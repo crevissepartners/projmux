@@ -16,6 +16,8 @@ import (
 // in internal/i18n/default_catalog.go for both en-US (FallbackLocale) and
 // ko-KR. The coverage tests enforce both halves.
 var uiTextKeys = map[string]i18n.Key{
+	"Continue: resumed %d, skipped %d; %s":        "startup.recovery.summary",
+	"Continue failed: resumed %d, skipped %d; %s": "startup.recovery.failed",
 	"wide columns":                  "picker.columns.wide",
 	"compact columns":               "picker.columns.compact",
 	"Toggle compact / wide columns": "settings.text.toggle_column_profile",

@@ -86,6 +86,26 @@ recoverable Agents still converge; an unrecoverable Agent that is itself a
 Window's required anchor keeps the existing Window refusal. Explicit snapshot
 restore and `agent resume` retain their separate authority.
 
+After Continue commits, its startup summary shows the resumed and skipped Agent
+totals and `projmux diagnostics log --component topology`. The same counts are
+available in the public materialize-project JSON result's `recovery` field.
+Already-live Agents count in neither total. Full per-Agent explanations remain
+on stderr; the transient summary stays within 220 UTF-8 bytes, including any
+ellipsis, independently of Agent names or how many were skipped.
+
+The private operations journal stores one `topology.outcome` and one
+`topology.agent.skipped` row per reason in the same invocation `run_id`. Reason
+counts sum to the committed skipped total. The ten codes use `topology.agent.`
+followed by `termination-excluded`, `phase-ineligible`, `activation-unproven`,
+`termination-invalid`, `session-ref-missing`, `session-ref-invalid`,
+`session-ref-mismatch`, `provider-unavailable`, `workspace-unavailable`, or
+`resume-prepare-failed`. `diagnostics report` includes recent closed recovery
+events in `topology-recovery.json`, including successful partial and 0/0 results.
+Journal rows contain no resource IDs/names, conversation IDs, payloads, or raw
+errors. Dry-run writes no execution event; failed or rolled-back execution
+records an error with zero committed counts. Journal and display failures are
+best effort and never change the topology result.
+
 `Recreate Project` never deletes or overwrites autosave or named snapshot files. It
 preserves the root, Git/worktrees, trust decision, and all unrelated Registry
 graphs while changing the Project identity. A rejected commit retains the

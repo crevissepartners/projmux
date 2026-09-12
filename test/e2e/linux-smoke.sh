@@ -5531,6 +5531,16 @@ while read -r topology_case_class topology_case_phase topology_case_ref topology
       exit 1
     fi
   fi
+  topology_case_skips="$((1 - topology_case_launches))"
+  topology_case_reasons='{}'
+  if [[ "$topology_case_skips" == 1 ]]; then
+    topology_case_code="topology.agent.termination-excluded"
+    if [[ "$topology_case_ref" == missing ]]; then topology_case_code="topology.agent.session-ref-missing"; fi
+    topology_case_reasons="{\"$topology_case_code\":1}"
+  fi
+  topology_pmx diagnostics log --component topology --tail 1000 --json >"$topology_root/matrix-$topology_case_label-journal.jsonl"
+  python3 test/e2e/topology-recovery.py "$topology_root/matrix-$topology_case_label-journal.jsonl" \
+    "$topology_root/matrix-$topology_case_label.err" "$topology_case_launches" "$topology_case_skips" "$topology_case_reasons"
   topology_settle_registry
   topology_case_registry="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
   topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json \
@@ -5541,6 +5551,9 @@ while read -r topology_case_class topology_case_phase topology_case_ref topology
     echo "Continue matrix repeat wrote or duplicated $topology_case_label" >&2
     exit 1
   fi
+  topology_pmx diagnostics log --component topology --tail 1000 --json >"$topology_root/matrix-$topology_case_label-repeat-journal.jsonl"
+  python3 test/e2e/topology-recovery.py "$topology_root/matrix-$topology_case_label-repeat-journal.jsonl" \
+    "$topology_root/matrix-$topology_case_label-repeat.err" 0 "$topology_case_skips" "$topology_case_reasons"
   echo ">> Continue evidence=$topology_case_class phase=$topology_case_phase ref=$topology_case_ref resume=$topology_case_launches fresh=0 repeat=0"
 done <<'TOPOLOGY_CONTINUE_MATRIX'
 abnormal Failed keep 1
@@ -6114,6 +6127,10 @@ if [[ "$(wc -l <"$startup_agent_argv")" != "$((startup_agent_launches_before_ext
   exit 1
 fi
 
+startup_pmx diagnostics log --component topology --tail 1000 --json >"$startup_root/external-hup-journal.jsonl"
+python3 test/e2e/topology-recovery.py "$startup_root/external-hup-journal.jsonl" "$startup_root/open-topology.err" 1 0 '{}'
+smoke_assert_file_contains "$startup_root/display-messages.log" 'resumed 1, skipped 0; projmux diagnostics log --component topology'
+
 # Explicit resume is tested separately after another exact test Agent Pane loss.
 # Reconciliation projects this loss without launching anything on its own.
 startup_hup_resume_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_owner_uid}' | awk -F '|' -v uid="$startup_agent_uid" '$2 == uid {print $1}')"
@@ -6412,6 +6429,9 @@ if [[ "$((startup_agent_launches_after_interrupted_continue - startup_agent_laun
   exit 1
 fi
 
+startup_pmx diagnostics log --component topology --tail 1000 --json >"$startup_root/retained-continue-journal.jsonl"
+python3 test/e2e/topology-recovery.py "$startup_root/retained-continue-journal.jsonl" "$startup_root/open-continue.err" 1 1 '{"topology.agent.termination-excluded":1}'
+
 startup_agent_launches_after_first_continue="$(wc -l <"$startup_agent_argv")"
 startup_interrupted_pane_after_first_continue="$startup_retained_agent_pane_uid"
 rm -f "$startup_root/open-continue.rc"
@@ -6429,8 +6449,41 @@ if [[ "$(wc -l <"$startup_agent_argv")" != "$startup_agent_launches_after_first_
   echo "repeated Continue launched a duplicate interrupted Agent" >&2
   exit 1
 fi
+startup_pmx diagnostics log --component topology --tail 1000 --json >"$startup_root/repeated-continue-journal.jsonl"
+cmp "$startup_root/retained-continue-journal.jsonl" "$startup_root/repeated-continue-journal.jsonl"
+
 echo ">> startup Continue eligibility clean-agent=$startup_clean_agent_uid clean-pane=$startup_clean_pane_uid clean-launches=0 interrupted-agent=$startup_agent_uid interrupted-pane=$startup_retained_agent_pane_uid interrupted-launches=1 repeat-duplicates=0 external-hup-launches=1 snapshot=preserved explicit-resume=preserved"
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
+
+# Nine long Korean names must never crowd counts or the diagnostics command
+# out of the actual startup result. The fixture adds no provider process.
+startup_managed_stop missing-nine
+startup_pmx reconcile resources --socket "$startup_socket" -o json >"$startup_root/missing-nine-projection.json"
+go run ./test/e2e/anchorfixture continue-missing-nine "$startup_root" "state/projmux/metadata/registry.json" "$startup_anchor_window_uid" "긴한글이름"
+rm -f "$startup_root/open-continue.rc"
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
+startup_wait_for "Continue nine missing refs" test -s "$startup_root/open-continue.rc"
+[[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" == 0 ]] || { cat "$startup_root/open-continue.err" >&2; exit 1; }
+startup_pmx diagnostics log --component topology --tail 1000 --json >"$startup_root/missing-nine-journal.jsonl"
+python3 test/e2e/topology-recovery.py "$startup_root/missing-nine-journal.jsonl" "$startup_root/open-continue.err" 1 10 '{"topology.agent.termination-excluded":1,"topology.agent.session-ref-missing":9}'
+[[ "$(grep -c 'no provider session ref is recorded' "$startup_root/open-continue.err")" == 9 ]] || exit 1
+
+# The operations writer refuses symlinks. Its failure must leave both the
+# successful startup result and the contained sentinel unchanged.
+startup_managed_stop journal-failure
+startup_journal="$startup_root/state/projmux/logs/operations.jsonl"
+mv "$startup_journal" "$startup_root/operations-before-writer-failure.jsonl"
+printf 'untouched journal target\n' >"$startup_root/journal-sentinel"
+cp "$startup_root/journal-sentinel" "$startup_root/journal-sentinel.before"
+ln -s "$startup_root/journal-sentinel" "$startup_journal"
+rm -f "$startup_root/open-continue.rc"
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
+startup_wait_for "Continue with failing journal" test -s "$startup_root/open-continue.rc"
+[[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" == 0 ]] || { cat "$startup_root/open-continue.err" >&2; exit 1; }
+smoke_assert_file_contains "$startup_root/open-continue.err" 'resumed 1, skipped 10; projmux diagnostics log --component topology'
+cmp "$startup_root/journal-sentinel.before" "$startup_root/journal-sentinel"
+rm "$startup_journal"
+mv "$startup_root/operations-before-writer-failure.jsonl" "$startup_journal"
 
 # 5. Stop again, explicitly remove every retained Window while the runtime is
 # absent, and Continue the resulting valid zero-Window Project. Continue keeps
@@ -6459,6 +6512,8 @@ if [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" != "0" ]]; then
   exit 1
 fi
 startup_wait_for "zero-Window Continue client handoff" startup_client_is_on "$startup_session"
+startup_pmx diagnostics log --component topology --tail 1000 --json >"$startup_root/zero-window-continue-journal.jsonl"
+python3 test/e2e/topology-recovery.py "$startup_root/zero-window-continue-journal.jsonl" "$startup_root/open-continue.err" 0 0 '{}'
 startup_zero_window_continue_project_uid="$(startup_pmx get projects -o uid)"
 startup_zero_window_continue_window_uid="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid)"
 startup_zero_window_continue_pane_uid="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid)"

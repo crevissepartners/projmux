@@ -254,6 +254,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// the same narrow provider-launch seam `create agent` and `agent resume`
 	// hold. There is no second launch builder anywhere in the topology engine.
 	reconcileCmd.agents = ai
+	reconcileCmd.diagnostics = recorder
 	// Canonical verb-to-kind routes. The registry-backed kinds own their own
 	// handler; the kinds whose behavior already exists forward raw argv to the
 	// current handler, so the canonical spelling is a parity alias rather than a

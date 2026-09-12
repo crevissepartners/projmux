@@ -14,9 +14,11 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 type resourceReconcileCommand struct {
+	diagnostics     *diagnostics.LifecycleRecorder
 	runner          tmuxCommandRunner
 	resources       *resourceStore
 	lookupEnv       func(string) string
@@ -75,8 +77,9 @@ type resourceReconcileCounts struct {
 }
 
 type resourceReconcileReport struct {
-	Target resourceReconcileTarget `json:"target"`
-	DryRun bool                    `json:"dryRun"`
+	Recovery *diagnostics.TopologyCounts `json:"recovery,omitempty"`
+	Target   resourceReconcileTarget     `json:"target"`
+	DryRun   bool                        `json:"dryRun"`
 	// HostMode is which of the two supported hosts the exact socket turned out
 	// to be. It is reported because the same Registry produces the same managed
 	// rows on both, and an operator debugging a refusal needs to know which

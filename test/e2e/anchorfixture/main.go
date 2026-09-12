@@ -45,6 +45,11 @@ func run(args []string) error {
 		return withTestRoot(args[1], func(root *os.Root) error {
 			return continueState(root, args[2], args[3], args[4], args[5], args[6], args[7])
 		})
+	case "continue-missing-nine":
+		if len(args) != 5 {
+			return errors.New("continue-missing-nine requires test root, relative registry, window uid, and fixture name base")
+		}
+		return withTestRoot(args[1], func(root *os.Root) error { return continueMissingNine(root, args[2], args[3], args[4]) })
 	case "inspect":
 		if len(args) != 5 {
 			return errors.New("inspect requires test root, relative registry path, window uid, and agent uid")
@@ -55,6 +60,58 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown mode %q", args[0])
 	}
+}
+
+// Seed only the isolated fixture Registry, after its Project has stopped. Real
+// mutation producers establish nine retained activations without conversations.
+func continueMissingNine(root *os.Root, name, windowUID, nameBase string) error {
+	registry, err := load(root, name)
+	if err != nil {
+		return err
+	}
+	window, ok := registry.Window(windowUID)
+	if !ok {
+		return errors.New("missing fixture window")
+	}
+	project, ok := registry.Project(window.Metadata.OwnerUID())
+	if !ok {
+		return errors.New("missing fixture project")
+	}
+	cwd := project.Spec.Root
+	mutator := coremetadata.Mutator{}
+	for i := range 9 {
+		agent, err := mutator.CreateAgent(&registry, windowUID, coremetadata.CreateAgentOptions{
+			Name: strings.Repeat(nameBase, 7) + fmt.Sprintf("-%d", i), Provider: "codex",
+			Workspace: coremetadata.AgentWorkspace{CWD: cwd}, OperationID: "e2e-missing-ref",
+		})
+		if err != nil {
+			return err
+		}
+		pane, err := mutator.AttachAgentPane(&registry, agent.Metadata.UID, coremetadata.BootstrapPane{CWD: cwd}, "e2e-missing-ref")
+		if err != nil {
+			return err
+		}
+		generation := fmt.Sprintf("e2e-missing-generation-%d", i)
+		if _, err := mutator.RecordPaneActivation(&registry, pane.Metadata.UID, coremetadata.PaneActivationOptions{Generation: generation, AgentUID: agent.Metadata.UID, OperationID: "e2e-missing-ref"}); err != nil {
+			return err
+		}
+		at := time.Now().UTC()
+		receipt := coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceControlAction, Classification: coremetadata.TerminationInterrupted, ObservedAt: at, PaneUID: pane.Metadata.UID, AgentUID: agent.Metadata.UID, Generation: generation, OperationID: "e2e-missing-stop"}
+		if outcome, err := mutator.RecordTermination(&registry, receipt); err != nil || !outcome.Applied {
+			return fmt.Errorf("missing-ref receipt: %+v %v", outcome, err)
+		}
+		if _, err := mutator.ProjectTermination(&registry, coremetadata.TerminationProjectionInput{PaneUID: pane.Metadata.UID, Generation: generation, ObservedAt: at}); err != nil {
+			return err
+		}
+	}
+	if err := registry.Validate(); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(registry, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeAtomic(root, name, append(raw, '\n'))
 }
 
 func withTestRoot(path string, fn func(*os.Root) error) (err error) {

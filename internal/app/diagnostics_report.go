@@ -158,6 +158,14 @@ func (c *diagnosticsCommand) buildSupportPlan(destination string, now time.Time)
 	if operationsManifest.Status == "included" {
 		entries = append(entries, supportArchiveEntry{name: operationsManifest.Name, data: operationsData})
 	}
+	topologyData, topologyManifest, err := c.supportTopologyRecovery()
+	if err != nil {
+		return supportPlan{}, err
+	}
+	manifest.Entries = append(manifest.Entries, topologyManifest)
+	if topologyManifest.Status == "included" {
+		entries = append(entries, supportArchiveEntry{name: topologyManifest.Name, data: topologyData})
+	}
 
 	aiData, aiManifest := c.supportAIIngestSummary()
 	manifest.Entries = append(manifest.Entries, aiManifest)
@@ -396,6 +404,48 @@ func (c *diagnosticsCommand) supportOperationalErrors() ([]byte, supportManifest
 		entry.Reason = "recent-bounded-errors-corrupt-records-skipped"
 	}
 	data, err := supportJSON(map[string]any{"events": errorsOnly})
+	return data, entry, err
+}
+
+// Recovery skips are successful partial recoveries, so the error-only archive
+// cannot explain them. Keep their closed events in a separate bounded entry.
+func (c *diagnosticsCommand) supportTopologyRecovery() ([]byte, supportManifestEntry, error) {
+	entry := supportManifestEntry{Name: "topology-recovery.json", Status: "omitted"}
+	path, err := diagnostics.DefaultPath(c.lookupEnv, c.homeDir)
+	if err != nil {
+		return nil, entry, err
+	}
+	result, err := diagnostics.NewStore(path).ReadOnly()
+	if err != nil {
+		entry.Reason = supportReadReason(err)
+		return nil, entry, nil
+	}
+	if result.Missing {
+		entry.Reason = "source-missing"
+		return nil, entry, nil
+	}
+	var events []diagnostics.Event
+	for _, event := range result.Events {
+		if event.Event != "topology.outcome" && event.Event != "topology.agent.skipped" {
+			continue
+		}
+		event.RunID = supportHash("run", event.RunID)
+		event.Version = supportHash("version", event.Version)
+		events = append(events, event)
+	}
+	if len(events) > supportOperationalTail {
+		events = events[len(events)-supportOperationalTail:]
+	}
+	// Do not export an oldest partial invocation whose outcome was clipped.
+	for len(events) > 0 && events[0].Event != "topology.outcome" {
+		events = events[1:]
+	}
+	if len(events) == 0 {
+		entry.Reason = "source-no-topology-events"
+		return nil, entry, nil
+	}
+	entry.Status, entry.Reason, entry.RecordCount = "included", "recent-bounded-topology", len(events)
+	data, err := supportJSON(map[string]any{"events": events})
 	return data, entry, err
 }
 

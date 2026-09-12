@@ -96,7 +96,7 @@ func TestRegistryTopologyMaterializationDryRunExecuteAndRepeatNoop(t *testing.T)
 	}
 
 	result, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "uid:prj-beta", "-o", "json")
-	if err != nil || stderr != "" {
+	if err != nil || !strings.Contains(stderr, "Continue: resumed 0, skipped 0;") {
 		t.Fatalf("execute: err=%v stderr=%q\n%s", err, stderr, result)
 	}
 	session := server.session("beta")

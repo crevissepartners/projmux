@@ -1388,8 +1388,8 @@ func TestProjectStartupNoticeMessageTruncatesOnRuneBoundaries(t *testing.T) {
 				if !strings.HasSuffix(got, "...") {
 					t.Fatalf("truncated message = %q, want the explicit ellipsis", got)
 				}
-				if len(got) > projectStartupNoticeMax+len("...") {
-					t.Fatalf("truncated message is %d bytes, want at most %d", len(got), projectStartupNoticeMax+len("..."))
+				if len(got) > projectStartupNoticeMax {
+					t.Fatalf("truncated message is %d bytes, want at most %d", len(got), projectStartupNoticeMax)
 				}
 				return
 			}

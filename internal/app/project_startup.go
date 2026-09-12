@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	"github.com/crevissepartners/projmux/internal/core/controller"
@@ -795,7 +796,7 @@ func newRegistryProjectTopologyMaterializer(recorders ...*diagnostics.LifecycleR
 	return materializer
 }
 
-func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx context.Context, request projectTopologyMaterializeRequest) (bool, error) {
+func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx context.Context, request projectTopologyMaterializeRequest) (materialized bool, resultErr error) {
 	root, sessionName := strings.TrimSpace(request.Root), strings.TrimSpace(request.SessionName)
 	if m == nil || m.resources == nil || root == "" || sessionName == "" {
 		return false, nil
@@ -804,6 +805,16 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 	if err != nil || !ok {
 		return false, err
 	}
+	started := time.Now()
+	executed := false
+	defer func() {
+		// Route binding and automatic mirror preflight precede the common
+		// engine. They own an error outcome only if execution never started.
+		if !executed && resultErr != nil && request.AgentReplayAuthority != topologyAgentReplaySnapshot {
+			m.diagnostics.Topology().Record(started, diagnostics.LifecycleError, diagnostics.TopologyCounts{})
+			reportTopologyRecovery(m.notices, diagnostics.LifecycleError, diagnostics.TopologyCounts{})
+		}
+	}()
 	if m.resolveRoute != nil {
 		route, routeErr := m.resolveRoute(ctx, request.Anchor)
 		if routeErr != nil {
@@ -859,11 +870,10 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 	if warn == nil {
 		warn = io.Discard
 	}
+	executed = true
 	outcome, err := run.execute(ctx, planner, warn)
-	// The plan writes its Agent disclosures line by line during the transaction;
-	// the flush is what turns them into the one message the operator actually
-	// sees. It runs on both outcomes: a failed activation is exactly when the
-	// "this Agent did not rejoin its conversation" line matters most.
+	// Continue replaces buffered Agent details with its committed summary.
+	// Snapshot authority retains the existing full-notice display flush.
 	flushProjectStartupNotices(m.notices)
 	if err != nil {
 		stage := outcome.failedStage
