@@ -52,23 +52,24 @@ type installedConnectionRow struct {
 }
 
 type installedConnectionLedger struct {
-	Result            string                        `json:"result"`
-	SourceHead        string                        `json:"sourceHead"`
-	SourceTree        string                        `json:"sourceTree"`
-	BinarySHA256      string                        `json:"binarySHA256"`
-	TestBinarySHA256  string                        `json:"testBinarySHA256"`
-	Runtime           installedRecoveryRuntime      `json:"runtime"`
-	TmuxProcess       codexinstalled.OwnedProcess   `json:"tmuxProcess"`
-	RouteVerified     bool                          `json:"routeVerified"`
-	RegistryVerified  bool                          `json:"registryVerified"`
-	Agents            int                           `json:"agents"`
-	Threads           int                           `json:"threads"`
-	ProviderInputs    int                           `json:"providerInputs"`
-	Rows              []installedConnectionRow      `json:"rows"`
-	ProcessesAfter    []codexinstalled.OwnedProcess `json:"processesAfter"`
-	UnreapedResiduals []codexinstalled.OwnedProcess `json:"unreapedResiduals,omitempty"`
-	Cleanup           bool                          `json:"cleanup"`
-	CleanupFailure    *installedCleanupFailure      `json:"cleanupFailure,omitempty"`
+	Result            string                           `json:"result"`
+	SourceHead        string                           `json:"sourceHead"`
+	SourceTree        string                           `json:"sourceTree"`
+	BinarySHA256      string                           `json:"binarySHA256"`
+	TestBinarySHA256  string                           `json:"testBinarySHA256"`
+	Runtime           installedRecoveryRuntime         `json:"runtime"`
+	TmuxProcess       codexinstalled.OwnedProcess      `json:"tmuxProcess"`
+	RouteVerified     bool                             `json:"routeVerified"`
+	RegistryVerified  bool                             `json:"registryVerified"`
+	Agents            int                              `json:"agents"`
+	Threads           int                              `json:"threads"`
+	ProviderInputs    int                              `json:"providerInputs"`
+	Rows              []installedConnectionRow         `json:"rows"`
+	ProcessesAfter    []codexinstalled.OwnedProcess    `json:"processesAfter"`
+	UnreapedResiduals []codexinstalled.OwnedProcess    `json:"unreapedResiduals,omitempty"`
+	Cleanup           bool                             `json:"cleanup"`
+	CleanupFailure    *installedCleanupFailure         `json:"cleanupFailure,omitempty"`
+	CommandFailure    *installedRecoveryCommandFailure `json:"commandFailure,omitempty"`
 }
 
 func decodeInstalledConnectionInput(raw []byte) (installedConnectionInput, error) {
@@ -136,7 +137,10 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 	}
 	ctx, stop := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer stop()
-	run := installedRecoveryCommand(t, ctx)
+	run := installedRecoveryCommand(t, ctx, func(failure *installedRecoveryCommandFailure) {
+		ledger.CommandFailure = failure
+		save()
+	})
 	ledger.Runtime = setupInstalledRecoveryRuntime(t, fixture, input.Binary, run)
 	save()
 	route, err := resolveExactObjectRuntimeMutationRoute(ctx, inttmux.ExecRunner{}, os.Getenv)

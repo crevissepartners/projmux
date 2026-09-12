@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -63,19 +62,20 @@ type installedRecoveryRow struct {
 }
 
 type installedRecoveryLedger struct {
-	Result            string                        `json:"result"`
-	SourceHead        string                        `json:"sourceHead"`
-	SourceTree        string                        `json:"sourceTree"`
-	BinarySHA256      string                        `json:"binarySHA256"`
-	TestBinarySHA256  string                        `json:"testBinarySHA256"`
-	Submissions       int                           `json:"submissions"`
-	Rows              []installedRecoveryRow        `json:"rows"`
-	Cleanup           bool                          `json:"cleanup"`
-	AuthRemoved       bool                          `json:"authRemoved"`
-	TmuxSocket        string                        `json:"tmuxSocket"`
-	CleanupFailure    *installedCleanupFailure      `json:"cleanupFailure,omitempty"`
-	ProcessesAfter    []codexinstalled.OwnedProcess `json:"processesAfter"`
-	UnreapedResiduals []codexinstalled.OwnedProcess `json:"unreapedResiduals,omitempty"`
+	Result            string                           `json:"result"`
+	SourceHead        string                           `json:"sourceHead"`
+	SourceTree        string                           `json:"sourceTree"`
+	BinarySHA256      string                           `json:"binarySHA256"`
+	TestBinarySHA256  string                           `json:"testBinarySHA256"`
+	Submissions       int                              `json:"submissions"`
+	Rows              []installedRecoveryRow           `json:"rows"`
+	Cleanup           bool                             `json:"cleanup"`
+	AuthRemoved       bool                             `json:"authRemoved"`
+	TmuxSocket        string                           `json:"tmuxSocket"`
+	CleanupFailure    *installedCleanupFailure         `json:"cleanupFailure,omitempty"`
+	ProcessesAfter    []codexinstalled.OwnedProcess    `json:"processesAfter"`
+	UnreapedResiduals []codexinstalled.OwnedProcess    `json:"unreapedResiduals,omitempty"`
+	CommandFailure    *installedRecoveryCommandFailure `json:"commandFailure,omitempty"`
 }
 
 // TestInstalledManagedCodexAuthorityRecoveryMatrix is opt-in, model-dependent
@@ -161,13 +161,19 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	run := installedRecoveryCommand(t, ctx)
+	var activeAttempt *installedRecoveryAttempt
+	run := installedRecoveryCommand(t, ctx, func(failure *installedRecoveryCommandFailure) {
+		ledger.CommandFailure = failure
+		if activeAttempt != nil && ((activeAttempt.Stage == "submitting-turn" && failure.Operation == "agent-turn-start") || (activeAttempt.Stage == "submitting-create" && failure.Operation == "create-agent")) {
+			activeAttempt.CommandFailure = failure
+		}
+		save()
+	})
 	runtime := setupInstalledRecoveryRuntime(t, fixture, input.Binary, run)
 	socketName, tmuxSocket, project, window := runtime.Name, runtime.Socket, runtime.Project, runtime.Window
 	ledger.TmuxSocket = tmuxSocket
 	save()
 
-	var activeAttempt *installedRecoveryAttempt
 	var activeGeneration string
 	var activeRetired *coremetadata.CodexAuthorityRef
 	defer func() {
@@ -428,16 +434,17 @@ func newInstalledRecoveryFixture(t *testing.T, root string) *codexinstalled.Fixt
 	return fixture
 }
 
-func installedRecoveryCommand(t *testing.T, ctx context.Context) func(string, ...string) string {
+func installedRecoveryCommand(t *testing.T, ctx context.Context, onFailure func(*installedRecoveryCommandFailure)) func(string, ...string) string {
 	return func(executable string, args ...string) string {
 		t.Helper()
 		callCtx, stop := context.WithTimeout(ctx, 90*time.Second)
 		defer stop()
-		command := exec.CommandContext(callCtx, executable, args...) // #nosec G204 -- explicit installed fixture executable and argv.
-		command.Env = withoutInheritedTmuxEnvironment(os.Environ())
-		output, err := command.Output()
+		output, failure, err := executeInstalledRecoveryCommand(callCtx, executable, args...)
 		if err != nil {
-			t.Fatalf("fixture command %s %s failed: %v (payload/output omitted)", filepath.Base(executable), args[0], err)
+			if onFailure != nil {
+				onFailure(failure)
+			}
+			t.Fatalf("fixture command failed: operation=%s exit=%d stage=%s code=%s outcome=unknown (output omitted)", failure.Operation, failure.ExitCode, failure.Stage, failure.Code)
 		}
 		return strings.TrimSpace(string(output))
 	}

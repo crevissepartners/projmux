@@ -23,13 +23,14 @@ import (
 // These are test evidence DTOs, deliberately separate from Registry/response
 // types which can contain prompts, progress text, approvals and raw errors.
 type installedRecoveryAttempt struct {
-	InputIndex   int                            `json:"inputIndex"`
-	Sample       string                         `json:"sample"`
-	Stage        string                         `json:"stage"`
-	AgentUID     string                         `json:"agentUID,omitempty"`
-	Selection    *installedConnectionSelection  `json:"selection,omitempty"`
-	Observations []installedRecoveryObservation `json:"observations,omitempty"`
-	Failure      *installedRecoveryFailure      `json:"failure,omitempty"`
+	InputIndex     int                              `json:"inputIndex"`
+	Sample         string                           `json:"sample"`
+	Stage          string                           `json:"stage"`
+	AgentUID       string                           `json:"agentUID,omitempty"`
+	Selection      *installedConnectionSelection    `json:"selection,omitempty"`
+	Observations   []installedRecoveryObservation   `json:"observations,omitempty"`
+	Failure        *installedRecoveryFailure        `json:"failure,omitempty"`
+	CommandFailure *installedRecoveryCommandFailure `json:"commandFailure,omitempty"`
 }
 
 // Every fresh create/turn input crosses the same verified selection guard as
