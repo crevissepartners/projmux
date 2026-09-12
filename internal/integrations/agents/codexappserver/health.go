@@ -330,8 +330,8 @@ func IsSafeDiagnosticVersion(value string) bool {
 // a path, provider prose, or embedded token into lifecycle evidence.
 func strictEvidenceVersion(raw string) string {
 	for _, prefix := range []string{"codex-cli/", "codex_cli_rs/", "codex/"} {
-		if strings.HasPrefix(raw, prefix) {
-			raw = strings.TrimPrefix(raw, prefix)
+		if after, ok := strings.CutPrefix(raw, prefix); ok {
+			raw = after
 			break
 		}
 	}

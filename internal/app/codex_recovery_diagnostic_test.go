@@ -114,6 +114,68 @@ func TestObserverDiagnosticRejectedAuthorityWritesZero(t *testing.T) {
 	}
 }
 
+func TestObserverSessionFailurePreservesTerminalReasonAfterAuthorityRejection(t *testing.T) {
+	for _, replaced := range []bool{false, true} {
+		name := "current"
+		if replaced {
+			name = "replaced"
+		}
+		t.Run(name, func(t *testing.T) {
+			sink := &diagnosticRejectingSink{recordingCodexLifecycleSink: newRecordingCodexLifecycleSink(), replaced: replaced}
+			records := &recordingCodexObserverJournal{}
+			var results []codexObserverStartupResult
+			observer := codexNativeObserver{identity: testCodexLifecycleIdentity(), sink: sink,
+				transitions:   newCodexObserverLogJournal(records.append, nil),
+				reportStartup: func(result codexObserverStartupResult) { results = append(results, result) },
+			}
+			observer.setSessionStartupFallback(syntheticDiagnosticFailure(t.Context(), "catalog"))
+			want := codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "unsupported"}
+			if replaced {
+				want = codexObserverStartupResult{Status: codexObserverStartupStale}
+			}
+			if len(results) != 1 || results[0] != want {
+				t.Errorf("session-construction failure lost terminal result: got %+v, want %+v", results, want)
+			}
+			if len(records.snapshot()) != 0 || len(sink.authorities) != 0 {
+				t.Fatal("uncommitted session failure wrote diagnostic/authority")
+			}
+		})
+	}
+}
+
+func TestAIIngestTextPreservesBoundedRecoveryDiagnosticsAndLegacyRecords(t *testing.T) {
+	raw, err := os.ReadFile("testdata/codex_recovery_diagnostic.json.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry aiIngestLogEntry
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		t.Fatal(err)
+	}
+	entry.At = "2026-09-13T00:00:00Z"
+	legacy := entry
+	legacy.Failure, legacy.Recovery = nil, nil
+	const oldText = "2026-09-13T00:00:00Z codex-observer observer.fallback provider-hook pane=%9 thread=thread-1 reason=unsupported"
+	if got := formatAIIngestLogEntry(legacy); got != oldText {
+		t.Fatalf("old journal record changed: %s", got)
+	}
+	recovery, _ := json.Marshal(entry.Recovery)
+	want := oldText + " failure=" + entry.Failure.String() + " recovery=" + string(recovery)
+	if got := formatAIIngestLogEntry(entry); got != want {
+		t.Errorf("public journal text lost safe diagnostics: %s", got)
+	}
+	for _, unsafe := range []string{"prompt-secret auth=secret Cookie: secret /private/path pid=12345", "\x00\n\x1b\xff", strings.Repeat("secret", 100000)} {
+		entry.Failure = &codexappserver.FailureDiagnostic{Method: unsafe, Cause: unsafe}
+		entry.Recovery = &codexappserver.RecoveryDiagnostic{Evidence: &codexappserver.ManagerEvidence{Status: unsafe, Backend: unsafe, Result: unsafe, Agreement: unsafe, Version: unsafe}, Ownership: codexappserver.ManagerOwnership(unsafe), Refusal: codexappserver.NativeActionRefusal(unsafe), Operator: codexappserver.OperatorRecovery(unsafe)}
+		got := formatAIIngestLogEntry(entry)
+		recovery, _ := json.Marshal(entry.Recovery)
+		want := oldText + " failure=" + entry.Failure.String() + " recovery=" + string(recovery)
+		if got != want || len(got)-len(oldText) > 947 || len(got) > maxCodexObserverFailureRecordBytes || strings.ContainsAny(got, "\x00\n\x1b\xff") || strings.Contains(got, "secret") || strings.Contains(got, "12345") {
+			t.Errorf("public journal text lost bounded safe projection")
+		}
+	}
+}
+
 type diagnosticRejectingSink struct {
 	*recordingCodexLifecycleSink
 	replaced bool

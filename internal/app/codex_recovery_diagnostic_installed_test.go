@@ -42,6 +42,8 @@ type installedDiagnosticEvidence struct {
 	TestBinarySHA256 string                   `json:"testBinarySHA256"`
 	Journal          []aiIngestLogEntry       `json:"journal"`
 	Doctor           []*codexappserver.Health `json:"doctor"`
+	PublicJSON       []aiIngestLogEntry       `json:"publicJSON"`
+	PublicText       []string                 `json:"publicText"`
 	ProviderTurns    int                      `json:"providerTurns"`
 	ManagerMutations int                      `json:"managerMutations"`
 	SocketVerified   bool                     `json:"socketVerified"`
@@ -72,7 +74,7 @@ func TestInstalledCodexRecoveryDiagnosticFixture(t *testing.T) {
 			t.Fatal("unset inherited tmux routing before diagnostic fixture")
 		}
 	}
-	evidence := installedDiagnosticEvidence{Result: "FAIL", Provenance: "synthetic manager/provider responses; real installed observer, broker IPC, journal, doctor", Input: input}
+	evidence := installedDiagnosticEvidence{Result: "FAIL", Provenance: "synthetic manager/provider responses and legacy journal row; real installed observer, broker IPC, journal, doctor, public JSON/text diagnostics", Input: input}
 	evidence.TestBinarySHA256 = verifyInstalledRecoveryBinary(t, input.Binary, input.SourceHead, input.BinarySHA256)
 	defer func() {
 		if t.Failed() {
@@ -296,11 +298,61 @@ exec "$CODEX_DIAGNOSTIC_HELPER" -test.run=^TestCodexDiagnosticProxyProcess$ -- "
 		evidence.Journal = append(evidence.Journal, entry)
 		evidence.Doctor = append(evidence.Doctor, health)
 	}
+	// Exercise the public consumers, including a synthetic pre-diagnostic row.
+	// All preceding rows were emitted by the actual observer executable.
+	legacy := aiIngestLogEntry{At: "2026-09-13T00:00:00Z", Source: "codex-observer", Event: "observer.fallback", Result: "provider-hook", Reason: aiIngestRecordReason("unsupported")}
+	legacyJSON, _ := json.Marshal(legacy)
+	journalFile, err := os.OpenFile(filepath.Join(paths.StateDir, aiIngestLogName), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := journalFile.Write(append(legacyJSON, '\n'))
+	closeErr := journalFile.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatal("could not append synthetic legacy journal row")
+	}
+	publicJSON := strings.Split(run(input.Binary, "diagnostics", "agent-hook", "--json"), "\n")
+	evidence.PublicText = strings.Split(run(input.Binary, "diagnostics", "agent-hook"), "\n")
+	wantRows := append(append([]aiIngestLogEntry{}, evidence.Journal...), legacy)
+	if len(publicJSON) != len(wantRows) || len(evidence.PublicText) != len(wantRows) {
+		t.Fatal("public journal consumers dropped records")
+	}
+	for i, want := range wantRows {
+		var entry aiIngestLogEntry
+		if err := json.Unmarshal([]byte(publicJSON[i]), &entry); err != nil {
+			t.Fatal("public journal JSON is invalid")
+		}
+		gotJSON, _ := json.Marshal(entry)
+		wantJSON, _ := json.Marshal(want)
+		if string(gotJSON) != string(wantJSON) {
+			t.Fatal("public JSON changed observer failure/recovery projection")
+		}
+		evidence.PublicJSON = append(evidence.PublicJSON, entry)
+		text := evidence.PublicText[i]
+		if !strings.Contains(text, "reason="+string(want.Reason)) {
+			t.Fatal("public text lost legacy reason")
+		}
+		if want.Failure != nil && !strings.Contains(text, "failure="+want.Failure.String()) {
+			t.Error("public text lost original observer failure")
+		}
+		if want.Recovery != nil {
+			recovery, _ := json.Marshal(want.Recovery)
+			if !strings.Contains(text, "recovery="+string(recovery)) {
+				t.Error("public text lost doctor/journal recovery evidence")
+			}
+		}
+		if len(publicJSON[i]) > maxCodexObserverFailureRecordBytes || len(text) > maxCodexObserverFailureRecordBytes || strings.Contains(text+publicJSON[i], "secret") || strings.ContainsAny(text, "\x00\x1b\xff") {
+			t.Fatal("public diagnostics exceeded bounds or disclosed raw provider payload")
+		}
+	}
+	if evidence.PublicText[len(wantRows)-1] != "2026-09-13T00:00:00Z codex-observer observer.fallback provider-hook reason=unsupported" {
+		t.Fatal("public text changed synthetic legacy record")
+	}
 	argv, err := os.ReadFile(filepath.Join(input.Root, "argv"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(argv)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(argv)), "\n") {
 		if line != "app-server proxy" && line != "app-server daemon version" && line != "--version" {
 			t.Fatalf("unexpected diagnostic command %q", line)
 		}
@@ -389,7 +441,7 @@ func TestCodexDiagnosticProxyProcess(t *testing.T) {
 			if mode == "transport" {
 				os.Exit(0)
 			}
-			payload := []byte(fmt.Sprintf(`{"id":%s,"error":{"code":-32601,"message":"secret"}}`, message.ID))
+			payload := fmt.Appendf(nil, `{"id":%s,"error":{"code":-32601,"message":"secret"}}`, message.ID)
 			if mode == "protocol" {
 				payload = []byte(`{broken`)
 			}

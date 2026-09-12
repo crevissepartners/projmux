@@ -571,6 +571,16 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 			parts = append(parts, field.key+"="+field.value)
 		}
 	}
+	// Re-project parsed journal fields through their closed JSON encoders. These
+	// optional additions total at most 947 bytes including labels/separators;
+	// records without diagnostics keep their original text exactly.
+	if entry.Failure != nil {
+		parts = append(parts, "failure="+entry.Failure.String())
+	}
+	if entry.Recovery != nil {
+		recovery, _ := json.Marshal(entry.Recovery)
+		parts = append(parts, "recovery="+string(recovery))
+	}
 	return strings.Join(parts, " ")
 }
 

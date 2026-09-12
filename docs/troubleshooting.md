@@ -206,12 +206,17 @@ Transport and local protocol failures have `rpc_code=null`. Read-only preflight
 refusals also carry the same `recovery` evidence and operator decision Doctor
 reports. These fields are appended only after the exact authority write succeeds;
 the existing startup handshake and reason consumers are unchanged.
+`projmux diagnostics agent-hook` displays the same safe `failure=` and `recovery=`
+JSON objects in its default text output; `--json` retains the original JSONL
+records. Older rows keep their existing text format.
 
 Diagnostic bounds are 32 bytes per method/cause/evidence token or version,
 20 decimal bytes for an RPC integer, 64 bytes per recovery decision token,
 160 bytes for `failure` JSON, 256 for `manager_evidence`, and 768 for `recovery`.
 The Codex health JSON/text section and enriched observer row each fit within
-4096 bytes (the row reserves space for its timestamp). The existing journal file
+4096 bytes (the row reserves space for its timestamp). Public journal text adds
+at most 947 bytes for both diagnostic objects, labels and separators; an enriched
+observer line remains within the same 4096-byte row bound. The existing journal file
 retention bound remains 1 MiB. Provider messages, payloads, prompts, auth, paths,
 and raw PIDs are excluded; unknown strings are replaced by closed unknown values.
 
