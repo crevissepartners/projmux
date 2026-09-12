@@ -18,6 +18,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
@@ -95,16 +96,18 @@ type aiPaneMatchRow struct {
 }
 
 type aiIngestLogEntry struct {
-	At        string         `json:"at"`
-	Source    string         `json:"source"`
-	Event     string         `json:"event,omitempty"`
-	Result    string         `json:"result"`
-	Reason    aiIngestReason `json:"reason,omitempty"`
-	Pane      string         `json:"pane,omitempty"`
-	CWD       string         `json:"cwd,omitempty"`
-	ThreadID  string         `json:"thread_id,omitempty"`
-	SessionID string         `json:"session_id,omitempty"`
-	TurnID    string         `json:"turn_id,omitempty"`
+	Failure   *codexappserver.FailureDiagnostic  `json:"failure,omitempty"`
+	Recovery  *codexappserver.RecoveryDiagnostic `json:"recovery,omitempty"`
+	At        string                             `json:"at"`
+	Source    string                             `json:"source"`
+	Event     string                             `json:"event,omitempty"`
+	Result    string                             `json:"result"`
+	Reason    aiIngestReason                     `json:"reason,omitempty"`
+	Pane      string                             `json:"pane,omitempty"`
+	CWD       string                             `json:"cwd,omitempty"`
+	ThreadID  string                             `json:"thread_id,omitempty"`
+	SessionID string                             `json:"session_id,omitempty"`
+	TurnID    string                             `json:"turn_id,omitempty"`
 	// Epoch is the observer epoch label a lifecycle transition belongs to. It
 	// is what makes two adjacent records comparable: the same label twice is
 	// one epoch reporting twice, a new label is a new connection.
@@ -567,6 +570,16 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 		if strings.TrimSpace(field.value) != "" {
 			parts = append(parts, field.key+"="+field.value)
 		}
+	}
+	// Re-project parsed journal fields through their closed JSON encoders. These
+	// optional additions total at most 947 bytes including labels/separators;
+	// records without diagnostics keep their original text exactly.
+	if entry.Failure != nil {
+		parts = append(parts, "failure="+entry.Failure.String())
+	}
+	if entry.Recovery != nil {
+		recovery, _ := json.Marshal(entry.Recovery)
+		parts = append(parts, "recovery="+string(recovery))
 	}
 	return strings.Join(parts, " ")
 }

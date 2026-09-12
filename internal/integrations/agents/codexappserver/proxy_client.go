@@ -66,7 +66,8 @@ func openDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion
 	return client, nil
 }
 
-func classifyProxyOpenError(ctx context.Context, err error) error {
+func classifyProxyOpenError(ctx context.Context, err error) (classified error) {
+	defer func() { classified = WithDiagnostic(classified, Diagnostic(err)) }()
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 		return context.DeadlineExceeded

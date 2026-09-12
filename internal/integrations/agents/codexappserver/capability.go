@@ -231,7 +231,8 @@ func StartDefaultReview(ctx context.Context, projmuxVersion, threadID string, ta
 	return projected, nil
 }
 
-func unavailableHealthError(health Health) error {
+func unavailableHealthError(health Health) (err error) {
+	defer func() { err = WithHealthDiagnostic(err, health) }()
 	if guidance := health.NativeActionGuidance(); guidance != "" {
 		return fmt.Errorf("%w: %s; %s", corecap.ErrUnavailable, health.LifecycleReason, guidance)
 	}

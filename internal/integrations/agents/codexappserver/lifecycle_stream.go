@@ -202,7 +202,8 @@ func OpenPrivateUnixLifecycle(
 	return client, nil
 }
 
-func (c *LifecycleClient) initialize(ctx context.Context, version string, experimental bool) error {
+func (c *LifecycleClient) initialize(ctx context.Context, version string, experimental bool) (err error) {
+	defer func() { err = withRequestFailure(methodInitialize, err) }()
 	params := initializeParams{ClientInfo: clientInfo{Name: "projmux", Title: "Projmux", Version: safeVersion(version)}}
 	if experimental {
 		params.Capabilities = &initializeCapabilities{ExperimentalAPI: true}
@@ -246,7 +247,8 @@ func (c *LifecycleClient) initialize(ctx context.Context, version string, experi
 // projects its response. The operation is not reusable after return: Close is
 // part of success, so no notification or late response can escape the owned
 // authority boundary.
-func (c *LifecycleClient) ReadLifecycleSnapshot(ctx context.Context, threadID string) (LifecycleSnapshot, error) {
+func (c *LifecycleClient) ReadLifecycleSnapshot(ctx context.Context, threadID string) (snapshot LifecycleSnapshot, err error) {
+	defer func() { err = withRequestFailure(methodThreadRead, err) }()
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle snapshot thread is empty", ErrProtocol)
@@ -575,6 +577,7 @@ const (
 	modeFlags
 	modeScalar
 	modeError
+	modeRPCCode
 )
 
 type lifecycleProjector struct {
@@ -742,7 +745,7 @@ func (p *lifecycleProjector) value(mode lifecycleMode, depth int) (any, error) {
 			return nil, fmt.Errorf("%w: lifecycle metadata shape", ErrProtocol)
 		}
 	}
-	if mode == modeScalar && (first == '{' || first == '[') {
+	if (mode == modeScalar || mode == modeRPCCode) && (first == '{' || first == '[') {
 		return nil, fmt.Errorf("%w: lifecycle metadata shape", ErrProtocol)
 	}
 	switch first {
@@ -751,7 +754,7 @@ func (p *lifecycleProjector) value(mode lifecycleMode, depth int) (any, error) {
 	case '[':
 		return p.array(mode, depth)
 	default:
-		return p.scalar(mode == modeScalar)
+		return p.scalar(mode == modeScalar || mode == modeRPCCode, mode == modeRPCCode)
 	}
 }
 
@@ -923,7 +926,10 @@ func wantedLifecycleMode(mode lifecycleMode, key string) lifecycleMode {
 			return modeScalar
 		}
 	case modeError:
-		if key == "code" || key == "message" {
+		if key == "code" {
+			return modeRPCCode
+		}
+		if key == "message" {
 			return modeScalar
 		}
 	}
@@ -1029,14 +1035,14 @@ func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys []string, fi
 }
 
 func projectedResponseError(failure projectedRPCError) error {
-	codeValue, codeOK := failure.code.(float64)
+	codeValue, codeOK := failure.code.(int64)
 	message, _ := failure.message.(string)
-	if !codeOK || math.Trunc(codeValue) != codeValue {
+	if !codeOK {
 		return fmt.Errorf("%w: invalid lifecycle RPC error", ErrProtocol)
 	}
 	code := int(codeValue)
 	if code == -32601 {
-		return ErrUnsupported
+		return &responseError{code: code, kind: ErrUnsupported}
 	}
 	normalized := strings.ToLower(strings.Join(strings.Fields(message), " "))
 	switch {
@@ -1125,7 +1131,7 @@ func (p *lifecycleProjector) array(mode lifecycleMode, depth int) (any, error) {
 	return nil, nil
 }
 
-func (p *lifecycleProjector) scalar(capture bool) (any, error) {
+func (p *lifecycleProjector) scalar(capture, exactRPCCode bool) (any, error) {
 	first, err := p.peek()
 	if err != nil {
 		return nil, err
@@ -1174,6 +1180,15 @@ func (p *lifecycleProjector) scalar(capture bool) (any, error) {
 	}
 	if !lifecycleNumber.MatchString(text) {
 		return nil, fmt.Errorf("%w: malformed lifecycle scalar", ErrProtocol)
+	}
+	if exactRPCCode {
+		// RPC codes are integers. Decode before float64 can round the original
+		// value; timestamps and all existing non-code scalar handling stay intact.
+		number, err := json.Number(text).Int64()
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid lifecycle RPC code", ErrProtocol)
+		}
+		return number, nil
 	}
 	number, err := json.Number(text).Float64()
 	if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {

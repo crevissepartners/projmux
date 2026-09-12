@@ -51,7 +51,14 @@ func ProbeDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersio
 	return withLifecycle(withInstallCapability(health, ObserveDefaultInstallCapability()), LifecycleNotAttempted, LifecycleReasonReadOnly)
 }
 
-func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool, lookPath func(string) (string, error), command func(context.Context) *exec.Cmd, daemonNotRunning func() bool) Health {
+func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool, lookPath func(string) (string, error), command func(context.Context) *exec.Cmd, daemonNotRunning func() bool) (health Health) {
+	var failure error
+	defer func() {
+		if failure != nil {
+			diagnostic := Diagnostic(failure)
+			health.Failure = &diagnostic
+		}
+	}()
 	if timeout <= 0 {
 		timeout = DefaultProbeTimeout
 	}
@@ -78,6 +85,7 @@ func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion strin
 	stream := &commandStream{stdin: stdin, stdout: stdout, cmd: cmd}
 	websocket, upgradeErr := upgradeProxyWebSocket(probeCtx, stream)
 	if upgradeErr != nil {
+		failure = upgradeErr
 		_ = stream.Close()
 		switch {
 		case errors.Is(upgradeErr, context.DeadlineExceeded), errors.Is(probeCtx.Err(), context.DeadlineExceeded):
@@ -100,6 +108,7 @@ func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion strin
 		return health
 	}
 	_ = client.Close()
+	failure = initErr
 	switch {
 	case errors.Is(initErr, context.DeadlineExceeded), errors.Is(probeCtx.Err(), context.DeadlineExceeded):
 		return Decide(AvailabilityTimeout, ReasonTimeout, "", EndpointStdioProxy, ConnectionTimedOut, hookAvailable)

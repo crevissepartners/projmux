@@ -662,6 +662,12 @@ func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) 
 	}
 	buf.WriteString("\n")
 	fmt.Fprintf(buf, "  App-server probe: %s; install capability: %s\n", health.ProbeReason, health.InstallCapability)
+	if health.Failure != nil {
+		fmt.Fprintf(buf, "  Failure: %s\n", health.Failure)
+	}
+	if evidence := health.ManagerEvidence; evidence != nil {
+		fmt.Fprintf(buf, "  Manager evidence: status %s; backend %s; result %s; agreement %s; manager version %s\n", evidence.Status, evidence.Backend, evidence.Result, evidence.Agreement, diagnosticVersionOrUnknown(evidence.Version))
+	}
 	fmt.Fprintf(buf, "  Capability guidance: %s\n", codexInstallCapabilityGuidance(health.InstallCapability).Text())
 	fmt.Fprintf(buf, "  Endpoint readiness: %s; running executable: %s; version relation: %s; manager ownership: %s; remote control: %s\n",
 		health.EndpointReadiness, health.RunningExecutable, health.VersionRelation, health.ManagerOwnership, health.RemoteControl)

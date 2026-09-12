@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"net"
 	"sync"
 	"time"
@@ -235,7 +236,9 @@ func (s *session) handleLifecycle(request wireRequest) {
 		if reason == RefusalNone {
 			reason = RefusalEndpointRefused
 		}
-		s.refuse(request.ID, reason)
+		diagnostic := codexappserver.Diagnostic(err)
+		s.host.countRefusal()
+		s.reply(request.ID, wireReply{Kind: replyRefused, Refusal: reason, Failure: &diagnostic})
 		return
 	}
 	s.reply(request.ID, wireReply{Kind: replyResult, Thread: request.Thread, Snapshot: &snapshot})

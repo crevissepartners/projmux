@@ -14,8 +14,9 @@ import (
 )
 
 // This isolates the fixture's environment producer and the production PATH
-// manager-observation consumer. It does not simulate an official manager or a
-// successful wire handshake, and is not installed conformance evidence.
+// manager-observation consumer using explicitly synthetic manager responses.
+// There is no real official manager or successful wire handshake here, and this
+// is not installed conformance evidence.
 func TestManagedSelectionShimAndProbeFollowCurrentLinkWithoutVersionCache(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "codex-home")
@@ -34,8 +35,9 @@ func TestManagedSelectionShimAndProbeFollowCurrentLinkWithoutVersionCache(t *tes
 		if err := os.MkdirAll(filepath.Join(release, "bin"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		// Only read-only commands exist. The intentionally absent wire endpoint
-		// must remain refused even when all manager-reported versions agree.
+		// Only read-only commands exist. Synthetic running-manager metadata
+		// contradicts the intentionally absent wire endpoint; it cannot establish
+		// an attached version or authorize any lifecycle mutation.
 		script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'--version') printf 'codex-cli %s\\n';;\n'app-server daemon version') printf '%%s\\n' '{\"status\":\"running\",\"backend\":\"pid\",\"cliVersion\":\"%s\",\"managedCodexVersion\":\"%s\",\"appServerVersion\":\"%s\"}';;\n'app-server proxy') exit 0;;\n*) exit 91;;\nesac\n", version, version, version, version)
 		if err := os.WriteFile(filepath.Join(release, "bin", "codex"), []byte(script), 0o700); err != nil {
 			t.Fatal(err)
@@ -57,8 +59,19 @@ func TestManagedSelectionShimAndProbeFollowCurrentLinkWithoutVersionCache(t *tes
 		}
 		health := codexappserver.ProbeDefaultProxy(ctx, time.Second, "fixture", true)
 		cancel()
-		if health.CLIVersion != version || health.ManagedVersion != version || health.RunningVersion != version || health.Version != "" || codexappserver.AuthorityFor(health).Attach != codexappserver.EndpointAttachRefused {
-			t.Fatalf("manager observation cached or metadata granted wire authority: %+v", health)
+		if health.CLIVersion != version || health.ManagedVersion != version || health.RunningVersion != "" || health.Version != "" {
+			t.Fatalf("selection cached or manager metadata replaced attached version: %+v", health)
+		}
+		wantEvidence := codexappserver.ManagerEvidence{Status: "running", Backend: "pid", Result: "observed", Agreement: "contradictory", Version: version}
+		if health.ManagerEvidence == nil || *health.ManagerEvidence != wantEvidence {
+			t.Fatalf("synthetic manager evidence did not follow current link independently: %+v", health.ManagerEvidence)
+		}
+		if health.EndpointReadiness != codexappserver.EndpointDead || health.ManagerOwnership != codexappserver.ManagerUnknown || health.NativeAction != codexappserver.NativeActionRefused || health.NativeRefusal != codexappserver.NativeActionRefusalEvidenceContradictory || health.OperatorRecovery != codexappserver.OperatorRecoveryInspectProcessOwnership {
+			t.Fatalf("contradictory synthetic evidence granted ownership or lost refusal: %+v", health)
+		}
+		authority := codexappserver.AuthorityFor(health)
+		if authority.Attach != codexappserver.EndpointAttachRefused || authority.Refusal != codexappserver.AttachRefusalOwnershipUnknown || authority.Lifecycle != codexappserver.DaemonLifecycleAuthorityNone {
+			t.Fatalf("synthetic manager metadata granted attach/lifecycle authority: %+v", authority)
 		}
 	}
 	if err := fixture.ledger.AssertNoLifecycleMutation(); err != nil {

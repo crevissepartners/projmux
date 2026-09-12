@@ -464,6 +464,8 @@ func withLifecycle(health Health, outcome LifecycleOutcome, reason LifecycleReas
 
 func projectLifecycleHealth(health Health, hookAvailable bool) Health {
 	projected := Decide(health.Availability, healthCause(health), health.Version, health.Endpoint, health.Connection, hookAvailable)
+	projected.Failure = health.Failure
+	projected.ManagerEvidence = health.ManagerEvidence
 	projected.InstallCapability = health.InstallCapability
 	projected.EndpointReadiness = health.EndpointReadiness
 	projected.RunningExecutable = health.RunningExecutable

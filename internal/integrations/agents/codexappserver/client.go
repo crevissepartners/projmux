@@ -60,6 +60,8 @@ type responseError struct {
 
 func (e *responseError) Error() string {
 	switch {
+	case errors.Is(e.kind, ErrUnsupported):
+		return fmt.Sprintf("codex app-server response refused: unsupported (code %d)", e.code)
 	case errors.Is(e.kind, ErrThreadNotDurable):
 		return fmt.Sprintf("codex app-server response refused: thread-not-durable (code %d)", e.code)
 	case errors.Is(e.kind, ErrThreadAbsent):
@@ -69,10 +71,15 @@ func (e *responseError) Error() string {
 	}
 }
 
-func (e *responseError) Unwrap() error { return ErrProtocol }
+func (e *responseError) Unwrap() error {
+	if e.kind == ErrUnsupported {
+		return ErrUnsupported
+	}
+	return ErrProtocol
+}
 
 func (e *responseError) Is(target error) bool {
-	return target == ErrProtocol || target == e.kind
+	return target == e.Unwrap() || target == e.kind
 }
 
 type readWriteCloser interface {
@@ -214,7 +221,8 @@ func (c *Client) initialize(ctx context.Context, version string, experimental bo
 // Request sends one request and waits until its matching response, local
 // cancellation, disconnect, or protocol failure. Late responses to cancelled
 // IDs are ignored.
-func (c *Client) Request(ctx context.Context, method string, params, result any) error {
+func (c *Client) Request(ctx context.Context, method string, params, result any) (err error) {
+	defer func() { err = withRequestFailure(method, err) }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -511,7 +519,7 @@ func classifyResponseError(response *wireError) error {
 		return ErrProtocol
 	}
 	if response.Code == -32601 {
-		return ErrUnsupported
+		return &responseError{code: response.Code, kind: ErrUnsupported}
 	}
 	message := strings.ToLower(strings.Join(strings.Fields(response.Message), " "))
 	switch {
