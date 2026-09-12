@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,7 +33,145 @@ def workflow_job(workflow: str, job: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def workflow_step(job: str, name: str) -> str:
+    lines = job.splitlines()
+    marker = f"      - name: {name}"
+    if lines.count(marker) != 1:
+        raise AssertionError(f"workflow step must occur exactly once: {name}")
+    start = lines.index(marker) + 1
+    end = next(
+        (
+            index
+            for index in range(start, len(lines))
+            if lines[index].startswith("      - ")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def step_script(step: str) -> str:
+    lines = step.splitlines()
+    run_at = next(
+        index for index, line in enumerate(lines) if line.startswith("        run: ")
+    )
+    command = lines[run_at].removeprefix("        run: ")
+    if command != "|":
+        return command
+    body: list[str] = []
+    for line in lines[run_at + 1 :]:
+        if line.strip() and not line.startswith("          "):
+            break
+        body.append(line[10:])
+    return "\n".join(body)
+
+
 class CIWorkflowContractTest(unittest.TestCase):
+    def test_required_unit_job_runs_pinned_deadcode_without_bypass(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        unit = workflow_job(workflow, "unit")
+        deadcode = workflow_step(unit, "Check pinned deadcode baseline")
+        self.assertEqual(deadcode.strip(), "run: make deadcode")
+        self.assertNotRegex(unit, r"(?m)^\s+(?:if|continue-on-error|env):")
+        self.assertIn("uses: actions/setup-go@", unit)
+        self.assertIn("go-version-file: go.mod", unit)
+        self.assertLess(
+            unit.index("go-version-file: go.mod"), unit.index("run: make deadcode")
+        )
+        self.assertLess(unit.index("run: make deadcode"), unit.index("run: make test"))
+
+        # The repository tool directive and module version pin the scanner;
+        # a runner must not install a floating tool or substitute a waiver.
+        module = (ROOT / "go.mod").read_text(encoding="utf-8")
+        self.assertIn("tool golang.org/x/tools/cmd/deadcode\n", module)
+        self.assertRegex(
+            module, r"(?m)^\s*golang\.org/x/tools v\d+\.\d+\.\d+(?:\s|$)"
+        )
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("if ! $(GO) tool deadcode ./...", makefile)
+
+        for job, name in {
+            "fmt": "Format",
+            "unit": "Unit Tests",
+            "npm-pack": "NPM Packages",
+            "integration": "Integration Tests",
+            "e2e-tests": "E2E Tests",
+            "test": "Test",
+        }.items():
+            self.assertIn(f"    name: {name}\n", workflow_job(workflow, job))
+        aggregate = workflow_job(workflow, "test")
+        self.assertIn("    if: always()", aggregate)
+        self.assertNotIn("continue-on-error:", aggregate)
+        self.assertIn("      - unit\n", aggregate)
+        self.assertIn("--required unit ", aggregate)
+
+    def test_deadcode_failure_fails_unit_and_test_aggregate(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        unit_script = step_script(
+            workflow_step(workflow_job(workflow, "unit"), "Check pinned deadcode baseline")
+        )
+        aggregate = workflow_job(workflow, "test")
+        aggregate_script = step_script(
+            workflow_step(aggregate, "Require every child to succeed")
+        )
+        children = re.findall(r"^      - ([\w-]+)$", aggregate, re.MULTILINE)
+        self.assertIn("unit", children)
+        self.assertEqual(
+            set(children), set(re.findall(r"--required ([\w-]+)", aggregate_script))
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            calls = root / "make-calls"
+            make = root / "make"
+            make.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DEADCODE_TEST_CALLS"\n'
+                'exit "$DEADCODE_TEST_STATUS"\n',
+                encoding="utf-8",
+            )
+            make.chmod(0o700)
+            for status in (0, 42):
+                with self.subTest(deadcode_exit=status):
+                    calls.write_text("", encoding="utf-8")
+                    unit_result = subprocess.run(
+                        ["bash", "-e", "-o", "pipefail", "-c", unit_script],
+                        cwd=ROOT,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        env={
+                            **os.environ,
+                            "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                            "DEADCODE_TEST_CALLS": str(calls),
+                            "DEADCODE_TEST_STATUS": str(status),
+                        },
+                    )
+                    self.assertEqual(calls.read_text(encoding="utf-8"), "deadcode\n")
+                    self.assertEqual(unit_result.returncode, status, unit_result.stderr)
+                    outcomes = (
+                        ("success",) if status == 0 else ("failure", "skipped", "cancelled")
+                    )
+                    for outcome in outcomes:
+                        results = {
+                            child: {"result": outcome if child == "unit" else "success"}
+                            for child in children
+                        }
+                        completed = subprocess.run(
+                            ["bash", "-e", "-o", "pipefail", "-c", aggregate_script],
+                            cwd=ROOT,
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                            env={**os.environ, "REQUIRED_RESULTS": json.dumps(results)},
+                        )
+                        self.assertEqual(
+                            completed.returncode,
+                            0 if outcome == "success" else 1,
+                            completed.stderr,
+                        )
+                        if outcome != "success":
+                            self.assertIn(f"unit={outcome}", completed.stderr)
+
     def test_installed_codex_schedule_is_a_separate_fail_closed_matrix(self) -> None:
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         workflow = (ROOT / ".github/workflows/installed-codex.yml").read_text(

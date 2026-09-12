@@ -677,6 +677,13 @@
   now fails closed over separate core, Codex broker, and Codex app-server
   children; the core child preserves metadata, notify, and recent-window
   coverage, and `CIWorkflowContractTest` pins both Codex failure paths red.
+  `CIWorkflowContractTest.test_required_unit_job_runs_pinned_deadcode_without_bypass`
+  requires the existing `Unit Tests` job to run `make deadcode` with the module's
+  pinned Go tool before `make test`, preserving every required job name.
+  `test_deadcode_failure_fails_unit_and_test_aggregate` executes the workflow
+  commands with a failing scanner gate and rejects failed, skipped, or cancelled
+  Unit results in `Test`. `DeadcodeBaselineContractTest.test_stale_current_and_new_finding_are_rejected`
+  preserves rejection of new findings; neither deadcode baseline is expanded.
   Required real-tmux L06 owns only the deterministic holder/released-before-
   deadline/waiter convergence guarantee. Eight-way throughput and fairness stay
   outside required acceptance in the explicit stress command documented above.
@@ -1198,8 +1205,10 @@
   recursive, late, or unrelated Stop publishes zero replies.
 - `TestClaudeQualificationRequiresBrokerChallengeAndExplicitReply` requires a
   stored original challenge, exact current source and target, a full frozen
-  frame, and a broker-committed explicit reply before opening general ingress.
-  A text echo or Stop alone cannot qualify the endpoint.
+  frame, and a broker-committed explicit reply before opening the general reply
+  execution gate. Current qualification responses stay pending across ordinary
+  delivery and Stop text, become qualified after the exact reply, and report
+  helper restart after close while the execution gate refuses further actions.
 - `TestClaudeExplicitReplyRejectsForeignStaleAndAlteredCorrelationBeforeCommit`
   covers foreign refs, altered conversations, stale generations/incarnations,
   reversed-route mismatch, and a wrong qualification response with commit zero.
@@ -1936,9 +1945,10 @@ separate decision this measurement exists to inform.
   outside the disposable root, reject unsafe candidate permissions before
   credential copying, and retain roots after uncertain cleanup without retry. Product `TestClaudeDialogueStream*` tests own public output parsing;
   the obsolete separate canary collector is removed.
-- `TestClaudeDialogueCanaryAcceptsProductionStoreAndPublicClaimReceipts` validates
-  production Store.PutReply/Claim and public CLI JSON with the Python companion,
-  including the actual `target-self-claim` reason and version-2 envelope.
+- `TestClaudeDialogueCanaryAcceptsProductionStoreClaimAndPublicReceipt` validates
+  production Store.PutReply/Claim records and current public send/status receipt
+  JSON with the Python companion, including the actual `target-self-claim`
+  reason and version-2 envelope, without a public claim command or serializer.
 
 - L20 owns a real authenticated Codex broker host and keeps its observed snapshot
   binding alive for the round trip; Registry-only synthetic authority is refused.

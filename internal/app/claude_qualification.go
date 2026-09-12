@@ -88,13 +88,6 @@ func qualificationResponseForState(state *claudeQualificationState) claudeCoordi
 		Reason: state.reason, Ambiguous: state.ambiguous, AutoResend: false}
 }
 
-func (h *claudeCoordinationHub) coordinationEligible() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.expireQualificationLocked(h.now())
-	return !h.closed && h.qualifiedVersion == claudeFrozenFrameProviderVersion
-}
-
 func (h *claudeCoordinationHub) closeQualificationLocked() {
 	h.qualifiedVersion = ""
 	if h.qualification != nil && h.qualification.state != "failed" {

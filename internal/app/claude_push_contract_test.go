@@ -195,8 +195,8 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 		t.Fatalf("fresh exact endpoint response=%+v writes=%d", response, poster.calls)
 	}
 	fixture.server.hub.close()
-	if fixture.server.hub.coordinationEligible() {
-		t.Fatal("helper exit inherited current-version qualification")
+	if got := fixture.server.hub.qualificationResponse(qualification.QualificationRef); got.Kind != "qualification-failed" || got.Reason != "helper-restart" {
+		t.Fatalf("helper exit inherited current-version qualification: %+v", got)
 	}
 
 	t.Run("Codex self-claim incarnation fence", func(t *testing.T) {

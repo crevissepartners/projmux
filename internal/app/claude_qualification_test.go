@@ -86,12 +86,12 @@ func TestClaudeQualificationRequiresBrokerChallengeAndExplicitReply(t *testing.T
 	evidence := exactQualificationEvidence(fixture.route, now)
 	hub.userPrompt()
 	started := hub.beginExplicitQualification(evidence, fixture.route, &challenge, broker, poster)
-	if started.Kind != "qualification-pending" || hub.coordinationEligible() || poster.calls != 1 || broker.handoffs != 1 || broker.deliveries != 1 {
+	if started.Kind != "qualification-pending" || hub.qualificationResponse(challenge.MessageRef).Kind != "qualification-pending" || poster.calls != 1 || broker.handoffs != 1 || broker.deliveries != 1 {
 		t.Fatalf("started=%+v", started)
 	}
 	stop := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "stop-reply", Target: fixture.target,
 		SessionID: fixture.sessionID, AssistantMessage: claudeQualificationMarkerPrefix + challenge.MessageRef})
-	if stop.Kind != "reply-refused" || hub.coordinationEligible() || broker.replies != 0 {
+	if stop.Kind != "reply-refused" || hub.qualificationResponse(challenge.MessageRef).Kind != "qualification-pending" || broker.replies != 0 {
 		t.Fatalf("Stop gained authority: %+v", stop)
 	}
 	// General admission no longer waits for qualification. Delivery and the
@@ -101,21 +101,32 @@ func TestClaudeQualificationRequiresBrokerChallengeAndExplicitReply(t *testing.T
 	if got := hub.submitPush(general, broker, poster); got.State != agentdelivery.StateDelivered || poster.calls != 2 {
 		t.Fatalf("general admission changed: %+v calls=%d", got, poster.calls)
 	}
-	if hub.coordinationEligible() {
+	if got := hub.qualificationResponse(challenge.MessageRef); got.Kind != "qualification-pending" {
 		t.Fatalf("general delivery must not qualify the activation")
+	}
+	generalReply := []string{"projmux", "agent", "message", "send", "uid:" + general.BrokerEnvelope.Source.AgentUID,
+		"--reply-to", general.MessageRef, "--", "general reply"}
+	if hub.permitsExplicitTool(generalReply, fixture.route, broker) {
+		t.Fatal("pending qualification opened the general reply execution gate")
 	}
 	hub.userPrompt() // Human presence has no authority to revoke an explicit action.
 	reply := explicitTestReply(*challenge.BrokerEnvelope, claudeQualificationMarkerPrefix+challenge.MessageRef)
 	completed := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "explicit-reply", Target: fixture.target, SessionID: fixture.sessionID, ReplyEnvelope: &reply})
-	if completed.Kind != "reply-accepted" || broker.replies != 1 || !hub.coordinationEligible() {
+	if completed.Kind != "reply-accepted" || broker.replies != 1 {
 		t.Fatalf("explicit=%+v", completed)
 	}
 	if got := hub.qualificationResponse(challenge.MessageRef); got.Kind != "qualification-qualified" || got.Reason != "exact-public-init-and-explicit-reply" {
 		t.Fatalf("qualification=%+v", got)
 	}
+	if !hub.permitsExplicitTool(generalReply, fixture.route, broker) {
+		t.Fatal("completed qualification did not open the general reply execution gate")
+	}
 	hub.close()
-	if hub.coordinationEligible() {
-		t.Fatal("qualification survived helper close")
+	if got := hub.qualificationResponse(challenge.MessageRef); got.Kind != "qualification-failed" || got.Reason != "helper-restart" || !got.Ambiguous || got.AutoResend {
+		t.Fatalf("qualification survived helper close: %+v", got)
+	}
+	if hub.permitsExplicitTool(generalReply, fixture.route, broker) {
+		t.Fatal("reply execution gate survived helper close")
 	}
 }
 
@@ -142,8 +153,11 @@ func TestClaudeExplicitReplyRejectsForeignStaleAndAlteredCorrelationBeforeCommit
 			hub.beginExplicitQualification(exactQualificationEvidence(fixture.route, now), fixture.route, &challenge, broker, poster)
 			reply := explicitTestReply(*challenge.BrokerEnvelope, claudeQualificationMarkerPrefix+challenge.MessageRef)
 			tc.mutate(&reply)
-			if got := hub.commitExplicitReply(reply, fixture.route, broker); got.Kind != "reply-refused" || broker.replies != 0 || hub.coordinationEligible() {
+			if got := hub.commitExplicitReply(reply, fixture.route, broker); got.Kind != "reply-refused" || broker.replies != 0 {
 				t.Fatalf("reply=%+v commits=%d", got, broker.replies)
+			}
+			if got := hub.qualificationResponse(challenge.MessageRef); got.Kind != "qualification-pending" {
+				t.Fatalf("invalid reply changed qualification: %+v", got)
 			}
 		})
 	}
@@ -204,7 +218,7 @@ func TestClaudeExplicitQualificationPartialAndTimeoutNeverResend(t *testing.T) {
 				t.Fatalf("expired=%+v", expired)
 			}
 			hub.beginExplicitQualification(exactQualificationEvidence(fixture.route, clock), fixture.route, &challenge, broker, poster)
-			if poster.calls != 1 || hub.coordinationEligible() {
+			if poster.calls != 1 || hub.qualificationResponse(challenge.MessageRef).Kind != "qualification-failed" {
 				t.Fatal("failed qualification resent or opened")
 			}
 		})
@@ -277,7 +291,10 @@ func TestClaudeQualificationPublishesOriginalBeforeConcurrentExplicitReply(t *te
 	if got := <-qualificationDone; got.Kind != "qualification-pending" {
 		t.Fatalf("qualification=%+v", got)
 	}
-	if got := <-replyDone; got.Kind != "reply-accepted" || broker.replies != 1 || poster.callCount() != 1 || !hub.coordinationEligible() {
+	if got := <-replyDone; got.Kind != "reply-accepted" || broker.replies != 1 || poster.callCount() != 1 {
 		t.Fatalf("reply=%+v commits=%d", got, broker.replies)
+	}
+	if got := hub.qualificationResponse(challenge.MessageRef); got.Kind != "qualification-qualified" || got.Reason != "exact-public-init-and-explicit-reply" {
+		t.Fatalf("qualification=%+v", got)
 	}
 }
