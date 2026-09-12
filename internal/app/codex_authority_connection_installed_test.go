@@ -67,6 +67,7 @@ type installedConnectionLedger struct {
 	Rows             []installedConnectionRow      `json:"rows"`
 	ProcessesAfter   []codexinstalled.OwnedProcess `json:"processesAfter"`
 	Cleanup          bool                          `json:"cleanup"`
+	CleanupFailure   *installedCleanupFailure      `json:"cleanupFailure,omitempty"`
 }
 
 func decodeInstalledConnectionInput(raw []byte) (installedConnectionInput, error) {
@@ -208,7 +209,9 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 		// Even a failed connection diagnostic stops only this still-verified owner.
 		// A failed ownership proof never falls through to generic cleanup.
 		if err := daemon.Stop(ctx); err != nil {
-			t.Fatal(err)
+			ledger.CleanupFailure = observeInstalledCleanupFailure("manager-stop", err, readInstalledCleanupStat)
+			save()
+			t.Fatal("official manager stop failed")
 		}
 		ledger.Rows[index].Stopped = true
 		save()
@@ -227,8 +230,9 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 	deadline, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for {
-		ledger.ProcessesAfter, err = fixture.OwnedProcesses()
+		ledger.ProcessesAfter, ledger.CleanupFailure, err = inspectInstalledCleanupProcesses(fixture.OwnedProcesses, readInstalledCleanupStat)
 		if err != nil {
+			save()
 			t.Fatal("zero-input cleanup process evidence unavailable")
 		}
 		if len(ledger.ProcessesAfter) == 0 {
@@ -236,15 +240,21 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 		}
 		select {
 		case <-deadline.Done():
+			ledger.CleanupFailure = observeInstalledCleanupFailure("owned-processes", deadline.Err(), nil)
+			save()
 			t.Fatal("zero-input owned processes remain")
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 	if err := fixture.Cleanup(); err != nil {
-		t.Fatal(err)
+		ledger.CleanupFailure = observeInstalledCleanupFailure("fixture-cleanup", err, readInstalledCleanupStat)
+		save()
+		t.Fatal("zero-input fixture cleanup failed")
 	}
 	if err := os.RemoveAll(input.Root); err != nil {
-		t.Fatal(err)
+		ledger.CleanupFailure = observeInstalledCleanupFailure("remove-root", err, readInstalledCleanupStat)
+		save()
+		t.Fatal("zero-input fixture root removal failed")
 	}
 	ledger.Cleanup = true
 	ledger.Result = "PASS"

@@ -63,16 +63,17 @@ type installedRecoveryRow struct {
 }
 
 type installedRecoveryLedger struct {
-	Result           string                 `json:"result"`
-	SourceHead       string                 `json:"sourceHead"`
-	SourceTree       string                 `json:"sourceTree"`
-	BinarySHA256     string                 `json:"binarySHA256"`
-	TestBinarySHA256 string                 `json:"testBinarySHA256"`
-	Submissions      int                    `json:"submissions"`
-	Rows             []installedRecoveryRow `json:"rows"`
-	Cleanup          bool                   `json:"cleanup"`
-	AuthRemoved      bool                   `json:"authRemoved"`
-	TmuxSocket       string                 `json:"tmuxSocket"`
+	Result           string                   `json:"result"`
+	SourceHead       string                   `json:"sourceHead"`
+	SourceTree       string                   `json:"sourceTree"`
+	BinarySHA256     string                   `json:"binarySHA256"`
+	TestBinarySHA256 string                   `json:"testBinarySHA256"`
+	Submissions      int                      `json:"submissions"`
+	Rows             []installedRecoveryRow   `json:"rows"`
+	Cleanup          bool                     `json:"cleanup"`
+	AuthRemoved      bool                     `json:"authRemoved"`
+	TmuxSocket       string                   `json:"tmuxSocket"`
+	CleanupFailure   *installedCleanupFailure `json:"cleanupFailure,omitempty"`
 }
 
 // TestInstalledManagedCodexAuthorityRecoveryMatrix is opt-in, model-dependent
@@ -144,7 +145,10 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	auth = nil
 	defer func() {
 		if err := os.Remove(authPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("remove private copied auth: %v", err)
+			if ledger.CleanupFailure == nil {
+				ledger.CleanupFailure = observeInstalledCleanupFailure("remove-auth", err, nil)
+			}
+			t.Error("private copied auth removal failed")
 		}
 		_, err := os.Lstat(authPath)
 		ledger.AuthRemoved = errors.Is(err, os.ErrNotExist)
@@ -187,7 +191,9 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	for rowIndex, name := range names {
 		if daemon != nil {
 			if err := daemon.Stop(ctx); err != nil {
-				t.Fatal(err)
+				ledger.CleanupFailure = observeInstalledCleanupFailure("manager-stop", err, readInstalledCleanupStat)
+				save()
+				t.Fatal("official manager stop failed")
 			}
 			daemon = nil
 		}
@@ -303,10 +309,14 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	}
 	run("tmux", "-S", tmuxSocket, "kill-server")
 	if err := daemon.Stop(ctx); err != nil {
-		t.Fatal(err)
+		ledger.CleanupFailure = observeInstalledCleanupFailure("manager-stop", err, readInstalledCleanupStat)
+		save()
+		t.Fatal("official manager stop failed")
 	}
 	if err := os.Remove(authPath); err != nil {
-		t.Fatal(err)
+		ledger.CleanupFailure = observeInstalledCleanupFailure("remove-auth", err, readInstalledCleanupStat)
+		save()
+		t.Fatal("private copied auth removal failed")
 	}
 	ledger.AuthRemoved = true
 	// The normal broker idle path owns its shutdown. No process is guessed or
@@ -314,24 +324,32 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	waitCtx, stop := context.WithTimeout(ctx, 50*time.Second)
 	defer stop()
 	for {
-		processes, err := fixture.OwnedProcesses()
+		processes, failure, err := inspectInstalledCleanupProcesses(fixture.OwnedProcesses, readInstalledCleanupStat)
 		if err != nil {
-			t.Fatal(err)
+			ledger.CleanupFailure = failure
+			save()
+			t.Fatal("matrix cleanup process evidence unavailable")
 		}
 		if len(processes) == 0 {
 			break
 		}
 		select {
 		case <-waitCtx.Done():
+			ledger.CleanupFailure = observeInstalledCleanupFailure("owned-processes", waitCtx.Err(), nil)
+			save()
 			t.Fatal("private owned processes remain after normal idle drain")
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
 	if err := fixture.Cleanup(); err != nil {
-		t.Fatal(err)
+		ledger.CleanupFailure = observeInstalledCleanupFailure("fixture-cleanup", err, readInstalledCleanupStat)
+		save()
+		t.Fatal("matrix fixture cleanup failed")
 	}
 	if err := os.RemoveAll(input.Root); err != nil {
-		t.Fatal(err)
+		ledger.CleanupFailure = observeInstalledCleanupFailure("remove-root", err, readInstalledCleanupStat)
+		save()
+		t.Fatal("matrix fixture root removal failed")
 	}
 	ledger.Cleanup = true
 	ledger.Result = "PASS"

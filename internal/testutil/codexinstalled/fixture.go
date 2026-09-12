@@ -1017,10 +1017,24 @@ type OwnedProcess struct {
 	Executable string `json:"executable"`
 }
 
+// OwnedProcessObservationError retains only the failing observation boundary.
+// Its cause remains available for errno inspection, but Error never emits a
+// proc path, process contents, environment or arbitrary underlying message.
+// This evidence grants no process ownership or cleanup authority.
+type OwnedProcessObservationError struct {
+	Operation string
+	PID       int
+	Leaf      string
+	cause     error
+}
+
+func (*OwnedProcessObservationError) Error() string     { return "owned process observation failed" }
+func (err *OwnedProcessObservationError) Unwrap() error { return err.cause }
+
 func (fixture *Fixture) OwnedProcesses() ([]OwnedProcess, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return nil, err
+		return nil, &OwnedProcessObservationError{Operation: "list-proc", cause: err}
 	}
 	processes := []OwnedProcess{}
 	for _, entry := range entries {
@@ -1033,7 +1047,7 @@ func (fixture *Fixture) OwnedProcesses() ([]OwnedProcess, error) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, &OwnedProcessObservationError{Operation: "read-environment", PID: pid, Leaf: "environ", cause: err}
 		}
 		owned := false
 		for value := range strings.SplitSeq(string(raw), "\x00") {
@@ -1049,14 +1063,14 @@ func (fixture *Fixture) OwnedProcesses() ([]OwnedProcess, error) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, &OwnedProcessObservationError{Operation: "read-birth", PID: pid, Leaf: "stat", cause: err}
 		}
 		executable, err := os.Readlink(filepath.Join("/proc", entry.Name(), "exe"))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, &OwnedProcessObservationError{Operation: "read-executable", PID: pid, Leaf: "exe", cause: err}
 		}
 		processes = append(processes, OwnedProcess{PID: pid, Birth: birth, Executable: executable})
 	}
