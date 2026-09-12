@@ -20,6 +20,7 @@ const (
 	methodRateLimitsRead    = "account/rateLimits/read"
 	methodRateLimitsUpdated = "account/rateLimits/updated"
 	nativeRequestTimeout    = 2 * time.Second
+	nativeWatchReadEvery    = 30 * time.Second
 	nativeEventSettle       = 10 * time.Millisecond
 )
 

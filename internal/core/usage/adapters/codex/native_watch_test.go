@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/usage"
@@ -12,12 +13,16 @@ import (
 )
 
 func TestWatchNativeRateLimitsPublishesInitialAndSparseEventWithoutFallback(t *testing.T) {
+	synctest.Test(t, testWatchNativeRateLimitsPublishesInitialAndSparseEventWithoutFallback)
+}
+
+func testWatchNativeRateLimitsPublishesInitialAndSparseEventWithoutFallback(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	client := &fakeNativeClient{
 		response: json.RawMessage(`{
-			"rateLimits":{"limitId":"codex","limitName":"General","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}},
-			"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":"General","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}}}
-		}`),
+		"rateLimits":{"limitId":"codex","limitName":"General","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}},
+		"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":"General","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}}}
+	}`),
 		events: make(chan codexappserver.Notification, 1),
 	}
 	adapter := NewWithRoot(t.TempDir())
@@ -42,8 +47,8 @@ func TestWatchNativeRateLimitsPublishesInitialAndSparseEventWithoutFallback(t *t
 	client.events <- codexappserver.Notification{
 		Method: methodRateLimitsUpdated,
 		Params: json.RawMessage(`{
-			"rateLimits":{"limitName":null,"primary":{"usedPercent":73,"resetsAt":1787380999}}
-		}`),
+		"rateLimits":{"limitName":null,"primary":{"usedPercent":73,"resetsAt":1787380999}}
+	}`),
 	}
 	updated := receiveNativeWatchBatch(t, published)
 	if len(updated) != 1 || updated[0].Pct != 73 ||
@@ -72,6 +77,10 @@ func TestWatchNativeRateLimitsPublishesInitialAndSparseEventWithoutFallback(t *t
 }
 
 func TestWatchNativeRateLimitsMalformedEventRetainsPriorBatch(t *testing.T) {
+	synctest.Test(t, testWatchNativeRateLimitsMalformedEventRetainsPriorBatch)
+}
+
+func testWatchNativeRateLimitsMalformedEventRetainsPriorBatch(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	client := &fakeNativeClient{
 		response: json.RawMessage(`{"rateLimits":{"limitId":"codex","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}}}`),

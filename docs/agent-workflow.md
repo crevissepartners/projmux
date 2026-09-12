@@ -321,6 +321,28 @@
 - `make test`: Codex native control plane Phase 8 capability and review coverage pins distinct localized default/advanced provider rows; default Codex launch with zero capability-session/readiness calls and zero `--model`/`model_reasoning_effort` overrides; advanced-only hidden/duplicate model removal, supported-effort and closed-modality normalization, boolean-only personality projection, catalog-localized semantic picker labels with provider model/effort/modality data unchanged, paginated `model/list`, connection/version epoch cache invalidation, stale picker refusal, live-session cleanup on pre-plan create refusal, the live picker-to-pre-create session refresh rejecting a removed option, and dynamic `model/list` -> exact launch argv. Advanced discovery failure returns its exact unavailable reason with zero create intents while a separate default launch remains usable. Review tests require one exact Running Agent -> owned Pane -> activation generation -> stored/live thread binding before `review/start`, use one bounded action context, reject incomplete or unknown initial turns, map only a valid initial response to provider-control-plane interaction state, and commit zero lifecycle writes for unavailable, timed-out, mismatched, or replaced bindings. The installed smoke is opt-in through `PROJMUX_CODEX_CAPABILITY_INSTALLED_SMOKE=1`; it closes the discovery context before refreshing the retained live connection. CI does not require a local authenticated Codex daemon or create a disposable provider thread.
 
 - `make test`: Codex native control plane Phase 5 makes `account/rateLimits/read` the authoritative Codex Usage source and consumes `account/rateLimits/updated` through one single-lease, demand-bounded read-only watcher. Bucket/malformed/sparse-event goldens pin percent, reset, label, nullable identity, unknown cadence, and row-level isolation. Manager tests require an accepted native event batch to atomically replace only Codex rows, preserve other-provider/backoff state, advance the Codex throttle timestamp, and trigger zero second collector calls in the same HUD invocation. Watcher tests pin single ownership, demand-expiry heartbeat cleanup, failure backoff, sparse-update recovery after malformed events, and a private atomic native-only sidecar that never replaces last-known-good bytes with rollout/fallback provenance. The watcher launch boundary rejects `.test` and `.test.exe` executables before starting a child; the status regression runs repeated calls from the actual Go test binary with zero child starts and all usage state confined to its isolated root. Adapter/CLI/HUD/diagnostics tests keep unavailable and unsupported accounts on the existing rollout lane, all-malformed native batches on last-known-good with a closed stale reason, source/value parity across table/JSON/HUD, and an exact request inventory containing only `account/rateLimits/read` with zero login/logout/config/token mutation.
+- `TestWatchNativeRateLimitsPeriodicReadKeepsQuietConnection`,
+  `TestWatchNativeRateLimitsNoEOFFailureIsBounded`, and
+  `TestWatchNativeRateLimitsPeriodicReadRefreshesSparseBase` use Go's virtual
+  clock to pin the initial read, fixed 30-second same-client reads, two-second
+  timeout, busy-notification independence, single pending read, native-only
+  publication, validated sparse base and malformed-result last-good retention.
+  `TestWatchNativeRateLimitsParentCancelRejectsLateProbeAndEvents` prevents a
+  canceled connection's late results or queued events from publishing.
+  `TestOwnedProxyCloseIsBoundedWhenPeerDoesNotRead` and
+  `TestOwnedProxyCloseUnblocksConcurrentWriterAndReapsChild` fill real owned
+  child pipes and require local close within one second, child reap, joined
+  reader/writers and concurrent/idempotent Close. Close never waits for a
+  WebSocket close frame or its write lock. Only the exact owned proxy is killed;
+  its upstream daemon lifecycle is unchanged.
+  `TestNativeWatcherProbeFailureUsesExistingBackoff` and
+  `TestNativeWatcherDemandExpiryCancelsPendingProbe` distinguish a failed
+  two-second probe from parent cancellation. They pin failure timestamps,
+  heartbeat removal, lease release, the existing inclusive 30-second backoff,
+  next-demand relaunch, and the 15-second demand TTL plus one-second monitor.
+  Existing cache freshness, newer-than-store, independent collector/fallback,
+  request cancellation/late-response and notification channel lifetime tests
+  remain the parity gates; heartbeat alone supplies no connection health proof.
 
 - `make test`: Codex native control plane Phase 9 makes the compact Usage identity native-first: label goldens map healthy authoritative app-server rows to exact `Codex`, fresh rollout rows and unknown non-stale provenance to `Codex [fallback]`, and retained last-known-good rows to `Codex [stale]`; en-US/ko-KR narrow statusbar fixtures pin spacing and width. Same-snapshot HUD/table/JSON tests and operations-journal tests preserve exact percent/reset values plus typed source/fallback/stale reasons, while Claude/Antigravity labels, projection order, and Usage semantics remain unchanged.
 
@@ -1043,6 +1065,11 @@
   That token is deliberately not `binding-revoked`: the four close-cause tokens
   answer "who closed the stream" and come from the broker epoch, and here the
   stream was never closed at all.
+- `test/e2e/codex-lifecycle.sh` (C01) exercises its actual projection barrier on
+  an inert fixture pane with an already-ready or later-ready level and repeated
+  option hooks before waiting. An atomic claim shared by the level check and
+  hook emits exactly one signal; duplicate `wait-for -S` calls would otherwise
+  lose the pending wakeup. The existing barrier deadline is unchanged.
 - `test/e2e/codex-lifecycle.sh` (C01) pins the exact disconnect token at its
   disconnect projection barrier and at the reconnect-gap hook comparison. It
   waited on the literal `disconnected` before, which was the bucket published

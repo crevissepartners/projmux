@@ -110,6 +110,11 @@ type Client struct {
 	version string
 	once    sync.Once
 
+	closeOnce  sync.Once
+	closeErr   error
+	readerDone chan struct{}
+	writers    sync.WaitGroup
+
 	// answered is the connection-scoped response-once ledger for inbound
 	// server requests. Entries are kind-tagged so the string id "1" and the
 	// number id 1 stay distinct, and they are never released: at-most-once on
@@ -137,6 +142,8 @@ func NewClient(stream readWriteCloser) *Client {
 		events:   make(chan Notification, notificationBacklog),
 		done:     make(chan struct{}),
 		answered: make(map[string]struct{}),
+
+		readerDone: make(chan struct{}),
 	}
 	go c.readLoop()
 	return c
@@ -241,11 +248,16 @@ func (c *Client) abort() error {
 	return c.stream.Close()
 }
 
-// Close terminates the connection and unblocks all pending requests.
+// Close terminates the connection, unblocks all pending requests, and joins
+// the owned reader/writers before returning. It is safe to call concurrently.
 func (c *Client) Close() error {
-	err := c.stream.Close()
-	c.fail(ErrDisconnected)
-	return err
+	c.closeOnce.Do(func() {
+		c.fail(ErrDisconnected)
+		c.closeErr = c.stream.Close()
+		<-c.readerDone
+		c.writers.Wait()
+	})
+	return c.closeErr
 }
 
 func (c *Client) notify(ctx context.Context, method string, params any) error {
@@ -256,8 +268,19 @@ func (c *Client) writeJSONContext(ctx context.Context, message any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Register under the same lock that closes admission, so Close can wait
+	// for every writer without racing a new WaitGroup.Add.
+	c.mu.Lock()
+	if c.err != nil {
+		err := c.err
+		c.mu.Unlock()
+		return err
+	}
+	c.writers.Add(1)
+	c.mu.Unlock()
 	writeDone := make(chan error, 1)
 	go func() {
+		defer c.writers.Done()
 		writeDone <- c.writeJSON(message)
 	}()
 	select {
@@ -320,6 +343,7 @@ func (c *Client) writeJSON(message any) error {
 // failing the connection here suspends every binding and forces a reconnect
 // that re-issues the same oversized read; that is a cycle, not a recovery.
 func (c *Client) readLoop() {
+	defer close(c.readerDone)
 	stream, framed := c.stream.(messageStream)
 	reader := bufio.NewReaderSize(c.stream, frameReaderBytes)
 	for {
