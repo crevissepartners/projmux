@@ -154,6 +154,12 @@ func (c *Command) ensureNativeWatcher(stateDir string) {
 }
 
 func (c *Command) runNativeWatcher() error {
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	return c.runNativeWatcherContext(signalCtx)
+}
+
+func (c *Command) runNativeWatcherContext(ctx context.Context) error {
 	stateDir, err := c.resolveStateDir()
 	if err != nil {
 		return err
@@ -175,9 +181,7 @@ func (c *Command) runNativeWatcher() error {
 		return err
 	}
 
-	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
-	watchCtx, cancelWatch := context.WithCancel(signalCtx)
+	watchCtx, cancelWatch := context.WithCancel(ctx)
 	monitorDone := make(chan struct{})
 	go func() {
 		defer close(monitorDone)
@@ -205,6 +209,9 @@ func (c *Command) runNativeWatcher() error {
 	failurePath := nativeWatcherPath(stateDir, nativeWatcherFailureName)
 	published := false
 	publish := func(snapshots []usage.Snapshot) error {
+		if err := watchCtx.Err(); err != nil {
+			return err
+		}
 		if err := cache.Publish(snapshots); err != nil {
 			return err
 		}
@@ -222,9 +229,12 @@ func (c *Command) runNativeWatcher() error {
 		}
 	}
 	watchErr := watch(watchCtx, publish)
+	// Only parent lifetime cancellation is a clean stop. A probe's own
+	// deadline is a connection failure and must retain the normal backoff.
+	parentErr := watchCtx.Err()
 	cancelWatch()
 	<-monitorDone
-	if errors.Is(watchErr, context.Canceled) || errors.Is(watchErr, context.DeadlineExceeded) {
+	if parentErr != nil {
 		return nil
 	}
 	if watchErr != nil {

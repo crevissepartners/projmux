@@ -50,6 +50,8 @@ func upgradeProxyWebSocket(ctx context.Context, raw readWriteCloser) (*websocket
 	}()
 	select {
 	case <-ctx.Done():
+		_ = raw.Close()
+		<-writeDone
 		return nil, ctx.Err()
 	case err := <-writeDone:
 		if err != nil {
@@ -70,6 +72,8 @@ func upgradeProxyWebSocket(ctx context.Context, raw readWriteCloser) (*websocket
 	var response *http.Response
 	select {
 	case <-ctx.Done():
+		_ = raw.Close()
+		<-readDone
 		return nil, ctx.Err()
 	case got := <-readDone:
 		if got.err != nil {
@@ -152,8 +156,10 @@ func (s *websocketStream) Write(p []byte) (int, error) {
 }
 
 func (s *websocketStream) Close() error {
-	_ = s.writeFrame(0x8, nil)
-	return s.raw.Close()
+	// Local teardown must not wait for the peer to read a close frame or for
+	// a data/control writer holding writeMu. Closing the owned transport also
+	// releases those writers; no asynchronous graceful cleanup is left behind.
+	return s.abort()
 }
 
 // abort bypasses the graceful close frame because a blocked data-frame write

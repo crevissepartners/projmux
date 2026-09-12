@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -18,17 +19,25 @@ type commandStream struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	cmd    *exec.Cmd
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (s *commandStream) Read(p []byte) (int, error)  { return s.stdout.Read(p) }
 func (s *commandStream) Write(p []byte) (int, error) { return s.stdin.Write(p) }
 func (s *commandStream) Close() error {
-	_ = s.stdin.Close()
-	_ = s.stdout.Close()
-	if s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
-	}
-	return s.cmd.Wait()
+	s.closeOnce.Do(func() {
+		// This Cmd is the proxy we started, never the shared upstream daemon.
+		// Kill first so even a stopped proxy cannot keep a pipe writer alive.
+		if s.cmd.Process != nil {
+			_ = s.cmd.Process.Kill()
+		}
+		_ = s.stdin.Close()
+		_ = s.stdout.Close()
+		s.closeErr = s.cmd.Wait()
+	})
+	return s.closeErr
 }
 
 // ProbeDefaultProxy performs an initialize-only probe against the existing
