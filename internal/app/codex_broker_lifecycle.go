@@ -68,15 +68,18 @@ type codexBrokerObserverSession struct {
 	discovery codexbroker.Discovery
 	launch    codexbroker.Launcher
 
-	mu         sync.Mutex
-	closed     bool
-	conn       *codexbroker.Conn
-	binding    *codexbroker.RemoteBinding
-	current    *codexBrokerLifecycleEpoch
-	ready      chan codexBrokerEpochRecord
-	pumped     chan struct{}
-	pending    codexBrokerEpochRecord
-	hasPending bool
+	openMu       sync.Mutex
+	recoverRoute func(context.Context) (codexNativeEndpointRoute, error)
+	routeRuntime func(codexNativeEndpointRoute) (codexbroker.Discovery, codexbroker.Launcher, error)
+	mu           sync.Mutex
+	closed       bool
+	conn         *codexbroker.Conn
+	binding      *codexbroker.RemoteBinding
+	current      *codexBrokerLifecycleEpoch
+	ready        chan codexBrokerEpochRecord
+	pumped       chan struct{}
+	pending      codexBrokerEpochRecord
+	hasPending   bool
 }
 
 // newCodexBrokerObserverSessionForRoute resolves one broker singleton from the
@@ -113,6 +116,27 @@ func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd 
 	}
 	session := newCodexBrokerObserverSessionOn(identity, cwd, roots, discovery, launch)
 	session.endpoint = route.Endpoint
+	if route.Default {
+		session.recoverRoute = (defaultCodexNativeThreadController{}).Current
+		session.routeRuntime = func(next codexNativeEndpointRoute) (codexbroker.Discovery, codexbroker.Launcher, error) {
+			key, err := next.brokerRoute().endpointKey()
+			if err != nil {
+				return codexbroker.Discovery{}, nil, err
+			}
+			discovery, err := codexBrokerDiscoveryForEndpoint(domain, key)
+			if err != nil {
+				return codexbroker.Discovery{}, nil, err
+			}
+			launch := func(context.Context) error {
+				path, err := os.Executable()
+				if err != nil {
+					return err
+				}
+				return startCodexBrokerRuntimeProcessForRoute(path, discovery, next.brokerRoute())
+			}
+			return discovery, launch, nil
+		}
+	}
 	return session, nil
 }
 
@@ -135,6 +159,11 @@ func newCodexBrokerObserverSessionOn(
 // there, and binds exactly the thread this activation owns. It never guesses a
 // thread from the working directory, and it never creates one.
 func (s *codexBrokerObserverSession) Open(ctx context.Context) (codexLifecycleConnection, error) {
+	s.openMu.Lock()
+	defer s.openMu.Unlock()
+	if err := s.refreshRoute(ctx); err != nil {
+		return nil, err
+	}
 	binding, ready, err := s.ensure(ctx)
 	if err != nil {
 		return nil, err
@@ -146,7 +175,12 @@ func (s *codexBrokerObserverSession) Open(ctx context.Context) (codexLifecycleCo
 	// fallback until the endpoint happened to reconnect. A suspension discards
 	// the record, so a closed authority is never re-served.
 	s.mu.Lock()
-	if s.hasPending && s.current == nil {
+	if s.current != nil {
+		current := s.current
+		s.mu.Unlock()
+		return current, nil
+	}
+	if s.hasPending {
 		record := s.pending
 		s.mu.Unlock()
 		return s.publish(record)
@@ -367,12 +401,17 @@ func (s *codexBrokerObserverSession) rotate(record codexBrokerEpochRecord, ready
 // publish makes one closed barrier the live epoch.
 func (s *codexBrokerObserverSession) publish(record codexBrokerEpochRecord) (*codexBrokerLifecycleEpoch, error) {
 	s.mu.Lock()
-	if s.closed || s.conn == nil || s.binding == nil {
+	if s.closed || s.conn == nil || s.binding == nil || !s.hasPending || s.pending.fence != record.fence {
+
 		s.mu.Unlock()
 		return nil, errors.New("codex broker binding session is closed")
 	}
-	runtimeID := ""
-	runtimeID = s.conn.Runtime()
+	fence, err := s.binding.ControlAuthority()
+	if err != nil || fence != record.fence {
+		s.mu.Unlock()
+		return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, err: err}
+	}
+	runtimeID := s.conn.Runtime()
 	epoch := &codexBrokerLifecycleEpoch{
 		session:       s,
 		identity:      s.identity,
@@ -385,8 +424,12 @@ func (s *codexBrokerObserverSession) publish(record codexBrokerEpochRecord) (*co
 		leases:        map[string]codexbroker.ApprovalLease{},
 	}
 	epoch.binding = s.binding
+	previous := s.current
 	s.current = epoch
 	s.mu.Unlock()
+	if previous != nil {
+		previous.end(codexObserverReasonEpochRotated)
+	}
 	return epoch, nil
 }
 
@@ -451,18 +494,49 @@ type codexBrokerLifecycleEpoch struct {
 // the same authenticated snapshot barrier; an observer process never invents
 // or substitutes any of these values.
 func (e *codexBrokerLifecycleEpoch) GenerationAuthority() (coremetadata.CodexAuthorityRef, error) {
-	if e == nil || e.session == nil || !e.session.endpoint.Valid() || e.brokerRuntime == "" ||
-		e.fence.Connection == 0 || e.fence.Binding == 0 {
-		return coremetadata.CodexAuthorityRef{}, errors.New("codex generation broker authority is unavailable")
+	if e == nil || e.session == nil {
+		return coremetadata.CodexAuthorityRef{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
-	want, err := codexbroker.NewEndpointKey(e.session.endpoint.StateDomainID, e.session.endpoint.EndpointGenerationID)
-	if err != nil || e.session.discovery.Endpoint() != want {
-		return coremetadata.CodexAuthorityRef{}, errors.New("codex generation broker route does not match the durable endpoint")
+	e.session.mu.Lock()
+	defer e.session.mu.Unlock()
+	return e.generationAuthorityLocked()
+}
+
+func (e *codexBrokerLifecycleEpoch) generationAuthorityLocked() (coremetadata.CodexAuthorityRef, error) {
+	refuse := func() (coremetadata.CodexAuthorityRef, error) {
+		return coremetadata.CodexAuthorityRef{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
-	return coremetadata.CodexAuthorityRef{
-		StateDomainID: e.session.endpoint.StateDomainID, EndpointGenerationID: e.session.endpoint.EndpointGenerationID,
-		BrokerRuntimeID: e.brokerRuntime, ConnectionEpoch: uint64(e.fence.Connection), BindingEpoch: uint64(e.fence.Binding),
-	}, nil
+	s := e.session
+	if s.closed || s.current != e || s.binding != e.binding || s.conn != e.connection || !e.endpoint.Valid() || s.endpoint != e.endpoint || e.brokerRuntime == "" || s.conn.Runtime() != e.brokerRuntime {
+		return refuse()
+	}
+	e.mu.Lock()
+	ended := e.ended
+	e.mu.Unlock()
+	if ended {
+		return refuse()
+	}
+	fence, err := e.binding.ControlAuthority()
+	if err != nil || fence != e.fence || fence.Connection == 0 || fence.Binding == 0 {
+		return refuse()
+	}
+	want, err := codexbroker.NewEndpointKey(e.endpoint.StateDomainID, e.endpoint.EndpointGenerationID)
+	if err != nil || s.discovery.Endpoint() != want {
+		return refuse()
+	}
+	return coremetadata.CodexAuthorityRef{StateDomainID: e.endpoint.StateDomainID, EndpointGenerationID: e.endpoint.EndpointGenerationID, BrokerRuntimeID: e.brokerRuntime, ConnectionEpoch: uint64(fence.Connection), BindingEpoch: uint64(fence.Binding)}, nil
+}
+
+// commitGenerationAuthority keeps a retired local producer from interleaving
+// its Registry write with barrier retirement or route replacement.
+func (e *codexBrokerLifecycleEpoch) commitGenerationAuthority(commit func(coremetadata.CodexAuthorityRef) error) error {
+	e.session.mu.Lock()
+	defer e.session.mu.Unlock()
+	authority, err := e.generationAuthorityLocked()
+	if err != nil {
+		return err
+	}
+	return commit(authority)
 }
 
 // Notifications is this epoch's ordered delivery stream. It closes when the
@@ -669,4 +743,60 @@ func (s *codexBrokerObserverSession) resync(epoch *codexBrokerLifecycleEpoch) {
 	if binding != nil {
 		_ = binding.Close()
 	}
+}
+
+// refreshRoute is used only by an already-bound default-route activation.
+// Stored resume resolution remains exact. Private generation routes never
+// acquire this capability and admission/rolling journals cannot be bypassed.
+func (s *codexBrokerObserverSession) refreshRoute(ctx context.Context) error {
+	if s.recoverRoute == nil {
+		return nil
+	}
+	next, err := s.recoverRoute(ctx)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	previous := s.endpoint
+	closed := s.closed
+	s.mu.Unlock()
+	if closed || !next.valid() || !next.Default || next.State != coremetadata.CodexGenerationCurrent || next.Endpoint.StateDomainID != previous.StateDomainID {
+		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	if next.Endpoint.Same(previous) {
+		return nil
+	}
+	// The consumer separately requires a Current lifecycle with no planned
+	// operation before committing the endpoint change.
+	if s.routeRuntime == nil {
+		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	discovery, launch, err := s.routeRuntime(next)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	current, binding, conn, pumped := s.current, s.binding, s.conn, s.pumped
+	s.current, s.binding, s.conn, s.ready, s.pumped = nil, nil, nil, nil, nil
+	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	s.mu.Unlock()
+	if current != nil {
+		current.end(codexObserverReasonEpochRotated)
+	}
+	if binding != nil {
+		_ = binding.Close()
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if pumped != nil {
+		<-pumped
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	s.endpoint, s.discovery, s.launch = next.Endpoint, discovery, launch
+	return nil
 }

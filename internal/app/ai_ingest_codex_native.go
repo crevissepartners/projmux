@@ -514,20 +514,21 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			o.progress.Begin(snapshot.TurnID, snapshot.StartedAt, o.currentTime())
 		}
 		if o.endpoint.Valid() {
-			authoritySource, ok := client.(codexGenerationAuthorityConnection)
-			authority, authorityErr := coremetadata.CodexAuthorityRef{}, errors.New("generation broker authority is unavailable")
-			if ok {
-				authority, authorityErr = authoritySource.GenerationAuthority()
-			}
-			generationSink, ok := o.sink.(codexGenerationLifecycleSink)
-			lifecycle, lifecycleOK := o.generationLifecycle()
-			if authorityErr != nil || !authority.Valid() || !authority.Endpoint().Same(o.endpoint) || !ok || !lifecycleOK ||
-				generationSink.SetGenerationAuthority(o.identity, o.endpoint, lifecycle.State, authority) != nil {
+			authorityErr := o.acceptGenerationAuthority(client)
+			if authorityErr != nil {
 				_ = client.Close()
+				if recovering {
+					recoveryAttempts++
+					if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonGenerationUnavailable); recoveryErr != nil {
+						return recoveryErr
+					} else if !retry {
+						return nil
+					}
+					continue
+				}
 				o.setStartupFallback(codexObserverReasonGenerationUnavailable)
 				return nil
 			}
-			o.authority = &authority
 			projection = o.decorateGenerationProjection(projection)
 		}
 		var control *codexControlServer
@@ -839,6 +840,48 @@ func (o *codexNativeObserver) decorateGenerationProjection(projection codexLifec
 // after admission changes that exact Agent to Draining; the route's launch
 // state is therefore only a compatibility fallback for ordinary Current rows,
 // never authority for a planned state.
+// acceptGenerationAuthority publishes only a current broker barrier. A
+// default-route replacement may move the endpoint of the same activation;
+// the sink compares the previous durable endpoint inside its exact-Pane fence.
+func (o *codexNativeObserver) acceptGenerationAuthority(client codexLifecycleConnection) error {
+	source, ok := client.(codexGenerationAuthorityConnection)
+	if !ok {
+		return errManagedAgentObservationIgnored
+	}
+	commit := func(authority coremetadata.CodexAuthorityRef) error {
+		lifecycle, valid := o.generationLifecycle()
+		sink, ok := o.sink.(codexGenerationLifecycleSink)
+		if !valid || !ok || !authority.Valid() {
+			return errManagedAgentObservationIgnored
+		}
+		if !authority.Endpoint().Same(o.endpoint) {
+			epoch, verified := client.(*codexBrokerLifecycleEpoch)
+			rebinder, allowed := o.sink.(interface {
+				RebindGenerationAuthority(codexLifecycleIdentity, coremetadata.CodexEndpointRef, coremetadata.CodexAuthorityRef) error
+			})
+			if !verified || epoch.session.recoverRoute == nil || !allowed || lifecycle.State != coremetadata.CodexGenerationCurrent || lifecycle.Operation != nil {
+				return errManagedAgentObservationIgnored
+			}
+			if err := rebinder.RebindGenerationAuthority(o.identity, o.endpoint, authority); err != nil {
+				return err
+			}
+			o.endpoint = authority.Endpoint()
+		} else if err := sink.SetGenerationAuthority(o.identity, o.endpoint, lifecycle.State, authority); err != nil {
+			return err
+		}
+		o.authority = &authority
+		return nil
+	}
+	if epoch, ok := client.(*codexBrokerLifecycleEpoch); ok {
+		return epoch.commitGenerationAuthority(commit)
+	}
+	authority, err := source.GenerationAuthority()
+	if err != nil {
+		return err
+	}
+	return commit(authority)
+}
+
 func (o *codexNativeObserver) generationLifecycle() (coremetadata.CodexGenerationLifecycleRef, bool) {
 	if source, ok := o.sink.(codexGenerationLifecycleSource); ok {
 		return source.GenerationLifecycle(o.identity, o.endpoint)
@@ -1265,7 +1308,7 @@ func (s aiCodexLifecycleSink) SetGenerationAuthority(identity codexLifecycleIden
 		}
 		agent, ok := registry.Agent(identity.AgentUID)
 		if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
-			agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(endpoint) ||
+			agent.Status.SessionRef.Codex.ThreadID != identity.ThreadID || agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(endpoint) ||
 			agent.Status.SessionRef.Codex.Lifecycle == nil || agent.Status.SessionRef.Codex.Lifecycle.State != state ||
 			!agent.Status.SessionRef.Codex.Lifecycle.ValidFor(&endpoint) {
 			return errManagedAgentObservationIgnored
@@ -1274,6 +1317,46 @@ func (s aiCodexLifecycleSink) SetGenerationAuthority(identity codexLifecycleIden
 		if !ok || pane.Status.Activation.Codex == nil {
 			return errManagedAgentObservationIgnored
 		}
+		stored := authority
+		pane.Status.Activation.Codex.Authority = &stored
+		return nil
+	})
+	return err
+}
+
+// RebindGenerationAuthority changes only the endpoint authority of the exact
+// surviving activation. It cannot move a stored resume, draining operation,
+// another state domain, or a retired Agent/Pane binding.
+func (s aiCodexLifecycleSink) RebindGenerationAuthority(identity codexLifecycleIdentity, previous coremetadata.CodexEndpointRef, authority coremetadata.CodexAuthorityRef) error {
+	if s.command == nil || s.command.updateRegistry == nil || !previous.Valid() || !authority.Valid() || authority.StateDomainID != previous.StateDomainID {
+		return errManagedAgentObservationIgnored
+	}
+	release, err := s.command.acquireCodexAuthorityFence(identity.PaneUID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if !s.BindingCurrent(identity) {
+		return errManagedAgentObservationIgnored
+	}
+	_, err = s.command.updateRegistry(func(registry *coremetadata.Registry) error {
+		if !exactCodexLifecycleBinding(*registry, identity) {
+			return errManagedAgentObservationIgnored
+		}
+		agent, _ := registry.Agent(identity.AgentUID)
+		if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.ThreadID != identity.ThreadID {
+			return errManagedAgentObservationIgnored
+		}
+		ref := agent.Status.SessionRef.Codex
+		if ref.Endpoint == nil || !ref.Endpoint.Same(previous) || ref.Lifecycle == nil || ref.Lifecycle.State != coremetadata.CodexGenerationCurrent || ref.Lifecycle.Operation != nil {
+			return errManagedAgentObservationIgnored
+		}
+		pane, ok := registry.Pane(identity.PaneUID)
+		if !ok || pane.Status.Activation.Codex == nil {
+			return errManagedAgentObservationIgnored
+		}
+		endpoint := authority.Endpoint()
+		ref.Endpoint = &endpoint
 		stored := authority
 		pane.Status.Activation.Codex.Authority = &stored
 		return nil
@@ -1902,7 +1985,7 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {
-			return startCodexControlServer(paths.StateDir, target.NativeRoute.Endpoint, epoch)
+			return startCodexControlServer(paths.StateDir, observer.endpoint, epoch)
 		}
 	}
 	return observer.Run(ctx)

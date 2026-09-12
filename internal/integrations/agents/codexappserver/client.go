@@ -172,6 +172,18 @@ func (c *Client) InitializeExperimental(ctx context.Context, version string) (st
 
 // ExperimentalAPI reports whether this connection negotiated the experimental
 // API capability during its initialize handshake.
+// NegotiatedVersion is the semantic version witnessed by this initialized wire.
+// It is independent of PATH and daemon status probes made before the dial.
+func (c *Client) NegotiatedVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	match := versionPattern.FindStringSubmatch(c.version)
+	if len(match) != 2 {
+		return ""
+	}
+	return match[1]
+}
+
 func (c *Client) ExperimentalAPI() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

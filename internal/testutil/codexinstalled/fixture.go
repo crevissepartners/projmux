@@ -3,13 +3,17 @@ package codexinstalled
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -704,3 +708,324 @@ func (buffer *boundedBuffer) Write(data []byte) (int, error) {
 }
 
 func (buffer *boundedBuffer) Bytes() []byte { return buffer.buffer.Bytes() }
+
+// ManagerIsolation is explicit launcher evidence. Namespace identity is read
+// again inside the fixture; an opt-in flag or private HOME alone is not proof
+// that the official manager cannot reach a host daemon.
+type ManagerIsolation struct {
+	HostNamespaces map[string]string `json:"hostNamespaces"`
+}
+
+func (isolation ManagerIsolation) Verify() (map[string]string, error) {
+	if err := validateInheritedEnvironment(); err != nil {
+		return nil, err
+	}
+	for _, key := range []string{"DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS", "DBUS_STARTER_ADDRESS"} {
+		if os.Getenv(key) != "" {
+			return nil, fmt.Errorf("ambient manager routing: %s", key)
+		}
+	}
+	namespaces := map[string]string{}
+	for _, kind := range []string{"pid", "mnt", "net"} {
+		observed, err := os.Readlink("/proc/self/ns/" + kind)
+		host := isolation.HostNamespaces[kind]
+		if err != nil || host == "" || host == observed {
+			return nil, fmt.Errorf("private %s namespace is unproved", kind)
+		}
+		namespaces[kind] = observed
+	}
+	init, err := os.ReadFile("/proc/1/comm")
+	if err != nil || (!strings.Contains(string(init), "docker-init") && !strings.Contains(string(init), "tini")) {
+		return nil, errors.New("private PID namespace needs an init reaper")
+	}
+	for _, path := range []string{"/run/dbus/system_bus_socket", "/var/run/docker.sock", fmt.Sprintf("/run/user/%d/bus", os.Getuid())} {
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			return nil, errors.New("ambient manager socket is exposed")
+		}
+	}
+	return namespaces, nil
+}
+
+// ManagedDaemonProof contains only process and route identity, never provider
+// payloads, command output, credentials, prompts, or approvals.
+type ManagedDaemonProof struct {
+	Backend    string            `json:"backend"`
+	Version    string            `json:"version"`
+	PID        int               `json:"pid"`
+	Birth      string            `json:"birth"`
+	Executable string            `json:"executable"`
+	SHA256     string            `json:"sha256"`
+	Socket     string            `json:"socket"`
+	Namespaces map[string]string `json:"namespaces"`
+}
+
+type ManagedDaemon struct {
+	fixture    *Fixture
+	isolation  ManagerIsolation
+	Proof      ManagedDaemonProof
+	socketInfo fs.FileInfo
+}
+
+// SelectManagedRelease points only this fixture's current link at an explicit
+// read-only release mount. It refuses to switch while a fixture daemon is live.
+func (fixture *Fixture) SelectManagedRelease(release string) error {
+	if !fixture.ownsState || fixture.managedStarted {
+		return errors.New("managed release switch requires an owned stopped fixture")
+	}
+	release, err := filepath.EvalSymlinks(release)
+	if err != nil || !filepath.IsAbs(release) {
+		return errors.New("managed release is unavailable")
+	}
+	mounts, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return errors.New("read-only release mount proof is unavailable")
+	}
+	readonly := false
+	for line := range strings.SplitSeq(string(mounts), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 6 && fields[4] == release {
+			for option := range strings.SplitSeq(fields[5], ",") {
+				if option == "ro" {
+					readonly = true
+				}
+			}
+		}
+	}
+	if !readonly {
+		return errors.New("managed release must be an exact read-only mount")
+	}
+	raw, err := os.ReadFile(filepath.Join(release, "codex-package.json"))
+	if err != nil {
+		return errors.New("managed release manifest missing")
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(raw, &manifest) != nil || !codexappserver.IsSafeDiagnosticVersion(manifest.Version) {
+		return errors.New("managed release manifest invalid")
+	}
+	current := filepath.Join(fixture.CodexHome, "packages", "standalone", "current")
+	if err := os.MkdirAll(filepath.Dir(current), 0o700); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(current); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			return errors.New("private current artifact is not a link")
+		}
+		if err := os.Remove(current); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.Symlink(release, current); err != nil {
+		return err
+	}
+	fixture.realCodex = filepath.Join(current, "bin", "codex")
+	fixture.versions.Managed = manifest.Version
+	fixture.managed = true
+	return nil
+}
+
+// StartManagedRecovery uses only the official manager after private namespace
+// and stopped pid-backend proofs. Failures retain evidence; there is no signal
+// fallback for an unknown or mismatched manager.
+func (fixture *Fixture) StartManagedRecovery(ctx context.Context, isolation ManagerIsolation) (*ManagedDaemon, error) {
+	namespaces, err := isolation.Verify()
+	if err != nil {
+		return nil, err
+	}
+	if !fixture.ownsState || !fixture.managed || fixture.managedStarted {
+		return nil, errors.New("managed fixture is not prepared and stopped")
+	}
+	for _, key := range []string{"HOME", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "TMUX_TMPDIR"} {
+		value := filepath.Clean(os.Getenv(key))
+		if !strings.HasPrefix(value, fixture.Root+string(filepath.Separator)) {
+			return nil, fmt.Errorf("%s is outside the fixture", key)
+		}
+	}
+	status, err := fixture.managedCommand(ctx, "version")
+	if err != nil || status.Backend != "pid" || status.Status != "stopped" {
+		return nil, errors.New("official manager is ambient, unknown, or already running")
+	}
+	started, err := fixture.managedCommand(ctx, "start")
+	if err != nil {
+		return nil, err
+	}
+	// Do not issue any mutation on a failed identity proof. The namespace owner
+	// can retire its entire container without guessing a daemon PID.
+	if started.Backend != "pid" || started.Status != "started" || started.PID <= 0 {
+		return nil, errors.New("official start did not prove a new pid manager")
+	}
+	fixture.managedStarted = true
+	status, err = fixture.managedCommand(ctx, "version")
+	if err != nil {
+		return nil, err
+	}
+	artifactPID, err := fixture.readManagedPID()
+	if err != nil || validateManagedIdentity(status, started.PID, artifactPID, fixture.SocketPath) != nil {
+		return nil, errors.New("manager PID/artifact/socket mismatch")
+	}
+	if status.Status != "running" || status.AppServerVersion != fixture.versions.Managed || status.ManagedCodexVersion != fixture.versions.Managed || status.CLIVersion != fixture.versions.Managed {
+		return nil, errors.New("manager version provenance mismatch")
+	}
+	birth, err := managedProcessBirth(started.PID)
+	if err != nil {
+		return nil, err
+	}
+	executable, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", started.PID))
+	if err != nil {
+		return nil, err
+	}
+	expected, err := filepath.EvalSymlinks(fixture.realCodex)
+	if err != nil || executable != expected {
+		return nil, errors.New("manager executable does not match selected release")
+	}
+	digest, err := FileSHA256(fmt.Sprintf("/proc/%d/exe", started.PID))
+	if err != nil {
+		return nil, err
+	}
+	expectedDigest, err := FileSHA256(expected)
+	if err != nil || expectedDigest != digest {
+		return nil, errors.New("manager executable digest mismatch")
+	}
+	info, err := os.Lstat(fixture.SocketPath)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return nil, errors.New("managed private socket is unavailable")
+	}
+	fixture.managedPID = started.PID
+	return &ManagedDaemon{fixture: fixture, isolation: isolation, socketInfo: info, Proof: ManagedDaemonProof{Backend: "pid", Version: status.AppServerVersion, PID: started.PID, Birth: birth, Executable: executable, SHA256: digest, Socket: fixture.SocketPath, Namespaces: namespaces}}, nil
+}
+
+func (daemon *ManagedDaemon) Stop(ctx context.Context) error {
+	if daemon == nil || !daemon.fixture.managedStarted {
+		return errors.New("managed daemon is not owned")
+	}
+	if _, err := daemon.isolation.Verify(); err != nil {
+		return err
+	}
+	fixture := daemon.fixture
+	status, err := fixture.managedCommand(ctx, "version")
+	pid, pidErr := fixture.readManagedPID()
+	birth, birthErr := managedProcessBirth(daemon.Proof.PID)
+	info, socketErr := os.Lstat(fixture.SocketPath)
+	digest, digestErr := FileSHA256(fmt.Sprintf("/proc/%d/exe", daemon.Proof.PID))
+	if err != nil || pidErr != nil || birthErr != nil || socketErr != nil || digestErr != nil || status.Backend != "pid" || pid != daemon.Proof.PID || birth != daemon.Proof.Birth || digest != daemon.Proof.SHA256 || status.SocketPath != daemon.Proof.Socket || !os.SameFile(info, daemon.socketInfo) {
+		return errors.New("managed stop refused: process birth, artifact, or socket changed")
+	}
+	stopped, err := fixture.managedCommand(ctx, "stop")
+	if err != nil || stopped.Backend != "pid" || stopped.Status != "stopped" {
+		return errors.New("official managed stop failed")
+	}
+	if err := waitForRetirement(ctx, fixture.SocketPath, daemon.Proof.PID); err != nil {
+		return err
+	}
+	fixture.managedPID, fixture.managedStarted = 0, false
+	return nil
+}
+
+func (fixture *Fixture) managedCommand(ctx context.Context, action string) (daemonVersion, error) {
+	commandCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(commandCtx, fixture.realCodex, "app-server", "daemon", action) // #nosec G204 -- fixture-owned explicit release and fixed manager argv.
+	command.Env = isolatedEnvironment(os.Environ(), fixture.CodexHome)
+	var output boundedBuffer
+	command.Stdout = &output
+	command.Stderr = &boundedBuffer{}
+	if err := command.Run(); err != nil {
+		return daemonVersion{}, fmt.Errorf("official daemon %s failed: %w", action, err)
+	}
+	var status daemonVersion
+	if json.Unmarshal(output.Bytes(), &status) != nil {
+		return status, errors.New("official manager returned invalid identity")
+	}
+	mutation := MutationEndpointLifecycle
+	if action == "version" {
+		mutation = MutationNone
+	}
+	fixture.ledger.record(Command{Scope: ScopeIsolated, Operation: "managed-" + action, Mutation: mutation})
+	return status, nil
+}
+
+func managedProcessBirth(pid int) (string, error) {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "", err
+	}
+	at := strings.LastIndex(string(raw), ") ")
+	if at < 0 {
+		return "", errors.New("process birth unavailable")
+	}
+	fields := strings.Fields(string(raw)[at+2:])
+	if len(fields) < 20 || fields[0] == "Z" {
+		return "", errors.New("process is not live")
+	}
+	return fields[19], nil
+}
+
+func FileSHA256(path string) (string, error) {
+	file, err := os.Open(path) // #nosec G304 -- explicit fixture binary or verified process executable.
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// OwnedProcess is a content-free process-birth observation in the private PID
+// namespace. It is evidence only and grants no signal authority.
+type OwnedProcess struct {
+	PID        int    `json:"pid"`
+	Birth      string `json:"birth"`
+	Executable string `json:"executable"`
+}
+
+func (fixture *Fixture) OwnedProcesses() ([]OwnedProcess, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	processes := []OwnedProcess{}
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "environ"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		owned := false
+		for value := range strings.SplitSeq(string(raw), "\x00") {
+			if value == "CODEX_HOME="+fixture.CodexHome {
+				owned = true
+			}
+		}
+		if !owned {
+			continue
+		}
+		birth, err := managedProcessBirth(pid)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		executable, err := os.Readlink(filepath.Join("/proc", entry.Name(), "exe"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		processes = append(processes, OwnedProcess{PID: pid, Birth: birth, Executable: executable})
+	}
+	return processes, nil
+}
