@@ -172,7 +172,7 @@ func recoveryError(err error) string {
 	if errors.As(err, &attach) {
 		return "attach:" + recoveryToken(string(attach.Refusal), "none", "endpoint-not-ready", "protocol-mismatch", "version-skew", "runtime-version-unknown", "ownership-unknown", "connect-failed")
 	}
-	if reason := codexbroker.RefusalOf(err); reason != "" {
+	if reason := codexbroker.RefusalOf(err); reason != codexbroker.RefusalNone {
 		return "broker:" + recoveryToken(string(reason), "host-unavailable", "discovery-untrusted", "binding-revoked", "endpoint-suspended", "lifecycle-unsupported", "lifecycle-protocol", "lifecycle-busy", "thread-absent", "thread-not-durable", "socket-path-too-long")
 	}
 	return "unclassified"
@@ -288,7 +288,10 @@ type installedRecoveryControlReader interface {
 }
 
 func readInstalledRecoveryControl(control installedRecoveryControlReader, out installedRecoveryObservation, requireStart bool) installedRecoveryObservation {
-	binding, err := control.resolveControlBinding("installed recovery readiness", "uid:"+out.Identity.Agent)
+	// The resolver interprets this spelling as a provider capability action.
+	// Prove the same route as the later installed turn command, then issue only
+	// a read-only status request; readiness itself never submits an input.
+	binding, err := control.resolveControlBinding("agent turn start", "uid:"+out.Identity.Agent)
 	if err != nil {
 		out.Stage = "control-binding"
 		out.Error = recoveryError(err)
