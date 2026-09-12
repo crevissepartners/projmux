@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/testutil/codexinstalled"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 // No auth, model, prompt, thread or Agent input exists in this schema.
@@ -33,17 +34,21 @@ type installedConnectionInput struct {
 }
 
 type installedConnectionStage struct {
-	Stage    string                        `json:"stage"`
-	Error    string                        `json:"error,omitempty"`
-	Endpoint coremetadata.CodexEndpointRef `json:"endpoint"`
-	Version  string                        `json:"version,omitempty"`
-	Peer     codexappserver.PeerIdentity   `json:"peer"`
+	Stage      string                        `json:"stage"`
+	Error      string                        `json:"error,omitempty"`
+	Endpoint   coremetadata.CodexEndpointRef `json:"endpoint"`
+	Version    string                        `json:"version,omitempty"`
+	Peer       codexappserver.PeerIdentity   `json:"peer"`
+	Selection  *installedConnectionSelection `json:"selection,omitempty"`
+	Health     *installedConnectionHealth    `json:"health,omitempty"`
+	DurationMS int64                         `json:"durationMS,omitempty"`
 }
 
 type installedConnectionRow struct {
-	Manager codexinstalled.ManagedDaemonProof `json:"manager"`
-	Stages  []installedConnectionStage        `json:"stages"`
-	Stopped bool                              `json:"stopped"`
+	Manager   codexinstalled.ManagedDaemonProof `json:"manager"`
+	Selection installedConnectionSelection      `json:"selection"`
+	Stages    []installedConnectionStage        `json:"stages"`
+	Stopped   bool                              `json:"stopped"`
 }
 
 type installedConnectionLedger struct {
@@ -173,18 +178,33 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		row := installedConnectionRow{Manager: daemon.Proof}
+		row := installedConnectionRow{Manager: daemon.Proof, Selection: observeInstalledConnectionSelection(fixture, daemon.Proof)}
 		ledger.Rows = append(ledger.Rows, row)
 		save()
 		record := func(stage installedConnectionStage) {
 			ledger.Rows[index].Stages = append(ledger.Rows[index].Stages, stage)
 			save()
 		}
-		probeCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		probeErr := probeInstalledRecoveryConnections(probeCtx, daemon.Proof.Version, (defaultCodexNativeThreadController{}).Current, func(route codexNativeEndpointRoute) (codexbroker.Opener, codexbroker.LifecycleOpener, error) {
-			return route.brokerRoute().openers()
-		}, record)
-		cancel()
+		var probeErr error
+		if row.Selection.Error != "" {
+			probeErr = errors.New("fixture execution selection is unverified")
+		} else {
+			probeCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			probeErr = probeInstalledRecoveryConnections(probeCtx, daemon.Proof.Version, (defaultCodexNativeThreadController{}).Current, func(route codexNativeEndpointRoute) (codexbroker.Opener, codexbroker.LifecycleOpener, error) {
+				return route.brokerRoute().openers()
+			}, record)
+			cancel()
+			if probeErr != nil {
+				selection := observeInstalledConnectionSelection(fixture, daemon.Proof)
+				record(installedConnectionStage{Stage: "failure-selection-after-attempt", Selection: &selection})
+				// Never invoke an unexpected PATH/environment target to diagnose it.
+				if selection.Error == "" {
+					probeErr = recordInstalledConnectionFailure(ctx, probeErr, func(probeCtx context.Context) codexappserver.Health {
+						return codexappserver.ProbeDefaultProxy(probeCtx, 5*time.Second, version.String(), true)
+					}, record)
+				}
+			}
+		}
 		// Even a failed connection diagnostic stops only this still-verified owner.
 		// A failed ownership proof never falls through to generic cleanup.
 		if err := daemon.Stop(ctx); err != nil {
