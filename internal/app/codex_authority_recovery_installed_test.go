@@ -225,9 +225,12 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 			var agentUID, expectedTurn string
 			if rowIndex == 0 || sample == 1 {
 				attempt.Stage = "submitting-create"
-				ledger.Submissions++
-				save()
-				agentUID = run(input.Binary, "create", "agent", "--provider", "codex", "--project", "uid:"+project, "--window", "uid:"+window, "--name", fmt.Sprintf("matrix-%d-%d", rowIndex, sample), "-o", "uid", "--", input.Inputs[inputIndex])
+				agentUID, err = submitInstalledRecoveryInput(&ledger, attempt, observeInstalledConnectionSelection(fixture, daemon.Proof), save, func() string {
+					return run(input.Binary, "create", "agent", "--provider", "codex", "--project", "uid:"+project, "--window", "uid:"+window, "--name", fmt.Sprintf("matrix-%d-%d", rowIndex, sample), "-o", "uid", "--", input.Inputs[inputIndex])
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
 				agents = append(agents, agentUID)
 			} else {
 				agentUID = survivor.Agent
@@ -254,11 +257,13 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 				if rowIndex > 1 && (observed.Authority.BrokerRuntimeID != previous.BrokerRuntimeID || observed.Authority.ConnectionEpoch <= previous.ConnectionEpoch || observed.Authority.BindingEpoch != previous.BindingEpoch) {
 					t.Fatal("server-only restart replaced broker runtime/binding or failed to advance connection epoch")
 				}
-				ledger.Submissions++
-				save()
 				attempt.Stage = "submitting-turn"
-				save()
-				receipt := run(input.Binary, "agent", "turn", "start", "uid:"+agentUID, "--", input.Inputs[inputIndex])
+				receipt, err := submitInstalledRecoveryInput(&ledger, attempt, observeInstalledConnectionSelection(fixture, daemon.Proof), save, func() string {
+					return run(input.Binary, "agent", "turn", "start", "uid:"+agentUID, "--", input.Inputs[inputIndex])
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
 				for field := range strings.FieldsSeq(receipt) {
 					if after, ok := strings.CutPrefix(field, "turn="); ok {
 						expectedTurn = after

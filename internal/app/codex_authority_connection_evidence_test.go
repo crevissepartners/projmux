@@ -25,6 +25,10 @@ type installedConnectionSelection struct {
 	StateDomainID      string `json:"stateDomainID,omitempty"`
 }
 
+func (selection installedConnectionSelection) verified() bool {
+	return selection.Error == "" && selection.EnvironmentMatches && selection.MatchesManager && selection.StateDomainID != ""
+}
+
 // Inspect only the exact fixture shim and selected, manager-proved release.
 // An unexpected PATH/environment/link target is refused without reading or
 // recording any foreign file or arbitrary environment value.
@@ -120,7 +124,8 @@ func projectInstalledConnectionHealth(health codexappserver.Health) *installedCo
 
 // This is a later independent read, never the health value that Current used.
 // Retain the original refusal even if this observation sees a ready endpoint;
-// it cannot retry Current, open a connection, or turn a failed row into PASS.
+// the probe opens its own independent transport. It cannot retry the original
+// Current/shared/owned stage or turn a failed row into PASS.
 func recordInstalledConnectionFailure(ctx context.Context, original error, probe func(context.Context) codexappserver.Health, record func(installedConnectionStage)) error {
 	if original == nil {
 		return nil

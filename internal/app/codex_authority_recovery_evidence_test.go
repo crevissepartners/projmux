@@ -27,8 +27,24 @@ type installedRecoveryAttempt struct {
 	Sample       string                         `json:"sample"`
 	Stage        string                         `json:"stage"`
 	AgentUID     string                         `json:"agentUID,omitempty"`
+	Selection    *installedConnectionSelection  `json:"selection,omitempty"`
 	Observations []installedRecoveryObservation `json:"observations,omitempty"`
 	Failure      *installedRecoveryFailure      `json:"failure,omitempty"`
+}
+
+// Every fresh create/turn input crosses the same verified selection guard as
+// the zero-input connection diagnostic. A refused fixture cannot increment the
+// submission ledger or invoke the installed command through a fallback CLI.
+func submitInstalledRecoveryInput(ledger *installedRecoveryLedger, attempt *installedRecoveryAttempt, selection installedConnectionSelection, save func(), submit func() string) (string, error) {
+	attempt.Selection = &selection
+	if !selection.verified() {
+		attempt.Stage = "selection-refused"
+		save()
+		return "", errors.New("fixture execution selection is unverified")
+	}
+	ledger.Submissions++
+	save()
+	return submit(), nil
 }
 
 type installedRecoveryObservation struct {

@@ -186,7 +186,7 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 			save()
 		}
 		var probeErr error
-		if row.Selection.Error != "" {
+		if !row.Selection.verified() {
 			probeErr = errors.New("fixture execution selection is unverified")
 		} else {
 			probeCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
@@ -198,7 +198,7 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 				selection := observeInstalledConnectionSelection(fixture, daemon.Proof)
 				record(installedConnectionStage{Stage: "failure-selection-after-attempt", Selection: &selection})
 				// Never invoke an unexpected PATH/environment target to diagnose it.
-				if selection.Error == "" {
+				if selection.verified() {
 					probeErr = recordInstalledConnectionFailure(ctx, probeErr, func(probeCtx context.Context) codexappserver.Health {
 						return codexappserver.ProbeDefaultProxy(probeCtx, 5*time.Second, version.String(), true)
 					}, record)
