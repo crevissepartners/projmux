@@ -25,7 +25,8 @@ func TestRequestFailureDiagnosticPreservesOriginalThroughCatalogWrapping(t *test
 		{"protocol", methodThreadRead, `{invalid`, `{"method":"thread/read","rpc_code":null,"cause":"protocol-error"}`, false, ErrProtocol},
 		{"missing code", methodThreadRead, `{"id":1,"error":{"message":"secret"}}`, `{"method":"thread/read","rpc_code":null,"cause":"protocol-error"}`, false, ErrProtocol},
 		{"null code", methodThreadRead, `{"id":1,"error":{"code":null}}`, `{"method":"thread/read","rpc_code":null,"cause":"protocol-error"}`, false, ErrProtocol},
-		{"transport", methodThreadRead, "", `{"method":"thread/read","rpc_code":null,"cause":"disconnected"}`, false, ErrDisconnected},
+		// uncaptured-default: FailureDiagnostic.cause explicitly captures this peer EOF as disconnected, in its own closed diagnostic vocabulary.
+		{"peer closes without response", methodThreadRead, "", `{"method":"thread/read","rpc_code":null,"cause":"disconnected"}`, false, ErrDisconnected},
 		{"unknown method", secret, `{"id":1,"error":{"code":-32601}}`, `{"method":"unknown","rpc_code":-32601,"cause":"unsupported"}`, false, ErrUnsupported},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
