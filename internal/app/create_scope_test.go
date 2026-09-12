@@ -193,7 +193,8 @@ func TestImplicitScopeRefusesEveryUnmanagedRuntime(t *testing.T) {
 				t.Parallel()
 				store, tmux := aliveAlphaRuntime(t)
 				create, _ := newTestAgentCreateCommand(t, store, tmux)
-				withActiveTarget(create, test.active)
+				active := *test.active // Each parallel route owns its lookup counter.
+				withActiveTarget(create, &active)
 				before := store.snapshot()
 				callsBefore := len(tmux.calls)
 

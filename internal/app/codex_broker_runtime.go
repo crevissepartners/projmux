@@ -70,8 +70,18 @@ func (route codexBrokerEndpointRoute) openers() (codexbroker.Opener, codexbroker
 		}
 		options := codexappserver.AttachOptions{Timeout: codexBrokerAttachTimeout, ExperimentalAPI: true}
 		shared := func(ctx context.Context) (codexbroker.Endpoint, error) {
-			client, _, err := codexappserver.AttachDefaultUnixAt(ctx, socketPath, version.String(), options)
-			return client, err
+			client, health, err := codexappserver.AttachDefaultUnixAt(ctx, socketPath, version.String(), options)
+			if err != nil {
+				return nil, err
+			}
+			// A fixed socket can now belong to another daemon. Its successful
+			// initialize must agree with both the readiness probe and this
+			// generation's route before the broker opens any thread barrier.
+			if !defaultBrokerEndpointMatches(route, health.RunningVersion, client.NegotiatedVersion()) {
+				_ = client.Close()
+				return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, err: codexappserver.ErrEndpointChanged}
+			}
+			return client, nil
 		}
 		owned := func(ctx context.Context, expected codexappserver.PeerIdentity) (codexappserver.LifecycleEndpoint, error) {
 			return codexappserver.OpenPrivateUnixLifecycle(ctx, socketPath, version.String(), true, expected)
@@ -336,4 +346,17 @@ func codexBrokerStateDomain(lookupEnv func(string) string, home func() (string, 
 		return "", fmt.Errorf("resolve projmux state paths: %w", err)
 	}
 	return paths.StateDir, nil
+}
+
+// defaultBrokerEndpointMatches refuses a route/version race; it never retags
+// the runtime using whatever executable happens to be current now.
+func defaultBrokerEndpointMatches(route codexBrokerEndpointRoute, probed, negotiated string) bool {
+	if !codexappserver.IsSafeDiagnosticVersion(probed) || negotiated == "" || probed != negotiated {
+		return false
+	}
+	if route == (codexBrokerEndpointRoute{}) {
+		return true
+	}
+	domain, err := defaultCodexStateDomainID(os.Getenv, os.UserHomeDir)
+	return err == nil && route.Default && route.StateDomainID == domain && route.EndpointGenerationID == "codex-"+negotiated
 }

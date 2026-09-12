@@ -199,6 +199,9 @@ func handshake(netConn net.Conn, discovery Discovery, record discoveryRecord,
 // drain-required refusal is returned as-is and the caller retries once the
 // running work has drained.
 func Ensure(ctx context.Context, discovery Discovery, cfg EnsureConfig) (*Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, refuse(RefusalHostUnavailable, err)
+	}
 	if !platformSupported {
 		return nil, refuse(RefusalUnsupportedPlatform, nil)
 	}
@@ -211,10 +214,13 @@ func Ensure(ctx context.Context, discovery Discovery, cfg EnsureConfig) (*Conn, 
 		return nil, err
 	}
 	var started *Conn
-	lockErr := withStartupLock(discovery, cfg.startupTimeout(), func() error {
+	lockErr := withStartupLock(ctx, discovery, cfg.startupTimeout(), func() error {
 		if again, dialErr := Dial(ctx, discovery, dial); dialErr == nil {
 			started = again
 			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return refuse(RefusalHostUnavailable, err)
 		}
 		if reclaimErr := reclaimStale(discovery); reclaimErr != nil {
 			if RefusalOf(reclaimErr) != RefusalHostLive {
@@ -229,6 +235,9 @@ func Ensure(ctx context.Context, discovery Discovery, cfg EnsureConfig) (*Conn, 
 		}
 		if cfg.Launch == nil {
 			return refuse(RefusalHostUnavailable, nil)
+		}
+		if err := ctx.Err(); err != nil {
+			return refuse(RefusalHostUnavailable, err)
 		}
 		if launchErr := cfg.Launch(ctx); launchErr != nil {
 			return refuse(RefusalHostUnavailable, launchErr)
@@ -260,7 +269,10 @@ func Ensure(ctx context.Context, discovery Discovery, cfg EnsureConfig) (*Conn, 
 }
 
 // withStartupLock serializes reclaim and launch for one discovery contract.
-func withStartupLock(discovery Discovery, timeout time.Duration, body func() error) error {
+func withStartupLock(ctx context.Context, discovery Discovery, timeout time.Duration, body func() error) error {
+	if err := ctx.Err(); err != nil {
+		return refuse(RefusalHostUnavailable, err)
+	}
 	if err := prepareDiscoveryDir(discovery); err != nil {
 		return err
 	}
@@ -275,6 +287,9 @@ func withStartupLock(discovery Discovery, timeout time.Duration, body func() err
 	}
 	deadline := time.Now().Add(timeout)
 	for {
+		if err := ctx.Err(); err != nil {
+			return refuse(RefusalHostUnavailable, err)
+		}
 		locked, lockErr := tryLockExclusive(file)
 		if lockErr != nil {
 			return refuse(RefusalDiscoveryUntrusted, lockErr)
@@ -285,9 +300,16 @@ func withStartupLock(discovery Discovery, timeout time.Duration, body func() err
 		if time.Now().After(deadline) {
 			return refuse(RefusalHostUnavailable, nil)
 		}
-		time.Sleep(lockPollInterval)
+		select {
+		case <-ctx.Done():
+			return refuse(RefusalHostUnavailable, ctx.Err())
+		case <-time.After(lockPollInterval):
+		}
 	}
 	defer func() { _ = unlockFile(file) }()
+	if err := ctx.Err(); err != nil {
+		return refuse(RefusalHostUnavailable, err)
+	}
 	return body()
 }
 

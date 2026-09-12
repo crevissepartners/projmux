@@ -1157,6 +1157,7 @@ func TestCodexNativeObserverForeignThreadSameTurnWritesNoRegistryProgressOrDiagn
 	}
 	ctx := t.Context()
 	sink := &recordingCodexProgressSink{recordingCodexLifecycleSink: newRecordingCodexLifecycleSink()}
+	startup := make(chan codexObserverStartupResult, 1)
 	observer := codexNativeObserver{
 		identity: identity, delay: time.Millisecond, sink: sink,
 		// The binding loss at the end of this test exits through a bounded
@@ -1164,11 +1165,18 @@ func TestCodexNativeObserverForeignThreadSameTurnWritesNoRegistryProgressOrDiagn
 		// than left at the three-second production default.
 		bindingTimeout: 20 * time.Millisecond,
 		open:           func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
+		reportStartup:  func(result codexObserverStartupResult) { startup <- result },
 	}
 	done := make(chan error, 1)
 	go func() { done <- observer.Run(ctx) }()
-	waitForCodexObserverEvents(t, sink.recordingCodexLifecycleSink, 2)
+	// Startup readiness follows the initial progress/diagnostic flush; the
+	// lifecycle Apply and SetAuthority events alone precede that flush.
+	waitForCodexObserverStartupResult(t, startup, codexObserverStartupReady)
 	progressBefore, diagnosticsBefore := sink.progressSnapshot()
+	if len(progressBefore) != 2 || !progressBefore[0].IsZero() || progressBefore[1].TurnRef != "turn-1" ||
+		len(diagnosticsBefore) != 2 || diagnosticsBefore[0] != (agentprogress.Diagnostics{}) || diagnosticsBefore[1] != (agentprogress.Diagnostics{}) {
+		t.Fatalf("unexpected baseline progress=%#v diagnostics=%#v", progressBefore, diagnosticsBefore)
+	}
 
 	conn.events <- codexappserver.Notification{Method: "turn/plan/updated", Params: []byte(`{"threadId":"thread-foreign","turnId":"turn-1","plan":[{"status":"completed","step":"PRIVATE-FOREIGN"}]}`)}
 	// The accepted lifecycle marker is queued after the foreign progress event,
@@ -1182,10 +1190,6 @@ func TestCodexNativeObserverForeignThreadSameTurnWritesNoRegistryProgressOrDiagn
 	}
 	if !reflect.DeepEqual(diagnostics, diagnosticsBefore) {
 		t.Fatalf("foreign thread added diagnostics writes: before=%#v after=%#v", diagnosticsBefore, diagnostics)
-	}
-	if len(progress) != 2 || !progress[0].IsZero() || progress[1].TurnRef != "turn-1" ||
-		len(diagnostics) != 2 || diagnostics[0] != (agentprogress.Diagnostics{}) || diagnostics[1] != (agentprogress.Diagnostics{}) {
-		t.Fatalf("unexpected baseline progress=%#v diagnostics=%#v", progress, diagnostics)
 	}
 	sink.setCurrent(false)
 	select {
