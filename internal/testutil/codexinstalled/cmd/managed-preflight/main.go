@@ -40,7 +40,7 @@ func run() error {
 	if len(os.Args) != 2 {
 		return errors.New("managed-preflight requires one explicit JSON input file")
 	}
-	raw, err := os.ReadFile(os.Args[1])
+	raw, err := codexinstalled.ReadExplicitInput(os.Args[1])
 	if err != nil {
 		return err
 	}

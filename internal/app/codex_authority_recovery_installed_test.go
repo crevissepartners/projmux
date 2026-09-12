@@ -56,9 +56,10 @@ type installedRecoveryTurn struct {
 }
 
 type installedRecoveryRow struct {
-	Name    string                            `json:"name"`
-	Manager codexinstalled.ManagedDaemonProof `json:"manager"`
-	Turns   []installedRecoveryTurn           `json:"turns"`
+	Name     string                            `json:"name"`
+	Manager  codexinstalled.ManagedDaemonProof `json:"manager"`
+	Turns    []installedRecoveryTurn           `json:"turns"`
+	Attempts []*installedRecoveryAttempt       `json:"attempts,omitempty"`
 }
 
 type installedRecoveryLedger struct {
@@ -82,7 +83,7 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	if inputPath == "" {
 		t.Skip("requires explicit private managed-daemon matrix input")
 	}
-	raw, err := os.ReadFile(inputPath)
+	raw, err := codexinstalled.ReadExplicitInput(inputPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,36 +103,9 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	if _, err := isolation.Verify(); err != nil {
 		t.Fatal(err)
 	}
-	digest, err := codexinstalled.FileSHA256(input.Binary)
-	if err != nil || digest != input.BinarySHA256 {
-		t.Fatal("candidate binary hash mismatch")
-	}
-	build, err := buildinfo.ReadFile(input.Binary)
-	if err != nil {
-		t.Fatal("candidate build identity unavailable")
-	}
-	revision, modified := "", ""
-	for _, setting := range build.Settings {
-		if setting.Key == "vcs.revision" {
-			revision = setting.Value
-		}
-		if setting.Key == "vcs.modified" {
-			modified = setting.Value
-		}
-	}
-	if revision != input.SourceHead || modified != "false" {
-		t.Fatal("candidate binary is not the exact clean source head")
-	}
+	testDigest := verifyInstalledRecoveryBinary(t, input.Binary, input.SourceHead, input.BinarySHA256)
 
-	testBinary, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	testDigest, err := codexinstalled.FileSHA256(testBinary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ledger := installedRecoveryLedger{Result: "RUNNING", SourceHead: input.SourceHead, SourceTree: input.SourceTree, BinarySHA256: digest, TestBinarySHA256: testDigest}
+	ledger := installedRecoveryLedger{Result: "RUNNING", SourceHead: input.SourceHead, SourceTree: input.SourceTree, BinarySHA256: input.BinarySHA256, TestBinarySHA256: testDigest}
 	save := func() {
 		t.Helper()
 		body, err := json.MarshalIndent(ledger, "", "  ")
@@ -148,20 +122,7 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 		}
 		save()
 	}()
-	fixture, err := codexinstalled.NewClean(input.Root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for key, leaf := range map[string]string{"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_STATE_HOME": "state", "XDG_CACHE_HOME": "cache", "XDG_DATA_HOME": "data", "XDG_RUNTIME_DIR": "runtime", "TMUX_TMPDIR": "tmux"} {
-		path := filepath.Join(input.Root, leaf)
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv(key, path)
-	}
-	t.Setenv("SHELL", "/bin/sh")
-	t.Setenv("TERM", "xterm-256color")
-	t.Setenv("PROJMUX_PROJDIR", fixture.Workspace)
+	fixture := newInstalledRecoveryFixture(t, input.Root)
 	if err := fixture.SelectManagedRelease(input.Releases[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -194,39 +155,30 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	run := func(executable string, args ...string) string {
-		t.Helper()
-		callCtx, stop := context.WithTimeout(ctx, 90*time.Second)
-		defer stop()
-		command := exec.CommandContext(callCtx, executable, args...) // #nosec G204 -- explicit installed fixture executable and argv.
-		command.Env = withoutInheritedTmuxEnvironment(os.Environ())
-		output, err := command.Output()
-		if err != nil {
-			t.Fatalf("fixture command %s %s failed: %v (payload/output omitted)", filepath.Base(executable), args[0], err)
-		}
-		return strings.TrimSpace(string(output))
-	}
-	socketName := "cp1-" + filepath.Base(input.Root)
-	run("tmux", "-L", socketName, "-f", "/dev/null", "new-session", "-d", "-s", "fixture-bootstrap", "-c", fixture.Workspace)
-	tmuxSocket := run("tmux", "-L", socketName, "display-message", "-p", "-F", "#{socket_path}")
-	if !strings.HasPrefix(tmuxSocket, os.Getenv("TMUX_TMPDIR")+string(filepath.Separator)) {
-		t.Fatal("tmux socket escaped fixture")
-	}
+	run := installedRecoveryCommand(t, ctx)
+	runtime := setupInstalledRecoveryRuntime(t, fixture, input.Binary, run)
+	socketName, tmuxSocket, project, window := runtime.Name, runtime.Socket, runtime.Project, runtime.Window
 	ledger.TmuxSocket = tmuxSocket
-	// This is the exact server this fixture just created and proved private.
-	// Publish its app ownership before config apply validates that contract.
-	run("tmux", "-S", tmuxSocket, "set-option", "-g", tmuxopts.AppGlobal, "1")
-	// Outside-tmux public create discovers -L projmux. This fixture-only alias
-	// reaches the unique real server; its socket_path and logical marker remain
-	// the unique route and all cleanup names that exact physical socket.
-	if err := os.Symlink(tmuxSocket, filepath.Join(filepath.Dir(tmuxSocket), "projmux")); err != nil {
-		t.Fatal(err)
-	}
-	generated := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "projmux", "tmux.conf")
-	run(input.Binary, "config", "apply", "--config", generated, "--socket", socketName)
-	project := run(input.Binary, "create", "project", "--root", fixture.Workspace, "--name", "recovery-matrix", "-o", "uid")
-	window := run(input.Binary, "get", "windows", "--project", "uid:"+project, "-o", "uid")
-	run(input.Binary, "reconcile", "resources", "--socket", socketName, "--materialize-project", "uid:"+project, "-o", "json")
+	save()
+
+	var activeAttempt *installedRecoveryAttempt
+	var activeGeneration string
+	var activeRetired *coremetadata.CodexAuthorityRef
+	defer func() {
+		if t.Failed() && activeAttempt != nil {
+			failureCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			if activeAttempt.AgentUID != "" {
+				activeAttempt.observe(observeInstalledRecovery(failureCtx, activeAttempt.AgentUID, activeGeneration, activeRetired, tmuxSocket))
+			}
+			identity := installedRecoveryAgent{Agent: activeAttempt.AgentUID}
+			if n := len(activeAttempt.Observations); n > 0 {
+				identity = activeAttempt.Observations[n-1].Identity
+			}
+			activeAttempt.Failure = captureInstalledRecoveryFailure(failureCtx, fixture, tmuxSocket, identity)
+			save()
+		}
+	}()
 	var daemon *codexinstalled.ManagedDaemon
 	agents := []string{}
 	var survivor installedRecoveryAgent
@@ -245,6 +197,13 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 			}
 			fixture.ApplyEnv(t.Setenv)
 		}
+		expectedVersion := "0.154.0"
+		if rowIndex == 0 {
+			expectedVersion = "0.151.0"
+		}
+		if fixture.Versions().Managed != expectedVersion {
+			t.Fatal("managed matrix release order is not 0.151.0 then 0.154.0")
+		}
 		daemon, err = fixture.StartManagedRecovery(ctx, isolation)
 		if err != nil {
 			t.Fatal(err)
@@ -257,8 +216,15 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 			if sample == 1 {
 				sampleName = "control"
 			}
+			attempt := &installedRecoveryAttempt{InputIndex: inputIndex, Sample: sampleName, Stage: "waiting-authority"}
+			activeAttempt = attempt
+			activeGeneration = "codex-" + daemon.Proof.Version
+			activeRetired = nil
+			ledger.Rows[rowIndex].Attempts = append(ledger.Rows[rowIndex].Attempts, attempt)
+			save()
 			var agentUID, expectedTurn string
 			if rowIndex == 0 || sample == 1 {
+				attempt.Stage = "submitting-create"
 				ledger.Submissions++
 				save()
 				agentUID = run(input.Binary, "create", "agent", "--provider", "codex", "--project", "uid:"+project, "--window", "uid:"+window, "--name", fmt.Sprintf("matrix-%d-%d", rowIndex, sample), "-o", "uid", "--", input.Inputs[inputIndex])
@@ -266,11 +232,15 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 			} else {
 				agentUID = survivor.Agent
 			}
+			attempt.AgentUID = agentUID
+			attempt.Stage = "waiting-authority"
+			save()
 			var retired *coremetadata.CodexAuthorityRef
 			if sample == 0 && rowIndex > 0 {
 				retired = &previous
+				activeRetired = retired
 			}
-			observed := waitInstalledRecoveryAuthority(t, ctx, agentUID, "codex-"+daemon.Proof.Version, retired)
+			observed := waitInstalledRecoveryAuthority(t, ctx, agentUID, "codex-"+daemon.Proof.Version, retired, tmuxSocket, attempt, save)
 			if observed.Project != project || observed.Window != window {
 				t.Fatal("fixture Agent escaped exact project/window")
 			}
@@ -285,6 +255,8 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 					t.Fatal("server-only restart replaced broker runtime/binding or failed to advance connection epoch")
 				}
 				ledger.Submissions++
+				save()
+				attempt.Stage = "submitting-turn"
 				save()
 				receipt := run(input.Binary, "agent", "turn", "start", "uid:"+agentUID, "--", input.Inputs[inputIndex])
 				for field := range strings.FieldsSeq(receipt) {
@@ -304,9 +276,13 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			attempt.Stage = "waiting-turn"
+			save()
 			turn := waitInstalledRecoveryTurn(t, ctx, client, observed.Thread, expectedTurn)
 			_ = client.Close()
 			ledger.Rows[rowIndex].Turns = append(ledger.Rows[rowIndex].Turns, installedRecoveryTurn{InputIndex: inputIndex, Sample: sampleName, Agent: observed, Turn: turn.TurnID, Status: turn.TurnState})
+			attempt.Stage = "completed"
+			activeAttempt = nil
 			if sample == 0 {
 				survivor = observed
 				previous = observed.Authority
@@ -357,41 +333,25 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	save()
 }
 
-func waitInstalledRecoveryAuthority(t *testing.T, ctx context.Context, agentUID, generation string, retired *coremetadata.CodexAuthorityRef) installedRecoveryAgent {
+func waitInstalledRecoveryAuthority(t *testing.T, ctx context.Context, agentUID, generation string, retired *coremetadata.CodexAuthorityRef, socket string, attempt *installedRecoveryAttempt, save func()) installedRecoveryAgent {
 	t.Helper()
 	deadline, stop := context.WithTimeout(ctx, 90*time.Second)
 	defer stop()
 	for {
-		registry, err := loadResourceRegistry()
-		if err == nil {
-			agent, ok := registry.Agent(agentUID)
-			if ok && agent.Status.SessionRef != nil && agent.Status.SessionRef.Codex != nil {
-				ref := agent.Status.SessionRef.Codex
-				pane, exists := registry.Pane(agent.Status.PaneRef)
-				if exists && pane.Status.Activation.Codex != nil && pane.Status.Activation.Codex.Authority != nil {
-					authority := *pane.Status.Activation.Codex.Authority
-					if authority.Valid() && ref.Endpoint != nil && authority.Endpoint().Same(*ref.Endpoint) && authority.EndpointGenerationID == generation && (retired == nil || authority != *retired) {
-						window, exists := registry.Window(agent.Metadata.OwnerUID())
-						if exists {
-							// Registry authority precedes listener and Pane
-							// publication. Prove the exact normal control
-							// consumer and read-only status response as well.
-							control := newAgentCommand()
-							binding, bindErr := control.resolveControlBinding("installed recovery readiness", "uid:"+agentUID)
-							if bindErr == nil && binding.Endpoint == authority.Endpoint() && binding.Identity.Generation == pane.Status.Activation.Generation && binding.Identity.ThreadID == ref.ThreadID {
-								response, callErr := control.callControl(binding, agentControlRequest{Operation: agentControlOpStatus})
-								if callErr == nil && response.OK && (retired == nil || response.Availability.Start) {
-									return installedRecoveryAgent{Project: window.Metadata.OwnerUID(), Window: window.Metadata.UID, Agent: agent.Metadata.UID, Pane: pane.Metadata.UID, Runtime: pane.Status.Activation.RuntimeID, Activation: pane.Status.Activation.Generation, Thread: ref.ThreadID, Session: ref.SessionID, Authority: authority, ControlEpoch: binding.Epoch}
-								}
-							}
-						}
-					}
-				}
-			}
+		probeCtx, cancel := context.WithTimeout(deadline, 3*time.Second)
+		observed := observeInstalledRecovery(probeCtx, agentUID, generation, retired, socket)
+		cancel()
+		if attempt.observe(observed) {
+			save()
+		}
+		if observed.Stage == "ready" {
+			return observed.Identity
 		}
 		select {
 		case <-deadline.Done():
-			t.Fatal("exact Agent authority did not recover")
+			attempt.Stage = "authority-timeout"
+			save()
+			t.Fatalf("exact Agent authority did not recover (stage=%s, reason=%s)", observed.Stage, observed.Error)
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
@@ -417,4 +377,104 @@ func waitInstalledRecoveryTurn(t *testing.T, ctx context.Context, client *codexa
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func newInstalledRecoveryFixture(t *testing.T, root string) *codexinstalled.Fixture {
+	t.Helper()
+	fixture, err := codexinstalled.NewClean(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, leaf := range map[string]string{"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_STATE_HOME": "state", "XDG_CACHE_HOME": "cache", "XDG_DATA_HOME": "data", "XDG_RUNTIME_DIR": "runtime", "TMUX_TMPDIR": "tmux"} {
+		path := filepath.Join(root, leaf)
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(key, path)
+	}
+	t.Setenv("SHELL", "/bin/sh")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("PROJMUX_PROJDIR", fixture.Workspace)
+	return fixture
+}
+
+func installedRecoveryCommand(t *testing.T, ctx context.Context) func(string, ...string) string {
+	return func(executable string, args ...string) string {
+		t.Helper()
+		callCtx, stop := context.WithTimeout(ctx, 90*time.Second)
+		defer stop()
+		command := exec.CommandContext(callCtx, executable, args...) // #nosec G204 -- explicit installed fixture executable and argv.
+		command.Env = withoutInheritedTmuxEnvironment(os.Environ())
+		output, err := command.Output()
+		if err != nil {
+			t.Fatalf("fixture command %s %s failed: %v (payload/output omitted)", filepath.Base(executable), args[0], err)
+		}
+		return strings.TrimSpace(string(output))
+	}
+}
+
+type installedRecoveryRuntime struct {
+	Name    string `json:"name"`
+	Socket  string `json:"socket"`
+	Project string `json:"project"`
+	Window  string `json:"window"`
+}
+
+func setupInstalledRecoveryRuntime(t *testing.T, fixture *codexinstalled.Fixture, binary string, run func(string, ...string) string) installedRecoveryRuntime {
+	t.Helper()
+	socketName := "cp1-" + filepath.Base(fixture.Root)
+	run("tmux", "-L", socketName, "-f", "/dev/null", "new-session", "-d", "-s", "fixture-bootstrap", "-c", fixture.Workspace)
+	tmuxSocket := run("tmux", "-L", socketName, "display-message", "-p", "-F", "#{socket_path}")
+	if !strings.HasPrefix(tmuxSocket, os.Getenv("TMUX_TMPDIR")+string(filepath.Separator)) {
+		t.Fatal("tmux socket escaped fixture")
+	}
+	// This is the exact server this fixture just created and proved private.
+	// Publish its app ownership before config apply validates that contract.
+	run("tmux", "-S", tmuxSocket, "set-option", "-g", tmuxopts.AppGlobal, "1")
+	// Outside-tmux public create discovers -L projmux. This fixture-only alias
+	// reaches the unique real server; its socket_path and logical marker remain
+	// the unique route and all cleanup names that exact physical socket.
+	if err := os.Symlink(tmuxSocket, filepath.Join(filepath.Dir(tmuxSocket), "projmux")); err != nil {
+		t.Fatal(err)
+	}
+	generated := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "projmux", "tmux.conf")
+	run(binary, "config", "apply", "--config", generated, "--socket", socketName)
+	project := run(binary, "create", "project", "--root", fixture.Workspace, "--name", "recovery-matrix", "-o", "uid")
+	window := run(binary, "get", "windows", "--project", "uid:"+project, "-o", "uid")
+	run(binary, "reconcile", "resources", "--socket", socketName, "--materialize-project", "uid:"+project, "-o", "json")
+	return installedRecoveryRuntime{Name: socketName, Socket: tmuxSocket, Project: project, Window: window}
+}
+
+func verifyInstalledRecoveryBinary(t *testing.T, binary, head, expectedSHA string) string {
+	t.Helper()
+	digest, err := codexinstalled.FileSHA256(binary)
+	if err != nil || digest != expectedSHA {
+		t.Fatal("candidate binary hash mismatch")
+	}
+	build, err := buildinfo.ReadFile(binary)
+	if err != nil {
+		t.Fatal("candidate build identity unavailable")
+	}
+	revision, modified := "", ""
+	for _, setting := range build.Settings {
+		if setting.Key == "vcs.revision" {
+			revision = setting.Value
+		}
+		if setting.Key == "vcs.modified" {
+			modified = setting.Value
+		}
+	}
+	if revision != head || modified != "false" {
+		t.Fatal("candidate binary is not the exact clean source head")
+	}
+
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	testDigest, err := codexinstalled.FileSHA256(testBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testDigest
 }
