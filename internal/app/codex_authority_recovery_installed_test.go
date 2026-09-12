@@ -373,10 +373,17 @@ func waitInstalledRecoveryAuthority(t *testing.T, ctx context.Context, agentUID,
 	t.Helper()
 	deadline, stop := context.WithTimeout(ctx, 90*time.Second)
 	defer stop()
+	var admission installedRecoveryAdmission
 	for {
 		probeCtx, cancel := context.WithTimeout(deadline, 3*time.Second)
 		observed := observeInstalledRecovery(probeCtx, agentUID, generation, retired, socket)
 		cancel()
+		if retired != nil {
+			// A recovered observer just performed an owned read. Wait for that
+			// existing admission interval before this fixture's first input,
+			// continuously rechecking the same exact authority/control tuple.
+			observed = admission.observe(time.Now(), observed)
+		}
 		if attempt.observe(observed) {
 			save()
 		}

@@ -388,7 +388,7 @@ func TestExactProjectCreateWindowIsByteEquivalentAcrossAmbientPanes(t *testing.T
 		if err != nil || stderr != "" {
 			t.Fatalf("ambient Pane %q: stdout=%q stderr=%q err=%v", ambient, stdout, stderr, err)
 		}
-		calls, err := json.Marshal(tmux.calls)
+		calls, err := marshalExactCreateComparisonCalls(tmux.calls)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -438,7 +438,7 @@ func TestExactProjectWindowAgentCreateIsByteEquivalentAcrossAmbientPaneContainme
 		if err != nil || stderr != "" {
 			t.Fatalf("private anchor %q: stdout=%q stderr=%q err=%v", privateAnchor, stdout, stderr, err)
 		}
-		calls, err := json.Marshal(tmux.calls)
+		calls, err := marshalExactCreateComparisonCalls(tmux.calls)
 		if err != nil {
 			t.Fatal(err)
 		}
