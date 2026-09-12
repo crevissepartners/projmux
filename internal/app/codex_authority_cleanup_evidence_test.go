@@ -68,7 +68,7 @@ func observeInstalledCleanupFailure(stage string, err error, readStat func(int) 
 		switch {
 		case observation.Operation == "list-proc" && observation.PID == 0 && observation.Leaf == "":
 			out.Operation = observation.Operation
-		case observation.PID > 0 && ((observation.Operation == "read-environment" && observation.Leaf == "environ") || (observation.Operation == "read-birth" && observation.Leaf == "stat") || (observation.Operation == "read-executable" && observation.Leaf == "exe")):
+		case observation.PID > 0 && ((observation.Operation == "read-environment" && observation.Leaf == "environ") || ((observation.Operation == "read-birth" || observation.Operation == "read-residual") && observation.Leaf == "stat") || (observation.Operation == "read-executable" && observation.Leaf == "exe")):
 			out.Operation, out.PID, out.Leaf = observation.Operation, observation.PID, observation.Leaf
 		}
 	} else if errors.As(err, &pathError) {
@@ -132,4 +132,29 @@ func projectInstalledCleanupStat(pid int, raw []byte, err error) *installedClean
 func inspectInstalledCleanupProcesses(inspect func() ([]codexinstalled.OwnedProcess, error), readStat func(int) ([]byte, error)) ([]codexinstalled.OwnedProcess, *installedCleanupFailure, error) {
 	processes, err := inspect()
 	return processes, observeInstalledCleanupFailure("owned-processes", err, readStat), err
+}
+
+// Retain residual observations even when normal reaping later empties the
+// inventory. The bound refuses overflow instead of silently discarding evidence.
+func retainInstalledCleanupResiduals(history *[]codexinstalled.OwnedProcess, processes []codexinstalled.OwnedProcess) error {
+	for _, process := range processes {
+		if process.Kind != codexinstalled.ProcessUnreapedResidual {
+			continue
+		}
+		found := false
+		for _, previous := range *history {
+			if previous.PID == process.PID && previous.Birth == process.Birth {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		if len(*history) == 64 {
+			return errors.New("cleanup residual evidence exceeds bound")
+		}
+		*history = append(*history, codexinstalled.OwnedProcess{Kind: process.Kind, PID: process.PID, Birth: process.Birth, State: process.State, ParentPID: process.ParentPID})
+	}
+	return nil
 }

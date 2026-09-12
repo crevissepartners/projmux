@@ -63,17 +63,19 @@ type installedRecoveryRow struct {
 }
 
 type installedRecoveryLedger struct {
-	Result           string                   `json:"result"`
-	SourceHead       string                   `json:"sourceHead"`
-	SourceTree       string                   `json:"sourceTree"`
-	BinarySHA256     string                   `json:"binarySHA256"`
-	TestBinarySHA256 string                   `json:"testBinarySHA256"`
-	Submissions      int                      `json:"submissions"`
-	Rows             []installedRecoveryRow   `json:"rows"`
-	Cleanup          bool                     `json:"cleanup"`
-	AuthRemoved      bool                     `json:"authRemoved"`
-	TmuxSocket       string                   `json:"tmuxSocket"`
-	CleanupFailure   *installedCleanupFailure `json:"cleanupFailure,omitempty"`
+	Result            string                        `json:"result"`
+	SourceHead        string                        `json:"sourceHead"`
+	SourceTree        string                        `json:"sourceTree"`
+	BinarySHA256      string                        `json:"binarySHA256"`
+	TestBinarySHA256  string                        `json:"testBinarySHA256"`
+	Submissions       int                           `json:"submissions"`
+	Rows              []installedRecoveryRow        `json:"rows"`
+	Cleanup           bool                          `json:"cleanup"`
+	AuthRemoved       bool                          `json:"authRemoved"`
+	TmuxSocket        string                        `json:"tmuxSocket"`
+	CleanupFailure    *installedCleanupFailure      `json:"cleanupFailure,omitempty"`
+	ProcessesAfter    []codexinstalled.OwnedProcess `json:"processesAfter"`
+	UnreapedResiduals []codexinstalled.OwnedProcess `json:"unreapedResiduals,omitempty"`
 }
 
 // TestInstalledManagedCodexAuthorityRecoveryMatrix is opt-in, model-dependent
@@ -325,6 +327,11 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 	defer stop()
 	for {
 		processes, failure, err := inspectInstalledCleanupProcesses(fixture.OwnedProcesses, readInstalledCleanupStat)
+		ledger.ProcessesAfter = processes
+		if err == nil {
+			err = retainInstalledCleanupResiduals(&ledger.UnreapedResiduals, processes)
+			failure = observeInstalledCleanupFailure("owned-processes", err, nil)
+		}
 		if err != nil {
 			ledger.CleanupFailure = failure
 			save()

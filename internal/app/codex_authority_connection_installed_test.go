@@ -52,22 +52,23 @@ type installedConnectionRow struct {
 }
 
 type installedConnectionLedger struct {
-	Result           string                        `json:"result"`
-	SourceHead       string                        `json:"sourceHead"`
-	SourceTree       string                        `json:"sourceTree"`
-	BinarySHA256     string                        `json:"binarySHA256"`
-	TestBinarySHA256 string                        `json:"testBinarySHA256"`
-	Runtime          installedRecoveryRuntime      `json:"runtime"`
-	TmuxProcess      codexinstalled.OwnedProcess   `json:"tmuxProcess"`
-	RouteVerified    bool                          `json:"routeVerified"`
-	RegistryVerified bool                          `json:"registryVerified"`
-	Agents           int                           `json:"agents"`
-	Threads          int                           `json:"threads"`
-	ProviderInputs   int                           `json:"providerInputs"`
-	Rows             []installedConnectionRow      `json:"rows"`
-	ProcessesAfter   []codexinstalled.OwnedProcess `json:"processesAfter"`
-	Cleanup          bool                          `json:"cleanup"`
-	CleanupFailure   *installedCleanupFailure      `json:"cleanupFailure,omitempty"`
+	Result            string                        `json:"result"`
+	SourceHead        string                        `json:"sourceHead"`
+	SourceTree        string                        `json:"sourceTree"`
+	BinarySHA256      string                        `json:"binarySHA256"`
+	TestBinarySHA256  string                        `json:"testBinarySHA256"`
+	Runtime           installedRecoveryRuntime      `json:"runtime"`
+	TmuxProcess       codexinstalled.OwnedProcess   `json:"tmuxProcess"`
+	RouteVerified     bool                          `json:"routeVerified"`
+	RegistryVerified  bool                          `json:"registryVerified"`
+	Agents            int                           `json:"agents"`
+	Threads           int                           `json:"threads"`
+	ProviderInputs    int                           `json:"providerInputs"`
+	Rows              []installedConnectionRow      `json:"rows"`
+	ProcessesAfter    []codexinstalled.OwnedProcess `json:"processesAfter"`
+	UnreapedResiduals []codexinstalled.OwnedProcess `json:"unreapedResiduals,omitempty"`
+	Cleanup           bool                          `json:"cleanup"`
+	CleanupFailure    *installedCleanupFailure      `json:"cleanupFailure,omitempty"`
 }
 
 func decodeInstalledConnectionInput(raw []byte) (installedConnectionInput, error) {
@@ -147,7 +148,7 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 		t.Fatal("zero-input process proof unavailable")
 	}
 	for _, process := range processes {
-		if strconv.Itoa(process.PID) == route.authority.ServerPID {
+		if process.Kind == codexinstalled.ProcessOwnedExecutable && strconv.Itoa(process.PID) == route.authority.ServerPID {
 			ledger.TmuxProcess = process
 		}
 	}
@@ -231,6 +232,10 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 	defer cancel()
 	for {
 		ledger.ProcessesAfter, ledger.CleanupFailure, err = inspectInstalledCleanupProcesses(fixture.OwnedProcesses, readInstalledCleanupStat)
+		if err == nil {
+			err = retainInstalledCleanupResiduals(&ledger.UnreapedResiduals, ledger.ProcessesAfter)
+			ledger.CleanupFailure = observeInstalledCleanupFailure("owned-processes", err, nil)
+		}
 		if err != nil {
 			save()
 			t.Fatal("zero-input cleanup process evidence unavailable")

@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -48,6 +48,9 @@ type Fixture struct {
 	strictManaged           bool
 	strictManagedUnresolved bool
 	strictManagedStopped    bool
+	processIsolation        ManagerIsolation
+	processNamespaces       map[string]string
+	processInventory        processInventory
 }
 
 type daemonVersion struct {
@@ -627,6 +630,9 @@ func (fixture *Fixture) Cleanup() error {
 	if fixture.strictManaged && (fixture.strictManagedUnresolved || fixture.managedStarted || fixture.managedPID != 0) {
 		return errors.New("managed recovery cleanup refused: exact official stop is unproved")
 	}
+	if err := fixture.processInventory.requireResolved(); err != nil {
+		return err
+	}
 	var errs []error
 	if fixture.direct != nil {
 		errs = append(errs, fixture.direct.forceCleanup())
@@ -916,6 +922,8 @@ func (fixture *Fixture) StartManagedRecovery(ctx context.Context, isolation Mana
 	}
 	fixture.managedPID = started.PID
 	fixture.managedStarted = true
+	fixture.processIsolation = ManagerIsolation{HostNamespaces: maps.Clone(isolation.HostNamespaces)}
+	fixture.processNamespaces = maps.Clone(namespaces)
 	return &ManagedDaemon{fixture: fixture, isolation: isolation, socketInfo: info, Proof: ManagedDaemonProof{Backend: "pid", Version: status.AppServerVersion, PID: started.PID, Birth: birth, Executable: executable, SHA256: digest, Socket: fixture.SocketPath, Namespaces: namespaces}}, nil
 }
 
@@ -1007,74 +1015,6 @@ func FileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-// OwnedProcess is a content-free process-birth observation in the private PID
-// namespace. It is evidence only and grants no signal authority.
-type OwnedProcess struct {
-	PID        int    `json:"pid"`
-	Birth      string `json:"birth"`
-	Executable string `json:"executable"`
-}
-
-// OwnedProcessObservationError retains only the failing observation boundary.
-// Its cause remains available for errno inspection, but Error never emits a
-// proc path, process contents, environment or arbitrary underlying message.
-// This evidence grants no process ownership or cleanup authority.
-type OwnedProcessObservationError struct {
-	Operation string
-	PID       int
-	Leaf      string
-	cause     error
-}
-
-func (*OwnedProcessObservationError) Error() string     { return "owned process observation failed" }
-func (err *OwnedProcessObservationError) Unwrap() error { return err.cause }
-
-func (fixture *Fixture) OwnedProcesses() ([]OwnedProcess, error) {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil, &OwnedProcessObservationError{Operation: "list-proc", cause: err}
-	}
-	processes := []OwnedProcess{}
-	for _, entry := range entries {
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil || pid == os.Getpid() {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "environ"))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, &OwnedProcessObservationError{Operation: "read-environment", PID: pid, Leaf: "environ", cause: err}
-		}
-		owned := false
-		for value := range strings.SplitSeq(string(raw), "\x00") {
-			if value == "CODEX_HOME="+fixture.CodexHome {
-				owned = true
-			}
-		}
-		if !owned {
-			continue
-		}
-		birth, err := managedProcessBirth(pid)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, &OwnedProcessObservationError{Operation: "read-birth", PID: pid, Leaf: "stat", cause: err}
-		}
-		executable, err := os.Readlink(filepath.Join("/proc", entry.Name(), "exe"))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, &OwnedProcessObservationError{Operation: "read-executable", PID: pid, Leaf: "exe", cause: err}
-		}
-		processes = append(processes, OwnedProcess{PID: pid, Birth: birth, Executable: executable})
-	}
-	return processes, nil
 }
 
 // Only the exact public version ENOENT result is a cold-start observation.

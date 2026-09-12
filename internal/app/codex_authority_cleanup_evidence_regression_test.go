@@ -24,6 +24,7 @@ func TestCleanupEvidenceRetainsErrorsWithoutRetryOrFalseSuccess(t *testing.T) {
 		&os.PathError{Op: "readlink", Path: "/proc/321/exe", Err: syscall.EPERM},
 		&os.PathError{Op: "open", Path: "/proc/321/stat", Err: syscall.ENOENT},
 		&codexinstalled.OwnedProcessObservationError{Operation: "read-birth", PID: 321, Leaf: "stat"},
+		&codexinstalled.OwnedProcessObservationError{Operation: "read-residual", PID: 321, Leaf: "stat"},
 	} {
 		for _, vanished := range []bool{false, true} {
 			inspections, reads := 0, 0
@@ -61,6 +62,42 @@ func TestCleanupEvidenceRetainsErrorsWithoutRetryOrFalseSuccess(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestCleanupResidualHistoryRetainsUnreapedEvidenceAfterNormalDrain(t *testing.T) {
+	residual := codexinstalled.OwnedProcess{Kind: codexinstalled.ProcessUnreapedResidual, PID: 7861, Birth: "2768830", State: "Z", ParentPID: 7860}
+	var history []codexinstalled.OwnedProcess
+	for range 3 {
+		processes, failure, err := inspectInstalledCleanupProcesses(func() ([]codexinstalled.OwnedProcess, error) { return []codexinstalled.OwnedProcess{residual}, nil }, func(int) ([]byte, error) {
+			t.Fatal("residual inventory must not trigger failure diagnostics")
+			return nil, nil
+		})
+		if err != nil || failure != nil || len(processes) == 0 {
+			t.Fatal("unreaped process became empty inventory")
+		}
+		if err := retainInstalledCleanupResiduals(&history, processes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := retainInstalledCleanupResiduals(&history, nil); err != nil || len(history) != 1 {
+		t.Fatal("later empty inventory lost or duplicated residual history")
+	}
+	for _, ledger := range []any{installedConnectionLedger{Result: "PASS", Cleanup: true, UnreapedResiduals: history}, installedRecoveryLedger{Result: "PASS", Cleanup: true, UnreapedResiduals: history}} {
+		raw, err := json.Marshal(ledger)
+		if err != nil || !strings.Contains(string(raw), `"unreaped-residual"`) || !strings.Contains(string(raw), `"2768830"`) || strings.Contains(string(raw), `"executable"`) {
+			t.Fatalf("drain evidence lost residual distinction: %s", raw)
+		}
+	}
+	for pid := 1; pid <= 63; pid++ {
+		residual.PID = pid
+		if err := retainInstalledCleanupResiduals(&history, []codexinstalled.OwnedProcess{residual}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	residual.PID = 9999
+	if err := retainInstalledCleanupResiduals(&history, []codexinstalled.OwnedProcess{residual}); err == nil || len(history) != 64 {
+		t.Fatal("evidence overflow silently discarded a residual")
 	}
 }
 
