@@ -24,6 +24,7 @@ import (
 // types which can contain prompts, progress text, approvals and raw errors.
 type installedRecoveryAttempt struct {
 	InputIndex     int                              `json:"inputIndex"`
+	ExpectedTurn   string                           `json:"expectedTurn,omitempty"`
 	Sample         string                           `json:"sample"`
 	Stage          string                           `json:"stage"`
 	AgentUID       string                           `json:"agentUID,omitempty"`

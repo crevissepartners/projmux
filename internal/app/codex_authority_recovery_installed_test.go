@@ -278,14 +278,14 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for field := range strings.FieldsSeq(receipt) {
-					if after, ok := strings.CutPrefix(field, "turn="); ok {
-						expectedTurn = after
-					}
+				expectedTurn, err = parseInstalledRecoveryTurnReceipt(receipt, observed.Thread, (&agentCommand{}).agentActionText(agentActionSendTurn))
+				if err != nil {
+					attempt.Stage = "receipt-refused"
+					save()
+					t.Fatal(err)
 				}
-				if expectedTurn == "" {
-					t.Fatal("exact control returned no actual turn ID")
-				}
+				attempt.ExpectedTurn = expectedTurn
+				save()
 			}
 			route, err := (defaultCodexNativeThreadController{}).Resolve(ctx, observed.Authority.Endpoint())
 			if err != nil {
@@ -452,6 +452,10 @@ func installedRecoveryCommand(t *testing.T, ctx context.Context, onFailure func(
 				onFailure(failure)
 			}
 			t.Fatalf("fixture command failed: operation=%s exit=%d stage=%s code=%s outcome=unknown (output omitted)", failure.Operation, failure.ExitCode, failure.Stage, failure.Code)
+		}
+		if installedCommandOperation(args) == "agent-turn-start" {
+			// The exact receipt parser must see extra whitespace/output too.
+			return string(output)
 		}
 		return strings.TrimSpace(string(output))
 	}
