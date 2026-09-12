@@ -732,7 +732,20 @@ func (c *switchCommand) materializeProjectTopology(ctx context.Context, request 
 			return nil
 		}
 	}
-	return c.ensureProjectSession(ctx, request, opened)
+	// A zero-Window Continue allocates its canonical descendants before this
+	// call, then takes the first-session transaction rather than topology replay.
+	// That transaction still owns a committed recovery result, with no Agents.
+	started := time.Now()
+	err := c.ensureProjectSession(ctx, request, opened)
+	if request.AgentReplayAuthority != topologyAgentReplaySnapshot {
+		result := diagnostics.LifecycleSuccess
+		if err != nil {
+			result = diagnostics.LifecycleError
+		}
+		c.diagnostics.Topology().Record(started, result, diagnostics.TopologyCounts{})
+		c.reportProjectStartup(topologyRecoverySummary(settingsLocale(), result, diagnostics.TopologyCounts{}))
+	}
+	return err
 }
 
 // registryProjectTopologyMaterializer runs closed-Project activation through the

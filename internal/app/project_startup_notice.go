@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/i18n"
 	"io"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/i18n"
 )
 
 // projectStartupNoticeMax bounds one `display-message` payload, in bytes.

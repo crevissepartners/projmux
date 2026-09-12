@@ -400,3 +400,132 @@ func TestTopologyRecoveryMixedReasonsReachJournal(t *testing.T) {
 		t.Fatalf("reasons=%+v", events)
 	}
 }
+
+func TestTopologyRecoveryCanonicalContinueReportsAfterCommit(t *testing.T) {
+	for _, failCommit := range []bool{false, true} {
+		for _, bootstrapped := range []bool{false, true} {
+			t.Run(fmt.Sprintf("commit-failure=%t/bootstrap=%t", failCommit, bootstrapped), func(t *testing.T) {
+				activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
+				for _, window := range store.registry.WindowsOf("prj-beta") {
+					if err := store.mutator().DeleteWindow(&store.registry, window.Metadata.UID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				starter := &registryProjectFreshStarter{resources: store.store()}
+				opened, err := starter.ContinueProject(context.Background(), root, "beta")
+				if err != nil {
+					t.Fatal(err)
+				}
+				opened.bootstrapped = bootstrapped
+				before, writesBefore := store.snapshot(), store.writes
+				recorder, cli, journal := topologyJournalFixture(t)
+				canonicalStore := store.store()
+				canonicalUpdate := canonicalStore.update
+				commitErr := errors.New("private canonical commit failure")
+				canonicalStore.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+					return canonicalUpdate(func(working *coremetadata.Registry) error {
+						if err := fn(working); err != nil {
+							return err
+						}
+						// Runtime materialization completed, but Registry commit is
+						// still pending. A recovery success here would be premature.
+						result, readErr := journal.ReadOnly()
+						if readErr != nil || len(result.Events) != 0 {
+							t.Fatalf("precommit journal=%+v err=%v", result, readErr)
+						}
+						if failCommit {
+							return commitErr
+						}
+						return nil
+					})
+				}
+				// The canonical session client uses literal field separators;
+				// the app fake renders the escaped separator used by its mirror.
+				// Adapt only that transport spelling, retaining the real fake
+				// session/env/owner inventory for canonical commit and rollback.
+				canonicalRunner := lifecycleTmuxRunnerFunc(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+					adapted := append([]string(nil), args...)
+					literal := false
+					for i, arg := range adapted {
+						if strings.Contains(arg, "\x1f") {
+							literal = true
+							adapted[i] = strings.ReplaceAll(arg, "\x1f", tmuxRowSepFormat)
+						}
+					}
+					out, err := activation.runner.Run(ctx, name, adapted...)
+					if literal {
+						out = bytes.ReplaceAll(out, []byte(tmuxRowSepFormat), []byte("\x1f"))
+					}
+					return out, err
+				})
+				reporter := &recordingProjectStartupReporter{}
+				command := &switchCommand{
+					diagnostics: recorder, tmuxRunner: server, startupNotices: reporter,
+					// false/nil is the no-topology fallback; bootstrapped skips
+					// the topology seam entirely, as actual zero-Window Continue does.
+					projectTopology: &fakeProjectTopologyMaterializer{},
+					projectSessionPlan: func(ctx context.Context, request projectSessionRequest) error {
+						return materializeProjectSessionCanonical(ctx, canonicalStore, canonicalRunner,
+							runtimeMutationRoute{target: activation.target, socketName: defaultAppSocket}, recorder,
+							request.SessionName, request.CWD, request.Opened.project)
+					},
+				}
+				err = command.materializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta"}, opened)
+				result := "success"
+				if failCommit {
+					result = "error"
+				}
+				if (err != nil) != failCommit {
+					t.Fatalf("canonical result=%v failCommit=%t", err, failCommit)
+				}
+				if failCommit && !errors.Is(err, commitErr) {
+					t.Fatalf("did not reach injected commit failure: %v", err)
+				}
+				assertTopologyEvents(t, readTopologyEvents(t, cli), result, 0, 0)
+				if len(reporter.messages) != 1 || reporter.messages[0] != topologyRecoverySummary(i18n.FallbackLocale, diagnostics.LifecycleResult(result), diagnostics.TopologyCounts{}) {
+					t.Fatalf("reports=%v", reporter.messages)
+				}
+				if failCommit {
+					if store.snapshot() != before || store.writes != writesBefore || server.session("beta") != nil {
+						t.Fatal("failed canonical commit retained Registry/runtime changes")
+					}
+				} else if store.writes != writesBefore+1 || server.session("beta") == nil {
+					t.Fatal("canonical success did not commit materialization")
+				}
+			})
+		}
+	}
+}
+
+func TestTopologyRecoverySwitchDoesNotDuplicateMaterializerOrSnapshot(t *testing.T) {
+	for _, snapshot := range []bool{false, true} {
+		activation, _, _, root, _ := newProjectStartupTopologyFixture(t)
+		recorder, cli, _ := topologyJournalFixture(t)
+		activation.diagnostics = recorder
+		reporter := &recordingProjectStartupReporter{}
+		command := &switchCommand{diagnostics: recorder, projectTopology: activation, startupNotices: reporter,
+			projectSessionPlan: func(context.Context, projectSessionRequest) error {
+				t.Fatal("materialized topology reached fallback")
+				return nil
+			},
+		}
+		request := projectTopologyMaterializeRequest{Root: root, SessionName: "beta"}
+		if snapshot {
+			request.AgentReplayAuthority = topologyAgentReplaySnapshot
+		}
+		if err := command.materializeProjectTopology(context.Background(), request, openedProjectBootstrap{}); err != nil {
+			t.Fatal(err)
+		}
+		events := readTopologyEvents(t, cli)
+		if snapshot {
+			if len(events) != 0 {
+				t.Fatalf("snapshot wrote topology events: %+v", events)
+			}
+		} else {
+			assertTopologyEvents(t, events, "success", 0, 0)
+		}
+		if len(reporter.messages) != 0 {
+			t.Fatalf("materializer duplicated fallback summary: %v", reporter.messages)
+		}
+	}
+}
