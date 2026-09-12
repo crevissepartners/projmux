@@ -38,6 +38,13 @@ func run(args []string) error {
 		return withTestRoot(args[1], func(root *os.Root) error {
 			return rewrite(root, args[2], args[3], args[4], args[5], args[0] == "rewrite-interrupted")
 		})
+	case "continue-state":
+		if len(args) != 8 {
+			return errors.New("continue-state requires test root, relative source/destination, agent uid, classification, phase, and keep/missing ref")
+		}
+		return withTestRoot(args[1], func(root *os.Root) error {
+			return continueState(root, args[2], args[3], args[4], args[5], args[6], args[7])
+		})
 	case "inspect":
 		if len(args) != 5 {
 			return errors.New("inspect requires test root, relative registry path, window uid, and agent uid")
@@ -205,4 +212,84 @@ func inspect(root *os.Root, name, windowUID, agentUID string) error {
 		defaultShell.Spec.Role,
 	)
 	return err
+}
+
+// continueState changes only deterministic test input after its contained
+// runtime has stopped. Keep the valid shell-anchor graph and use the existing
+// termination producer/projector, so abnormal exercises an actual Failed row.
+func continueState(root *os.Root, source, destination, agentUID, classification, phase, refMode string) error {
+	registry, err := load(root, source)
+	if err != nil {
+		return err
+	}
+	agent, ok := registry.Agent(agentUID)
+	if !ok {
+		return fmt.Errorf("agent %q does not exist", agentUID)
+	}
+	pane, ok := registry.Pane(agent.Status.PaneRef)
+	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerRef.UID != agentUID || pane.Spec.Role != coremetadata.PaneRoleAgent || pane.Status.Activation.AgentUID != agentUID || pane.Status.Activation.Generation == "" {
+		return fmt.Errorf("agent %q lacks an exact managed activation", agentUID)
+	}
+	agent.Status.LastTermination, pane.Status.LastTermination = nil, nil
+	observedAt := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	mutator := coremetadata.Mutator{Now: func() time.Time { return observedAt }}
+	receipt := coremetadata.TerminationEvidence{ObservedAt: observedAt, PaneUID: pane.Metadata.UID, AgentUID: agentUID, Generation: pane.Status.Activation.Generation, Classification: coremetadata.TerminationClassification(classification)}
+	switch classification {
+	case "interrupted", "intentional":
+		receipt.Source = coremetadata.TerminationSourceControlAction
+		receipt.OperationID = "e2e-continue-control"
+	case "normal", "abnormal":
+		receipt.Source = coremetadata.TerminationSourceSupervisor
+		code := 0
+		if classification == "abnormal" {
+			code = 42
+		}
+		receipt.ExitCode = &code
+	case "killed":
+		receipt.Source = coremetadata.TerminationSourceSupervisor
+		receipt.Signal = "HUP"
+	case "unknown", "none":
+		receipt.Source = coremetadata.TerminationSourceReconcile
+		receipt.Classification = coremetadata.TerminationUnknown
+	default:
+		return fmt.Errorf("unsupported fixture classification %q", classification)
+	}
+	if outcome, err := mutator.RecordTermination(&registry, receipt); err != nil || !outcome.Applied {
+		return fmt.Errorf("fixture receipt: %+v: %v", outcome, err)
+	}
+	if _, err := mutator.ProjectTermination(&registry, coremetadata.TerminationProjectionInput{PaneUID: pane.Metadata.UID, Generation: receipt.Generation, ObservedAt: observedAt}); err != nil {
+		return err
+	}
+	agent, _ = registry.Agent(agentUID)
+	pane, _ = registry.Pane(receipt.PaneUID)
+	if classification == "abnormal" && agent.Status.Phase != coremetadata.PhaseFailed {
+		return errors.New("abnormal fixture did not project to Failed")
+	}
+	switch coremetadata.AgentPhase(phase) {
+	case coremetadata.PhaseRunning:
+		agent.Status.PaneRef = pane.Metadata.UID
+	case coremetadata.PhaseOffline, coremetadata.PhaseFailed:
+		agent.Status.PaneRef = ""
+	default:
+		return fmt.Errorf("unsupported fixture phase %q", phase)
+	}
+	agent.Status.Phase = coremetadata.AgentPhase(phase)
+	if classification == "none" {
+		agent.Status.LastTermination, pane.Status.LastTermination = nil, nil
+	}
+	switch refMode {
+	case "keep":
+	case "missing":
+		agent.Status.SessionRef = nil
+	default:
+		return fmt.Errorf("unsupported ref mode %q", refMode)
+	}
+	if err := registry.Validate(); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(registry, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeAtomic(root, destination, append(raw, '\n'))
 }

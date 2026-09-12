@@ -65,7 +65,7 @@ type registryTopologyAgentPlan struct {
 
 // topologyAgentReplayAuthority names why a stored Agent is being considered
 // for automatic materialization. Ordinary Project Continue and explicit
-// reconcile use interruption evidence as their sole authority. Snapshot restore
+// reconcile resume retained conversations after unplanned stops. Snapshot restore
 // is an explicit, separate replay authority and keeps the pre-existing snapshot
 // recipe behavior.
 type topologyAgentReplayAuthority uint8
@@ -75,63 +75,105 @@ const (
 	topologyAgentReplaySnapshot
 )
 
-// decideTopologyAgentContinueEligibility is the pure retained-Project Continue
-// gate. A phase is not launch authority by itself: only the exact
-// current-generation control-action/interrupted receipt Phase 0 committed on
-// both the Agent and its retained managed Pane may start the Agent again. The
-// Running state is admitted only before the runtime-absence projection clears
-// paneRef; Offline is its projected form.
+// decideTopologyAgentContinueEligibility admits only a current managed activation
+// after an unplanned stop. Runtime liveness and foreign UID claims are checked
+// separately by the topology observer and owner guard, including under the lock.
+// A missing receipt is distinct from a malformed one; it still needs an exact
+// retained activation, never a phase or recycled runtime handle alone.
 func decideTopologyAgentContinueEligibility(registry coremetadata.Registry, agent coremetadata.Agent) (bool, string) {
-	receipt := agent.Status.LastTermination
-	if receipt == nil || receipt.IsZero() {
-		return false, "no termination evidence authorizes automatic Continue replay"
-	}
-	if !coremetadata.ValidTerminationSource(receipt.Source) ||
-		!coremetadata.ValidTerminationClassification(receipt.Classification) {
-		return false, fmt.Sprintf("termination evidence has unsupported source/classification %q/%q",
-			receipt.Source, receipt.Classification)
-	}
-	if receipt.Source != coremetadata.TerminationSourceControlAction ||
-		receipt.Classification != coremetadata.TerminationInterrupted {
-		return false, fmt.Sprintf("termination evidence %s/%s is not exact control-action/interrupted Continue authority",
-			receipt.Source, receipt.Classification)
-	}
-	if strings.TrimSpace(receipt.AgentUID) != agent.Metadata.UID ||
-		strings.TrimSpace(receipt.PaneUID) == "" || strings.TrimSpace(receipt.Generation) == "" ||
-		strings.TrimSpace(receipt.OperationID) == "" || receipt.ObservedAt.IsZero() ||
-		receipt.ExitCode != nil || strings.TrimSpace(receipt.Signal) != "" {
-		return false, "control-action/interrupted evidence lacks the exact Agent, Pane, generation, operation, or intent-only shape"
-	}
-	if agent.Status.Phase != coremetadata.PhaseRunning && agent.Status.Phase != coremetadata.PhaseOffline {
-		return false, "phase " + string(agent.Status.Phase) + " is neither the pre-projection Running nor projected Offline phase allowed for interrupted Continue replay"
-	}
 	switch agent.Status.Phase {
 	case coremetadata.PhaseRunning:
-		if strings.TrimSpace(agent.Status.PaneRef) != receipt.PaneUID {
-			return false, "the pre-projection Running Agent no longer binds the interrupted Pane"
+		if strings.TrimSpace(agent.Status.PaneRef) == "" {
+			return false, "the pre-projection Running Agent has no exact paneRef"
 		}
-	case coremetadata.PhaseOffline:
-		if strings.TrimSpace(agent.Status.PaneRef) != "" {
-			return false, "the projected Offline Agent still records a current paneRef"
+	case coremetadata.PhaseOffline, coremetadata.PhaseFailed:
+		if agent.Status.PaneRef != "" {
+			return false, "the projected " + string(agent.Status.Phase) + " Agent still records a current paneRef"
 		}
+	default:
+		return false, "phase " + string(agent.Status.Phase) + " is not a retained Running, Offline, or Failed activation"
 	}
-	pane, ok := registry.Pane(receipt.PaneUID)
+
+	receipt := agent.Status.LastTermination
+	paneUID := agent.Status.PaneRef
+	if receipt != nil {
+		if reason := topologyContinueTerminationReason(*receipt); reason != "" {
+			return false, reason
+		}
+		if receipt.AgentUID != agent.Metadata.UID || strings.TrimSpace(receipt.PaneUID) == "" ||
+			strings.TrimSpace(receipt.Generation) == "" || receipt.ObservedAt.IsZero() {
+			return false, "termination evidence lacks the exact Agent, Pane, generation, or observation"
+		}
+		if agent.Status.Phase == coremetadata.PhaseRunning && paneUID != receipt.PaneUID {
+			return false, "the pre-projection Running Agent no longer binds the termination evidence Pane"
+		}
+		paneUID = receipt.PaneUID
+	} else if paneUID == "" {
+		// Released Agents have no paneRef. Require one retained owned Pane, not
+		// the newest timestamp or the first pane in Registry/runtime order.
+		panes := registry.PanesOf(agent.Metadata.UID)
+		if len(panes) != 1 {
+			return false, "no termination evidence and no unique retained managed Pane activation"
+		}
+		paneUID = panes[0].Metadata.UID
+	}
+	pane, ok := registry.Pane(paneUID)
 	if !ok {
-		return false, "termination evidence names retained Pane " + receipt.PaneUID + " which is not in the Registry"
+		return false, "retained Pane " + paneUID + " is not in the Registry"
 	}
 	if pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
 		pane.Metadata.OwnerRef.UID != agent.Metadata.UID || pane.Spec.Role != coremetadata.PaneRoleAgent {
-		return false, "termination evidence Pane is not the Agent's retained managed Pane"
+		return false, "retained Pane is not the Agent's managed Pane"
 	}
 	activation := pane.Status.Activation
-	if strings.TrimSpace(activation.Generation) == "" || activation.Generation != receipt.Generation ||
-		activation.AgentUID != agent.Metadata.UID {
+	if strings.TrimSpace(activation.Generation) == "" || activation.AgentUID != agent.Metadata.UID ||
+		strings.TrimSpace(activation.OperationID) == "" || activation.StartedAt.IsZero() ||
+		(receipt != nil && activation.Generation != receipt.Generation) {
 		return false, "termination evidence is not for the retained Pane's current Agent activation generation"
 	}
 	if !sameTopologyTerminationEvidence(pane.Status.LastTermination, receipt) {
 		return false, "Agent and retained Pane do not carry the same exact termination evidence"
 	}
 	return true, ""
+}
+
+// topologyContinueTerminationReason validates the consumer's evidence boundary
+// without changing receipt production or sticky intent. Reconcile has no wait
+// status or operation receipt; supervisors carry either an exit or a signal.
+func topologyContinueTerminationReason(receipt coremetadata.TerminationEvidence) string {
+	pairing := false
+	switch receipt.Source {
+	case coremetadata.TerminationSourceControlAction:
+		pairing = receipt.Classification == coremetadata.TerminationInterrupted || receipt.Classification == coremetadata.TerminationIntentional
+	case coremetadata.TerminationSourceSupervisor:
+		pairing = receipt.Classification == coremetadata.TerminationNormal || receipt.Classification == coremetadata.TerminationKilled || receipt.Classification == coremetadata.TerminationAbnormal
+	case coremetadata.TerminationSourceReconcile:
+		pairing = receipt.Classification == coremetadata.TerminationUnknown
+	}
+	if !pairing {
+		return fmt.Sprintf("termination evidence has unsupported source/classification %q/%q", receipt.Source, receipt.Classification)
+	}
+	if receipt.Classification == coremetadata.TerminationIntentional || receipt.Classification == coremetadata.TerminationNormal {
+		return fmt.Sprintf("termination evidence %s/%s excludes automatic Continue replay", receipt.Source, receipt.Classification)
+	}
+	validShape := receipt.ExitCode == nil && receipt.Signal == ""
+	switch receipt.Source {
+	case coremetadata.TerminationSourceControlAction:
+		validShape = validShape && strings.TrimSpace(receipt.OperationID) != ""
+	case coremetadata.TerminationSourceSupervisor:
+		signal := strings.TrimSpace(receipt.Signal)
+		validShape = (receipt.ExitCode != nil && signal == "") || (receipt.ExitCode == nil && signal != "")
+		code := 0
+		if receipt.ExitCode != nil {
+			code = *receipt.ExitCode
+			validShape = validShape && code >= 0
+		}
+		validShape = validShape && coremetadata.ClassifyProcessExit(code, signal) == receipt.Classification
+	}
+	if !validShape {
+		return fmt.Sprintf("termination evidence %s/%s has an invalid intent or wait-status shape", receipt.Source, receipt.Classification)
+	}
+	return ""
 }
 
 func sameTopologyTerminationEvidence(left, right *coremetadata.TerminationEvidence) bool {
@@ -170,9 +212,8 @@ type topologyAgentResumeDecision struct {
 //
 // Every branch that cannot produce a conversation id answers with a reason so
 // the caller's replay authority can apply its own fail-closed rule. An eligible
-// interrupted Agent with no observed conversation can launch fresh; one that
-// records a conversation must resume it exactly. Explicit snapshot restore
-// retains its older recipe fallback.
+// Continue Agent must resume a recorded conversation exactly. Explicit snapshot
+// restore retains its older recipe fallback.
 func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDecision {
 	declared := strings.TrimSpace(agent.Spec.Provider)
 	ref := agent.Status.SessionRef
@@ -295,14 +336,27 @@ func planTopologyAgentReplay(
 		return registryTopologyAgentPlan{}, false
 	}
 	decision := decideTopologyAgentResume(agent)
-	recordedConversation := ""
-	if agent.Status.SessionRef != nil {
-		recordedConversation = strings.TrimSpace(agent.Status.SessionRef.ConversationID())
-	}
-	if authority != topologyAgentReplaySnapshot && recordedConversation != "" && decision.conversationID == "" {
-		plan.noteAgent(label, fmt.Sprintf("recorded conversation %s cannot be resumed exactly: %s",
-			recordedConversation, decision.reason))
-		return registryTopologyAgentPlan{}, false
+	if authority != topologyAgentReplaySnapshot {
+		if decision.conversationID == "" {
+			plan.noteAgent(label, "no exact conversation can be resumed: "+decision.reason)
+			return registryTopologyAgentPlan{}, false
+		}
+		// ConversationID selects the populated union member, so check that the
+		// member really belongs to the discriminator before passing it onward.
+		ref := agent.Status.SessionRef
+		validRef := false
+		switch decision.provider {
+		case "claude":
+			validRef = ref.Claude != nil && ref.Codex == nil && ref.Antigravity == nil
+		case "codex":
+			validRef = ref.Codex != nil && ref.Claude == nil && ref.Antigravity == nil
+		case "antigravity":
+			validRef = ref.Antigravity != nil && ref.Claude == nil && ref.Codex == nil
+		}
+		if !validRef {
+			plan.noteAgent(label, "the recorded session ref has an unsupported provider or mismatched provider member")
+			return registryTopologyAgentPlan{}, false
+		}
 	}
 	if decision.provider == "" {
 		plan.noteAgent(label, "neither the Agent nor its session ref names a provider")

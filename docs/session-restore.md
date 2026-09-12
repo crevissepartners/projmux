@@ -42,10 +42,11 @@ same-kind collision is rejected as damaged before trust authorization,
 Registry/tmux/provider mutation, or any snapshot write.
 
 The committed Registry is then converged by the ordinary Project materializer.
-For a restored offline Agent-anchor Window, `Continue project` visibly plans a
+For a restored offline Agent-anchor Window, snapshot materialization visibly plans a
 lazy default shell, creates the Window from that shell, and stages the Agent on
 its retained anchor Pane UID. A successful repeat writes neither Registry nor
-topology. Agent recipes use the canonical provider launch/resume path. Stored startup
+topology. Snapshot Agent recipes use the canonical provider launch/resume path,
+including their existing fresh-conversation fallback. Stored startup
 commands are not directly executed by snapshot restore. A runtime item refusal
 does not roll the Registry back: desired state and the source snapshot remain
 available for another `Continue project`, and the refusal is reported as an
@@ -69,6 +70,21 @@ A closed Project has exactly two actions:
 
 Esc/cancel returns to Projects; it is not an action row. Picker failure falls
 back to the non-destructive `Continue project` action.
+
+Continue resumes an Agent's exact recorded conversation after interrupted,
+killed, abnormal, unknown, or unrecorded termination. Intentional and normal
+termination remain excluded. A recorded receipt must agree on the Agent and
+its retained Pane's current managed activation. Without a receipt, Running
+requires its exact paneRef; Offline or Failed requires one unambiguous retained
+Agent-owned Pane activation. Pending Agents are skipped. Live Agents are not
+launched again.
+
+A missing, blank, malformed, or mismatched conversation ref, a disabled provider,
+a missing workspace, or a resume preparation failure skips the Agent with a
+reason. Continue never substitutes a new conversation. Shells and other
+recoverable Agents still converge; an unrecoverable Agent that is itself a
+Window's required anchor keeps the existing Window refusal. Explicit snapshot
+restore and `agent resume` retain their separate authority.
 
 `Recreate Project` never deletes or overwrites autosave or named snapshot files. It
 preserves the root, Git/worktrees, trust decision, and all unrelated Registry
