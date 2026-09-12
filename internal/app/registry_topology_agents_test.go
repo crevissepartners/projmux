@@ -137,6 +137,14 @@ func codexConversationRef(id string) *coremetadata.AgentSessionRef {
 
 func markTopologyAgentInterrupted(t *testing.T, store *fakeResourceStore, agentUID, paneUID string) coremetadata.Pane {
 	t.Helper()
+	return markTopologyAgentTermination(t, store, agentUID, paneUID, coremetadata.TerminationInterrupted)
+}
+
+// markTopologyAgentTermination uses the real receipt and projection producers,
+// including abnormal -> Failed. An empty classification removes both receipts
+// after projection to model an older retained activation without evidence.
+func markTopologyAgentTermination(t *testing.T, store *fakeResourceStore, agentUID, paneUID string, classification coremetadata.TerminationClassification) coremetadata.Pane {
+	t.Helper()
 	mutator := store.mutator()
 	if paneUID == "" {
 		pane, err := mutator.AttachAgentPane(&store.registry, agentUID, coremetadata.BootstrapPane{
@@ -157,99 +165,258 @@ func markTopologyAgentInterrupted(t *testing.T, store *fakeResourceStore, agentU
 		ObservedAt: time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), PaneUID: paneUID, AgentUID: agentUID,
 		Generation: "generation-" + agentUID, OperationID: "op-topology-stop",
 	}
+	receipt.Classification = classification
+	switch classification {
+	case coremetadata.TerminationNormal, coremetadata.TerminationAbnormal:
+		receipt.Source = coremetadata.TerminationSourceSupervisor
+		code := 0
+		if classification == coremetadata.TerminationAbnormal {
+			code = 42
+		}
+		receipt.ExitCode = &code
+	case coremetadata.TerminationKilled:
+		receipt.Source = coremetadata.TerminationSourceSupervisor
+		receipt.Signal = "HUP"
+	case coremetadata.TerminationUnknown, "":
+		receipt.Source = coremetadata.TerminationSourceReconcile
+		receipt.Classification = coremetadata.TerminationUnknown
+		receipt.OperationID = ""
+	}
 	if outcome, err := mutator.RecordTermination(&store.registry, receipt); err != nil || !outcome.Applied {
 		t.Fatalf("record interrupted evidence: %+v, %v", outcome, err)
 	}
+	wantPhase := coremetadata.PhaseOffline
+	if classification == coremetadata.TerminationAbnormal {
+		wantPhase = coremetadata.PhaseFailed
+	}
 	if projection, err := mutator.ProjectTermination(&store.registry, coremetadata.TerminationProjectionInput{
 		PaneUID: paneUID, Generation: receipt.Generation, ObservedAt: receipt.ObservedAt,
-	}); err != nil || projection.AgentUID != agentUID || projection.Phase != coremetadata.PhaseOffline {
+	}); err != nil || projection.AgentUID != agentUID || projection.Phase != wantPhase {
 		t.Fatalf("project interrupted evidence: %+v, %v", projection, err)
 	}
 	pane, ok := store.registry.Pane(paneUID)
 	if !ok {
 		t.Fatalf("interrupted projection removed retained Pane %s", paneUID)
 	}
+	if classification == "" {
+		agent, _ := store.registry.Agent(agentUID)
+		agent.Status.LastTermination = nil
+		pane.Status.LastTermination = nil
+	}
 	return pane.Clone()
 }
 
-// TestTopologyAgentContinueEligibilityMatrix is the exact
-// source x classification x phase x sessionRef contract. SessionRef chooses
-// fresh versus exact resume only after the termination gate; it never grants
-// launch authority itself.
+// The complete source/classification x phase matrix keeps intent and normal
+// exit excluded even when only the phase changes. Ref requirements follow in
+// the replay planner and never substitute a fresh conversation.
 func TestTopologyAgentContinueEligibilityMatrix(t *testing.T) {
-	_, store, _, _, root, _ := newTopologyMaterializeFixture(t)
-	seed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
-		name: "matrix", provider: "codex", cwd: root, ref: codexConversationRef("thread-matrix"),
-	})
-	markTopologyAgentInterrupted(t, store, seed.Metadata.UID, "")
+	for _, classification := range []coremetadata.TerminationClassification{
+		coremetadata.TerminationInterrupted, coremetadata.TerminationKilled, coremetadata.TerminationAbnormal,
+		coremetadata.TerminationUnknown, "", coremetadata.TerminationIntentional, coremetadata.TerminationNormal,
+	} {
+		for _, phase := range []coremetadata.AgentPhase{coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed, coremetadata.PhasePending} {
+			t.Run(string(classification)+"/"+string(phase), func(t *testing.T) {
+				command, store, _, _, root, _ := newTopologyMaterializeFixture(t)
+				seed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+					name: "matrix", provider: "codex", cwd: root, ref: codexConversationRef("thread-matrix"),
+				})
+				pane := markTopologyAgentTermination(t, store, seed.Metadata.UID, "", classification)
+				agent, _ := store.registry.Agent(seed.Metadata.UID)
+				agent.Status.Phase = phase
+				if phase == coremetadata.PhaseRunning {
+					agent.Status.PaneRef = pane.Metadata.UID
+				}
+				want := phase != coremetadata.PhasePending && classification != coremetadata.TerminationIntentional && classification != coremetadata.TerminationNormal
+				got, reason := decideTopologyAgentContinueEligibility(store.registry, agent.Clone())
+				if got != want || (got && reason != "") || (!got && reason == "") {
+					t.Fatalf("eligible=%t reason=%q, want %t", got, reason, want)
+				}
+				// Run the same row through materialization, not only the pure gate.
+				launcher := command.agents.(*fakeTopologyAgentLauncher)
+				before := agent.Clone()
+				_, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+				if err != nil || len(launcher.launches) != 0 {
+					t.Fatalf("materialize: %v stderr=%q fresh=%v", err, stderr, launcher.launches)
+				}
+				if want {
+					if !slices.Equal(launcher.resumes, []string{"codex:thread-matrix"}) || len(launcher.binds) != 1 {
+						t.Fatalf("exact resumes=%v binds=%v", launcher.resumes, launcher.binds)
+					}
+				} else if len(launcher.resumes) != 0 || len(launcher.binds) != 0 || !strings.Contains(stderr, reason) {
+					t.Fatalf("refusal: resumes=%v binds=%v stderr=%q", launcher.resumes, launcher.binds, stderr)
+				}
+				after, _ := store.registry.Agent(seed.Metadata.UID)
+				if !after.Status.SessionRef.SameConversation(before.Status.SessionRef) || (!want && !sameTopologyTerminationEvidence(after.Status.LastTermination, before.Status.LastTermination)) {
+					t.Fatalf("Continue changed retained ref or excluded evidence: %+v", after.Status)
+				}
+			})
+		}
+	}
+}
 
+func TestTopologyAgentContinueRejectsInvalidActivationEvidence(t *testing.T) {
+	_, store, _, _, root, _ := newTopologyMaterializeFixture(t)
+	seed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "evidence", provider: "codex", cwd: root, ref: codexConversationRef("thread-evidence")})
+	retained := markTopologyAgentInterrupted(t, store, seed.Metadata.UID, "")
 	type mutation func(*coremetadata.Registry, *coremetadata.Agent, *coremetadata.Pane)
-	setEvidence := func(source coremetadata.TerminationSource, classification coremetadata.TerminationClassification) mutation {
-		return func(_ *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
-			agent.Status.LastTermination.Source = source
-			agent.Status.LastTermination.Classification = classification
-			pane.Status.LastTermination.Source = source
-			pane.Status.LastTermination.Classification = classification
+	withoutReceipt := func(next mutation) mutation {
+		return func(reg *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
+			agent.Status.LastTermination, pane.Status.LastTermination = nil, nil
+			next(reg, agent, pane)
 		}
 	}
 	for _, test := range []struct {
 		name   string
 		mutate mutation
-		want   bool
-		reason string
 	}{
-		{name: "control interrupted Offline with sessionRef", want: true},
-		{name: "control interrupted Offline without sessionRef", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, _ *coremetadata.Pane) {
-			agent.Status.SessionRef = nil
-		}, want: true},
-		{name: "supervisor normal Offline", mutate: setEvidence(coremetadata.TerminationSourceSupervisor, coremetadata.TerminationNormal), reason: "supervisor/normal"},
-		{name: "supervisor abnormal Failed", mutate: func(reg *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
-			setEvidence(coremetadata.TerminationSourceSupervisor, coremetadata.TerminationAbnormal)(reg, agent, pane)
-			agent.Status.Phase = coremetadata.PhaseFailed
-		}, reason: "supervisor/abnormal"},
-		{name: "supervisor killed Offline", mutate: setEvidence(coremetadata.TerminationSourceSupervisor, coremetadata.TerminationKilled), reason: "supervisor/killed"},
-		{name: "delete intentional Offline", mutate: setEvidence(coremetadata.TerminationSourceControlAction, coremetadata.TerminationIntentional), reason: "control-action/intentional"},
-		{name: "reconcile unknown Offline", mutate: setEvidence(coremetadata.TerminationSourceReconcile, coremetadata.TerminationUnknown), reason: "reconcile/unknown"},
-		{name: "nil evidence", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
-			agent.Status.LastTermination, pane.Status.LastTermination = nil, nil
-		}, reason: "no termination evidence"},
-		{name: "stale generation", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
-			agent.Status.LastTermination.Generation = "generation-stale"
-			pane.Status.LastTermination.Generation = "generation-stale"
-		}, reason: "current Agent activation generation"},
-		{name: "illegal source classification pairing", mutate: setEvidence(coremetadata.TerminationSourceControlAction, coremetadata.TerminationNormal), reason: "control-action/normal"},
-		{name: "interrupted Pending", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, _ *coremetadata.Pane) {
-			agent.Status.Phase = coremetadata.PhasePending
-		}, reason: "phase Pending"},
-		{name: "interrupted Running before absence projection", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
-			agent.Status.Phase = coremetadata.PhaseRunning
-			agent.Status.PaneRef = pane.Metadata.UID
-		}, want: true},
-		{name: "interrupted Failed", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, _ *coremetadata.Pane) {
-			agent.Status.Phase = coremetadata.PhaseFailed
-		}, reason: "phase Failed"},
+		{"empty receipt", func(_ *coremetadata.Registry, a *coremetadata.Agent, p *coremetadata.Pane) {
+			a.Status.LastTermination = &coremetadata.TerminationEvidence{}
+			p.Status.LastTermination = &coremetadata.TerminationEvidence{}
+		}},
+		{"stale generation", func(_ *coremetadata.Registry, a *coremetadata.Agent, p *coremetadata.Pane) {
+			a.Status.LastTermination.Generation = "old"
+			p.Status.LastTermination.Generation = "old"
+		}},
+		{"foreign receipt agent", func(_ *coremetadata.Registry, a *coremetadata.Agent, p *coremetadata.Pane) {
+			a.Status.LastTermination.AgentUID = "foreign"
+			p.Status.LastTermination.AgentUID = "foreign"
+		}},
+		{"missing observation", func(_ *coremetadata.Registry, a *coremetadata.Agent, p *coremetadata.Pane) {
+			a.Status.LastTermination.ObservedAt = time.Time{}
+			p.Status.LastTermination.ObservedAt = time.Time{}
+		}},
+		{"missing control operation", func(_ *coremetadata.Registry, a *coremetadata.Agent, p *coremetadata.Pane) {
+			a.Status.LastTermination.OperationID = ""
+			p.Status.LastTermination.OperationID = ""
+		}},
+		{"intent with exit", func(_ *coremetadata.Registry, a *coremetadata.Agent, p *coremetadata.Pane) {
+			code := 1
+			a.Status.LastTermination.ExitCode = &code
+			p.Status.LastTermination.ExitCode = &code
+		}},
+		{"pane receipt absent", func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.LastTermination = nil
+		}},
+		{"agent receipt absent", func(_ *coremetadata.Registry, a *coremetadata.Agent, _ *coremetadata.Pane) {
+			a.Status.LastTermination = nil
+		}},
+		{"receipt pane mismatch", func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.LastTermination.PaneUID = "another-pane"
+		}},
+		{"receipt timestamp mismatch", func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.LastTermination.ObservedAt = p.Status.LastTermination.ObservedAt.Add(time.Second)
+		}},
+		{"receipt operation mismatch", func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.LastTermination.OperationID = "another-operation"
+		}},
+		{"missing retained pane", func(r *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			r.Panes = slices.DeleteFunc(r.Panes, func(candidate coremetadata.Pane) bool { return candidate.Metadata.UID == p.Metadata.UID })
+		}},
+		{"foreign owner", func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Metadata.OwnerRef.UID = "foreign-agent"
+		}},
+		{"shell role", func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Spec.Role = coremetadata.PaneRoleShell
+		}},
+		{"foreign activation", func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.Activation.AgentUID = "foreign-agent"
+		}},
+		{"Running another binding", func(_ *coremetadata.Registry, a *coremetadata.Agent, _ *coremetadata.Pane) {
+			a.Status.Phase = coremetadata.PhaseRunning
+			a.Status.PaneRef = "another-pane"
+		}},
+		{"Offline binding", func(_ *coremetadata.Registry, a *coremetadata.Agent, p *coremetadata.Pane) {
+			a.Status.PaneRef = p.Metadata.UID
+		}},
+		{"no receipt empty activation", withoutReceipt(func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.Activation = coremetadata.PaneActivation{}
+		})},
+		{"no receipt foreign activation", withoutReceipt(func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.Activation.AgentUID = "foreign-agent"
+		})},
+		{"no receipt missing operation", withoutReceipt(func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.Activation.OperationID = ""
+		})},
+		{"no receipt missing start", withoutReceipt(func(_ *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			p.Status.Activation.StartedAt = time.Time{}
+		})},
+		{"no receipt ambiguous panes", withoutReceipt(func(r *coremetadata.Registry, _ *coremetadata.Agent, p *coremetadata.Pane) {
+			other := p.Clone()
+			other.Metadata.UID = "other-pane"
+			other.Status.Activation.Generation = "other-generation"
+			r.Panes = append(r.Panes, other)
+		})},
+		{"no receipt Failed current binding", withoutReceipt(func(_ *coremetadata.Registry, a *coremetadata.Agent, p *coremetadata.Pane) {
+			a.Status.Phase = coremetadata.PhaseFailed
+			a.Status.PaneRef = p.Metadata.UID
+		})},
+		{"no receipt Running missing binding", withoutReceipt(func(_ *coremetadata.Registry, a *coremetadata.Agent, _ *coremetadata.Pane) {
+			a.Status.Phase = coremetadata.PhaseRunning
+		})},
+		{"no receipt Running foreign binding", withoutReceipt(func(_ *coremetadata.Registry, a *coremetadata.Agent, _ *coremetadata.Pane) {
+			a.Status.Phase = coremetadata.PhaseRunning
+			a.Status.PaneRef = "pane-alpha"
+		})},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			registry := store.registry.Clone()
-			agent, _ := registry.Agent(seed.Metadata.UID)
-			pane, _ := registry.Pane(agent.Status.LastTermination.PaneUID)
-			if test.mutate != nil {
-				test.mutate(&registry, agent, pane)
+			reg := store.registry.Clone()
+			agent, _ := reg.Agent(seed.Metadata.UID)
+			pane, _ := reg.Pane(retained.Metadata.UID)
+			test.mutate(&reg, agent, pane)
+			if ok, reason := decideTopologyAgentContinueEligibility(reg, agent.Clone()); ok || reason == "" {
+				t.Fatalf("invalid activation admitted: eligible=%t reason=%q", ok, reason)
 			}
-			got, reason := decideTopologyAgentContinueEligibility(registry, agent.Clone())
-			if got != test.want {
-				t.Fatalf("eligible=%t reason=%q, want %t", got, reason, test.want)
-			}
-			if test.reason != "" && !strings.Contains(reason, test.reason) {
-				t.Fatalf("reason=%q, want substring %q", reason, test.reason)
+		})
+	}
+}
+
+func TestTopologyAgentContinueTerminationPairingAndShape(t *testing.T) {
+	for _, source := range []coremetadata.TerminationSource{coremetadata.TerminationSourceControlAction, coremetadata.TerminationSourceSupervisor, coremetadata.TerminationSourceReconcile, "bogus"} {
+		for _, classification := range []coremetadata.TerminationClassification{coremetadata.TerminationInterrupted, coremetadata.TerminationKilled, coremetadata.TerminationAbnormal, coremetadata.TerminationUnknown, coremetadata.TerminationIntentional, coremetadata.TerminationNormal, "bogus"} {
+			t.Run(string(source)+"/"+string(classification), func(t *testing.T) {
+				r := coremetadata.TerminationEvidence{Source: source, Classification: classification, OperationID: "op"}
+				if classification == coremetadata.TerminationAbnormal {
+					code := 42
+					r.ExitCode = &code
+				}
+				if classification == coremetadata.TerminationKilled {
+					r.Signal = "HUP"
+				}
+				want := source == coremetadata.TerminationSourceControlAction && classification == coremetadata.TerminationInterrupted || source == coremetadata.TerminationSourceSupervisor && (classification == coremetadata.TerminationKilled || classification == coremetadata.TerminationAbnormal) || source == coremetadata.TerminationSourceReconcile && classification == coremetadata.TerminationUnknown
+				if reason := topologyContinueTerminationReason(r); (reason == "") != want {
+					t.Fatalf("reason=%q want admitted=%t", reason, want)
+				}
+			})
+		}
+	}
+	for _, test := range []struct {
+		name           string
+		classification coremetadata.TerminationClassification
+		code           *int
+		signal         string
+		want           bool
+	}{
+		{"abnormal signal", coremetadata.TerminationAbnormal, nil, "TERM", true},
+		{"abnormal without wait status", coremetadata.TerminationAbnormal, nil, "", false},
+		{"abnormal zero exit", coremetadata.TerminationAbnormal, exitCodePtr(0), "", false},
+		{"abnormal negative exit", coremetadata.TerminationAbnormal, exitCodePtr(-1), "", false},
+		{"abnormal HUP", coremetadata.TerminationAbnormal, nil, "HUP", false},
+		{"killed non HUP", coremetadata.TerminationKilled, nil, "TERM", false},
+		{"killed dual status", coremetadata.TerminationKilled, exitCodePtr(129), "HUP", false},
+		{"abnormal dual status", coremetadata.TerminationAbnormal, exitCodePtr(143), "TERM", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reason := topologyContinueTerminationReason(coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceSupervisor, Classification: test.classification, ExitCode: test.code, Signal: test.signal})
+			if (reason == "") != test.want {
+				t.Fatalf("reason=%q want admitted=%t", reason, test.want)
 			}
 		})
 	}
 }
 
 // TestTopologyAgentResumeDecisionTable pins the three resume-decision branches
-// the Phase owes: a stored ref resumes, a missing or unusable ref starts a new
-// conversation with a stated reason, and the provider discriminator is the
+// the Phase owes: a stored ref resumes, a missing or unusable ref has a stated
+// refusal reason, and the provider discriminator is the
 // stored ref's own -- never a conversation store, never a snapshot recipe.
 func TestTopologyAgentResumeDecisionTable(t *testing.T) {
 	for _, test := range []struct {
@@ -286,7 +453,7 @@ func TestTopologyAgentResumeDecisionTable(t *testing.T) {
 			wantConversation: "conv-loose",
 		},
 		{
-			name: "no session ref starts a new conversation",
+			name: "no session ref has a refusal reason",
 			agent: coremetadata.Agent{
 				Spec:   coremetadata.AgentSpec{Provider: "codex"},
 				Status: coremetadata.AgentStatus{},
@@ -295,7 +462,7 @@ func TestTopologyAgentResumeDecisionTable(t *testing.T) {
 			wantReason:   "no provider session ref is recorded",
 		},
 		{
-			name: "a ref with no conversation id starts a new conversation",
+			name: "a ref with no conversation id has a refusal reason",
 			agent: coremetadata.Agent{
 				Spec: coremetadata.AgentSpec{Provider: "claude"},
 				Status: coremetadata.AgentStatus{SessionRef: &coremetadata.AgentSessionRef{
@@ -306,7 +473,7 @@ func TestTopologyAgentResumeDecisionTable(t *testing.T) {
 			wantReason:   "carries no conversation id",
 		},
 		{
-			name: "a ref with no provider discriminator starts a new conversation",
+			name: "a ref with no provider discriminator has a refusal reason",
 			agent: coremetadata.Agent{
 				Spec: coremetadata.AgentSpec{Provider: "claude"},
 				Status: coremetadata.AgentStatus{SessionRef: &coremetadata.AgentSessionRef{
@@ -359,7 +526,7 @@ func TestTopologyAgentResumeDecisionTable(t *testing.T) {
 // TestRegistryTopologyMaterializationReplaysStoredAgents is the end-to-end
 // slice: a closed Project with stored Agents comes back with an Agent-owned
 // Pane per Agent, the one with a session ref rejoins that exact conversation,
-// the one without starts a new one and says so, and the whole materialization
+// the one without stays Offline with a reason, and the whole materialization
 // still succeeds.
 func TestRegistryTopologyMaterializationReplaysStoredAgents(t *testing.T) {
 	command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
@@ -367,25 +534,25 @@ func TestRegistryTopologyMaterializationReplaysStoredAgents(t *testing.T) {
 	resumed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
 		name: "claude", provider: "claude", cwd: root, ref: claudeConversationRef("conv-claude-1"), topic: "roadmap",
 	})
-	fresh := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+	refLessAgent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
 		name: "codex", provider: "codex", cwd: root,
 	})
 	markTopologyAgentInterrupted(t, store, resumed.Metadata.UID, "")
-	markTopologyAgentInterrupted(t, store, fresh.Metadata.UID, "")
+	markTopologyAgentInterrupted(t, store, refLessAgent.Metadata.UID, "")
 
 	out, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 	if err != nil {
 		t.Fatalf("materialize: err=%v\n%s", err, out)
 	}
-	for _, want := range []string{`"kind": "Agent"`, "uid:" + resumed.Metadata.UID, "uid:" + fresh.Metadata.UID} {
+	for _, want := range []string{`"kind": "Agent"`, "uid:" + resumed.Metadata.UID} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("report missing %q:\n%s", want, out)
 		}
 	}
 
-	// 1. Both Agents are managed again: Running, with an Agent-owned Pane that
+	// 1. The resumable Agent is managed again: Running, with an Agent-owned Pane that
 	//    carries the exact uid mirror `get agents` reads.
-	for _, agentUID := range []string{resumed.Metadata.UID, fresh.Metadata.UID} {
+	for _, agentUID := range []string{resumed.Metadata.UID} {
 		agent, ok := store.registry.Agent(agentUID)
 		if !ok {
 			t.Fatalf("agent %s disappeared", agentUID)
@@ -419,14 +586,14 @@ func TestRegistryTopologyMaterializationReplaysStoredAgents(t *testing.T) {
 		t.Fatalf("the resumed Pane was not bound with its conversation: %v", launcher.binds)
 	}
 
-	// 3. The Agent with no session ref comes up on a NEW conversation, it is
-	//    reported, and the overall materialization still succeeded.
-	if !slices.ContainsFunc(launcher.binds, func(bind string) bool { return strings.HasPrefix(bind, "managed ") }) {
-		t.Fatalf("the ref-less Agent was not bound as a fresh managed pane: %v", launcher.binds)
+	// 3. Managed stop grants no exception for a missing sessionRef. Its UID,
+	// evidence and Offline state remain, while all other topology converges.
+	refLess, _ := store.registry.Agent(refLessAgent.Metadata.UID)
+	if refLess.Status.Phase != coremetadata.PhaseOffline || refLess.Status.PaneRef != "" || len(launcher.launches) != 0 || len(launcher.binds) != 1 {
+		t.Fatalf("ref-less Continue launched fresh: status=%+v fresh=%v binds=%v", refLess.Status, launcher.launches, launcher.binds)
 	}
-	if !strings.Contains(stderr, "agent/main/codex starts a new conversation instead of resuming") ||
-		!strings.Contains(stderr, "no provider session ref is recorded") {
-		t.Fatalf("the unresumed Agent was not reported: %q", stderr)
+	if !strings.Contains(stderr, "agent/main/codex was not restored") || !strings.Contains(stderr, "no provider session ref is recorded") {
+		t.Fatalf("the ref-less Agent was not reported: %q", stderr)
 	}
 	if strings.Contains(stderr, "agent/main/claude") {
 		t.Fatalf("a resumed Agent was reported as unresumed: %q", stderr)
@@ -437,7 +604,7 @@ func TestRegistryTopologyMaterializationReplaysStoredAgents(t *testing.T) {
 	server.calls = nil
 	writesBefore := store.writes
 	repeat, repeatErr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
-	if err != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || store.writes != writesBefore || repeatErr != "" {
+	if err != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || store.writes != writesBefore || !strings.Contains(repeatErr, "no provider session ref is recorded") {
 		t.Fatalf("repeat replayed Agents: err=%v stderr=%q writes=%d->%d\n%s", err, repeatErr, writesBefore, store.writes, repeat)
 	}
 	for _, call := range server.calls {
@@ -586,12 +753,12 @@ func TestRegistryTopologyMaterializationAgentReplayRefusalsAreNeverFatal(t *test
 			arrange: func(f *fakeTopologyAgentLauncher) {
 				f.launchErr["codex"] = fmt.Errorf("codex is not installed")
 			},
-			want: "no fresh codex launch could be built either",
+			want: "no provider session ref is recorded",
 		},
 		{
 			name:  "an Agent with no provider anywhere is not launched",
 			agent: topologyFixtureAgent{name: "nameless"},
-			want:  "neither the Agent nor its session ref names a provider",
+			want:  "no provider session ref is recorded",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -629,7 +796,7 @@ func TestRegistryTopologyMaterializationAgentReplayRefusalsAreNeverFatal(t *test
 			if strings.Contains(out, "uid:"+agent.Metadata.UID) {
 				t.Fatalf("an unlaunchable Agent entered the plan:\n%s", out)
 			}
-			if declared.ref != nil && len(launcher.resumes) != 0 && len(launcher.launches) != 0 {
+			if len(launcher.launches) != 0 || len(launcher.binds) != 0 {
 				t.Fatalf("exact resume preparation failure planned a fresh Agent: resume=%v fresh=%v", launcher.resumes, launcher.launches)
 			}
 		})
@@ -658,7 +825,8 @@ func TestRegistryTopologyMaterializationAgentReplayHonorsTheOwnerGuard(t *testin
 	foreign := server.addSession("foreign")
 	foreign.windows[0].panes[0].opts[tmuxopts.PaneUID] = stale.Metadata.UID
 
-	before := store.snapshot()
+	before, runtimeBefore, writesBefore := store.snapshot(), server.state(), store.writes
+	server.calls = nil
 	out, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 	if err == nil {
 		t.Fatalf("a foreign claim on the stale managed Pane uid was not refused:\n%s", out)
@@ -666,8 +834,13 @@ func TestRegistryTopologyMaterializationAgentReplayHonorsTheOwnerGuard(t *testin
 	if !strings.Contains(err.Error(), "is already live on") {
 		t.Fatalf("owner-guard wording changed: %v", err)
 	}
-	if store.snapshot() != before {
+	if store.snapshot() != before || server.state() != runtimeBefore || store.writes != writesBefore {
 		t.Fatalf("a refused pass mutated the Registry")
+	}
+	for _, call := range server.calls {
+		if len(call) != 0 && slices.Contains([]string{"new-session", "new-window", "split-window", "kill-pane", "set-option"}, call[0]) {
+			t.Fatalf("foreign UID claim reached a first runtime write: %v", call)
+		}
 	}
 	// With the foreign claim gone the stale row is provably dead, so the Agent
 	// is released and re-attached under its own uid.
@@ -695,5 +868,94 @@ func TestProjectTopologyStartupDescriptionNamesAgents(t *testing.T) {
 	}
 	if got := topologyProjectStartupCandidate().Description; got != projectTopologyStartupDescription {
 		t.Fatalf("the startup row and the shared description drifted: %q != %q", got, projectTopologyStartupDescription)
+	}
+}
+
+func TestTopologyAgentContinueResumePreparationMatrix(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		ref          *coremetadata.AgentSessionRef
+		provider     string
+		configure    func(*fakeTopologyAgentLauncher, *coremetadata.Agent)
+		want         string
+		conversation string
+	}{
+		{name: "nil ref", provider: "codex", want: "no provider session ref"},
+		{name: "empty ref", provider: "codex", ref: &coremetadata.AgentSessionRef{}, want: "no provider session ref"},
+		{name: "blank ref", provider: "codex", ref: codexConversationRef(" \t\n"), want: "no conversation id"},
+		{name: "missing id", provider: "codex", ref: codexConversationRef(""), want: "no conversation id"},
+		{name: "missing discriminator", provider: "codex", ref: &coremetadata.AgentSessionRef{Codex: &coremetadata.CodexSessionRef{ThreadID: "thread"}}, want: "no provider discriminator"},
+		{name: "blank discriminator", provider: "codex", ref: &coremetadata.AgentSessionRef{Provider: " \t", Codex: &coremetadata.CodexSessionRef{ThreadID: "thread"}}, want: "no provider discriminator"},
+		{name: "cross provider", provider: "codex", ref: claudeConversationRef("conversation"), want: "is a codex Agent but its session ref is a claude"},
+		{name: "mismatched member", provider: "codex", ref: &coremetadata.AgentSessionRef{Provider: "codex", Claude: &coremetadata.ClaudeSessionRef{SessionID: "conversation"}}, want: "mismatched provider member"},
+		{name: "multiple members", provider: "codex", ref: &coremetadata.AgentSessionRef{Provider: "codex", Claude: &coremetadata.ClaudeSessionRef{SessionID: "conversation"}, Codex: &coremetadata.CodexSessionRef{ThreadID: "thread"}}, want: "mismatched provider member"},
+		{name: "unsupported provider", provider: "unsupported", ref: &coremetadata.AgentSessionRef{Provider: "unsupported", Codex: &coremetadata.CodexSessionRef{ThreadID: "thread"}}, want: "unsupported provider"},
+		{name: "disabled provider", provider: "codex", ref: codexConversationRef("thread"), configure: func(l *fakeTopologyAgentLauncher, _ *coremetadata.Agent) { l.disabled["codex"] = true }, want: "disabled in Settings"},
+		{name: "missing cwd", provider: "codex", ref: codexConversationRef("thread"), configure: func(_ *fakeTopologyAgentLauncher, a *coremetadata.Agent) { a.Spec.Workspace.CWD += "/missing" }, want: "Agent cwd"},
+		{name: "resume prepare failure", provider: "codex", ref: codexConversationRef("thread"), configure: func(l *fakeTopologyAgentLauncher, _ *coremetadata.Agent) {
+			l.resumeErr["codex"] = fmt.Errorf("prepare failed")
+		}, want: "prepare failed"},
+		{name: "normalized valid id", provider: " codex ", ref: codexConversationRef(" \tthread\n"), conversation: "thread"},
+		{name: "legacy codex session id", provider: "codex", ref: &coremetadata.AgentSessionRef{Provider: "codex", Codex: &coremetadata.CodexSessionRef{SessionID: " session "}}, conversation: "session"},
+		{name: "normalized discriminator", provider: "claude", ref: &coremetadata.AgentSessionRef{Provider: " claude ", Claude: &coremetadata.ClaudeSessionRef{SessionID: " conversation "}}, conversation: "conversation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			launcher := newFakeTopologyAgentLauncher()
+			agent := coremetadata.Agent{Spec: coremetadata.AgentSpec{Provider: test.provider, Workspace: coremetadata.AgentWorkspace{CWD: root}}, Status: coremetadata.AgentStatus{SessionRef: test.ref}}
+			if test.configure != nil {
+				test.configure(launcher, &agent)
+			}
+			plan := &registryTopologyPlan{}
+			work, ok := planTopologyAgentReplay(plan, coremetadata.Project{Spec: coremetadata.ProjectSpec{Root: root}}, agent, "main/matrix", launcher, topologyAgentReplayInterrupted)
+			if ok != (test.conversation != "") || len(launcher.launches) != 0 {
+				t.Fatalf("planned=%t fresh=%v notices=%v", ok, launcher.launches, plan.notices)
+			}
+			if ok {
+				if work.conversationID != test.conversation || len(launcher.resumes) != 1 || len(plan.notices) != 0 {
+					t.Fatalf("exact resume=%+v calls=%v notices=%v", work, launcher.resumes, plan.notices)
+				}
+			} else if !strings.Contains(strings.Join(plan.notices, "\n"), test.want) {
+				t.Fatalf("notices=%v want %q", plan.notices, test.want)
+			}
+		})
+	}
+}
+
+func TestTopologyAgentSnapshotKeepsFreshFallback(t *testing.T) {
+	for _, hasRef := range []bool{false, true} {
+		t.Run(fmt.Sprintf("resume-fails-%t", hasRef), func(t *testing.T) {
+			root := t.TempDir()
+			launcher := newFakeTopologyAgentLauncher()
+			agent := coremetadata.Agent{Spec: coremetadata.AgentSpec{Provider: "claude", Workspace: coremetadata.AgentWorkspace{CWD: root}}}
+			if hasRef {
+				agent.Status.SessionRef = claudeConversationRef("saved-conversation")
+				launcher.resumeErr["claude"] = fmt.Errorf("cannot prepare")
+			}
+			plan := &registryTopologyPlan{}
+			work, ok := planTopologyAgentReplay(plan, coremetadata.Project{}, agent, "main/snapshot", launcher, topologyAgentReplaySnapshot)
+			if !ok || work.conversationID != "" || !slices.Equal(launcher.launches, []string{"claude"}) || !strings.Contains(strings.Join(plan.notices, "\n"), "starts a new conversation") {
+				t.Fatalf("snapshot fallback=%t work=%+v fresh=%v notices=%v", ok, work, launcher.launches, plan.notices)
+			}
+		})
+	}
+}
+
+func TestRegistryTopologyContinueRechecksEvidenceUnderLock(t *testing.T) {
+	command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
+	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "raced", provider: "codex", cwd: root, ref: codexConversationRef("thread-raced")})
+	pane := markTopologyAgentTermination(t, store, agent.Metadata.UID, "", "")
+	originalUpdate := command.resources.updateConvergent
+	command.resources.updateConvergent = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+		// A newer activation arrives after the unlocked plan. Its mismatching
+		// owner makes the earlier no-receipt plan unusable under the lock.
+		current, _ := store.registry.Pane(pane.Metadata.UID)
+		current.Status.Activation.AgentUID = "different-agent"
+		return originalUpdate(fn)
+	}
+	_, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	launcher := command.agents.(*fakeTopologyAgentLauncher)
+	if err != nil || len(launcher.binds) != 0 || len(launcher.launches) != 0 || server.argvContains("thread-raced") || !strings.Contains(stderr, "current Agent activation generation") {
+		t.Fatalf("locked evidence escaped recheck: err=%v stderr=%q binds=%v", err, stderr, launcher.binds)
 	}
 }

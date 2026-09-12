@@ -962,18 +962,6 @@ func agentMessageFailureAction(delivery coremessage.Delivery) string {
 	}
 }
 
-func writeAgentMessageClaim(stdout io.Writer, record messagestore.Record, _ bool) error {
-	payload, err := json.Marshal(struct {
-		Envelope coremessage.Envelope `json:"envelope"`
-		Delivery coremessage.Delivery `json:"delivery"`
-	}{record.Envelope, record.Delivery})
-	if err != nil {
-		return err
-	}
-	_, err = stdout.Write(payload)
-	return err
-}
-
 func (c *agentCommand) messageClock() time.Time {
 	if c == nil || c.messageNow == nil {
 		return time.Now().UTC()

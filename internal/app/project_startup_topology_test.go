@@ -460,10 +460,10 @@ func TestNewSwitchCommandWiresExactSocketTopologyActivation(t *testing.T) {
 	}
 }
 
-// TestClosedProjectStartupContinuesOnlyInterruptedAgents is the startup-boundary
-// C-2 guarantee: clean A is retained and disclosed, interrupted B resumes its
-// exact conversation once, and a repeated Continue creates no duplicate.
-func TestClosedProjectStartupContinuesOnlyInterruptedAgents(t *testing.T) {
+// TestClosedProjectStartupContinuesUnplannedStops is the startup-boundary
+// recovery guarantee: clean A is retained and disclosed, interrupted B and
+// abnormal Failed C resume exactly once, and repeat creates no duplicate.
+func TestClosedProjectStartupContinuesUnplannedStops(t *testing.T) {
 	activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
 	notices := activation.notices.(*bytes.Buffer)
 	clean := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
@@ -472,6 +472,10 @@ func TestClosedProjectStartupContinuesOnlyInterruptedAgents(t *testing.T) {
 	interrupted := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
 		name: "interrupted-b", provider: "codex", cwd: root, ref: codexConversationRef("thread-interrupted"),
 	})
+	failed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "failed-c", provider: "claude", cwd: root, ref: claudeConversationRef("conv-failed"),
+	})
+	markTopologyAgentTermination(t, store, failed.Metadata.UID, "", coremetadata.TerminationAbnormal)
 	cleanPane := markTopologyAgentInterrupted(t, store, clean.Metadata.UID, "")
 	markTopologyAgentInterrupted(t, store, interrupted.Metadata.UID, "")
 	zero := 0
@@ -498,6 +502,10 @@ func TestClosedProjectStartupContinuesOnlyInterruptedAgents(t *testing.T) {
 	if interruptedAfter.Status.Phase != coremetadata.PhaseRunning || interruptedAfter.Status.PaneRef == "" ||
 		!interruptedAfter.Status.SessionRef.SameConversation(codexConversationRef("thread-interrupted")) {
 		t.Fatalf("interrupted B did not resume exactly: %+v", interruptedAfter.Status)
+	}
+	failedAfter, _ := store.registry.Agent(failed.Metadata.UID)
+	if failedAfter.Status.Phase != coremetadata.PhaseRunning || failedAfter.Status.PaneRef == "" || !server.argvContains("conv-failed") || len(activation.agents.(*fakeTopologyAgentLauncher).launches) != 0 {
+		t.Fatalf("startup failed to resume abnormal Failed C exactly: %+v", failedAfter.Status)
 	}
 	if !server.argvContains("--resume") || !server.argvContains("thread-interrupted") ||
 		server.argvContains("conv-clean") {

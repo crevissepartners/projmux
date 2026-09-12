@@ -13,7 +13,7 @@ import (
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 )
 
-func TestClaudeDialogueCanaryAcceptsProductionStoreAndPublicClaimReceipts(t *testing.T) {
+func TestClaudeDialogueCanaryAcceptsProductionStoreClaimAndPublicReceipt(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 is required by the opt-in canary")
@@ -39,14 +39,14 @@ func TestClaudeDialogueCanaryAcceptsProductionStoreAndPublicClaimReceipts(t *tes
 	if err != nil || !ok {
 		t.Fatal("production claim failed", err)
 	}
-	var receipt, claim bytes.Buffer
+	var receipt bytes.Buffer
 	if err := writeAgentMessageReceipt(&receipt, receiptFor(record), true); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeAgentMessageClaim(&claim, claimed, true); err != nil {
-		t.Fatal(err)
-	}
-	fixture := map[string]any{"original": json.RawMessage(receipt.Bytes()), "reply": json.RawMessage(claim.Bytes()), "routes": map[string]any{"sender": original.Source, "receiver": original.Target},
+	// The canary consumes the durable store claim shape; there is no public
+	// claim command. Keep its correlation check tied to the production record
+	// and the current public send/status receipt serializer.
+	fixture := map[string]any{"original": json.RawMessage(receipt.Bytes()), "reply": claimed, "routes": map[string]any{"sender": original.Source, "receiver": original.Target},
 		"evidence": []map[string]any{{"toolUseID": "tool-production", "messageRef": original.MessageRef, "targetAgentUID": original.Source.AgentUID, "replyRef": claimed.Envelope.MessageRef, "resultObserved": true, "guardSelectionMatched": true, "guardedCommitMatched": true}}}
 	data, err := json.Marshal(fixture)
 	if err != nil {

@@ -637,7 +637,7 @@ func TestRegistryTopologyMaterializationInvalidCWDAndForeignSessionRefuse(t *tes
 
 func TestRegistryTopologyMaterializationAgentAnchorLazyDefaultShellAndRepeatNoop(t *testing.T) {
 	command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
-	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "anchor-agent", provider: "codex", cwd: root})
+	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "anchor-agent", provider: "codex", cwd: root, ref: codexConversationRef("anchor-thread")})
 	managed, err := store.mutator().AttachAgentPane(&store.registry, agent.Metadata.UID, coremetadata.BootstrapPane{
 		Name: "managed", CWD: root,
 	}, "op-agent-anchor")
@@ -876,5 +876,29 @@ func TestRegistryTopologyMaterializationLiveUIDSafetyMatrix(t *testing.T) {
 				t.Fatalf("unsafe live state was not refused byte-stably: err=%v\n%s", err, out)
 			}
 		})
+	}
+}
+
+func TestRegistryTopologyContinueKeepsUnresumableAgentAnchorRefusal(t *testing.T) {
+	command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
+	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "ref-less-anchor", provider: "codex", cwd: root})
+	pane := markTopologyAgentInterrupted(t, store, agent.Metadata.UID, "")
+	stored, _ := store.registry.Agent(agent.Metadata.UID)
+	stored.Status.Phase, stored.Status.PaneRef = coremetadata.PhaseRunning, pane.Metadata.UID
+	window, _ := store.registry.Window("win-beta-main")
+	window.Spec.AnchorPaneRef = pane.Metadata.UID
+	before := stored.Clone()
+	registryBefore, runtimeBefore := store.snapshot(), server.state()
+	out, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	launcher := command.agents.(*fakeTopologyAgentLauncher)
+	if err == nil || !strings.Contains(err.Error(), "refused desired topology") || !strings.Contains(out, "offline Agent anchor cannot be materialized by its exact owning Agent") || !strings.Contains(stderr, "no provider session ref") || len(launcher.binds) != 0 || len(launcher.launches) != 0 {
+		t.Fatalf("unresumable anchor was repaired or hidden: err=%v out=%s stderr=%q binds=%v fresh=%v", err, out, stderr, launcher.binds, launcher.launches)
+	}
+	stored, _ = store.registry.Agent(agent.Metadata.UID)
+	if stored.Status.PaneRef != before.Status.PaneRef || !sameTopologyTerminationEvidence(stored.Status.LastTermination, before.Status.LastTermination) {
+		t.Fatalf("unresumable anchor state changed: %+v", stored.Status)
+	}
+	if store.snapshot() != registryBefore || server.state() != runtimeBefore || store.writes != 0 {
+		t.Fatal("unresumable primary Agent anchor refusal changed Registry or runtime")
 	}
 }
