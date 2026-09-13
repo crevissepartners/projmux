@@ -2062,6 +2062,12 @@ separate decision this measurement exists to inform.
   `TestClaudeDialogueStreamRejectsUnknownEffectsAndBoundsState` cover transient
   public JSON validation, action/result pairing, zero pre-inbound tool effects,
   unknown metadata refusal and finite hook/tool state.
+- `TestClaudeDialogueStreamReplaysObservedFrameCorpus` replays
+  `internal/app/testdata/claude-dialogue-observed-frames.json`, the top-level
+  key shapes preserved from a Claude Code 2.1.263 run, through a fresh stream in
+  each item's declared state. Items carry provenance labels and the measured
+  verdict. A reject must stop once its recorded rule keys are removed, so any
+  validator change that moves a recorded verdict fails with the item name and rule.
 - `TestClaudeDialoguePipeEOFClosesInputButWaitsCurrentTurn`,
   `TestClaudeDialoguePipeDiagnosticLossFailsClosedWithoutBusyLoop`,
   `TestClaudeDialogueCleanupWaitsExactWriterAndHandlesZombieWithoutSignals`, and

@@ -1,0 +1,194 @@
+{
+  "description": "Claude dialogue frame shapes preserved from real-provider observations. Only key-level shape was preserved: no raw frame and no nested value survived. Every item's frame carries the observed keys plus the scaffolding keys it needs to reach the rule, and every value is a placeholder: the minimum that satisfies the reply-only validator's value rules, or null where the validator places no rule on that slot. The recorded verdict is what the validator returned when the corpus was measured. TestClaudeDialogueStreamReplaysObservedFrameCorpus replays each frame through claudeDialogueStream.inspect.",
+  "items": [
+    {
+      "name": "assistant-envelope-7-keys",
+      "provenance": {
+        "observedAt": "2026-09-07",
+        "provider": "Claude Code 2.1.263",
+        "evidence": "top-level-key-list",
+        "evidenceNote": "A refusal diagnostic printed these seven sorted top-level keys for two assistant frames.",
+        "observedKeys": ["message", "parent_tool_use_id", "request_id", "session_id", "timestamp", "type", "uuid"],
+        "derivedKeys": [],
+        "scaffoldingKeys": [],
+        "values": "All values are placeholders. message is the minimum the validator admits: role assistant and one empty text block. session_id is a placeholder reference; the other slots are null because the validator places no value rule on them."
+      },
+      "state": "initialized",
+      "frame": {
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": ""}]},
+        "parent_tool_use_id": null,
+        "request_id": null,
+        "session_id": "session-placeholder",
+        "timestamp": null,
+        "uuid": null
+      },
+      "verdict": {
+        "kind": "drop",
+        "rule": "assistant top-level allowlist admits the seven observed keys and a text-only message is dropped"
+      }
+    },
+    {
+      "name": "result-success-25-keys",
+      "provenance": {
+        "observedAt": "2026-09-07",
+        "provider": "Claude Code 2.1.263",
+        "evidence": "top-level-key-list",
+        "evidenceNote": "A refusal diagnostic printed these twenty-five sorted top-level keys for two result frames with subtype success.",
+        "observedKeys": ["api_error_status", "duration_api_ms", "duration_ms", "fast_mode_disabled_reason", "fast_mode_state", "first_content_frame_ms", "is_error", "modelUsage", "num_turns", "origin", "permission_denials", "queued_turn_count", "result", "session_id", "stop_reason", "subagent_stats", "subtype", "terminal_reason", "time_to_request_ms", "total_cost_usd", "ttft_ms", "ttft_stream_ms", "type", "usage", "uuid"],
+        "derivedKeys": [],
+        "scaffoldingKeys": [],
+        "values": "All values are placeholders. subtype success comes from the diagnostic. Numbers are 0, lists and usage objects are empty, and enum slots hold a value the validator accepts. subagent_stats holds the all-zero object, the only value the validator accepts, so it is not an observed nested shape. origin, result, uuid and api_error_status are null."
+      },
+      "state": "initialized",
+      "frame": {
+        "type": "result",
+        "subtype": "success",
+        "api_error_status": null,
+        "duration_api_ms": 0,
+        "duration_ms": 0,
+        "fast_mode_disabled_reason": "sdk_opt_in_required",
+        "fast_mode_state": "off",
+        "first_content_frame_ms": 0,
+        "is_error": false,
+        "modelUsage": {},
+        "num_turns": 0,
+        "origin": null,
+        "permission_denials": [],
+        "queued_turn_count": 0,
+        "result": null,
+        "session_id": "session-placeholder",
+        "stop_reason": "end_turn",
+        "subagent_stats": {
+          "by_type": {},
+          "completed": 0,
+          "failed": 0,
+          "killed": {"parent": 0, "system": 0, "user": 0},
+          "max_depth": 0,
+          "refused": {"budget": 0, "concurrency_limit": 0, "depth_limit": 0},
+          "requested": {"background": 0, "foreground": 0, "unset": 0},
+          "spawned": 0,
+          "spawned_by_subagents": 0,
+          "started_in_background": 0
+        },
+        "terminal_reason": "completed",
+        "time_to_request_ms": 0,
+        "total_cost_usd": 0,
+        "ttft_ms": 0,
+        "ttft_stream_ms": 0,
+        "usage": {},
+        "uuid": null
+      },
+      "verdict": {
+        "kind": "reject",
+        "rule": "result top-level allowlist lacks origin",
+        "ruleKeys": ["origin"]
+      }
+    },
+    {
+      "name": "system-init-allowlist-diff",
+      "provenance": {
+        "observedAt": "2026-09-07",
+        "provider": "Claude Code 2.1.263",
+        "evidence": "allowlist-diff",
+        "evidenceNote": "To admit the real init frame, a local instrumentation patch appended memory_paths and terminal_slash_commands to the init top-level allowlist. Before the patch that allowlist was the same string the validator holds today. The exact real init key set is not recoverable: it is only known to fit the widened list and to need both additions.",
+        "observedKeys": ["memory_paths", "terminal_slash_commands"],
+        "derivedKeys": ["type", "subtype"],
+        "scaffoldingKeys": ["session_id", "tools", "mcp_servers", "plugins", "permissionMode", "claude_code_version"],
+        "values": "type and subtype are derived from the init branch the diff widened. Scaffolding holds the values the validator requires: tools Bash, empty mcp_servers and plugins, permissionMode dontAsk. claude_code_version is the observation-time version 2.1.263. memory_paths and terminal_slash_commands values were not preserved and are null, not paths."
+      },
+      "state": "fresh-after-startup-hooks",
+      "frame": {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "session-placeholder",
+        "tools": ["Bash"],
+        "mcp_servers": [],
+        "plugins": [],
+        "permissionMode": "dontAsk",
+        "claude_code_version": "2.1.263",
+        "memory_paths": null,
+        "terminal_slash_commands": null
+      },
+      "verdict": {
+        "kind": "reject",
+        "rule": "init top-level allowlist lacks memory_paths and terminal_slash_commands",
+        "ruleKeys": ["memory_paths", "terminal_slash_commands"]
+      }
+    },
+    {
+      "name": "system-model-refusal-no-fallback-10-keys",
+      "provenance": {
+        "observedAt": "2026-09-07",
+        "provider": "Claude Code 2.1.263",
+        "evidence": "diagnosis-quote",
+        "evidenceNote": "The diagnosis of the real reply-only run quotes these ten top-level keys for a system frame with subtype model_refusal_no_fallback.",
+        "observedKeys": ["api_refusal_category", "api_refusal_explanation", "content", "original_model", "refused_user_message_uuid", "request_id", "session_id", "subtype", "type", "uuid"],
+        "derivedKeys": [],
+        "scaffoldingKeys": [],
+        "values": "All values are placeholders. session_id is a placeholder reference; every other slot except type and subtype is null because the validator places no value rule on it."
+      },
+      "state": "initialized",
+      "frame": {
+        "type": "system",
+        "subtype": "model_refusal_no_fallback",
+        "api_refusal_category": null,
+        "api_refusal_explanation": null,
+        "content": null,
+        "original_model": null,
+        "refused_user_message_uuid": null,
+        "request_id": null,
+        "session_id": "session-placeholder",
+        "uuid": null
+      },
+      "verdict": {
+        "kind": "drop",
+        "rule": "model_refusal_no_fallback top-level allowlist admits the ten observed keys and the frame is dropped after init"
+      }
+    },
+    {
+      "name": "rate-limit-event-overage-disabled-reason",
+      "provenance": {
+        "observedAt": "2026-09-07",
+        "provider": "Claude Code 2.1.263",
+        "evidence": "diagnosis-quote",
+        "evidenceNote": "The diagnosis quotes a rate_limit_event whose rate_limit_info row is seven keys wide, with overageDisabledReason in place of overageResetsAt. The six unchanged row keys are derived from that quote together with the seven-key row the validator held before it admitted the second spelling. They were not observed directly. Envelope keys other than type and rate_limit_info were not preserved.",
+        "observedKeys": ["type", "rate_limit_info", "rate_limit_info.overageDisabledReason"],
+        "derivedKeys": ["rate_limit_info.isUsingOverage", "rate_limit_info.overageStatus", "rate_limit_info.rateLimitType", "rate_limit_info.resetsAt", "rate_limit_info.status", "rate_limit_info.unifiedWindows"],
+        "scaffoldingKeys": ["session_id"],
+        "values": "All values are placeholders. session_id is scaffolding the validator requires on every frame. Numbers are 0, isUsingOverage is false, overageDisabledReason is null, and enum slots hold the first value the validator accepts. The unifiedWindows object holds the only shape the validator accepts, so it is not an observed nested shape."
+      },
+      "state": "initialized",
+      "frame": {
+        "type": "rate_limit_event",
+        "session_id": "session-placeholder",
+        "rate_limit_info": {
+          "isUsingOverage": false,
+          "overageDisabledReason": null,
+          "overageStatus": "allowed",
+          "rateLimitType": "five_hour",
+          "resetsAt": 0,
+          "status": "allowed",
+          "unifiedWindows": {
+            "five_hour": {"resetsAt": 0, "utilization": 0},
+            "seven_day": {"resetsAt": 0, "utilization": 0}
+          }
+        }
+      },
+      "verdict": {
+        "kind": "drop",
+        "rule": "rate_limit_info admits overageDisabledReason in the seven-key row and the frame is dropped after init"
+      }
+    }
+  ],
+  "gaps": [
+    {"shape": "command_lifecycle frame", "reason": "No key list or value was preserved."},
+    {"shape": "assistant message context_management non-null value", "reason": "Reported as intermittent; the value was not preserved."},
+    {"shape": "system frame with subtype thinking_tokens", "reason": "No observation was preserved."},
+    {"shape": "hook frames and user tool_result frames", "reason": "Not preserved."},
+    {"shape": "exact real init top-level key set", "reason": "Only the two keys the allowlist diff added are known."},
+    {"shape": "nested values of every frame", "reason": "Only top-level key shape was preserved."},
+    {"shape": "rate_limit_event envelope keys beyond type and rate_limit_info", "reason": "Not preserved."},
+    {"shape": "earlier frame shape inventories", "reason": "The inventory files were lost before they were preserved."}
+  ]
+}

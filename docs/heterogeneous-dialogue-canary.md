@@ -337,3 +337,26 @@ The selectorless E2E remains the single deterministic L20 scenario. Actual
 active-tool/human overlap, multiple ordinary requests, same-UID recovery and
 installed smoke remain separate unverified evidence. They are not run by this
 qualification-plus-one-idle transaction and are not inferred from its result.
+
+`TestClaudeDialogueStreamReplaysObservedFrameCorpus` replays the preserved
+Claude Code 2.1.263 frame shapes through the reply-only validator and fails when
+a recorded verdict moves. Neither it nor L20 proves:
+
+- compatibility with the installed provider, which only this canary observes;
+- value drift, because the corpus keeps top-level key shape and fills values
+  with placeholders;
+- acceptance of unknown frames or fields, which the closed vocabulary rejects
+  by design.
+
+The L20 fixture emits none of the corpus's dropped side frames. Recorded real
+shapes the validator rejects today:
+
+- `result-success-25-keys`: the result allowlist lacks `origin`;
+- `system-init-allowlist-diff`: the init allowlist lacks `memory_paths` and
+  `terminal_slash_commands`.
+
+Shapes without preserved evidence are gaps, not corpus items: `command_lifecycle`
+keys and values; a non-null assistant `context_management` value; `system`
+`thinking_tokens` frames; hook and user `tool_result` frames; the exact real init
+key set; nested values of every frame; `rate_limit_event` envelope keys beyond
+`type` and `rate_limit_info`; and earlier shape inventories, which were lost.
