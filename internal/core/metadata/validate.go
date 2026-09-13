@@ -261,16 +261,12 @@ func (r Registry) Validate() error {
 		if !ok {
 			return stateErr(op, ErrInvalidRegistry, "window %q anchorPaneRef %q does not exist", window.Metadata.Name, window.Spec.AnchorPaneRef)
 		}
-		anchorWindowUID, owned := paneWindowOwnerUID(r, *anchor)
-		if !owned || anchorWindowUID != window.Metadata.UID ||
-			(anchor.Spec.Role != PaneRoleShell && anchor.Spec.Role != PaneRoleAgent) {
+		switch windowAnchorEligibility(r, window.Metadata.UID, *anchor) {
+		case windowAnchorEligible:
+		case windowAnchorNotSameWindowShellOrAgent:
 			return stateErr(op, ErrInvalidRegistry, "window %q anchorPaneRef %q is not a same-Window shell or Agent Pane", window.Metadata.Name, window.Spec.AnchorPaneRef)
-		}
-		if anchor.Spec.Role == PaneRoleAgent {
-			agent, _ := r.Agent(anchor.Metadata.OwnerUID())
-			if agent == nil || agent.Status.PaneRef != anchor.Metadata.UID {
-				return stateErr(op, ErrInvalidRegistry, "window %q anchorPaneRef %q is not its Agent owner's managed Pane", window.Metadata.Name, window.Spec.AnchorPaneRef)
-			}
+		case windowAnchorNotManagedAgentPane:
+			return stateErr(op, ErrInvalidRegistry, "window %q anchorPaneRef %q is not its Agent owner's managed Pane", window.Metadata.Name, window.Spec.AnchorPaneRef)
 		}
 		if shellRef := strings.TrimSpace(window.Spec.DefaultShellPaneRef); shellRef != "" {
 			shell, ok := r.Pane(shellRef)
@@ -346,6 +342,49 @@ func validRuntimeHandle(value string, prefix byte) bool {
 		}
 	}
 	return true
+}
+
+// windowAnchorVerdict names the clause of the Window anchor rule a Pane fails,
+// so Validate can keep one refusal per clause while every writer asks the same
+// question.
+type windowAnchorVerdict uint8
+
+const (
+	// windowAnchorEligible means the Pane may be the Window's anchorPaneRef.
+	windowAnchorEligible windowAnchorVerdict = iota
+	// windowAnchorNotSameWindowShellOrAgent means the Pane's exact owner chain
+	// does not reach the Window, or its role is neither shell nor agent.
+	windowAnchorNotSameWindowShellOrAgent
+	// windowAnchorNotManagedAgentPane means an Agent Pane its owner Agent does
+	// not currently bind through status.paneRef: a released, retained, or
+	// superseded managed Pane.
+	windowAnchorNotManagedAgentPane
+)
+
+// windowAnchorEligibility is the one Window anchor eligibility predicate.
+// Validate enforces it, and every anchor writer -- delete reselection,
+// termination release, and rebind -- selects only Panes it admits, so a writer
+// can never commit an anchor the next write's validation rejects.
+func windowAnchorEligibility(r Registry, windowUID string, pane Pane) windowAnchorVerdict {
+	ownerWindowUID, owned := paneWindowOwnerUID(r, pane)
+	if !owned || ownerWindowUID != windowUID ||
+		(pane.Spec.Role != PaneRoleShell && pane.Spec.Role != PaneRoleAgent) {
+		return windowAnchorNotSameWindowShellOrAgent
+	}
+	if pane.Spec.Role == PaneRoleAgent {
+		agent, ok := r.Agent(pane.Metadata.OwnerUID())
+		if !ok || agent.Status.PaneRef != pane.Metadata.UID {
+			return windowAnchorNotManagedAgentPane
+		}
+	}
+	return windowAnchorEligible
+}
+
+// windowAnchorRefEligible resolves paneUID and applies windowAnchorEligibility.
+// A missing Pane is never eligible.
+func (r Registry) windowAnchorRefEligible(windowUID, paneUID string) bool {
+	pane, ok := r.Pane(paneUID)
+	return ok && windowAnchorEligibility(r, windowUID, *pane) == windowAnchorEligible
 }
 
 func paneWindowOwnerUID(r Registry, pane Pane) (string, bool) {

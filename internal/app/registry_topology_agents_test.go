@@ -254,6 +254,49 @@ func TestTopologyAgentContinueEligibilityMatrix(t *testing.T) {
 	}
 }
 
+// A terminated Agent whose managed Pane anchored its Window releases the
+// binding and moves the anchor in one mutation. Continue therefore sees the
+// ordinary released shape, never a retained current paneRef kept only to
+// satisfy the Window anchor.
+func TestTopologyAgentContinueAdmitsTerminatedAnchorAgentWithEmptyPaneRef(t *testing.T) {
+	for _, classification := range []coremetadata.TerminationClassification{
+		coremetadata.TerminationInterrupted, coremetadata.TerminationAbnormal,
+	} {
+		t.Run(string(classification), func(t *testing.T) {
+			_, store, _, _, root, _ := newTopologyMaterializeFixture(t)
+			seed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+				name: "anchor", provider: "codex", cwd: root, ref: codexConversationRef("thread-anchor"),
+			})
+			pane, err := store.mutator().AttachAgentPane(&store.registry, seed.Metadata.UID, coremetadata.BootstrapPane{
+				Name: "anchor-pane", CWD: root,
+			}, "op-topology-anchor-pane")
+			if err != nil {
+				t.Fatal(err)
+			}
+			window, _ := store.registry.Window("win-beta-main")
+			window.Spec.AnchorPaneRef = pane.Metadata.UID
+			if err := store.registry.Validate(); err != nil {
+				t.Fatalf("anchor fixture: %v", err)
+			}
+
+			retained := markTopologyAgentTermination(t, store, seed.Metadata.UID, pane.Metadata.UID, classification)
+			agent, _ := store.registry.Agent(seed.Metadata.UID)
+			window, _ = store.registry.Window("win-beta-main")
+			if agent.Status.Phase == coremetadata.PhaseRunning || agent.Status.PaneRef != "" ||
+				window.Spec.AnchorPaneRef == "" || window.Spec.AnchorPaneRef == retained.Metadata.UID {
+				t.Fatalf("termination = agent:%+v anchor:%q, want released binding and moved anchor", agent.Status, window.Spec.AnchorPaneRef)
+			}
+			if err := store.registry.Validate(); err != nil {
+				t.Fatalf("post termination Registry: %v", err)
+			}
+			eligible, _, reason := decideTopologyAgentContinueEligibility(store.registry, agent.Clone())
+			if strings.Contains(reason, "still records a current paneRef") || !eligible || reason != "" {
+				t.Fatalf("terminated anchor Agent eligible=%t reason=%q, want admitted", eligible, reason)
+			}
+		})
+	}
+}
+
 func TestTopologyAgentContinueRejectsInvalidActivationEvidence(t *testing.T) {
 	_, store, _, _, root, _ := newTopologyMaterializeFixture(t)
 	seed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "evidence", provider: "codex", cwd: root, ref: codexConversationRef("thread-evidence")})
