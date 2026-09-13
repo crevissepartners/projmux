@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.2](https://github.com/crevissepartners/projmux/compare/v0.15.1...v0.15.2) (2026-09-13)
+
+
+### Features
+
+* **keybindings:** route managed prefix x and & through canonical delete ([#975](https://github.com/crevissepartners/projmux/issues/975)) ([64dbc67](https://github.com/crevissepartners/projmux/commit/64dbc67a7ef966db73fb39aefed65a7064f8696a))
+* **keybindings:** route managed tmux menu Kill through canonical delete ([#977](https://github.com/crevissepartners/projmux/issues/977)) ([a205264](https://github.com/crevissepartners/projmux/commit/a2052641cda87fbc73fe1c10cdec7f42ba545c21))
+
 ## [0.15.1](https://github.com/crevissepartners/projmux/compare/v0.15.0...v0.15.1) (2026-09-13)
 
 
