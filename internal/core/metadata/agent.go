@@ -160,6 +160,14 @@ func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared Bootst
 		return Pane{}, stateErr(op, ErrInvalidPhase, "agent %s cannot move from %s to %s", agent.Metadata.Name, agent.Status.Phase, PhaseRunning)
 	}
 	now := m.clock()().UTC()
+	windowUID := agent.Metadata.OwnerUID()
+	previous := agent.Status.PaneRef
+	window, windowOK := reg.Window(windowUID)
+	rebindAnchor := previous != "" && windowOK && window.Spec.AnchorPaneRef == previous
+	var before Registry
+	if rebindAnchor {
+		before = reg.Clone()
+	}
 	txn := m.Begin(reg, operationID)
 	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, declared.Name, declared.Command, declared.CWD, declared.Labels, now)
 	if err != nil {
@@ -174,6 +182,14 @@ func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared Bootst
 	agent.Status.Progress = AgentProgress{}
 	agent.Status.Reason = ""
 	agent.Status.LastTransitionAt = now
+	if rebindAnchor {
+		// The previous binding Pane stops being the Agent's managed Pane here,
+		// so an anchor on it follows the binding onto the new managed Pane.
+		if err := m.moveAnchorOffReleasedPane(reg, windowUID, previous, pane.Metadata.UID, operationID, now); err != nil {
+			*reg = before
+			return Pane{}, err
+		}
+	}
 	reg.UpdatedAt = now
 	return pane, nil
 }
@@ -265,6 +281,17 @@ func (m Mutator) TransitionAgent(reg *Registry, agentUID string, phase AgentPhas
 		return Agent{}, inputErr(op, ErrInvalidPhase, "agent %s cannot move from %s to %s", agent.Metadata.Name, agent.Status.Phase, phase)
 	}
 	now := m.clock()().UTC()
+	windowUID := agent.Metadata.OwnerUID()
+	releasedPaneUID := ""
+	if phase != PhaseRunning {
+		releasedPaneUID = agent.Status.PaneRef
+	}
+	window, windowOK := reg.Window(windowUID)
+	releasesAnchor := releasedPaneUID != "" && windowOK && window.Spec.AnchorPaneRef == releasedPaneUID
+	var before Registry
+	if releasesAnchor {
+		before = reg.Clone()
+	}
 	agent.Status.Phase = phase
 	agent.Status.Reason = strings.TrimSpace(reason)
 	agent.Status.LastTransitionAt = now
@@ -274,6 +301,16 @@ func (m Mutator) TransitionAgent(reg *Registry, agentUID string, phase AgentPhas
 		agent.Status.PaneRef = ""
 		agent.Status.Interaction = AgentInteraction{Kind: InteractionUnknown, ObservedAt: now, Source: "lifecycle"}
 		agent.Status.Progress = AgentProgress{}
+	}
+	if releasesAnchor {
+		// The released Pane row is retained, but it is no longer a managed Pane
+		// and so no longer an eligible anchor. The binding stays released; the
+		// anchor moves in the same mutation.
+		if err := m.moveAnchorOffReleasedPane(reg, windowUID, releasedPaneUID, "", "replace-released-agent-anchor", now); err != nil {
+			*reg = before
+			return Agent{}, err
+		}
+		agent = mustAgent(reg, agentUID)
 	}
 	reg.UpdatedAt = now
 	return agent.Clone(), nil
@@ -292,12 +329,13 @@ func (r *Registry) firstWindowShellPaneUID(windowUID string) string {
 	return ""
 }
 
-// firstWindowAnchorPaneUID returns the first Pane whose exact Registry ancestry
-// reaches windowUID. Both direct shell Panes and managed Agent Panes are valid
-// final-v2 anchors.
+// firstWindowAnchorPaneUID returns the first Pane in Registry insertion order
+// that windowAnchorEligibility admits for windowUID. Direct shell Panes and
+// managed Agent Panes qualify; a retained Agent Pane its owner no longer binds
+// is skipped rather than selected.
 func (r *Registry) firstWindowAnchorPaneUID(windowUID string) string {
 	for _, pane := range r.Panes {
-		if owner, ok := paneWindowOwnerUID(*r, pane); ok && owner == windowUID {
+		if windowAnchorEligibility(*r, windowUID, pane) == windowAnchorEligible {
 			return pane.Metadata.UID
 		}
 	}
@@ -337,9 +375,9 @@ func (r *Registry) deletePane(uid string) bool {
 }
 
 // repairRetainedWindow closes the final-v2 lifecycle invariant after one or
-// more descendants have been removed. It preserves an existing valid sibling
+// more descendants have been removed. It preserves an existing eligible sibling
 // in deterministic Registry order and allocates a shell only when the retained
-// Window would otherwise have no descendant Pane at all.
+// Window would otherwise have no eligible anchor Pane at all.
 func (m Mutator) repairRetainedWindow(reg *Registry, windowUID, operationID string, now time.Time) error {
 	window, ok := reg.Window(windowUID)
 	if !ok {
@@ -354,11 +392,46 @@ func (m Mutator) repairRetainedWindow(reg *Registry, windowUID, operationID stri
 		}
 		return nil
 	}
-	if _, _, err := m.EnsureWindowDefaultShell(reg, windowUID, "", operationID); err != nil {
+	return m.anchorWindowOnDefaultShell(reg, windowUID, operationID, now)
+}
+
+// moveAnchorOffReleasedPane moves windowUID's anchor only when it names
+// releasedPaneUID and the caller's mutation left that Pane failing
+// windowAnchorEligibility. Any other anchor -- eligible or already corrupt --
+// and the optional default shell are left untouched, so consumers that refuse
+// a corrupt anchor keep refusing it. The replacement is preferred when it is
+// eligible, otherwise the first eligible Pane in Registry order, otherwise the
+// default-shell close. Ineligible Pane rows are never removed.
+func (m Mutator) moveAnchorOffReleasedPane(reg *Registry, windowUID, releasedPaneUID, preferred, operationID string, now time.Time) error {
+	window, ok := reg.Window(windowUID)
+	if !ok || releasedPaneUID == "" || window.Spec.AnchorPaneRef != releasedPaneUID ||
+		reg.windowAnchorRefEligible(windowUID, releasedPaneUID) {
+		return nil
+	}
+	if preferred != "" && reg.windowAnchorRefEligible(windowUID, preferred) {
+		window.Spec.AnchorPaneRef = preferred
+		return nil
+	}
+	if anchor := reg.firstWindowAnchorPaneUID(windowUID); anchor != "" {
+		window.Spec.AnchorPaneRef = anchor
+		return nil
+	}
+	return m.anchorWindowOnDefaultShell(reg, windowUID, operationID, now)
+}
+
+// anchorWindowOnDefaultShell is the close for a Window with no eligible anchor
+// Pane left. It reuses EnsureWindowDefaultShell's allocation and then lands the
+// anchor on that shell explicitly: EnsureWindowDefaultShell never replaces a
+// non-empty anchor and Pane creation adopts only an empty one, so a Window whose
+// anchor still names a released Agent Pane would otherwise keep it.
+func (m Mutator) anchorWindowOnDefaultShell(reg *Registry, windowUID, operationID string, now time.Time) error {
+	shell, _, err := m.EnsureWindowDefaultShell(reg, windowUID, "", operationID)
+	if err != nil {
 		return err
 	}
-	window, _ = reg.Window(windowUID)
-	if window.Spec.AnchorPaneRef == "" || reg.firstWindowAnchorPaneUID(windowUID) == "" {
+	window, _ := reg.Window(windowUID)
+	window.Spec.AnchorPaneRef = shell.Metadata.UID
+	if !reg.windowAnchorRefEligible(windowUID, window.Spec.AnchorPaneRef) {
 		return stateErr("repair retained window", ErrInvalidRegistry,
 			"window %q has no descendant after replacement", windowUID)
 	}

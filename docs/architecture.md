@@ -242,6 +242,16 @@ Resources and ownership:
   session observation, and no replacement allocation. The requested Window and
   all descendants are removed exactly; only explicit Project deletion removes
   the owning root itself.
+  Every in-place anchor writer uses the one eligibility predicate `Validate`
+  enforces: same-Window ancestry, `shell` or `agent` role, and an Agent Pane
+  only while it is its owner's `status.paneRef`. Delete reselection picks the
+  first eligible Pane in Registry order; a termination that releases the
+  anchoring Agent's binding moves the anchor in the same mutation; a rebind
+  moves an anchor on the previous binding Pane onto the new managed Pane.
+  Ineligible retained Agent Pane rows are skipped, never selected or deleted,
+  and when no eligible Pane remains the anchor lands on a shell allocated
+  through the default-shell path. A non-Running Agent still carries an empty
+  `paneRef`: the anchor moves, the binding is never kept for it.
 
 Home and root kinds:
 
