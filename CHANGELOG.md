@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.15.1](https://github.com/crevissepartners/projmux/compare/v0.15.0...v0.15.1) (2026-09-13)
+
+
+### Features
+
+* **agent:** resume retained conversations after unplanned stops ([#964](https://github.com/crevissepartners/projmux/issues/964)) ([6ef9e72](https://github.com/crevissepartners/projmux/commit/6ef9e72258fb558b21d6a3ecb7d9581fe0f7aa01))
+* **cli:** show age in default resource lists ([#959](https://github.com/crevissepartners/projmux/issues/959)) ([2f1de99](https://github.com/crevissepartners/projmux/commit/2f1de992b0036120582ad9a810a04d27b5d23ca7))
+* **diagnostics:** journal Window teardown decisions ([#974](https://github.com/crevissepartners/projmux/issues/974)) ([b249d55](https://github.com/crevissepartners/projmux/commit/b249d5507d49891525de7a843366f42eb7103de8))
+* **diagnostics:** report Continue recovery outcomes ([#966](https://github.com/crevissepartners/projmux/issues/966)) ([af759da](https://github.com/crevissepartners/projmux/commit/af759daa0d0177a996951a5e94a435d47403c59f))
+* **doctor:** identify Codex endpoint generation mismatch risks ([#955](https://github.com/crevissepartners/projmux/issues/955)) ([4d3da1b](https://github.com/crevissepartners/projmux/commit/4d3da1b1c862e04bd0d232c84fb279185897dad8))
+* **doctor:** report stored Codex version-pair qualification ([#954](https://github.com/crevissepartners/projmux/issues/954)) ([b2c68c6](https://github.com/crevissepartners/projmux/commit/b2c68c6eba908d4bc9b0078d02c9f3a55a636aaa))
+
+
+### Bug Fixes
+
+* **agent:** expose source anchors and label unverified claims ([#956](https://github.com/crevissepartners/projmux/issues/956)) ([2bc0337](https://github.com/crevissepartners/projmux/commit/2bc0337159302a0c7a271056681bc2cdb20fc586))
+* **agent:** preserve failed reply causes and safe retry paths ([#960](https://github.com/crevissepartners/projmux/issues/960)) ([95ecd01](https://github.com/crevissepartners/projmux/commit/95ecd01537aaf2bacdf50e29a6f5989400a9d10e))
+* **agent:** preserve provider frame rejection reasons ([#957](https://github.com/crevissepartners/projmux/issues/957)) ([c780a16](https://github.com/crevissepartners/projmux/commit/c780a16c43f1c734a4ea6d7bbe91a1d780ab1cee))
+* **agent:** report Codex coordination push failures to senders ([#962](https://github.com/crevissepartners/projmux/issues/962)) ([18b0e9f](https://github.com/crevissepartners/projmux/commit/18b0e9f6282e5cd46bc511053338e103d4d62b6b))
+* **codex:** make unmanaged endpoint recovery guidance actionable ([#961](https://github.com/crevissepartners/projmux/issues/961)) ([d0bd5d9](https://github.com/crevissepartners/projmux/commit/d0bd5d94171111e47b117976bb3eb52f44069259))
+* **codex:** preserve recovery diagnostics and manager ownership evidence ([#969](https://github.com/crevissepartners/projmux/issues/969)) ([bf150b8](https://github.com/crevissepartners/projmux/commit/bf150b81aa3a8f9dc21ed1418c2fda9b05f607aa))
+* **codex:** rebind recovered clients to verified authority ([#967](https://github.com/crevissepartners/projmux/issues/967)) ([c610a77](https://github.com/crevissepartners/projmux/commit/c610a77c61658615145cf11e8eda47895ab88ec6))
+* **registry:** keep every anchor writer inside the validator's anchor predicate ([#971](https://github.com/crevissepartners/projmux/issues/971)) ([dc0f91e](https://github.com/crevissepartners/projmux/commit/dc0f91e6201e760a0306d0b2b7b5e1ad88c3ed55))
+* **replacement:** point report-only routes and delete refusals at runnable commands ([#972](https://github.com/crevissepartners/projmux/issues/972)) ([c55119c](https://github.com/crevissepartners/projmux/commit/c55119c8e6922769e588a96dc44c59d7638364e9))
+* **snapshot:** skip unbound Panes in the runtime id duplicate check ([#970](https://github.com/crevissepartners/projmux/issues/970)) ([3e56c2b](https://github.com/crevissepartners/projmux/commit/3e56c2b2096c0e5a5ad2c71a5ca25e8c0063d445))
+* **snapshot:** skip unbound Windows in the runtime id duplicate check ([#973](https://github.com/crevissepartners/projmux/issues/973)) ([2d2c623](https://github.com/crevissepartners/projmux/commit/2d2c623e596a10c691ee1078bdb36d0b9c926b84))
+* **usage:** recover quiet Codex rate-limit connections ([#965](https://github.com/crevissepartners/projmux/issues/965)) ([077c46a](https://github.com/crevissepartners/projmux/commit/077c46a600d4d473ac38b6832875054e2d397387))
+
 ## [0.15.0](https://github.com/crevissepartners/projmux/compare/v0.14.2...v0.15.0) (2026-09-09)
 
 
