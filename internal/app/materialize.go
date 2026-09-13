@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -159,8 +160,16 @@ type runtimeLedger struct {
 }
 
 func newRuntimeLedger(operationID string) *runtimeLedger {
+	return newRuntimeLedgerAt(operationID, time.Now())
+}
+
+// newRuntimeLedgerAt builds the ledger with an explicit clock reading for the
+// operation marker. The create transaction passes its injected clock here so a
+// test can compare two transactions byte for byte without crossing a second
+// boundary; every other caller keeps newRuntimeLedger's wall clock.
+func newRuntimeLedgerAt(operationID string, now time.Time) *runtimeLedger {
 	return &runtimeLedger{
-		operationMarker: newCreateOperationMarker(operationID),
+		operationMarker: newCreateOperationMarkerAt(operationID, now),
 		currentWindows:  make(map[string]runtimeOwner),
 	}
 }

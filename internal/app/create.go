@@ -125,6 +125,10 @@ type createCommand struct {
 	shell          string
 	sessionNameFor func(root string) string
 	newOperationID func() (string, error)
+	// now stamps the create-operation marker each transaction ledger carries.
+	// Injectable, like newOperationID, so a test can hold the marker's second
+	// fixed and compare two transactions byte for byte. Nil selects time.Now.
+	now func() time.Time
 	// newGeneration mints the opaque activation generation one materialized
 	// Pane's supervisor quotes back when its child stops.
 	newGeneration    func() (string, error)
@@ -183,6 +187,7 @@ func newCreateCommand() *createCommand {
 		shell:            configuredShell(os.Getenv),
 		sessionNameFor:   namer.SessionName,
 		newOperationID:   newCreateOperationID,
+		now:              time.Now,
 		newGeneration:    coremetadata.NewGeneration,
 		resolveWorkspace: resolveAgentWorkspace,
 	}

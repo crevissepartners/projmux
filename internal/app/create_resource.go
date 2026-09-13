@@ -1548,6 +1548,15 @@ func (c *createCommand) exactProjectOwnershipGuard(projectUID string) createPreR
 	}
 }
 
+// operationClock is the clock the transaction ledger's create-operation marker
+// is stamped from. Production wires time.Now; a nil seam falls back to it.
+func (c *createCommand) operationClock() func() time.Time {
+	if c == nil || c.now == nil {
+		return time.Now
+	}
+	return c.now
+}
+
 // transact runs one create operation under the declared transaction order:
 // full preflight -> operation id -> created-resource ledger -> metadata
 // mutation -> runtime mutation -> commit.
@@ -1574,7 +1583,7 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 	if err != nil {
 		return err
 	}
-	ledger := newRuntimeLedger(operationID)
+	ledger := newRuntimeLedgerAt(operationID, c.operationClock()())
 	guard := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
 		var selected liveSessionIdentity
 		for _, candidate := range guards {

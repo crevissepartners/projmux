@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -219,9 +220,15 @@ func newTestResourceCreateCommand(t *testing.T, store *fakeResourceStore, tmux *
 		shell:          "/bin/zsh",
 		sessionNameFor: filepath.Base,
 		newOperationID: func() (string, error) { return "op-test", nil },
+		now:            func() time.Time { return testCreateOperationClock },
 		newGeneration:  testGenerationSequence(),
 	}, sessions
 }
+
+// testCreateOperationClock is the fixed instant every fixture-built create
+// transaction stamps into its operation marker. Holding it still keeps two
+// transactions byte-equivalent regardless of the wall-clock second they run in.
+var testCreateOperationClock = time.Unix(1_700_000_000, 0).UTC()
 
 // testSupervisorBinary is the stable projmux path the managed process
 // supervisor is spelled with inside launch-argv assertions.

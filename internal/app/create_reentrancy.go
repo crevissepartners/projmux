@@ -18,7 +18,15 @@ const createOperationEnvironment = "__projmux_create_operation"
 const createOperationMarkerMaxAge = 5 * time.Minute
 
 func newCreateOperationMarker(operationID string) string {
-	return fmt.Sprintf("v1:%d:%d:%s", os.Getpid(), time.Now().Unix(), strings.TrimSpace(operationID))
+	return newCreateOperationMarkerAt(operationID, time.Now())
+}
+
+// newCreateOperationMarkerAt stamps the lease with an explicit clock reading so
+// a transaction whose clock is injected produces the same marker on every run.
+// The format is the hook-visible contract; only the source of the instant
+// differs from newCreateOperationMarker.
+func newCreateOperationMarkerAt(operationID string, now time.Time) string {
+	return fmt.Sprintf("v1:%d:%d:%s", os.Getpid(), now.Unix(), strings.TrimSpace(operationID))
 }
 
 func activeCreateOperationMarker(marker string, now time.Time) bool {

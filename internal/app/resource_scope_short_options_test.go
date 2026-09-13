@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -188,7 +187,8 @@ func TestResourceCreateShortOptionsPreserveMutationAndTmuxPlan(t *testing.T) {
 // lease, so two otherwise identical routes that straddle a Unix second cannot
 // produce byte-identical marker values. The helper first proves every observed
 // marker is one consistent, live op-test lease; all remaining argv bytes stay
-// under the exact DeepEqual assertion above.
+// under the exact DeepEqual assertion above. Liveness is judged against the
+// fixture's injected clock, which is the instant the marker was stamped from.
 func normalizedCreateLeaseCalls(t *testing.T, calls [][]string) [][]string {
 	t.Helper()
 	var marker string
@@ -212,7 +212,7 @@ func normalizedCreateLeaseCalls(t *testing.T, calls [][]string) [][]string {
 				t.Fatalf("tmux calls carry multiple create leases: %q and %q", marker, candidate)
 			}
 			parts := strings.SplitN(candidate, ":", 4)
-			if len(parts) != 4 || parts[0] != "v1" || parts[3] != "op-test" || !activeCreateOperationMarker(candidate, time.Now()) {
+			if len(parts) != 4 || parts[0] != "v1" || parts[3] != "op-test" || !activeCreateOperationMarker(candidate, testCreateOperationClock) {
 				t.Fatalf("tmux calls create lease %q is malformed or inactive", candidate)
 			}
 			normalized := strings.Join([]string{parts[0], parts[1], "<started>", parts[3]}, ":")
