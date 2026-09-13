@@ -15,6 +15,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -286,6 +287,10 @@ type controllerTriggerRunner struct {
 	// config-apply preexisting dead Pane producer. Tests replace it without
 	// consulting the host process table.
 	processAlive func(int) bool
+	// teardown journals consumed Window/Pane teardown decisions under this
+	// invocation's run ID. It is nil-safe and best-effort: nil records nothing,
+	// and an append never changes a pass, an outcome, or a retry.
+	teardown *diagnostics.TeardownRecorder
 }
 
 var _ controllerTriggering = (*controllerTriggerRunner)(nil)
@@ -439,6 +444,15 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 			}
 			if passTrigger.reason == controllerTriggerPaneExited {
 				sawPaneExit = true
+			}
+			// An unpaired unlink is a retain decision when its own hook pass first
+			// waits, and again when the same pair wait at its retry bound is dropped
+			// below. Carried retries in between record nothing. Journaling here, once
+			// per pass and before the carry branch advances retry, keeps the
+			// reconciler's candidate/locked evaluations from duplicating it.
+			if passTrigger.reason == controllerTriggerWindowUnlinked && !passTrigger.fullReobserve && pass.awaitingPaneExit &&
+				(passTrigger.retry == 0 || (!sawPaneExit && passTrigger.retry >= controllerTriggerMaxRetries)) {
+				journalWindowUnlinkAwaitingPaneExit(r.teardown, pass.awaitingSubject)
 			}
 			if passTrigger.reason == controllerTriggerWindowUnlinked && !passTrigger.fullReobserve && pass.awaitingPaneExit && !sawPaneExit && passTrigger.retry < controllerTriggerMaxRetries {
 				passTrigger.retry++
@@ -621,7 +635,10 @@ type controllerPassResult struct {
 	// target before generic binding reconciliation.
 	controlRoot      bool
 	awaitingPaneExit bool
-	refused          string
+	// awaitingSubject carries the exact-handle Window resolution of an awaiting
+	// unlink to the teardown journal. It never affects carry, retry, or outcome.
+	awaitingSubject lifecycleTeardownSubject
+	refused         string
 	// exhaustedCleanExitConverged is set only when the existing exact planner
 	// removed the retained Agent Pane and projected its stable Agent Offline.
 	// It is the acknowledgement authority for a terminal event record.
@@ -712,6 +729,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 			runtimePaneID:    trigger.hookPane, runtimeWindowID: trigger.hookWindow,
 			receipts: receipts, pinStore: r.pins,
 			exhaustedReplay: trigger.exhaustedReplay,
+			decisions:       r.teardown,
 		}
 		if trigger.reason == controllerTriggerPaneExited {
 			dirty.teardownKind = coremetadata.TeardownEventPaneExited
@@ -729,6 +747,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 		pass.residualExits = exits.changed()
 		pass.exhaustedCleanExitConverged = len(exits.cascaded) == 1
 		pass.awaitingPaneExit = exits.awaitingPaneExit
+		pass.awaitingSubject = exits.awaitingSubject
 		return pass, nil
 	}
 	route, err := resolveControllerRuntimeMutationRoute(ctx, r.runner, target, func(string) string { return "" })

@@ -44,6 +44,20 @@ UIDs and stage labels are bounded control data; root paths, pane content,
 history, prompts, transcripts, and snapshot contents are never identity or
 intent authority.
 
+Automatic Window teardown decisions use `component=topology` and
+`event=topology.teardown.decision`: one `info`/`success` record per decision
+the `internal tmux converge` hook path consumes. An unpaired `window-unlinked`
+records `retain` when its own hook first waits and again when its bounded pair
+wait is exhausted, never for the carried retries between; its Window/Pane UID
+is resolved read-only from the exact `$N/@N` handles and omitted when
+ambiguous. The record adds only
+a closed `decision` (`retain`, `delete-pane-agent`, `delete-window`, `refuse`),
+a `code` from the closed `topology.teardown.<reason>` set that mirrors every
+core teardown reason, an optional closed termination `classification`, and
+optional opaque `window_uid` (`win-…`) and `pane_uid` (`pane-…`) Registry UIDs.
+tmux `%N`/`@N`/`$N` handles, socket paths, session names, cwd, argv, and free
+text are never recorded, and every other event family rejects these fields.
+
 Session State mutations use one outcome-only `session-state.outcome` record
 per selected attempt. The closed operations are `session-state.save`,
 `session-state.autosave`, `session-state.restore`, and `session-state.delete`;

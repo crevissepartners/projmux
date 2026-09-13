@@ -51,6 +51,10 @@ type Event struct {
 	ResumedCount       *int   `json:"resumed_count,omitempty"`
 	SkippedCount       *int   `json:"skipped_count,omitempty"`
 	ItemCount          *int   `json:"item_count,omitempty"`
+	Decision           string `json:"decision,omitempty"`
+	Classification     string `json:"classification,omitempty"`
+	WindowUID          string `json:"window_uid,omitempty"`
+	PaneUID            string `json:"pane_uid,omitempty"`
 }
 
 // NewRunID creates one opaque correlation ID for a process invocation.
@@ -107,7 +111,7 @@ func SanitizeMessage(message, home string) string {
 var (
 	allowedLevels     = stringSet("info", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -268,6 +272,12 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 }
 
 func validateEventShape(event Event) error {
+	if event.Event == teardownDecisionEvent {
+		return validateTeardownDecisionEvent(event)
+	}
+	if event.hasTeardownFields() {
+		return fmt.Errorf("teardown decision fields on unrelated event")
+	}
 	if event.Event == "topology.outcome" || event.Event == "topology.agent.skipped" {
 		return validateTopologyEvent(event)
 	}

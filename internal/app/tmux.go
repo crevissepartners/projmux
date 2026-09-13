@@ -499,6 +499,7 @@ func (c *tmuxCommand) trigger(ctx context.Context, trigger controllerTrigger) (c
 		if err != nil {
 			return controllerTriggerOutcome{reason: trigger.reason}, err
 		}
+		built.teardown = c.diagnostics.Teardown()
 		runner = built
 	}
 	return runner.run(ctx, trigger)
@@ -515,6 +516,7 @@ func (c *tmuxCommand) replayExhaustedCleanExits(ctx context.Context, target tmux
 		if err != nil {
 			return controllerTriggerOutcome{reason: controllerTriggerConfigApply}, err
 		}
+		built.teardown = c.diagnostics.Teardown()
 		runner = built
 	}
 	return runner.replayExhaustedCleanExits(ctx, target)
