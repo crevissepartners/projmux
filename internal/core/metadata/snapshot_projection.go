@@ -39,6 +39,13 @@ func StampProjectSnapshot(registry Registry, projectUID string, snap sessionstat
 			windowsByRuntime[runtimeID] = window
 		}
 		for _, pane := range registry.snapshotPanesOf(window.Metadata.UID) {
+			// The duplicate check asks whether two live Panes own one runtime
+			// id. An unbound Pane owns no runtime: its retained id is a stale
+			// record kept for delete authority, which tmux may reuse for a live
+			// Pane after a server restart.
+			if snapshotPaneRuntimeUnbound(pane) {
+				continue
+			}
 			if runtimeID := strings.TrimSpace(pane.Status.Activation.RuntimeID); runtimeID != "" {
 				if existing, duplicate := panesByRuntime[runtimeID]; duplicate {
 					return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
@@ -109,6 +116,14 @@ func StampProjectSnapshot(registry Registry, projectUID string, snap sessionstat
 		return sessionstate.Snapshot{}, fmt.Errorf("%s: %w", op, err)
 	}
 	return out, nil
+}
+
+// snapshotPaneRuntimeUnbound reports whether a Pane is recorded as
+// MissingRuntime=True with reason RuntimeUnbound. Any other status or reason
+// leaves the Pane counted as a live runtime owner.
+func snapshotPaneRuntimeUnbound(pane Pane) bool {
+	condition, ok := pane.HasCondition(ConditionMissingRuntime)
+	return ok && condition.Status == ConditionTrue && condition.Reason == ReasonRuntimeUnbound
 }
 
 func snapshotResourceMetadata(meta ObjectMeta, ownerKind, ownerUID string) *sessionstate.ResourceMetadata {
