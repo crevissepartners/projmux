@@ -124,6 +124,12 @@ func runShellOutputLedger() []runShellProducer {
 			Note:  "runs inside command-prompt; the rename projection is consumed in-process",
 		},
 		{
+			ID: "catalog.delete-confirm", Surface: runShellSurfaceKeybinding,
+			Match: "internal tmux delete-confirm", Channel: runShellChannelIntentionalUI,
+			Route: interactiveRouteDeleteConfirm,
+			Note:  "the mirrored branch of prefix x/& opens one confirmation prompt on the exact client; the prompt is the declared UI and a refusal reaches that client",
+		},
+		{
 			ID: "catalog.agent-pane-launch", Surface: runShellSurfaceKeybinding,
 			Match: "internal agent-pane launch-", Channel: runShellChannelSilent,
 			Route: interactiveRouteAgentPaneLaunch,
@@ -254,6 +260,18 @@ func runShellOutputLedger() []runShellProducer {
 			Note:       "queued runtime mutation continuation; the marker is the receipt, the job prints nothing",
 		},
 		{
+			ID: "runtime.delete-confirm-pane", Surface: runShellSurfaceRuntime,
+			Match: "internal tmux pane-menu", Channel: runShellChannelExactClientMessage,
+			Route: interactiveRoutePaneMenu,
+			Note:  "the confirmed command of a managed prefix x is the Pane menu Kill route itself; it reports one bounded line to the exact client",
+		},
+		{
+			ID: "runtime.delete-confirm-window", Surface: runShellSurfaceRuntime,
+			Match: "internal tmux window-delete", Channel: runShellChannelExactClientMessage,
+			Route: interactiveRouteWindowDelete,
+			Note:  "the confirmed command of a managed prefix & reaches canonical delete window and reports one bounded line to the exact client",
+		},
+		{
 			ID: "runtime.quit-refusal-sentinel", Surface: runShellSurfaceRuntime,
 			Match: "exit 73", Channel: runShellChannelSilent,
 			ControlSentinel: true,
@@ -290,6 +308,7 @@ func runShellSourceSites() []runShellSourceSite {
 		{File: "tmux.go", Snippet: "{ run-shell "},
 		{File: "tmux.go", Snippet: `"bind-key -T projmux-status " + key + " run-shell "`},
 		{File: "tmux.go", Snippet: `"run-shell " + tmuxConfigQuote(bin+" internal tmux pane-menu`},
+		{File: "tmux.go", Snippet: `"run-shell " + tmuxConfigQuote(env+tmuxShellQuote(bin)+" "+route)`},
 		{File: "switch.go", Snippet: `"tmux", "run-shell", "-b", command`},
 		{File: "quit.go", Snippet: "exit 73"},
 	}

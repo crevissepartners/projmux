@@ -391,7 +391,16 @@ func TestGeneratedCatalogMutationAndNavigationArtifactsHaveOneSurfaceRow(t *test
 		} else if matched[0].LegacyID != action.ID {
 			t.Errorf("catalog surface %q legacy alias = %q, want shipped id %q", matched[0].ID, matched[0].LegacyID, action.ID)
 		}
-		for field := range strings.FieldsSeq(action.TmuxBody + " " + strings.Join(action.TmuxBodyAliases, " ")) {
+		if action.TmuxStockBody != "" {
+			// A managed close key's mirror-absent branch is tmux's own stock body
+			// for that key, classified exactly by the full-config sweep. It may be
+			// nothing else and live on no other kind.
+			if action.TmuxKind != tmuxBindingManagedDelete || (action.TmuxStockBody != `confirm-before -p "kill-pane #P? (y/n)" kill-pane` &&
+				action.TmuxStockBody != `confirm-before -p "kill-window #W? (y/n)" kill-window`) {
+				t.Errorf("generated catalog artifact %q carries an unclassified stock body %q", action.ID, action.TmuxStockBody)
+			}
+		}
+		for field := range strings.FieldsSeq(action.TmuxBody + " " + action.TmuxManagedGuard + " " + strings.Join(action.TmuxBodyAliases, " ")) {
 			field = strings.Trim(field, `{};'"`)
 			if closedTmuxTopologyMutationVerbs[field] {
 				t.Errorf("generated catalog artifact %q embeds managed topology verb %q instead of its classified handler", action.ID, field)
@@ -737,6 +746,18 @@ func TestGeneratedWindowLifecycleActionsReachTypedHandlersWithoutRawManagedVerbs
 	wantRoute := map[string]string{
 		"new-window":    "internal tmux window-create --client #{client_tty} --anchor #{pane_id}",
 		"rename-window": "internal tmux window-rename --client #{client_tty} --anchor #{pane_id}",
+		"delete-pane":   "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} pane",
+		"delete-window": "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} window",
+	}
+	wantCanonicalID := map[string]string{
+		"new-window": "window.create", "rename-window": "window.rename",
+		"delete-pane": "pane.delete", "delete-window": "window.delete",
+	}
+	// The managed close keys replace tmux stock bindings, so their else branch is
+	// tmux 3.6's exact stock body and nothing else; see tmux36StockPrefixX.
+	wantStockElse := map[string]string{
+		"delete-pane":   `confirm-before -p "kill-pane #P? (y/n)" kill-pane`,
+		"delete-window": `confirm-before -p "kill-window #W? (y/n)" kill-window`,
 	}
 	seen := map[string]bool{}
 	for _, action := range defaultKeyBindingCatalog() {
@@ -745,14 +766,19 @@ func TestGeneratedWindowLifecycleActionsReachTypedHandlersWithoutRawManagedVerbs
 			continue
 		}
 		seen[action.ID] = true
-		wantCanonical := "window.create"
-		if action.ID == "rename-window" {
-			wantCanonical = "window.rename"
-		}
-		if action.CanonicalID != wantCanonical {
-			t.Fatalf("generated %s canonical id = %q, want %q", action.ID, action.CanonicalID, wantCanonical)
+		if action.CanonicalID != wantCanonicalID[action.ID] {
+			t.Fatalf("generated %s canonical id = %q, want %q", action.ID, action.CanonicalID, wantCanonicalID[action.ID])
 		}
 		body := renderTmuxBindingBody("/usr/local/bin/projmux", action)
+		if stock, managedDelete := wantStockElse[action.ID]; managedDelete {
+			managed, elseBranch, split := strings.Cut(body, " } { ")
+			if !split || !strings.HasPrefix(managed, `if-shell -F "#{@projmux_`) || elseBranch != stock+" }" {
+				t.Fatalf("generated %s body = %q, want a mirror-guarded managed branch and exact stock else %q", action.ID, body, stock)
+			}
+			// Only the managed branch reaches projmux, and it must reach the typed
+			// handler with no raw verb of its own.
+			body = managed + " }"
+		}
 		if !strings.Contains(body, route) {
 			t.Fatalf("generated %s body = %q, want typed handler %q", action.ID, body, route)
 		}
@@ -817,6 +843,7 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		"trigger.recent-window-record", "trigger.after-new-window", "trigger.after-split-window",
 		"trigger.client-attached-welcome", "config.generated-statusbar", "config.generated-key-sequences",
 		"pane-menu.swap-up", "pane-menu.swap-down", "pane-menu.zoom",
+		"catalog.pane.delete", "catalog.window.delete",
 	} {
 		if rows[id] == "" {
 			t.Fatalf("generated config producer %q has no closed surface row", id)
@@ -835,12 +862,24 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		!reflect.DeepEqual(overriddenWindow.TmuxBodyAliases, defaultWindow.TmuxBodyAliases) {
 		t.Fatal("Settings key override changed the closed generated action handler")
 	}
+	// The managed close keys moved and disabled: pane.delete leaves prefix x for
+	// X, window.delete gives up prefix & entirely. Both vacated stock keys must
+	// come back as tmux's own stock body and nothing else.
+	closeKeyMoved, closeKeyOff := "X", ""
+	closeKeyOverride, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), keymapFile{Bindings: map[string]keymapOverride{
+		"pane.delete":   {Prefix: &closeKeyMoved},
+		"window.delete": {Prefix: &closeKeyOff},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	decorations := statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff)
 	configs := map[string]string{
 		"standalone":                   tmuxStandaloneConfig("/usr/local/bin/projmux", config.StatusbarDecorationOff),
 		"app":                          tmuxAppConfig("/usr/local/bin/projmux", "/bin/sh", config.StatusbarDecorationOff),
 		"standalone-settings-override": tmuxStandaloneConfigWithKeymap("/usr/local/bin/projmux", decorations, overridden, true),
 		"app-settings-override":        tmuxAppConfigWithKeymap("/usr/local/bin/projmux", "/bin/sh", decorations, overridden, true),
+		"app-close-key-override":       tmuxAppConfigWithKeymap("/usr/local/bin/projmux", "/bin/sh", decorations, closeKeyOverride, true),
 	}
 	requiredArtifacts := map[string]string{
 		"trigger.attention-focus":        "set-hook -g pane-focus-out",
@@ -885,6 +924,35 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 			"config.generated-statusbar": 4, "config.generated-key-sequences": 2,
 			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
+	}
+	// The managed close keys are app-scoped: each app config carries one exact
+	// delete-confirm route per key it still owns, a standalone snippet carries
+	// none, and a disabled key carries none.
+	requiredArtifacts["catalog.pane.delete"] = "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} pane"
+	requiredArtifacts["catalog.window.delete"] = "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} window"
+	expectedArtifactCounts["app-close-key-override"] = map[string]int{}
+	maps.Copy(expectedArtifactCounts["app-close-key-override"], expectedArtifactCounts["app"])
+	for kind, counts := range expectedArtifactCounts {
+		counts["catalog.pane.delete"], counts["catalog.window.delete"] = 0, 0
+		if strings.HasPrefix(kind, "app") {
+			counts["catalog.pane.delete"], counts["catalog.window.delete"] = 1, 1
+		}
+	}
+	expectedArtifactCounts["app-close-key-override"]["catalog.window.delete"] = 0
+	// kill-pane and kill-window may appear only inside tmux 3.6's exact stock
+	// bodies for those keys: the mirror-absent else branch of a managed binding,
+	// or the stock restore of a key a managed action vacated.
+	type stockKillCount struct{ elseBranches, restores int }
+	stockKillBodies := map[string]string{
+		"kill-pane":   `confirm-before -p "kill-pane #P? (y/n)" kill-pane`,
+		"kill-window": `confirm-before -p "kill-window #W? (y/n)" kill-window`,
+	}
+	expectedStockKills := map[string]map[string]stockKillCount{
+		"standalone":                   {},
+		"standalone-settings-override": {},
+		"app":                          {"kill-pane": {elseBranches: 1}, "kill-window": {elseBranches: 1}},
+		"app-settings-override":        {"kill-pane": {elseBranches: 1}, "kill-window": {elseBranches: 1}},
+		"app-close-key-override":       {"kill-pane": {elseBranches: 1, restores: 1}, "kill-window": {restores: 1}},
 	}
 	for kind, rendered := range configs {
 		wantConverge := 4
@@ -944,6 +1012,33 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		}
 		for verb := range closedTmuxTopologyMutationVerbs {
 			occurrences := regexp.MustCompile(`(^|[[:space:];{}'\"])(`+regexp.QuoteMeta(verb)+`)([[:space:];{}'\"]|$)`).FindAllStringIndex(rendered, -1)
+			if stock, closeKey := stockKillBodies[verb]; closeKey {
+				// Each stock body spells its verb twice, in the prompt and as the
+				// command, so any occurrence beyond those bodies is unclassified.
+				var got stockKillCount
+				restore := regexp.MustCompile(`^bind-key [^ ]+ ` + regexp.QuoteMeta(stock) + `$`)
+				for line := range strings.SplitSeq(rendered, "\n") {
+					if !strings.Contains(line, stock) {
+						continue
+					}
+					switch {
+					case strings.Count(line, stock) == 1 && strings.HasPrefix(line, "bind-key ") && strings.Contains(line, " { run-shell ") &&
+						strings.Contains(line, "internal tmux delete-confirm") && strings.HasSuffix(line, " } { "+stock+" }"):
+						got.elseBranches++
+					case restore.MatchString(line):
+						got.restores++
+					default:
+						t.Errorf("%s generated config embeds the stock %s body outside a managed close key: %s", kind, verb, line)
+					}
+				}
+				if want := expectedStockKills[kind][verb]; got != want {
+					t.Errorf("%s generated config stock %s bodies = %+v, want %+v", kind, verb, got, want)
+				}
+				if classified := 2 * (got.elseBranches + got.restores); len(occurrences) != classified {
+					t.Errorf("%s generated config has %d %s occurrence(s), but only %d sit inside exact stock close-key bodies", kind, len(occurrences), verb, classified)
+				}
+				continue
+			}
 			if len(occurrences) == 0 {
 				continue
 			}

@@ -47,35 +47,35 @@ func appLightThemeConfig() theme.ThemeConfig {
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
 		"standalone": "d1a33ed87346ccf070f7e8c9b8357ae99551fbb56abc106bd9eedeb8ba69ad8f",
-		"app":        "721a71dc568df7a363253f478ca688aac82b84569f7a8c522213e8211c5c6c58",
+		"app":        "b09d80b00861afa57f8b4e6b94ccbc0801766e16bd35b2df5117c110df4987b9",
 	},
 	"projmux": {
 		"standalone": "3bac3816918d90b5b6466e800231495a39f078022e983138c30041b6da5dc736",
-		"app":        "7f3c8aa967e4bbcb92e43175ffa89c9d27f199ab4bbf594fb661f761c287495b",
+		"app":        "67497e631248a5f8bd985be92679c0f72fe93626cfd78c0667a5f74cdc15ed32",
 	},
 	"blue-hour": {
 		"standalone": "2cf7299308e4701248a5817b4af3fd2564591415b2608f27f3158a26b07bfa75",
-		"app":        "3845990a95456bf53da16243574f357efcedc058bd144a3e04b7d13f02b57c78",
+		"app":        "44f3eabaf32afc255d03fe83aaa917c18100cb70740064d98f149bd23b3b6a4e",
 	},
 	"carbon-violet": {
 		"standalone": "d3e6073c15693342acc2f155ee360997f5361ee45ebab08d5efccec7e916cc9d",
-		"app":        "2258ae317004d1a7a02b27ae2d7d87df226abcb7573514833d380ee67958b775",
+		"app":        "279b83351dffcf8e43cc659d694d22c9e8e10bc8e543f707ab53300924b3b5dd",
 	},
 	"ember": {
 		"standalone": "ef898c6361fe13f4627b57a009f2a5bc888f48d9a70820906484c4edf7f67543",
-		"app":        "a11c63bcc7d1fd232aace189e8729d273207195bbb8f4e7af7083cc3b9471b66",
+		"app":        "ea1b0ae228c6f758983776217327eca34cec0ed97c9eefc24556ea5ae847f681",
 	},
 	"forest": {
 		"standalone": "93e3259283842bfc9a45a9f8db481a7061267bf323599329f326c809f629656f",
-		"app":        "84ac3f263eea5c02ed3472a44d860edf10a6333cd1fbccc39835d212ff14719a",
+		"app":        "d6bbb8654e463bdb825ac4965ce5034a3c683b50dc751a1b661c4dfd3705f5c1",
 	},
 	"rose": {
 		"standalone": "22f84b03721717d5872c98670d717e38c95157d674f84a96d5eb9d7d9aed23f2",
-		"app":        "91d63b7de1c15b72b955604866194d6bcdd5b8a91b73a1ab52f2ded6b2c190a4",
+		"app":        "05eb6bf3148493205d135db283c6b067a395fda571456c6e8b26bc03ba83cc55",
 	},
 	"high-contrast": {
 		"standalone": "039310b18a9dfac7ac5369752612098313dcb3bf8b5213a0362a7cbd71ccb3c9",
-		"app":        "db4251994e76b5dbccc5d06f28a0a67567104f1509342d054ef583d333ee4bdf",
+		"app":        "57641ffcf55486ce0bc64f7d75970c6278953f0ed6d017e83162855f49f15917",
 	},
 }
 
@@ -87,8 +87,11 @@ var brightPhase2ConfigGoldens = map[string]map[string]string{
 // output-channel convergence: the status-key bindings now carry
 // `#{client_tty}` so a status action's result reaches the exact client, and the
 // foreground runtime-created hook is exit-guarded so a refused convergence
-// cannot paint the pane that just appeared. Theme rendering itself is
-// unchanged, which is what this test still pins.
+// cannot paint the pane that just appeared. The app digests were rebaselined
+// again when the app config began replacing tmux's stock `prefix x` and
+// `prefix &` with the mirror-guarded managed close keys; every standalone
+// digest stayed byte-identical. Theme rendering itself is unchanged, which is
+// what this test still pins.
 func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 	t.Parallel()
 

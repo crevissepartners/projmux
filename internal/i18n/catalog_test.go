@@ -146,3 +146,55 @@ func requiredDefaultCatalogKeysByPrefix(catalog Catalog, prefixes []string) []Ke
 	}
 	return keys
 }
+
+// TestDefaultCatalogManagedDeleteConfirmParity pins the confirmation prompt the
+// managed tmux close keys show. Both locales must name the Registry deletion
+// and the Agent consequence -- deleted, and not coming back on Continue -- and
+// keep tmux's own target format plus the y/n key hint the prompt answers.
+func TestDefaultCatalogManagedDeleteConfirmParity(t *testing.T) {
+	for _, test := range []struct {
+		key    Key
+		format string
+		want   map[Locale][]string
+	}{
+		{
+			key:    Key("tmux.confirm.delete_pane"),
+			format: "#P",
+			want: map[Locale][]string{
+				FallbackLocale:  {"Delete Pane", "Registry", "Agent", "deleted", "Continue"},
+				Locale("ko-KR"): {"Pane", "Registry", "삭제", "Agent", "Continue", "돌아오지 않습니다"},
+			},
+		},
+		{
+			key:    Key("tmux.confirm.delete_window"),
+			format: "#W",
+			want: map[Locale][]string{
+				FallbackLocale:  {"Delete Window", "Panes", "Registry", "Agents", "deleted", "Continue"},
+				Locale("ko-KR"): {"Window", "Pane", "Registry", "삭제", "Agent", "Continue", "돌아오지 않습니다"},
+			},
+		},
+	} {
+		for _, locale := range []Locale{FallbackLocale, Locale("ko-KR")} {
+			missing := DefaultCatalog().MissingLocaleKeys(locale, []Key{test.key})
+			if len(missing) != 0 {
+				t.Fatalf("%s catalog is missing %s; the managed delete prompt must not fall back across locales", locale, test.key)
+			}
+			text, err := NewLocalizer(locale).Text(test.key)
+			if err != nil {
+				t.Fatalf("Text(%s, %s) error = %v", locale, test.key, err)
+			}
+			value := text.String()
+			if text.Locale() != locale {
+				t.Fatalf("Text(%s, %s) resolved from %s", locale, test.key, text.Locale())
+			}
+			for _, want := range append([]string{test.format, "(y/n)"}, test.want[locale]...) {
+				if !strings.Contains(value, want) {
+					t.Fatalf("%s %s = %q, want it to contain %q", locale, test.key, value, want)
+				}
+			}
+			if strings.Contains(value, "%") || strings.Contains(value, "\n") {
+				t.Fatalf("%s %s = %q; a tmux prompt must stay one line without printf verbs", locale, test.key, value)
+			}
+		}
+	}
+}

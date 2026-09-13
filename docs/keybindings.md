@@ -217,6 +217,55 @@ without storing or replacing the transport default. Rename actions no longer
 have a built-in terminal fallback; use tmux's prefix rename flow or configure
 an explicit safe key where the action is editable.
 
+## Managed close keys
+
+The generated app config replaces tmux's stock `prefix x` (kill Pane) and
+`prefix &` (kill Window) with two catalog actions, `pane.delete` (v0 id
+`delete-pane`) and `window.delete` (v0 id `delete-window`). Each binding
+branches on the target's Registry identity mirror:
+
+| Key | Target carries the mirror | Target has no mirror |
+| --- | --- | --- |
+| `prefix x` | `@projmux_pane_uid`: confirm, then the Pane menu Kill route (canonical `delete pane`) | tmux stock `confirm-before -p "kill-pane #P? (y/n)" kill-pane` |
+| `prefix &` | `@projmux_window_uid`: confirm, then canonical `delete window` | tmux stock `confirm-before -p "kill-window #W? (y/n)" kill-window` |
+
+A managed target is always confirmed first. The prompt is localized (en-US and
+ko-KR) when the key is pressed. It says the resource is deleted from the
+Registry and what happens to Agents: deleting a Pane leaves its owning Agent in
+the Registry as Offline with a `deleted` exit, and deleting a Window deletes the
+Agents in it. Neither comes back on Continue. Answering `y` deletes the target
+with an `intentional` termination receipt, so a later Project start does not
+re-materialize it. Deleting a Project's last Window follows `delete window` and
+leaves a zero-Window Project. When the canonical route refuses, the reason is
+shown on the client that pressed the key and nothing falls back to a raw tmux
+kill.
+
+A target without the mirror gets tmux's own stock prompt and kill, unchanged,
+and projmux writes nothing to the Registry. The projmux process never issues
+`kill-pane` or `kill-window` for either key: the stock body is tmux's binding,
+run by tmux. The standalone `~/.tmux.conf` snippet does not carry these
+actions, so a plain tmux server keeps both keys stock.
+
+Both actions follow the ordinary keymap rules. In `keymap.toml`,
+`prefix = "<key>"` moves the managed binding, `prefix = ""` disables it, and
+`keys` adds root-table keys that run the same branching binding:
+
+```toml
+[bindings."pane.delete"]
+prefix = "X"
+
+[bindings."window.delete"]
+prefix = ""
+```
+
+When an action no longer owns its stock key, because it was disabled or moved,
+the generated config unbinds that key and binds tmux's stock body back onto it.
+`prefix x` and `prefix &` therefore return to tmux's own behavior on the next
+apply, including on a server that is already running, instead of being left
+with no binding at all. Two managed actions on one prefix key are rejected.
+Settings > Keybindings adds and removes root-table keys for these actions; their
+prefix key is changed in `keymap.toml`.
+
 ## Product Requirements
 
 Settings > Keybindings stays a discovery surface. It must continue to expose

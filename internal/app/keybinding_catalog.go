@@ -8,6 +8,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/app/initcmd"
 	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 type keyBindingScope string
@@ -25,6 +26,12 @@ const (
 	tmuxBindingCommand          tmuxBindingKind = "command"
 	tmuxBindingCommandPrompt    tmuxBindingKind = "command-prompt"
 	tmuxBindingPromptRunProjmux tmuxBindingKind = "prompt-run-projmux"
+	// tmuxBindingManagedDelete replaces one stock tmux close key. The binding
+	// branches on the target's identity mirror: a mirrored target runs the
+	// projmux confirm route, and a target without the mirror runs tmux's own
+	// stock binding byte for byte. It is the only kind whose PrefixChord is
+	// rendered as a `bind-key`.
+	tmuxBindingManagedDelete tmuxBindingKind = "managed-delete"
 )
 
 type keyBindingTier string
@@ -63,6 +70,30 @@ const (
 // tmuxPaneEnvPrefix carries the exact pane a key binding was pressed in into
 // the projmux process run-shell spawns. See renderTmuxBindingBody.
 const tmuxPaneEnvPrefix = "TMUX_PANE=#{pane_id} " + canonicalCreateTargetClientEnv + "=#{client_tty} "
+
+// The two stock tmux close keys projmux replaces. The stock bodies are tmux
+// 3.6's compiled-in defaults, verified against an isolated `tmux -f /dev/null`
+// server with `list-keys -T prefix x` and `list-keys -T prefix &`:
+//
+//	bind-key -T prefix x confirm-before -p "kill-pane #P? (y/n)" kill-pane
+//	bind-key -T prefix & confirm-before -p "kill-window #W? (y/n)" kill-window
+//
+// `bind-key` replaces a stock binding and tmux has no command that calls a
+// replaced default, so the mirror-absent branch has to carry these bytes
+// itself. tmux runs them; projmux never issues a raw kill for either branch.
+const (
+	tmuxStockPanePrefixChord   = "x"
+	tmuxStockWindowPrefixChord = "&"
+	tmuxStockKillPaneBinding   = `confirm-before -p "kill-pane #P? (y/n)" kill-pane`
+	tmuxStockKillWindowBinding = `confirm-before -p "kill-window #W? (y/n)" kill-window`
+
+	managedDeletePaneRoute   = "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} pane"
+	managedDeleteWindowRoute = "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} window"
+	// The guards read the same uid mirrors the canonical routes resolve. A
+	// Window mirror is a window option, so a Pane format lookup inherits it.
+	managedDeletePaneGuard   = "#{" + tmuxopts.PaneUID + "}"
+	managedDeleteWindowGuard = "#{" + tmuxopts.WindowUID + "}"
+)
 
 // keyBindingAction is the in-app source of truth for built-in key actions.
 // Terminal init adapters and tmux config rendering derive their concrete
@@ -103,7 +134,13 @@ type keyBindingAction struct {
 	TmuxBody        string
 	TmuxBodyAliases []string
 	TmuxPromptArgs  string
-	Toggleable      bool
+	// TmuxManagedGuard and TmuxStockBody belong to tmuxBindingManagedDelete
+	// only. The guard is the tmux format whose non-empty value marks the target
+	// as Registry-managed; the stock body is tmux's own default binding for the
+	// replaced key, run unchanged when the guard is empty.
+	TmuxManagedGuard string
+	TmuxStockBody    string
+	Toggleable       bool
 
 	PlainBindOrder  int
 	PrefixBindOrder int
@@ -535,6 +572,44 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbeLabel:     "Ctrl-N",
 			ProbeAction:    "New window",
 			ProbePlain:     "\x0e",
+		},
+		{
+			// Replaces tmux's stock `prefix x`. See tmuxStockKillPaneBinding.
+			ID:                  "delete-pane",
+			DisplayName:         "Delete Pane",
+			Category:            keyBindingCategoryNavigation,
+			Semantics:           keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "delete the focused managed Pane and its owning Agent from the Registry after confirmation; a Pane without a Registry mirror keeps tmux's stock prefix binding", Placement: keyBindingPlacementInFocusedWindow, Anchor: keyBindingAnchorCurrentPaneDeleteTarget},
+			HandlerBoundaryNote: "a mirrored Pane confirms on the exact client and reaches the Pane menu Kill route, canonical delete pane; a Pane without the mirror runs tmux's own stock binding",
+			CanonicalID:         "pane.delete",
+			Description:         "Delete the current managed Pane from the Registry",
+			Kind:                keyBindingActionCommand,
+			Tier:                keyBindingTierUserConfigurableDirect,
+			Scope:               keyBindingScopeApp,
+			PrefixChord:         tmuxStockPanePrefixChord,
+			TmuxKind:            tmuxBindingManagedDelete,
+			TmuxBody:            managedDeletePaneRoute,
+			TmuxManagedGuard:    managedDeletePaneGuard,
+			TmuxStockBody:       tmuxStockKillPaneBinding,
+			PrefixBindOrder:     10,
+		},
+		{
+			// Replaces tmux's stock `prefix &`. See tmuxStockKillWindowBinding.
+			ID:                  "delete-window",
+			DisplayName:         "Delete Window",
+			Category:            keyBindingCategoryNavigation,
+			Semantics:           keyBindingActionSemantics{TargetKind: "Window", ResultKind: "delete the focused managed Window with its Panes and Agents from the Registry after confirmation; a Window without a Registry mirror keeps tmux's stock prefix binding", Placement: keyBindingPlacementInFocusedWindow, Anchor: keyBindingAnchorCurrentPaneDeleteTarget},
+			HandlerBoundaryNote: "a mirrored Window confirms on the exact client and reaches canonical delete window; a Window without the mirror runs tmux's own stock binding",
+			CanonicalID:         "window.delete",
+			Description:         "Delete the current managed Window from the Registry",
+			Kind:                keyBindingActionCommand,
+			Tier:                keyBindingTierUserConfigurableDirect,
+			Scope:               keyBindingScopeApp,
+			PrefixChord:         tmuxStockWindowPrefixChord,
+			TmuxKind:            tmuxBindingManagedDelete,
+			TmuxBody:            managedDeleteWindowRoute,
+			TmuxManagedGuard:    managedDeleteWindowGuard,
+			TmuxStockBody:       tmuxStockKillWindowBinding,
+			PrefixBindOrder:     20,
 		},
 		{
 			// tmux listens directly for the xterm-standard `M-S-Left` chord that
@@ -991,7 +1066,12 @@ const (
 	// the new Window's initial Pane and nothing else. tmux, not the binding,
 	// chooses the Window index.
 	keyBindingAnchorCurrentPaneCwdSeed = "current Pane cwd (seeds the initial Pane; tmux chooses the Window index)"
-	keyBindingAnchorFocusedRow         = "focused row in the open picker"
+	// keyBindingAnchorCurrentPaneDeleteTarget is the anchor of the two managed
+	// close keys: the raw `%N` of the Pane the key was pressed in, captured at
+	// press time and carried through confirmation, from which the canonical
+	// route resolves the exact Pane or its owning Window.
+	keyBindingAnchorCurrentPaneDeleteTarget = "current Pane %N transport id (captured at key press and carried through confirmation; the canonical delete route resolves the exact target)"
+	keyBindingAnchorFocusedRow              = "focused row in the open picker"
 
 	keyBindingPlacementRight = "right"
 	keyBindingPlacementDown  = "down"
@@ -1062,6 +1142,10 @@ func keyBindingActionShippedInvocation(action keyBindingAction) (keyBindingActio
 	case tmuxBindingPromptRunProjmux:
 		body := strings.TrimSpace(action.TmuxBody)
 		return keyBindingHandlerFromManifest(strings.Fields(body), "tmux command-prompt then projmux "+body), true
+	case tmuxBindingManagedDelete:
+		body := strings.TrimSpace(action.TmuxBody)
+		return keyBindingHandlerFromManifest(strings.Fields(body),
+			"tmux if-shell "+action.TmuxManagedGuard+" then projmux "+body+", else tmux's stock binding"), true
 	}
 	return keyBindingActionHandler{}, false
 }
@@ -1405,6 +1489,60 @@ func tmuxBindLines(binaryPath string, actions []keyBindingAction) []string {
 		lines = append(lines, binding.line)
 	}
 
+	// Prefix chords are rendered only for the managed-delete kind. Every other
+	// PrefixChord is a retired remnant that is unbound and never re-bound; see
+	// tmuxBindingManagedDelete. The line names the prefix table implicitly so a
+	// modified chord such as `C-x` stays in the prefix table instead of the
+	// root table renderTmuxBindLine would pick for it.
+	prefix := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
+		return keyBindingRendersPrefixChord(action) && strings.TrimSpace(action.PrefixChord) != ""
+	})
+	sort.SliceStable(prefix, func(i, j int) bool { return prefix[i].PrefixBindOrder < prefix[j].PrefixBindOrder })
+	for _, action := range prefix {
+		lines = append(lines, "bind-key "+strings.TrimSpace(action.PrefixChord)+" "+renderTmuxBindingBody(binaryPath, action))
+	}
+
+	return lines
+}
+
+// keyBindingRendersPrefixChord reports whether an action's PrefixChord becomes
+// a generated `bind-key`.
+func keyBindingRendersPrefixChord(action keyBindingAction) bool {
+	return action.TmuxKind == tmuxBindingManagedDelete
+}
+
+// tmuxStockPrefixRestoreLines hands a stock tmux key back to tmux when the
+// managed-delete action that replaced it no longer owns it.
+//
+// The unbind rules clear every default chord so a remapped or disabled action
+// cannot leave its old binding live. For an ordinary action that is the whole
+// story. For `prefix x` and `prefix &` it is not: tmux had its own binding there
+// before projmux replaced it, tmux has no command that restores a compiled-in
+// default, and a bare unbind would leave the key doing nothing -- on a fresh
+// server as much as on a running one, since the generated config unbinds on
+// every source. Re-binding tmux's exact stock body is therefore what "projmux
+// no longer handles this key" means. It is emitted after the unbind lines and
+// before the managed bind lines, so a managed action moved onto another stock
+// key still wins there.
+func tmuxStockPrefixRestoreLines(defaults, merged []keyBindingAction) []string {
+	owned := map[string]bool{}
+	for _, action := range merged {
+		if chord := strings.TrimSpace(action.PrefixChord); keyBindingRendersPrefixChord(action) && chord != "" {
+			owned[chord] = true
+		}
+	}
+	stock := filterKeyBindingActions(defaults, func(action keyBindingAction) bool {
+		return keyBindingRendersPrefixChord(action) && strings.TrimSpace(action.PrefixChord) != "" && action.TmuxStockBody != ""
+	})
+	sort.SliceStable(stock, func(i, j int) bool { return stock[i].PrefixBindOrder < stock[j].PrefixBindOrder })
+	var lines []string
+	for _, action := range stock {
+		chord := strings.TrimSpace(action.PrefixChord)
+		if owned[chord] {
+			continue
+		}
+		lines = append(lines, "bind-key "+chord+" "+action.TmuxStockBody)
+	}
 	return lines
 }
 
@@ -1441,6 +1579,15 @@ func renderTmuxBindingBody(binaryPath string, action keyBindingAction) string {
 	case tmuxBindingPromptRunProjmux:
 		body := "run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+bin+" "+action.TmuxBody)
 		return strings.TrimSpace("command-prompt " + action.TmuxPromptArgs + " " + tmuxConfigQuote(body))
+	case tmuxBindingManagedDelete:
+		// The mirror decides which branch runs, at key press. A mirrored target
+		// reaches projmux, whose only act is a confirmation prompt; the target
+		// without a mirror runs tmux's stock binding exactly as tmux ships it,
+		// executed by tmux. The anchor rides the same env prefix as every other
+		// generated projmux binding.
+		return "if-shell -F " + tmuxConfigQuote(action.TmuxManagedGuard) +
+			" { run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+bin+" "+action.TmuxBody) + " }" +
+			" { " + action.TmuxStockBody + " }"
 	default:
 		return action.TmuxBody
 	}
