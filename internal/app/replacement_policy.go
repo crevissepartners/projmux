@@ -45,6 +45,69 @@ type replacementRolePolicy struct {
 	// shipped path the install asks; for a report-only role it is what an
 	// operator or the ordinary lifecycle does instead.
 	Route string
+	// Action is the route spelled as something that can actually happen, in
+	// order. A route name alone tells an operator which kind of replacement
+	// applies and not what to run; every step here is either a `projmux`
+	// command the shipped CLI resolves or a lifecycle event from the closed
+	// set below. TestReplacementRoutesNameARunnableAction holds both halves.
+	Action []replacementActionStep
+}
+
+// replacementActionStep is one step of a role's replacement. Exactly one field
+// is set.
+type replacementActionStep struct {
+	// Command is an operator command, spelled from `projmux` with `<...>`
+	// placeholders for the values the operator supplies.
+	Command string
+	// Event is a lifecycle event token that replaces the role without any
+	// operator command.
+	Event string
+}
+
+// The lifecycle events that replace a role on their own. The set is closed for
+// the same reason the dispositions are: an event this list does not name is a
+// replacement nobody has shown happens.
+const (
+	// replacementEventInstallPass is the install pass `make install` runs
+	// (`projmux internal install-replace`). It dials a superseded broker
+	// runtime, which drains and closes when its last binding goes; the next
+	// binding starts a runtime on the installed image. It is installer
+	// plumbing rather than an operator command, which is why it is an event.
+	replacementEventInstallPass = "install-replacement-pass"
+	// replacementEventShellWrapperExit is the `projmux shell` wrapper process
+	// ending. The wrapper runs `tmux attach-session` as a child and waits for
+	// it, so it ends only when that client exits and the terminal command that
+	// ran `projmux shell` returns.
+	replacementEventShellWrapperExit = "shell-wrapper-exit"
+	// replacementEventUsageDemandLapse is the rate-limit watcher cancelling
+	// itself once no usage render has refreshed its demand marker within the
+	// demand TTL, releasing its lease. The next render starts a watcher on the
+	// installed image.
+	replacementEventUsageDemandLapse = "usage-demand-lapse"
+	// replacementEventInvocationExit is a short-lived invocation returning on
+	// its own. The next invocation runs the installed image.
+	replacementEventInvocationExit = "invocation-exit"
+)
+
+// replacementLifecycleEvents is the closed event set, in documentation order.
+var replacementLifecycleEvents = []string{
+	replacementEventInstallPass,
+	replacementEventShellWrapperExit,
+	replacementEventUsageDemandLapse,
+	replacementEventInvocationExit,
+}
+
+// replacementPaneRelaunch is the operator action behind `pane-relaunch`.
+//
+// Every role it covers lives exactly as long as one managed Pane: the
+// supervisor is the Pane's own process, the lifecycle observer ends once its
+// Pane binding is gone, and the endpoint helper ends once its provider process
+// is. `stop project` ends the Project's exact tmux session and preserves the
+// Registry graph; `start project` materializes it again from the installed
+// image, and that Continue replays each Agent whose Pane stopped unplanned.
+var replacementPaneRelaunch = []replacementActionStep{
+	{Command: "projmux stop project <project-ref>"},
+	{Command: "projmux start project <project-ref>"},
 }
 
 // replacementRolePolicies fixes the disposition of every role the census names.
@@ -62,34 +125,48 @@ type replacementRolePolicy struct {
 // attached tmux session, the longest-lived role on this repository's ledger at
 // 169h29m, and a uniform cutoff applied to it ends the terminal the install was
 // typed into. TestReplacementSessionClientIsNeverADrainTarget holds it.
+//
+// The census counts the `projmux shell` wrapper, not the tmux client, and a
+// reattach that leaves that wrapper running replaces nothing. Its action is
+// therefore the wrapper ending and a new `projmux shell`, never a reattach.
 var replacementRolePolicies = map[string]replacementRolePolicy{
 	codexControlPlaneRoleBroker: {
 		Disposition: replacementDispositionDrain,
 		Route:       "broker-drain",
+		Action:      []replacementActionStep{{Event: replacementEventInstallPass}},
 	},
 	codexControlPlaneRoleObserver: {
 		Disposition: replacementDispositionReportOnly,
 		Route:       "pane-relaunch",
+		Action:      replacementPaneRelaunch,
 	},
 	projmuxProcessRoleSupervisor: {
 		Disposition: replacementDispositionReportOnly,
 		Route:       "pane-relaunch",
+		Action:      replacementPaneRelaunch,
 	},
 	projmuxProcessRoleSessionClient: {
 		Disposition: replacementDispositionReportOnly,
 		Route:       "operator-reattach",
+		Action: []replacementActionStep{
+			{Event: replacementEventShellWrapperExit},
+			{Command: "projmux shell"},
+		},
 	},
 	projmuxProcessRoleAgentEndpoint: {
 		Disposition: replacementDispositionReportOnly,
 		Route:       "pane-relaunch",
+		Action:      replacementPaneRelaunch,
 	},
 	projmuxProcessRoleUsageWatcher: {
 		Disposition: replacementDispositionReportOnly,
 		Route:       "lease-expiry",
+		Action:      []replacementActionStep{{Event: replacementEventUsageDemandLapse}},
 	},
 	projmuxProcessRoleOther: {
 		Disposition: replacementDispositionReportOnly,
 		Route:       "process-exit",
+		Action:      []replacementActionStep{{Event: replacementEventInvocationExit}},
 	},
 }
 

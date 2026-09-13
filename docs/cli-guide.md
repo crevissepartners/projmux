@@ -760,6 +760,14 @@ Registry-only result reports that no tmux Pane was killed, preserves the owning
 Window/root/socket and all siblings, and repeating the exact apply returns the
 ordinary no-match result.
 
+A name, scope, or active-target delete of a target that carries that evidence
+still refuses with the live-mirror refusal, but the refusal then names the
+typed resource's exact form to run instead —
+`projmux delete pane|agent uid:<uid> --socket-path <server> --dry-run`, then the
+same command with `--yes` — and says which evidence qualifies it. A target the
+`uid:` form would refuse too, such as a Pane without `MissingRuntime` or a
+`Running` or `Failed` Agent, gets no such pointer.
+
 `delete window|pane|agent` names the server its live half addresses the same
 way `reconcile resources` does: `--socket <name>`, `--socket-path <absolute>`,
 or the inherited absolute `$TMUX`. Outside tmux with neither flag it refuses
