@@ -2180,7 +2180,9 @@ func TestTmuxPrintConfigBindsPaneContextMenu(t *testing.T) {
 		// A few more stock items with their dim/toggle format conditions.
 		"\"#{?#{>:#{window_panes},1},,-}Swap Up\" u { swap-pane -U }",
 		"\"#{?#{>:#{window_panes},1},,-}Swap Down\" d { swap-pane -D }",
-		`"Kill" X { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" }`,
+		// Kill keeps the managed route for a Pane with the identity mirror and
+		// runs tmux's stock kill-pane item for a Pane without it.
+		`"Kill" X { if-shell -F "#{@projmux_pane_uid}" { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" } { kill-pane } }`,
 		"\"#{?pane_marked,Unmark,Mark}\" m { select-pane -m }",
 		"\"#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}\" z { resize-pane -Z }",
 	} {
@@ -2194,10 +2196,16 @@ func TestGeneratedPaneMenuOmitsRawTmuxMutationVerbsAndRespawn(t *testing.T) {
 	t.Parallel()
 
 	menu := strings.Join(tmuxPaneContextMenuBindings("/tmp/projmux"), "\n")
-	for _, literal := range []string{"split-window", "kill-pane", "Respawn", "respawn-pane"} {
+	for _, literal := range []string{"split-window", "Respawn", "respawn-pane"} {
 		if count := strings.Count(menu, literal); count != 0 {
 			t.Fatalf("generated pane-menu contains %d %q literal(s), want 0: %s", count, literal, menu)
 		}
+	}
+	// The one raw kill is tmux's stock Kill item, and only as the branch for a
+	// Pane without the identity mirror; a mirrored Pane never reaches it.
+	stockElse := `{ if-shell -F "#{@projmux_pane_uid}" { run-shell "'/tmp/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" } { kill-pane } }`
+	if strings.Count(menu, "kill-pane") != 1 || strings.Count(menu, stockElse) != 1 {
+		t.Fatalf("generated pane-menu carries kill-pane outside the mirror-absent Kill branch: %s", menu)
 	}
 }
 
@@ -2206,7 +2214,7 @@ func TestGeneratedPaneMenuGolden(t *testing.T) {
 
 	want := []string{
 		"unbind-key -q -n MouseDown3Pane",
-		`bind-key -n MouseDown3Pane if-shell -F -t = "#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}" { select-pane -t = ; send-keys -M } { display-menu -T "#[align=centre]#{pane_index} (#{pane_id})" -t = -x M -y M "AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} ai-split-resume-right" } '' "Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" } "Vertical Split" v { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}" } '' "#{?#{>:#{window_panes},1},,-}Swap Up" u { swap-pane -U } "#{?#{>:#{window_panes},1},,-}Swap Down" d { swap-pane -D } '' "Kill" X { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" } "#{?pane_marked,Unmark,Mark}" m { select-pane -m } "#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}" z { resize-pane -Z } }`,
+		`bind-key -n MouseDown3Pane if-shell -F -t = "#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}" { select-pane -t = ; send-keys -M } { display-menu -T "#[align=centre]#{pane_index} (#{pane_id})" -t = -x M -y M "AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} ai-split-resume-right" } '' "Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" } "Vertical Split" v { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}" } '' "#{?#{>:#{window_panes},1},,-}Swap Up" u { swap-pane -U } "#{?#{>:#{window_panes},1},,-}Swap Down" d { swap-pane -D } '' "Kill" X { if-shell -F "#{@projmux_pane_uid}" { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" } { kill-pane } } "#{?pane_marked,Unmark,Mark}" m { select-pane -m } "#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}" z { resize-pane -Z } }`,
 	}
 	if got := tmuxPaneContextMenuBindings("/tmp/proj mux/bin/projmux"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("generated pane-menu config changed\n--- got ---\n%s\n--- want ---\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

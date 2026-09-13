@@ -754,6 +754,64 @@ for close_contract in \
   fi
 done
 
+# Managed menus: the applied app config replaces tmux's stock prefix <,
+# MouseDown3Status and M-MouseDown3Status Window menus and its prefix > and
+# M-MouseDown3Pane Pane menus, and MouseDown3Pane keeps its generated menu. Each
+# Kill item branches on the identity mirror: the mirrored branch is only the
+# canonical route (menu selection is the confirmation, so no delete-confirm),
+# and the else branch is tmux's stock kill item, run by tmux. Rename, New At End
+# and both Splits reach typed intents; Respawn and New After are gone.
+menu_window_kill="Kill X { if-shell -F \"#{@projmux_window_uid}\" { run-shell \"TMUX_PANE=#{pane_id} PROJMUX_POPUP_TARGET_CLIENT=#{client_tty} '$bin' internal tmux window-delete --client #{client_tty} --anchor #{pane_id}\" } { kill-window } }"
+menu_window_rename="Rename n { command-prompt -I \"#{window_name}\" \"run-shell \\\"TMUX_PANE=##{pane_id} PROJMUX_POPUP_TARGET_CLIENT=##{client_tty} '$bin' internal tmux window-rename --client ##{client_tty} --anchor ##{pane_id} -- '%%'\\\"\" }"
+menu_window_create="\"New At End\" W { run-shell \"TMUX_PANE=#{pane_id} PROJMUX_POPUP_TARGET_CLIENT=#{client_tty} '$bin' internal tmux window-create --client #{client_tty} --anchor #{pane_id}\" }"
+menu_pane_kill="Kill X { if-shell -F \"#{@projmux_pane_uid}\" { run-shell \"'$bin' internal tmux pane-menu --client #{client_tty} kill #{pane_id}\" } { kill-pane } }"
+menu_pane_split_right="\"Horizontal Split\" h { run-shell \"'$bin' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}\" }"
+menu_pane_split_down="\"Vertical Split\" v { run-shell \"'$bin' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}\" }"
+menu_count() {
+  grep -oF -- "$2" <<<"$1" | wc -l | tr -d '[:space:]'
+}
+for menu_contract in \
+  'window|prefix|<|display-menu -T "#[align=centre]#{window_index}:#{window_name}" -x W -y W ' \
+  'window|root|MouseDown3Status|display-menu -T "#[align=centre]#{window_index}:#{window_name}" -t = -x W -y W ' \
+  'window|root|M-MouseDown3Status|display-menu -T "#[align=centre]#{window_index}:#{window_name}" -t = -x W -y W ' \
+  'pane|prefix|>|display-menu -T "#[align=centre]#{pane_index} (#{pane_id})" -x P -y P ' \
+  'pane|root|M-MouseDown3Pane|display-menu -T "#[align=centre]#{pane_index} (#{pane_id})" -t = -x M -y M ' \
+  'pane|root|MouseDown3Pane|if-shell -F -t = '; do
+  IFS='|' read -r menu_kind menu_table menu_key menu_head <<<"$menu_contract"
+  menu_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T "$menu_table" "$menu_key")"
+  if [[ "$(printf '%s\n' "$menu_binding" | wc -l | tr -d '[:space:]')" != "1" || "$menu_binding" != "bind-key -T $menu_table $menu_key $menu_head"* ]]; then
+    echo "applied $menu_table $menu_key is not the generated $menu_kind menu: $menu_binding" >&2
+    exit 1
+  fi
+  if [[ "$menu_kind" == "window" ]]; then
+    menu_required=("$menu_window_kill" "$menu_window_rename" "$menu_window_create")
+    menu_forbidden=(Respawn "New After" new-window rename-window respawn-window delete-confirm kill-pane)
+    menu_stock_kill="kill-window"
+  else
+    menu_required=("$menu_pane_kill" "$menu_pane_split_right" "$menu_pane_split_down")
+    menu_forbidden=(Respawn split-window respawn-pane delete-confirm kill-window)
+    menu_stock_kill="kill-pane"
+  fi
+  for menu_needle in "${menu_required[@]}"; do
+    if [[ "$(menu_count "$menu_binding" "$menu_needle")" != "1" ]]; then
+      echo "applied $menu_table $menu_key menu lacks the exact item: $menu_needle" >&2
+      echo "$menu_binding" >&2
+      exit 1
+    fi
+  done
+  for menu_needle in "${menu_forbidden[@]}"; do
+    if [[ "$menu_binding" == *"$menu_needle"* ]]; then
+      echo "applied $menu_table $menu_key menu retained $menu_needle: $menu_binding" >&2
+      exit 1
+    fi
+  done
+  # The only raw kill is the mirror-absent branch of Kill.
+  if [[ "$(menu_count "$menu_binding" "$menu_stock_kill")" != "1" ]]; then
+    echo "applied $menu_table $menu_key menu carries $menu_stock_kill outside its Kill else branch: $menu_binding" >&2
+    exit 1
+  fi
+done
+
 # Schema v2 sequences compile shared prefixes into one generated trie. Apply
 # records the exact generated roots/tables so a repeat source is idempotent and
 # a later removal can retire stale state without touching unrelated bindings.

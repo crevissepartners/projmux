@@ -56,6 +56,9 @@ type runShellSurface string
 const (
 	runShellSurfaceKeybinding runShellSurface = "keybinding"
 	runShellSurfacePaneMenu   runShellSurface = "pane-menu"
+	// runShellSurfaceWindowMenu is the app config's generated Window menus
+	// (`prefix <`, MouseDown3Status, M-MouseDown3Status).
+	runShellSurfaceWindowMenu runShellSurface = "window-menu"
 	runShellSurfaceStatusbar  runShellSurface = "statusbar"
 	runShellSurfaceHook       runShellSurface = "hook"
 	runShellSurfaceStartup    runShellSurface = "startup"
@@ -154,6 +157,26 @@ func runShellOutputLedger() []runShellProducer {
 			Match: "internal tmux pane-menu", Channel: runShellChannelExactClientMessage,
 			Route: interactiveRoutePaneMenu,
 			Note:  "split and kill consume the canonical projection and report one bounded line to the clicking client",
+		},
+
+		// --- window menus ----------------------------------------------------
+		{
+			ID: "window-menu.window-delete", Surface: runShellSurfaceWindowMenu,
+			Match: "internal tmux window-delete", Channel: runShellChannelExactClientMessage,
+			Route: interactiveRouteWindowDelete,
+			Note:  "the mirrored branch of Window menu Kill reaches canonical delete window and reports one bounded line to the exact client",
+		},
+		{
+			ID: "window-menu.window-rename", Surface: runShellSurfaceWindowMenu,
+			Match: "internal tmux window-rename", Channel: runShellChannelExactClientMessage,
+			Route: interactiveRouteWindowRename,
+			Note:  "Window menu Rename runs the catalog rename inside command-prompt; the rename projection is consumed in-process",
+		},
+		{
+			ID: "window-menu.window-create", Surface: runShellSurfaceWindowMenu,
+			Match: "internal tmux window-create", Channel: runShellChannelExactClientMessage,
+			Route: interactiveRouteWindowCreate,
+			Note:  "Window menu New At End runs the catalog create; the client sees the bounded create line",
 		},
 
 		// --- status bar -------------------------------------------------------

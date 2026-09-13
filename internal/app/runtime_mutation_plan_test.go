@@ -210,6 +210,7 @@ func TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed(t *test
 		"startup.shell-project", "startup.sidebar-project", "startup.current-project", "startup.attach-project", "startup.session-picker-project",
 		"pane-menu.split-right", "pane-menu.split-down", "pane-menu.kill", "pane-menu.resume", "pane-menu.swap-up",
 		"pane-menu.swap-down", "pane-menu.mark", "pane-menu.zoom", "pane-menu.mouse-forward", "shell.foreground-attach",
+		"pane-menu.swap-marked", "window-menu.kill", "window-menu.rename", "window-menu.create", "window-menu.swap-left", "window-menu.swap-right", "window-menu.swap-marked", "window-menu.mark",
 		"app.quit", "attach.ensure-home", "attach.ephemeral-prune", "attach.ephemeral-create", "standalone.prune", "manual.tagged-kill", "switch.manual-kill", "sidebar.unmanaged-candidate-stop", "replay.retired-snapshot",
 		"config.apply-source", "pane.rebalance", "trigger.after-new-window", "trigger.after-split-window",
 		"trigger.after-kill-pane", "trigger.after-kill-pane.rebalance", "trigger.pane-exited", "trigger.pane-exited.rebalance", "trigger.pane-died", "trigger.pane-died.rebalance", "trigger.window-unlinked",
@@ -795,39 +796,154 @@ func TestGeneratedWindowLifecycleActionsReachTypedHandlersWithoutRawManagedVerbs
 	}
 }
 
+// TestGeneratedPaneMenuArtifactsHaveOneClosedSurfaceRow holds every generated
+// menu -- MouseDown3Pane in both configs, and the app config's `prefix <`,
+// MouseDown3Status, M-MouseDown3Status, `prefix >` and M-MouseDown3Pane -- to
+// the closed surface table item by item: each item's exact command maps to one
+// row, each menu carries exactly its expected rows in order, every menu row is
+// carried by some artifact, and no item holds a closed topology verb except the
+// exact presentation items and the mirror-absent branch of Kill.
 func TestGeneratedPaneMenuArtifactsHaveOneClosedSurfaceRow(t *testing.T) {
-	rendered := strings.Join(tmuxPaneContextMenuBindings("/usr/local/bin/projmux"), "\n")
-	managed := regexp.MustCompile(`pane-menu --client #\{client_tty\} ([a-z-]+) #\{pane_id\}`).FindAllStringSubmatch(rendered, -1)
-	got := map[string]bool{"pane-menu.resume": strings.Contains(rendered, "ai-split-resume-right"),
-		"pane-menu.swap-up": strings.Contains(rendered, "swap-pane -U"), "pane-menu.swap-down": strings.Contains(rendered, "swap-pane -D"),
-		"pane-menu.mark": strings.Contains(rendered, "select-pane -m"), "pane-menu.zoom": strings.Contains(rendered, "resize-pane -Z"),
-		"pane-menu.mouse-forward": strings.Contains(rendered, "send-keys -M")}
-	for _, match := range managed {
-		got["pane-menu."+match[1]] = true
-	}
-	want := []string{"pane-menu.resume", "pane-menu.split-right", "pane-menu.split-down", "pane-menu.kill", "pane-menu.swap-up", "pane-menu.swap-down", "pane-menu.mark", "pane-menu.zoom", "pane-menu.mouse-forward"}
-	rows := map[string]int{}
+	const bin = "/usr/local/bin/projmux"
+	app := tmuxAppConfig(bin, "/bin/sh", config.StatusbarDecorationOff)
+	standalone := tmuxStandaloneConfig(bin, config.StatusbarDecorationOff)
+	rows := map[string]runtimeMutationSurface{}
 	for _, row := range runtimeMutationSurfaces {
-		if strings.HasPrefix(row.ID, "pane-menu.") {
-			rows[row.ID]++
+		if strings.HasPrefix(row.ID, "pane-menu.") || strings.HasPrefix(row.ID, "window-menu.") {
+			if _, duplicate := rows[row.ID]; duplicate {
+				t.Fatalf("duplicate generated menu surface row %q", row.ID)
+			}
+			rows[row.ID] = row
 		}
 	}
-	for _, id := range want {
-		if !got[id] || rows[id] != 1 {
-			t.Errorf("generated menu surface %q: artifact=%t rows=%d, want true/1", id, got[id], rows[id])
-		}
-		delete(got, id)
-		delete(rows, id)
+
+	window, pane := managedMenuItemCommands(bin)
+	windowRows := map[string]string{
+		"swap-window -t :-1": "window-menu.swap-left",
+		"swap-window -t :+1": "window-menu.swap-right",
+		"swap-window":        "window-menu.swap-marked",
+		window["Kill"]:       "window-menu.kill",
+		"select-pane -m":     "window-menu.mark",
+		window["Rename"]:     "window-menu.rename",
+		window["New At End"]: "window-menu.create",
 	}
-	if len(got) != 0 || len(rows) != 0 {
-		t.Fatalf("unclassified generated/menu surface delta: artifacts=%v rows=%v", got, rows)
+	paneRows := map[string]string{
+		`select-pane -t = ; run-shell "'` + bin + `' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} ai-split-resume-right"`: "pane-menu.resume",
+		"send-keys -X history-top":    "pane-menu.go-to-top",
+		"send-keys -X history-bottom": "pane-menu.go-to-bottom",
+		`if-shell -F "#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}" "copy-mode -t=" ; send-keys -X -t = search-backward -- "#{q:mouse_word}"`: "pane-menu.search-word",
+		`copy-mode -q ; send-keys -l "#{q:mouse_word}"`:      "pane-menu.type-word",
+		`copy-mode -q ; set-buffer "#{q:mouse_word}"`:        "pane-menu.copy-word",
+		`copy-mode -q ; set-buffer "#{q:mouse_line}"`:        "pane-menu.copy-line",
+		`copy-mode -q ; send-keys -l "#{q:mouse_hyperlink}"`: "pane-menu.type-hyperlink",
+		`copy-mode -q ; set-buffer "#{q:mouse_hyperlink}"`:   "pane-menu.copy-hyperlink",
+		pane["Horizontal Split"]:                             "pane-menu.split-right",
+		pane["Vertical Split"]:                               "pane-menu.split-down",
+		"swap-pane -U":                                       "pane-menu.swap-up",
+		"swap-pane -D":                                       "pane-menu.swap-down",
+		"swap-pane":                                          "pane-menu.swap-marked",
+		pane["Kill"]:                                         "pane-menu.kill",
+		"select-pane -m":                                     "pane-menu.mark",
+		"resize-pane -Z":                                     "pane-menu.zoom",
 	}
-	for verb := range closedTmuxTopologyMutationVerbs {
-		if verb == "swap-pane" || verb == "resize-pane" {
-			continue // exact presentation rows above
+	windowWant := []string{"window-menu.swap-left", "window-menu.swap-right", "window-menu.swap-marked", "window-menu.kill", "window-menu.mark", "window-menu.rename", "window-menu.create"}
+	paneKeyWant := []string{"pane-menu.go-to-top", "pane-menu.go-to-bottom", "pane-menu.search-word", "pane-menu.type-word", "pane-menu.copy-word",
+		"pane-menu.copy-line", "pane-menu.type-hyperlink", "pane-menu.copy-hyperlink", "pane-menu.split-right", "pane-menu.split-down",
+		"pane-menu.swap-up", "pane-menu.swap-down", "pane-menu.swap-marked", "pane-menu.kill", "pane-menu.mark", "pane-menu.zoom"}
+	mouseDown3PaneWant := []string{"pane-menu.resume", "pane-menu.split-right", "pane-menu.split-down", "pane-menu.swap-up", "pane-menu.swap-down", "pane-menu.kill", "pane-menu.mark", "pane-menu.zoom"}
+	// The one closed verb an item may carry, and where.
+	allowedVerb := map[string]string{
+		"window-menu.swap-left": "swap-window", "window-menu.swap-right": "swap-window", "window-menu.swap-marked": "swap-window",
+		"pane-menu.swap-up": "swap-pane", "pane-menu.swap-down": "swap-pane", "pane-menu.swap-marked": "swap-pane", "pane-menu.zoom": "resize-pane",
+		"window-menu.kill": "kill-window", "pane-menu.kill": "kill-pane",
+	}
+	plannedVerb := map[string]runtimeMutationVerb{
+		"window-menu.kill": mutationKillWindow, "window-menu.rename": mutationRenameWindow, "window-menu.create": mutationCreateWindow,
+		"pane-menu.kill": mutationKillPane, "pane-menu.split-right": mutationCreatePane, "pane-menu.split-down": mutationCreatePane,
+	}
+
+	used := map[string]int{}
+	for _, menu := range []struct {
+		kind, config, bind string
+		classify           map[string]string
+		want               []string
+	}{
+		{"app", app, "bind-key < ", windowRows, windowWant},
+		{"app", app, "bind-key -n MouseDown3Status ", windowRows, windowWant},
+		{"app", app, "bind-key -n M-MouseDown3Status ", windowRows, windowWant},
+		{"app", app, "bind-key > ", paneRows, paneKeyWant},
+		{"app", app, "bind-key -n M-MouseDown3Pane ", paneRows, paneKeyWant},
+		{"app", app, mouseDown3PaneBind, paneRows, mouseDown3PaneWant},
+		{"standalone", standalone, mouseDown3PaneBind, paneRows, mouseDown3PaneWant},
+	} {
+		var got []string
+		for _, item := range generatedMenu(t, menu.config, menu.bind).Items {
+			if item == (tmuxMenuItem{}) {
+				continue
+			}
+			if item.Name == "Respawn" || item.Name == "New After" {
+				t.Errorf("%s %s kept tmux's %s item: %#v", menu.kind, menu.bind, item.Name, item)
+			}
+			id, ok := menu.classify[item.Command]
+			if !ok {
+				t.Errorf("%s %s item %q matches no closed surface row: %s", menu.kind, menu.bind, item.Name, item.Command)
+				continue
+			}
+			if _, ok := rows[id]; !ok {
+				t.Errorf("%s %s item %q maps to missing surface row %q", menu.kind, menu.bind, item.Name, id)
+			}
+			got = append(got, id)
+			used[id]++
+			for verb := range closedTmuxTopologyMutationVerbs {
+				occurrences := len(regexp.MustCompile(`(^|[[:space:];{}'\"])`+regexp.QuoteMeta(verb)+`([[:space:];{}'\"]|$)`).FindAllStringIndex(item.Command, -1))
+				want := 0
+				if allowedVerb[id] == verb {
+					want = 1
+				}
+				if occurrences != want {
+					t.Errorf("%s %s item %q (%s) carries %d %q occurrence(s), want %d: %s", menu.kind, menu.bind, item.Name, id, occurrences, verb, want, item.Command)
+				}
+			}
+			if strings.HasPrefix(allowedVerb[id], "kill-") && !strings.HasSuffix(item.Command, " } { "+allowedVerb[id]+" }") {
+				t.Errorf("%s %s Kill carries %s outside its mirror-absent branch: %s", menu.kind, menu.bind, allowedVerb[id], item.Command)
+			}
 		}
-		if strings.Contains(" "+rendered+" ", " "+verb+" ") {
-			t.Fatalf("generated Pane menu contains unmanaged lifecycle verb %q", verb)
+		if !reflect.DeepEqual(got, menu.want) {
+			t.Errorf("%s %s surface rows = %v, want %v", menu.kind, menu.bind, got, menu.want)
+		}
+	}
+	for _, rendered := range []string{standalone, app} {
+		if line := configLinesWithPrefix(rendered, mouseDown3PaneBind); len(line) != 1 || !strings.Contains(line[0], " { select-pane -t = ; send-keys -M } ") {
+			t.Fatalf("MouseDown3Pane lost its mouse-forward guard: %v", line)
+		}
+	}
+	used["pane-menu.mouse-forward"]++
+
+	for id, row := range rows {
+		if used[id] == 0 {
+			t.Errorf("surface row %q is carried by no generated menu artifact", id)
+		}
+		if verb, planned := plannedVerb[id]; planned {
+			if row.Disposition != runtimeMutationSurfacePlanned || row.PlanVerb != string(verb) {
+				t.Errorf("menu surface %q = %#v, want planned %s", id, row, verb)
+			}
+			continue
+		}
+		if row.Disposition != runtimeMutationSurfaceExempt {
+			t.Errorf("presentation menu surface %q disposition = %q, want exempt", id, row.Disposition)
+		}
+	}
+	for id, route := range map[string]string{
+		"window-menu.kill": "internal tmux window-delete", "window-menu.rename": "internal tmux window-rename", "window-menu.create": "internal tmux window-create",
+		"pane-menu.kill": "internal tmux pane-menu kill", "pane-menu.split-right": "internal tmux pane-menu split-right", "pane-menu.split-down": "internal tmux pane-menu split-down",
+	} {
+		if !strings.HasPrefix(rows[id].Handler, route) {
+			t.Errorf("menu surface %q handler = %q, want the typed route %q", id, rows[id].Handler, route)
+		}
+	}
+	for id, stock := range map[string]string{"window-menu.kill": "stock kill-window", "pane-menu.kill": "stock kill-pane"} {
+		if guard := rows[id].Guard; !strings.Contains(guard, "mirror-absent") || !strings.Contains(guard, stock) || !strings.Contains(guard, "projmux issues nothing") {
+			t.Errorf("menu surface %q guard %q does not state the mirror-absent %s branch", id, guard, stock)
 		}
 	}
 }
@@ -844,6 +960,8 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		"trigger.client-attached-welcome", "config.generated-statusbar", "config.generated-key-sequences",
 		"pane-menu.swap-up", "pane-menu.swap-down", "pane-menu.zoom",
 		"catalog.pane.delete", "catalog.window.delete",
+		"pane-menu.kill", "pane-menu.swap-marked", "window-menu.kill", "window-menu.rename", "window-menu.create",
+		"window-menu.swap-left", "window-menu.swap-right", "window-menu.swap-marked",
 	} {
 		if rows[id] == "" {
 			t.Fatalf("generated config producer %q has no closed surface row", id)
@@ -890,9 +1008,20 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		"trigger.recent-window-record":   "set-hook -g after-select-window",
 		"config.generated-statusbar":     "set -g status-right",
 		"config.generated-key-sequences": tmuxSequenceRootsOption,
-		"pane-menu.swap-up":              "swap-pane -U",
-		"pane-menu.swap-down":            "swap-pane -D",
-		"pane-menu.zoom":                 "resize-pane -Z",
+		"pane-menu.swap-up":              "{ swap-pane -U }",
+		"pane-menu.swap-down":            "{ swap-pane -D }",
+		"pane-menu.zoom":                 "{ resize-pane -Z }",
+		// The generated menus. MouseDown3Pane renders in both configs; the app
+		// config alone replaces tmux's `prefix >` and M-MouseDown3Pane Pane menus
+		// and its three Window menus.
+		"pane-menu.kill":          "internal tmux pane-menu --client #{client_tty} kill #{pane_id}",
+		"pane-menu.swap-marked":   "{ swap-pane }",
+		"window-menu.kill":        "internal tmux window-delete --client #{client_tty} --anchor #{pane_id}",
+		"window-menu.rename":      `"Rename" n { command-prompt `,
+		"window-menu.create":      `"New At End" W { run-shell `,
+		"window-menu.swap-left":   "{ swap-window -t :-1 }",
+		"window-menu.swap-right":  "{ swap-window -t :+1 }",
+		"window-menu.swap-marked": "{ swap-window }",
 	}
 	appOnlyArtifacts := map[string]string{
 		"trigger.after-new-window":        "set-hook -g after-new-window",
@@ -904,26 +1033,39 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.pane-died": 1, "trigger.after-kill-pane": 1,
 			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
 			"config.generated-statusbar": 2, "config.generated-key-sequences": 1,
-			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
 		"app": {
 			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.pane-died": 1, "trigger.after-kill-pane": 1,
 			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
 			"config.generated-statusbar": 4, "config.generated-key-sequences": 2,
-			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
 		"standalone-settings-override": {
 			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.pane-died": 1, "trigger.after-kill-pane": 1,
 			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
 			"config.generated-statusbar": 2, "config.generated-key-sequences": 1,
-			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
 		"app-settings-override": {
 			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.pane-died": 1, "trigger.after-kill-pane": 1,
 			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
 			"config.generated-statusbar": 4, "config.generated-key-sequences": 2,
-			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
+	}
+	// Menu items per config: the three Pane menu items MouseDown3Pane shares are
+	// one per Pane menu (one standalone, three app); Swap Marked is carried by the
+	// two app-only Pane menus; every Window menu item is carried by the three
+	// app-only Window menus.
+	for kind, counts := range expectedArtifactCounts {
+		paneMenus, keyPaneMenus, windowMenus := 1, 0, 0
+		if strings.HasPrefix(kind, "app") {
+			paneMenus, keyPaneMenus, windowMenus = 3, 2, 3
+		}
+		for _, id := range []string{"pane-menu.swap-up", "pane-menu.swap-down", "pane-menu.zoom", "pane-menu.kill"} {
+			counts[id] = paneMenus
+		}
+		counts["pane-menu.swap-marked"] = keyPaneMenus
+		for _, id := range []string{"window-menu.kill", "window-menu.rename", "window-menu.create", "window-menu.swap-left", "window-menu.swap-right", "window-menu.swap-marked"} {
+			counts[id] = windowMenus
+		}
 	}
 	// The managed close keys are app-scoped: each app config carries one exact
 	// delete-confirm route per key it still owns, a standalone snippet carries
@@ -940,19 +1082,24 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 	}
 	expectedArtifactCounts["app-close-key-override"]["catalog.window.delete"] = 0
 	// kill-pane and kill-window may appear only inside tmux 3.6's exact stock
-	// bodies for those keys: the mirror-absent else branch of a managed binding,
-	// or the stock restore of a key a managed action vacated.
-	type stockKillCount struct{ elseBranches, restores int }
+	// bodies: for the close keys, the mirror-absent else branch of a managed
+	// binding or the stock restore of a key a managed action vacated; for a
+	// generated menu, the mirror-absent branch of its Kill item.
+	type stockKillCount struct{ elseBranches, restores, menuElse int }
 	stockKillBodies := map[string]string{
 		"kill-pane":   `confirm-before -p "kill-pane #P? (y/n)" kill-pane`,
 		"kill-window": `confirm-before -p "kill-window #W? (y/n)" kill-window`,
 	}
+	menuKillBranches := map[string]*regexp.Regexp{
+		"kill-pane":   regexp.MustCompile(`"Kill" X \{ if-shell -F "#\{@projmux_pane_uid\}" \{ run-shell "'/usr/local/bin/projmux' internal tmux pane-menu --client #\{client_tty\} kill #\{pane_id\}" \} \{ kill-pane \} \}`),
+		"kill-window": regexp.MustCompile(`"Kill" X \{ if-shell -F "#\{@projmux_window_uid\}" \{ run-shell "TMUX_PANE=#\{pane_id\} PROJMUX_POPUP_TARGET_CLIENT=#\{client_tty\} '/usr/local/bin/projmux' internal tmux window-delete --client #\{client_tty\} --anchor #\{pane_id\}" \} \{ kill-window \} \}`),
+	}
 	expectedStockKills := map[string]map[string]stockKillCount{
-		"standalone":                   {},
-		"standalone-settings-override": {},
-		"app":                          {"kill-pane": {elseBranches: 1}, "kill-window": {elseBranches: 1}},
-		"app-settings-override":        {"kill-pane": {elseBranches: 1}, "kill-window": {elseBranches: 1}},
-		"app-close-key-override":       {"kill-pane": {elseBranches: 1, restores: 1}, "kill-window": {restores: 1}},
+		"standalone":                   {"kill-pane": {menuElse: 1}},
+		"standalone-settings-override": {"kill-pane": {menuElse: 1}},
+		"app":                          {"kill-pane": {elseBranches: 1, menuElse: 3}, "kill-window": {elseBranches: 1, menuElse: 3}},
+		"app-settings-override":        {"kill-pane": {elseBranches: 1, menuElse: 3}, "kill-window": {elseBranches: 1, menuElse: 3}},
+		"app-close-key-override":       {"kill-pane": {elseBranches: 1, restores: 1, menuElse: 3}, "kill-window": {restores: 1, menuElse: 3}},
 	}
 	for kind, rendered := range configs {
 		wantConverge := 4
@@ -978,6 +1125,20 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 			if got := strings.Count(rendered, signature); got != want {
 				t.Errorf("%s generated artifact %q signature %q count=%d, want %d", kind, id, signature, got, want)
 			}
+		}
+		// Standalone configs keep tmux's five stock menus; app configs replace
+		// each exactly once. MouseDown3Pane is generated in both.
+		for _, binding := range managedStockMenuBindings {
+			want := 0
+			if strings.HasPrefix(kind, "app") {
+				want = 1
+			}
+			if got := len(configLinesWithPrefix(rendered, binding.Bind)); got != want || countConfigLines(rendered, binding.Unbind) != want {
+				t.Errorf("%s generated config binds %s %d time(s) and unbinds it %d time(s), want %d", kind, binding.Name, got, countConfigLines(rendered, binding.Unbind), want)
+			}
+		}
+		if got := len(configLinesWithPrefix(rendered, mouseDown3PaneBind)); got != 1 {
+			t.Errorf("%s generated config binds MouseDown3Pane %d time(s), want 1", kind, got)
 		}
 		for hook, rebalanceID := range map[string]string{
 			"pane-exited":     "trigger.pane-exited.rebalance",
@@ -1031,26 +1192,33 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 						t.Errorf("%s generated config embeds the stock %s body outside a managed close key: %s", kind, verb, line)
 					}
 				}
+				got.menuElse = len(menuKillBranches[verb].FindAllStringIndex(rendered, -1))
 				if want := expectedStockKills[kind][verb]; got != want {
 					t.Errorf("%s generated config stock %s bodies = %+v, want %+v", kind, verb, got, want)
 				}
-				if classified := 2 * (got.elseBranches + got.restores); len(occurrences) != classified {
-					t.Errorf("%s generated config has %d %s occurrence(s), but only %d sit inside exact stock close-key bodies", kind, len(occurrences), verb, classified)
+				// A menu Kill branch spells its verb once.
+				if classified := 2*(got.elseBranches+got.restores) + got.menuElse; len(occurrences) != classified {
+					t.Errorf("%s generated config has %d %s occurrence(s), but only %d sit inside exact stock close-key and menu Kill bodies", kind, len(occurrences), verb, classified)
 				}
 				continue
 			}
 			if len(occurrences) == 0 {
 				continue
 			}
-			if verb != "swap-pane" && verb != "resize-pane" {
+			if verb != "swap-pane" && verb != "swap-window" && verb != "resize-pane" {
 				t.Errorf("%s generated config embeds unmanaged lifecycle/topology verb %q", kind, verb)
 				continue
 			}
+			// swap-pane, swap-window and resize-pane are admitted only as the exact
+			// stock menu presentation items that have their own surface rows.
 			classified := 0
-			if verb == "swap-pane" {
-				classified = strings.Count(rendered, "swap-pane -U") + strings.Count(rendered, "swap-pane -D")
-			} else {
-				classified = strings.Count(rendered, "resize-pane -Z")
+			switch verb {
+			case "swap-pane":
+				classified = strings.Count(rendered, "{ swap-pane -U }") + strings.Count(rendered, "{ swap-pane -D }") + strings.Count(rendered, "{ swap-pane }")
+			case "swap-window":
+				classified = strings.Count(rendered, "{ swap-window -t :-1 }") + strings.Count(rendered, "{ swap-window -t :+1 }") + strings.Count(rendered, "{ swap-window }")
+			default:
+				classified = strings.Count(rendered, "{ resize-pane -Z }")
 			}
 			if classified != len(occurrences) {
 				t.Errorf("%s generated config has %d %s occurrence(s), but only %d match exact closed presentation rows", kind, len(occurrences), verb, classified)

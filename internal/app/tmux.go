@@ -2824,6 +2824,10 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)
+	// The managed stock menus render before the catalog key bindings, so a
+	// keymap that deliberately puts a managed action on `prefix <` or `>` still
+	// owns that key.
+	lines = append(lines, tmuxManagedStockMenuBindings(binaryPath)...)
 	lines = append(lines, tmuxAppKeyBindings(binaryPath, catalog, keymapPresent)...)
 	// Two-line status bar:
 	//   [0] notify HUD (left) + usage HUD (right)
@@ -2946,8 +2950,10 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 //
 // The menu reconstructs the useful subset of tmux 3.4's stock pane menu
 // (split, swap, kill, mark, zoom — with tmux's stock key shortcuts and dim
-// conditions) and adds a projmux `AI Resume Picker` entry at the top. Split and
-// Kill state managed intents instead of tmux mutations. Respawn is omitted
+// conditions) and adds a projmux `AI Resume Picker` entry at the top. Split
+// states a managed intent instead of a tmux mutation, and Kill does so for a
+// Pane that carries the identity mirror; a Pane without the mirror gets tmux's
+// stock `kill-pane` item (see tmuxPaneMenuKill). Respawn is omitted
 // because the resource model has no managed intent that preserves its identity
 // contract. The AI entry opens the resume picker through the same `tmux popup-toggle
 // ai-split-resume-right` entrypoint as the C-r keybinding. Calling `ai picker`
@@ -2974,9 +2980,6 @@ func tmuxPaneContextMenuBindings(binaryPath string) []string {
 		TmuxBody: "ai-split-resume-right",
 	})
 	bin := tmuxShellQuote(binaryPath)
-	managedAction := func(action string) string {
-		return "run-shell " + tmuxConfigQuote(bin+" internal tmux pane-menu --client #{client_tty} "+action+" #{pane_id}")
-	}
 	// Guard + title + dim conditions mirror tmux 3.4 key-bindings.c: swap
 	// entries are dimmed (`-` prefix) in single-pane windows, Mark/Unmark and
 	// Zoom/Unzoom toggle with pane/window state.
@@ -2986,19 +2989,149 @@ func tmuxPaneContextMenuBindings(binaryPath string) []string {
 		"{ display-menu -T " + tmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})") + " -t = -x M -y M " +
 		tmuxConfigQuote("AI Resume Picker") + " a { select-pane -t = ; " + resumeAction + " } " +
 		"'' " +
-		tmuxConfigQuote("Horizontal Split") + " h { " + managedAction("split-right") + " } " +
-		tmuxConfigQuote("Vertical Split") + " v { " + managedAction("split-down") + " } " +
+		tmuxConfigQuote("Horizontal Split") + " h { " + tmuxPaneMenuAction(bin, "split-right") + " } " +
+		tmuxConfigQuote("Vertical Split") + " v { " + tmuxPaneMenuAction(bin, "split-down") + " } " +
 		"'' " +
 		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Up") + " u { swap-pane -U } " +
 		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Down") + " d { swap-pane -D } " +
 		"'' " +
-		tmuxConfigQuote("Kill") + " X { " + managedAction("kill") + " } " +
+		tmuxConfigQuote("Kill") + " X { " + tmuxPaneMenuKill(bin) + " } " +
 		tmuxConfigQuote("#{?pane_marked,Unmark,Mark}") + " m { select-pane -m } " +
 		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}") + " z { resize-pane -Z } }"
 	return []string{
 		"unbind-key -q -n MouseDown3Pane",
 		menu,
 	}
+}
+
+// tmuxPaneMenuAction is one managed Pane menu intent on the exact Pane the menu
+// targets. tmux expands a menu item's command against the display-menu target
+// when the menu opens, so `#{pane_id}` is the clicked Pane for a mouse menu and
+// the current Pane for a keyboard one.
+func tmuxPaneMenuAction(bin, action string) string {
+	return "run-shell " + tmuxConfigQuote(bin+" internal tmux pane-menu --client #{client_tty} "+action+" #{pane_id}")
+}
+
+// tmuxPaneMenuKill is the Kill item of every generated Pane menu. The Pane's
+// identity mirror decides the branch: a mirrored Pane reaches the Pane menu
+// Kill route (canonical delete pane), and a Pane without the mirror runs tmux's
+// own stock `kill-pane` menu item, executed by tmux. The menu selection is the
+// confirmation, exactly as it is for tmux's stock item.
+func tmuxPaneMenuKill(bin string) string {
+	return "if-shell -F " + tmuxConfigQuote(managedDeletePaneGuard) + " { " + tmuxPaneMenuAction(bin, "kill") + " } { " + tmuxStockMenuKillPane + " }"
+}
+
+// tmux 3.6's stock menu Kill item bodies. They are the only raw kill a generated
+// menu may carry, and only as the mirror-absent branch of its Kill item.
+const (
+	tmuxStockMenuKillPane   = "kill-pane"
+	tmuxStockMenuKillWindow = "kill-window"
+)
+
+// managedMenuWindowDeleteRoute is the Window menu Kill route. It is the same
+// canonical Window intent a confirmed managed `prefix &` reaches, without the
+// confirmation: selecting Kill in a menu is the confirmation.
+const managedMenuWindowDeleteRoute = "internal tmux window-delete --client #{client_tty} --anchor #{pane_id}"
+
+// tmuxManagedStockMenuBindings replaces tmux 3.6's stock Window menus
+// (`prefix <`, MouseDown3Status, M-MouseDown3Status) and the two stock Pane
+// menus it leaves outside MouseDown3Pane (`prefix >`, M-MouseDown3Pane). They
+// are app-config only, like the managed close keys: the standalone snippet runs
+// on every server the operator starts and keeps tmux's stock menus.
+//
+// Each binding keeps tmux's title, position, target, item names, key shortcuts
+// and dim conditions. Only the items that change topology or identity change:
+// Kill branches on the identity mirror, Rename, New At End and both Splits
+// state typed intents, and Respawn and New After are removed because the
+// resource model has no managed intent that preserves their contract. Swap,
+// Mark, Zoom and the copy-mode items are presentation and stay stock.
+//
+// Targeting. A mouse menu opens with `-t =` and a keyboard menu without it.
+// tmux format-expands every item command against that display-menu target when
+// the menu opens, so `#{@projmux_window_uid}`, `#{pane_id}` and `#{client_tty}`
+// inside an item already name the clicked Window's active Pane (or the clicked
+// Pane) and the client that clicked; no item needs its own `-t =`. The one
+// exception is a `command-prompt` template: an expanded `%N` Pane handle there
+// is a prompt-response placeholder, so Rename defers its template's formats to
+// the prompt's own run time (see tmuxMenuPromptCommand).
+func tmuxManagedStockMenuBindings(binaryPath string) []string {
+	bin := tmuxShellQuote(binaryPath)
+	catalog := defaultKeyBindingCatalog()
+	rename, _ := keyBindingActionByID(catalog, "rename-window")
+	create, _ := keyBindingActionByID(catalog, "new-window")
+	windowKill := renderTmuxBindingBody(binaryPath, keyBindingAction{
+		TmuxKind:         tmuxBindingManagedDelete,
+		TmuxManagedGuard: managedDeleteWindowGuard,
+		TmuxBody:         managedMenuWindowDeleteRoute,
+		TmuxStockBody:    tmuxStockMenuKillWindow,
+	})
+	item := func(name, key, command string) string {
+		return tmuxConfigQuote(name) + " " + key + " { " + command + " }"
+	}
+	windowItems := strings.Join([]string{
+		item("#{?#{>:#{session_windows},1},,-}Swap Left", "l", "swap-window -t :-1"),
+		item("#{?#{>:#{session_windows},1},,-}Swap Right", "r", "swap-window -t :+1"),
+		item("#{?pane_marked_set,,-}Swap Marked", "s", "swap-window"),
+		"''",
+		item("Kill", "X", windowKill),
+		item("#{?pane_marked,Unmark,Mark}", "m", "select-pane -m"),
+		item("Rename", "n", tmuxMenuPromptCommand(binaryPath, rename)),
+		"''",
+		item("New At End", "W", renderTmuxBindingBody(binaryPath, create)),
+	}, " ")
+	paneItems := strings.Join([]string{
+		item("#{?#{m/r:(copy|view)-mode,#{pane_mode}},Go To Top,}", "<", "send-keys -X history-top"),
+		item("#{?#{m/r:(copy|view)-mode,#{pane_mode}},Go To Bottom,}", ">", "send-keys -X history-bottom"),
+		"''",
+		item("#{?mouse_word,Search For #[underscore]#{=/9/...:mouse_word},}", "C-r", `if-shell -F "#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}" "copy-mode -t=" ; send-keys -X -t = search-backward -- "#{q:mouse_word}"`),
+		item("#{?mouse_word,Type #[underscore]#{=/9/...:mouse_word},}", "C-y", `copy-mode -q ; send-keys -l "#{q:mouse_word}"`),
+		item("#{?mouse_word,Copy #[underscore]#{=/9/...:mouse_word},}", "c", `copy-mode -q ; set-buffer "#{q:mouse_word}"`),
+		item("#{?mouse_line,Copy Line,}", "l", `copy-mode -q ; set-buffer "#{q:mouse_line}"`),
+		"''",
+		item("#{?mouse_hyperlink,Type #[underscore]#{=/9/...:mouse_hyperlink},}", "C-h", `copy-mode -q ; send-keys -l "#{q:mouse_hyperlink}"`),
+		item("#{?mouse_hyperlink,Copy #[underscore]#{=/9/...:mouse_hyperlink},}", "h", `copy-mode -q ; set-buffer "#{q:mouse_hyperlink}"`),
+		"''",
+		item("Horizontal Split", "h", tmuxPaneMenuAction(bin, "split-right")),
+		item("Vertical Split", "v", tmuxPaneMenuAction(bin, "split-down")),
+		"''",
+		item("#{?#{>:#{window_panes},1},,-}Swap Up", "u", "swap-pane -U"),
+		item("#{?#{>:#{window_panes},1},,-}Swap Down", "d", "swap-pane -D"),
+		item("#{?pane_marked_set,,-}Swap Marked", "s", "swap-pane"),
+		"''",
+		item("Kill", "X", tmuxPaneMenuKill(bin)),
+		item("#{?pane_marked,Unmark,Mark}", "m", "select-pane -m"),
+		item("#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}", "z", "resize-pane -Z"),
+	}, " ")
+	windowTitle := "-T " + tmuxConfigQuote("#[align=centre]#{window_index}:#{window_name}")
+	paneTitle := "-T " + tmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})")
+	return []string{
+		"unbind-key -q <",
+		"bind-key < display-menu " + windowTitle + " -x W -y W " + windowItems,
+		"unbind-key -q -n MouseDown3Status",
+		"bind-key -n MouseDown3Status display-menu " + windowTitle + " -t = -x W -y W " + windowItems,
+		"unbind-key -q -n M-MouseDown3Status",
+		"bind-key -n M-MouseDown3Status display-menu " + windowTitle + " -t = -x W -y W " + windowItems,
+		"unbind-key -q >",
+		"bind-key > display-menu " + paneTitle + " -x P -y P " + paneItems,
+		"unbind-key -q -n M-MouseDown3Pane",
+		"bind-key -n M-MouseDown3Pane display-menu " + paneTitle + " -t = -x M -y M " + paneItems,
+	}
+}
+
+// tmuxMenuPromptCommand embeds a prompt-run-projmux catalog action as a menu
+// item command. The catalog renderer's bytes are kept; only the prompt template
+// has its `#` doubled. tmux expands a menu item when the menu opens, and an
+// expanded Pane handle such as `%1` inside a command-prompt template is the
+// placeholder for the first prompt response: measured on tmux 3.6, the rename
+// anchor became the typed name. Doubling defers the template's formats to the
+// run-shell the prompt starts, which still runs against the menu target, so the
+// command tmux finally runs is the catalog key binding's command byte for byte.
+// The prompt arguments (the initial `#{window_name}`) keep expanding at menu
+// open, where they name the clicked Window rather than the current one.
+func tmuxMenuPromptCommand(binaryPath string, action keyBindingAction) string {
+	rendered := renderTmuxBindingBody(binaryPath, action)
+	head := strings.TrimSpace("command-prompt "+action.TmuxPromptArgs) + " "
+	return head + strings.ReplaceAll(strings.TrimPrefix(rendered, head), "#", "##")
 }
 
 func buildMarkedPopupCommand(binaryPath string, args []string, marker, cwd string, env map[string]string) string {
