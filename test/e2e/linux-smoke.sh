@@ -9942,12 +9942,19 @@ if [[ -z "$(menu_tmux show-options -pqv -t "$menu_origin_pane" @projmux_pane_uid
 fi
 menu_binding="$(menu_tmux list-keys -T root MouseDown3Pane)"
 smoke_assert_output_contains "$menu_binding" "internal tmux pane-menu --client"
-for menu_raw_verb in split-window kill-pane respawn-pane; do
+for menu_raw_verb in split-window respawn-pane; do
   if [[ "$menu_binding" == *"$menu_raw_verb"* ]]; then
     echo "generated MouseDown3Pane binding retained raw $menu_raw_verb" >&2
     exit 1
   fi
 done
+# The one raw kill is tmux's stock Kill item, and only for a Pane without the
+# identity mirror.
+if [[ "$(grep -oF 'kill-pane' <<<"$menu_binding" | wc -l | tr -d '[:space:]')" != "1" ]] ||
+  [[ "$menu_binding" != *'Kill X { if-shell -F "#{@projmux_pane_uid}" { run-shell "'"'$bin'"' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" } { kill-pane } }'* ]]; then
+  echo "generated MouseDown3Pane Kill is not the mirror-guarded route with tmux's stock kill-pane branch: $menu_binding" >&2
+  exit 1
+fi
 if [[ "$menu_binding" == *Respawn* ]]; then
   echo "generated MouseDown3Pane binding retained Respawn menu text" >&2
   exit 1
@@ -10349,6 +10356,332 @@ menu_refocus_origin
 menu_settle_run_shell
 menu_assert_no_overlay "managed close keys"
 
+# 6. The generated managed menus through tmux's own menu machinery. The app
+#    config replaced tmux's stock prefix <, MouseDown3Status and
+#    M-MouseDown3Status Window menus and its prefix > and M-MouseDown3Pane Pane
+#    menus. A keyboard menu is opened with `send-keys -K` on the attached
+#    client; a mouse menu with a real SGR right-click (Meta for the M- variant)
+#    written to that client's terminal, so tmux itself resolves the clicked
+#    Window or Pane. Items are selected with their stock key shortcut on the
+#    same terminal. Selecting Kill is the confirmation, so no prompt is expected.
+#    For the status-line clicks the leg lays the window list out in fixed
+#    ten-column cells; only that presentation option changes, and it is
+#    restored before the leg ends.
+menu_status_saved="$(menu_tmux show-options -gv status)"
+menu_status_format_saved="$(menu_tmux show-options -gv 'status-format[0]')"
+menu_tmux set-option -g status on
+menu_tmux set-option -g 'status-format[0]' '#{W:#[range=window|#{window_index}]#{p10:window_index}#[norange]}'
+menu_status_click() {
+  local button="$1"
+  local window="$2"
+  local ordinal height
+  ordinal="$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | grep -Fnx -- "$window" | cut -d: -f1)"
+  height="$(menu_tmux display-message -p -c "$menu_client" '#{client_height}')"
+  if [[ -z "$ordinal" || -z "$height" ]]; then
+    echo "cannot place a status-line click on Window $window" >&2
+    exit 1
+  fi
+  printf '\033[<%d;%d;%dM' "$button" "$(((ordinal - 1) * 10 + 5))" "$height" >&6
+}
+# A click lands on whatever status line tmux last drew, and tmux records the
+# click ranges only when it redraws that line. A detached `new-window` does not
+# redraw the attached client's status line on its own (measured: no client
+# output for five seconds), so after a Window appears the harness asks for a
+# full client redraw and waits until the client has received the status row
+# carrying every current Window cell in output written since the given offset
+# (taken before the Window appeared). The redraw is presentation only.
+menu_wait_status_row() {
+  local offset="$1"
+  local row
+  row="$(menu_tmux list-windows -t "$menu_session" -F '#{window_index}' | while IFS= read -r index; do printf '%-10s' "$index"; done)"
+  row="${row%"${row##*[! ]}"}"
+  menu_tmux refresh-client -t "$menu_client"
+  menu_wait_for_open "status line drawn with Window cells [$row] (line ${BASH_LINENO[0]})" "$offset" "$row" 15
+}
+menu_pane_click() {
+  local button="$1"
+  local pane="$2"
+  local left top
+  read -r left top < <(menu_tmux display-message -p -t "$pane" '#{pane_left} #{pane_top}')
+  printf '\033[<%d;%d;%dM' "$button" "$((left + 3))" "$((top + 3))" >&6
+}
+# menu_wait_for_open waits for a generated menu to be drawn on the client. A menu
+# that never opens is reported with the client's state, tmux's own key and
+# command log, and what the client terminal received, so the failing leg is
+# diagnosable from the attempt log alone.
+menu_wait_for_open() {
+  local label="$1"
+  local offset="$2"
+  local marker="$3"
+  local budget="${4:-5}"
+  if (smoke_wait_until "$budget" "$label" menu_client_saw "$offset" "$marker"); then
+    return 0
+  fi
+  {
+    echo "managed menu client output did not arrive: $label"
+    menu_tmux display-message -p -c "$menu_client" 'client window=#{window_id} pane=#{pane_id} size=#{client_width}x#{client_height} key-table=#{client_key_table}' 2>&1 || true
+    menu_tmux list-windows -a -F 'window #{session_name}:#{window_index} #{window_id} name=#{window_name} uid=#{@projmux_window_uid}' 2>&1 || true
+    menu_tmux show-options -g status 2>&1 || true
+    menu_tmux list-keys -T prefix '<' 2>&1 | cut -c1-200 || true
+    menu_tmux show-messages 2>&1 | tail -n 20 | cut -c1-240 || true
+    echo "client output since offset $offset:"
+    tail -c "+$((offset + 1))" "$menu_client_log" | cat -v | tail -c 3000 || true
+    echo
+  } >&2
+  exit 1
+}
+# menu_select_open_item waits for the generated menu, then types one item's key
+# shortcut.
+menu_select_open_item() {
+  local offset="$1"
+  local marker="$2"
+  local key="$3"
+  menu_wait_for_open "generated menu showing $marker for item $key (line ${BASH_LINENO[0]})" "$offset" "$marker"
+  printf '%s' "$key" >&6
+}
+menu_new_window_except() {
+  menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | grep -Fvx -f <(printf '%s\n' "$1") | tail -n 1
+}
+menu_generated_window_deleted() {
+  local offset="$1"
+  local window="$2"
+  local window_uid="$3"
+  local pane_uid="$4"
+  menu_client_saw "$offset" "delete window: deleting 1 window" || return 1
+  ! menu_pmx get windows -o uid | grep -Fxq "$window_uid" || return 1
+  ! menu_pmx get panes -o uid | grep -Fxq "$pane_uid" || return 1
+  menu_window_absent "$window"
+}
+
+# 6a. prefix < New At End on the origin Window reaches typed window-create.
+menu_refocus_origin
+menu_windows_before="$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}')"
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b '<'
+menu_select_open_item "$menu_offset" "New At End" W
+smoke_wait_for "Window menu New At End client message" menu_client_saw "$menu_offset" "Created Window"
+menu_settle_run_shell
+menu_assert_no_overlay "Window menu New At End"
+menu_target_window="$(menu_new_window_except "$menu_windows_before")"
+menu_target_window_uid="$(menu_tmux show-options -wqv -t "$menu_target_window" @projmux_window_uid)"
+menu_target_pane="$(menu_tmux display-message -p -t "$menu_target_window" '#{pane_id}')"
+menu_target_pane_uid="$(menu_tmux show-options -pqv -t "$menu_target_pane" @projmux_pane_uid)"
+if [[ -z "$menu_target_window" || -z "$menu_target_window_uid" || -z "$menu_target_pane_uid" ]] ||
+  ! menu_pmx get windows -o uid | grep -Fxq "$menu_target_window_uid"; then
+  echo "Window menu New At End did not create a Registry-backed Window: window=$menu_target_window uid=$menu_target_window_uid pane-uid=$menu_target_pane_uid" >&2
+  exit 1
+fi
+menu_wait_status_row "$menu_offset"
+
+# 6b. MouseDown3Status on that non-current Window: Rename prompts with the
+#     clicked Window's name and renames the clicked Window, not the focused one.
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_run_producer "$menu_target_pane" internal tmux window-rename --client "$menu_client" --anchor "$menu_target_pane" -- menu-target-e2e
+smoke_wait_for "menu target Window rename" menu_client_saw "$menu_offset" "Renamed Window: menu-target-e2e"
+menu_origin_window_name="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{window_name}')"
+if [[ "$(menu_tmux display-message -p -c "$menu_client" '#{window_id}')" == "$menu_target_window" ]]; then
+  echo "managed menu fixture: the menu target Window is the focused Window" >&2
+  exit 1
+fi
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_status_click 2 "$menu_target_window"
+menu_wait_for_open "MouseDown3Status Window menu before Rename" "$menu_offset" "New At End"
+# The menu title already names the clicked Window, so the prompt is read only
+# from output written after Rename is selected.
+menu_prompt_offset="$(stat -c %s "$menu_client_log")"
+printf 'n' >&6
+smoke_wait_for "Window menu Rename prompt with the clicked Window's name" menu_client_saw "$menu_prompt_offset" "menu-target-e2e"
+menu_settle_run_shell
+printf '%s\r' "-renamed" >&6
+smoke_wait_for "Window menu Rename client message" menu_client_saw "$menu_offset" "Renamed Window: menu-target-e2e-renamed"
+if [[ "$(menu_tmux display-message -p -t "$menu_target_window" '#{window_name}')" != "menu-target-e2e-renamed" ]] ||
+  [[ "$(menu_tmux display-message -p -t "$menu_origin_pane" '#{window_name}')" != "$menu_origin_window_name" ]]; then
+  echo "MouseDown3Status Rename did not rename exactly the clicked Window" >&2
+  exit 1
+fi
+menu_settle_run_shell
+menu_assert_no_overlay "Window menu Rename on a non-current Window"
+
+# 6c. MouseDown3Status Kill on that non-current managed Window: canonical delete
+#     window removes the clicked Window with its Pane and Registry rows, asks
+#     nothing, and leaves the focused origin Window alone.
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_status_click 2 "$menu_target_window"
+menu_select_open_item "$menu_offset" "New At End" X
+smoke_wait_for "Window menu Kill canonical delete of the clicked Window" \
+  menu_generated_window_deleted "$menu_offset" "$menu_target_window" "$menu_target_window_uid" "$menu_target_pane_uid"
+menu_settle_run_shell
+if menu_client_saw "$menu_offset" "(y/n)"; then
+  echo "Window menu Kill asked for a second confirmation" >&2
+  exit 1
+fi
+menu_assert_no_overlay "Window menu Kill on a non-current Window"
+
+# 6d. M-MouseDown3Status Kill on a non-current Window without the mirror: tmux's
+#     stock kill-window removes the clicked Window and the Registry is unchanged.
+menu_registry_before_menu="$(menu_registry_resource_uids)"
+menu_windows_before="$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}')"
+menu_row_offset="$(stat -c %s "$menu_client_log")"
+menu_tmux new-window -d -t "$menu_session" sleep 600
+menu_raw_window="$(menu_new_window_except "$menu_windows_before")"
+if [[ -z "$menu_raw_window" || -n "$(menu_tmux show-options -wqv -t "$menu_raw_window" @projmux_window_uid)" ]]; then
+  echo "managed menu fixture Window is not an unmanaged Window: window=$menu_raw_window" >&2
+  exit 1
+fi
+menu_wait_status_row "$menu_row_offset"
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_status_click 10 "$menu_raw_window"
+menu_select_open_item "$menu_offset" "New At End" X
+smoke_wait_for "Window menu stock kill of the clicked unmanaged Window" menu_window_absent "$menu_raw_window"
+smoke_wait_for "Window menu stock kill convergence hooks idle" menu_close_hooks_idle
+menu_settle_run_shell
+if menu_client_saw "$menu_offset" "delete window" || menu_client_saw "$menu_offset" "Delete Window failed"; then
+  echo "an unmanaged Window menu Kill reached the canonical route" >&2
+  exit 1
+fi
+if [[ "$(menu_registry_resource_uids)" != "$menu_registry_before_menu" ]]; then
+  echo "unmanaged Window menu Kill changed Registry resources: before=$menu_registry_before_menu after=$(menu_registry_resource_uids)" >&2
+  exit 1
+fi
+menu_assert_no_overlay "Window menu stock Kill on a non-current Window"
+
+# 6e. prefix < Kill on a Window whose mirror names no Registry Window: the
+#     canonical route refuses on the client and nothing is killed.
+menu_windows_before="$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}')"
+menu_tmux new-window -d -t "$menu_session" sleep 600
+menu_stale_menu_window="$(menu_new_window_except "$menu_windows_before")"
+menu_tmux set-option -wq -t "$menu_stale_menu_window" @projmux_window_uid win-e2e-menu-kill-stale
+menu_tmux select-window -t "$menu_stale_menu_window"
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b '<'
+menu_select_open_item "$menu_offset" "New At End" X
+smoke_wait_for "stale-mirror Window menu Kill refusal message" menu_client_saw "$menu_offset" "Delete Window failed"
+menu_settle_run_shell
+if menu_window_absent "$menu_stale_menu_window"; then
+  echo "a refused Window menu Kill fell back to a raw Window kill" >&2
+  exit 1
+fi
+# The harness removes its own fixture Window as an unmanaged one again.
+menu_tmux set-option -wqu -t "$menu_stale_menu_window" @projmux_window_uid
+menu_tmux kill-window -t "$menu_stale_menu_window"
+smoke_wait_for "Window menu fixture Window removal" menu_window_absent "$menu_stale_menu_window"
+smoke_wait_for "Window menu refusal convergence hooks idle" menu_close_hooks_idle
+menu_refocus_origin
+menu_settle_run_shell
+menu_assert_no_overlay "Window menu Kill refusal"
+
+# 6f. prefix > Horizontal Split reaches typed pane-menu split-right, and
+#     M-MouseDown3Pane Kill on that non-active managed Pane reaches canonical
+#     delete pane for the clicked Pane only.
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b '>'
+menu_select_open_item "$menu_offset" "Horizontal Split" h
+smoke_wait_for "Pane menu Horizontal Split pane" menu_wait_for_pane_count 2
+smoke_wait_for "Pane menu Horizontal Split client message" menu_client_saw "$menu_offset" "Created Pane"
+menu_settle_run_shell
+menu_assert_no_overlay "Pane menu Horizontal Split"
+menu_target_pane="$(menu_new_pane_except "$menu_origin_pane")"
+smoke_wait_for "Pane menu split Registry identity" menu_pane_is_managed "$menu_target_pane"
+menu_target_pane_uid="$(menu_tmux show-options -pqv -t "$menu_target_pane" @projmux_pane_uid)"
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_pane_click 10 "$menu_target_pane"
+menu_select_open_item "$menu_offset" "Horizontal Split" X
+smoke_wait_for "Pane menu Kill canonical delete of the clicked Pane" \
+  menu_delete_converged "$menu_target_pane_uid" "$menu_offset" 1
+menu_settle_run_shell
+if menu_client_saw "$menu_offset" "(y/n)"; then
+  echo "Pane menu Kill asked for a second confirmation" >&2
+  exit 1
+fi
+menu_assert_no_overlay "Pane menu Kill on a non-active Pane"
+
+# 6g. MouseDown3Pane Kill on a non-active Pane without the mirror: tmux's stock
+#     kill-pane removes the clicked Pane instead of a refusal, and the Registry is
+#     unchanged.
+menu_registry_before_menu="$(menu_registry_resource_uids)"
+menu_tmux split-window -d -t "$menu_origin_pane" sleep 600
+smoke_wait_for "Pane menu unmanaged Pane" menu_wait_for_pane_count 2
+menu_raw_pane="$(menu_new_pane_except "$menu_origin_pane")"
+if [[ -z "$menu_raw_pane" || -n "$(menu_tmux show-options -pqv -t "$menu_raw_pane" @projmux_pane_uid)" ]]; then
+  echo "managed menu fixture split is not an unmanaged Pane: pane=$menu_raw_pane" >&2
+  exit 1
+fi
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_pane_click 2 "$menu_raw_pane"
+menu_select_open_item "$menu_offset" "Horizontal Split" X
+smoke_wait_for "Pane menu stock kill of the clicked unmanaged Pane" menu_wait_for_pane_count 1
+smoke_wait_for "Pane menu stock kill convergence hooks idle" menu_close_hooks_idle
+menu_settle_run_shell
+if menu_client_saw "$menu_offset" "delete pane" || menu_client_saw "$menu_offset" "failed"; then
+  echo "an unmanaged Pane menu Kill reached the canonical route or was refused" >&2
+  exit 1
+fi
+if [[ "$(menu_registry_resource_uids)" != "$menu_registry_before_menu" ]]; then
+  echo "unmanaged Pane menu Kill changed Registry resources: before=$menu_registry_before_menu after=$(menu_registry_resource_uids)" >&2
+  exit 1
+fi
+menu_assert_no_overlay "Pane menu stock Kill on a non-active Pane"
+
+# 6h. A Project's last Window through the Window menu. A second one-Window
+#     Project is registered the way the origin Project was, so the origin
+#     Project keeps its Windows for the legs below. canonical delete window
+#     removes the Window with its Pane and ends the session, and the Project
+#     stays with zero Windows. The destroyed session hands its client back to
+#     the origin session instead of detaching it.
+mkdir -p "$menu_root/work/beta"
+menu_tmux new-session -d -s work-beta -c "$menu_root/work/beta" sleep 600
+menu_tmux set-option -t '=work-beta' -q @projmux_project_path "$menu_root/work/beta"
+menu_beta_project_uid="$(menu_pmx create project --root "$menu_root/work/beta" -o uid)"
+e2e_bounded_reconcile_to_noop --allow-initial-noop "$menu_root/reconcile-beta" \
+  menu_pmx reconcile resources --socket "$menu_socket" -o json
+# The Project's runtime session is found by its identity mirror, not by name.
+menu_beta_session="$(menu_tmux list-sessions -F '#{session_id} #{@projmux_project_uid}' | awk -v uid="$menu_beta_project_uid" '$2 == uid { print $1 }')"
+if [[ -z "$menu_beta_project_uid" || "$(printf '%s\n' "$menu_beta_session" | grep -c .)" != "1" ]]; then
+  {
+    echo "last-Window menu fixture Project has no single runtime session: project=$menu_beta_project_uid sessions=[$menu_beta_session]"
+    menu_tmux list-sessions -F 'session #{session_id} name=#{session_name} uid=#{@projmux_project_uid} path=#{@projmux_project_path}' || true
+    tail -c 3000 "$menu_root"/reconcile-beta-*.json || true
+  } >&2
+  exit 1
+fi
+menu_beta_window="$(menu_tmux list-windows -t "$menu_beta_session" -F '#{window_id}')"
+menu_beta_window_uid="$(menu_tmux show-options -wqv -t "$menu_beta_window" @projmux_window_uid)"
+menu_beta_pane="$(menu_tmux display-message -p -t "$menu_beta_window" '#{pane_id}')"
+menu_beta_pane_uid="$(menu_tmux show-options -pqv -t "$menu_beta_pane" @projmux_pane_uid)"
+if [[ -z "$menu_beta_project_uid" || -z "$menu_beta_window_uid" || -z "$menu_beta_pane_uid" || "$(printf '%s\n' "$menu_beta_window" | wc -l)" != "1" ]]; then
+  echo "last-Window menu fixture is not a one-Window managed Project: project=$menu_beta_project_uid window=$menu_beta_window uid=$menu_beta_window_uid pane-uid=$menu_beta_pane_uid" >&2
+  exit 1
+fi
+menu_tmux set-option -t "$menu_beta_session" detach-on-destroy off
+menu_tmux switch-client -c "$menu_client" -t "$menu_beta_pane"
+menu_client_on_beta() {
+  [[ "$(menu_tmux display-message -p -c "$menu_client" '#{pane_id}')" == "$menu_beta_pane" ]]
+}
+smoke_wait_for "client on the last-Window menu fixture" menu_client_on_beta
+menu_beta_last_window_deleted() {
+  ! menu_pmx get windows -o uid | grep -Fxq "$menu_beta_window_uid" || return 1
+  ! menu_pmx get panes -o uid | grep -Fxq "$menu_beta_pane_uid" || return 1
+  menu_pmx describe project "uid:$menu_beta_project_uid" -o json >/dev/null || return 1
+  [[ -z "$(menu_pmx get windows --project "uid:$menu_beta_project_uid" -o uid)" ]] || return 1
+  ! menu_tmux has-session -t "$menu_beta_session" 2>/dev/null
+}
+menu_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b '<'
+menu_select_open_item "$menu_offset" "New At End" X
+smoke_wait_for "last-Window menu Kill keeps a zero-Window Project" menu_beta_last_window_deleted
+if ! menu_tmux has-session -t "$menu_session" 2>/dev/null || ! menu_tmux list-clients -F '#{client_name}' | grep -Fxq -- "$menu_client"; then
+  echo "last-Window menu Kill ended the origin session or detached the client" >&2
+  exit 1
+fi
+menu_tmux switch-client -c "$menu_client" -t "$menu_origin_pane"
+smoke_wait_for "last-Window menu convergence hooks idle" menu_close_hooks_idle
+
+menu_tmux set-option -g status "$menu_status_saved"
+menu_tmux set-option -g 'status-format[0]' "$menu_status_format_saved"
+menu_refocus_origin
+menu_settle_run_shell
+menu_assert_no_overlay "managed menus"
+
 if [[ "$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_current_command}')" != "$menu_origin_command_before" ]]; then
   echo "the interactive matrix replaced the origin pane's foreground process" >&2
   exit 1
@@ -10426,7 +10759,7 @@ for menu_cleanup_check in "$menu_cleanup_target" "$menu_sibling_cleanup_target";
   fi
 done
 trap smoke_cleanup_env EXIT
-echo ">> managed pane-menu and interactive run-shell output e2e passed: pane=$menu_origin_pane project=$menu_project_uid canonical-window=$menu_created_window_uid owner-pair=$menu_created_live_binding clean-exit=target-only sibling-socket=byte-identical overlay-matrix=none socket=$menu_socket path=$menu_socket_path sibling-path=$menu_sibling_socket_path cleanup=$menu_cleanup_target,$menu_sibling_cleanup_target inherited=unset"
+echo ">> managed pane-menu and interactive run-shell output e2e passed: pane=$menu_origin_pane project=$menu_project_uid canonical-window=$menu_created_window_uid owner-pair=$menu_created_live_binding managed-menus=window-kill-clicked,window-stock-kill,window-refusal,pane-kill-clicked,pane-stock-kill,last-window:$menu_beta_project_uid clean-exit=target-only sibling-socket=byte-identical overlay-matrix=none socket=$menu_socket path=$menu_socket_path sibling-path=$menu_sibling_socket_path cleanup=$menu_cleanup_target,$menu_sibling_cleanup_target inherited=unset"
 
 smoke_contract_pass
 fi

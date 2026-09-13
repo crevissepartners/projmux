@@ -266,6 +266,42 @@ with no binding at all. Two managed actions on one prefix key are rejected.
 Settings > Keybindings adds and removes root-table keys for these actions; their
 prefix key is changed in `keymap.toml`.
 
+## Managed menus
+
+The generated app config also replaces tmux's stock Window and Pane menus. Each
+generated menu keeps tmux's title, position, item names, key shortcuts, and dim
+conditions, and changes only the items that alter topology or identity:
+
+| Menu | Bindings | Kill on a target with the mirror | Kill on a target without it | Typed items | Removed |
+| --- | --- | --- | --- | --- | --- |
+| Window | `prefix <`, `MouseDown3Status`, `M-MouseDown3Status` | `@projmux_window_uid`: `internal tmux window-delete`, canonical `delete window` | tmux stock `kill-window` | Rename: `internal tmux window-rename`; New At End: `internal tmux window-create` | Respawn, New After |
+| Pane | `prefix >`, `M-MouseDown3Pane` | `@projmux_pane_uid`: the Pane menu Kill route, canonical `delete pane` | tmux stock `kill-pane` | Horizontal Split / Vertical Split: `internal tmux pane-menu split-right` / `split-down` | Respawn |
+| Pane context | `MouseDown3Pane` | same as the Pane menus | tmux stock `kill-pane` | Horizontal Split / Vertical Split, as above | Respawn |
+
+Swap Left, Swap Right, Swap Marked, Swap Up, Swap Down, Mark, Zoom, and the
+copy-mode items (Go To Top, Go To Bottom, Search For, Type, Copy, Copy Line)
+are presentation and run tmux's own commands. `MouseDown3Pane` also keeps its
+AI Resume Picker entry.
+
+Selecting Kill is the confirmation, as it is in tmux's own menus, so a managed
+Kill asks nothing more. It deletes the target with an `intentional` termination
+receipt: a Pane's owning Agent stays in the Registry as Offline with a `deleted`
+exit, the Agents of a deleted Window are deleted with it, and deleting a
+Project's last Window leaves a zero-Window Project. When the canonical route
+refuses, for example because the mirror names no Registry resource, the reason
+is shown on the client that opened the menu and nothing falls back to a raw
+tmux kill. A target without the mirror gets tmux's own kill with no Registry
+write; the projmux process never issues `kill-pane` or `kill-window`.
+
+A mouse menu acts on what was clicked, not on what is focused: Kill, Rename, and
+New At End in the status-line Window menu act on the clicked Window, and the
+Rename prompt starts with that Window's name.
+
+The standalone `~/.tmux.conf` snippet keeps tmux's stock `prefix <`, `prefix >`,
+`MouseDown3Status`, `M-MouseDown3Status`, and `M-MouseDown3Pane` menus; it
+carries only the `MouseDown3Pane` menu. A `keymap.toml` that assigns a managed
+action to `prefix <` or `prefix >` keeps that key.
+
 ## Product Requirements
 
 Settings > Keybindings stays a discovery surface. It must continue to expose

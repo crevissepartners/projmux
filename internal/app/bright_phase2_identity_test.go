@@ -46,36 +46,36 @@ func appLightThemeConfig() theme.ThemeConfig {
 // config contract additions update every digest together.
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
-		"standalone": "d1a33ed87346ccf070f7e8c9b8357ae99551fbb56abc106bd9eedeb8ba69ad8f",
-		"app":        "b09d80b00861afa57f8b4e6b94ccbc0801766e16bd35b2df5117c110df4987b9",
+		"standalone": "ef41840d1a366df2162db5651ed8673932698633e0991c1f75e1065532dcbd61",
+		"app":        "0ccdc983b5c1e2c0bad02313355255aeace12a60252c55cca61028f679467b84",
 	},
 	"projmux": {
-		"standalone": "3bac3816918d90b5b6466e800231495a39f078022e983138c30041b6da5dc736",
-		"app":        "67497e631248a5f8bd985be92679c0f72fe93626cfd78c0667a5f74cdc15ed32",
+		"standalone": "bc9602d9462db9e00969da9b8f330b8d72973e482e7da112993d5316678c2f86",
+		"app":        "a0f798dad17a77428c70d79f1e5278b37e164f781b631370039786b716997657",
 	},
 	"blue-hour": {
-		"standalone": "2cf7299308e4701248a5817b4af3fd2564591415b2608f27f3158a26b07bfa75",
-		"app":        "44f3eabaf32afc255d03fe83aaa917c18100cb70740064d98f149bd23b3b6a4e",
+		"standalone": "93659cfcb9fd60b346402d3e971b32fdef5af48d4f3280256906b7dbd2b9e76d",
+		"app":        "620d6415863d2b1d6b8a6eb410739ca6e3a29fe4ccc68955ecd7ce564878a9b8",
 	},
 	"carbon-violet": {
-		"standalone": "d3e6073c15693342acc2f155ee360997f5361ee45ebab08d5efccec7e916cc9d",
-		"app":        "279b83351dffcf8e43cc659d694d22c9e8e10bc8e543f707ab53300924b3b5dd",
+		"standalone": "cbf1d51aa6c4623a180ef4135550569205e135a2c63dfd501242b8c8e9aca2e5",
+		"app":        "2f4ef6c871a384df85b82a1fcd08b0dd36bb6382bf9ca5bf3e1f61434120d066",
 	},
 	"ember": {
-		"standalone": "ef898c6361fe13f4627b57a009f2a5bc888f48d9a70820906484c4edf7f67543",
-		"app":        "ea1b0ae228c6f758983776217327eca34cec0ed97c9eefc24556ea5ae847f681",
+		"standalone": "4301ccb673b86fe2df0b623cf20f4855afa2e69fed123813a543b1f698d9f7fe",
+		"app":        "a2c19aaac4efd43ba5be815b3a3bf07d22fef4cfc971a00dd460438479f50934",
 	},
 	"forest": {
-		"standalone": "93e3259283842bfc9a45a9f8db481a7061267bf323599329f326c809f629656f",
-		"app":        "d6bbb8654e463bdb825ac4965ce5034a3c683b50dc751a1b661c4dfd3705f5c1",
+		"standalone": "6e8e4b4463176ba41b45484b3354c71693147a05c3e187a9fd2f9fdb910591d1",
+		"app":        "9c5fcc477ede10d88b845ab2779998ae733dc81c35f264ce7b943d82b775e557",
 	},
 	"rose": {
-		"standalone": "22f84b03721717d5872c98670d717e38c95157d674f84a96d5eb9d7d9aed23f2",
-		"app":        "05eb6bf3148493205d135db283c6b067a395fda571456c6e8b26bc03ba83cc55",
+		"standalone": "34231beb2b536cd4348bd935097d2fa4ac2707b263ab14d823a592daef5c36d4",
+		"app":        "cbfc8203e62fda4c0eaed4b90c8869da963256d7e5dab300fe4b40711b6fd552",
 	},
 	"high-contrast": {
-		"standalone": "039310b18a9dfac7ac5369752612098313dcb3bf8b5213a0362a7cbd71ccb3c9",
-		"app":        "57641ffcf55486ce0bc64f7d75970c6278953f0ed6d017e83162855f49f15917",
+		"standalone": "8112d73615d762215fc2da24fb186ec4a3792c81362270e2da4b8b47c9469b52",
+		"app":        "6e562b76fbb8a210ea010cbfae980b284d71de6a576e2f0beb9a3b62868460f5",
 	},
 }
 
@@ -90,7 +90,10 @@ var brightPhase2ConfigGoldens = map[string]map[string]string{
 // cannot paint the pane that just appeared. The app digests were rebaselined
 // again when the app config began replacing tmux's stock `prefix x` and
 // `prefix &` with the mirror-guarded managed close keys; every standalone
-// digest stayed byte-identical. Theme rendering itself is unchanged, which is
+// digest stayed byte-identical. Every digest was rebaselined once more when the
+// MouseDown3Pane Kill item gained the identity-mirror guard with tmux's stock
+// kill-pane branch (both configs) and the app config began replacing tmux's
+// stock Window and Pane menus. Theme rendering itself is unchanged, which is
 // what this test still pins.
 func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 	t.Parallel()

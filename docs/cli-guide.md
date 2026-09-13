@@ -376,10 +376,16 @@ The generated `MouseDown3Pane` menu treats its Horizontal Split, Vertical
 Split, and Kill entries as Projmux resource actions. Both splits pass the exact
 clicked pane through the popup-origin anchor above and reach the same canonical
 `create pane` materializer as the CLI, so the new pane receives a Registry uid.
-Kill resolves that anchor's mirrored uid and reaches canonical `delete pane`,
-including its printed delete result. The menu never falls back to a raw tmux
-mutation when either route refuses. The reason is displayed on the exact client
-that opened the menu instead of being lost as a `run-shell` exit code.
+Kill on a pane with `@projmux_pane_uid` resolves that anchor's mirrored uid and
+reaches canonical `delete pane`, including its printed delete result; a pane
+without the mirror runs tmux's own `kill-pane` instead of being refused. The
+menu never falls back to a raw tmux mutation when either route refuses. The
+reason is displayed on the exact client that opened the menu instead of being
+lost as a `run-shell` exit code. The app config's `prefix >` and
+`M-MouseDown3Pane` Pane menus follow the same rules, and its `prefix <`,
+`MouseDown3Status`, and `M-MouseDown3Status` Window menus route Kill on a
+mirrored Window to canonical `delete window`; see
+[Managed menus](keybindings.md#managed-menus).
 
 tmux Respawn has no equivalent in the current resource model: it preserves the
 same pane handle, layout, Registry uid, and original command, while canonical

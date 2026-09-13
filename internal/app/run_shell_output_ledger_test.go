@@ -61,8 +61,10 @@ func extractRunShellOccurrences(t *testing.T, generated string) []runShellOccurr
 
 func runShellSurfaceOf(prefix string) runShellSurface {
 	switch {
-	case strings.Contains(prefix, "MouseDown3Pane"):
+	case strings.Contains(prefix, "MouseDown3Pane"), strings.HasPrefix(prefix, "bind-key > display-menu "):
 		return runShellSurfacePaneMenu
+	case strings.Contains(prefix, "MouseDown3Status display-menu "), strings.HasPrefix(prefix, "bind-key < display-menu "):
+		return runShellSurfaceWindowMenu
 	case strings.Contains(prefix, "MouseDown1Status"), strings.Contains(prefix, "-T projmux-status"):
 		return runShellSurfaceStatusbar
 	case strings.Contains(prefix, "set-hook"):
