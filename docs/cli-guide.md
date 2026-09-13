@@ -549,6 +549,14 @@ content, prompt, history, and transcript are never parsed. `abnormal`,
 `killed`, `unknown`, stale/resumed bindings, empty or unavailable inventory,
 permission failure, and foreign-host/window observations keep their diagnostic
 rows and produce no automatic delete plan.
+Every teardown decision on this hook path appends one
+`topology.teardown.decision` journal record (`projmux diagnostics log
+--component topology`) with its `delete-window`/`delete-pane-agent`/`retain`/
+`refuse` decision, `topology.teardown.<reason>` code, Window/Pane UID, and
+termination classification. An unpaired `window-unlinked` records `retain`
+with `topology.teardown.awaiting-pane-exit` when it first waits and again when
+its bounded pair wait is exhausted; `kill-window` closes surface this way,
+because tmux fires no `pane-exited` for them.
 
 For `pane-exited`, tmux supplies `%N` as `#{hook_pane}`. Its current-context
 session/window formats may already name a surviving client Window, so the owner
@@ -1152,7 +1160,9 @@ autosave-session-state`, `window record`, and
 successful `diagnostics log` views do not produce an event. Errors from those
 automatic hook/poll paths still produce one safe `error` outcome. Successful
 direct command help and explicit `--dry-run` preview modes also remain
-read-only and do not produce an event. Journal failures are a best-effort side
+read-only and do not produce an event. The automatic `internal tmux converge`
+route still appends one typed `topology.teardown.decision` record per Window or
+Pane teardown decision it consumes. Journal failures are a best-effort side
 channel and never change command output or exit status. See
 [operational-diagnostics.md](operational-diagnostics.md) for the file,
 retention, concurrency, and privacy contracts.

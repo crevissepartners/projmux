@@ -1738,11 +1738,21 @@ if [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux")" != "700" ]] ||
   exit 1
 fi
 
-before_read_only="$(wc -l <"$operations_log")"
+# The lifecycle fixtures above stopped, unregistered, and pruned sessions on this
+# hook-installed server. Their generated pane-exited/window-unlinked hooks run
+# detached (`run-shell -b`), and each converge may append a typed
+# topology.teardown.decision record whenever it finishes, independent of the
+# command under measurement. Count every other record, so any outcome, lifecycle,
+# notify, or other event the measured command itself appends still fails.
+operations_journal_lines_excluding_async_teardown() {
+  grep -vc '"event":"topology.teardown.decision"' "$operations_log" || true
+}
+
+before_read_only="$(operations_journal_lines_excluding_async_teardown)"
 "$bin" internal status resources >"$PROJMUX_SMOKE_WORKDIR/resources-read-only.out"
 "$bin" diagnostics log --tail 1 --json --level info --component cli \
   >"$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl"
-after_read_only="$(wc -l <"$operations_log")"
+after_read_only="$(operations_journal_lines_excluding_async_teardown)"
 if [[ "$before_read_only" != "$after_read_only" ]]; then
   echo "read-only status/viewer success unexpectedly appended an operational event" >&2
   exit 1
@@ -1763,9 +1773,9 @@ assert_automatic_success_no_record() {
   local label="$1"
   shift
   local before after
-  before="$(wc -l <"$operations_log")"
+  before="$(operations_journal_lines_excluding_async_teardown)"
   "$@" >"$PROJMUX_SMOKE_WORKDIR/automatic-$label.out"
-  after="$(wc -l <"$operations_log")"
+  after="$(operations_journal_lines_excluding_async_teardown)"
   if [[ "$before" != "$after" ]]; then
     echo "$label success unexpectedly appended an operational event" >&2
     exit 1
@@ -3737,6 +3747,152 @@ if [[ "$termination_closed_before" != "$termination_closed_after" ]] ||
   exit 1
 fi
 echo ">> termination Phase 1 last-Pane project=$termination_closed_project_uid window=$termination_closed_window_uid descendants=0 project=retained sibling-project=preserved sibling-socket=preserved repeat=byte-identical"
+
+# Window teardown decision journal Phase 0. The generated pane-exited and
+# window-unlinked hooks above ran against this server's isolated state root, so
+# the clean last-Pane pair must have left exactly one typed delete-window
+# decision for that exact Window UID, carrying its Pane UID and classification.
+termination_teardown_journal() {
+  termination_pmx diagnostics log --component topology --tail 1000 --json
+}
+termination_teardown_journal >"$termination_root/closed-teardown-journal.jsonl"
+python3 - "$termination_root/closed-teardown-journal.jsonl" "$termination_closed_window_uid" "$termination_closed_agent_pane_uid" <<'TEARDOWN_DELETE_WINDOW'
+import json
+import sys
+
+path, window_uid, pane_uid = sys.argv[1:]
+with open(path, encoding="utf-8") as journal:
+    events = [json.loads(line) for line in journal if line.strip()]
+deletes = [
+    event for event in events
+    if event["event"] == "topology.teardown.decision"
+    and event.get("decision") == "delete-window"
+    and event.get("window_uid") == window_uid
+]
+assert len(deletes) == 1, deletes
+record = deletes[0]
+assert record["code"] == "topology.teardown.window-teardown", record
+assert record.get("pane_uid") == pane_uid and record.get("classification") == "normal", record
+assert record["level"] == "info" and record["result"] == "success", record
+allowed = {"at", "level", "component", "event", "result", "duration_ms", "run_id", "version", "mux_backend",
+           "code", "decision", "classification", "window_uid", "pane_uid"}
+assert set(record) <= allowed, record
+TEARDOWN_DELETE_WINDOW
+
+# An unpaired window-unlinked is a retain decision when its own hook first
+# waits and again when its bounded causal pair wait is exhausted; the carried
+# retries between are controller transport state. Replay the shipped
+# window-unlinked route once for a Window handle that resolves no Registry
+# Window, then let ordinary pane-killed producers carry the queued unlink
+# through its retries. Exactly the first-wait and one exhaustion record appear,
+# both without UIDs, and a converged producer adds none.
+termination_unlink_awaiting_count() {
+  termination_teardown_journal | python3 -c '
+import json
+import sys
+
+window_uid = sys.argv[1]
+count = 0
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    event = json.loads(line)
+    if (event["event"] != "topology.teardown.decision" or event.get("decision") != "retain"
+            or event["code"] != "topology.teardown.awaiting-pane-exit"):
+        continue
+    if event.get("window_uid", "") != window_uid:
+        continue
+    if not window_uid:
+        assert "pane_uid" not in event, event
+    count += 1
+print(count)
+' "${1:-}"
+}
+termination_pair_wait_before="$(termination_unlink_awaiting_count)"
+termination_pmx internal tmux converge --socket-path "$termination_socket_path" --reason window-unlinked \
+  --session "$termination_session_id" --hook-window "@999999" \
+  >"$termination_root/pair-wait-unlink.out" 2>"$termination_root/pair-wait-unlink.err"
+termination_pair_wait_after="$termination_pair_wait_before"
+for _ in $(seq 1 100); do
+  termination_pair_wait_after="$(termination_unlink_awaiting_count)"
+  if [[ "$termination_pair_wait_after" == "$((termination_pair_wait_before + 2))" ]]; then
+    break
+  fi
+  termination_pmx internal tmux converge --socket-path "$termination_socket_path" --reason pane-killed \
+    >"$termination_root/pair-wait-producer.out" 2>"$termination_root/pair-wait-producer.err"
+  sleep 0.05
+done
+termination_pair_wait_converged=0
+for _ in $(seq 1 100); do
+  termination_pmx internal tmux converge --socket-path "$termination_socket_path" --reason pane-killed \
+    >"$termination_root/pair-wait-settle.out" 2>"$termination_root/pair-wait-settle.err"
+  if grep -q "converged=true" "$termination_root/pair-wait-settle.err"; then
+    termination_pair_wait_converged=1
+    break
+  fi
+  sleep 0.05
+done
+termination_pair_wait_settled="$(termination_unlink_awaiting_count)"
+if [[ "$termination_pair_wait_converged" != "1" ]] ||
+  [[ "$termination_pair_wait_after" != "$((termination_pair_wait_before + 2))" ]] ||
+  [[ "$termination_pair_wait_settled" != "$termination_pair_wait_after" ]]; then
+  echo "pair-wait journal before=$termination_pair_wait_before after=$termination_pair_wait_after settled=$termination_pair_wait_settled converged=$termination_pair_wait_converged" >&2
+  cat "$termination_root/pair-wait-unlink.err" "$termination_root/pair-wait-settle.err" >&2 || true
+  exit 1
+fi
+echo ">> termination teardown journal delete-window=1 window=$termination_closed_window_uid pair-wait first-wait=1 exhausted=1 repeat=0"
+
+# A real `tmux kill-window` fires only window-unlinked, never pane-exited, so
+# its retained-Window close is visible only as the hook's first awaiting
+# decision. That record must name the exact Window UID resolved from the hook's
+# own $N/@N handles, and the Window row must survive. A disposable one-Window
+# Project keeps the retained Window out of every other fixture on this server.
+mkdir -p "$termination_root/work/killwin"
+termination_tmux new-session -d -s work-killwin -n main -c "$termination_root/work/killwin" sleep 600
+termination_tmux set-option -t work-killwin -q @projmux_project_path "$termination_root/work/killwin"
+termination_killwin_project_uid="$(termination_pmx create project --root "$termination_root/work/killwin" --name killwin -o uid)"
+bounded_resource_reconcile_to_noop "$termination_root/reconcile-killwin" \
+  termination_pmx reconcile resources --socket "$termination_socket" -o json
+termination_killwin_window_id="$(termination_tmux display-message -p -t work-killwin:main '#{window_id}')"
+termination_killwin_window_uid="$(termination_tmux show-options -wqv -t work-killwin:main @projmux_window_uid)"
+termination_killwin_pane_runtime="$(termination_tmux display-message -p -t work-killwin:main '#{pane_id}')"
+termination_killwin_pane_uid="$(termination_tmux show-options -pqv -t "$termination_killwin_pane_runtime" @projmux_pane_uid)"
+if [[ -z "$termination_killwin_project_uid" || -z "$termination_killwin_window_uid" ||
+  -z "$termination_killwin_pane_uid" || ! "$termination_killwin_window_id" =~ ^@[0-9]+$ ]]; then
+  echo "kill-window teardown journal fixture could not resolve its exact Window binding" >&2
+  exit 1
+fi
+termination_tmux kill-window -t "$termination_killwin_window_id"
+termination_killwin_records=0
+for _ in $(seq 1 200); do
+  termination_killwin_records="$(termination_unlink_awaiting_count "$termination_killwin_window_uid")"
+  if [[ "$termination_killwin_records" != "0" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+termination_teardown_journal >"$termination_root/killwin-teardown-journal.jsonl"
+python3 - "$termination_root/killwin-teardown-journal.jsonl" "$termination_killwin_window_uid" "$termination_killwin_pane_uid" <<'TEARDOWN_KILL_WINDOW'
+import json
+import sys
+
+path, window_uid, pane_uid = sys.argv[1:]
+with open(path, encoding="utf-8") as journal:
+    events = [json.loads(line) for line in journal if line.strip()]
+records = [
+    event for event in events
+    if event["event"] == "topology.teardown.decision" and event.get("window_uid") == window_uid
+]
+assert len(records) == 1, records
+record = records[0]
+assert record.get("decision") == "retain" and record["code"] == "topology.teardown.awaiting-pane-exit", record
+assert record.get("pane_uid", pane_uid) == pane_uid, record
+TEARDOWN_KILL_WINDOW
+if ! termination_pmx describe window "uid:$termination_killwin_window_uid" -o json >"$termination_root/killwin-window.json"; then
+  echo "kill-window close deleted the retained Window row $termination_killwin_window_uid" >&2
+  exit 1
+fi
+echo ">> termination teardown journal kill-window window=$termination_killwin_window_uid awaiting-pane-exit=1 window=retained"
 
 # A long-lived Pane proves the supervisor really is the pane's own process and
 # that the Registry recorded the exact live handle it landed on.

@@ -9,6 +9,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -82,6 +83,15 @@ type lifecycleDirtyEvent struct {
 	preexistingRecovery bool
 	supervisorPID       int
 	processAlive        func(int) bool
+	// decisions journals the authoritative teardown decision this event reaches.
+	// It is nil-safe observation only: it never narrows, widens, or gates the
+	// event, and a failed append never reaches the reconciliation result.
+	decisions *diagnostics.TeardownRecorder
+}
+
+// journalTeardown appends one consumed decision through the event's recorder.
+func (e lifecycleDirtyEvent) journalTeardown(record *lifecycleTeardownRecord) {
+	record.journal(e.decisions)
 }
 
 // describe renders the event for a diagnostic line.
@@ -122,7 +132,10 @@ type lifecycleReconcileResult struct {
 	// awaitingPaneExit says an exact unlink found no matching stored pane-exit
 	// evidence. It is controller transport state, not Registry authority.
 	awaitingPaneExit bool
-	transactions     int
+	// awaitingSubject is the teardown journal's read-only resolution of the
+	// Window an awaiting unlink names. It is diagnostic projection only.
+	awaitingSubject lifecycleTeardownSubject
+	transactions    int
 	// receiptsChanged reports journal evidence absorbed independently of a
 	// lifecycle projection. A late supervisor refinement is a real write and
 	// therefore requires the controller's following no-op verification pass.
@@ -273,7 +286,13 @@ func equalOptionalInt(left, right *int) bool {
 }
 
 func stableDeadPaneAuthorityConflict(reason coremetadata.TeardownReason, detail string) error {
-	return fmt.Errorf("stable dead Pane authority conflict (%s): %s", reason, detail)
+	return fmt.Errorf("%s%s", stableDeadPaneAuthorityConflictPrefix(reason), detail)
+}
+
+// stableDeadPaneAuthorityConflictPrefix is the one spelling of a conflict's
+// typed reason, shared by the constructor and the teardown journal reader.
+func stableDeadPaneAuthorityConflictPrefix(reason coremetadata.TeardownReason) string {
+	return "stable dead Pane authority conflict (" + string(reason) + "): "
 }
 
 // planExactPaneExitCascade converts only a positively observed exact
@@ -289,6 +308,9 @@ type exactLifecycleCascadePlan struct {
 	pending     coremetadata.PaneTeardownEvidencePlan
 	root        coremetadata.WindowRootCascadeDeletePlan
 	deadCleanup *paneLiveDeleteTarget
+	// subject names the resolved owner chain of the decision for the teardown
+	// journal. It is diagnostic projection only and never read by the apply.
+	subject lifecycleTeardownSubject
 }
 
 func planExactLifecycleCascade(
@@ -483,9 +505,10 @@ func planExactLifecycleCascade(
 	if mutator.Now != nil {
 		now = mutator.Now
 	}
+	subject := lifecycleTeardownSubject{paneUID: pane.Metadata.UID, windowUID: windowUID, classification: classification}
 	if liveSiblingPane {
 		plan, err := coremetadata.PlanPaneAgentCascadeDelete(registry, teardown, now().UTC())
-		cascade := exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan}
+		cascade := exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan, subject: subject}
 		if err == nil && plan.Changed && retainedDead {
 			target := lifecycleDeadPaneTarget(teardown, sessionName, *pane)
 			cascade.deadCleanup = &target
@@ -493,7 +516,7 @@ func planExactLifecycleCascade(
 		return cascade, err
 	}
 	pending, err := coremetadata.PlanPaneTeardownEvidence(registry, teardown, now().UTC())
-	cascade := exactLifecycleCascadePlan{Desired: pending.Desired, Changed: pending.Changed, pending: pending}
+	cascade := exactLifecycleCascadePlan{Desired: pending.Desired, Changed: pending.Changed, pending: pending, subject: subject}
 	if err == nil && pending.Changed && retainedDead {
 		target := lifecycleDeadPaneTarget(teardown, sessionName, *pane)
 		cascade.deadCleanup = &target
@@ -558,13 +581,14 @@ func planExactWindowUnlinkCascade(
 		pane = candidate
 	}
 	if pane == nil || pane.Status.Teardown == nil {
-		return exactLifecycleCascadePlan{awaiting: true}, nil
+		return exactLifecycleCascadePlan{awaiting: true, subject: lifecycleWindowUnlinkAwaitingSubject(registry, event)}, nil
 	}
 	evidence := pane.Status.Teardown
+	subject := lifecycleTeardownSubject{paneUID: pane.Metadata.UID, windowUID: evidence.WindowUID, classification: evidence.Classification}
 	if live[pane.Metadata.UID] || liveWindows[evidence.WindowUID] {
 		return exactLifecycleCascadePlan{root: coremetadata.WindowRootCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
 			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonConflictingOwnerFacts,
-		}}}, nil
+		}}, subject: subject}, nil
 	}
 	for i := range registry.Panes {
 		candidate := registry.Panes[i]
@@ -574,7 +598,7 @@ func planExactWindowUnlinkCascade(
 		if windowUID, ok := paneWindowUID(registry, candidate); ok && windowUID == evidence.WindowUID {
 			return exactLifecycleCascadePlan{root: coremetadata.WindowRootCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
 				Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonLiveSiblingPane,
-			}}}, nil
+			}}, subject: subject}, nil
 		}
 	}
 	liveSiblingRootWindows := 0
@@ -589,7 +613,7 @@ func planExactWindowUnlinkCascade(
 	if liveWindowSessions[evidence.RuntimeSessionID] != liveSiblingRootWindows {
 		return exactLifecycleCascadePlan{root: coremetadata.WindowRootCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
 			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonForeignHost,
-		}}}, nil
+		}}, subject: subject}, nil
 	}
 	chain := coremetadata.TeardownOwnerChain{
 		SocketIdentity: evidence.SocketIdentity, SessionHandle: evidence.RuntimeSessionID, PaneHandle: evidence.RuntimePaneID,
@@ -608,7 +632,7 @@ func planExactWindowUnlinkCascade(
 		now = mutator.Now
 	}
 	plan, err := coremetadata.PlanWindowRootCascadeDelete(registry, paneEvent, unlinked, now().UTC())
-	return exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, root: plan}, err
+	return exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, root: plan, subject: subject}, err
 }
 
 func lifecycleRootSessionName(registry coremetadata.Registry, root coremetadata.OwnerRef) string {
@@ -1005,21 +1029,33 @@ func reconcileLifecycle(
 	deadObservations := lifecycleLegacyDeadPaneObservations(candidate, dead)
 	candidateEvent := narrowLifecycleDeadPaneEvent(deadObservations, event)
 	cascade, cascadeErr := planExactLifecycleCascade(candidate, live, deadObservations, liveHostPanes, liveWindows, liveWindowSessions, candidateEvent, store.mutator())
+	// The candidate decision is journaled only where this pass returns before
+	// locking; once the transaction runs, its locked decision is authoritative.
 	if cascadeErr != nil {
+		event.journalTeardown(lifecycleTeardownRefusal(candidate, candidateEvent, cascadeErr))
 		return result, cascadeErr
 	}
 	if event.exhaustedReplay && !cascade.paneAgent.Changed {
+		event.journalTeardown(cascade.teardownRecord())
 		result.skipped = "exhausted clean-exit event did not produce the exact Pane/Agent cascade: " + event.describe()
 		return result, nil
 	}
 	if !cascade.Changed && len(lifecycleProjectionTargets(registry, lifecycleEffectiveLivePanes(live, dead.uids), candidateEvent)) == 0 &&
 		!terminationReceiptsNeedAbsorption(registry, store.mutator(), event.receipts) {
+		event.journalTeardown(cascade.teardownRecord())
 		result.awaitingPaneExit = cascade.awaiting
+		result.awaitingSubject = cascade.awaitingTeardownSubject()
 		result.skipped = "nothing left to reconcile: " + event.describe()
 		return result, nil
 	}
 	var observationFailed bool
+	// locked is the decision of the last closure execution, and lockedErr the
+	// error that closure returned with it. Both are reset per execution, so a
+	// re-executed closure cannot leave a stale or duplicate decision behind.
+	var locked *lifecycleTeardownRecord
+	var lockedErr error
 	_, err = store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		locked, lockedErr = nil, nil
 		fresh, observeErr := inventory.LivePaneUIDs(ctx)
 		if observeErr != nil {
 			// Abort with zero writes and preserve every resource, exactly as the
@@ -1066,13 +1102,16 @@ func reconcileLifecycle(
 		lockedEvent := narrowLifecycleDeadPaneEvent(freshDeadObservations, event)
 		cascade, err := planExactLifecycleCascade(*applyTo, fresh, freshDeadObservations, freshHostPanes, freshWindows, freshWindowSessions, lockedEvent, mutator)
 		if err != nil {
+			locked, lockedErr = lifecycleTeardownRefusal(*applyTo, lockedEvent, err), err
 			return err
 		}
+		locked = cascade.teardownRecord()
 		if event.exhaustedReplay && !cascade.paneAgent.Changed {
 			result.receiptsChanged = false
 			return nil
 		}
 		result.awaitingPaneExit = cascade.awaiting
+		result.awaitingSubject = cascade.awaitingTeardownSubject()
 		if cascade.Changed {
 			var runtime lifecycleDeadPaneCleanupInventory
 			if cascade.deadCleanup != nil {
@@ -1089,11 +1128,13 @@ func reconcileLifecycle(
 			// stale-owner-binding.
 			if cascade.deadCleanup != nil {
 				if cleanupErr := runtime.CleanupLifecycleDeadPane(ctx, *cascade.deadCleanup); cleanupErr != nil {
-					return &lifecycleCleanupRetryError{
+					retry := &lifecycleCleanupRetryError{
 						Reason: coremetadata.TeardownReasonDeadPaneCleanupRetry,
 						Target: *cascade.deadCleanup,
 						Err:    cleanupErr,
 					}
+					locked, lockedErr = locked.cleanupRetry(), retry
+					return retry
 				}
 			}
 			*working = cascade.Desired
@@ -1118,8 +1159,15 @@ func reconcileLifecycle(
 		return result, nil
 	}
 	if err != nil {
+		// A refusal or a cleanup retry is the decision this transaction reached.
+		// Any other failure, such as the lock or the commit, decided nothing that
+		// landed; the controller's retry re-decides it.
+		if lockedErr != nil {
+			event.journalTeardown(locked)
+		}
 		return result, err
 	}
+	event.journalTeardown(locked)
 	if result.changed() == 0 {
 		// The locked re-observation found every candidate live again, or every
 		// projection lost a guard. The transaction was opened but the convergent
