@@ -560,7 +560,9 @@ generated `pane-exited` hook. The supervisor must have durably journaled a
 same-generation `normal` receipt, the hook must name the exact `%N` Pane and
 the owner Window must carry its exact last-positive `$N/@N` binding on the same
 socket, and fresh preflight plus locked observations must still resolve the
-same Registry owner chain. A non-last Pane is removed while its directly owning
+same Registry owner chain. This includes Windows re-materialized by Project
+start/Continue topology replay: the replay records each Window it materializes
+with its live `$N/@N` in the same commit. A non-last Pane is removed while its directly owning
 Agent is retained Offline with its conversation identity. For a last Pane, that evidence is retained until a
 matching `window-unlinked` hook removes the Window; a final Project Window also
 removes its Window descendants while retaining the exact Project uid, root,
