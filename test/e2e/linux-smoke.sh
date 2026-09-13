@@ -10669,7 +10669,7 @@ menu_offset="$(stat -c %s "$menu_client_log")"
 menu_press C-b '<'
 menu_select_open_item "$menu_offset" "New At End" X
 smoke_wait_for "last-Window menu Kill keeps a zero-Window Project" menu_beta_last_window_deleted
-if ! menu_tmux has-session -t "$menu_session" 2>/dev/null || [[ -z "$(menu_tmux list-clients -F '#{client_name}' | grep -Fx "$menu_client")" ]]; then
+if ! menu_tmux has-session -t "$menu_session" 2>/dev/null || ! menu_tmux list-clients -F '#{client_name}' | grep -Fxq -- "$menu_client"; then
   echo "last-Window menu Kill ended the origin session or detached the client" >&2
   exit 1
 fi
