@@ -1174,6 +1174,20 @@ func validateKeymapConflicts(actions []keyBindingAction) error {
 			global[chord] = action.ID
 		}
 	}
+	// Only managed-delete actions render their prefix chord, so they are the
+	// only prefix-table owners that can collide. Two of them on one key would
+	// leave the second `bind-key` silently replacing the first.
+	prefixOwners := map[string]string{}
+	for _, action := range actions {
+		chord := strings.TrimSpace(action.PrefixChord)
+		if !keyBindingRendersPrefixChord(action) || chord == "" {
+			continue
+		}
+		if prev := prefixOwners[chord]; prev != "" && prev != action.ID {
+			return fmt.Errorf("prefix key %q is bound to both %s and %s", chord, prev, action.ID)
+		}
+		prefixOwners[chord] = action.ID
+	}
 	type sequenceOwner struct {
 		action  string
 		value   string

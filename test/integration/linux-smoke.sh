@@ -737,6 +737,23 @@ if [[ "$app_flag" != "1" ]]; then
   exit 1
 fi
 
+# Managed close keys: the applied app config replaces tmux's stock prefix x and
+# prefix & with one binding each that branches on the identity mirror. The
+# mirrored branch reaches only the canonical delete-confirm intent; the else
+# branch is tmux 3.6's stock body byte for byte, run by tmux itself.
+for close_contract in \
+  'x|#{@projmux_pane_uid}|pane|confirm-before -p "kill-pane #P? (y/n)" kill-pane' \
+  '&|#{@projmux_window_uid}|window|confirm-before -p "kill-window #W? (y/n)" kill-window'; do
+  IFS='|' read -r close_key close_guard close_target close_stock <<<"$close_contract"
+  close_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T prefix "$close_key")"
+  close_head="bind-key -T prefix $close_key if-shell -F \"$close_guard\" { run-shell \""
+  close_tail="internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} $close_target\" } { $close_stock }"
+  if [[ "$close_binding" != "$close_head"* || "$close_binding" != *"$close_tail" ]]; then
+    echo "managed close key prefix $close_key is not a mirror-guarded canonical route with the exact stock fallback: $close_binding" >&2
+    exit 1
+  fi
+done
+
 # Schema v2 sequences compile shared prefixes into one generated trie. Apply
 # records the exact generated roots/tables so a repeat source is idempotent and
 # a later removal can retire stale state without touching unrelated bindings.

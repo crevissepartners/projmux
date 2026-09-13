@@ -1054,6 +1054,8 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("picker.resources.unavailable.platform"):                         textEntry("Resource attribution is unavailable on {platform}."),
 		Key("settings.keybinding.resources.name"):                            textEntry("Resources"),
 		Key("settings.keybinding.resources.description"):                     textEntry("Open the read-only Project, Window, and Pane resource inspector"),
+		Key("tmux.confirm.delete_pane"):                                      textEntry("Delete Pane #P from the Registry? If an Agent owns it, that Agent exits as deleted and will not return on Continue. (y/n)"),
+		Key("tmux.confirm.delete_window"):                                    textEntry("Delete Window #W and its Panes from the Registry? Agents in them are deleted too and will not return on Continue. (y/n)"),
 	},
 	Locale("ko-KR"): {
 		Key("startup.recovery.summary"):                                      textEntry("Continue: 복귀 %d, 건너뜀 %d; %s"),
@@ -2104,6 +2106,8 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("picker.resources.unavailable.platform"):                         textEntry("{platform}에서는 리소스 귀속을 사용할 수 없습니다."),
 		Key("settings.keybinding.resources.name"):                            textEntry("리소스"),
 		Key("settings.keybinding.resources.description"):                     textEntry("읽기 전용 프로젝트, 창, pane 리소스 검사기 열기"),
+		Key("tmux.confirm.delete_pane"):                                      textEntry("Pane #P를 Registry에서 삭제할까요? Agent가 소유한 Pane이면 그 Agent는 삭제로 종료되어 Continue로 돌아오지 않습니다. (y/n)"),
+		Key("tmux.confirm.delete_window"):                                    textEntry("Window #W와 그 Pane들을 Registry에서 삭제할까요? 그 안의 Agent도 삭제되며 Continue로 돌아오지 않습니다. (y/n)"),
 	},
 }
 

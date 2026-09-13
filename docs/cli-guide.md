@@ -389,6 +389,23 @@ menu therefore omits Respawn entirely and does not expose a refusal handler or
 invent a replace operation. User-authored tmux bindings remain outside this
 managed-menu contract.
 
+#### Managed close keys
+
+The generated app config routes tmux's `prefix x` and `prefix &` through the
+same resource routes whenever the target carries a Registry identity mirror.
+`prefix x` on a Pane with `@projmux_pane_uid` confirms on the exact client, then
+runs the Pane menu Kill route above: canonical `delete pane` with an
+`intentional` termination receipt. The Agent that owned the Pane stays in the
+Registry as Offline with a `deleted` exit, which Continue never replays.
+`prefix &` on a Window with
+`@projmux_window_uid` confirms, then runs `internal tmux window-delete`, which is
+canonical `delete window` on that exact Window; a Project's last Window leaves a
+zero-Window Project. A refusal is shown on that client and never falls back to
+a raw kill. A target without the mirror keeps tmux's stock `confirm-before`
+prompt and kill, with no Registry write. See
+[Managed close keys](keybindings.md#managed-close-keys) for changing or
+disabling the keys.
+
 ### Rename and rebind live convergence
 
 `rename project|window|pane` commits the selected Registry `metadata.name` and

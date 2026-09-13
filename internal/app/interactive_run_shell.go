@@ -17,6 +17,8 @@ const (
 	interactiveRoutePaneMenu              = "internal tmux pane-menu"
 	interactiveRouteWindowCreate          = "internal tmux window-create"
 	interactiveRouteWindowRename          = "internal tmux window-rename"
+	interactiveRouteWindowDelete          = "internal tmux window-delete"
+	interactiveRouteDeleteConfirm         = "internal tmux delete-confirm"
 	interactiveRoutePopupToggle           = "internal tmux popup-toggle"
 	interactiveRouteAgentPaneLaunch       = "internal agent-pane launch"
 	interactiveRouteStatusbarClick        = "internal statusbar click"
@@ -53,6 +55,8 @@ func interactiveRunShellRoutes() []interactiveRunShellRoute {
 		{ID: interactiveRoutePaneMenu, Prefix: []string{"internal", "tmux", "pane-menu"}, Label: "pane menu action"},
 		{ID: interactiveRouteWindowCreate, Prefix: []string{"internal", "tmux", "window-create"}, Label: "Create Window"},
 		{ID: interactiveRouteWindowRename, Prefix: []string{"internal", "tmux", "window-rename"}, Label: "Rename Window"},
+		{ID: interactiveRouteWindowDelete, Prefix: []string{"internal", "tmux", "window-delete"}, Label: "Delete Window"},
+		{ID: interactiveRouteDeleteConfirm, Prefix: []string{"internal", "tmux", "delete-confirm"}, Label: "delete confirmation"},
 		{ID: interactiveRoutePopupToggle, Prefix: []string{"internal", "tmux", "popup-toggle"}, Label: "popup"},
 		{ID: interactiveRouteAgentPaneLaunch, Prefix: []string{"internal", "agent-pane", "launch-default"}, Label: "create Pane"},
 		{ID: interactiveRouteAgentPaneLaunch, Prefix: []string{"internal", "agent-pane", "launch-provider"}, Label: "create Pane"},

@@ -21,6 +21,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -113,6 +114,10 @@ type tmuxCommand struct {
 	paneMenuDelete paneMenuDeleteFunc
 	windowCreate   windowCreateIntentFunc
 	windowRename   windowRenameIntentFunc
+	// windowDelete is the canonical `delete window` adapter behind a confirmed
+	// managed `prefix &`. Like paneMenuDelete it is a field only so a test can
+	// stop before the real Registry and tmux mutations.
+	windowDelete paneMenuDeleteFunc
 }
 
 func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
@@ -142,6 +147,7 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 		windowRename: func(intent windowRenameIntent, stdout, stderr io.Writer) error {
 			return newCreateCommand().renameWindowFromIntent(intent, stdout, stderr)
 		},
+		windowDelete: deleteWindowThroughCanonicalRoute,
 	}
 	if len(recorders) > 0 {
 		cmd.diagnostics = recorders[0]
@@ -179,6 +185,10 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runWindowCreateIntent(fs.Args()[1:], stdout, stderr)
 	case "window-rename":
 		return c.runWindowRenameIntent(fs.Args()[1:], stdout, stderr)
+	case "window-delete":
+		return c.runWindowDeleteIntent(fs.Args()[1:], stdout, stderr)
+	case "delete-confirm":
+		return c.runDeleteConfirmIntent(fs.Args()[1:], stdout, stderr)
 	case "rebalance-panes":
 		return c.runRebalancePanes(fs.Args()[1:], stderr)
 	case "converge":
@@ -695,6 +705,124 @@ func deletePaneThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writ
 		return errors.New("delete pane: exact menu origin did not resolve inside a tmux client; nothing was changed")
 	}
 	return command.Run([]string{"pane", "--yes", ref.Raw}, stdout, stderr)
+}
+
+// runWindowDeleteIntent is the canonical Window delete a confirmed managed
+// `prefix &` reaches. It states only the anchor Pane the key was pressed in and
+// the client that sees the result; the Window is whatever that anchor's mirror
+// resolves to in the Registry, and every rule -- descendant Panes and Agents,
+// the zero-Window Project a last Window leaves -- is `delete window`'s own. A
+// refusal is shown on the client and nothing falls back to a raw tmux kill.
+func (c *tmuxCommand) runWindowDeleteIntent(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("tmux window-delete", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	client := fs.String("client", "", "exact tmux client that receives the action result")
+	anchor := fs.String("anchor", "", "exact anchor Pane")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	paneID := exactTmuxHandle(strings.TrimSpace(*anchor), "%")
+	if fs.NArg() != 0 || strings.TrimSpace(*client) == "" || paneID == "" {
+		return errors.New("tmux window-delete requires --client <key> --anchor <%pane>")
+	}
+	if c.windowDelete == nil {
+		return errors.New("canonical Window delete route is not configured")
+	}
+	var actionOut, actionErr bytes.Buffer
+	err := c.windowDelete(paneID, &actionOut, &actionErr)
+	summary := firstPaneMenuResultLine(actionOut.String())
+	if summary == "" {
+		summary = "delete window completed"
+	}
+	return c.finishWindowIntent(*client, "Delete Window", "projmux "+summary, actionErr.String(), err)
+}
+
+// managedDeletePrompts are the confirmation prompts of the two managed close
+// keys. The English fallback is the en-US catalog entry, so a missing locale
+// entry degrades to the same sentence rather than to an empty prompt.
+var managedDeletePrompts = map[string]struct {
+	key      i18n.Key
+	fallback string
+}{
+	"pane":   {key: i18n.Key("tmux.confirm.delete_pane"), fallback: "Delete Pane #P from the Registry? If an Agent owns it, that Agent exits as deleted and will not return on Continue. (y/n)"},
+	"window": {key: i18n.Key("tmux.confirm.delete_window"), fallback: "Delete Window #W and its Panes from the Registry? Agents in them are deleted too and will not return on Continue. (y/n)"},
+}
+
+// runDeleteConfirmIntent is the mirrored branch of the generated `prefix x` and
+// `prefix &` bindings. It issues exactly one localized `confirm-before` to the
+// exact client that pressed the key, and the command that prompt runs on "y" is
+// the canonical intent: the Pane menu Kill route for a Pane, window-delete for a
+// Window. Both carry the anchor captured at key press, so the confirmed delete
+// cannot drift to whatever Pane is focused when the operator answers.
+//
+// This process issues no tmux mutation of its own. The confirmation is
+// localized here, at press time, because generated tmux config carries no
+// locale; `-b` returns immediately so the foreground run-shell job does not
+// hold the client while the operator reads the prompt.
+func (c *tmuxCommand) runDeleteConfirmIntent(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("tmux delete-confirm", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	client := fs.String("client", "", "exact tmux client that answers the confirmation")
+	anchor := fs.String("anchor", "", "exact anchor Pane")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	clientKey := strings.TrimSpace(*client)
+	paneID := exactTmuxHandle(strings.TrimSpace(*anchor), "%")
+	if fs.NArg() != 1 || clientKey == "" || paneID == "" {
+		return errors.New("tmux delete-confirm requires --client <key> --anchor <%pane> <pane|window>")
+	}
+	target := strings.TrimSpace(fs.Arg(0))
+	prompt, ok := managedDeletePrompts[target]
+	if !ok {
+		return fmt.Errorf("unknown tmux delete-confirm target: %s", target)
+	}
+	// A Pane reaches the Pane menu Kill route byte for byte; that route hands its
+	// anchor to canonical delete pane as route evidence itself. Canonical delete
+	// window resolves its mutation route from the invocation's TMUX_PANE, and a
+	// job confirm-before starts inherits $TMUX but no pane, so the Window intent
+	// carries the anchor the way every generated keybinding producer already
+	// does (tmuxPaneEnvPrefix). That makes it exactly `projmux delete window
+	// --yes uid:<W>` run inside that Window, self-queued kill included.
+	env, route := "", "internal tmux pane-menu --client "+tmuxShellQuote(clientKey)+" kill "+paneID
+	if target == "window" {
+		env, route = "TMUX_PANE="+paneID+" ", "internal tmux window-delete --client "+tmuxShellQuote(clientKey)+" --anchor "+paneID
+	}
+	if c.runner == nil {
+		return errors.New("confirm managed delete: tmux runner is not configured")
+	}
+	if c.executable == nil {
+		return errors.New("confirm managed delete: projmux executable resolver is not configured")
+	}
+	bin, err := c.executable()
+	if err != nil {
+		return fmt.Errorf("confirm managed delete: resolve projmux executable: %w", err)
+	}
+	text := localizeText(appLocale(c.homeDir, c.lookupEnv), prompt.key, prompt.fallback)
+	confirmed := "run-shell " + tmuxConfigQuote(env+tmuxShellQuote(bin)+" "+route)
+	if _, err := c.runner.Run(context.Background(), "tmux", "confirm-before", "-b", "-t", clientKey, "-p", text, confirmed); err != nil {
+		return fmt.Errorf("confirm managed %s delete on client %q: %w", target, clientKey, err)
+	}
+	return nil
+}
+
+// deleteWindowThroughCanonicalRoute resolves the anchor Pane's owning Window
+// exactly, the way deletePaneThroughCanonicalRoute resolves its Pane, and runs
+// canonical `delete window --yes` on that uid.
+func deleteWindowThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writer) error {
+	command := newDeleteCommand()
+	registry, err := command.store.load()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	ref, resolved, err := activeTargetRef(defaultAnchoredActiveTargetLookup(anchorPaneID), coremetadata.KindWindow, registry)
+	if err != nil {
+		return err
+	}
+	if !resolved {
+		return errors.New("delete window: exact key origin did not resolve inside a tmux client; nothing was changed")
+	}
+	return command.Run([]string{"window", "--yes", ref.Raw}, stdout, stderr)
 }
 
 func (c *tmuxCommand) displayPaneMenuMessage(client, message string) error {
@@ -2743,6 +2871,7 @@ func tmuxAppKeyBindings(binaryPath string, catalog []keyBindingAction, keymapPre
 		lines = append(lines, tmuxUnbindLines(appKeyBindings)...)
 	}
 	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
+	lines = append(lines, tmuxStockPrefixRestoreLines(defaultAppKeyBindings, appKeyBindings)...)
 	lines = append(lines, tmuxBindLines(binaryPath, appKeyBindings)...)
 	lines = append(lines, tmuxSequenceBindLines(binaryPath, allKeyBindings)...)
 	return lines

@@ -10225,6 +10225,130 @@ for menu_refusal in \
   menu_assert_no_overlay "refused: $menu_refusal"
 done
 
+# 5. The managed close keys through the real key path. `send-keys -K -c` hands
+#    the attached client its own `C-b x` / `C-b &`, so tmux resolves the
+#    generated prefix binding exactly as it does for a typed key. A mirrored
+#    target is confirmed on that client and reaches canonical delete; a target
+#    without the mirror gets tmux's stock prompt and kill and the Registry keeps
+#    its resources. The prompt check reads "Registry", which both locales carry.
+menu_press() {
+  menu_tmux send-keys -K -c "$menu_client" "$@"
+}
+menu_registry_resource_uids() {
+  printf '%s|%s' "$(menu_pmx get panes -o uid | sort | tr '\n' ' ')" "$(menu_pmx get windows -o uid | sort | tr '\n' ' ')"
+}
+menu_window_absent() {
+  ! menu_tmux list-windows -a -F '#{window_id}' | grep -Fxq "$1"
+}
+menu_refocus_origin() {
+  menu_tmux select-window -t "$menu_origin_pane"
+  menu_tmux select-pane -t "$menu_origin_pane"
+}
+
+# 5a. Managed Pane: prefix x asks first, then deletes through the Pane menu Kill
+#     route.
+menu_run_producer "$menu_origin_pane" internal tmux pane-menu --client "$menu_client" split-right "$menu_origin_pane"
+smoke_wait_for "close-key managed Pane" menu_wait_for_pane_count 2
+menu_close_pane="$(menu_new_pane_except "$menu_origin_pane")"
+smoke_wait_for "close-key managed Pane Registry identity" menu_pane_is_managed "$menu_close_pane"
+menu_close_pane_uid="$(menu_tmux show-options -pqv -t "$menu_close_pane" @projmux_pane_uid)"
+menu_tmux select-pane -t "$menu_close_pane"
+menu_close_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b x
+smoke_wait_for "managed prefix x confirmation prompt" menu_client_saw "$menu_close_offset" "Registry"
+if ! menu_pane_is_managed "$menu_close_pane"; then
+  echo "managed prefix x deleted the Pane before the operator answered" >&2
+  exit 1
+fi
+menu_press y
+smoke_wait_for "managed prefix x canonical delete" menu_delete_converged "$menu_close_pane_uid" "$menu_close_offset" 1
+menu_refocus_origin
+
+# 5b. Unmanaged Pane: tmux's stock prompt and kill, and no Registry resource
+#     change.
+menu_close_registry_before="$(menu_registry_resource_uids)"
+menu_tmux split-window -d -t "$menu_origin_pane" sleep 600
+smoke_wait_for "close-key unmanaged Pane" menu_wait_for_pane_count 2
+menu_unmanaged_pane="$(menu_new_pane_except "$menu_origin_pane")"
+if [[ -z "$menu_unmanaged_pane" || -n "$(menu_tmux show-options -pqv -t "$menu_unmanaged_pane" @projmux_pane_uid)" ]]; then
+  echo "close-key fixture split is not an unmanaged Pane: pane=$menu_unmanaged_pane" >&2
+  exit 1
+fi
+menu_tmux select-pane -t "$menu_unmanaged_pane"
+menu_close_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b x
+smoke_wait_for "stock prefix x prompt" menu_client_saw "$menu_close_offset" "kill-pane"
+menu_press y
+smoke_wait_for "stock prefix x kill" menu_wait_for_pane_count 1
+if menu_client_saw "$menu_close_offset" "Registry"; then
+  echo "unmanaged prefix x showed the managed confirmation" >&2
+  exit 1
+fi
+if [[ "$(menu_registry_resource_uids)" != "$menu_close_registry_before" ]]; then
+  echo "unmanaged prefix x changed Registry resources: before=$menu_close_registry_before after=$(menu_registry_resource_uids)" >&2
+  exit 1
+fi
+menu_refocus_origin
+
+# 5c. Managed Window: prefix & asks first, then deletes the Window, its Pane,
+#     and their Registry rows through canonical delete window.
+menu_close_offset="$(stat -c %s "$menu_client_log")"
+menu_run_producer "$menu_origin_pane" internal tmux window-create --client "$menu_client" --anchor "$menu_origin_pane"
+smoke_wait_for "close-key Create Window message" menu_client_saw "$menu_close_offset" "Created Window"
+menu_close_window="$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | tail -n 1)"
+menu_close_window_uid="$(menu_tmux show-options -wqv -t "$menu_close_window" @projmux_window_uid)"
+menu_close_window_pane="$(menu_tmux display-message -p -t "$menu_close_window" '#{pane_id}')"
+menu_close_window_pane_uid="$(menu_tmux show-options -pqv -t "$menu_close_window_pane" @projmux_pane_uid)"
+if [[ -z "$menu_close_window_uid" || -z "$menu_close_window_pane_uid" || "$menu_close_window" == "$menu_created_window" ]]; then
+  echo "close-key fixture Window is not a new managed Window: window=$menu_close_window uid=$menu_close_window_uid pane-uid=$menu_close_window_pane_uid" >&2
+  exit 1
+fi
+menu_window_delete_converged() {
+  local offset="$1"
+  menu_client_saw "$offset" "delete window: deleting 1 window" || return 1
+  ! menu_pmx get windows -o uid | grep -Fxq "$menu_close_window_uid" || return 1
+  ! menu_pmx get panes -o uid | grep -Fxq "$menu_close_window_pane_uid" || return 1
+  menu_window_absent "$menu_close_window"
+}
+menu_tmux select-window -t "$menu_close_window"
+menu_close_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b '&'
+smoke_wait_for "managed prefix & confirmation prompt" menu_client_saw "$menu_close_offset" "Registry"
+menu_press y
+smoke_wait_for "managed prefix & canonical delete" menu_window_delete_converged "$menu_close_offset"
+menu_refocus_origin
+
+# 5d. A Window whose mirror names no Registry Window: the canonical route
+#     refuses, the reason reaches the client, and nothing is killed.
+menu_tmux new-window -d -t "$menu_session" sleep 600
+menu_stale_window="$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | tail -n 1)"
+menu_tmux set-option -wq -t "$menu_stale_window" @projmux_window_uid win-e2e-close-key-stale
+menu_tmux select-window -t "$menu_stale_window"
+menu_close_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b '&'
+smoke_wait_for "stale-mirror prefix & confirmation prompt" menu_client_saw "$menu_close_offset" "Registry"
+menu_press y
+smoke_wait_for "stale-mirror prefix & refusal message" menu_client_saw "$menu_close_offset" "Delete Window failed"
+menu_settle_run_shell
+if menu_window_absent "$menu_stale_window"; then
+  echo "a refused managed prefix & fell back to a raw Window kill" >&2
+  exit 1
+fi
+# The harness removes its own fixture Window as an unmanaged one again.
+menu_tmux set-option -wqu -t "$menu_stale_window" @projmux_window_uid
+menu_tmux kill-window -t "$menu_stale_window"
+smoke_wait_for "close-key fixture Window removal" menu_window_absent "$menu_stale_window"
+# The raw kills above leave background pane-exit/window-unlinked convergence
+# hooks running. Let them finish, without repairing anything, before the
+# origin identity assertions below read the Registry.
+menu_close_hooks_idle() {
+  ! pgrep -f 'internal tmux (converge|rebalance-panes)' >/dev/null 2>&1
+}
+smoke_wait_for "close-key convergence hooks idle" menu_close_hooks_idle
+menu_refocus_origin
+menu_settle_run_shell
+menu_assert_no_overlay "managed close keys"
+
 if [[ "$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_current_command}')" != "$menu_origin_command_before" ]]; then
   echo "the interactive matrix replaced the origin pane's foreground process" >&2
   exit 1
@@ -10270,6 +10394,27 @@ if [[ "$menu_sibling_after" != "$menu_sibling_before" ]]; then
   echo "canonical Window clean-exit changed the unrelated sibling socket: before=$menu_sibling_before after=$menu_sibling_after" >&2
   exit 1
 fi
+
+# The Project's last Window through managed prefix &: canonical delete window
+# removes it with its Pane and ends the session, and the Project stays with zero
+# Windows instead of being unregistered.
+menu_origin_window_uid="$(menu_tmux show-options -wqv -t "$menu_origin_pane" @projmux_window_uid)"
+if [[ -z "$menu_origin_window_uid" || "$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | wc -l)" != "1" ]]; then
+  echo "last-Window close-key fixture is not a one-Window managed Project: window-uid=$menu_origin_window_uid" >&2
+  exit 1
+fi
+menu_last_window_deleted() {
+  ! menu_pmx get windows -o uid | grep -Fxq "$menu_origin_window_uid" || return 1
+  ! menu_pmx get panes -o uid | grep -Fxq "$menu_origin_uid" || return 1
+  menu_pmx describe project "uid:$menu_project_uid" -o json >/dev/null || return 1
+  ! menu_tmux has-session -t "$menu_session" 2>/dev/null
+}
+menu_tmux select-pane -t "$menu_origin_pane"
+menu_close_offset="$(stat -c %s "$menu_client_log")"
+menu_press C-b '&'
+smoke_wait_for "last-Window prefix & confirmation prompt" menu_client_saw "$menu_close_offset" "Registry"
+menu_press y
+smoke_wait_for "last-Window canonical delete keeps a zero-Window Project" menu_last_window_deleted
 
 menu_cleanup_target="$menu_socket_path"
 menu_sibling_cleanup_target="$menu_sibling_socket_path"
