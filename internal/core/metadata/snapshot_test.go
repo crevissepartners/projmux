@@ -207,6 +207,107 @@ func TestStampProjectSnapshotJoinsExactRuntimeIDsAcrossReorderAndRefusesDrift(t 
 	}
 }
 
+func TestStampProjectSnapshotSkipsUnboundPanesInRuntimeIDDuplicateCheck(t *testing.T) {
+	t.Parallel()
+
+	unboundCondition := func(status, reason string) []Condition {
+		return []Condition{{Type: ConditionMissingRuntime, Status: status, Reason: reason, FirstObservedAt: fixedNow, LastTransitionAt: fixedNow}}
+	}
+	for _, tc := range []struct {
+		name        string
+		conditions  []Condition
+		wantRefused bool
+	}{
+		{name: "unbound Pane does not claim a reused runtime id", conditions: unboundCondition(ConditionTrue, ReasonRuntimeUnbound)},
+		{name: "two live Panes sharing a runtime id are refused", wantRefused: true},
+		{name: "MissingRuntime False is still counted", conditions: unboundCondition(ConditionFalse, ReasonRuntimeUnbound), wantRefused: true},
+		{name: "MissingRuntime True with another reason is still counted", conditions: unboundCondition(ConditionTrue, "OtherReason"), wantRefused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg, projectUID, _, _ := projectionFixture(t)
+			windows := reg.WindowsOf(projectUID)
+			for wi, window := range windows {
+				stored, _ := reg.Window(window.Metadata.UID)
+				stored.Status.RuntimeSessionID = "$1"
+				stored.Status.RuntimeID = fmt.Sprintf("@%d", wi+10)
+				for pi, pane := range reg.snapshotPanesOf(window.Metadata.UID) {
+					storedPane, _ := reg.Pane(pane.Metadata.UID)
+					storedPane.Status.Activation.Generation = fmt.Sprintf("generation-%d-%d", wi, pi)
+					storedPane.Status.Activation.RuntimeID = fmt.Sprintf("%%%d", wi*10+pi+20)
+				}
+			}
+			firstWindowPanes := reg.snapshotPanesOf(windows[0].Metadata.UID)
+			if len(firstWindowPanes) < 2 {
+				t.Fatal("fixture requires two Panes in the first Window")
+			}
+			liveUID, staleUID := firstWindowPanes[0].Metadata.UID, firstWindowPanes[1].Metadata.UID
+			sharedRuntimeID := firstWindowPanes[0].Status.Activation.RuntimeID
+			stale, _ := reg.Pane(staleUID)
+			stale.Status.Activation.RuntimeID = sharedRuntimeID
+			stale.Status.Conditions = tc.conditions
+			if err := reg.Validate(); err != nil {
+				t.Fatal(err)
+			}
+
+			// The stale Pane has no live tmux mirror, so the capture omits it.
+			captured := buildSnapshot(&reg, projectUID, "one")
+			for wi, window := range reg.WindowsOf(projectUID) {
+				captured.Windows[wi].RuntimeID = window.Status.RuntimeID
+				captured.Windows[wi].RegistryUID = window.Metadata.UID
+				var livePanes []sessionstate.Pane
+				for pi, pane := range reg.snapshotPanesOf(window.Metadata.UID) {
+					if pane.Metadata.UID == staleUID {
+						continue
+					}
+					capturedPane := captured.Windows[wi].Panes[pi]
+					capturedPane.RuntimeID = pane.Status.Activation.RuntimeID
+					capturedPane.RegistryUID = pane.Metadata.UID
+					if pane.Spec.Role == PaneRoleAgent {
+						agent, _ := reg.Agent(pane.Metadata.OwnerUID())
+						capturedPane.Recipe = sessionstate.AgentRecipe(string(agent.Spec.Provider), "", "")
+					}
+					livePanes = append(livePanes, capturedPane)
+				}
+				captured.Windows[wi].Panes = livePanes
+			}
+
+			stamped, err := StampProjectSnapshot(reg, projectUID, captured)
+			if tc.wantRefused {
+				if !errors.Is(err, ErrInvalidRegistry) || !strings.Contains(err.Error(), "share runtime id") {
+					t.Fatalf("shared Pane runtime id error=%v, want ErrInvalidRegistry share runtime id", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("stamp with unbound Pane retaining a reused runtime id: %v", err)
+			}
+			matches := 0
+			for _, sw := range stamped.Windows {
+				for _, sp := range sw.Panes {
+					if sp.Metadata != nil && sp.Metadata.UID == staleUID {
+						t.Fatalf("stamped snapshot carries unbound Pane %s: %+v", staleUID, sp)
+					}
+					if sp.RuntimeID != sharedRuntimeID {
+						continue
+					}
+					matches++
+					if sp.Metadata == nil || sp.Metadata.UID != liveUID {
+						t.Fatalf("Pane runtime %s metadata = %+v, want live Pane %s", sharedRuntimeID, sp.Metadata, liveUID)
+					}
+				}
+			}
+			if matches != 1 {
+				t.Fatalf("stamped Panes with runtime %s = %d, want 1", sharedRuntimeID, matches)
+			}
+			if retained, _ := reg.Pane(staleUID); retained.Status.Activation.RuntimeID != sharedRuntimeID {
+				t.Fatalf("unbound Pane runtime id = %q, want retained %q", retained.Status.Activation.RuntimeID, sharedRuntimeID)
+			}
+		})
+	}
+}
+
 func TestCurrentSnapshotRestoresAbsentExplicitAgentMetadataAndRefusesAgentNameCollision(t *testing.T) {
 	t.Parallel()
 	m := testMutator(dirSet{"/src/agent-snapshot": true})

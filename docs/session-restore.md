@@ -2,7 +2,10 @@
 
 Session snapshots are explicit desired-state inputs for one Project. They are
 not tmux replay scripts and they are not Registry backups. Snapshot save keeps
-the existing v1 schema and storage behavior.
+the existing v1 schema and storage behavior. In snapshot save's runtime id
+duplicate check, a Pane recorded as `MissingRuntime`/`RuntimeUnbound` does not
+claim its retained runtime id, so a tmux id reused after a server restart does
+not refuse the save; two live Panes sharing an id are still refused.
 
 ```sh
 projmux get snapshots [--session <snapshot-session>]
