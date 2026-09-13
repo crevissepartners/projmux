@@ -31,7 +31,11 @@ func StampProjectSnapshot(registry Registry, projectUID string, snap sessionstat
 	windowsByRuntime := make(map[string]Window)
 	panesByRuntime := make(map[string]Pane)
 	for _, window := range registry.WindowsOf(project.Metadata.UID) {
-		if runtimeID := strings.TrimSpace(window.Status.RuntimeID); runtimeID != "" {
+		// The duplicate check asks whether two live Windows own one runtime id.
+		// An unbound Window owns no runtime: its retained id is a stale record,
+		// which tmux may reuse for a live Window after a server restart. Its
+		// Panes still pass through the Pane check below.
+		if runtimeID := strings.TrimSpace(window.Status.RuntimeID); runtimeID != "" && !snapshotWindowRuntimeUnbound(window) {
 			if existing, duplicate := windowsByRuntime[runtimeID]; duplicate {
 				return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
 					"Registry Windows %q and %q share runtime id %q", existing.Metadata.UID, window.Metadata.UID, runtimeID)
@@ -123,6 +127,14 @@ func StampProjectSnapshot(registry Registry, projectUID string, snap sessionstat
 // leaves the Pane counted as a live runtime owner.
 func snapshotPaneRuntimeUnbound(pane Pane) bool {
 	condition, ok := pane.HasCondition(ConditionMissingRuntime)
+	return ok && condition.Status == ConditionTrue && condition.Reason == ReasonRuntimeUnbound
+}
+
+// snapshotWindowRuntimeUnbound reports whether a Window is recorded as
+// MissingRuntime=True with reason RuntimeUnbound. Any other status or reason
+// leaves the Window counted as a live runtime owner.
+func snapshotWindowRuntimeUnbound(window Window) bool {
+	condition, ok := window.HasCondition(ConditionMissingRuntime)
 	return ok && condition.Status == ConditionTrue && condition.Reason == ReasonRuntimeUnbound
 }
 

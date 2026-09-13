@@ -308,6 +308,108 @@ func TestStampProjectSnapshotSkipsUnboundPanesInRuntimeIDDuplicateCheck(t *testi
 	}
 }
 
+func TestStampProjectSnapshotSkipsUnboundWindowsInRuntimeIDDuplicateCheck(t *testing.T) {
+	t.Parallel()
+
+	unboundCondition := func(status, reason string) []Condition {
+		return []Condition{{Type: ConditionMissingRuntime, Status: status, Reason: reason, FirstObservedAt: fixedNow, LastTransitionAt: fixedNow}}
+	}
+	for _, tc := range []struct {
+		name        string
+		conditions  []Condition
+		wantRefused bool
+	}{
+		{name: "unbound Window does not claim a reused runtime id", conditions: unboundCondition(ConditionTrue, ReasonRuntimeUnbound)},
+		{name: "two live Windows sharing a runtime id are refused", wantRefused: true},
+		{name: "MissingRuntime False is still counted", conditions: unboundCondition(ConditionFalse, ReasonRuntimeUnbound), wantRefused: true},
+		{name: "MissingRuntime True with another reason is still counted", conditions: unboundCondition(ConditionTrue, "OtherReason"), wantRefused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg, projectUID, _, _ := projectionFixture(t)
+			windows := reg.WindowsOf(projectUID)
+			for wi, window := range windows {
+				stored, _ := reg.Window(window.Metadata.UID)
+				stored.Status.RuntimeSessionID = "$1"
+				stored.Status.RuntimeID = fmt.Sprintf("@%d", wi+10)
+				for pi, pane := range reg.snapshotPanesOf(window.Metadata.UID) {
+					storedPane, _ := reg.Pane(pane.Metadata.UID)
+					storedPane.Status.Activation.Generation = fmt.Sprintf("generation-%d-%d", wi, pi)
+					storedPane.Status.Activation.RuntimeID = fmt.Sprintf("%%%d", wi*10+pi+20)
+				}
+			}
+			if len(windows) < 2 {
+				t.Fatal("fixture requires two Windows")
+			}
+			// The stale Window keeps its own Panes on runtime ids that collide
+			// with nothing, so only the Window check is exercised.
+			liveUID, staleUID := windows[0].Metadata.UID, windows[1].Metadata.UID
+			live, _ := reg.Window(liveUID)
+			sharedRuntimeID := live.Status.RuntimeID
+			stale, _ := reg.Window(staleUID)
+			stale.Status.RuntimeID = sharedRuntimeID
+			stale.Status.Conditions = tc.conditions
+			if err := reg.Validate(); err != nil {
+				t.Fatal(err)
+			}
+
+			// The stale Window has no live tmux mirror, so the capture omits it.
+			full := buildSnapshot(&reg, projectUID, "one")
+			captured := full
+			captured.Windows = nil
+			for wi, window := range reg.WindowsOf(projectUID) {
+				if window.Metadata.UID == staleUID {
+					continue
+				}
+				capturedWindow := full.Windows[wi]
+				capturedWindow.RuntimeID = window.Status.RuntimeID
+				capturedWindow.RegistryUID = window.Metadata.UID
+				capturedWindow.Panes = append([]sessionstate.Pane(nil), full.Windows[wi].Panes...)
+				for pi, pane := range reg.snapshotPanesOf(window.Metadata.UID) {
+					capturedWindow.Panes[pi].RuntimeID = pane.Status.Activation.RuntimeID
+					capturedWindow.Panes[pi].RegistryUID = pane.Metadata.UID
+					if pane.Spec.Role == PaneRoleAgent {
+						agent, _ := reg.Agent(pane.Metadata.OwnerUID())
+						capturedWindow.Panes[pi].Recipe = sessionstate.AgentRecipe(string(agent.Spec.Provider), "", "")
+					}
+				}
+				captured.Windows = append(captured.Windows, capturedWindow)
+			}
+
+			stamped, err := StampProjectSnapshot(reg, projectUID, captured)
+			if tc.wantRefused {
+				if !errors.Is(err, ErrInvalidRegistry) || !strings.Contains(err.Error(), "Registry Windows") || !strings.Contains(err.Error(), "share runtime id") {
+					t.Fatalf("shared Window runtime id error=%v, want ErrInvalidRegistry Registry Windows share runtime id", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("stamp with unbound Window retaining a reused runtime id: %v", err)
+			}
+			matches := 0
+			for _, sw := range stamped.Windows {
+				if sw.Metadata != nil && sw.Metadata.UID == staleUID {
+					t.Fatalf("stamped snapshot carries unbound Window %s: %+v", staleUID, sw)
+				}
+				if sw.RuntimeID != sharedRuntimeID {
+					continue
+				}
+				matches++
+				if sw.Metadata == nil || sw.Metadata.UID != liveUID {
+					t.Fatalf("Window runtime %s metadata = %+v, want live Window %s", sharedRuntimeID, sw.Metadata, liveUID)
+				}
+			}
+			if matches != 1 {
+				t.Fatalf("stamped Windows with runtime %s = %d, want 1", sharedRuntimeID, matches)
+			}
+			if retained, _ := reg.Window(staleUID); retained.Status.RuntimeID != sharedRuntimeID {
+				t.Fatalf("unbound Window runtime id = %q, want retained %q", retained.Status.RuntimeID, sharedRuntimeID)
+			}
+		})
+	}
+}
+
 func TestCurrentSnapshotRestoresAbsentExplicitAgentMetadataAndRefusesAgentNameCollision(t *testing.T) {
 	t.Parallel()
 	m := testMutator(dirSet{"/src/agent-snapshot": true})
