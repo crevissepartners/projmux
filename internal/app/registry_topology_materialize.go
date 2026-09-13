@@ -1216,6 +1216,9 @@ func executeRegistryTopology(
 		if err := runtime.mirrorWindow(ctx, created.WindowID, first.window); err != nil {
 			return err
 		}
+		if err := observeReplayedWindowBinding(registry, mutator, ledger, &first.window, created.SessionID, created.WindowID); err != nil {
+			return err
+		}
 		if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, first.bootstrap.Metadata.UID, ledger); err != nil {
 			return err
 		}
@@ -1269,6 +1272,9 @@ func executeRegistryTopology(
 				}
 				if mirrorErr := runtime.mirrorWindow(ctx, result.WindowID, work.window); mirrorErr != nil {
 					return errors.Join(createErr, mirrorErr)
+				}
+				if bindingErr := observeReplayedWindowBinding(registry, mutator, ledger, &work.window, created.SessionID, result.WindowID); bindingErr != nil {
+					return errors.Join(createErr, bindingErr)
 				}
 				if result.PaneID != "" {
 					// Attribution already proved this Pane belongs to the exact new
@@ -1354,6 +1360,33 @@ func executeRegistryTopology(
 	// Startup runs only after every created object carries its exact uid, so a
 	// synchronous startup mutation cannot escape the transaction unnoticed.
 	return runtime.finalizeSessionStartup(ctx, created, plan.sessionName, plan.project.Spec.Root, ledger)
+}
+
+// observeReplayedWindowBinding records the exact live $N/@N of a Window this
+// replay just materialized, in the same Registry transaction that claims its
+// uid, exactly like a canonical Window create. Without it the row keeps the
+// binding of a runtime that no longer exists, and a clean last-Pane exit builds
+// its teardown evidence from those stale handles, so the real window-unlinked
+// can never pair with it.
+func observeReplayedWindowBinding(
+	registry *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	ledger *runtimeLedger,
+	window *coremetadata.Window,
+	sessionID, windowID string,
+) error {
+	if strings.TrimSpace(sessionID) == "" && strings.TrimSpace(windowID) == "" {
+		return nil
+	}
+	projected, err := mutator.ObserveWindowRuntimeBinding(registry, window.Metadata.UID, sessionID, windowID)
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	*window = projected
+	ledger.observeCurrentWindow(projected.Metadata.UID, runtimeOwner{
+		SessionID: projected.Status.RuntimeSessionID, WindowID: projected.Status.RuntimeID,
+	})
+	return nil
 }
 
 // describeRefusedItems renders refused items for one error line. The reasons are
