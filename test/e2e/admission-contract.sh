@@ -172,3 +172,55 @@ grep -Fq 'state=reclaiming reason=stale-owner owner_pid=99999999' \
 [[ -e "$contract_root/stale-recovered" && ! -e "$stale_state_dir/active" ]]
 assert_state_files_cleaned "$stale_state_dir"
 echo ">> a dead active owner is diagnosed and reclaimed before the next suite starts"
+
+# Resolution only: the live EUID root must never be acquired (or even created)
+# by this contract, so every call below runs in resolve-only mode with a child
+# command that must not execute.
+expected_root="/tmp/projmux-e2e-admission-$(id -u)"
+resolve_root() {
+  local env_root="$1"
+  mkdir -p "$env_root/runtime" "$env_root/state" "$env_root/home" "$env_root/tmp"
+  env -u PROJMUX_E2E_ADMISSION_STATE_DIR \
+    XDG_RUNTIME_DIR="$env_root/runtime" \
+    XDG_STATE_HOME="$env_root/state" \
+    HOME="$env_root/home" \
+    TMPDIR="$env_root/tmp" \
+    PROJMUX_E2E_ADMISSION_RESOLVE_ONLY=1 \
+    "$admission" bash -c 'exit 99'
+}
+set +e
+resolved_a="$(resolve_root "$contract_root/env-a")"
+resolve_a_status=$?
+resolved_b="$(resolve_root "$contract_root/env-b")"
+resolve_b_status=$?
+set -e
+if [[ "$resolve_a_status" != "0" || "$resolve_b_status" != "0" ]]; then
+  echo "admission resolve-only ran or failed instead of exiting 0: first=$resolve_a_status second=$resolve_b_status" >&2
+  exit 1
+fi
+if [[ "$resolved_a" != "$expected_root" || "$resolved_b" != "$expected_root" ]]; then
+  echo "admission root resolution split by caller environment: first=$resolved_a second=$resolved_b expected=$expected_root" >&2
+  exit 1
+fi
+for env_root in "$contract_root/env-a" "$contract_root/env-b"; do
+  if [[ -n "$(find "$env_root" -mindepth 2 -print -quit)" ]]; then
+    echo "admission resolve-only wrote under a caller environment root: $env_root" >&2
+    exit 1
+  fi
+done
+
+resolve_only_state="$contract_root/resolve-only-state"
+resolved_override="$(
+  PROJMUX_E2E_ADMISSION_STATE_DIR="$resolve_only_state" \
+    PROJMUX_E2E_ADMISSION_RESOLVE_ONLY=1 \
+    "$admission" bash -c 'exit 99'
+)"
+if [[ "$resolved_override" != "$resolve_only_state" ]]; then
+  echo "admission resolve-only ignored the isolation override: got=$resolved_override expected=$resolve_only_state" >&2
+  exit 1
+fi
+if [[ -e "$resolve_only_state" ]]; then
+  echo "admission resolve-only created the override state dir: $resolve_only_state" >&2
+  exit 1
+fi
+echo ">> two callers with different XDG_RUNTIME_DIR, XDG_STATE_HOME, HOME, and TMPDIR resolve one EUID-pinned admission root without acquiring it"

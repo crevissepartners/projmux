@@ -625,19 +625,33 @@
   surface, so assigning an observed-flake count would invent evidence. A future
   unit quarantine first needs attempt-preserving per-test evidence and a separate
   contract.
-- `test/e2e/admission-contract.sh` (`make test-e2e-contract`) pins the local
+- `test/e2e/admission-contract.sh` (`make test` via `e2e-admission-contract`,
+  so CI `Unit Tests` executes it, plus `make test-e2e-contract`) pins the local
   full-suite capacity boundary used by default `make test-e2e`: one invocation
   owns the active state while another waits, and the wait diagnostic plus state
   file expose `reason=local-full-suite-capacity`, capacity one, owner pid,
   start time, cwd, and exact state path. Both callers retain their own terminal
-  status after admission. `PROJMUX_E2E_ADMISSION_BYPASS=1` is the explicit
-  stress path and is required to overlap a live admitted owner. Single-scenario
-  replay and CI shard/suite selectors remain outside this local full-suite
-  boundary; `test/e2e/shard-contract.sh` keeps the four Linux plus two suite
-  jobs on independent runners with `fail-fast: false` and the stable required
-  name `E2E Tests`, while also proving both selector families enter with a local
-  slot already occupied. A dead owner is diagnosed as `stale-owner` and reclaimed
+  status after admission. The canonical local root is
+  `/tmp/projmux-e2e-admission-<euid>` (`id -u`), chosen without reading
+  `XDG_RUNTIME_DIR`, `XDG_STATE_HOME`, `HOME`, or `TMPDIR`;
+  `PROJMUX_E2E_ADMISSION_STATE_DIR` exists only as the isolation-test override,
+  and `PROJMUX_E2E_ADMISSION_RESOLVE_ONLY=1` prints the resolved root and exits
+  without acquiring it. The contract asserts that two callers with all four of
+  those variables different resolve the same pinned root without acquiring the
+  live root. `PROJMUX_E2E_ADMISSION_BYPASS=1` is the explicit stress path and is
+  required to overlap a live admitted owner. Single-scenario replay and CI
+  shard/suite selectors remain outside this local full-suite boundary;
+  `test/e2e/shard-contract.sh` keeps the four Linux plus two suite jobs on
+  independent runners with `fail-fast: false` and the stable required name
+  `E2E Tests`, while also proving both selector families enter with a local slot
+  already occupied. A dead owner is diagnosed as `stale-owner` and reclaimed
   only while the active hard link still identifies its exact owner record.
+  Non-guarantees: bypass, the CI selectors, and `E2E_SCENARIO` replay stay
+  outside the boundary; a different EUID, a different host, or an execution
+  environment that does not share `/tmp` (containers, namespaces) gets a
+  different root; and dead owner records left in the former roots
+  (`/run/user/<uid>/...`, `$HOME/.local/state/...`) are neither reclaimed nor
+  migrated.
 - `test/e2e/evidence-contract.sh` (`make test-e2e-contract`) and
   `test/e2e/reliability-contract.sh` (`make test-e2e-reliability`) keep the persisted
   `projmux.e2e-attempt/v1` evidence and success result hash stable while adding

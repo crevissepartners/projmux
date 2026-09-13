@@ -114,7 +114,7 @@ deadcode: deadcode-contract
 deadcode-contract:
 	python3 -m unittest discover -s test -p 'deadcode_baseline_test.py'
 
-test: deadcode-contract release-contract ci-contract smoke-assert-contract
+test: deadcode-contract release-contract ci-contract smoke-assert-contract e2e-admission-contract
 	$(GO) test ./...
 
 smoke-assert-contract:
@@ -139,6 +139,9 @@ test-e2e: test-e2e-manifest
 test-e2e-contract:
 	test/e2e/admission-contract.sh
 	test/e2e/evidence-contract.sh
+
+e2e-admission-contract:
+	test/e2e/admission-contract.sh
 
 test-e2e-reliability:
 	test/e2e/reliability-contract.sh

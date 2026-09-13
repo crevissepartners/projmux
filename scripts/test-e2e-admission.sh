@@ -33,17 +33,30 @@ if [[ ! "$poll_seconds" =~ ^[0-9]+([.][0-9]+)?$ || "$poll_seconds" == "0" ]]; th
   exit 2
 fi
 
+# The capacity-1 root is pinned to the host and the effective uid on purpose.
+# Deriving it from the caller's shell environment (the xdg runtime/state,
+# home, and temp directory variables) let two shells of the same user resolve
+# two roots and both be admitted. /tmp exists on Linux and macOS, and sticky
+# /tmp plus the chmod 0700 below fails closed if another uid already squats on
+# the name. The only override is the explicit isolation-test variable.
 if [[ -n "${PROJMUX_E2E_ADMISSION_STATE_DIR:-}" ]]; then
   state_dir="$PROJMUX_E2E_ADMISSION_STATE_DIR"
-elif [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
-  state_dir="$XDG_RUNTIME_DIR/projmux/e2e-admission"
-elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
-  state_dir="$XDG_STATE_HOME/projmux/e2e-admission"
-elif [[ -n "${HOME:-}" ]]; then
-  state_dir="$HOME/.local/state/projmux/e2e-admission"
 else
-  state_dir="${TMPDIR:-/tmp}/projmux-e2e-admission-$(id -u)"
+  state_dir="/tmp/projmux-e2e-admission-$(id -u)"
 fi
+
+case "${PROJMUX_E2E_ADMISSION_RESOLVE_ONLY:-0}" in
+  0 | "") ;;
+  1)
+    printf '%s\n' "$state_dir"
+    exit 0
+    ;;
+  *)
+    echo "invalid PROJMUX_E2E_ADMISSION_RESOLVE_ONLY=${PROJMUX_E2E_ADMISSION_RESOLVE_ONLY}; expected 0 or 1" >&2
+    exit 2
+    ;;
+esac
+
 active_state="$state_dir/active"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 owner_record="$state_dir/owner-$$-$(date +%s)-${RANDOM}"
