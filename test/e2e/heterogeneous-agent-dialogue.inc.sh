@@ -31,6 +31,7 @@ dialogue_env=(
   PROJMUX_FAKE_CODEX_STATE="$dialogue_codex_state"
   PROJMUX_FAKE_CLAUDE_STATE="$dialogue_claude_state"
   PROJMUX_FAKE_CLAUDE_BIN="$bin"
+  PROJMUX_FAKE_CLAUDE_OBSERVED_FRAMES="$smoke_root/internal/app/testdata/claude-dialogue-observed-frames.json"
   PROJMUX_MANAGED_ROOTS="$dialogue_root"
 )
 dialogue_tmux() { "${dialogue_env[@]}" "$dialogue_real_tmux" -L "$dialogue_socket" "$@"; }
@@ -258,6 +259,18 @@ fi
 # the fixture sandbox, which this scenario does not set out to prove. The
 # ledger is recorded for the receipt and not asserted.
 echo ">> dialogue codex provider-write ledger: before=$dialogue_provider_writes_before after=$dialogue_provider_writes_after" >&2
+# The fixture emits every corpus drop item after init, and the observer printed
+# its ready marker only after the reply-only validator admitted each of them.
+# The emitted set must equal the corpus drop set, read here independently.
+python3 - "$smoke_root/internal/app/testdata/claude-dialogue-observed-frames.json" "$dialogue_claude_state/observed-side-frames" <<'PY'
+import json, pathlib, sys
+corpus=json.loads(pathlib.Path(sys.argv[1]).read_text())
+expected=sorted(item["name"] for item in corpus["items"] if item["verdict"]["kind"]=="drop")
+recorded=pathlib.Path(sys.argv[2]).read_text().splitlines()
+assert expected, "observed frame corpus has no drop item"
+assert len(set(recorded))==len(recorded) and sorted(recorded)==expected, f"emitted side frames {recorded} differ from corpus drop items {expected}"
+print(">> dialogue corpus side frames emitted: "+" ".join(recorded), file=sys.stderr)
+PY
 
 # The barrier captures pane/supervisor/helper births before canonical delete.
 # A failed proof deliberately retains the root, including on the outer EXIT.

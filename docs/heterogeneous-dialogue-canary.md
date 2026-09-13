@@ -348,14 +348,19 @@ a recorded verdict moves. Neither it nor L20 proves:
 - acceptance of unknown frames or fields, which the closed vocabulary rejects
   by design.
 
-The L20 fixture emits none of the corpus's dropped side frames. Recorded real
-shapes the validator rejects today:
+L20 replays every corpus item whose verdict is `drop` through the production
+reply-only validator. Its Claude fixture reads the corpus at run time, emits each
+dropped side frame with its key set unchanged after init and before its startup
+result, and the scenario requires the emitted names to equal the corpus drop
+set. Those frames are key-shape placeholders, not model output. L20 does not
+emit the recorded real shapes the validator rejects today:
 
 - `result-success-25-keys`: the result allowlist lacks `origin`;
 - `system-init-allowlist-diff`: the init allowlist lacks `memory_paths` and
   `terminal_slash_commands`.
 
-Shapes without preserved evidence are gaps, not corpus items: `command_lifecycle`
+Shapes without preserved evidence are gaps, not corpus items, so neither the
+corpus nor L20 exercises them: `command_lifecycle`
 keys and values; a non-null assistant `context_management` value; `system`
 `thinking_tokens` frames; hook and user `tool_result` frames; the exact real init
 key set; nested values of every frame; `rate_limit_event` envelope keys beyond

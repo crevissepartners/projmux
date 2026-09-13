@@ -212,16 +212,21 @@ independently.
 validator's verdict on preserved real frame shapes. Neither it nor L20 proves
 installed-provider compatibility, value drift (the corpus keeps top-level key
 shape with placeholder values), or acceptance of unknown frames and fields (the
-closed vocabulary rejects them by design). The L20 fixture emits none of the
-corpus's dropped side frames. Two recorded real shapes are rejected today:
+closed vocabulary rejects them by design). L20 replays every corpus item whose
+verdict is `drop` through the production reply-only validator: the Claude
+fixture reads the corpus at run time from `PROJMUX_FAKE_CLAUDE_OBSERVED_FRAMES`,
+emits each dropped side frame with its key set unchanged after init and before
+its startup result, and the scenario requires the emitted names to equal the
+corpus drop set. Those frames are key-shape placeholders, not model output. L20
+does not emit the two recorded real shapes that are rejected today:
 `result-success-25-keys` (the result allowlist lacks `origin`) and
 `system-init-allowlist-diff` (the init allowlist lacks `memory_paths` and
 `terminal_slash_commands`). Shapes without preserved evidence are gaps, not
-items: `command_lifecycle` keys and values, a non-null assistant
-`context_management`, `system` `thinking_tokens`, hook and user `tool_result`
-frames, the exact real init key set, every nested value, `rate_limit_event`
-envelope keys beyond `type` and `rate_limit_info`, and the lost earlier shape
-inventories.
+items, so neither the corpus nor L20 exercises them: `command_lifecycle` keys
+and values, a non-null assistant `context_management`, `system`
+`thinking_tokens`, hook and user `tool_result` frames, the exact real init key
+set, every nested value, `rate_limit_event` envelope keys beyond `type` and
+`rate_limit_info`, and the lost earlier shape inventories.
 
 Provider sources: [SessionStart and Stop hooks](https://code.claude.com/docs/en/hooks)
 and [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging).

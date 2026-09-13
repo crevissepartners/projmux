@@ -2,7 +2,12 @@
 // the deterministic heterogeneous-dialogue E2E. It owns a private Unix socket,
 // accepts the documented auth line plus exactly one frozen user frame per
 // connection, and executes explicit public reply commands. It has no model,
-// tool, plugin, MCP, connector, credential, or other vendor frame.
+// tool, plugin, MCP, connector or credential. Beyond its own synthetic events it
+// replays only the side frames the preserved real-provider frame corpus records
+// as dropped. Those are key-shape placeholders read from the corpus at run time,
+// not model output. This source spells none of the keys or type values that only
+// those side frames carry; the envelope vocabulary it shares with them is the
+// allowlist in TestFixtureSourceSpellsNoCorpusSideFrameVocabulary.
 package main
 
 import (
@@ -28,7 +33,15 @@ import (
 const (
 	sessionID                 = "fixture-claude-session"
 	qualificationMarkerPrefix = "HETEROGENEOUS_QUALIFIED:qualification-"
+	observedFramesEnv         = "PROJMUX_FAKE_CLAUDE_OBSERVED_FRAMES"
+	maxObservedFramesBytes    = 1 << 20
 )
+
+// observedSideFrame is one corpus item whose recorded verdict is drop.
+type observedSideFrame struct {
+	Name  string
+	Frame map[string]any
+}
 
 type providerFrame struct {
 	Type    string `json:"type"`
@@ -118,7 +131,7 @@ func run() error {
 	environment := append(os.Environ(), "CLAUDE_CODE_MESSAGING_SOCKET="+socketPath, "CLAUDE_CODE_MESSAGING_TOKEN="+token, "PMX_INTERNAL_CLAUDE_REPLY_GUARD=1")
 	publicProfile := os.Getenv("PMX_INTERNAL_CLAUDE_DIALOGUE_PROFILE") != ""
 	if publicProfile {
-		if err := publicProfileStartup(ctx, binary, environment); err != nil {
+		if err := publicProfileStartup(ctx, root, binary, environment); err != nil {
 			return err
 		}
 	} else {
@@ -387,7 +400,82 @@ func publicHookEvent(subtype, event, id, output string) error {
 	}
 	return publicEvent(value)
 }
-func publicProfileStartup(ctx context.Context, binary string, environment []string) error {
+
+// loadObservedSideFrames reads the harness-selected real-provider frame corpus.
+// The corpus is the only source of side-frame shape.
+func loadObservedSideFrames() ([]observedSideFrame, error) {
+	path := os.Getenv(observedFramesEnv)
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil, errors.New("fake Claude requires an absolute observed frame corpus")
+	}
+	info, err := os.Lstat(path) // #nosec G703 -- read-only validation of the harness-selected corpus before it is opened.
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxObservedFramesBytes {
+		return nil, errors.New("fake Claude observed frame corpus is not a bounded regular file")
+	}
+	file, err := os.Open(path) // #nosec G304 G703 -- harness-selected corpus validated above; opened read-only, compared with the validated file and read with a bound.
+	if err != nil {
+		return nil, errors.New("fake Claude observed frame corpus is unreadable")
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, errors.New("fake Claude observed frame corpus changed while opening")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxObservedFramesBytes+1))
+	if err != nil || len(data) > maxObservedFramesBytes {
+		return nil, errors.New("fake Claude observed frame corpus is unreadable")
+	}
+	return selectObservedSideFrames(data)
+}
+
+// selectObservedSideFrames returns every corpus item whose recorded verdict is
+// drop, in corpus order. It decodes only the fields it uses: the corpus schema
+// belongs to the replay test next to the corpus.
+func selectObservedSideFrames(data []byte) ([]observedSideFrame, error) {
+	var corpus struct {
+		Items []struct {
+			Name    string          `json:"name"`
+			State   string          `json:"state"`
+			Frame   json.RawMessage `json:"frame"`
+			Verdict struct {
+				Kind string `json:"kind"`
+			} `json:"verdict"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(data, &corpus); err != nil {
+		return nil, fmt.Errorf("observed frame corpus is malformed: %w", err)
+	}
+	frames := []observedSideFrame{}
+	seen := map[string]bool{}
+	for _, item := range corpus.Items {
+		if item.Verdict.Kind != "drop" {
+			continue
+		}
+		if item.Name == "" || seen[item.Name] || strings.ContainsAny(item.Name, "\r\n") {
+			return nil, fmt.Errorf("observed side frame name %q is empty, repeated or not one line", item.Name)
+		}
+		seen[item.Name] = true
+		// The only placement this fixture implements is between init and the
+		// startup result, where the stream is initialized and not yet ready.
+		if item.State != "initialized" {
+			return nil, fmt.Errorf("observed side frame %q needs stream state %q, but the fixture only places frames in state initialized", item.Name, item.State)
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(item.Frame, &frame); err != nil || frame == nil {
+			return nil, fmt.Errorf("observed side frame %q is not a JSON object", item.Name)
+		}
+		if _, ok := frame["session_id"].(string); !ok {
+			return nil, fmt.Errorf("observed side frame %q has no string session_id slot", item.Name)
+		}
+		frames = append(frames, observedSideFrame{Name: item.Name, Frame: frame})
+	}
+	if len(frames) == 0 {
+		return nil, errors.New("observed frame corpus has no dropped side frame")
+	}
+	return frames, nil
+}
+
+func publicProfileStartup(ctx context.Context, root *os.Root, binary string, environment []string) error {
 	// The wrapper must have kept same-session persistence while restricting the
 	// actual provider argv. The fixture never reads arbitrary terminal bytes.
 	for key, want := range map[string]string{"--tools": "Bash", "--permission-mode": "dontAsk", "--setting-sources": "", "--input-format": "stream-json", "--output-format": "stream-json"} {
@@ -400,6 +488,10 @@ func publicProfileStartup(ctx context.Context, binary string, environment []stri
 		if !found {
 			return errors.New("fixture public isolation argv missing")
 		}
+	}
+	sideFrames, err := loadObservedSideFrames()
+	if err != nil {
+		return err
 	}
 	var initial providerFrame
 	line, err := bufio.NewReader(io.LimitReader(os.Stdin, 4096)).ReadBytes('\n')
@@ -427,6 +519,20 @@ func publicProfileStartup(ctx context.Context, binary string, environment []stri
 		}
 	}
 	if err := publicEvent(map[string]any{"type": "system", "subtype": "init", "tools": []string{"Bash"}, "mcp_servers": []any{}, "plugins": []any{}, "permissionMode": "dontAsk", "claude_code_version": "2.1.263"}); err != nil {
+		return err
+	}
+	// The corpus records these verdicts for an initialized stream that is not
+	// yet ready, which is exactly this point. publicEvent replaces only the value
+	// of the frame's existing session_id slot, because the validator binds one
+	// session per stream; no key is added or removed.
+	names := make([]string, 0, len(sideFrames))
+	for _, side := range sideFrames {
+		if err := publicEvent(side.Frame); err != nil {
+			return err
+		}
+		names = append(names, side.Name)
+	}
+	if err := atomicWrite(root, "observed-side-frames", []byte(strings.Join(names, "\n")+"\n")); err != nil {
 		return err
 	}
 	return publicEvent(map[string]any{"type": "result", "subtype": "success", "is_error": false})

@@ -1361,8 +1361,11 @@
   receipts, Agent count two, Codex provider writes zero, and pre-removal
   Registry/tmux/helper/socket/process residual checks. Its strict Claude content
   fixture preserves `sourceNotice` and verifies claimed/unverified source,
-  caller-authentication limits, and untrusted payload semantics. It does not
-  require a provider binary, model, network, or version matrix.
+  caller-authentication limits, and untrusted payload semantics. The Claude
+  fixture also replays every `drop` item of
+  `internal/app/testdata/claude-dialogue-observed-frames.json` after init, and
+  the scenario requires the emitted names to equal the corpus drop set. It does
+  not require a provider binary, model, network, or version matrix.
 - The real-provider path is opt-in through `scripts/agent-dialogue-canary-setup.py`
   and `docs/heterogeneous-dialogue-canary.md`. It uses public reply-only activation,
   product observer/helper-memory evidence and separate qualification/idle claims.
@@ -2082,6 +2085,20 @@ separate decision this measurement exists to inform.
   each item's declared state. Items carry provenance labels and the measured
   verdict. A reject must stop once its recorded rule keys are removed, so any
   validator change that moves a recorded verdict fails with the item name and rule.
+- L20 feeds the same corpus's `drop` items through `claudeDialogueStream.inspect`
+  end to end: the Claude fixture reads the corpus from
+  `PROJMUX_FAKE_CLAUDE_OBSERVED_FRAMES`, emits each frame after init with only the
+  `session_id` value replaced, and records the emitted names, which the scenario
+  compares with the corpus drop set. In `test/e2e/claudefixture`,
+  `TestObservedSideFramesAreExactlyCorpusDropItems`,
+  `TestObservedSideFramesFailClosed`,
+  `TestObservedSideFramesLoadOnlyAnAbsoluteRegularCorpus` and
+  `TestFixtureSourceSpellsNoCorpusSideFrameVocabulary` require the selection to be
+  exactly the drop items; refuse a missing or malformed corpus, zero drop items, a
+  non-`initialized` state or a frame without a string `session_id`; and fail when
+  the fixture source spells a key or type value that only the drop frames carry.
+  Rejected real shapes, value drift, unknown frames and fields, and
+  `command_lifecycle` or `thinking_tokens` frames stay outside L20.
 - `TestClaudeDialoguePipeEOFClosesInputButWaitsCurrentTurn`,
   `TestClaudeDialoguePipeDiagnosticLossFailsClosedWithoutBusyLoop`,
   `TestClaudeDialogueCleanupWaitsExactWriterAndHandlesZombieWithoutSignals`, and
@@ -2096,6 +2113,9 @@ separate decision this measurement exists to inform.
   claimed by the original Codex route. This is deterministic integration
   evidence, not actual model execution. Wrapped pane output is joined for the
   readiness marker; cancellation closes the fixture's own first-frame listener.
+  Between init and the startup result the fixture emits every `drop` item of the
+  observed-frame corpus, so the observer reaches ready only after the validator
+  drops each one.
 - `TestClaudeEndpointProcessIntegration` intentionally remains the private
   registration/bootstrap/process fixture. Its owned registration child opts in
   after activation; it does not depend on a supervisor-inherited guard flag,
