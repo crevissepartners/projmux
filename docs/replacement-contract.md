@@ -105,7 +105,9 @@ holds the forgery refusal. For the `L2` guarantee above,
 `TestBrokerRuntimeDrainsWhenItsOwnImageWasReplaced` holds the vintage entry
 condition and that a runtime on the installed image is not drained by it,
 `TestReplacementRolePoliciesMatchTheContractDocument` and
-`TestReplacementSessionClientIsNeverADrainTarget` hold the policy table, and
+`TestReplacementSessionClientIsNeverADrainTarget` hold the policy table,
+`TestReplacementRoutesNameARunnableAction` holds that every role's action is a
+runnable `projmux` command or a closed lifecycle event, and
 `TestInstallReplacementPassOutcomesAreFixedByFleetAndRequest` fixes every
 outcome of the install pass.
 
@@ -321,18 +323,46 @@ measurement, and they are fixed here rather than at a call site.
 when it actually goes. `report-only` means no install touches it; the route that
 does replace it is named instead, so a reader of the row knows what would.
 
-`TestReplacementRolePoliciesMatchTheContractDocument` holds this table and the
-code's policy map equal, in both directions.
+`TestReplacementRolePoliciesMatchTheContractDocument` holds this table — its
+operator actions included — and the lifecycle event table below equal to the
+code's policy map and event set, in both directions.
 
-| Role | Disposition | Replacement route |
-| --- | --- | --- |
-| `broker-runtime` | `drain` | `broker-drain` |
-| `lifecycle-observer` | `report-only` | `pane-relaunch` |
-| `supervisor` | `report-only` | `pane-relaunch` |
-| `session-client` | `report-only` | `operator-reattach` |
-| `agent-endpoint` | `report-only` | `pane-relaunch` |
-| `usage-watcher` | `report-only` | `lease-expiry` |
-| `other` | `report-only` | `process-exit` |
+| Role | Disposition | Replacement route | Operator action |
+| --- | --- | --- | --- |
+| `broker-runtime` | `drain` | `broker-drain` | event `install-replacement-pass` |
+| `lifecycle-observer` | `report-only` | `pane-relaunch` | `projmux stop project <project-ref>`, then `projmux start project <project-ref>` |
+| `supervisor` | `report-only` | `pane-relaunch` | `projmux stop project <project-ref>`, then `projmux start project <project-ref>` |
+| `session-client` | `report-only` | `operator-reattach` | event `shell-wrapper-exit`, then `projmux shell` |
+| `agent-endpoint` | `report-only` | `pane-relaunch` | `projmux stop project <project-ref>`, then `projmux start project <project-ref>` |
+| `usage-watcher` | `report-only` | `lease-expiry` | event `usage-demand-lapse` |
+| `other` | `report-only` | `process-exit` | event `invocation-exit` |
+
+**The operator action is the route spelled as something that can happen.** A
+route name says which kind of replacement applies; the action says what carries
+it out, step by step. A step is either a `projmux` command the shipped CLI
+catalog resolves to a runnable verb, or one of the lifecycle events below, which
+replace a role with no command at all.
+`TestReplacementRoutesNameARunnableAction` fails when a command names a route
+the catalog does not have, stops at a verb that refuses without its child, or
+reaches into `internal`, and when an event is outside this list.
+
+| Event | What happens |
+| --- | --- |
+| `install-replacement-pass` | `make install` runs `projmux internal install-replace`, which dials the superseded broker runtime. The runtime drains, closes when its last binding goes, and the next binding starts one on the installed image |
+| `shell-wrapper-exit` | the terminal command that ran `projmux shell` returns. The wrapper waits on its `tmux attach-session` child, so it ends only when that client does |
+| `usage-demand-lapse` | no usage render has refreshed the watcher's demand marker within its 15-second TTL, so the watcher cancels itself and releases its lease; the next render starts one on the installed image. A status line still rendering the usage segment keeps that demand fresh |
+| `invocation-exit` | a short-lived invocation returns on its own, and the next one runs the installed image |
+
+**`pane-relaunch` is a Project runtime cycle.** Each role it covers lives as
+long as one managed Pane: the supervisor is that Pane's own process, the
+lifecycle observer ends once its Pane binding is gone, and the endpoint helper
+ends once its provider process does. `projmux stop project` ends the Project's
+exact tmux session and preserves its Registry graph; `projmux start project`
+materializes that graph again from the installed image, and its Continue
+launches or resumes the Project's declared Agents under the same eligibility
+every Continue uses. It ends every Pane of that Project, which is exactly why
+no install runs it on the operator's behalf. A Pane under the Home control
+session belongs to no Project, and no Project verb reaches it.
 
 **Exactly one role drains, and that is a fact about what exists rather than a
 first instalment.** A drain is a protocol: the runtime has to be able to hear
@@ -349,6 +379,17 @@ attached tmux session, the longest-lived role on this repository's ledger at
 typed into. It is report-only and no cutoff reaches it.
 `TestReplacementSessionClientIsNeverADrainTarget` holds that as a property of
 the table rather than of any call site.
+
+**Detaching and reattaching does not by itself finish that replacement.** The
+census counts the `projmux shell` wrapper, not the tmux client. The wrapper
+starts `tmux attach-session` as a child process and waits on it, so the
+wrapper — the process still on the pre-install image — keeps running until that
+client exits and the terminal command that ran `projmux shell` returns. A
+reattach that leaves that command running, such as switching sessions or
+attaching a second client, leaves the wrapper exactly where it was. The required
+action is to end the wrapper by exiting the terminal session running
+`projmux shell`, then start `projmux shell` again, which runs the installed
+image.
 
 **No disposition severs work.** The one hard kill this repository has measured —
 2026-09-05, four panes — brought three of the four back automatically and left

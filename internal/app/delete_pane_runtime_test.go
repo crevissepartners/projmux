@@ -474,6 +474,171 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 	})
 }
 
+// TestPaneDeleteLiveMirrorRefusalNamesTheExactUIDRegistryOnlyForm pins the
+// whole refusal text for a target the Registry-only path turned away only
+// because it was not addressed by exact uid.
+//
+// Those refusals are correct -- a name never authorizes a zero-mirror delete --
+// but without a pointer they are a dead end, because nothing says the `uid:`
+// spelling of the same target would succeed. The negative rows are the other
+// half: a target that spelling would refuse too gets no pointer at all.
+func TestPaneDeleteLiveMirrorRefusalNamesTheExactUIDRegistryOnlyForm(t *testing.T) {
+	sibling := livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review")
+	server := testDeleteTarget.Value
+	offlineAlphaAgent := func(reg *coremetadata.Registry) {
+		agent, _ := reg.Agent("agt-alpha-codex")
+		agent.Status.Phase = coremetadata.PhaseOffline
+		agent.Status.PaneRef = ""
+		markPaneMissingRuntime(t, reg, "pan-alpha-codex")
+	}
+	for _, test := range []struct {
+		name    string
+		prepare func(*coremetadata.Registry)
+		plan    func(coremetadata.Registry) deletePlan
+		want    string
+	}{
+		{
+			name:    "name-selected MissingRuntime Pane names the exact uid form",
+			prepare: func(reg *coremetadata.Registry) { markPaneMissingRuntime(t, reg, "pan-alpha-log") },
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return panePlanFor(t, reg, coremetadata.KindPane, "pan-alpha-log")
+			},
+			want: `delete pane: registry Pane uid "pan-alpha-log" has no exact live tmux Pane mirror on -L ` + server +
+				`; nothing was changed; Pane uid "pan-alpha-log" carries MissingRuntime evidence, which authorizes Registry-only deletion only under the exact uid: selector: run ` +
+				"`projmux delete pane uid:pan-alpha-log --socket-path " + server + " --dry-run`, then `projmux delete pane uid:pan-alpha-log --socket-path " + server + " --yes`",
+		},
+		{
+			name:    "name-selected Offline Agent names the Agent, not its Pane",
+			prepare: offlineAlphaAgent,
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return panePlanFor(t, reg, coremetadata.KindAgent, "agt-alpha-codex")
+			},
+			want: `delete agent: registry Pane uid "pan-alpha-codex" has no exact live tmux Pane mirror on -L ` + server +
+				`; nothing was changed; Agent uid "agt-alpha-codex" carries Offline+MissingRuntime evidence, which authorizes Registry-only deletion only under the exact uid: selector: run ` +
+				"`projmux delete agent uid:agt-alpha-codex --socket-path " + server + " --dry-run`, then `projmux delete agent uid:agt-alpha-codex --socket-path " + server + " --yes`",
+		},
+		{
+			name: "name-selected zero-Pane Offline Agent names the exact uid form",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return panePlanFor(t, reg, coremetadata.KindAgent, "agt-beta-codex")
+			},
+			want: `delete agent: registry Agent uid "agt-beta-codex" is Offline, not an exact Offline target; no live managed Pane can authorize deletion and nothing was changed; ` +
+				`Agent uid "agt-beta-codex" carries Offline evidence, which authorizes Registry-only deletion only under the exact uid: selector: run ` +
+				"`projmux delete agent uid:agt-beta-codex --socket-path " + server + " --dry-run`, then `projmux delete agent uid:agt-beta-codex --socket-path " + server + " --yes`",
+		},
+		{
+			name: "exact uid without MissingRuntime gets no pointer",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return exactPanePlanFor(t, reg, coremetadata.KindPane, "pan-alpha-log")
+			},
+			want: `delete pane: registry Pane uid "pan-alpha-log" has no exact live tmux Pane mirror on -L ` + server + `; nothing was changed`,
+		},
+		{
+			name: "name-selected Pane without MissingRuntime gets no pointer",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return panePlanFor(t, reg, coremetadata.KindPane, "pan-alpha-log")
+			},
+			want: `delete pane: registry Pane uid "pan-alpha-log" has no exact live tmux Pane mirror on -L ` + server + `; nothing was changed`,
+		},
+		{
+			name:    "name-selected Running Agent gets no pointer even over a MissingRuntime Pane",
+			prepare: func(reg *coremetadata.Registry) { markPaneMissingRuntime(t, reg, "pan-alpha-codex") },
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return panePlanFor(t, reg, coremetadata.KindAgent, "agt-alpha-codex")
+			},
+			want: `delete agent: registry Pane uid "pan-alpha-codex" has no exact live tmux Pane mirror on -L ` + server + `; nothing was changed`,
+		},
+		{
+			name: "name-selected zero-Pane Failed Agent gets no pointer",
+			prepare: func(reg *coremetadata.Registry) {
+				agent, _ := reg.Agent("agt-beta-codex")
+				agent.Status.Phase = coremetadata.PhaseFailed
+			},
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return panePlanFor(t, reg, coremetadata.KindAgent, "agt-beta-codex")
+			},
+			want: `delete agent: registry Agent uid "agt-beta-codex" is Failed, not an exact Offline target; no live managed Pane can authorize deletion and nothing was changed`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
+			if test.prepare != nil {
+				test.prepare(&registry)
+			}
+			_, err := runtime.preflight(context.Background(), registry, test.plan(registry))
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("preflight error =\n%v\nwant\n%s", err, test.want)
+			}
+			for _, call := range runner.calls {
+				if strings.Contains(strings.Join(call.args, " "), "kill-pane") {
+					t.Fatalf("refused preflight mutated tmux: %#v", runner.calls)
+				}
+			}
+		})
+	}
+}
+
+// TestDeleteByNameRefusalPointsAtARunnableUIDCommand drives the refusal through
+// the real route, resolver included, and then runs the command it names.
+//
+// The first half proves the name-selected refusals above are reachable from an
+// argv an operator types. The second half is what "runnable" means: the named
+// `--dry-run` command, passed back to the same route, succeeds and writes
+// nothing.
+func TestDeleteByNameRefusalPointsAtARunnableUIDCommand(t *testing.T) {
+	sibling := livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review")
+	for _, test := range []struct {
+		name    string
+		prepare func(*coremetadata.Registry)
+		args    []string
+	}{
+		{
+			name:    "Pane",
+			prepare: func(reg *coremetadata.Registry) { markPaneMissingRuntime(t, reg, "pan-alpha-log") },
+			args:    []string{"pane", "log", "--project", "alpha", "--window", "main", "--dry-run"},
+		},
+		{
+			name: "zero-Pane Offline Agent",
+			args: []string{"agent", "codex", "--project", "beta", "--dry-run"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			if test.prepare != nil {
+				test.prepare(&store.registry)
+			}
+			cmd := newTestDeleteCommand(store, false, false, nil)
+			runtime, _, _ := newPaneRuntimeFixture(t, sibling)
+			cmd.panes = runtime
+			before := store.snapshot()
+
+			_, _, err := runRoute(t, cmd, test.args...)
+			if err == nil {
+				t.Fatalf("delete %v succeeded; want the live-mirror refusal", test.args)
+			}
+			_, named, ok := strings.Cut(err.Error(), "run `projmux delete ")
+			if !ok {
+				t.Fatalf("delete %v refusal names no uid command: %v", test.args, err)
+			}
+			named, _, ok = strings.Cut(named, "`")
+			if !ok || !strings.HasSuffix(named, " --dry-run") {
+				t.Fatalf("delete %v refusal names a malformed command: %v", test.args, err)
+			}
+
+			stdout, _, err := runRoute(t, cmd, strings.Fields(named)...)
+			if err != nil {
+				t.Fatalf("named command `projmux delete %s` failed: %v", named, err)
+			}
+			if !strings.Contains(stdout, "dry-run: nothing was deleted") {
+				t.Fatalf("named command `projmux delete %s` stdout = %q", named, stdout)
+			}
+			if store.transactions != 0 || store.snapshot() != before {
+				t.Fatalf("refusal and named dry-run wrote the Registry: %d transactions", store.transactions)
+			}
+		})
+	}
+}
+
 func TestPaneDeleteStandaloneSocketAuthorizesOnlyRegistryOnlyEvidence(t *testing.T) {
 	sibling := livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review")
 	for _, test := range []struct {

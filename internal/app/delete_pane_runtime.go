@@ -691,6 +691,54 @@ func registryOnlyPaneTarget(registry coremetadata.Registry, plan deletePlan, tar
 	}
 }
 
+// registryOnlyUIDSelectorHint names the runnable exact-uid form for a target the
+// Registry-only path refused only because of how it was addressed.
+//
+// A name, scope, label, or active-target plan never takes that path, whatever
+// evidence the target carries, so the live-mirror refusal it reaches is correct
+// and, on its own, a dead end: nothing in it says the `uid:` spelling of the
+// same target would succeed. The answer is the same eligibility check the
+// preflight runs, asked again as if every target had been an exact uid. A plan
+// that already was exact, or a target that check would still refuse, gets "":
+// pointing an operator at a spelling that fails the same way is worse than no
+// pointer.
+func (r *tmuxPaneDeleteRuntime) registryOnlyUIDSelectorHint(registry coremetadata.Registry, plan deletePlan, resourceUID string) string {
+	if plan.ExactUID {
+		return ""
+	}
+	exact := plan
+	exact.ExactUID = true
+	for _, target := range plan.Targets {
+		if target.Match.UID != resourceUID {
+			continue
+		}
+		eligible, ok, err := registryOnlyPaneTarget(registry, exact, target)
+		if err != nil || !ok {
+			return ""
+		}
+		command := "projmux delete " + strings.ToLower(string(plan.Kind)) + " uid:" + resourceUID + deleteSocketFlagSpelling(r.target)
+		return fmt.Sprintf("; %s uid %q carries %s evidence, which authorizes Registry-only deletion only under the exact uid: selector: run `%s --dry-run`, then `%s --yes`",
+			eligible.Kind, resourceUID, eligible.Evidence, command, command)
+	}
+	return ""
+}
+
+// deleteSocketFlagSpelling renders the delete route's own flag for the server
+// this invocation addressed, so a named retry reaches the same server from
+// inside or outside tmux.
+func deleteSocketFlagSpelling(target tmuxTransport) string {
+	switch {
+	case !target.Present():
+		return ""
+	case target.Kind == tmuxSocketName:
+		return " --socket " + target.Value
+	case target.Kind == tmuxSocketPath:
+		return " --socket-path " + target.Value
+	default:
+		return ""
+	}
+}
+
 func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremetadata.Registry, plan deletePlan) (paneLiveDeletePlan, error) {
 	socketPath, err := r.exactSocketPath(ctx)
 	if err != nil {
@@ -788,8 +836,8 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 		for _, target := range plan.Targets {
 			if len(target.Descendants) == 0 && !registryOnlyByResource[target.Match.UID] {
 				agent, _ := registry.Agent(target.Match.UID)
-				return paneLiveDeletePlan{}, fmt.Errorf("delete agent: registry Agent uid %q is %s, not an exact Offline target; no live managed Pane can authorize deletion and nothing was changed",
-					target.Match.UID, agent.Status.Phase)
+				return paneLiveDeletePlan{}, fmt.Errorf("delete agent: registry Agent uid %q is %s, not an exact Offline target; no live managed Pane can authorize deletion and nothing was changed%s",
+					target.Match.UID, agent.Status.Phase, r.registryOnlyUIDSelectorHint(registry, plan, target.Match.UID))
 			}
 		}
 	}
@@ -803,8 +851,9 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 			if registryOnlyByResource[target.resourceUID] {
 				continue
 			}
-			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: registry Pane uid %q has no exact live tmux Pane mirror on -L %s; nothing was changed",
-				strings.ToLower(string(plan.Kind)), target.paneUID, r.target.Value)
+			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: registry Pane uid %q has no exact live tmux Pane mirror on -L %s; nothing was changed%s",
+				strings.ToLower(string(plan.Kind)), target.paneUID, r.target.Value,
+				r.registryOnlyUIDSelectorHint(registry, plan, target.resourceUID))
 		}
 		if len(matches) != 1 {
 			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: registry Pane uid %q has %d live tmux Pane mirrors on -L %s; exact target is ambiguous and nothing was changed",

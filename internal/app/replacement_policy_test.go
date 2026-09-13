@@ -1,16 +1,48 @@
 package app
 
 import (
+	"errors"
+	"fmt"
 	"maps"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/cli"
 )
 
-// replacementPolicyDocRow matches one row of the published disposition table.
-var replacementPolicyDocRow = regexp.MustCompile("^\\|\\s*`([a-z-]+)`\\s*\\|\\s*`([a-z-]+)`\\s*\\|\\s*`([a-z-]+)`\\s*\\|$")
+// replacementPolicyDocRow matches one row of the published disposition table:
+// role, disposition, route, and the operator action cell.
+var replacementPolicyDocRow = regexp.MustCompile("^\\|\\s*`([a-z-]+)`\\s*\\|\\s*`([a-z-]+)`\\s*\\|\\s*`([a-z-]+)`\\s*\\|\\s*([^|]*?)\\s*\\|$")
+
+// replacementEventDocRow matches one row of the published lifecycle event
+// table: exactly two cells, the first a backticked token. A role row has four
+// cells and never matches.
+var replacementEventDocRow = regexp.MustCompile("^\\|\\s*`([a-z-]+)`\\s*\\|[^|]+\\|$")
+
+// replacementPolicyDocEntry is one role row as the document spells it.
+type replacementPolicyDocEntry struct {
+	Disposition string
+	Route       string
+	Action      string
+}
+
+// renderReplacementAction spells a role's action the way its table cell does:
+// a command in backticks, an event as "event" plus its token, steps joined in
+// order.
+func renderReplacementAction(steps []replacementActionStep) string {
+	parts := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if step.Event != "" {
+			parts = append(parts, "event `"+step.Event+"`")
+			continue
+		}
+		parts = append(parts, "`"+step.Command+"`")
+	}
+	return strings.Join(parts, ", then ")
+}
 
 // TestReplacementRolePoliciesMatchTheContractDocument is the policy half of the
 // vocabulary drift guard.
@@ -24,20 +56,35 @@ var replacementPolicyDocRow = regexp.MustCompile("^\\|\\s*`([a-z-]+)`\\s*\\|\\s*
 func TestReplacementRolePoliciesMatchTheContractDocument(t *testing.T) {
 	t.Parallel()
 
-	published := map[string]replacementRolePolicy{}
+	published := map[string]replacementPolicyDocEntry{}
+	var publishedEvents []string
 	for line := range strings.SplitSeq(replacementPolicySection(t), "\n") {
-		match := replacementPolicyDocRow.FindStringSubmatch(strings.TrimSpace(line))
-		if match == nil {
+		line = strings.TrimSpace(line)
+		if match := replacementPolicyDocRow.FindStringSubmatch(line); match != nil {
+			published[match[1]] = replacementPolicyDocEntry{Disposition: match[2], Route: match[3], Action: match[4]}
 			continue
 		}
-		published[match[1]] = replacementRolePolicy{Disposition: match[2], Route: match[3]}
+		if match := replacementEventDocRow.FindStringSubmatch(line); match != nil {
+			publishedEvents = append(publishedEvents, match[1])
+		}
 	}
 	if len(published) == 0 {
 		t.Fatal("docs/replacement-contract.md publishes no role dispositions")
 	}
-	if !maps.Equal(published, replacementRolePolicies) {
-		t.Fatalf("role dispositions: docs/replacement-contract.md has %v, code has %v",
-			published, replacementRolePolicies)
+	code := map[string]replacementPolicyDocEntry{}
+	for role, policy := range replacementRolePolicies {
+		code[role] = replacementPolicyDocEntry{
+			Disposition: policy.Disposition, Route: policy.Route, Action: renderReplacementAction(policy.Action),
+		}
+	}
+	if !maps.Equal(published, code) {
+		t.Fatalf("role dispositions: docs/replacement-contract.md has %v, code has %v", published, code)
+	}
+	// The lifecycle events an action may name are published beside the table,
+	// and that list is the closed set, in both directions.
+	if !slices.Equal(publishedEvents, replacementLifecycleEvents) {
+		t.Fatalf("lifecycle events: docs/replacement-contract.md has %v, code has %v",
+			publishedEvents, replacementLifecycleEvents)
 	}
 
 	// Every role the census can name has a decision. A role with no entry
@@ -61,6 +108,101 @@ func TestReplacementRolePoliciesMatchTheContractDocument(t *testing.T) {
 			t.Fatalf("role %q has disposition %q, want drain or report-only", role, policy.Disposition)
 		}
 	}
+}
+
+// TestReplacementRoutesNameARunnableAction is the executability half of the
+// policy table.
+//
+// A route name tells an operator which kind of replacement applies and nothing
+// about what to run. Every role therefore carries an action, and every step of
+// it has to be something that can happen: a `projmux` command whose route the
+// shipped CLI catalog resolves to a runnable verb, or an event from the closed
+// lifecycle set. A prose instruction, a renamed command, or an event nobody has
+// shown occurs fails here rather than in front of an operator.
+func TestReplacementRoutesNameARunnableAction(t *testing.T) {
+	t.Parallel()
+
+	used := map[string]bool{}
+	for _, role := range projmuxProcessRoleOrder {
+		policy := replacementRolePolicies[role]
+		if len(policy.Action) == 0 {
+			t.Fatalf("role %q (route %q) names no action", role, policy.Route)
+		}
+		for i, step := range policy.Action {
+			if err := replacementActionStepRunnable(step); err != nil {
+				t.Fatalf("role %q action step %d: %v", role, i, err)
+			}
+			if step.Event != "" {
+				used[step.Event] = true
+			}
+		}
+	}
+	// The closed set carries no event that no role is replaced by.
+	for _, event := range replacementLifecycleEvents {
+		if !used[event] {
+			t.Fatalf("lifecycle event %q is in the closed set but no role names it", event)
+		}
+	}
+
+	// The check itself has to bite: each of these would put an action an
+	// operator cannot carry out into the table.
+	for _, step := range []replacementActionStep{
+		{},
+		{Command: "projmux shell", Event: replacementEventInvocationExit},
+		{Command: "tmux attach-session"},
+		{Command: "projmux relaunch pane <pane-ref>"},
+		{Command: "projmux stop"},
+		{Command: "projmux stop project alpha"},
+		{Command: "projmux internal install-replace"},
+		{Event: "lease-expiry"},
+	} {
+		if err := replacementActionStepRunnable(step); err == nil {
+			t.Fatalf("runnable-action check accepted %+v", step)
+		}
+	}
+}
+
+// replacementActionStepRunnable reports why one action step is not something
+// an operator or the lifecycle can carry out, or nil when it is.
+func replacementActionStepRunnable(step replacementActionStep) error {
+	switch {
+	case step.Command != "" && step.Event != "":
+		return errors.New("step names both a command and an event")
+	case step.Event != "":
+		if !slices.Contains(replacementLifecycleEvents, step.Event) {
+			return fmt.Errorf("event %q is not in the closed lifecycle event set", step.Event)
+		}
+		return nil
+	case step.Command == "":
+		return errors.New("step names neither a command nor an event")
+	}
+	fields := strings.Fields(step.Command)
+	if len(fields) < 2 || fields[0] != "projmux" {
+		return fmt.Errorf("command %q is not a projmux command", step.Command)
+	}
+	var words []string
+	for i, field := range fields[1:] {
+		if strings.HasPrefix(field, "<") || strings.HasPrefix(field, "-") {
+			for _, rest := range fields[1+i:] {
+				if !strings.HasPrefix(rest, "<") && !strings.HasPrefix(rest, "-") {
+					return fmt.Errorf("command %q has literal %q after its operands begin", step.Command, rest)
+				}
+			}
+			break
+		}
+		words = append(words, field)
+	}
+	if words[0] == "internal" {
+		return fmt.Errorf("command %q names an internal route, not an operator command", step.Command)
+	}
+	path, route, ok := cli.Resolve(words)
+	if !ok || len(path) != len(words) {
+		return fmt.Errorf("command %q names route %q, which the CLI catalog does not have", step.Command, strings.Join(words, " "))
+	}
+	if route.Invocation == cli.InvocationRefusal {
+		return fmt.Errorf("command %q stops at %q, which refuses without a child verb", step.Command, strings.Join(words, " "))
+	}
+	return nil
 }
 
 // TestReplacementSessionClientIsNeverADrainTarget holds the one entry in the
