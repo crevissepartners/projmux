@@ -218,17 +218,3 @@ func hasBraillePrefix(value string) bool {
 func containsString(values []string, target string) bool {
 	return slices.Contains(values, target)
 }
-
-func sanitizeSwitchPreviewPath(model corepreview.SwitchReadModel) string {
-	path := sanitizeCell(model.DisplayPath)
-	if path != "" {
-		return path
-	}
-
-	path = sanitizeCell(model.Path)
-	if path != "" {
-		return path
-	}
-
-	return "-"
-}

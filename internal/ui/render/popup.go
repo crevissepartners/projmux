@@ -61,16 +61,6 @@ func RenderPopupPreviewWithText(model preview.PopupReadModel, text PopupPreviewT
 	return builder.String()
 }
 
-func formatPopupSummary(model preview.PopupReadModel) string {
-	var parts []string
-	parts = append(parts, sanitizeCell(strconv.Itoa(effectiveWindowCount(model)))+"w")
-	parts = append(parts, sanitizeCell(strconv.Itoa(effectivePaneCount(model)))+"p")
-	if target := formatTargetSummary(model.SelectedWindowIndex, model.SelectedPaneIndex); target != "" {
-		parts = append(parts, target)
-	}
-	return strings.Join(parts, "  ")
-}
-
 func effectiveWindowCount(model preview.PopupReadModel) int {
 	if model.WindowCount > 0 {
 		return model.WindowCount
@@ -83,14 +73,6 @@ func effectivePaneCount(model preview.PopupReadModel) int {
 		return model.TotalPaneCount
 	}
 	return len(model.Panes)
-}
-
-func formatSelectedSummary(model preview.PopupReadModel) string {
-	if !model.HasSelection {
-		return "none"
-	}
-
-	return formatTargetSummary(model.SelectedWindowIndex, model.SelectedPaneIndex)
 }
 
 func formatTargetSummary(windowIndex, paneIndex string) string {
@@ -153,13 +135,6 @@ func writePanesWithNone(builder *strings.Builder, model preview.PopupReadModel, 
 		builder.WriteString(line)
 		builder.WriteString("\n")
 	}
-}
-
-func selectionMarker(selected bool) string {
-	if selected {
-		return "*"
-	}
-	return " "
 }
 
 func formatWindowSummary(window preview.Window, panes []preview.Pane) string {

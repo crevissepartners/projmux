@@ -90,10 +90,6 @@ func BandLineWithTheme(pickerTheme Theme, label, value, secondary string, cols i
 	return ChromeLineWithTheme(pickerTheme, line.String(), cols)
 }
 
-func ChromeLine(line string, cols int) string {
-	return ChromeLineWithTheme(DefaultTheme, line, cols)
-}
-
 func ChromeLineWithTheme(pickerTheme Theme, line string, cols int) string {
 	if cols <= 0 {
 		cols = DefaultCols
@@ -373,10 +369,6 @@ func PadStyledLineWithTheme(pickerTheme Theme, line string, width int) string {
 		return line + Reset + padding
 	}
 	return line + padding
-}
-
-func padsInsideFinalStyle(line string) bool {
-	return padsInsideFinalStyleWithTheme(DefaultTheme, line)
 }
 
 func padsInsideFinalStyleWithTheme(pickerTheme Theme, line string) bool {

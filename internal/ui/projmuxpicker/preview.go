@@ -56,10 +56,6 @@ func PreviewWidth(cols int, window string) int {
 	return width
 }
 
-func RenderSplitPreview(w io.Writer, listLines, previewLines []string, layout Layout, window string, total, start, end int) {
-	RenderSplitPreviewRows(w, listLines, previewLines, layout, window, total, start, end, 0)
-}
-
 func RenderSplitPreviewRows(w io.Writer, listLines, previewLines []string, layout Layout, window string, total, start, end, rowCount int) {
 	previewWidth := PreviewWidth(layout.Cols, window)
 	listWidth := layout.Cols - previewWidth - 1
@@ -97,10 +93,6 @@ func RenderDownPreview(w io.Writer, previewLines []string, layout Layout) {
 		line = normalizePreviewLine(line)
 		fmt.Fprintln(w, PadStyledLine(TruncateANSI(line, width), width))
 	}
-}
-
-func RenderInlinePreview(w io.Writer, previewLines []string) {
-	RenderInlinePreviewRows(w, previewLines, Layout{})
 }
 
 func RenderInlinePreviewRows(w io.Writer, previewLines []string, layout Layout) {

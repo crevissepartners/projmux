@@ -40,41 +40,6 @@ func Run(ctx context.Context, args ...string) error {
 	return DefaultRunner().Run(ctx, args...)
 }
 
-// SetPaneOption writes a pane-scoped tmux option.
-func SetPaneOption(ctx context.Context, paneTarget, option, value string) error {
-	return DefaultRunner().SetPaneOption(ctx, paneTarget, option, value)
-}
-
-// UnsetPaneOption removes a pane-scoped tmux option.
-func UnsetPaneOption(ctx context.Context, paneTarget, option string) error {
-	return DefaultRunner().UnsetPaneOption(ctx, paneTarget, option)
-}
-
-// ShowPaneOption reads a pane-scoped tmux option through display-message.
-func ShowPaneOption(ctx context.Context, paneTarget, option string) (string, error) {
-	return DefaultRunner().ShowPaneOption(ctx, paneTarget, option)
-}
-
-// DisplayMessage executes `tmux display-message -p` and returns raw output.
-func DisplayMessage(ctx context.Context, opts DisplayMessageOptions) ([]byte, error) {
-	return DefaultRunner().DisplayMessage(ctx, opts)
-}
-
-// DisplayMessageTrimmed executes `tmux display-message -p` and trims output.
-func DisplayMessageTrimmed(ctx context.Context, opts DisplayMessageOptions) (string, error) {
-	return DefaultRunner().DisplayMessageTrimmed(ctx, opts)
-}
-
-// Read executes tmux with args and returns the raw backend output.
-func Read(ctx context.Context, args ...string) ([]byte, error) {
-	return DefaultRunner().Read(ctx, args...)
-}
-
-// ReadTrimmed executes tmux with args and trims surrounding whitespace.
-func ReadTrimmed(ctx context.Context, args ...string) (string, error) {
-	return DefaultRunner().ReadTrimmed(ctx, args...)
-}
-
 // Run executes tmux with args and discards output.
 func (r Runner) Run(ctx context.Context, args ...string) error {
 	_, err := r.Read(ctx, args...)

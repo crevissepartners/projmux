@@ -1758,10 +1758,6 @@ func truncateWithEllipsis(s string, maxWidth int) string {
 	return string(rs[:maxWidth-1]) + "…"
 }
 
-func runeLen(s string) int {
-	return len([]rune(s))
-}
-
 func printUsageHelp(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintf(w, "  projmux agent usage [--model %s] [--window 5h|weekly|context|quota|all] [--json] [--force|-f]\n", strings.Join(aiprovider.UsageTargets(), "|"))

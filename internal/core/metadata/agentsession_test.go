@@ -487,7 +487,7 @@ func TestARegistryWrittenBeforeTheSessionRefExistedRoundTripsByteIdentically(t *
 
 	action, err := ClassifySchemaVersion(decoded.SchemaVersion)
 	if err != nil || action != SchemaCurrent {
-		t.Fatalf("classify = (%s, %v), want (current, nil): the field is additive inside schemaVersion %d", action, err, SchemaVersion)
+		t.Fatalf("classify = (%d, %v), want (current, nil): the field is additive inside schemaVersion %d", action, err, SchemaVersion)
 	}
 	migrated, ran, err := MigrateRegistry(decoded)
 	if err != nil {

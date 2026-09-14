@@ -2156,10 +2156,6 @@ func nativeAppendPartialNextItemLinesWithTheme(pickerTheme projmuxpicker.Theme, 
 	return append(out, nextLines...)
 }
 
-func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, selected, limit int) ([]string, int) {
-	return nativePrependPartialPreviousItemLinesWithTheme(projmuxpicker.DefaultTheme, items, lines, start, selected, limit)
-}
-
 func nativePrependPartialPreviousItemLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, lines []string, start, selected, limit int) ([]string, int) {
 	if limit <= 0 || len(lines) >= limit || start <= 0 || start > len(items) {
 		return lines, 0
@@ -2178,10 +2174,6 @@ func nativePrependPartialPreviousItemLinesWithTheme(pickerTheme projmuxpicker.Th
 	return out, len(prefix)
 }
 
-func nativeLinesBeforeItem(items []Item, index, selected int) []string {
-	return nativeLinesBeforeItemWithTheme(projmuxpicker.DefaultTheme, items, index, selected)
-}
-
 func nativeLinesBeforeItemWithTheme(pickerTheme projmuxpicker.Theme, items []Item, index, selected int) []string {
 	if index <= 0 || index >= len(items) {
 		return nil
@@ -2192,10 +2184,6 @@ func nativeLinesBeforeItemWithTheme(pickerTheme projmuxpicker.Theme, items []Ite
 		return nil
 	}
 	return withCurrent[:len(withCurrent)-len(current)]
-}
-
-func nativePartialNextItemLines(items []Item, next, selected int) []string {
-	return nativePartialNextItemLinesWithTheme(projmuxpicker.DefaultTheme, items, next, selected)
 }
 
 func nativePartialNextItemLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, next, selected int) []string {
@@ -2289,24 +2277,12 @@ func nativeTextLineCount(value string) int {
 	return len(strings.Split(value, "\n"))
 }
 
-func nativeSearchSeparatorLine(cols int) string {
-	return projmuxpicker.SeparatorLine(cols)
-}
-
 func nativeSearchSeparatorLineWithTheme(pickerTheme projmuxpicker.Theme, cols int) string {
 	return projmuxpicker.SeparatorLineWithTheme(pickerTheme, cols)
 }
 
-func nativeHeaderLine(header string, cols int) string {
-	return projmuxpicker.HeaderLine(header, cols)
-}
-
 func nativeHeaderLineWithTheme(pickerTheme projmuxpicker.Theme, header string, cols int) string {
 	return projmuxpicker.HeaderLineWithTheme(pickerTheme, header, cols)
-}
-
-func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
-	projmuxpicker.DefaultRenderer().RenderFrame(w, content, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
 func renderNativeFrameWithTitle(w io.Writer, content, title string, layout nativeLayout, options Options) {
@@ -2333,10 +2309,6 @@ func nativeTitlebarRowsForOptions(options Options) int {
 		return projmuxpicker.ChipsTitlebarRows(options.TitleChips)
 	}
 	return projmuxpicker.TitlebarRows(options.Title)
-}
-
-func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {
-	projmuxpicker.WriteContentWithFooter(w, top, main, footer, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
 func writeNativeContentWithFooterWithTheme(w io.Writer, pickerTheme projmuxpicker.Theme, top, main, footer string, layout nativeLayout) {
@@ -2378,10 +2350,6 @@ func nativeResourceSummaryDockLines(pickerTheme projmuxpicker.Theme, bands []Chr
 	return lines
 }
 
-func nativeFooterBlockLines(footer string, cols int) []string {
-	return projmuxpicker.FooterBlockLines(footer, cols)
-}
-
 func nativeRenderedTextLineCount(value string) int {
 	return projmuxpicker.RenderedTextLineCount(value)
 }
@@ -2394,20 +2362,8 @@ func nativePromptLineWithCursor(prompt, query string, cursor, matches, total, co
 	return projmuxpicker.PromptLineWithCursorLabel(nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, cursor, matches, total, cols)
 }
 
-func nativePromptLineWithCursorAndTheme(pickerTheme projmuxpicker.Theme, prompt, query string, cursor, matches, total, cols int) string {
-	return projmuxpicker.PromptLineWithRenderedQueryLabelAndTheme(pickerTheme, nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, projmuxpicker.QueryWithCursorAndTheme(pickerTheme, query, cursor), matches, total, cols)
-}
-
 func nativePromptLineWithCursorAndThemeForOptions(pickerTheme projmuxpicker.Theme, options Options, prompt, query string, cursor, matches, total, cols int) string {
 	return projmuxpicker.PromptLineWithRenderedQueryLabelAndTheme(pickerTheme, nativeLocalizedTextForOptions(options, i18n.KeyPickerPromptSearch, "Search"), prompt, query, projmuxpicker.QueryWithCursorAndTheme(pickerTheme, query, cursor), matches, total, cols)
-}
-
-func nativePromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
-	return projmuxpicker.PromptLineWithRenderedQueryLabel(nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, renderedQuery, matches, total, cols)
-}
-
-func nativeQueryWithCursor(query string, cursor int) string {
-	return projmuxpicker.QueryWithCursor(query, cursor)
 }
 
 func nativeVisibleRange(total, selected, limit int) (int, int) {
@@ -2487,14 +2443,6 @@ func nativeInteractiveListLinesWithTheme(pickerTheme projmuxpicker.Theme, items 
 	return projmuxpicker.InteractiveListLinesWithTheme(pickerTheme, nativeRows(items), start, end, selected, multiLine)
 }
 
-func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) []string {
-	return projmuxpicker.ListLinesWithScrollbar(lines, total, start, end, width)
-}
-
-func nativeListLinesWithScrollbarRows(lines []string, total, start, end, width, rows int) []string {
-	return projmuxpicker.ListLinesWithScrollbarRows(lines, total, start, end, width, rows)
-}
-
 func nativeListLinesWithScrollbarRowsWithTheme(pickerTheme projmuxpicker.Theme, lines []string, total, start, end, width, rows int) []string {
 	return projmuxpicker.ListLinesWithScrollbarRowsWithTheme(pickerTheme, lines, total, start, end, width, rows)
 }
@@ -2513,16 +2461,8 @@ func nativeListScrollbarUnits(items []Item, start, end int, multiLine bool) (int
 	return total, before, before + visible
 }
 
-func nativeRenderableListLines(lines []string, width int) []string {
-	return projmuxpicker.RenderableListLines(lines, width)
-}
-
 func nativeRenderableListLine(line string, width int) string {
 	return projmuxpicker.RenderableListLine(line, width)
-}
-
-func nativePadStyledLine(line string, width int) string {
-	return projmuxpicker.PadStyledLine(line, width)
 }
 
 func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
@@ -2535,10 +2475,6 @@ func nativeInteractiveItemLinesWithTheme(pickerTheme projmuxpicker.Theme, item I
 
 func nativeSelectedContent(value string) string {
 	return projmuxpicker.SelectedContent(value)
-}
-
-func nativeInverseSelectedContent(value string) string {
-	return projmuxpicker.InverseSelectedContent(value)
 }
 
 func nativeRows(items []Item) []projmuxpicker.Row {
@@ -2554,10 +2490,6 @@ func nativeRow(item Item) projmuxpicker.Row {
 		Label:     item.EffectiveLabel(),
 		MetaLines: item.MetaLines,
 	}
-}
-
-func nativeHighlightSimpleItems(options Options, items []Item, query string) []Item {
-	return nativeHighlightSimpleItemsWithTheme(projmuxpicker.DefaultTheme, options, items, query)
 }
 
 func nativeHighlightSimpleItemsWithTheme(pickerTheme projmuxpicker.Theme, options Options, items []Item, query string) []Item {
@@ -2616,10 +2548,6 @@ func nativeFuzzyMatchPositions(source string, pattern []rune, caseSensitive bool
 		}
 	}
 	return nil, false
-}
-
-func nativeHighlightANSIVisiblePositions(value string, positions []int) string {
-	return nativeHighlightANSIVisiblePositionsWithTheme(projmuxpicker.DefaultTheme, value, positions)
 }
 
 func nativeHighlightANSIVisiblePositionsWithTheme(pickerTheme projmuxpicker.Theme, value string, positions []int) string {
@@ -2802,10 +2730,6 @@ func renderNativeDownPreview(w io.Writer, previewLines []string, layout nativeLa
 
 func renderNativeInlinePreview(w io.Writer, previewLines []string, layout nativeLayout) {
 	projmuxpicker.RenderInlinePreviewRows(w, previewLines, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
-}
-
-func nativePadRight(value string, width int) string {
-	return projmuxpicker.PadRight(value, width)
 }
 
 func nativeTruncateANSI(value string, width int) string {

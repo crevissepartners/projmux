@@ -36,22 +36,6 @@ type FormatRowsOptions struct {
 }
 
 // ListPanes executes `tmux list-panes -F` and parses fixed-width rows.
-func ListPanes(ctx context.Context, opts ListPanesOptions) ([][]string, error) {
-	return DefaultRunner().ListPanes(ctx, opts)
-}
-
-// ListWindows executes `tmux list-windows -F` and parses fixed-width rows.
-func ListWindows(ctx context.Context, opts ListWindowsOptions) ([][]string, error) {
-	return DefaultRunner().ListWindows(ctx, opts)
-}
-
-// DisplayPaneFields executes `tmux display-message -p` for one pane target and
-// parses the result as a fixed field row.
-func DisplayPaneFields(ctx context.Context, target string, formats ...string) ([]string, error) {
-	return DefaultRunner().DisplayPaneFields(ctx, target, formats...)
-}
-
-// ListPanes executes `tmux list-panes -F` and parses fixed-width rows.
 func (r Runner) ListPanes(ctx context.Context, opts ListPanesOptions) ([][]string, error) {
 	if len(opts.Formats) == 0 {
 		return nil, nil

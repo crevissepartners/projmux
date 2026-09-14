@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -806,10 +805,4 @@ func parseRows(output string, want int) [][]string {
 		rows = append(rows, fields)
 	}
 	return rows
-}
-
-// WindowTarget renders the canonical tmux window target for a session and
-// window index.
-func WindowTarget(session string, index int) string {
-	return session + ":" + strconv.Itoa(index)
 }

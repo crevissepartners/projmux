@@ -198,7 +198,6 @@ type Text struct {
 	value  string
 }
 
-func (t Text) Key() Key       { return t.key }
 func (t Text) Locale() Locale { return t.locale }
 func (t Text) String() string { return t.value }
 
@@ -210,13 +209,8 @@ type StyledFragment struct {
 	value  string
 }
 
-func (f StyledFragment) Key() Key           { return f.key }
-func (f StyledFragment) Locale() Locale     { return f.locale }
-func (f StyledFragment) Kind() MessageKind  { return f.kind }
-func (f StyledFragment) String() string     { return f.value }
-func (f StyledFragment) IsANSI() bool       { return f.kind == MessageKindANSI }
-func (f StyledFragment) IsTmuxStyle() bool  { return f.kind == MessageKindTmux }
-func (f StyledFragment) IsStyledKind() bool { return f.IsANSI() || f.IsTmuxStyle() }
+func (f StyledFragment) IsANSI() bool      { return f.kind == MessageKindANSI }
+func (f StyledFragment) IsTmuxStyle() bool { return f.kind == MessageKindTmux }
 
 // Catalog is an immutable in-memory message catalog.
 type Catalog struct {
@@ -305,11 +299,6 @@ func NewLocalizerWithCatalog(catalog Catalog, locale Locale) Localizer {
 		locale = FallbackLocale
 	}
 	return Localizer{catalog: catalog, locale: locale}
-}
-
-// Locale returns the localizer's preferred locale.
-func (l Localizer) Locale() Locale {
-	return l.locale
 }
 
 // Text returns a plain text message, falling back to en-US when needed.

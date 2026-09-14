@@ -71,36 +71,6 @@ type SelectWindowOptions struct {
 }
 
 // DisplayPopup opens a tmux popup and executes the provided shell command.
-func DisplayPopup(ctx context.Context, command string, options PopupOptions) error {
-	return DefaultRunner().DisplayPopup(ctx, command, options)
-}
-
-// ClosePopup closes a scoped tmux popup.
-func ClosePopup(ctx context.Context, opts ClosePopupOptions) error {
-	return DefaultRunner().ClosePopup(ctx, opts)
-}
-
-// CapturePane reads visible text from a tmux pane.
-func CapturePane(ctx context.Context, opts CapturePaneOptions) (string, error) {
-	return DefaultRunner().CapturePane(ctx, opts)
-}
-
-// SwitchClient switches a tmux client to the target.
-func SwitchClient(ctx context.Context, opts SwitchClientOptions) error {
-	return DefaultRunner().SwitchClient(ctx, opts)
-}
-
-// SelectPane selects or retitles a tmux pane.
-func SelectPane(ctx context.Context, opts SelectPaneOptions) error {
-	return DefaultRunner().SelectPane(ctx, opts)
-}
-
-// SelectWindow selects a tmux window.
-func SelectWindow(ctx context.Context, opts SelectWindowOptions) error {
-	return DefaultRunner().SelectWindow(ctx, opts)
-}
-
-// DisplayPopup opens a tmux popup and executes the provided shell command.
 func (r Runner) DisplayPopup(ctx context.Context, command string, options PopupOptions) error {
 	args, err := BuildDisplayPopupArgs(command, options)
 	if err != nil {

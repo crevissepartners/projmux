@@ -1925,14 +1925,6 @@ func (c *notifyCommand) listNotifyLivePanesAndSet() ([]notifyLivePane, notifyLiv
 	return notifyLivePanesFromRows(rows), newNotifyLivePaneSet(rows), nil
 }
 
-func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {
-	rows, err := c.listLivePaneRows()
-	if err != nil {
-		return nil, err
-	}
-	return notifyLivePanesFromRows(rows), nil
-}
-
 func notifyLivePanesFromRows(rows []livePaneRow) []notifyLivePane {
 	out := make([]notifyLivePane, 0, len(rows))
 	for _, row := range rows {

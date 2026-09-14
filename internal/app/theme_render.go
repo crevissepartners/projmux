@@ -64,10 +64,6 @@ func (s renderThemeSource) tmuxStandaloneConfig(binaryPath string, decorations s
 	return tmuxStandaloneConfigWithKeymapTheme(binaryPath, decorations, catalog, keymapPresent, s.effective)
 }
 
-func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyle(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool) string {
-	return tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, decorations, badgeStyle, catalog, keymapPresent, s.effective)
-}
-
 func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keyBindingAction, keymapPresent bool) string {
 	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, s.effective)
 }
@@ -88,10 +84,6 @@ func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyMode
 
 func (s renderThemeSource) tmuxAppConfig(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
 	return tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell, decorations, catalog, keymapPresent, s.effective)
-}
-
-func (s renderThemeSource) tmuxAppConfigWithAIBadgeStyle(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool) string {
-	return tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell, decorations, badgeStyle, catalog, keymapPresent, s.effective)
 }
 
 func (s renderThemeSource) tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keyBindingAction, keymapPresent bool) string {

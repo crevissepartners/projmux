@@ -472,7 +472,7 @@ func TestClassifySchemaVersionFailsClosedForNewerAndUnversionedEnvelopes(t *test
 			t.Parallel()
 			action, err := ClassifySchemaVersion(tt.version)
 			if action != tt.wantAction {
-				t.Fatalf("action = %s, want %s", action, tt.wantAction)
+				t.Fatalf("action = %d, want %d", action, tt.wantAction)
 			}
 			if tt.wantErr == nil {
 				if err != nil {
@@ -495,7 +495,7 @@ func TestARegisteredOlderStepTurnsRejectionIntoMigrationWithoutChangingProductio
 
 	// With no registered step, version 0 is refused.
 	if action, err := ClassifySchemaVersion(0); action != SchemaReject || !errors.Is(err, ErrSchemaUnsupported) {
-		t.Fatalf("production classify(0) = %s, %v; want reject", action, err)
+		t.Fatalf("production classify(0) = %d, %v; want reject", action, err)
 	}
 	// With a step registered in a private set, the same version migrates.
 	action, err := ClassifySchemaVersionWith(testMigrationSet(), 0)
@@ -503,7 +503,7 @@ func TestARegisteredOlderStepTurnsRejectionIntoMigrationWithoutChangingProductio
 		t.Fatalf("classify with an injected step: %v", err)
 	}
 	if action != SchemaMigrate {
-		t.Fatalf("classify with an injected step = %s, want migrate", action)
+		t.Fatalf("classify with an injected step = %d, want migrate", action)
 	}
 	// Registering a step in a private set never mutates the production set.
 	if len(productionMigrations) != 3 || productionMigrations[1] == nil || productionMigrations[2] == nil || productionMigrations[3] == nil {

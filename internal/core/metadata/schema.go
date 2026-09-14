@@ -22,20 +22,6 @@ const (
 	SchemaReject
 )
 
-// String renders the action for diagnostics.
-func (a SchemaAction) String() string {
-	switch a {
-	case SchemaCurrent:
-		return "current"
-	case SchemaMigrate:
-		return "migrate"
-	case SchemaReject:
-		return "reject"
-	default:
-		return fmt.Sprintf("SchemaAction(%d)", int(a))
-	}
-}
-
 // MigrationEnvironment supplies the only machine-dependent inputs a schema
 // repair may use. Keeping them injected leaves this package pure and gives the
 // production adapter and byte-fixed golden tests the exact same algorithm.
