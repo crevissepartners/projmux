@@ -221,7 +221,7 @@ func settingsDesktopNotifyResolver(homeDir func() (string, error), lookupEnv fun
 			if lookupEnv == nil || strings.TrimSpace(lookupEnv("TMUX")) == "" {
 				return ""
 			}
-			out, err := mux.ShowOption(context.Background(), mux.ShowOptionOptions{
+			out, err := mux.DefaultRunner().ShowOption(context.Background(), mux.ShowOptionOptions{
 				Global:    true,
 				Quiet:     true,
 				ValueOnly: true,

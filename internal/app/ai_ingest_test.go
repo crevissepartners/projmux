@@ -654,7 +654,7 @@ func TestAIHookRuntimeActionDoesNotChangeInstallEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("aiHookInstallEvents error = %v", err)
 	}
-	if !containsString(events, "Stop") {
+	if !slices.Contains(events, "Stop") {
 		t.Fatalf("install events = %#v, want Stop preserved despite runtime quiet", events)
 	}
 	if got := cmd.aiHookEffectiveAction(aiHookProviderCodex, "Stop"); got.Action != aiHookActionQuiet || got.Source != aiHookActionSourceRuntime {

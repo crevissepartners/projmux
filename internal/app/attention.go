@@ -9,12 +9,12 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 const (
@@ -467,7 +467,7 @@ func attentionWindowBadgeKind(row attentionWindowRow) string {
 		return kind
 	}
 	switch {
-	case row.State == attentionStateBusy || strings.TrimSpace(row.AIState) == "thinking" || hasBraillePrefix(row.Title):
+	case row.State == attentionStateBusy || strings.TrimSpace(row.AIState) == "thinking" || intrender.HasBraillePrefix(row.Title):
 		return aiBadgeKindInProgress
 	case row.State == attentionStateReply || strings.TrimSpace(row.AIState) == "waiting" || hasAttentionPrefix(row.Title):
 		return aiBadgeKindResponseComplete
@@ -584,7 +584,7 @@ func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 			Agent:          row.Agent,
 			Topic:          row.Topic,
 			ReplyState:     row.AttentionState == attentionStateReply,
-			TitleBadge:     hasAttentionPrefix(row.Title) || hasBraillePrefix(row.Title),
+			TitleBadge:     hasAttentionPrefix(row.Title) || intrender.HasBraillePrefix(row.Title),
 		})
 	}
 	return out, nil
@@ -593,7 +593,7 @@ func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 func filterAttentionRows(rows []attentionPaneRow) []attentionPaneRow {
 	out := make([]attentionPaneRow, 0, len(rows))
 	for _, row := range rows {
-		if row.AttentionState != "" || hasAttentionPrefix(row.Title) || hasBraillePrefix(row.Title) {
+		if row.AttentionState != "" || hasAttentionPrefix(row.Title) || intrender.HasBraillePrefix(row.Title) {
 			out = append(out, row)
 		}
 	}
@@ -694,11 +694,6 @@ func trimAttentionPrefix(title string) string {
 
 func hasAttentionPrefix(title string) bool {
 	return strings.HasPrefix(title, "✳") || strings.HasPrefix(title, "✔")
-}
-
-func hasBraillePrefix(title string) bool {
-	r, _ := utf8.DecodeRuneInString(title)
-	return r >= 0x2800 && r <= 0x28ff
 }
 
 func printAttentionUsage(w io.Writer) {

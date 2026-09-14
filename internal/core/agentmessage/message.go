@@ -49,8 +49,8 @@ type Route struct {
 }
 
 func (r Route) Valid() bool {
-	return validRef(r.AgentUID) && validRef(r.PaneUID) && validRef(r.ActivationGeneration) &&
-		validProvider(r.Provider) && validRef(r.Incarnation)
+	return ValidRef(r.AgentUID) && ValidRef(r.PaneUID) && ValidRef(r.ActivationGeneration) &&
+		validProvider(r.Provider) && ValidRef(r.Incarnation)
 }
 
 func (r Route) Same(other Route) bool {
@@ -71,8 +71,8 @@ type Envelope struct {
 }
 
 func (e Envelope) Validate() error {
-	if e.Version != Version || !validRef(e.MessageRef) || !validRef(e.ConversationRef) ||
-		(e.ReplyTo != "" && !validRef(e.ReplyTo)) || !e.Source.Valid() || !e.Target.Valid() ||
+	if e.Version != Version || !ValidRef(e.MessageRef) || !ValidRef(e.ConversationRef) ||
+		(e.ReplyTo != "" && !ValidRef(e.ReplyTo)) || !e.Source.Valid() || !e.Target.Valid() ||
 		e.Authority != PeerAuthority() || !validPayload(e.Payload) || e.AcceptedAt.IsZero() || e.Deadline.IsZero() ||
 		!e.Deadline.After(e.AcceptedAt) || e.Deadline.Sub(e.AcceptedAt) > MaxTTL {
 		return ErrInvalidEnvelope
@@ -109,7 +109,11 @@ func ValidateReply(original, reply Envelope) error {
 	return nil
 }
 
-func validRef(value string) bool {
+// ValidRef reports whether value is a well-formed Registry ref: already
+// trimmed, non-empty, at most MaxRefBytes, valid UTF-8, and free of control
+// runes. It owns that judgement for every package that persists a ref, so a ref
+// one reducer accepts cannot be one another refuses.
+func ValidRef(value string) bool {
 	if value != strings.TrimSpace(value) || value == "" || len(value) > MaxRefBytes || !utf8.ValidString(value) {
 		return false
 	}

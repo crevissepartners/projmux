@@ -231,7 +231,7 @@ func paneAttentionRank(pane preview.Pane) int {
 	case aibadge.InProgress:
 		return 2
 	}
-	if strings.TrimSpace(pane.AttentionState) == "busy" || strings.TrimSpace(pane.AIState) == "thinking" || hasBraillePrefix(pane.Title) {
+	if strings.TrimSpace(pane.AttentionState) == "busy" || strings.TrimSpace(pane.AIState) == "thinking" || HasBraillePrefix(pane.Title) {
 		return 2
 	}
 	if strings.TrimSpace(pane.AttentionState) == "reply" || strings.TrimSpace(pane.AIState) == "waiting" || hasAttentionTitlePrefix(pane.Title) {

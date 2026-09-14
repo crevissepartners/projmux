@@ -90,6 +90,10 @@ func TestWTAdapterDetectNilEnv(t *testing.T) {
 	}
 }
 
+// noOSRelease is the osrelease reader for cases that exercise the env markers
+// alone; a real /proc read would make the result depend on the host kernel.
+func noOSRelease(string) ([]byte, error) { return nil, errors.New("no osrelease") }
+
 func TestIsWSL(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -102,12 +106,23 @@ func TestIsWSL(t *testing.T) {
 		{env: map[string]string{}, want: false},
 	}
 	for _, tc := range cases {
-		if got := isWSL(envFn(tc.env)); got != tc.want {
-			t.Fatalf("isWSL(%v) = %v, want %v", tc.env, got, tc.want)
+		if got := IsWSL(envFn(tc.env), noOSRelease); got != tc.want {
+			t.Fatalf("IsWSL(%v) = %v, want %v", tc.env, got, tc.want)
 		}
 	}
-	if isWSL(nil) {
-		t.Fatalf("isWSL(nil) = true")
+	if IsWSL(nil, noOSRelease) {
+		t.Fatalf("IsWSL(nil, _) = true")
+	}
+
+	// The kernel osrelease probe the AI notification path used to own
+	// separately now answers from here, so both callers see one predicate.
+	microsoft := func(string) ([]byte, error) { return []byte("5.15.0-microsoft-standard-WSL2"), nil }
+	if !IsWSL(envFn(map[string]string{}), microsoft) {
+		t.Fatal("IsWSL with a microsoft osrelease = false, want true")
+	}
+	plain := func(string) ([]byte, error) { return []byte("6.11.0-generic"), nil }
+	if IsWSL(envFn(map[string]string{}), plain) {
+		t.Fatal("IsWSL with a plain Linux osrelease = true, want false")
 	}
 }
 

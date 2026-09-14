@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"io"
 	"os"
 	"slices"
@@ -11,6 +10,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexhandover"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
@@ -83,15 +83,22 @@ func (e *UsageError) Error() string {
 	return e.Message
 }
 
+// MetadataUsageError marks this error for the shared usage-error predicate in
+// internal/core/metadata. Projecting the app's own error type into that marker
+// protocol is what lets one owner decide the question for both layers.
+func (e *UsageError) MetadataUsageError() bool { return true }
+
 // usageError builds a UsageError with the supplied message.
 func usageError(message string) error {
 	return &UsageError{Message: message}
 }
 
-// IsUsageError reports whether err (or any wrapped error) is a UsageError.
+// IsUsageError reports whether err was caused by invalid user input. It is a
+// projection of coremetadata.IsUsageError, which owns the judgement; *UsageError
+// reaches it through the MetadataUsageError marker above. The app keeps the name
+// so CLI callers do not import the metadata package for an exit-code question.
 func IsUsageError(err error) bool {
-	var ue *UsageError
-	return errors.As(err, &ue)
+	return coremetadata.IsUsageError(err)
 }
 
 // App wires the CLI entrypoints to concrete command handlers.

@@ -21,6 +21,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/app/initcmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
@@ -79,10 +80,6 @@ const (
 	aiBadgeKindResponseComplete = aibadge.ResponseComplete
 )
 
-type aiCommandRunner interface {
-	Run(options intpickercompat.Options) (intpickercompat.Result, error)
-}
-
 type codexCapabilitySession interface {
 	Snapshot() corecap.Snapshot
 	Refresh(context.Context) (corecap.Snapshot, error)
@@ -90,7 +87,6 @@ type codexCapabilitySession interface {
 }
 
 type aiCommand struct {
-	runner                        aiCommandRunner
 	nativePicker                  intpicker.Runner
 	executable                    func() (string, error)
 	lookupEnv                     func(string) string
@@ -3231,15 +3227,7 @@ func (c *aiCommand) resolvePowerShell() string {
 }
 
 func (c *aiCommand) isWSL() bool {
-	if c.env("WSL_DISTRO_NAME") != "" {
-		return true
-	}
-	readFile := c.readFile
-	if readFile == nil {
-		readFile = os.ReadFile
-	}
-	content, err := readFile("/proc/sys/kernel/osrelease")
-	return err == nil && strings.Contains(strings.ToLower(string(content)), "microsoft")
+	return initcmd.IsWSL(c.env, c.readFile)
 }
 
 func (c *aiCommand) gitBranchForPath(path string) string {

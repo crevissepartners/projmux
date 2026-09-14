@@ -1,7 +1,8 @@
 # .deadcode-must-keep.txt
 #
-# Proactive maintenance ledger for symbols that are not current deadcode
-# findings but must survive for migration, compatibility, or proof contracts.
+# Proactive maintenance ledger for symbols that must survive for migration,
+# compatibility, or proof contracts, whether or not they are current deadcode
+# findings.
 # Each data row is exactly `symbol<TAB>maintenance reason`; reasons are
 # mandatory. This file suppresses only its exact, reason-bearing symbols when
 # they appear in deadcode output; unrelated new findings still fail the gate.

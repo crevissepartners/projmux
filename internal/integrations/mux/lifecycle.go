@@ -56,11 +56,6 @@ type ShowOptionOptions struct {
 	Option    string
 }
 
-// ShowOption reads a tmux option.
-func ShowOption(ctx context.Context, opts ShowOptionOptions) (string, error) {
-	return DefaultRunner().ShowOption(ctx, opts)
-}
-
 // NewEphemeralSession creates only a detached ephemeral candidate.
 func (r Runner) NewEphemeralSession(ctx context.Context, opts EphemeralSessionOptions) (string, error) {
 	args := []string{"new-session", "-d"}

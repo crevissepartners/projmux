@@ -143,13 +143,13 @@ keys = ["M-t"]
 	cmd := testSettingsCommandWithHome(home)
 
 	options := cmd.rootOptions(settingsRootTabGlobal)
-	if !containsString(options.Bindings, "alt-s:abort") {
+	if !slices.Contains(options.Bindings, "alt-s:abort") {
 		t.Fatalf("settings bindings = %#v, want custom SettingsToggle alias close", options.Bindings)
 	}
-	if containsString(options.Bindings, "alt-a:abort") {
+	if slices.Contains(options.Bindings, "alt-a:abort") {
 		t.Fatalf("settings bindings = %#v, AI picker alias must not close settings popup", options.Bindings)
 	}
-	if containsString(options.Bindings, "alt-t:abort") {
+	if slices.Contains(options.Bindings, "alt-t:abort") {
 		t.Fatalf("settings bindings = %#v, direct command alias must not close popup", options.Bindings)
 	}
 }
@@ -3368,7 +3368,7 @@ func TestSettingsNotificationsHookActionsShowsAndSavesRuntimeQuietPolicy(t *test
 	if got := ai.aiHookEffectiveAction(aiHookProviderCodex, "Stop"); got.Action != aiHookActionQuiet || got.Source != aiHookActionSourceRuntime {
 		t.Fatalf("effective Stop action = %#v, want runtime quiet", got)
 	}
-	if events, err := ai.aiHookInstallEvents(aiHookProviderCodex); err != nil || !containsString(events, "Stop") {
+	if events, err := ai.aiHookInstallEvents(aiHookProviderCodex); err != nil || !slices.Contains(events, "Stop") {
 		t.Fatalf("install events = %#v, err = %v; want Stop preserved", events, err)
 	}
 }
@@ -7634,13 +7634,12 @@ func testSettingsSwitchCommand(t *testing.T, store *stubSwitchPinStore) *switchC
 func testSettingsSwitchCommandWithHome(t *testing.T, home string, store *stubSwitchPinStore) *switchCommand {
 	t.Helper()
 
-	runner, native := scriptedPicker(t, nil)
+	_, native := scriptedPicker(t, nil)
 	return &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{filepath.Join(home, "source", "repos", "app")}, nil
 		},
 		pinStore:     func() (switchPinStore, error) { return store, nil },
-		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
 		identity:     stubSwitchIdentityResolver{name: "app"},
@@ -8221,7 +8220,7 @@ type pickerStep struct {
 // scriptedPicker returns a (runner, nativePicker) pair backed by a single
 // step list. It collapses the previously doubled lambda body that tests
 // used to populate both fields with the same call-counting switch.
-func scriptedPicker(t *testing.T, steps []pickerStep) (switchRunner, intpicker.Runner) {
+func scriptedPicker(t *testing.T, steps []pickerStep) (intpickercompat.Runner, intpicker.Runner) {
 	t.Helper()
 	var calls int
 	fn := func(options intpickercompat.Options) (intpickercompat.Result, error) {

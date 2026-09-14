@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
+	"slices"
 )
 
 type settingsProjectContext struct {
@@ -631,7 +632,7 @@ func (c *settingsCommand) addCurrentDiscoveryRootEntryLocale(locale i18n.Locale,
 			Value: settingsNoopValue,
 		}
 	}
-	if containsString(saved, current) {
+	if slices.Contains(saved, current) {
 		return intpickercompat.Entry{
 			Label: settingsLabelDimLocale(locale, label, "already saved  "+current),
 			Value: settingsNoopValue,

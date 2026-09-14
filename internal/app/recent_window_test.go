@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	projmuxpicker "github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
+	"slices"
 )
 
 var recentWindowANSIPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
@@ -723,13 +724,13 @@ keys = ["M-t"]
 
 	options := recentWindowPickerOptions(nil, -1, func() (string, error) { return home, nil }, func(string) string { return "" })
 	bindings := compatOptionsFromNativePickerForTest(options).Bindings
-	if !containsString(bindings, "alt-r:abort") {
+	if !slices.Contains(bindings, "alt-r:abort") {
 		t.Fatalf("recent windows bindings = %#v, want custom RecentWindows:Open alias close", bindings)
 	}
-	if containsString(bindings, "alt-a:abort") {
+	if slices.Contains(bindings, "alt-a:abort") {
 		t.Fatalf("recent windows bindings = %#v, AI picker alias must not close recent windows popup", bindings)
 	}
-	if containsString(bindings, "alt-t:abort") {
+	if slices.Contains(bindings, "alt-t:abort") {
 		t.Fatalf("recent windows bindings = %#v, direct command alias must not close popup", bindings)
 	}
 }

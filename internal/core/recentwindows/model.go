@@ -146,7 +146,7 @@ func BuildLabel(snapshot Snapshot) Label {
 	secondaryParts := make([]string, 0, 3)
 	for _, value := range []string{snapshot.LastPaneTitle, snapshot.LastPaneTopic, snapshot.LastCommand, snapshot.Project, snapshot.Session} {
 		value = strings.TrimSpace(value)
-		if value == "" || value == primary || containsString(secondaryParts, value) {
+		if value == "" || value == primary || slices.Contains(secondaryParts, value) {
 			continue
 		}
 		secondaryParts = append(secondaryParts, value)
@@ -344,8 +344,4 @@ func debugTarget(snapshot Snapshot) string {
 		parts = append(parts, "pane "+pane)
 	}
 	return strings.Join(parts, " ")
-}
-
-func containsString(values []string, target string) bool {
-	return slices.Contains(values, target)
 }

@@ -101,10 +101,16 @@ func (w *WindowsTerminalAdapter) Detect(env func(string) string) bool {
 	return false
 }
 
-// isWSL reports whether we appear to be running inside WSL based on the
-// environment. WSL governs how ConfigPath resolves the Windows-side
-// %LOCALAPPDATA% path.
-func isWSL(env func(string) string) bool {
+// IsWSL reports whether we appear to be running inside WSL. It is the one
+// owner of that judgement: WSL governs how ConfigPath resolves the Windows-side
+// %LOCALAPPDATA% path, and the AI notification path picks the PowerShell toast
+// sender from the same answer. Both env markers and the kernel osrelease probe
+// live here so the two callers cannot answer differently on one machine.
+//
+// env supplies the environment lookup and readFile the osrelease read; a nil
+// readFile falls back to os.ReadFile, and a nil env makes the whole predicate
+// false because no marker is then observable.
+func IsWSL(env func(string) string, readFile func(string) ([]byte, error)) bool {
 	if env == nil {
 		return false
 	}
@@ -114,7 +120,11 @@ func isWSL(env func(string) string) bool {
 	if strings.TrimSpace(env("WSL_INTEROP")) != "" {
 		return true
 	}
-	return false
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
+	content, err := readFile("/proc/sys/kernel/osrelease")
+	return err == nil && strings.Contains(strings.ToLower(string(content)), "microsoft")
 }
 
 // ConfigPath implements TerminalAdapter. Two branches:
@@ -131,7 +141,7 @@ func (w *WindowsTerminalAdapter) ConfigPath(env func(string) string) (string, er
 	if env == nil {
 		env = os.Getenv
 	}
-	if isWSL(env) {
+	if IsWSL(env, nil) {
 		return w.wslConfigPath(env)
 	}
 	return w.nativeConfigPath(env)

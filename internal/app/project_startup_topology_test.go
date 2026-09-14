@@ -323,7 +323,7 @@ func TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine(t *testing.T)
 	topology := &fakeProjectTopologyMaterializer{materialized: true}
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
 	var startupOptions intpickercompat.Options
-	runner, native := scriptedPicker(t, []pickerStep{
+	_, native := scriptedPicker(t, []pickerStep{
 		{observe: func(o intpickercompat.Options) { startupOptions = o },
 			reply: intpickercompat.Result{Value: projectStartupValueTopology}},
 	})
@@ -337,7 +337,6 @@ func TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine(t *testing.T)
 			}
 			return ""
 		},
-		runner:          runner,
 		nativePicker:    native,
 		projectTopology: topology,
 	}

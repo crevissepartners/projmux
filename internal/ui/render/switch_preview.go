@@ -124,7 +124,7 @@ func sidebarWindowTitles(windowIndex string, panes []corepreview.Pane, badgeStyl
 		}
 
 		title := formatSidebarPaneTitle(pane, badgeStyle)
-		if title == "" || containsString(unique, title) {
+		if title == "" || slices.Contains(unique, title) {
 			continue
 		}
 
@@ -155,7 +155,7 @@ func formatSidebarPaneTitle(pane corepreview.Pane, badgeStyle string) string {
 	switch {
 	case strings.HasPrefix(title, "✳"), strings.HasPrefix(title, "✔"):
 		return ansiGreen + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
-	case hasBraillePrefix(title):
+	case HasBraillePrefix(title):
 		return ansiProgress + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
 	default:
 		if visiblePaneIdentity(pane).Source == paneidentity.SourceTopic {
@@ -195,7 +195,7 @@ func trimSidebarPaneTitleMarker(title string) string {
 	switch {
 	case strings.HasPrefix(title, "✳"), strings.HasPrefix(title, "✔"):
 		return strings.TrimSpace(strings.TrimLeft(title, "✳✔"))
-	case hasBraillePrefix(title):
+	case HasBraillePrefix(title):
 		runes := []rune(title)
 		if len(runes) <= 1 {
 			return ""
@@ -206,15 +206,15 @@ func trimSidebarPaneTitleMarker(title string) string {
 	}
 }
 
-func hasBraillePrefix(value string) bool {
+// HasBraillePrefix reports whether value starts with a Braille Patterns rune
+// (U+2800..U+28FF), the spinner glyphs agent panes render while working. It is
+// the one owner of that judgement; callers outside this package project it
+// instead of re-deriving the range.
+func HasBraillePrefix(value string) bool {
 	if value == "" {
 		return false
 	}
 
 	r := []rune(value)[0]
 	return r >= 0x2800 && r <= 0x28FF
-}
-
-func containsString(values []string, target string) bool {
-	return slices.Contains(values, target)
 }

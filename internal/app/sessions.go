@@ -41,10 +41,6 @@ type sessionsKiller interface {
 	KillSession(ctx context.Context, sessionName string) error
 }
 
-type sessionsRunner interface {
-	Run(options intpickercompat.Options) (intpickercompat.Result, error)
-}
-
 type sessionsCommand struct {
 	diagnostics          *diagnostics.LifecycleRecorder
 	recent               sessionsRecentResolver
@@ -52,7 +48,6 @@ type sessionsCommand struct {
 	opener               sessionsOpener
 	killer               sessionsKiller
 	mutationRunner       tmuxCommandRunner
-	runner               sessionsRunner
 	native               intpicker.Runner
 	executable           func() (string, error)
 	lookupEnv            func(string) string

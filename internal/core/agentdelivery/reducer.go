@@ -4,7 +4,11 @@
 // this package neither defines nor exposes that public broker contract.
 package agentdelivery
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/crevissepartners/projmux/internal/core/agentmessage"
+)
 
 type State string
 
@@ -67,7 +71,7 @@ type Event struct {
 // Reduce is terminal-once and fail-closed. Duplicate, foreign, stale, and
 // out-of-order events are no-ops. The bool reports whether state changed.
 func Reduce(current Delivery, event Event) (Delivery, bool) {
-	if !validRef(event.MessageRef) || (current.MessageRef != "" && event.MessageRef != current.MessageRef) || current.State.Terminal() {
+	if !agentmessage.ValidRef(event.MessageRef) || (current.MessageRef != "" && event.MessageRef != current.MessageRef) || current.State.Terminal() {
 		return current, false
 	}
 	if current.MessageRef == "" {
@@ -86,7 +90,7 @@ func Reduce(current Delivery, event Event) (Delivery, bool) {
 		next.State = StateHeld
 		next.Reason = boundedReason(event.Reason)
 	case EventBeginHandoff:
-		if (current.State != StateQueued && current.State != StateHeld) || !validRef(event.WaiterRef) {
+		if (current.State != StateQueued && current.State != StateHeld) || !agentmessage.ValidRef(event.WaiterRef) {
 			return current, false
 		}
 		next.State = StateHandoff
@@ -137,11 +141,6 @@ func Reduce(current Delivery, event Event) (Delivery, bool) {
 		return current, false
 	}
 	return next, true
-}
-
-func validRef(value string) bool {
-	value = strings.TrimSpace(value)
-	return value != "" && len(value) <= 160 && !strings.ContainsAny(value, "\r\n\x00")
 }
 
 func boundedReason(value string) string {

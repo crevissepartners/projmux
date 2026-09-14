@@ -16,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"slices"
 )
 
 const keybindingProtectedActionVisibleReason = "shipped/default trigger uses a reserved key"
@@ -1374,12 +1375,12 @@ func (c *settingsCommand) keymapWithBindingCandidate(actionID string, candidate 
 			return keymapFile{}, path, normalizeErr
 		}
 		if len(old.Strokes) == 1 {
-			if !containsString(keys, old.Canonical) {
+			if !slices.Contains(keys, old.Canonical) {
 				return keymapFile{}, path, fmt.Errorf("key %q is not configured for %s", old.Canonical, action.ID)
 			}
 			keys = removeString(keys, old.Canonical)
 		} else {
-			if !containsString(sequences, old.Canonical) {
+			if !slices.Contains(sequences, old.Canonical) {
 				return keymapFile{}, path, fmt.Errorf("sequence %q is not configured for %s", old.Canonical, action.ID)
 			}
 			sequences = removeString(sequences, old.Canonical)
@@ -1936,7 +1937,7 @@ func (c *settingsCommand) keybindingSequenceDetailEntries(actionID, sequence str
 	if err != nil {
 		return nil, "", err
 	}
-	if !containsString(keyBindingEffectiveSequences(action), sequence) {
+	if !slices.Contains(keyBindingEffectiveSequences(action), sequence) {
 		return nil, "", fmt.Errorf("sequence %q is not configured for %s", sequence, action.ID)
 	}
 	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
@@ -2001,7 +2002,7 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 			SearchKey: protectedReason,
 		})
 	}
-	if !protected && containsString(removableKeybindingKeys(keymap, action, defaultAction), chord) {
+	if !protected && slices.Contains(removableKeybindingKeys(keymap, action, defaultAction), chord) {
 		entries = append(entries,
 			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphType, settingsColorType, "Replace binding", "record 1 to 4 strokes"), Value: prefix + "replace:" + chord},
 			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter replacement manually", "type 1 to 4 strokes"), Value: prefix + "type-replace:" + chord},
@@ -2408,7 +2409,7 @@ func (c *settingsCommand) removeKeymapSequenceAndApply(actionID, sequence string
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
 	sequences := keyBindingEffectiveSequences(action)
-	if !containsString(sequences, sequence) {
+	if !slices.Contains(sequences, sequence) {
 		return fmt.Errorf("sequence %q is not configured for %s", sequence, action.ID)
 	}
 	sequences = removeString(sequences, sequence)

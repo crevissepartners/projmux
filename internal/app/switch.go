@@ -76,10 +76,6 @@ type switchTagStore interface {
 
 type switchTagStoreFactory func() (switchTagStore, error)
 
-type switchRunner interface {
-	Run(options intpickercompat.Options) (intpickercompat.Result, error)
-}
-
 type switchSessionExecutor interface {
 	EnsureSession(ctx context.Context, sessionName, cwd string) error
 	OpenSession(ctx context.Context, sessionName string) error
@@ -112,7 +108,6 @@ type switchCommand struct {
 	// against. It is a seam so a fixture can declare a Registry without a file.
 	pinProjects          func() ([]pins.ProjectRef, error)
 	tagStore             switchTagStoreFactory
-	runner               switchRunner
 	tmuxRunner           tmuxRunner
 	sessions             switchSessionExecutor
 	previewStore         switchPreviewStore
@@ -1283,7 +1278,7 @@ func tmuxProjdirOption() string {
 	if os.Getenv("TMUX") == "" {
 		return ""
 	}
-	out, err := mux.ShowOption(context.Background(), mux.ShowOptionOptions{
+	out, err := mux.DefaultRunner().ShowOption(context.Background(), mux.ShowOptionOptions{
 		Global:    true,
 		Quiet:     true,
 		ValueOnly: true,
@@ -3077,7 +3072,7 @@ func semanticBadgeKindForPreviewPane(pane corepreview.Pane) string {
 		return kind
 	}
 	switch {
-	case pane.AttentionState == attentionStateBusy || strings.TrimSpace(pane.AIState) == "thinking" || hasBraillePrefix(pane.Title):
+	case pane.AttentionState == attentionStateBusy || strings.TrimSpace(pane.AIState) == "thinking" || intrender.HasBraillePrefix(pane.Title):
 		return aiBadgeKindInProgress
 	case pane.AttentionState == attentionStateReply || strings.TrimSpace(pane.AIState) == "waiting" || hasAttentionPrefix(pane.Title):
 		return aiBadgeKindResponseComplete
@@ -3753,8 +3748,4 @@ func (c *switchCommand) clearPins() error {
 		return fmt.Errorf("clear switch pins: %w", err)
 	}
 	return nil
-}
-
-func containsString(items []string, target string) bool {
-	return slices.Contains(items, target)
 }

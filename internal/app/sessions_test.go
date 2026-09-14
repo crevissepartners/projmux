@@ -73,10 +73,6 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 					},
 				},
 			},
-			runner: sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-				gotOptions = options
-				return intpickercompat.Result{Value: "repo-b"}, nil
-			}),
 			native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 				gotOptions = options
 				return intpickercompat.Result{Value: "repo-b"}, nil
@@ -143,10 +139,6 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	cmd := &sessionsCommand{
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
-		}),
-		runner: sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotOptions = options
-			return intpickercompat.Result{}, nil
 		}),
 		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotOptions = options
@@ -238,10 +230,6 @@ func TestSessionsCommandUsesNativePicker(t *testing.T) {
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			compatCalled = true
-			return intpickercompat.Result{}, nil
-		}),
 		native: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			if options.UI != switchUIPopup {
 				t.Fatalf("native UI = %q, want %q", options.UI, switchUIPopup)
@@ -286,14 +274,6 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 				}, nil
 			}
 			return []inttmux.RecentSessionSummary{{Name: "home", Attached: true}}, nil
-		}),
-		runner: sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			gotOptions = append(gotOptions, options)
-			runnerCalls++
-			if runnerCalls == 1 {
-				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
-			}
-			return intpickercompat.Result{}, nil
 		}),
 		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			gotOptions = append(gotOptions, options)
@@ -351,13 +331,6 @@ func TestSessionsCommandCtrlXSwitchesToFallbackBeforeKillingAttachedSession(t *t
 			}
 			return []inttmux.RecentSessionSummary{{Name: "home", Attached: true}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			runnerCalls++
-			if runnerCalls == 1 {
-				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
-			}
-			return intpickercompat.Result{}, nil
-		}),
 		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
 			if runnerCalls == 1 {
@@ -390,13 +363,6 @@ func TestSessionsCommandCtrlXBlocksAttachedSessionKillWithoutFallback(t *testing
 	cmd := &sessionsCommand{
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b", Attached: true}}, nil
-		}),
-		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			runnerCalls++
-			if runnerCalls == 1 {
-				return intpickercompat.Result{Key: sessionsKillExpectKey, Value: "repo-b"}, nil
-			}
-			return intpickercompat.Result{}, nil
 		}),
 		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			runnerCalls++
@@ -432,9 +398,6 @@ func TestSessionsCommandAllowsEmptySelection(t *testing.T) {
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 		}),
-		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{}, nil
-		}),
 		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			return intpickercompat.Result{}, nil
 		})),
@@ -457,10 +420,6 @@ func TestSessionsCommandReturnsWithoutPickerWhenRecentListIsEmpty(t *testing.T) 
 	cmd := &sessionsCommand{
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 			return nil, nil
-		}),
-		runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			called = true
-			return intpickercompat.Result{}, nil
 		}),
 		native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			called = true
@@ -557,9 +516,6 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
-				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{}, nil
-				}),
 				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{}, nil
 				})),
@@ -572,7 +528,6 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
-				runner:     sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil }),
 				native:     nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) { return intpickercompat.Result{}, nil })),
 				executable: func() (string, error) { return "", errors.New("not found") },
 			},
@@ -583,9 +538,6 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &sessionsCommand{
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
-				}),
-				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{}, errors.New("picker failed")
 				}),
 				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{}, errors.New("picker failed")
@@ -599,9 +551,6 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &sessionsCommand{
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
-				}),
-				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{Value: "repo-b"}, nil
 				}),
 				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil
@@ -617,9 +566,6 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
 				}),
 				store: &recordingSessionsStore{err: errors.New("state failed")},
-				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{Value: "repo-b"}, nil
-				}),
 				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil
 				})),
@@ -633,9 +579,6 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &sessionsCommand{
 				recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
 					return []inttmux.RecentSessionSummary{{Name: "repo-b"}}, nil
-				}),
-				runner: sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-					return intpickercompat.Result{Value: "repo-b"}, nil
 				}),
 				native: nativePickerFromCompatRunner(sessionsRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 					return intpickercompat.Result{Value: "repo-b"}, nil

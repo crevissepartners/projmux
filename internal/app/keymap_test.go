@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	"slices"
 )
 
 func TestCurrentProjectSessionQuotesPaneCWDAsOneLiteralShellArgv(t *testing.T) {
@@ -512,14 +513,14 @@ keys = ["M-t"]
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			keys := effectivePickerKeysForPopupToggleMode(homeDir, lookupEnv, tc.mode, []string{"esc"})
-			if !containsString(keys, "esc") || !containsString(keys, tc.want) {
+			if !slices.Contains(keys, "esc") || !slices.Contains(keys, tc.want) {
 				t.Fatalf("%s close keys = %#v, want esc and %s", tc.mode, keys, tc.want)
 			}
 			for _, leaked := range []string{"alt-p", "alt-n", "alt-r", "alt-a", "alt-s", "alt-j", "alt-u", "alt-t"} {
 				if leaked == tc.want {
 					continue
 				}
-				if containsString(keys, leaked) {
+				if slices.Contains(keys, leaked) {
 					t.Fatalf("%s close keys = %#v, did not want leaked key %s", tc.mode, keys, leaked)
 				}
 			}

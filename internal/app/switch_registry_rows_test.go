@@ -40,7 +40,6 @@ func switchRegistryFixture(t *testing.T, inherited string, discovered []string, 
 	return &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) { return discovered, nil },
 		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
-		runner:   runner,
 		// The picker is driven through the compat shim the shipped surfaces use
 		// so the entries asserted are the entries a real run would render.
 		nativePicker: nativePickerFromCompatRunner(runner),

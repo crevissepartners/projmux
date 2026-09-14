@@ -201,10 +201,6 @@ type lifecycleHookRunner interface {
 	Run(ctx context.Context, event hooks.Event, c hooks.Context) (hooks.RunResult, error)
 }
 
-type lifecycleHookInspector interface {
-	HasHooks(event hooks.Event, cwd string) bool
-}
-
 type lifecycleSessionEnvProvider interface {
 	ProjectSessionEnv(cwd string) map[string]string
 }

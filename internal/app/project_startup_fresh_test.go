@@ -784,7 +784,7 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
 	tmux := &recordingTmuxRunner{}
 	reporter := &recordingProjectStartupReporter{}
-	runner, native := scriptedPicker(t, steps)
+	_, native := scriptedPicker(t, steps)
 	cmd := &switchCommand{
 		sessions:   executor,
 		identity:   stubSwitchIdentityResolver{name: "alpha"},
@@ -800,7 +800,6 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 				return ""
 			}
 		},
-		runner:            runner,
 		nativePicker:      native,
 		projectTopology:   &fakeProjectTopologyMaterializer{},
 		projectFreshStart: &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}},

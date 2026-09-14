@@ -104,13 +104,12 @@ func startupModeFixture(t *testing.T, pickerState startupModePickerState, regist
 	target := t.TempDir()
 	starter := &startupModeFreshStarter{registered: registered}
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
-	runner, native := scriptedPicker(t, steps)
+	_, native := scriptedPicker(t, steps)
 	cmd := &switchCommand{
 		sessions:          executor,
 		identity:          stubSwitchIdentityResolver{name: "workspace"},
 		homeDir:           func() (string, error) { return home, nil },
 		lookupEnv:         lookupEnv,
-		runner:            runner,
 		nativePicker:      native,
 		executable:        func() (string, error) { return "/tmp/projmux", nil },
 		projectTopology:   &fakeProjectTopologyMaterializer{materialized: true},

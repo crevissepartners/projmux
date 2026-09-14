@@ -154,7 +154,6 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	home := t.TempDir()
 	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: "shell"}}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if err := cmd.Run([]string{"settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -197,19 +196,18 @@ keys = ["M-t"]
 	}
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if _, err := cmd.runAgentPicker("right"); err != nil {
 		t.Fatalf("runAgentPicker() error = %v", err)
 	}
-	if !containsString(runner.options.Bindings, "alt-a:abort") {
+	if !slices.Contains(runner.options.Bindings, "alt-a:abort") {
 		t.Fatalf("AI picker bindings = %#v, want custom AISplitPickerToggle alias close", runner.options.Bindings)
 	}
-	if containsString(runner.options.Bindings, "alt-s:abort") {
+	if slices.Contains(runner.options.Bindings, "alt-s:abort") {
 		t.Fatalf("AI picker bindings = %#v, SettingsToggle alias must not close AI picker", runner.options.Bindings)
 	}
-	if containsString(runner.options.Bindings, "alt-t:abort") {
+	if slices.Contains(runner.options.Bindings, "alt-t:abort") {
 		t.Fatalf("AI picker bindings = %#v, direct command alias must not close popup", runner.options.Bindings)
 	}
 }
@@ -224,7 +222,6 @@ foreground = "#ffffff"
 `)
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if _, err := cmd.runAgentPicker("right"); err != nil {
@@ -250,7 +247,6 @@ surface = "#112233"
 `)
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if err := cmd.Run([]string{"settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -268,7 +264,6 @@ func TestAIPickerUnsetThemeMatchesFallback(t *testing.T) {
 	home := t.TempDir()
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if _, err := cmd.runAgentPicker("right"); err != nil {
@@ -314,7 +309,6 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	home := t.TempDir()
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if _, err := cmd.runAgentPicker("right"); err != nil {
@@ -805,7 +799,6 @@ func TestAIPickerFiltersDisabledAgents(t *testing.T) {
 	}
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if _, err := cmd.runAgentPicker("right"); err != nil {
@@ -845,7 +838,6 @@ func TestAIPickerAllAgentsDisabledShowsShellFallbackGuidance(t *testing.T) {
 	}
 	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if _, err := cmd.runAgentPicker("down"); err != nil {
@@ -989,7 +981,6 @@ func TestAIResumePickerNewDelegatesToAgentPicker(t *testing.T) {
 		{Key: "esc"},
 	}}
 	cmd := testAICommand(home)
-	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 	cmd.lookupEnv = func(name string) string {
 		switch name {
@@ -2275,7 +2266,6 @@ type aiCommandRecorder struct {
 func testAICommand(home string) *aiCommand {
 	recorder := &aiCommandRecorder{}
 	cmd := &aiCommand{
-		runner:       &capturingAIRunner{},
 		nativePicker: nativePickerFromCompatRunner(&capturingAIRunner{}),
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv: func(name string) string {

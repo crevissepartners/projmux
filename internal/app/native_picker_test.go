@@ -255,17 +255,8 @@ func TestProductionPickerConstructorsDoNotCreateCompatRunner(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	if cmd := newAICommand(); cmd.runner != nil {
-		t.Fatal("newAICommand() created compat runner")
-	}
 	if cmd := newSettingsCommand(testAICommand(t.TempDir()), testSettingsSwitchCommand(t, newStubPinStore()), nil, nil); cmd.runner != nil {
 		t.Fatal("newSettingsCommand() created compat runner")
-	}
-	if cmd := newSwitchCommand(); cmd.runner != nil {
-		t.Fatal("newSwitchCommand() created compat runner")
-	}
-	if cmd := newSessionsCommand(); cmd.runner != nil {
-		t.Fatal("newSessionsCommand() created compat runner")
 	}
 	if cmd := newNotifyCommand(newDefaultLivePaneLister()); cmd.picker != nil {
 		t.Fatal("newNotifyCommand() created compat runner")
