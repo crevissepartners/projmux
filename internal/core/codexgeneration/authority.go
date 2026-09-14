@@ -36,17 +36,6 @@ func DecideAuthority(durable *metadata.CodexEndpointRef, stored, presented *meta
 	return AuthorityAllowed
 }
 
-// ApplyAuthorized invokes write exactly once only for the complete exact
-// authority. Every legacy, same-number cross-generation, and stale row has a
-// provider/Registry/tmux write count of zero by construction.
-func ApplyAuthorized(durable *metadata.CodexEndpointRef, stored, presented *metadata.CodexAuthorityRef, write func()) AuthorityDecision {
-	decision := DecideAuthority(durable, stored, presented)
-	if decision == AuthorityAllowed && write != nil {
-		write()
-	}
-	return decision
-}
-
 type ResumeDecision string
 
 const (
@@ -74,14 +63,4 @@ func DecideSuccessorResume(owner, successor metadata.CodexEndpointRef, oldStoppe
 		return ResumeNotDurable
 	}
 	return ResumeAllowed
-}
-
-// ApplySuccessorResume runs resume only after the semantic old-stopped and
-// durable barriers are both closed.
-func ApplySuccessorResume(owner, successor metadata.CodexEndpointRef, oldStopped, completedPersisted bool, resume func()) ResumeDecision {
-	decision := DecideSuccessorResume(owner, successor, oldStopped, completedPersisted)
-	if decision == ResumeAllowed && resume != nil {
-		resume()
-	}
-	return decision
 }

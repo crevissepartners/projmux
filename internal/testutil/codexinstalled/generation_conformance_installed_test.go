@@ -187,7 +187,13 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 
 	oldRef := metadata.CodexEndpointRef{StateDomainID: "state-domain-qualification", EndpointGenerationID: "g-" + pair.Old}
 	newRef := metadata.CodexEndpointRef{StateDomainID: "state-domain-qualification", EndpointGenerationID: "g-" + pair.New}
-	if decision := codexgeneration.ApplySuccessorResume(oldRef, newRef, false, true, func() {
+	resumeWhenAllowed := func(decision codexgeneration.ResumeDecision, resume func()) codexgeneration.ResumeDecision {
+		if decision == codexgeneration.ResumeAllowed {
+			resume()
+		}
+		return decision
+	}
+	if decision := resumeWhenAllowed(codexgeneration.DecideSuccessorResume(oldRef, newRef, false, true), func() {
 		_, _ = newClient.ResumeThread(ctx, oldThread.ThreadID, workspace, nil)
 	}); decision != codexgeneration.ResumeOwnerStillLive {
 		t.Fatalf("live-owner barrier decision=%s", decision)
@@ -200,7 +206,7 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 	oldEndpoint.stop(t, ctx)
 	ledger.markOldStopped()
 	resumed := false
-	if decision := codexgeneration.ApplySuccessorResume(oldRef, newRef, true, true, func() {
+	if decision := resumeWhenAllowed(codexgeneration.DecideSuccessorResume(oldRef, newRef, true, true), func() {
 		binding, resumeErr := newClient.ResumeThread(ctx, oldThread.ThreadID, workspace, nil)
 		if resumeErr != nil || binding.ThreadID != oldThread.ThreadID {
 			t.Fatalf("successor exact-thread resume binding=%+v err=%v", binding, resumeErr)

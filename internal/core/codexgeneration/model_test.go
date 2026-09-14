@@ -218,11 +218,12 @@ func TestCompositeAuthorityRejectsSameNumberCrossGenerationAndLegacyWithZeroWrit
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			writes := struct{ Provider, Registry, Tmux int }{}
-			got := ApplyAuthorized(test.endpoint, stored, test.ref, func() {
+			got := DecideAuthority(test.endpoint, stored, test.ref)
+			if got == AuthorityAllowed {
 				writes.Provider++
 				writes.Registry++
 				writes.Tmux++
-			})
+			}
 			if got != test.want || writes.Provider != test.wantWrites || writes.Registry != test.wantWrites || writes.Tmux != test.wantWrites {
 				t.Fatalf("decision=%s writes=%+v, want %s/%d for each mutation surface", got, writes, test.want, test.wantWrites)
 			}
@@ -234,10 +235,16 @@ func TestOldStopBarrierKeepsSuccessorResumeAtZeroUntilSafe(t *testing.T) {
 	old := metadata.CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "old"}
 	newEndpoint := metadata.CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "new"}
 	writes := 0
-	if got := ApplySuccessorResume(old, newEndpoint, false, true, func() { writes++ }); got != ResumeOwnerStillLive || writes != 0 {
+	resumeWhenAllowed := func(decision ResumeDecision) ResumeDecision {
+		if decision == ResumeAllowed {
+			writes++
+		}
+		return decision
+	}
+	if got := resumeWhenAllowed(DecideSuccessorResume(old, newEndpoint, false, true)); got != ResumeOwnerStillLive || writes != 0 {
 		t.Fatalf("live-old decision=%s writes=%d", got, writes)
 	}
-	if got := ApplySuccessorResume(old, newEndpoint, true, true, func() { writes++ }); got != ResumeAllowed || writes != 1 {
+	if got := resumeWhenAllowed(DecideSuccessorResume(old, newEndpoint, true, true)); got != ResumeAllowed || writes != 1 {
 		t.Fatalf("stopped-old decision=%s writes=%d", got, writes)
 	}
 }
