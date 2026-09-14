@@ -132,7 +132,7 @@ def metadata(tool: str, generated: list[dict[str, Any]]) -> dict[str, Any]:
         notes = [
             {
                 "rule": "multiple",
-                "scope": "17 findings still current from the 47 the 2026-07-29 audit reviewed",
+                "scope": "15 findings still current from the 47 the 2026-07-29 audit reviewed",
                 "reason": "reviewed per rule, path, message, source fingerprint, and maximum count",
             }
         ]

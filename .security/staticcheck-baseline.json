@@ -5,7 +5,7 @@
   "reviewed_suppressions": [
     {
       "rule": "multiple",
-      "scope": "17 findings still current from the 47 the 2026-07-29 audit reviewed",
+      "scope": "15 findings still current from the 47 the 2026-07-29 audit reviewed",
       "reason": "reviewed per rule, path, message, source fingerprint, and maximum count"
     }
   ],
@@ -113,20 +113,6 @@
       "path": "internal/integrations/tmux/client.go",
       "message": "type lifecycleHookInspector is unused",
       "source": "type lifecycleHookInspector interface {",
-      "max_count": 1
-    },
-    {
-      "rule": "U1000",
-      "path": "internal/ui/render/popup.go",
-      "message": "func effectivePaneCount is unused",
-      "source": "func effectivePaneCount(model preview.PopupReadModel) int {",
-      "max_count": 1
-    },
-    {
-      "rule": "U1000",
-      "path": "internal/ui/render/popup.go",
-      "message": "func formatTargetSummary is unused",
-      "source": "func formatTargetSummary(windowIndex, paneIndex string) string {",
       "max_count": 1
     }
   ]
