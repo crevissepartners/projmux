@@ -2002,7 +2002,7 @@ func TestTmuxPrintConfigCanonicalPaneRenameWritesOnlyLabelBinding(t *testing.T) 
 	for _, want := range []string{
 		"bind-key -n M-r command-prompt",
 		`-p "pane label:"`,
-		"set-option -p @projmux_pane_label",
+		"internal tmux pane-rename --client #{client_tty} --anchor #{pane_id} --name-stdin",
 	} {
 		if !strings.Contains(binding, want) {
 			t.Fatalf("pane rename binding = %q, want %q", binding, want)
@@ -3137,7 +3137,7 @@ keys = ["M-a"] # unrelated current binding
 	if strings.Contains(output, "bind-key -n C-t ") {
 		t.Fatalf("generated config rebound retired C-t:\n%s", output)
 	}
-	for _, want := range []string{`-p "pane label:"`, "set-option -p @projmux_pane_label", "bind-key -n M-a run-shell"} {
+	for _, want := range []string{`-p "pane label:"`, "internal tmux pane-rename", "bind-key -n M-a run-shell"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("generated config missing preserved current binding %q\n%s", want, output)
 		}

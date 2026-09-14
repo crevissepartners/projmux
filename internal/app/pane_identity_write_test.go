@@ -35,7 +35,9 @@ func TestPaneIdentityActionWriteMatrix(t *testing.T) {
 		forbidden []string
 	}{
 		{name: "user rename helper", commands: recordedTmuxCallsText(renameRunner.calls), allowed: []string{paneLabelOption}, forbidden: []string{aiPaneTopicOption, aiPaneTopicManualOption, "select-pane -T"}},
-		{name: "canonical rename action", commands: canonical.TmuxBody, allowed: []string{paneLabelOption}, forbidden: []string{aiPaneTopicOption, aiPaneTopicManualOption, "select-pane -T", "pane_title"}},
+		// The canonical action renames the Registry Pane; its label mirror is
+		// written by the shared rename owner, never by the binding body.
+		{name: "canonical rename action", commands: canonical.TmuxBody, allowed: []string{"internal tmux pane-rename"}, forbidden: []string{aiPaneTopicOption, aiPaneTopicManualOption, "select-pane -T", "pane_title", "set-option"}},
 		{name: "AI topic set", commands: recordedAICommandsText(cmdRecorder(topicSet).commands), allowed: []string{aiPaneTopicOption, aiPaneTopicManualOption}, forbidden: []string{paneLabelOption, "select-pane -T"}},
 		{name: "AI topic clear", commands: recordedAICommandsText(cmdRecorder(topicClear).commands), allowed: []string{aiPaneTopicOption, aiPaneTopicManualOption}, forbidden: []string{paneLabelOption, "select-pane -T"}},
 	}

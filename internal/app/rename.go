@@ -118,27 +118,7 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 	}
 	uid := resolution.Matches[0].UID
 
-	if err := c.store.mutate(kind, []string{uid}, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		switch kind {
-		case coremetadata.KindProject:
-			_, err := mutator.RenameProject(working, uid, *name)
-			return err
-		case coremetadata.KindWindow:
-			_, err := mutator.RenameWindow(working, uid, *name)
-			return err
-		case coremetadata.KindPane:
-			_, err := mutator.RenamePane(working, uid, *name)
-			return err
-		case coremetadata.KindAgent:
-			_, err := mutator.RenameAgent(working, uid, *name)
-			return err
-		default:
-			return fmt.Errorf("%s: unsupported kind %q", spelling, kind)
-		}
-	}); err != nil {
-		return err
-	}
-	if err := c.mirrorRenamed(context.Background(), kind, uid, *name); err != nil {
+	if _, err := c.commitRename(context.Background(), kind, uid, *name, nil); err != nil {
 		return err
 	}
 
@@ -163,6 +143,74 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 		return nil
 	}
 	return receipt.WriteHuman(stdout)
+}
+
+// renameOriginGuard re-proves, under the Registry lock of one rename, the
+// runtime evidence a caller resolved its target from. It reads the working
+// Registry and never writes; a refusal leaves the Registry untouched.
+type renameOriginGuard func(context.Context, coremetadata.Registry, coremetadata.Mutator) error
+
+// commitRename is the one owner of a Registry rename. Public `rename <kind>`
+// and the generated Window and Pane rename routes (`internal tmux
+// window-rename` and `internal tmux pane-rename`) all commit through it, so the
+// typed Mutator rename, its same-scope conflict refusal, and the exact
+// stable-name mirror that follows it are one path whether the name came from a
+// typed command or a key press.
+//
+// guard, when set, runs inside the Registry transaction before the Mutator.
+// committed reports whether the Registry transaction committed: false means
+// nothing was written anywhere, true with an error means the Registry holds the
+// new name and only its live mirror failed to converge.
+func (c *renameCommand) commitRename(ctx context.Context, kind coremetadata.Kind, uid, name string, guard renameOriginGuard) (committed bool, err error) {
+	if err := c.store.mutate(kind, []string{uid}, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if guard != nil {
+			if err := guard(ctx, working.Clone(), mutator); err != nil {
+				return err
+			}
+		}
+		switch kind {
+		case coremetadata.KindProject:
+			_, err := mutator.RenameProject(working, uid, name)
+			return err
+		case coremetadata.KindWindow:
+			_, err := mutator.RenameWindow(working, uid, name)
+			return err
+		case coremetadata.KindPane:
+			_, err := mutator.RenamePane(working, uid, name)
+			return err
+		case coremetadata.KindAgent:
+			_, err := mutator.RenameAgent(working, uid, name)
+			return err
+		default:
+			return fmt.Errorf("rename %s: unsupported kind %q", strings.ToLower(string(kind)), kind)
+		}
+	}); err != nil {
+		return false, err
+	}
+	return true, c.mirrorRenamed(ctx, kind, uid, name)
+}
+
+// generatedRenameName applies the input rules of the generated rename routes to
+// one raw prompt response.
+//
+// A blank or whitespace-only response is no request at all: requested is false
+// and the caller writes nothing, not even a cleared label. Any other response
+// must already be a valid name byte for byte. It is never trimmed or repaired
+// into a different name behind the operator's back; the refusal carries the
+// validation reason and, when one exists, the usable spelling SanitizeNameBase
+// derives from the response, so the operator can type that instead.
+func generatedRenameName(response string) (name string, requested bool, err error) {
+	if strings.TrimSpace(response) == "" {
+		return "", false, nil
+	}
+	if err := coremetadata.ValidateName(response); err != nil {
+		reason := strings.TrimSpace(err.Error())
+		if usable := coremetadata.SanitizeNameBase(response); usable != "" {
+			return "", true, usageError(fmt.Sprintf("usable name %q; %s; nothing was changed", usable, reason))
+		}
+		return "", true, usageError(reason + "; nothing was changed")
+	}
+	return response, true, nil
 }
 
 // renameReceipt projects one committed rename.

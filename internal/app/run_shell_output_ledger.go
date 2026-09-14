@@ -124,7 +124,13 @@ func runShellOutputLedger() []runShellProducer {
 			ID: "catalog.window-rename", Surface: runShellSurfaceKeybinding,
 			Match: "internal tmux window-rename", Channel: runShellChannelExactClientMessage,
 			Route: interactiveRouteWindowRename,
-			Note:  "runs inside command-prompt; the rename projection is consumed in-process",
+			Note:  "runs inside command-prompt; the Registry rename projection is consumed in-process and the client sees one bounded line",
+		},
+		{
+			ID: "catalog.pane-rename", Surface: runShellSurfaceKeybinding,
+			Match: "internal tmux pane-rename", Channel: runShellChannelExactClientMessage,
+			Route: interactiveRoutePaneRename,
+			Note:  "runs inside command-prompt; the Registry rename projection is consumed in-process and the client sees one bounded line",
 		},
 		{
 			ID: "catalog.delete-confirm", Surface: runShellSurfaceKeybinding,

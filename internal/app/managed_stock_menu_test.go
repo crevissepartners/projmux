@@ -291,7 +291,7 @@ func managedMenuItemCommands(bin string) (window, pane map[string]string) {
 	window = map[string]string{
 		// No delete-confirm: selecting Kill in a menu is the confirmation.
 		"Kill":       `if-shell -F "#{@projmux_window_uid}" { ` + windowIntent("window-delete --client #{client_tty} --anchor #{pane_id}") + ` } { kill-window }`,
-		"Rename":     `command-prompt -I "#{window_name}" "run-shell \"TMUX_PANE=##{pane_id} PROJMUX_POPUP_TARGET_CLIENT=##{client_tty} ` + quoted + ` internal tmux window-rename --client ##{client_tty} --anchor ##{pane_id} -- '%%'\""`,
+		"Rename":     `command-prompt -I "#{window_name}" "run-shell \"TMUX_PANE=##{pane_id} PROJMUX_POPUP_TARGET_CLIENT=##{client_tty} ` + quoted + ` internal tmux window-rename --client ##{client_tty} --anchor ##{pane_id} --name-stdin <<'PROJMUX_RENAME_RESPONSE'\nname=%%%\nPROJMUX_RENAME_RESPONSE\""`,
 		"New At End": windowIntent("window-create --client #{client_tty} --anchor #{pane_id}"),
 	}
 	pane = map[string]string{

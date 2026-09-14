@@ -733,8 +733,8 @@ func TestCanonicalWindowRenameAlreadyMatchingRefusesRecycledParentBeforeWrite(t 
 
 	err := fx.create.renameWindowFromIntent(windowRenameIntent{
 		anchorPaneID: fx.originID,
-		displayName:  "renamed",
-	}, ioDiscard{}, ioDiscard{})
+		response:     "renamed",
+	}, canonicalFixtureRenamer(fx), ioDiscard{}, ioDiscard{})
 	if err == nil || !strings.Contains(err.Error(), "identity parent drifted") {
 		t.Fatalf("canonical rename recycled parent error = %v", err)
 	}

@@ -195,7 +195,8 @@ Optional direct keys can be added for actions such as:
 | `ai-split-right` | Open a new direct AI split to the right |
 | `ai-split-down` | Open a new direct AI split below |
 | `new-window` | New tmux window in the current pane directory |
-| `rename-window` | Rename the current tmux window |
+| `rename-window` | Rename the current Window in the Registry; see [Rename keys](#rename-keys) |
+| `rename-pane-label` | Rename the current Pane in the Registry; see [Rename keys](#rename-keys) |
 
 `AISplitPickerToggle` is the `Alt-7` popup picker toggle. It opens or closes
 the picker UI where the user chooses the AI split mode. It is separate from
@@ -296,6 +297,44 @@ write; the projmux process never issues `kill-pane` or `kill-window`.
 A mouse menu acts on what was clicked, not on what is focused: Kill, Rename, and
 New At End in the status-line Window menu act on the clicked Window, and the
 Rename prompt starts with that Window's name.
+
+## Rename keys
+
+`rename-window` (`window.rename`) and the Window menu Rename item run
+`internal tmux window-rename`; `rename-pane-label` (`pane.rename`) runs
+`internal tmux pane-rename`. Neither has a default key. Both are Registry
+renames through the same owner as `projmux rename window` and
+`projmux rename pane`: the Pane the key was pressed in, or the menu target,
+resolves to its exact Registry Window or Pane, its `metadata.name` changes, and
+its mirror converges with it. A Window rename writes `@projmux_window_name`
+and, after the Registry commit, the tmux `window_name`; a Pane rename writes
+`@projmux_pane_label`. A Continue that rebuilds the session from the Registry
+therefore keeps the new name, including for the first Window of a session.
+
+The prompt response is used exactly as typed:
+
+- An empty or whitespace-only response changes nothing, not even the label,
+  and the client is told nothing was changed.
+- A response that is not a valid name, such as one with a space, leading or
+  trailing whitespace, or a character like `'`, `"`, `$`, `;`, `%`, or `#`, is
+  refused with the reason and the usable spelling projmux would accept, for
+  example `a-b` for `a b`. Nothing is written.
+- A name already used by another Window of the same Project or ControlSession,
+  or by another Pane of the same root, is refused. No suffix is added.
+- A Pane with no Registry identity, such as one on a server projmux does not
+  manage, is refused with no write.
+- A name a launcher chose, such as an Agent Pane's, renames like any other.
+
+Every result is one line on the client that pressed the key. The response
+reaches projmux on stdin inside a quoted here-document, so no shell parses it.
+tmux still format-expands the `run-shell` command before any shell runs, as it
+does at its own `:` prompt: a `#{...}` sequence in a response is substituted and
+a `#(...)` sequence is run by tmux as a format job. Names cannot contain `#`, so
+a response that still holds one is refused.
+
+`internal tmux rename-pane <pane> <label>` is a separate label-only helper with
+no generated binding. It writes `@projmux_pane_label` without touching the
+Registry, so the next Continue restores the Registry name.
 
 The standalone `~/.tmux.conf` snippet keeps tmux's stock `prefix <`, `prefix >`,
 `MouseDown3Status`, `M-MouseDown3Status`, and `M-MouseDown3Pane` menus; it

@@ -2046,6 +2046,8 @@ projmux internal tmux popup-sessions
 projmux internal tmux popup-preview <session>
 projmux internal tmux rebalance-panes
 projmux internal tmux rename-pane <pane> <label>
+projmux internal tmux window-rename --client <key> --anchor <%pane> (--name-stdin | -- <name>)
+projmux internal tmux pane-rename   --client <key> --anchor <%pane> (--name-stdin | -- <name>)
 projmux internal tmux print-config     [--bin <path>]
 projmux internal tmux print-app-config [--bin <path>]
 projmux internal tmux install     [--bin <path>] [--config <path>] [--include <path>]
@@ -2059,10 +2061,18 @@ accepted by `popup-toggle` mirror the historical sessionizer surface:
 `notify-sidebar`, `recent-windows`, `resource-inspector`, `ai-split-picker-right`,
 `ai-split-picker-down`, `ai-split-resume-right`, `ai-split-resume-down`,
 `ai-split-settings`.
-`rename-pane` sets only the pane-scoped user label
-`@projmux_pane_label`; an empty label clears the option. It does not change the
-raw tmux pane title, AI topic, or AI topic manual-ownership flag. The canonical
-keybinding action id is `rename-pane-label`. The retired `rename-pane-topic`
+`rename-pane` is a label-only helper: it sets only the pane-scoped
+`@projmux_pane_label`, and an empty label clears the option. It does not change
+the Registry Pane name, so the next Continue restores that name, and it does not
+change the raw tmux pane title, AI topic, or AI topic manual-ownership flag. No
+generated binding uses it.
+`window-rename` and `pane-rename` are the generated rename routes behind the
+`rename-window` and `rename-pane-label` keybinding actions and the Window menu
+Rename item. They resolve the anchor Pane to its exact Registry Window or Pane
+and rename it through the same owner as `projmux rename window|pane`, then
+report one line to the client. The generated bindings pass the prompt response
+with `--name-stdin` inside a quoted here-document; see
+[keybindings.md](keybindings.md#rename-keys) for the input rules. The retired `rename-pane-topic`
 keymap action is no longer accepted: replace a stale
 `[bindings.rename-pane-topic]` table with `[bindings.rename-pane-label]`.
 The `projmux agent topic set/clear` commands keep

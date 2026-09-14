@@ -72,6 +72,7 @@ type paneMenuCreateFunc func(agentPaneIntent, io.Writer, io.Writer) error
 type paneMenuDeleteFunc func(string, io.Writer, io.Writer) error
 type windowCreateIntentFunc func(windowCreateIntent, io.Writer, io.Writer) error
 type windowRenameIntentFunc func(windowRenameIntent, io.Writer, io.Writer) error
+type paneRenameIntentFunc func(paneRenameIntent, io.Writer, io.Writer) error
 
 type tmuxCommand struct {
 	diagnostics             *diagnostics.LifecycleRecorder
@@ -114,6 +115,11 @@ type tmuxCommand struct {
 	paneMenuDelete paneMenuDeleteFunc
 	windowCreate   windowCreateIntentFunc
 	windowRename   windowRenameIntentFunc
+	paneRename     paneRenameIntentFunc
+	// stdin carries the raw prompt response of a generated rename binding. The
+	// binding hands it over in a quoted here-document so no shell parses it;
+	// see generatedRenameResponseHeredoc.
+	stdin io.Reader
 	// windowDelete is the canonical `delete window` adapter behind a confirmed
 	// managed `prefix &`. Like paneMenuDelete it is a field only so a test can
 	// stop before the real Registry and tmux mutations.
@@ -145,8 +151,12 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 			return newCreateCommand().createWindowFromIntent(intent, stdout, stderr)
 		},
 		windowRename: func(intent windowRenameIntent, stdout, stderr io.Writer) error {
-			return newCreateCommand().renameWindowFromIntent(intent, stdout, stderr)
+			return newCreateCommand().renameWindowFromIntent(intent, newRenameCommand(), stdout, stderr)
 		},
+		paneRename: func(intent paneRenameIntent, stdout, stderr io.Writer) error {
+			return newCreateCommand().renamePaneFromIntent(intent, newRenameCommand(), stdout, stderr)
+		},
+		stdin:        os.Stdin,
 		windowDelete: deleteWindowThroughCanonicalRoute,
 	}
 	if len(recorders) > 0 {
@@ -185,6 +195,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runWindowCreateIntent(fs.Args()[1:], stdout, stderr)
 	case "window-rename":
 		return c.runWindowRenameIntent(fs.Args()[1:], stdout, stderr)
+	case "pane-rename":
+		return c.runPaneRenameIntent(fs.Args()[1:], stdout, stderr)
 	case "window-delete":
 		return c.runWindowDeleteIntent(fs.Args()[1:], stdout, stderr)
 	case "delete-confirm":
@@ -561,6 +573,10 @@ const (
 	paneMenuCreatedMessage = "Created Pane"
 	windowCreatedMessage   = "Created Window"
 	windowRenamedMessage   = "Renamed Window: "
+	paneRenamedMessage     = "Renamed Pane: "
+	// renameUnchangedMessageSuffix ends the client line for a blank or
+	// whitespace-only rename response, which is no request: nothing is written.
+	renameUnchangedMessageSuffix = ": no name was entered; nothing was changed"
 )
 
 // runPaneMenuAction is the managed boundary behind MouseDown3Pane. The menu
@@ -654,24 +670,119 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 	return c.finishWindowIntent(*client, "Create Window", windowCreatedMessage, actionErr.String(), err)
 }
 
+// runWindowRenameIntent is the generated Window rename: the catalog key and the
+// Window menu Rename item. The raw prompt response reaches the canonical intent
+// unmodified; generatedRenameName owns every input rule, and a blank response
+// is reported without reaching the Registry or tmux at all.
 func (c *tmuxCommand) runWindowRenameIntent(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("tmux window-rename", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	client := fs.String("client", "", "exact tmux client that receives the action result")
-	anchor := fs.String("anchor", "", "exact anchor Pane")
-	if err := fs.Parse(args); err != nil {
+	const label = "Rename Window"
+	parsed, err := parseRenameIntentArgs("window-rename", args, stderr)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 1 || strings.TrimSpace(*client) == "" || exactTmuxHandle(*anchor, "%") == "" || strings.TrimSpace(fs.Arg(0)) == "" {
-		return errors.New("tmux window-rename requires --client <key> --anchor <%pane> -- <name>")
+	response, err := parsed.readResponse(c.stdin)
+	if err != nil {
+		return c.finishWindowIntent(parsed.client, label, "", "", err)
+	}
+	if _, requested, _ := generatedRenameName(response); !requested {
+		return c.finishWindowIntent(parsed.client, label, "projmux "+label+renameUnchangedMessageSuffix, "", nil)
 	}
 	if c.windowRename == nil {
 		return errors.New("canonical Window rename route is not configured")
 	}
 	var actionOut, actionErr bytes.Buffer
-	name := strings.TrimSpace(fs.Arg(0))
-	err := c.windowRename(windowRenameIntent{anchorPaneID: *anchor, targetClient: *client, displayName: fs.Arg(0)}, &actionOut, &actionErr)
-	return c.finishWindowIntent(*client, "Rename Window", windowRenamedMessage+name, actionErr.String(), err)
+	err = c.windowRename(windowRenameIntent{anchorPaneID: parsed.anchor, targetClient: parsed.client, response: response}, &actionOut, &actionErr)
+	return c.finishWindowIntent(parsed.client, label, windowRenamedMessage+response, actionErr.String(), err)
+}
+
+// runPaneRenameIntent is the generated Pane rename key, symmetric to
+// runWindowRenameIntent: the same argv, the same input rules, and the same
+// one bounded line on the exact client.
+func (c *tmuxCommand) runPaneRenameIntent(args []string, stdout, stderr io.Writer) error {
+	const label = "Rename Pane"
+	parsed, err := parseRenameIntentArgs("pane-rename", args, stderr)
+	if err != nil {
+		return err
+	}
+	response, err := parsed.readResponse(c.stdin)
+	if err != nil {
+		return c.finishWindowIntent(parsed.client, label, "", "", err)
+	}
+	if _, requested, _ := generatedRenameName(response); !requested {
+		return c.finishWindowIntent(parsed.client, label, "projmux "+label+renameUnchangedMessageSuffix, "", nil)
+	}
+	if c.paneRename == nil {
+		return errors.New("canonical Pane rename route is not configured")
+	}
+	var actionOut, actionErr bytes.Buffer
+	err = c.paneRename(paneRenameIntent{anchorPaneID: parsed.anchor, targetClient: parsed.client, response: response}, &actionOut, &actionErr)
+	return c.finishWindowIntent(parsed.client, label, paneRenamedMessage+response, actionErr.String(), err)
+}
+
+// renameIntentArgs is one parsed generated rename invocation.
+type renameIntentArgs struct {
+	client     string
+	anchor     string
+	fromStdin  bool
+	positional string
+}
+
+// parseRenameIntentArgs reads `--client <key> --anchor <%pane>` plus exactly
+// one response channel. Generated bindings use --name-stdin; a scripted
+// producer may pass the response as the single argument after `--`.
+func parseRenameIntentArgs(route string, args []string, stderr io.Writer) (renameIntentArgs, error) {
+	fs := flag.NewFlagSet("tmux "+route, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	client := fs.String("client", "", "exact tmux client that receives the action result")
+	anchor := fs.String("anchor", "", "exact anchor Pane")
+	fromStdin := fs.Bool(strings.TrimPrefix(generatedRenameStdinFlag, "--"), false, "read the raw prompt response from stdin")
+	if err := fs.Parse(args); err != nil {
+		return renameIntentArgs{}, err
+	}
+	parsed := renameIntentArgs{
+		client:    strings.TrimSpace(*client),
+		anchor:    exactTmuxHandle(strings.TrimSpace(*anchor), "%"),
+		fromStdin: *fromStdin,
+	}
+	wantArgs := 1
+	if parsed.fromStdin {
+		wantArgs = 0
+	}
+	if parsed.client == "" || parsed.anchor == "" || fs.NArg() != wantArgs {
+		return renameIntentArgs{}, fmt.Errorf("tmux %s requires --client <key> --anchor <%%pane> and either %s or -- <name>", route, generatedRenameStdinFlag)
+	}
+	if !parsed.fromStdin {
+		parsed.positional = fs.Arg(0)
+	}
+	return parsed, nil
+}
+
+// maxGeneratedRenameResponse bounds the stdin read. It is far above any usable
+// name, so an over-long response still reaches the name rules and is refused
+// with its usable spelling instead of as a transport failure.
+const maxGeneratedRenameResponse = 64 << 10
+
+// readResponse returns the raw prompt response. On stdin it must arrive as the
+// here-document body the generated binding writes: the sentinel, the
+// response, and one newline. The sentinel is what keeps a response equal to
+// the here-document delimiter from ending the document early.
+func (a renameIntentArgs) readResponse(stdin io.Reader) (string, error) {
+	if !a.fromStdin {
+		return a.positional, nil
+	}
+	if stdin == nil {
+		return "", errors.New("the rename response was not delivered: stdin is not configured; nothing was changed")
+	}
+	raw, err := io.ReadAll(io.LimitReader(stdin, maxGeneratedRenameResponse+1))
+	if err != nil {
+		return "", fmt.Errorf("read the rename response: %v; nothing was changed", err)
+	}
+	body, sentinel := strings.CutPrefix(string(raw), generatedRenameResponseSentinel)
+	response, newline := strings.CutSuffix(body, "\n")
+	if len(raw) > maxGeneratedRenameResponse || !sentinel || !newline {
+		return "", errors.New("the rename response was not delivered intact; nothing was changed")
+	}
+	return response, nil
 }
 
 // finishWindowIntent converges one Window intent onto the exact client that ran
@@ -830,7 +941,7 @@ func (c *tmuxCommand) displayPaneMenuMessage(client, message string) error {
 		return fmt.Errorf("%s; display the pane-menu result: tmux runner is not configured", message)
 	}
 	message = strings.Join(strings.Fields(message), " ")
-	if _, err := c.runner.Run(context.Background(), "tmux", "display-message", "-c", client, "-d", "10000", message); err != nil {
+	if _, err := c.runner.Run(context.Background(), "tmux", "display-message", "-c", client, "-d", "10000", tmuxLiteralMessage(message)); err != nil {
 		return fmt.Errorf("%s; display the pane-menu result to client %q: %w", message, client, err)
 	}
 	return nil

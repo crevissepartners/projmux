@@ -2004,9 +2004,11 @@ Selector and the implicit active target:
 
 Projmux keeps visible naming separate from source metadata:
 
-- **User pane label** is persistent pane-scoped metadata stored in
-  `@projmux_pane_label`. The Rename Pane action sets or clears only this field;
-  it does not write the AI topic or raw pane title.
+- **User pane label** is pane-scoped metadata stored in `@projmux_pane_label`,
+  the live mirror of the Pane's Registry `metadata.name`. The Rename Pane action
+  renames the Registry Pane through the same owner as `rename pane`, which
+  writes this mirror; an empty response changes nothing, and the action never
+  writes the AI topic or raw pane title.
 - **Pane border label** is the primary visible pane name. In the app tmux
   config and native previews it resolves to user pane label first, agent AI
   topic second, known interactive shell command (`zsh`, `bash`, `fish`, `sh`,

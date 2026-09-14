@@ -633,8 +633,9 @@ if stale_ct="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t 2>/dev
   exit 1
 fi
 mp_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-p)"
-if [[ "$mp_binding" != *"command-prompt"* || "$mp_binding" != *"pane label:"* || "$mp_binding" != *"@projmux_pane_label"* ]]; then
-  echo "expected current M-p pane-label binding after apply, got: $mp_binding" >&2
+if [[ "$mp_binding" != *"command-prompt"* || "$mp_binding" != *"pane label:"* || "$mp_binding" != *"@projmux_pane_label"* ||
+  "$mp_binding" != *"internal tmux pane-rename --client #{client_tty} --anchor #{pane_id} --name-stdin"* || "$mp_binding" == *"set-option"* ]]; then
+  echo "expected current M-p Pane rename binding on the Registry rename route after apply, got: $mp_binding" >&2
   exit 1
 fi
 unrelated_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-F12)"
@@ -762,7 +763,7 @@ done
 # and the else branch is tmux's stock kill item, run by tmux. Rename, New At End
 # and both Splits reach typed intents; Respawn and New After are gone.
 menu_window_kill="Kill X { if-shell -F \"#{@projmux_window_uid}\" { run-shell \"TMUX_PANE=#{pane_id} PROJMUX_POPUP_TARGET_CLIENT=#{client_tty} '$bin' internal tmux window-delete --client #{client_tty} --anchor #{pane_id}\" } { kill-window } }"
-menu_window_rename="Rename n { command-prompt -I \"#{window_name}\" \"run-shell \\\"TMUX_PANE=##{pane_id} PROJMUX_POPUP_TARGET_CLIENT=##{client_tty} '$bin' internal tmux window-rename --client ##{client_tty} --anchor ##{pane_id} -- '%%'\\\"\" }"
+menu_window_rename="Rename n { command-prompt -I \"#{window_name}\" \"run-shell \\\"TMUX_PANE=##{pane_id} PROJMUX_POPUP_TARGET_CLIENT=##{client_tty} '$bin' internal tmux window-rename --client ##{client_tty} --anchor ##{pane_id} --name-stdin <<'PROJMUX_RENAME_RESPONSE'\\nname=%%%\\nPROJMUX_RENAME_RESPONSE\\\"\" }"
 menu_window_create="\"New At End\" W { run-shell \"TMUX_PANE=#{pane_id} PROJMUX_POPUP_TARGET_CLIENT=#{client_tty} '$bin' internal tmux window-create --client #{client_tty} --anchor #{pane_id}\" }"
 menu_pane_kill="Kill X { if-shell -F \"#{@projmux_pane_uid}\" { run-shell \"'$bin' internal tmux pane-menu --client #{client_tty} kill #{pane_id}\" } { kill-pane } }"
 menu_pane_split_right="\"Horizontal Split\" h { run-shell \"'$bin' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}\" }"
@@ -1432,6 +1433,58 @@ if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-m
   exit 1
 fi
 cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
+# Generated rename routes. The Window key/menu route and the Pane key route run
+# with an explicit client and anchor the way the generated bindings run them,
+# the prompt response in a quoted here-document on stdin, and must rename the
+# Registry rather than only tmux: the Continue below rebuilds the session from
+# the Registry, which is where a tmux-only rename used to be lost.
+session_state_first_window="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-windows -t "=$session_state_name" \
+  -F '#{window_id}|#{@projmux_window_uid}' | sed -n '1p')"
+IFS='|' read -r session_state_first_window_id session_state_rename_window_uid <<<"$session_state_first_window"
+session_state_first_pane="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-panes -t "$session_state_first_window_id" \
+  -F '#{pane_id}|#{@projmux_pane_uid}' | sed -n '1p')"
+IFS='|' read -r session_state_rename_anchor session_state_rename_pane_uid <<<"$session_state_first_pane"
+if [[ ! "$session_state_rename_anchor" =~ ^%[0-9]+$ || -z "$session_state_rename_window_uid" || -z "$session_state_rename_pane_uid" ]]; then
+  echo "Session State first Window has no managed anchor to rename: window=$session_state_first_window pane=$session_state_first_pane" >&2
+  exit 1
+fi
+session_state_generated_rename() {
+  local route="$1" response="$2"
+  env -u TMUX -u TMUX_PANE tmux -S "$PROJMUX_SMOKE_TMUX_ACTUAL" run-shell -t "$session_state_rename_anchor" \
+    "TMUX_PANE='$session_state_rename_anchor' PROJMUX_POPUP_TARGET_CLIENT='$control_client' '$bin' internal tmux $route --client '$control_client' --anchor '$session_state_rename_anchor' --name-stdin <<'PROJMUX_RENAME_RESPONSE'
+name=$response
+PROJMUX_RENAME_RESPONSE"
+}
+session_state_registry_names() {
+  python3 - "$XDG_STATE_HOME/projmux/metadata/registry.json" "$session_state_rename_window_uid" "$session_state_rename_pane_uid" <<'GENERATED_RENAME_NAMES'
+import json
+import pathlib
+import sys
+
+registry = json.loads(pathlib.Path(sys.argv[1]).read_text())
+windows = [window["metadata"]["name"] for window in registry.get("windows", [])
+           if window["metadata"]["uid"] == sys.argv[2]]
+panes = [pane["metadata"]["name"] for pane in registry.get("panes", [])
+         if pane["metadata"]["uid"] == sys.argv[3]]
+print((windows[0] if len(windows) == 1 else "") + "|" + (panes[0] if len(panes) == 1 else ""))
+GENERATED_RENAME_NAMES
+}
+session_state_generated_rename window-rename smoke-renamed-window
+session_state_generated_rename pane-rename smoke-renamed-pane
+if [[ "$(session_state_registry_names)" != "smoke-renamed-window|smoke-renamed-pane" ]]; then
+  echo "generated rename routes did not rename the Registry: $(session_state_registry_names)" >&2
+  env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-messages -t "$control_client" >&2 || true
+  exit 1
+fi
+# A quote-breaking response reaches projmux whole and is refused: no shell
+# syntax error, no Registry write, no tmux write.
+session_state_generated_rename window-rename "x'y"
+session_state_generated_rename pane-rename "x'y"
+if [[ "$(session_state_registry_names)" != "smoke-renamed-window|smoke-renamed-pane" ]] ||
+  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t "$session_state_rename_anchor" '#{window_name}|#{@projmux_window_name}|#{@projmux_pane_label}')" != "smoke-renamed-window|smoke-renamed-window|smoke-renamed-pane" ]]; then
+  echo "a refused generated rename changed a name" >&2
+  exit 1
+fi
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
 session_state_continue_anchor="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -c "$control_client" '#{pane_id}')"
@@ -1444,6 +1497,16 @@ if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-m
   exit 1
 fi
 assert_first_window_registry_name "$session_state_name" "Session State Continue"
+session_state_continued_window="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-windows -t "=$session_state_name" \
+  -F '#{@projmux_window_uid}|#{window_name}|#{@projmux_window_name}' | sed -n '1p')"
+session_state_continued_label="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-panes -s -t "=$session_state_name" \
+  -F '#{@projmux_pane_uid}|#{@projmux_pane_label}' | awk -F'|' -v uid="$session_state_rename_pane_uid" '$1 == uid { print $2 }')"
+if [[ "$(session_state_registry_names)" != "smoke-renamed-window|smoke-renamed-pane" ]] ||
+  [[ "$session_state_continued_window" != "$session_state_rename_window_uid|smoke-renamed-window|smoke-renamed-window" ]] ||
+  [[ "$session_state_continued_label" != "smoke-renamed-pane" ]]; then
+  echo "generated renames did not survive Continue: registry=$(session_state_registry_names) window=$session_state_continued_window label=$session_state_continued_label" >&2
+  exit 1
+fi
 cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
 

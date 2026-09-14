@@ -3249,7 +3249,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../integrations/tmux/client.go:KillSession:kill-session":                         "attach.ephemeral-prune",
 		"tmux.go:runAutosaveSessionState:set-option":                                      "sessionstate.autosave-marker",
 		"tmux.go:runRebalancePanes:select-layout":                                         "pane.rebalance",
-		"tmux.go:runRenamePane:set-option":                                                "catalog.pane.rename",
+		"tmux.go:runRenamePane:set-option":                                                "internal.rename-pane-label",
 		"../integrations/tmux/client.go:createDetachedSession:helper:NewEphemeralSession": "attach.ephemeral-create",
 		"attach.go:executeAutoAttachPlan:helper:KillSession":                              "attach.ephemeral-prune",
 		"prune.go:runEphemeral:helper:KillSession":                                        "standalone.prune",

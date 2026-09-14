@@ -155,7 +155,9 @@ func TestInteractiveRunShellGuardConvergesFailureOnTheExactClient(t *testing.T) 
 	}
 	want := recordedTmuxCall{name: "tmux", args: []string{
 		"display-message", "-c", "/dev/pts/3", "-d", "10000",
-		"projmux pane menu action failed: create pane refused: anchor %4 left the managed enclosure",
+		// tmux expands a display-message argument, so the literal `%4` is
+		// sent doubled; see tmuxLiteralMessage.
+		"projmux pane menu action failed: create pane refused: anchor %%4 left the managed enclosure",
 	}}
 	if !reflect.DeepEqual(runner.calls, []recordedTmuxCall{want}) {
 		t.Fatalf("tmux calls = %#v, want one bounded exact-client message %#v", runner.calls, want)
@@ -242,7 +244,7 @@ func TestWindowIntentsReportOneBoundedLineToTheExactClient(t *testing.T) {
 					return nil
 				},
 				windowRename: func(intent windowRenameIntent, stdout, _ io.Writer) error {
-					_, _ = fmt.Fprintf(stdout, "renamed: window/uid=win-3 -> %s\n", intent.displayName)
+					_, _ = fmt.Fprintf(stdout, "renamed: window/uid=win-3 -> %s\n", intent.response)
 					return nil
 				},
 			}

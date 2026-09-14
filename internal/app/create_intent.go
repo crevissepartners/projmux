@@ -43,10 +43,20 @@ type windowCreateIntent struct {
 	targetClient string
 }
 
+// windowRenameIntent and paneRenameIntent are the generated rename surfaces'
+// complete input: the exact anchor Pane the key or menu item targeted, the
+// client that sees the result, and the raw prompt response. The response is
+// deliberately unvalidated here; generatedRenameName owns the input rules.
 type windowRenameIntent struct {
 	anchorPaneID string
 	targetClient string
-	displayName  string
+	response     string
+}
+
+type paneRenameIntent struct {
+	anchorPaneID string
+	targetClient string
+	response     string
 }
 
 func (c *createCommand) projectCanonicalOriginWindowBinding(
@@ -137,17 +147,21 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 	return c.writeResults(stdout, canonicalCreateWindow, cli.OutputModeDefault, coremetadata.KindWindow, []createResult{result})
 }
 
-func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, stdout, stderr io.Writer) error {
-	anchor, displayName := exactTmuxHandle(strings.TrimSpace(intent.anchorPaneID), "%"), strings.TrimSpace(intent.displayName)
-	if anchor == "" || displayName == "" {
-		return usageError("canonical Window rename intent requires an exact anchor Pane and non-empty name; nothing was changed")
-	}
-	scope, err := c.resolveCanonicalIntentScope(agentPaneIntent{
-		producer: canonicalProducerWindowRename, anchorPaneID: anchor, targetClient: intent.targetClient,
-	})
+// renameWindowFromIntent is the generated Window rename (the catalog key and
+// the Window menu Rename item). The Registry name is written by the same
+// commitRename that owns public `rename window`, which also converges the
+// `@projmux_window_name` mirror; only after that commit does this route rename
+// the tmux display `window_name`, through the guarded exact-containment
+// mutation, so the three agree live and a Continue that rebuilds the session
+// from the Registry restores the new name. A refusal before the commit writes
+// nothing to the Registry or tmux.
+func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, renamer *renameCommand, stdout, stderr io.Writer) error {
+	name, scope, err := c.commitRenameFromIntent(coremetadata.KindWindow, canonicalProducerWindowRename,
+		intent.anchorPaneID, intent.targetClient, intent.response, renamer)
 	if err != nil {
-		return visibleCanonicalCreateError(err)
+		return err
 	}
+	displayName := name
 	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, _ string, _ *runtimeLedger) error {
 		_, ok := working.Window(scope.windowUID)
 		if !ok {
@@ -195,10 +209,81 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, stdout
 		return nil
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
-		return visibleCanonicalCreateError(err)
+		return visibleCanonicalCreateError(fmt.Errorf(
+			"rename window %q committed Registry name %q but its tmux display name did not change: %w", scope.windowUID, name, err))
 	}
 	_, err = fmt.Fprintf(stdout, "renamed: window/%s -> %s\n", scope.windowUID, displayName)
 	return err
+}
+
+// renamePaneFromIntent is the generated Pane rename key. It resolves the exact
+// anchor Pane to its Registry Pane UID with the same owner-chain and runtime
+// session proof as the Window intent, then commits through commitRename, which
+// writes the Registry name and its `@projmux_pane_label` mirror together. A Pane
+// whose name a launcher chose, an Agent's Pane included, renames like any other.
+func (c *createCommand) renamePaneFromIntent(intent paneRenameIntent, renamer *renameCommand, stdout, stderr io.Writer) error {
+	name, scope, err := c.commitRenameFromIntent(coremetadata.KindPane, canonicalProducerPaneRename,
+		intent.anchorPaneID, intent.targetClient, intent.response, renamer)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "renamed: pane/%s -> %s\n", scope.paneUID, name)
+	return err
+}
+
+// commitRenameFromIntent is the shared front half of both generated rename
+// routes: input rules, exact origin resolution, then the one Registry rename
+// owner with the origin re-proved under its lock. It adds no rename logic of its
+// own. An anchor that resolves to no exact managed Registry identity is refused
+// here with zero writes.
+func (c *createCommand) commitRenameFromIntent(kind coremetadata.Kind, producer canonicalCreateProducer, anchorPaneID, targetClient, response string, renamer *renameCommand) (string, canonicalIntentScope, error) {
+	label := strings.ToLower(string(kind))
+	anchor := exactTmuxHandle(strings.TrimSpace(anchorPaneID), "%")
+	if anchor == "" {
+		return "", canonicalIntentScope{}, usageError(fmt.Sprintf("canonical %s rename intent requires an exact anchor Pane; nothing was changed", label))
+	}
+	name, requested, err := generatedRenameName(response)
+	if err != nil {
+		return "", canonicalIntentScope{}, err
+	}
+	if !requested {
+		return "", canonicalIntentScope{}, usageError(fmt.Sprintf("canonical %s rename intent requires a non-blank name; nothing was changed", label))
+	}
+	if renamer == nil {
+		return "", canonicalIntentScope{}, fmt.Errorf("canonical %s rename: the Registry rename route is not configured; nothing was changed", label)
+	}
+	scope, err := c.resolveCanonicalIntentScope(agentPaneIntent{producer: producer, anchorPaneID: anchor, targetClient: targetClient})
+	if err != nil {
+		return "", canonicalIntentScope{}, visibleCanonicalCreateError(err)
+	}
+	uid := scope.windowUID
+	if kind == coremetadata.KindPane {
+		uid = scope.paneUID
+	}
+	committed, err := renamer.commitRename(context.Background(), kind, uid, name, c.canonicalIntentRenameGuard(scope))
+	if err != nil {
+		if !committed && !strings.Contains(err.Error(), "nothing was") {
+			err = fmt.Errorf("%w; nothing was changed", err)
+		}
+		return "", canonicalIntentScope{}, visibleCanonicalCreateError(err)
+	}
+	return name, scope, nil
+}
+
+// canonicalIntentRenameGuard runs the canonical intent guards a create runs
+// before it writes against the working Registry of one rename. The origin
+// Pane, its owner chain, its runtime session and, for a ControlSession, the
+// root's identity markers must still be the ones resolved at key press.
+func (c *createCommand) canonicalIntentRenameGuard(scope canonicalIntentScope) renameOriginGuard {
+	guards := c.canonicalIntentGuards(scope)
+	return func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator) error {
+		for _, guard := range guards {
+			if _, err := guard(ctx, working, mutator, ""); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 // resolveCanonicalIntentScope resolves the exact mirrored origin chain before

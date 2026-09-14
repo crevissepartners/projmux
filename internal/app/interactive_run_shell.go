@@ -17,6 +17,7 @@ const (
 	interactiveRoutePaneMenu              = "internal tmux pane-menu"
 	interactiveRouteWindowCreate          = "internal tmux window-create"
 	interactiveRouteWindowRename          = "internal tmux window-rename"
+	interactiveRoutePaneRename            = "internal tmux pane-rename"
 	interactiveRouteWindowDelete          = "internal tmux window-delete"
 	interactiveRouteDeleteConfirm         = "internal tmux delete-confirm"
 	interactiveRoutePopupToggle           = "internal tmux popup-toggle"
@@ -55,6 +56,7 @@ func interactiveRunShellRoutes() []interactiveRunShellRoute {
 		{ID: interactiveRoutePaneMenu, Prefix: []string{"internal", "tmux", "pane-menu"}, Label: "pane menu action"},
 		{ID: interactiveRouteWindowCreate, Prefix: []string{"internal", "tmux", "window-create"}, Label: "Create Window"},
 		{ID: interactiveRouteWindowRename, Prefix: []string{"internal", "tmux", "window-rename"}, Label: "Rename Window"},
+		{ID: interactiveRoutePaneRename, Prefix: []string{"internal", "tmux", "pane-rename"}, Label: "Rename Pane"},
 		{ID: interactiveRouteWindowDelete, Prefix: []string{"internal", "tmux", "window-delete"}, Label: "Delete Window"},
 		{ID: interactiveRouteDeleteConfirm, Prefix: []string{"internal", "tmux", "delete-confirm"}, Label: "delete confirmation"},
 		{ID: interactiveRoutePopupToggle, Prefix: []string{"internal", "tmux", "popup-toggle"}, Label: "popup"},
@@ -203,8 +205,20 @@ func displayInteractiveRunShellMessage(runner tmuxRunner, client, message string
 	if runner == nil {
 		runner = inttmux.ExecRunner{}
 	}
-	_, err := runner.Run(context.Background(), "tmux", "display-message", "-c", strings.TrimSpace(client), "-d", "10000", message)
+	_, err := runner.Run(context.Background(), "tmux", "display-message", "-c", strings.TrimSpace(client), "-d", "10000", tmuxLiteralMessage(message))
 	return err
+}
+
+// tmuxLiteralMessage escapes one status message so tmux shows it as written.
+//
+// display-message expands its message as a strftime(3) format and as a tmux
+// format, so a refusal carrying `--anchor <%pane>` reached the client with the
+// `%p` replaced by a localized AM/PM marker, and a response such as
+// `#{session_name}` quoted in a rename refusal would be replaced by a session
+// name. Doubling every `%` and `#` survives both passes in either order on the
+// tmux 3.4 floor, and a message holding neither is sent byte for byte.
+func tmuxLiteralMessage(message string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(message, "%", "%%"), "#", "##")
 }
 
 // runGuardedInteractiveRoute executes one guarded invocation with the

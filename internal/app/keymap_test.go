@@ -145,11 +145,16 @@ func TestRenamePaneLabelCatalogExcludesRetiredTopicAlias(t *testing.T) {
 	}
 	// tmux invokes the body only when command-prompt confirms. Esc is therefore
 	// a native cancellation with no alternate/direct action body to run.
-	if canonical.TmuxKind != tmuxBindingCommandPrompt || len(canonical.TmuxBodyAliases) != 0 {
-		t.Fatalf("rename action prompt contract = kind %q aliases %#v, want native command-prompt with no alternate body", canonical.TmuxKind, canonical.TmuxBodyAliases)
+	// The confirmed body reaches the Registry rename route; the label changes
+	// only as that rename's mirror.
+	if canonical.TmuxKind != tmuxBindingPromptRunProjmux || len(canonical.TmuxBodyAliases) != 0 {
+		t.Fatalf("rename action prompt contract = kind %q aliases %#v, want a native command-prompt running the projmux route with no alternate body", canonical.TmuxKind, canonical.TmuxBodyAliases)
 	}
 	body := renderTmuxBindingBody("/tmp/projmux", canonical)
-	for _, want := range []string{"command-prompt", `-p "pane label:"`, `-I "#{@projmux_pane_label}"`, "set-option -p @projmux_pane_label", "set-option -p -u @projmux_pane_label"} {
+	if strings.Contains(body, "set-option") {
+		t.Fatalf("rename pane binding = %q, writes a tmux option directly instead of renaming through the Registry", body)
+	}
+	for _, want := range []string{"command-prompt", `-p "pane label:"`, `-I "#{@projmux_pane_label}"`, "internal tmux pane-rename --client #{client_tty} --anchor #{pane_id} --name-stdin"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rename pane binding = %q, want %q", body, want)
 		}

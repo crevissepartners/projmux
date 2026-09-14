@@ -333,13 +333,15 @@ retired_picker_inode="$(stat -c %i "$retired_picker_file")"
 recorder_rename_prompt() {
   tmux -L "$recorder_socket" command-prompt -b -t "$recorder_client" \
     -p "pane label:" -I '#{@projmux_pane_label}' \
-    "if-shell -F '#{==:%1,}' 'set-option -p -u @projmux_pane_label' 'set-option -p @projmux_pane_label \"%1\"'"
+    "run-shell \"TMUX_PANE=#{pane_id} PROJMUX_POPUP_TARGET_CLIENT=#{client_tty} '$bin' internal tmux pane-rename --client #{client_tty} --anchor #{pane_id} --name-stdin <<'PROJMUX_RENAME_RESPONSE'\\nname=%%%\\nPROJMUX_RENAME_RESPONSE\""
 }
 recorder_label_is() {
   [[ "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_pane_label)" == "$1" ]]
 }
-recorder_label_empty() {
-  [[ -z "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_pane_label)" ]]
+recorder_client_saw() {
+  local offset="$1"
+  local text="$2"
+  tail -c "+$((offset + 1))" "$recorder_log" | grep -aFq "$text"
 }
 assert_recorder_identity_metadata() {
   if [[ "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_ai_topic)" != "recorder AI topic" ]] ||
@@ -350,17 +352,43 @@ assert_recorder_identity_metadata() {
   fi
 }
 
-# Enter with no edits confirms the prompt's captured current-label initial value.
+# The canonical Pane rename key runs the Registry rename route. This recorder
+# Pane has no Registry identity, so every submission is refused on this client
+# with zero writes. Enter with no edits submits the label captured when the
+# prompt opened: its space is refused with the usable spelling of that captured
+# value, not of the label written after the prompt opened.
+recorder_offset="$(stat -c %s "$recorder_log")"
 recorder_rename_prompt
 tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_pane_label "initial value probe"
 printf '\r' >&9
-smoke_wait_for "restored initial pane label" recorder_label_is "existing label"
+smoke_wait_for "captured initial pane label refusal" recorder_client_saw "$recorder_offset" 'usable name "existing-label"'
+if ! recorder_label_is "initial value probe"; then
+  echo "rename-pane-label refusal wrote the label" >&2
+  exit 1
+fi
 assert_recorder_identity_metadata
 
-# Ctrl-U replaces the initial value and Enter confirms it.
+# A quote-breaking response reaches projmux whole and is refused with its usable
+# name instead of failing as a shell syntax error.
+recorder_offset="$(stat -c %s "$recorder_log")"
 recorder_rename_prompt
-printf '\025confirmed label\r' >&9
-smoke_wait_for "confirmed pane label" recorder_label_is "confirmed label"
+printf '\025%s\r' "x'y" >&9
+smoke_wait_for "quote-breaking pane label refusal" recorder_client_saw "$recorder_offset" 'usable name "x-y"'
+if ! recorder_label_is "initial value probe"; then
+  echo "rename-pane-label quote refusal wrote the label" >&2
+  exit 1
+fi
+assert_recorder_identity_metadata
+
+# A valid name for a Pane with no Registry identity is refused with no write.
+recorder_offset="$(stat -c %s "$recorder_log")"
+recorder_rename_prompt
+printf '\025confirmed-label\r' >&9
+smoke_wait_for "unmanaged pane rename refusal" recorder_client_saw "$recorder_offset" "projmux Rename Pane failed"
+if ! recorder_label_is "initial value probe"; then
+  echo "rename-pane-label unmanaged refusal wrote the label" >&2
+  exit 1
+fi
 assert_recorder_identity_metadata
 
 # Native Esc cancels a staged edit and leaves the prior label unchanged.
@@ -369,16 +397,21 @@ printf '\025cancelled label\033' >&9
 # Wait past tmux's Escape disambiguation window before checking state or
 # starting the next command prompt.
 sleep 0.6
-if ! recorder_label_is "confirmed label"; then
+if ! recorder_label_is "initial value probe"; then
   echo "rename-pane-label Esc cancellation changed the label" >&2
   exit 1
 fi
 assert_recorder_identity_metadata
 
-# Empty input plus Enter clears only the label.
+# Empty input plus Enter changes nothing at all: the label is not cleared.
+recorder_offset="$(stat -c %s "$recorder_log")"
 recorder_rename_prompt
 printf '\025\r' >&9
-smoke_wait_for "cleared pane label" recorder_label_empty
+smoke_wait_for "empty pane rename report" recorder_client_saw "$recorder_offset" "nothing was changed"
+if ! recorder_label_is "initial value probe"; then
+  echo "rename-pane-label empty response changed the label" >&2
+  exit 1
+fi
 assert_recorder_identity_metadata
 
 # Settings live apply is an app-owned product surface. Move the raw command-

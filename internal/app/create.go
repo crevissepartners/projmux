@@ -376,6 +376,10 @@ const (
 	// distinct makes the generated artifact -> handler inventory bijective.
 	canonicalProducerWindowCreate canonicalCreateProducer = "window-create"
 	canonicalProducerWindowRename canonicalCreateProducer = "window-rename"
+	// canonicalProducerPaneRename is the generated Pane rename key. It shares
+	// the exact-origin resolver and creates nothing; its label keeps the
+	// artifact -> handler inventory bijective for Panes as well.
+	canonicalProducerPaneRename canonicalCreateProducer = "pane-rename"
 )
 
 var canonicalCreateProducers = []canonicalCreateProducer{
@@ -392,8 +396,13 @@ var canonicalWindowMutationProducers = []canonicalCreateProducer{
 	canonicalProducerWindowRename,
 }
 
+var canonicalPaneMutationProducers = []canonicalCreateProducer{
+	canonicalProducerPaneRename,
+}
+
 func (p canonicalCreateProducer) valid() bool {
-	return slices.Contains(canonicalCreateProducers, p) || slices.Contains(canonicalWindowMutationProducers, p)
+	return slices.Contains(canonicalCreateProducers, p) || slices.Contains(canonicalWindowMutationProducers, p) ||
+		slices.Contains(canonicalPaneMutationProducers, p)
 }
 
 // canonicalPaneCreator is the seam the split UI hands its intents to.

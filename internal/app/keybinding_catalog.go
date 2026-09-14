@@ -67,6 +67,37 @@ const (
 	retiredPaneRenameActionID = "rename-pane-topic"
 )
 
+// The generated Window and Pane rename bindings hand the raw prompt response to
+// projmux on stdin, never in shell argv.
+//
+// tmux 3.6 runs a confirmed command-prompt template in four passes: `%%%` is
+// replaced by the response with `"`, `\`, `$`, `;` and `~` backslash-escaped,
+// the result is parsed as a tmux command, run-shell format-expands its command,
+// and /bin/sh runs it. The response is placed in the body of a here-document
+// whose delimiter is quoted, which POSIX sh copies without parameter, command,
+// or arithmetic expansion and without quote removal, so `'`, `"`, `$(...)`,
+// backquotes, `;` and spaces all reach projmux byte for byte. The `\n` escapes
+// become newlines when tmux parses the quoted command. The sentinel in front
+// of the response means no response, including the delimiter itself, can end
+// the document early.
+//
+// What remains is tmux's own pass: run-shell format-expands the whole command
+// before any shell sees it, so `#{...}` and `#X` sequences in a response are
+// substituted and a `#(...)` sequence is started as a tmux format job. That is
+// tmux acting on the operator's own input, the same as its `:` prompt, not a
+// shell parse of the name. Names cannot contain `#`, so a response that still
+// holds one after expansion is refused.
+const (
+	generatedRenameStdinFlag        = "--name-stdin"
+	generatedRenameResponseSentinel = "name="
+	generatedRenameHeredocDelimiter = "PROJMUX_RENAME_RESPONSE"
+	generatedRenameResponseHeredoc  = generatedRenameStdinFlag + " <<'" + generatedRenameHeredocDelimiter + `'\n` +
+		generatedRenameResponseSentinel + `%%%\n` + generatedRenameHeredocDelimiter
+
+	windowRenameRoute = "internal tmux window-rename --client #{client_tty} --anchor #{pane_id}"
+	paneRenameRoute   = "internal tmux pane-rename --client #{client_tty} --anchor #{pane_id}"
+)
+
 // tmuxPaneEnvPrefix carries the exact pane a key binding was pressed in into
 // the projmux process run-shell spawns. See renderTmuxBindingBody.
 const tmuxPaneEnvPrefix = "TMUX_PANE=#{pane_id} " + canonicalCreateTargetClientEnv + "=#{client_tty} "
@@ -379,15 +410,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ID:             "rename-window",
 			DisplayName:    "Rename Window",
 			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "rename the focused Window", Placement: keyBindingPlacementInFocusedWindow},
+			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "rename the focused Window in the Registry", Placement: keyBindingPlacementInFocusedWindow},
 			CanonicalID:    "window.rename",
-			Description:    "Rename the current tmux window",
+			Description:    "Rename the current Window in the Registry, its name mirror, and its tmux window name",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "",
 			TmuxKind:       tmuxBindingPromptRunProjmux,
-			TmuxBody:       "internal tmux window-rename --client #{client_tty} --anchor #{pane_id} -- '%%'",
+			TmuxBody:       windowRenameRoute + " " + generatedRenameResponseHeredoc,
 			TmuxPromptArgs: "-I \"#{window_name}\"",
 			PlainBindOrder: 70,
 			ProbeOrder:     100,
@@ -399,14 +430,14 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ID:             paneRenameActionID,
 			DisplayName:    "Rename Pane",
 			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "set or clear the focused Pane label", Placement: keyBindingPlacementInFocusedWindow},
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "rename the focused Pane in the Registry", Placement: keyBindingPlacementInFocusedWindow},
 			CanonicalID:    "pane.rename",
-			Description:    "Set or clear the current tmux pane's user label",
+			Description:    "Rename the current Pane in the Registry and its pane label mirror",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeStandalone,
-			TmuxKind:       tmuxBindingCommandPrompt,
-			TmuxBody:       "if-shell -F '#{==:%1,}' 'set-option -p -u " + paneLabelOption + "' 'set-option -p " + paneLabelOption + " \"%1\"'",
+			TmuxKind:       tmuxBindingPromptRunProjmux,
+			TmuxBody:       paneRenameRoute + " " + generatedRenameResponseHeredoc,
 			TmuxPromptArgs: "-p \"pane label:\" -I \"#{" + paneLabelOption + "}\"",
 			ProbeOrder:     110,
 			ProbeLabel:     "Ctrl-Shift-M",
