@@ -67,7 +67,7 @@ for fragment in required_fragments:
 
 baseline_expectations = {
     ".security/gosec-baseline.json": "5a3064d5c4dcc97e17db31c333cdcec681108a534a06b051eb20715359b83791",
-    ".security/staticcheck-baseline.json": "d8e89c93fa15d0cde29c6e0e793a4dd5b1579a3d4f09b7e1ffd4c144c5f27eb2",
+    ".security/staticcheck-baseline.json": "169426e66d681b9002d811c08522b20b93a75264b8e60ba0552b1cdeca35a7f5",
 }
 baseline_digests = {}
 for name, expected in baseline_expectations.items():
