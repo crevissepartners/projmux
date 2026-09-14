@@ -10,9 +10,9 @@
       "baseline_sha256": "5a3064d5c4dcc97e17db31c333cdcec681108a534a06b051eb20715359b83791"
     },
     "staticcheck": {
-      "finding_count": 15,
-      "fingerprint_count": 15,
-      "finding_identity_sha256": "0d6d145c70eddcb3e070c6e5dfd9c8403ed8b9cfae58c4a7580a8578217675c3",
+      "finding_count": 14,
+      "fingerprint_count": 14,
+      "finding_identity_sha256": "460c2664a96e60d1edcb83b3ebff145f66eaaad08b3dca5205ea769cc0825fb2",
       "baseline_sha256": "169426e66d681b9002d811c08522b20b93a75264b8e60ba0552b1cdeca35a7f5"
     }
   }
