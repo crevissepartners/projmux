@@ -353,7 +353,8 @@ const (
 	// windowAnchorEligible means the Pane may be the Window's anchorPaneRef.
 	windowAnchorEligible windowAnchorVerdict = iota
 	// windowAnchorNotSameWindowShellOrAgent means the Pane's exact owner chain
-	// does not reach the Window, or its role is neither shell nor agent.
+	// does not reach the Window, its role is neither shell nor agent, or it is
+	// a shell Pane the Window does not own directly.
 	windowAnchorNotSameWindowShellOrAgent
 	// windowAnchorNotManagedAgentPane means an Agent Pane its owner Agent does
 	// not currently bind through status.paneRef: a released, retained, or
@@ -362,20 +363,35 @@ const (
 )
 
 // windowAnchorEligibility is the one Window anchor eligibility predicate.
-// Validate enforces it, and every anchor writer -- delete reselection,
-// termination release, and rebind -- selects only Panes it admits, so a writer
-// can never commit an anchor the next write's validation rejects.
+// Validate enforces it, every anchor writer -- delete reselection, termination
+// release, and rebind -- selects only Panes it admits, and Registry.WindowAnchor
+// resolves through it. A writer therefore can never commit an anchor the next
+// write's validation rejects, and no consumer can resolve an anchor Validate
+// would refuse.
+//
+// A shell Pane qualifies only when the Window owns it directly. That is not a
+// second rule layered on top of membership: the Pane role switch above already
+// refuses any shell Pane whose ownerRef names something other than a Window, so
+// a shell owned by a same-Window Agent is an illegal Pane rather than an
+// eligible anchor. Admitting it here would make this predicate contradict the
+// Registry invariant it exists to state.
 func windowAnchorEligibility(r Registry, windowUID string, pane Pane) windowAnchorVerdict {
 	ownerWindowUID, owned := paneWindowOwnerUID(r, pane)
-	if !owned || ownerWindowUID != windowUID ||
-		(pane.Spec.Role != PaneRoleShell && pane.Spec.Role != PaneRoleAgent) {
+	if !owned || ownerWindowUID != windowUID {
 		return windowAnchorNotSameWindowShellOrAgent
 	}
-	if pane.Spec.Role == PaneRoleAgent {
+	switch pane.Spec.Role {
+	case PaneRoleShell:
+		if pane.Metadata.OwnerRef.Kind != KindWindow {
+			return windowAnchorNotSameWindowShellOrAgent
+		}
+	case PaneRoleAgent:
 		agent, ok := r.Agent(pane.Metadata.OwnerUID())
 		if !ok || agent.Status.PaneRef != pane.Metadata.UID {
 			return windowAnchorNotManagedAgentPane
 		}
+	default:
+		return windowAnchorNotSameWindowShellOrAgent
 	}
 	return windowAnchorEligible
 }

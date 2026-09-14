@@ -13,7 +13,9 @@ import (
 )
 
 // TestWindowAnchorEligibilityPredicateBranches pins every clause of the one
-// anchor predicate Validate and the anchor writers share.
+// anchor predicate Validate, the anchor writers, and Registry.WindowAnchor
+// share. Each case asserts all three entry points give the same answer for the
+// same input, so a second inline derivation cannot drift away from this table.
 func TestWindowAnchorEligibilityPredicateBranches(t *testing.T) {
 	t.Parallel()
 	fixture := newAnchorSchemaFixture(t)
@@ -36,6 +38,13 @@ func TestWindowAnchorEligibilityPredicateBranches(t *testing.T) {
 		}, want: windowAnchorNotSameWindowShellOrAgent},
 		{name: "role: unsupported same-Window role", window: fixture.windowUID, pane: fixture.shellUID, mutate: func(_ *Registry, p *Pane) {
 			p.Spec.Role = PaneRole("bogus")
+		}, want: windowAnchorNotSameWindowShellOrAgent},
+		// The input the two derivations used to answer differently: a shell
+		// Pane whose owner chain does reach the Window, but through an Agent
+		// rather than the Window itself. Validate's Pane role switch refuses
+		// that ownerRef outright, so the anchor predicate refuses it too.
+		{name: "role: shell owned by a same-Window Agent", window: fixture.windowUID, pane: fixture.shellUID, mutate: func(_ *Registry, p *Pane) {
+			p.Metadata.OwnerRef = &OwnerRef{Kind: KindAgent, UID: fixture.agentUID}
 		}, want: windowAnchorNotSameWindowShellOrAgent},
 		{name: "managed: released Agent Pane", window: fixture.windowUID, pane: fixture.agentPaneUID, mutate: func(r *Registry, _ *Pane) {
 			agent, _ := r.Agent(fixture.agentUID)
@@ -63,6 +72,18 @@ func TestWindowAnchorEligibilityPredicateBranches(t *testing.T) {
 			}
 			if got := reg.windowAnchorRefEligible(tt.window, tt.pane); got != (tt.want == windowAnchorEligible) {
 				t.Fatalf("windowAnchorRefEligible = %t, want %t", got, tt.want == windowAnchorEligible)
+			}
+			anchored, ok := reg.Window(tt.window)
+			if !ok {
+				t.Fatalf("fixture Window %q missing", tt.window)
+			}
+			anchored.Spec.AnchorPaneRef = tt.pane
+			resolved, resolvedOK := reg.WindowAnchor(tt.window)
+			if resolvedOK != (tt.want == windowAnchorEligible) {
+				t.Fatalf("Registry.WindowAnchor ok = %t, want %t", resolvedOK, tt.want == windowAnchorEligible)
+			}
+			if resolvedOK && resolved.Metadata.UID != tt.pane {
+				t.Fatalf("Registry.WindowAnchor resolved %q, want %q", resolved.Metadata.UID, tt.pane)
 			}
 		})
 	}

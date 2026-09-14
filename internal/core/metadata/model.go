@@ -392,29 +392,18 @@ func (s WindowSpec) CompatibilityShellPaneRef() string {
 // Window and remain that Agent's managed Pane. Consumers use this helper before
 // selecting a runtime target so a dangling or cross-Window ref can never turn
 // into an inferred sibling Pane.
+//
+// Those clauses are not restated here. windowAnchorEligibility owns them, and
+// this resolver only supplies the Window and the Pane its anchorPaneRef names,
+// so a consumer and Validate can never disagree about the same anchor.
 func (r Registry) WindowAnchor(windowUID string) (*Pane, bool) {
 	window, ok := r.Window(strings.TrimSpace(windowUID))
 	if !ok {
 		return nil, false
 	}
 	pane, ok := r.Pane(strings.TrimSpace(window.Spec.AnchorPaneRef))
-	if !ok || (pane.Spec.Role != PaneRoleShell && pane.Spec.Role != PaneRoleAgent) {
+	if !ok || windowAnchorEligibility(r, window.Metadata.UID, *pane) != windowAnchorEligible {
 		return nil, false
-	}
-	if pane.Spec.Role == PaneRoleShell {
-		if pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindWindow ||
-			pane.Metadata.OwnerRef.UID != window.Metadata.UID {
-			return nil, false
-		}
-	} else {
-		ownerWindowUID, ok := paneWindowOwnerUID(r, *pane)
-		if !ok || ownerWindowUID != window.Metadata.UID {
-			return nil, false
-		}
-		agent, ok := r.Agent(pane.Metadata.OwnerUID())
-		if !ok || agent.Status.PaneRef != pane.Metadata.UID {
-			return nil, false
-		}
 	}
 	return pane, true
 }
