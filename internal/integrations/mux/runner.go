@@ -36,11 +36,6 @@ func DefaultRunner() Runner {
 }
 
 // Run executes tmux with args and discards output.
-func Run(ctx context.Context, args ...string) error {
-	return DefaultRunner().Run(ctx, args...)
-}
-
-// Run executes tmux with args and discards output.
 func (r Runner) Run(ctx context.Context, args ...string) error {
 	_, err := r.Read(ctx, args...)
 	return err

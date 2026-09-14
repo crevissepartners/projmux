@@ -879,25 +879,3 @@ func TestAdapterResetBackoffClearsState(t *testing.T) {
 		t.Fatalf("backoff.Consecutive = %d, want 0 after ResetBackoff", state.Consecutive)
 	}
 }
-
-func TestRedactTokenNeverLeaksFullSecret(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{"", "****"},
-		{"short", "****"},
-		{"abcdefghij", "abcd****ghij"},
-	}
-	for _, tc := range cases {
-		got := RedactToken(tc.in)
-		if got != tc.want {
-			t.Fatalf("RedactToken(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-		if len(tc.in) > 8 && strings.Contains(got, tc.in) {
-			t.Fatalf("RedactToken leaked full secret: %q", got)
-		}
-	}
-}

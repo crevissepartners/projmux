@@ -1360,16 +1360,15 @@ const notifySidebarReset = theme.ANSIReset
 // tmux palettes, so we lean on the dim attribute), while GONE adds
 // strikethrough to telegraph "the target no longer exists".
 var (
-	notifySidebarDimOpen        = theme.ANSINotifyDimStart
-	notifySidebarProject        = theme.ANSINotifyProjectStart
-	notifySidebarInfo           = theme.ANSINotifyInfoStart
-	notifySidebarWarn           = theme.ANSINotifyWarnStart
-	notifySidebarCrit           = theme.ANSINotifyCritStart
-	notifySidebarStale          = theme.ANSINotifyStaleStart
-	notifySidebarGone           = theme.ANSINotifyGoneStart
-	notifySidebarTitle          = theme.ANSINotifyTitleStart
-	notifySidebarAgeOpen        = theme.ANSINotifyAgeStart
-	notifySidebarAgentOpenStyle = theme.ANSINotifyAgentStart
+	notifySidebarDimOpen = theme.ANSINotifyDimStart
+	notifySidebarProject = theme.ANSINotifyProjectStart
+	notifySidebarInfo    = theme.ANSINotifyInfoStart
+	notifySidebarWarn    = theme.ANSINotifyWarnStart
+	notifySidebarCrit    = theme.ANSINotifyCritStart
+	notifySidebarStale   = theme.ANSINotifyStaleStart
+	notifySidebarGone    = theme.ANSINotifyGoneStart
+	notifySidebarTitle   = theme.ANSINotifyTitleStart
+	notifySidebarAgeOpen = theme.ANSINotifyAgeStart
 )
 
 func notifySidebarAge(age string) string {
@@ -1435,25 +1434,6 @@ func notifySidebarStateBadgeForDisplay(label string, display notifyRowDisplaySta
 		open = notifySidebarCrit
 	}
 	return open + " " + label + " " + notifySidebarReset
-}
-
-func notifySidebarAgentBadge(agent string) string {
-	agent = strings.TrimSpace(agent)
-	if agent == "" {
-		return ""
-	}
-	return notifySidebarAgentOpen(agent) + " " + agent + " " + notifySidebarReset
-}
-
-func notifySidebarAgentOpen(agent string) string {
-	switch strings.ToLower(strings.TrimSpace(agent)) {
-	case "claude":
-		return notifySidebarAgentOpenStyle
-	case "codex":
-		return notifySidebarAgentOpenStyle
-	default:
-		return notifySidebarAgentOpenStyle
-	}
 }
 
 func notifySidebarDim(value string) string {

@@ -68,25 +68,6 @@ func effectiveWindowCount(model preview.PopupReadModel) int {
 	return len(model.Windows)
 }
 
-func effectivePaneCount(model preview.PopupReadModel) int {
-	if model.TotalPaneCount > 0 {
-		return model.TotalPaneCount
-	}
-	return len(model.Panes)
-}
-
-func formatTargetSummary(windowIndex, paneIndex string) string {
-	windowIndex = strings.TrimSpace(windowIndex)
-	paneIndex = strings.TrimSpace(paneIndex)
-	if windowIndex == "" {
-		return ""
-	}
-	if paneIndex == "" {
-		return "w" + sanitizeCell(windowIndex)
-	}
-	return "w" + sanitizeCell(windowIndex) + ".p" + sanitizeCell(paneIndex)
-}
-
 func writeWindows(builder *strings.Builder, model preview.PopupReadModel) {
 	writeWindowsWithNone(builder, model, "(none)")
 }

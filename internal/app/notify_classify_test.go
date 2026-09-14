@@ -247,7 +247,7 @@ func TestNotifySidebarStateBadgeInactiveAndGonePalette(t *testing.T) {
 	}
 }
 
-func TestNotifySidebarPaletteSeparatesAttentionAndAI(t *testing.T) {
+func TestNotifySidebarPaletteSeparatesAttentionStatesFromActionColors(t *testing.T) {
 	t.Parallel()
 
 	need := notifySidebarStateBadge("NEED")
@@ -258,11 +258,7 @@ func TestNotifySidebarPaletteSeparatesAttentionAndAI(t *testing.T) {
 	if !strings.HasPrefix(warn, "\x1b[1;38;5;16;48;5;214m") {
 		t.Fatalf("WARN badge = %q, want amber warning palette", warn)
 	}
-	agent := notifySidebarAgentBadge("codex")
-	if !strings.HasPrefix(agent, "\x1b[1;38;5;16;48;5;37m") {
-		t.Fatalf("agent badge = %q, want AI palette", agent)
-	}
-	for _, label := range []string{need, warn, agent} {
+	for _, label := range []string{need, warn} {
 		for _, notWant := range []string{"48;5;29", "48;5;45", "48;5;51"} {
 			if strings.Contains(label, notWant) {
 				t.Fatalf("sidebar label = %q, must not use action/legacy color %q", label, notWant)

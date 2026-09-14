@@ -787,15 +787,3 @@ func writeCredentials(path string, original []byte, newAccess, newRefresh string
 	cleanup = false
 	return nil
 }
-
-// RedactToken returns the supplied string with the middle replaced by
-// `****`. Exported so future debug-logging hooks (gated on
-// PROJMUX_USAGE_DEBUG at the call site) have a single safe primitive for
-// surfacing token-shaped strings without leaking the secret. Tokens MUST
-// pass through this helper before they ever touch a Writer.
-func RedactToken(s string) string {
-	if len(s) <= 8 {
-		return "****"
-	}
-	return s[:4] + "****" + s[len(s)-4:]
-}

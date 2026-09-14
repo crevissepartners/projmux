@@ -209,9 +209,6 @@ type StyledFragment struct {
 	value  string
 }
 
-func (f StyledFragment) IsANSI() bool      { return f.kind == MessageKindANSI }
-func (f StyledFragment) IsTmuxStyle() bool { return f.kind == MessageKindTmux }
-
 // Catalog is an immutable in-memory message catalog.
 type Catalog struct {
 	locales map[Locale]map[Key]Entry

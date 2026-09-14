@@ -2,7 +2,6 @@ package projmuxpicker
 
 import (
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 )
@@ -12,25 +11,6 @@ const gapSentinel = "\x00projmux-picker-gap\x00"
 type Row struct {
 	Label     string
 	MetaLines []string
-}
-
-func WriteContentWithFooter(w io.Writer, top, main, footer string, layout Layout) {
-	var screen strings.Builder
-	screen.WriteString(top)
-	screen.WriteString(main)
-	footerLines := FooterBlockLines(footer, layout.Cols)
-	if len(footerLines) == 0 {
-		fmt.Fprint(w, screen.String())
-		return
-	}
-	remaining := layout.Rows - RenderedTextLineCount(screen.String()) - len(footerLines)
-	for range remaining {
-		fmt.Fprintln(&screen)
-	}
-	for _, line := range footerLines {
-		fmt.Fprintln(&screen, line)
-	}
-	fmt.Fprint(w, screen.String())
 }
 
 func FooterBlockLines(footer string, cols int) []string {
@@ -316,18 +296,6 @@ func scrollbarThumbRange(total, visible, start, track int) (int, int) {
 	return thumbStart, thumbStart + thumb
 }
 
-func RenderableListLines(lines []string, width int) []string {
-	return RenderableListLinesWithTheme(DefaultTheme, lines, width)
-}
-
-func RenderableListLinesWithTheme(pickerTheme Theme, lines []string, width int) []string {
-	rendered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		rendered = append(rendered, RenderableListLineWithTheme(pickerTheme, line, width))
-	}
-	return rendered
-}
-
 func RenderableListLine(line string, width int) string {
 	return RenderableListLineWithTheme(DefaultTheme, line, width)
 }
@@ -433,15 +401,6 @@ func SelectedContent(value string) string {
 func SelectedContentWithTheme(pickerTheme Theme, value string) string {
 	selected := themeSelected(pickerTheme)
 	return selected + strings.ReplaceAll(value, Reset, Reset+selected) + Reset
-}
-
-func InverseSelectedContent(value string) string {
-	return InverseSelectedContentWithTheme(DefaultTheme, value)
-}
-
-func InverseSelectedContentWithTheme(pickerTheme Theme, value string) string {
-	inverse := themeCursor(pickerTheme)
-	return inverse + strings.ReplaceAll(value, Reset, Reset+inverse) + Reset
 }
 
 func themeSelected(pickerTheme Theme) string {

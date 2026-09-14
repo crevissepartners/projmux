@@ -3154,7 +3154,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../integrations/mux/interactive.go:SwitchClient:variable-argv":                   "sidebar.origin-restore",
 		"../integrations/mux/interactive.go:SelectPane:variable-argv":                     "sidebar.origin-restore",
 		"../integrations/mux/interactive.go:SelectWindow:variable-argv":                   "sidebar.origin-restore",
-		"../integrations/mux/runner.go:Run:variable-argv":                                 "runtime.observation",
 		"../integrations/mux/runner.go:SetPaneOption:variable-argv":                       "agent.presentation",
 		"../integrations/mux/runner.go:UnsetPaneOption:variable-argv":                     "agent.presentation",
 		"../integrations/mux/runner.go:Read:variable-argv":                                "runtime.observation",

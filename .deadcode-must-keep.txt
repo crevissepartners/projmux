@@ -7,20 +7,29 @@
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
 AggregateTeardownEvents	Pure multi-event teardown authority is retained for lifecycle decision proofs and planned consumers.
+All	Closed provider-registry projection retained as the test seam that pins the live aiprovider registry create-shortcut and picker-order contract.
 ApplyAuthorized	Phase 0 composite authority gate is retained before generation-aware runtime consumers are enabled.
 ApplySuccessorResume	Phase 0 old-stop semantic barrier is retained before journaled handover consumers are enabled.
+AuditGoStringLiteralsInDir	Directory walker of the hardcoded-string governance audit; its subject is the live repository source, so the guard is test-entered by design rather than a retired product path.
+AuditGoStrings	In-memory entry point of the hardcoded-string governance audit retained with AuditGoStringLiteralsInDir as the guard that keeps catalog-bypassing literals out of shipped code.
 Binding.ControlAuthority	The snapshot-barrier control authority accessor is retained as the in-process mutation gate; the local IPC path fences inside Submit instead.
 Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
+BuildSwitchPickerItems	Backend-neutral switch picker row builder retained as the test seam over the live switchPickerItem projection.
 Cache.Lookup	Phase 1 exact-tuple cache lookup is retained for the Phase 2 payload-free route consumer.
 Cache.Publish	Phase 1 immutable capability publication is retained for executable installed qualification.
 Cache.Resolve	Phase 1 fail-closed cache projection is retained so invalid evidence can never open a native route.
 Cache.path	Phase 1 private 0600 cache path derivation is retained behind immutable publish and exact lookup.
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
+Catalog.Keys	Whole-catalog key enumeration retained as the test seam that pins the shipped default catalog key coverage.
+Catalog.LocaleKeys	Per-locale key enumeration retained as the test seam that pins the shipped catalog per-locale coverage.
+Catalog.MissingFallbackKeys	Fallback-locale projection of MissingLocaleKeys retained as the test seam that pins required-key coverage of the shipped catalog.
+ClassifySchemaVersion	Ambient-environment entry point of ClassifySchemaVersionWith retained as the test seam that pins fail-closed registry schema classification.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
 CompleteBundleArtifactPaths	Phase 2 closed private-host artifact paths are retained for qualified bundle packagers without exposing mutable requirements.
 Create	Phase 0 immutable Codex release-bundle lease creator is retained for the later private generation host.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
+DecideProjectOpen	Compatibility projection of the live DecideProjectLifecycle table retained as the totality proof for the project-open state table.
 DecideSuccessorResume	Phase 0 pure same-thread old-stop decision is retained for the journaled handover phase.
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
 DeclaredGenerationPair	The declared version pair of the generation-pool qualification is retained as the only entry point that turns operator-declared versions into a receipt version pair; no main package reaches it.
@@ -33,7 +42,9 @@ DirectEndpoint.Health	Test-only installed qualification API retained for canonic
 DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
 DirectEndpoint.markClosed	Test-only installed qualification helper retained for single-consumer bounded direct exit finalization proof.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
+Dispositions	Closed CLI route disposition catalog retained as the test seam that pins exactly one disposition per canonical route.
 EmitGenerationQualificationReceipt	The canonical qualification receipt writer is retained as the single supported receipt exit for the declared-pair harness and its upgrade-request round trip; no main package reaches it.
+EqualTeardownPlans	Serialization-free teardown plan comparison retained as the comparison primitive of the live teardown aggregation property tests.
 Error.Error	Phase 0 bundle refusal renderer is retained as the content-free immutable lease error contract.
 EvaluateQualification	Phase 0 exact-version-pair qualification reducer is retained for installed pool admission gates.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
@@ -54,6 +65,9 @@ Fixture.readDaemonVersion	Test-only installed qualification helper retained for 
 Fixture.readManagedPID	Test-only installed qualification helper retained for contained public PID artifact proof.
 Fixture.readManagedStartResult	Test-only installed qualification helper retained for exact managed start PID proof.
 Fixture.retireAfterFailure	Test-only installed qualification helper retained for bounded exact managed failure cleanup proof.
+FooterBlockLines	Default-theme entry point of FooterBlockLinesWithTheme retained as the picker footer geometry seam.
+FormatList	Locale-resolving list formatter retained as the test seam that pins payload-item preservation over the live formatter locale resolution.
+FoundationKeys	Foundation key set retained as the test seam that pins the shipped default catalog coverage of it.
 GateQualification	Phase 0 go/no-go gate is retained to keep unsafe Phase 2+ pool work closed.
 GenerationPool.AdmitCreate	Phase 2 dark Preparing admission refusal is retained until the journaled current-generation owner exists.
 GenerationPool.BindExisting	Phase 2 exact generation/thread attach is retained for the later Agent resume consumer.
@@ -64,6 +78,7 @@ GenerationPool.RestartBroker	Phase 2 exact binding restore and broker-runtime re
 GenerationPool.releaseBindingReservation	Phase 2 pending-thread reservation cleanup is retained to keep raced cross-route provider writes at zero.
 GenerationRoute.key	Phase 2 exact route canonicalization is retained for all generation-pinned pool operations.
 GenerationRoute.valid	Phase 2 exact route validation is retained to refuse malformed thread authority before provider access.
+HeaderLine	Default-theme entry point of HeaderLineWithTheme retained as the picker chrome golden seam.
 Host.RuntimeID	The runtime identity accessor is retained as the authority axis clients present alongside both epochs.
 HostError.Error	Phase 2 private-host refusal renderer is retained as a path-free lifecycle error contract.
 HostError.Unwrap	Phase 2 private-host refusal causes remain available for internal exact cleanup diagnostics without entering rendered output.
@@ -71,10 +86,13 @@ HostRefusalOf	Phase 2 private-host refusal classifier is retained for publish an
 IdentifyBinary	Phase 1 exact RoleTUI and RoleAppServer digest authority is retained for installed qualification and later route consumption.
 IdentifySocketRoute	Phase 1 exact bound-socket fingerprint is retained to invalidate stopped, restarted, or rebound private routes.
 Inspect	Phase 0 Codex release manifest inspector is retained for later private generation provisioning.
+IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
+IsSharedOutputMode	Closed shared -o catalog membership predicate retained as the seam that keeps route-local projections out of the shared enum.
 IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
 IsolatedPane.Close	Test-only installed qualification API retained for contained exact tmux server cleanup.
 IsolatedPane.ID	Test-only installed qualification API retained for content-free exact Pane evidence.
 IsolatedPane.run	Test-only installed qualification helper retained for inherited tmux identity stripping on every command.
+Kinds	Closed Registry kind set retained as the test seam that pins kind-set closure and cardinality matrix coverage.
 LaunchProof.String	Phase 2 launch-proof diagnostic rendering is retained without making it durable broker authority.
 Lease.Paths	Phase 0 verified bundle role resolver is retained for generation-pinned server, TUI, and helper launch.
 Ledger.AmbientMutations	Test-only installed qualification API retained for typed ambient mutation counting proof.
@@ -84,19 +102,31 @@ Ledger.Commands	Test-only installed qualification API retained for semantic comm
 Ledger.DistinctOperations	Test-only installed qualification API retained for content-free command reporting.
 Ledger.HasOperation	Test-only installed qualification API retained for canonical proxy observation proof.
 Ledger.record	Test-only installed qualification helper retained for owned lifecycle command evidence.
+ListLinesWithScrollbar	Default-rows entry point of ListLinesWithScrollbarRows retained as the scrollbar thumb geometry seam.
+LoadSessionStateToggleFile	Explicit-path entry point of LoadSessionStateToggleFileDefault retained as the session-state toggle round-trip seam.
+Localizer.Styled	Styled-fragment lookup retained as the test seam that pins the kind-mismatch error of the live catalog lookup.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
 Manifest.ContentID	Phase 0 canonical bundle identity is retained for generation lease persistence.
 Manifest.Validate	Phase 0 complete server, TUI, helper, hash, mode, and protocol manifest validation is retained.
+Matrix	Whole cardinality table copy retained as the test seam that pins the declared verb-kind cells and their canonical route adoption.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
+MigrateRegistry	Ambient-environment entry point of MigrateRegistryWithEnvironment retained as the registry schema migration seam.
 NewCache	Phase 1 exact capability cache constructor is retained for the later production tuple source.
 NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewGenerationPool	Phase 2 dark bounded broker-pool constructor is retained for the later upgrade coordinator.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
+NewState	Recent-window state constructor retained as the test seam over the live normalizeEntries MRU contract.
 NewTuple	Phase 1 complete executable tuple constructor is retained for private conformance and later production observation.
+NewWithConfig	Credential and endpoint injection constructor retained as the only seam that exercises the live Claude usage adapter without real credentials.
+NewWithRoot	Rollout-root injection constructor retained as the only seam that pins the live rollout parser without probing the installed Codex.
+NextPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
+NextWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
 Open	Phase 0 immutable bundle reopen verification is retained for source-removal relaunch and later recovery.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
+PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
+PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.
 PlanUpgrade	Phase 0 pure read-only upgrade plan is retained for the later upgrade command.
 Pool.Current	Phase 0 sole-current lookup is retained as part of the bounded read-only planning model.
 Pool.Validate	Phase 0 bounded current-one plus draining-one topology validator is retained for later coordinators.
@@ -110,6 +140,8 @@ PooledBinding.attachLocked	Phase 2 restored binding attachment is retained to sw
 PooledBinding.closeLocked	Phase 2 single-close binding teardown is retained for race-safe pool cleanup.
 PooledBinding.dispatch	Phase 2 single-owner public stream dispatcher is retained to prevent pump send-close races.
 PooledBinding.pump	Phase 2 broker-generation event pump is retained for snapshot readiness and reconnect delivery.
+PreviousPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
+PreviousWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
 PrivateGenerationHost.Close	Phase 2 exact owned process and socket cleanup is retained for private host failures and tests.
 PrivateGenerationHost.Kill	Phase 2 full-proof kill gate is retained for later journaled lifecycle operations.
 PrivateGenerationHost.LaunchArgv	Phase 2 immutable leased launch argv accessor is retained for source-removal and pointer-drift proof.
@@ -122,6 +154,7 @@ PrivateGenerationHost.Stop	Phase 2 full-proof stop gate is retained for later jo
 PrivateGenerationHost.signal	Phase 2 common proof-before-signal gate is retained to keep lifecycle mutation zero on any drift.
 PrivateGenerationHost.validateProofLocked	Phase 2 complete PID/socket/executable/bundle proof validator is retained before every lifecycle signal.
 ProjectAgentObligation	Phase 3 no-turn obligation projector is retained as the invariant-ledger and installed-observation seam until retirement coordination consumes it.
+PromptLineWithCursor	Default-theme cursor prompt entry point retained as the picker prompt seam over QueryWithCursorAndTheme.
 ProtocolRange.Supports	Phase 0 protocol range containment check is retained for pre-commit bundle refusal.
 ProtocolRange.Valid	Phase 0 protocol range validation is retained as part of immutable bundle manifests.
 QualificationResult.JSON	Phase 0 content-free generation qualification writer is retained for installed receipts.
@@ -132,35 +165,56 @@ ReadLifecycleSnapshotOn	The shared requester lifecycle decoder remains a compati
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
 Refusal.String	Phase 0 closed bundle refusal token renderer is retained for content-free diagnostics.
 RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.
+Registry.rebuildMissingReservations	v0-to-v1 name reservation rebuild retained as the migration proof for the live scopeFor reservation scoping.
 Registry.snapshotPanesOf	Snapshot pane lookup remains part of the retained snapshot reconciliation implementation.
+RenderBar	Uncolored HUD bar renderer retained as the test seam that pins the BarFillCount fill math shared with RenderColoredBar.
+RenderSwitchPreview	Default badge-style entry point of RenderSwitchPreviewWithAIBadgeStyle retained as the switch preview golden seam.
+Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained as the frame inner-width seam.
+Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
 Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
 ResumeDefaultThread	The default-endpoint resume wrapper is retained for installed protocol qualification; generation-pinned product routing uses explicit routes.
 RetainedQualificationFields	Phase 0 qualification privacy allowlist is retained for schema redaction audits.
+RouteLocalFieldProjections	Closed route-local field projection catalog retained as the test seam that keeps -o cwd out of the shared enum.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
+Run	Recorder-free CLI bootstrap retained as the test seam over the live App.Run dispatch that RunWithLifecycleDiagnostics ships.
+Runner.ListWindows	Structured window inventory read retained as the test seam that pins the live format join and pane target argument builders.
+RuntimeKoreanStringAuditOptions	Runtime Korean profile of the governance string audit; it scopes the live guard over shipped Go sources.
+SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
+SharedOutputModes	Closed shared -o catalog retained as the test seam that pins catalog closure and contract ordering.
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
 StartDefaultThread	The default-endpoint start wrapper is retained for installed turn-free protocol qualification; generation-pinned product routing uses explicit routes.
 StartPrivateGeneration	Phase 2 complete-lease private app-server launcher is retained for the later upgrade coordinator.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
 Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
+StringAuditFinding.IsCandidate	Candidate predicate of the governance string audit retained with the guard that classifies shipped literals.
+TeardownEventKinds	Closed teardown event vocabulary retained as the test seam that pins the teardown decision table totality.
 TeardownObservations	The closed teardown-observation catalog is retained for authority proofs and planned consumers.
+Text.Locale	Resolved-locale accessor retained as the test seam that pins the live catalog fallback resolution.
 TopologyError.Error	Phase 0 topology refusal renderer is retained as the content-free bounded-pool error contract.
 TopologyRefusal.String	Phase 0 closed topology refusal token renderer is retained for exact plan blockers.
+UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
 UnknownRecord	Phase 1 exact-tuple unknown record is retained for fail-closed cache misses and invalid evidence.
 UpgradePlan.JSON	Phase 0 exact JSON plan projection is retained for the later upgrade command.
 UpgradePlan.Text	Phase 0 exact text plan projection is retained for the later upgrade command.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
+WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
+WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
 absoluteNonRoot	Phase 2 private-host path validator is retained to refuse broad or noncanonical lifecycle targets.
+aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained as the AI notification label seam.
 awaitPrivateGenerationReady	Phase 2 event-driven socket plus initialized-handshake barrier is retained to avoid polling sleeps.
 boundedBuffer.Bytes	Test-only installed qualification helper retained for bounded public status decoding.
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
+buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test pins that the shipped parser accepts the documented format.
+buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained as the popup launcher environment seam.
 canonicalize	Phase 0 bundle manifest canonicalizer is retained to make content identity independent of discovery order.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
 cleanRelative	Phase 0 bundle relative-path validator is retained to keep lease artifacts contained.
 cleanupFailedLaunch	Phase 2 exact failed-child and socket cleanup is retained for pre-publication drift refusal.
 cloneManifest	Phase 0 manifest clone helper is retained to canonicalize without aliasing caller state.
+codexHooksBlock	Default-events entry point of codexHooksBlockForEvents retained as the managed Codex hook block seam.
 copyVerified	Phase 0 staged bundle copier is retained for hash, size, mode, and source-identity pre-commit verification.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 execGenerationProcess.Done	Phase 2 repeatable process-exit barrier is retained for readiness and exact cleanup consumers.
@@ -173,6 +227,8 @@ execGenerationProcess.SignalProcessGroup	Phase 2 captured private-group signal s
 execGenerationProcess.ValidateProcessGroup	Phase 2 live leader and Setsid group revalidation is retained before lifecycle mutation.
 fileIdentity	Phase 2 device/inode/change-time/mode/size capture is retained for socket and executable proof.
 formatLegacyPaneSummary	Legacy pane-summary rendering remains required while persisted legacy pane metadata is readable.
+formatRelativeAge	Fallback-locale entry point of formatRelativeAgeLocale retained as the status notify age bucket seam.
+formatStatusNotify	Fallback-locale entry point of formatStatusNotifyWithLiveLocale retained as the status notify width tier seam.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
 hostRefuse	Phase 2 typed private-host refusal constructor is retained for closed zero-effect outcomes.
 inspectArtifact	Phase 0 source artifact inspector is retained for content-addressed upstream identity verification.
@@ -182,14 +238,28 @@ launchOwnedGenerationProcess	Phase 2 exact leased executable launcher is retaine
 leaseArtifact	Phase 2 exact server-role manifest lookup is retained to bind executable hash into launch proof.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
+nativeAppendPartialNextItemLines	Default-theme entry point of nativeAppendPartialNextItemLinesWithTheme retained as the partial multiline item seam.
+nativeInteractiveItemLines	Default-theme entry point over InteractiveRowLines retained as the multiline selection seam.
+nativeInteractiveListLines	Default-theme entry point over InteractiveListLines retained as the interactive list line seam.
+nativePromptLine	Default-theme entry point over projmuxpicker.PromptLine retained as the inline match count seam.
+nativePromptLineWithCursor	Default-theme cursor entry point over PromptLineWithCursorLabel retained as the query cursor rendering seam.
+nativeRenderableListLine	Default-theme entry point over RenderableListLine retained as the selected-line padding seam.
+nativeSelectedContent	Default-theme entry point over SelectedContent retained as the selection style reset seam.
+nativeTruncateANSI	Default entry point over projmuxpicker.TruncateANSI retained as the ANSI cut-before-reset seam.
+nativeVisibleLen	Default entry point over projmuxpicker.VisibleLen retained as the visible width seam.
+newClientWithEnv	Environment injection constructor retained as the only seam that pins tmux client attach and switch routing without a live tmux server.
 newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
 newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
 normalizeEvidence	Phase 1 content-free evidence normalization is retained behind the immutable reducer.
 normalizeStageEvidence	Phase 1 stage identity/reason normalization is retained behind the immutable reducer.
+notifyCommand.buildNotifyLiveReport	Fallback-locale entry point of buildNotifyLiveReportLocale retained as the notify row classification seam.
+notifySidebarEntriesWithLive	Fallback-locale collapsed-entry projection of the live notify sidebar read model retained as the classification seam.
+notifySidebarStateBadge	Live-display entry point of notifySidebarStateBadgeForDisplay retained as the sidebar state palette seam.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
 openReadyThreadClient	The default-endpoint client helper remains behind installed protocol qualification wrappers, not generation-pinned product routing.
 ownerPrivateDirectory	Phase 2 owner/mode/leaf-symlink directory proof is retained before private socket launch.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
+pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 privateGenerationEnvironment	Phase 2 environment reducer is retained to strip inherited tmux routing and pin CODEX_HOME.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 qualifiedBundleRequirements	Phase 2 immutable qualified artifact and role set is retained inside the private host.
@@ -199,14 +269,26 @@ readyPrivateGeneration	Phase 2 initialized private app-server handshake is retai
 remoteNewTMUXArgs	Test-only installed qualification argv allowlist is retained to prove remote-new starts without a prompt, resume operand, or send-keys path.
 removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
 removeExactSocket	Phase 2 inode-and-change-time-matched private socket cleanup is retained to avoid ambient/default mutation.
+renderNativeInteractive	Cursor-at-end entry point of renderNativeInteractiveWithCursor retained as the native picker frame golden seam.
+renderNotifyBadge	Severity badge entry point retained as the test seam over the live renderNotifyBlockBadge palette.
+renderSettingsNavTree	Settings navigation tree renderer retained as the golden seam over the live settingsNavChildren topology.
 revalidateOwnerPrivateDirectory	Phase 2 post-readiness root identity check is retained to refuse ancestor replacement before publication.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
+runShellOutputLedger	Closed run-shell producer ledger; the C-1 no-overlay contract is enforced by sweeping shipped generated config against it.
+runShellSourceSites	Closed run-shell source site ledger; the package source sweep fails until a new producer is registered here.
+runtimeMutationPlan.withoutEffects	Effect-free plan projection retained as the property-test seam that pins guarded, ordered, idempotent runtime mutation.
 safeRoot	Phase 0 lease root validator is retained to keep future bundle mutations off broad or relative targets.
 safeVersionToken	Phase 0 bundle version token validator is retained to keep manifests content-free.
+settingsCommand.rootEntries	Fallback-locale entry point of the settings root entry builder retained as the axis metadata seam.
+sortedProbeLabels	Ordering helper retained as the test seam that pins the live default probe key catalog coverage of the terminal key spec.
 statChangeTime	Phase 2 Linux/Darwin change-time capture is retained to fence immediate socket inode reuse.
 terminateOwnedSession	Phase 2 exact private-group termination and dual process/session barrier is retained for descendant-complete cleanup.
+tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
+tmuxPaneBorderFormat	Default badge-style entry point of tmuxPaneBorderFormatWithAIBadgeStyle retained as the pane border format seam.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
+tmuxStandaloneConfig	Default-keymap entry point of tmuxStandaloneConfigWithKeymap retained as the standalone config golden seam.
+tmuxStyledVisiblePaneLabelFormat	Default-theme entry point of tmuxStyledVisiblePaneLabelFormatFor retained as the visible pane label format seam.
 unsupportedRootsError	The default-endpoint roots refusal helper remains part of the retained installed protocol qualification contract.
 validGenerationState	Phase 0 closed generation-state validator is retained for bounded-pool topology proofs.
 validIdentityToken	Phase 0 opaque identity validator is retained to keep plans and receipts content-free.
