@@ -2,6 +2,7 @@ package codexgeneration
 
 import (
 	"errors"
+	"github.com/crevissepartners/projmux/internal/core/metadata"
 	"slices"
 	"strings"
 )
@@ -44,7 +45,7 @@ type DrainLedgerEntry struct {
 // persisted thread is explicitly eligible. Closed rows are retained as
 // non-blocking audit facts rather than silently disappearing.
 func ProjectDrainLedger(oldGenerationID string, obligations []AgentObligation) ([]DrainLedgerEntry, error) {
-	if !validIdentityToken(oldGenerationID) {
+	if !metadata.ValidCodexIdentityToken(oldGenerationID) {
 		return nil, errors.New("old-generation-required")
 	}
 	seen := make(map[string]struct{}, len(obligations))
@@ -53,7 +54,7 @@ func ProjectDrainLedger(oldGenerationID string, obligations []AgentObligation) (
 		if obligation.EndpointGenerationID != oldGenerationID {
 			continue
 		}
-		if !validIdentityToken(obligation.AgentUID) || !validObligationState(obligation.State) {
+		if !metadata.ValidCodexIdentityToken(obligation.AgentUID) || !validObligationState(obligation.State) {
 			return nil, errors.New("invalid-obligation")
 		}
 		if _, exists := seen[obligation.AgentUID]; exists {
@@ -125,9 +126,9 @@ func NewRollingUpgradeOperation(operationRef, stateDomainID, oldGenerationID, ta
 }
 
 func (op RollingUpgradeOperation) Validate() error {
-	if op.JournalVersion != RollingJournalVersion || !validIdentityToken(op.OperationRef) ||
-		!validIdentityToken(op.StateDomainID) || !validIdentityToken(op.OldGenerationID) ||
-		!validIdentityToken(op.TargetGenerationID) || op.OldGenerationID == op.TargetGenerationID ||
+	if op.JournalVersion != RollingJournalVersion || !metadata.ValidCodexIdentityToken(op.OperationRef) ||
+		!metadata.ValidCodexIdentityToken(op.StateDomainID) || !metadata.ValidCodexIdentityToken(op.OldGenerationID) ||
+		!metadata.ValidCodexIdentityToken(op.TargetGenerationID) || op.OldGenerationID == op.TargetGenerationID ||
 		!validRollingPhase(op.Phase) {
 		return errors.New("invalid-rolling-operation")
 	}
@@ -170,7 +171,7 @@ func (op RollingUpgradeOperation) Validate() error {
 		return errors.New("candidate-cleanup-receipt-mismatch")
 	}
 	for _, row := range op.Ledger {
-		if !validIdentityToken(row.AgentUID) || row.EndpointGenerationID != op.OldGenerationID ||
+		if !metadata.ValidCodexIdentityToken(row.AgentUID) || row.EndpointGenerationID != op.OldGenerationID ||
 			!validObligationState(row.State) || row.BlocksHandover !=
 			(row.State == ObligationActive || row.State == ObligationApprovalPending || row.State == ObligationNoTurn || row.State == ObligationUnknown) {
 			return errors.New("invalid-drain-ledger")

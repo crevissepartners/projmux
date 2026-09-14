@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/core/layout"
 )
 
 // keymapMaxFileBytes bounds how much of a keymap file the migrator will read.
@@ -179,7 +181,7 @@ func planKeymapMigration(store keymapStore) (keymapMigrationPlan, error) {
 func replaceKeymapSchemaMarker(raw []byte, version int) ([]byte, error) {
 	lines := strings.SplitAfter(string(raw), "\n")
 	for i, line := range lines {
-		content := strings.TrimSpace(stripKeymapComment(line))
+		content := strings.TrimSpace(layout.StripComment(line))
 		key, _, ok := strings.Cut(content, "=")
 		if !ok || strings.TrimSpace(key) != keymapSchemaVersionKey {
 			continue

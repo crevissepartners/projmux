@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +23,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbundle"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -904,27 +904,9 @@ func fileIdentity(info fs.FileInfo) FileIdentity {
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 		identity.Device = uint64(stat.Dev)
 		identity.Inode = uint64(stat.Ino)
-		identity.ChangeTimeSeconds, identity.ChangeTimeNanoseconds = statChangeTime(stat)
+		identity.ChangeTimeSeconds, identity.ChangeTimeNanoseconds = localipc.StatChangeTime(stat)
 	}
 	return identity
-}
-
-// Stat_t spells the change-time field Ctim on Linux and Ctimespec on Darwin.
-// Reflection keeps this package inside the repository's explicit two-OS
-// contract without platform build files or narrowing conversions.
-func statChangeTime(stat *syscall.Stat_t) (int64, int64) {
-	value := reflect.ValueOf(stat).Elem()
-	for _, name := range []string{"Ctim", "Ctimespec"} {
-		field := value.FieldByName(name)
-		if !field.IsValid() {
-			continue
-		}
-		seconds, nanoseconds := field.FieldByName("Sec"), field.FieldByName("Nsec")
-		if seconds.IsValid() && nanoseconds.IsValid() && seconds.CanInt() && nanoseconds.CanInt() {
-			return seconds.Int(), nanoseconds.Int()
-		}
-	}
-	return 0, 0
 }
 
 func ownerPrivateDirectory(path string) (fs.FileInfo, error) {

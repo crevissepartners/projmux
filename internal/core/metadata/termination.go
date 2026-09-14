@@ -233,9 +233,9 @@ type CodexAuthorityRef struct {
 
 // Valid reports whether the complete composite authority is available.
 func (r CodexAuthorityRef) Valid() bool {
-	return validCodexIdentityToken(r.StateDomainID) &&
-		validCodexIdentityToken(r.EndpointGenerationID) &&
-		validCodexIdentityToken(r.BrokerRuntimeID) &&
+	return ValidCodexIdentityToken(r.StateDomainID) &&
+		ValidCodexIdentityToken(r.EndpointGenerationID) &&
+		ValidCodexIdentityToken(r.BrokerRuntimeID) &&
 		r.ConnectionEpoch != 0 && r.BindingEpoch != 0
 }
 

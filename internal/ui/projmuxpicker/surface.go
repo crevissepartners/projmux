@@ -166,7 +166,7 @@ func QueryWithCursor(query string, cursor int) string {
 
 func QueryWithCursorAndTheme(pickerTheme Theme, query string, cursor int) string {
 	runes := []rune(query)
-	cursor = clampCursor(runes, cursor)
+	cursor = ClampCursor(runes, cursor)
 	cursorStart := themeCursor(pickerTheme)
 	if cursor == len(runes) {
 		return string(runes) + cursorStart + " " + Reset
@@ -481,7 +481,8 @@ func themeContinuation(pickerTheme Theme) string {
 	return themePointer(pickerTheme)
 }
 
-func clampCursor(runes []rune, cursor int) int {
+// ClampCursor confines a cursor index to the closed range [0, len(runes)].
+func ClampCursor(runes []rune, cursor int) int {
 	if cursor < 0 {
 		return 0
 	}

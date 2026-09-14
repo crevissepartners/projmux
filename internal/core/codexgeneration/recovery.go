@@ -2,6 +2,7 @@ package codexgeneration
 
 import (
 	"errors"
+	"github.com/crevissepartners/projmux/internal/core/metadata"
 	"strings"
 )
 
@@ -60,9 +61,9 @@ func NewColdRecoveryOperation(operationRef, rollingRef, stateDomainID, generatio
 }
 
 func (op ColdRecoveryOperation) Validate() error {
-	if op.JournalVersion != ColdRecoveryJournalVersion || !validIdentityToken(op.OperationRef) ||
-		!validIdentityToken(op.RollingOperationRef) || !validIdentityToken(op.StateDomainID) ||
-		!validIdentityToken(op.GenerationID) || !validIdentityToken(op.LaunchOperationRef) || !op.Intended ||
+	if op.JournalVersion != ColdRecoveryJournalVersion || !metadata.ValidCodexIdentityToken(op.OperationRef) ||
+		!metadata.ValidCodexIdentityToken(op.RollingOperationRef) || !metadata.ValidCodexIdentityToken(op.StateDomainID) ||
+		!metadata.ValidCodexIdentityToken(op.GenerationID) || !metadata.ValidCodexIdentityToken(op.LaunchOperationRef) || !op.Intended ||
 		op.Mutations < 0 || op.Mutations > 1 || op.Recovered != (op.Mutations == 1) ||
 		strings.TrimSpace(op.OperationRef) != op.OperationRef {
 		return errors.New("invalid-cold-recovery-operation")

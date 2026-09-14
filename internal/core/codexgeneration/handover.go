@@ -136,9 +136,9 @@ func validHandoverPhase(phase HandoverPhase) bool {
 }
 
 func (op HandoverOperation) Validate() error {
-	if op.JournalVersion != HandoverJournalVersion || !validIdentityToken(op.OperationRef) ||
-		!validIdentityToken(op.RollingOperationRef) || !validIdentityToken(op.StateDomainID) ||
-		!validIdentityToken(op.OldGenerationID) || !validIdentityToken(op.SuccessorGenerationID) ||
+	if op.JournalVersion != HandoverJournalVersion || !metadata.ValidCodexIdentityToken(op.OperationRef) ||
+		!metadata.ValidCodexIdentityToken(op.RollingOperationRef) || !metadata.ValidCodexIdentityToken(op.StateDomainID) ||
+		!metadata.ValidCodexIdentityToken(op.OldGenerationID) || !metadata.ValidCodexIdentityToken(op.SuccessorGenerationID) ||
 		op.OldGenerationID == op.SuccessorGenerationID || !validOwnerClass(op.Owner) || !validHandoverPhase(op.Phase) {
 		return errors.New("invalid-handover-operation")
 	}
@@ -189,16 +189,16 @@ func (op HandoverOperation) Validate() error {
 	if op.Owner == OwnerProjmuxPrivate && op.ExternalStopReceipt != nil {
 		return errors.New("managed-owner-cannot-use-external-stop-receipt")
 	}
-	if op.ExternalStopReceipt != nil && (!validIdentityToken(op.ExternalStopReceipt.ReceiptID) ||
+	if op.ExternalStopReceipt != nil && (!metadata.ValidCodexIdentityToken(op.ExternalStopReceipt.ReceiptID) ||
 		!op.ExternalStopReceipt.Endpoint.Same(metadata.CodexEndpointRef{StateDomainID: op.StateDomainID, EndpointGenerationID: op.OldGenerationID})) {
 		return errors.New("invalid-owner-stop-receipt")
 	}
 	seenAgent, seenPane, seenThread := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
 	absences, resumes, snapshots, cases, relaunches := 0, 0, 0, 0, 0
 	for _, target := range op.Targets {
-		if !validIdentityToken(target.AgentUID) || !validIdentityToken(target.PaneUID) ||
+		if !metadata.ValidCodexIdentityToken(target.AgentUID) || !metadata.ValidCodexIdentityToken(target.PaneUID) ||
 			strings.TrimSpace(target.PaneRuntimeID) == "" || strings.TrimSpace(target.PaneGeneration) == "" ||
-			!validIdentityToken(target.RelaunchGeneration) || !validIdentityToken(target.ThreadID) {
+			!metadata.ValidCodexIdentityToken(target.RelaunchGeneration) || !metadata.ValidCodexIdentityToken(target.ThreadID) {
 			return errors.New("invalid-handover-target")
 		}
 		for value, set := range map[string]map[string]struct{}{target.AgentUID: seenAgent, target.PaneUID: seenPane, target.ThreadID: seenThread} {
@@ -234,9 +234,9 @@ func (op HandoverOperation) Validate() error {
 	choiceCount := 0
 	seenChoiceAgent, seenReplacement := map[string]struct{}{}, map[string]struct{}{}
 	for _, choice := range op.Choices {
-		if !validIdentityToken(choice.AgentUID) || !validIdentityToken(choice.PaneUID) || strings.TrimSpace(choice.PaneRuntimeID) == "" ||
+		if !metadata.ValidCodexIdentityToken(choice.AgentUID) || !metadata.ValidCodexIdentityToken(choice.PaneUID) || strings.TrimSpace(choice.PaneRuntimeID) == "" ||
 			strings.TrimSpace(choice.PaneGeneration) == "" || (choice.Decision != NoTurnClose && choice.Decision != NoTurnReplacement) ||
-			(choice.Decision == NoTurnReplacement) != validIdentityToken(choice.ReplacementAgentUID) || choice.AgentUID == choice.ReplacementAgentUID {
+			(choice.Decision == NoTurnReplacement) != metadata.ValidCodexIdentityToken(choice.ReplacementAgentUID) || choice.AgentUID == choice.ReplacementAgentUID {
 			return errors.New("invalid-no-turn-choice")
 		}
 		if _, duplicate := seenChoiceAgent[choice.AgentUID]; duplicate {

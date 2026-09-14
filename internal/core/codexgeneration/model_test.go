@@ -149,12 +149,12 @@ func FuzzBoundedPoolNeverAcceptsMoreThanTwoLiveSlots(f *testing.F) {
 
 func TestIdentityAndVersionTokensRejectNonCanonicalWhitespace(t *testing.T) {
 	for _, token := range []string{" generation", "generation ", "generation\n"} {
-		if validIdentityToken(token) {
+		if metadata.ValidCodexIdentityToken(token) {
 			t.Fatalf("identity token %q validated", token)
 		}
 	}
 	for _, version := range []string{" 0.152.0", "0.152.0 ", "0.152.0\n"} {
-		if validVersionToken(version) {
+		if ValidVersionToken(version) {
 			t.Fatalf("version token %q validated", version)
 		}
 		result := qualified()

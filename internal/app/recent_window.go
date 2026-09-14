@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/paneidentity"
@@ -540,7 +541,7 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time, ba
 	if name == "" {
 		name = recentWindowTargetLabel(candidate)
 	}
-	name = recentWindowTruncate(name, recentWindowNameMaxRunes)
+	name = usagecmd.TruncateDisplayRunes(name, recentWindowNameMaxRunes)
 
 	age := recentWindowAge(candidate.LastFocusedAt, now)
 	lastVisit := recentWindowLastVisit(age, candidate.LastFocusedAt)
@@ -601,7 +602,7 @@ func recentWindowBadgeText(candidate recentwindows.Candidate) string {
 	if badge == "" {
 		badge = strings.TrimSpace(candidate.Session)
 	}
-	return recentWindowTruncate(badge, recentWindowProjectBadgeMaxRunes)
+	return usagecmd.TruncateDisplayRunes(badge, recentWindowProjectBadgeMaxRunes)
 }
 
 // recentWindowPaneTitles returns the pane-title list, falling back to the
@@ -630,7 +631,7 @@ func recentWindowPaneSummary(candidate recentwindows.Candidate) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return recentWindowTruncate(strings.Join(parts, " | "), recentWindowPaneSummaryMaxRunes)
+	return usagecmd.TruncateDisplayRunes(strings.Join(parts, " | "), recentWindowPaneSummaryMaxRunes)
 }
 
 // recentWindowPaneSummaryParts returns the ordered perceived-title parts for the
@@ -704,7 +705,7 @@ func recentWindowPaneSummaryLine(candidate recentwindows.Candidate, badgeStyle s
 	rendered := make([]string, 0, len(visible)+1)
 	for _, cell := range visible {
 		// Truncate identically to the plain summary path so layout never shifts.
-		body := recentWindowTruncate(cell.perceivedTitle(), recentWindowPaneSummaryMaxRunes)
+		body := usagecmd.TruncateDisplayRunes(cell.perceivedTitle(), recentWindowPaneSummaryMaxRunes)
 		if glyph := recentWindowPaneKindGlyph(cell.kind, badgeStyle); glyph != "" {
 			body = glyph + " " + body
 		}
@@ -814,23 +815,6 @@ func recentWindowFocusDate(focused time.Time) string {
 		return ""
 	}
 	return focused.Local().Format("2006-01-02 15:04")
-}
-
-// recentWindowTruncate shortens value to at most maxRunes runes (rune-aware),
-// appending a single-rune ellipsis when truncation occurs. Distinct from the
-// package's plain truncateRunes (which hard-cuts without an ellipsis).
-func recentWindowTruncate(value string, maxRunes int) string {
-	if maxRunes <= 0 {
-		return ""
-	}
-	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
-	if maxRunes == 1 {
-		return "…"
-	}
-	return string(runes[:maxRunes-1]) + "…"
 }
 
 func recentWindowValue(candidate recentwindows.Candidate) string {

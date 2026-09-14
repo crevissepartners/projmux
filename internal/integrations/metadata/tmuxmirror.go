@@ -726,7 +726,7 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 		indexOrder[fields[0]] = len(legacy.Windows)
 		legacy.Windows = append(legacy.Windows, coremetadata.LegacyWindow{
 			Name:             fields[1],
-			AutomaticRename:  tmuxTruthyOption(fields[2]),
+			AutomaticRename:  TmuxTruthyOption(fields[2]),
 			RuntimeSessionID: fields[3], RuntimeID: fields[4],
 			UID: strings.TrimSpace(fields[5]),
 		})
@@ -773,8 +773,8 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 	return legacy, targets, nil
 }
 
-// tmuxTruthyOption reads a tmux boolean option value.
-func tmuxTruthyOption(value string) bool {
+// TmuxTruthyOption reads a tmux boolean option value.
+func TmuxTruthyOption(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "on", "1", "yes", "true":
 		return true

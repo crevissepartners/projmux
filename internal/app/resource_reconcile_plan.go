@@ -859,7 +859,7 @@ func planResourceBoundMirrorDrift(ctx context.Context, recorder *resourcePlanTmu
 			if !ok {
 				continue
 			}
-			if resourceTmuxTruthy(object.automatic) {
+			if intmetadata.TmuxTruthyOption(object.automatic) {
 				if err := reconciler.mirror.DisableAutomaticRename(ctx, object.target); err != nil {
 					return err
 				}
@@ -887,15 +887,6 @@ func planResourceBoundMirrorDrift(ctx context.Context, recorder *resourcePlanTmu
 		}
 	}
 	return nil
-}
-
-func resourceTmuxTruthy(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "on", "1", "yes", "true":
-		return true
-	default:
-		return false
-	}
 }
 
 func resourceProjectForeignItems(registry coremetadata.Registry, sessions []observedResourceProjectSession, reconciler *registryReconciler) []resourceReconcileItem {

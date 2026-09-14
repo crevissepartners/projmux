@@ -1318,7 +1318,7 @@ func SnapshotWindowLabel(snapshot usage.Snapshot) string {
 		if quota := snapshot.NamedQuota; quota != nil && !quota.IsActive {
 			label += " [inactive]"
 		}
-		return truncateDisplayRunes(label, 72)
+		return TruncateDisplayRunes(label, 72)
 	}
 	label := string(snapshot.Window)
 	if snapshot.Bucket != "" {
@@ -1327,7 +1327,7 @@ func SnapshotWindowLabel(snapshot usage.Snapshot) string {
 	if native := snapshot.RateLimit; native != nil && native.Label != nil && *native.Label != "" {
 		label += " · " + boundedOpaqueDisplayID(*native.Label, 24)
 	}
-	return truncateDisplayRunes(label, 72)
+	return TruncateDisplayRunes(label, 72)
 }
 
 // SnapshotReasonLabel returns the one reason relevant to the rendered row.
@@ -1399,10 +1399,10 @@ func codexCompactQualifier(snapshot usage.Snapshot) string {
 }
 
 func boundedOpaqueDisplayID(id string, maxRunes int) string {
-	return truncateDisplayRunes(BucketDisplayID(id), maxRunes)
+	return TruncateDisplayRunes(BucketDisplayID(id), maxRunes)
 }
 
-func truncateDisplayRunes(value string, maxRunes int) string {
+func TruncateDisplayRunes(value string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
 	}

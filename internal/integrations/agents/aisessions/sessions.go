@@ -27,6 +27,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 const (
@@ -1152,7 +1153,7 @@ func titleFromRecord(fields map[string]any) string {
 			if payloadType := stringJSONField(payload, "type"); payloadType != "" && !strings.EqualFold(payloadType, "user_message") {
 				return ""
 			}
-			return cleanTitleCandidate(firstNestedString(payload, "message"))
+			return cleanTitleCandidate(inttmux.FirstNestedString(payload, "message"))
 		}
 	}
 	if recordType == "response_item" {
@@ -1230,24 +1231,6 @@ func contentText(value any) string {
 	default:
 		return ""
 	}
-}
-
-func firstNestedString(fields map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value := stringJSONField(fields, key); value != "" {
-			return value
-		}
-	}
-	for _, raw := range fields {
-		nested, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if value := firstNestedString(nested, keys...); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func stringJSONField(fields map[string]any, key string) string {

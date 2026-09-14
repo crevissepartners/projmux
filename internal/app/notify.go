@@ -14,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -1238,7 +1239,7 @@ func notifySidebarGroupContextLabel(group notifySidebarGroup, liveByID map[strin
 func notifySidebarGroupExplicitAgent(rows []notifySidebarRow, liveByID map[string]notifyLivePane) string {
 	for _, row := range rows {
 		live := liveByID[row.Notify.ID]
-		if agent := firstNonEmptyNotifySidebarString(live.Agent, row.Notify.Metadata[notify.MetaAgent], row.Notify.Metadata["provider"]); agent != "" {
+		if agent := recentwindows.FirstNonEmpty(live.Agent, row.Notify.Metadata[notify.MetaAgent], row.Notify.Metadata["provider"]); agent != "" {
 			return notifySidebarAgentDisplayName(agent)
 		}
 	}
@@ -1248,7 +1249,7 @@ func notifySidebarGroupExplicitAgent(rows []notifySidebarRow, liveByID map[strin
 func notifySidebarGroupContext(rows []notifySidebarRow, liveByID map[string]notifyLivePane) string {
 	for _, row := range rows {
 		live := liveByID[row.Notify.ID]
-		if context := firstNonEmptyNotifySidebarString(
+		if context := recentwindows.FirstNonEmpty(
 			live.Topic,
 			row.Notify.Metadata[notify.MetaTopic],
 			live.Title,
@@ -1298,15 +1299,6 @@ func notifySidebarGroupFallbackLabel(entry notify.Notification) string {
 		return session
 	}
 	return "external"
-}
-
-func firstNonEmptyNotifySidebarString(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func notifySidebarChildLabelForLocale(e notify.Notification, now time.Time, display notifyRowDisplayState, locale i18n.Locale) string {
@@ -1995,32 +1987,21 @@ func writeNotifyLiveTable(w io.Writer, report notifyLiveReport, now time.Time, l
 	}
 	for _, row := range report.Rows {
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			notifyTableCell(row.State),
-			notifyTableCell(row.Target),
-			notifyTableCell(row.ID),
-			notifyTableCell(row.Explanation),
-			notifyTableCell(row.Text),
+			attentionTableCell(row.State),
+			attentionTableCell(row.Target),
+			attentionTableCell(row.ID),
+			attentionTableCell(row.Explanation),
+			attentionTableCell(row.Text),
 		); err != nil {
 			return err
 		}
 	}
 	for _, e := range report.Errors {
-		if _, err := fmt.Fprintf(w, "live error\t-\t-\t%s\t-\n", notifyTableCell(e)); err != nil {
+		if _, err := fmt.Fprintf(w, "live error\t-\t-\t%s\t-\n", attentionTableCell(e)); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func notifyTableCell(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "-"
-	}
-	value = strings.ReplaceAll(value, "\t", " ")
-	value = strings.ReplaceAll(value, "\r", " ")
-	value = strings.ReplaceAll(value, "\n", " ")
-	return value
 }
 
 func formatAgeLocale(d time.Duration, locale i18n.Locale) string {

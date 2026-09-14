@@ -13,7 +13,7 @@ func loadAIBadgeStyle(homeDir func() (string, error), lookupEnv func(string) str
 	if homeDir == nil {
 		return config.AIBadgeStyleDot
 	}
-	paths, err := statusbarConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return config.AIBadgeStyleDot
 	}
@@ -28,7 +28,7 @@ func aiBadgeConfigPaths(homeDir func() (string, error), lookupEnv func(string) s
 	if homeDir == nil {
 		homeDir = os.UserHomeDir
 	}
-	return statusbarConfigPaths(homeDir, lookupEnv)
+	return configPaths(homeDir, lookupEnv)
 }
 
 func saveAIBadgeStyle(homeDir func() (string, error), lookupEnv func(string) string, value config.AIBadgeStyle) error {

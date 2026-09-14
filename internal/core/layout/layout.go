@@ -454,7 +454,7 @@ func Parse(content string) (Preset, error) {
 	ignoredArray := false
 
 	for lineNo, raw := range strings.Split(content, "\n") {
-		line := strings.TrimSpace(stripComment(raw))
+		line := strings.TrimSpace(StripComment(raw))
 		if line == "" {
 			continue
 		}
@@ -772,7 +772,9 @@ func parseIntValue(value string) (int, error) {
 	return n, nil
 }
 
-func stripComment(line string) string {
+// StripComment drops a trailing `#` comment from one config line, ignoring
+// `#` inside a double-quoted string.
+func StripComment(line string) string {
 	inString := false
 	escaped := false
 	for i, r := range line {

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -37,29 +36,11 @@ func statusbarDecorationSetFromGlobal(mode config.StatusbarDecoration) statusbar
 	return statusbarDecorationSet{Cwd: mode, Git: mode, Notify: mode}
 }
 
-func statusbarConfigPaths(homeDir func() (string, error), lookupEnv func(string) string) (config.Paths, error) {
-	if homeDir == nil {
-		homeDir = os.UserHomeDir
-	}
-	if lookupEnv == nil {
-		lookupEnv = os.Getenv
-	}
-	home, err := homeDir()
-	if err != nil {
-		return config.Paths{}, fmt.Errorf("resolve home directory: %w", err)
-	}
-	return config.Homes{
-		HomeDir:    home,
-		ConfigHome: lookupEnv("XDG_CONFIG_HOME"),
-		StateHome:  lookupEnv("XDG_STATE_HOME"),
-	}.Paths()
-}
-
 func loadStatusbarDecoration(homeDir func() (string, error), lookupEnv func(string) string) config.StatusbarDecoration {
 	if homeDir == nil {
 		return config.StatusbarDecorationOff
 	}
-	paths, err := statusbarConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return config.StatusbarDecorationOff
 	}
@@ -83,7 +64,7 @@ func loadStatusbarDecorationForTarget(homeDir func() (string, error), lookupEnv 
 	if homeDir == nil {
 		return fallback
 	}
-	paths, err := statusbarConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return fallback
 	}

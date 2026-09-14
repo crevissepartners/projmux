@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 )
 
 const ManifestSchemaVersion = 1
@@ -139,7 +141,7 @@ func inspectArtifact(source, path string, roles []Role) (Artifact, error) {
 }
 
 func (m Manifest) Validate() error {
-	if m.SchemaVersion != ManifestSchemaVersion || !safeVersionToken(m.Version) || !m.Protocol.Valid() || len(m.Artifacts) == 0 {
+	if m.SchemaVersion != ManifestSchemaVersion || !codexgeneration.ValidVersionToken(m.Version) || !m.Protocol.Valid() || len(m.Artifacts) == 0 {
 		return &Error{Refusal: RefusalManifestInvalid}
 	}
 	seen := make(map[string]bool, len(m.Artifacts))
@@ -447,19 +449,6 @@ func safeRoot(path string) bool {
 	}
 	clean := filepath.Clean(path)
 	return path == clean && filepath.IsAbs(path) && path != filepath.Clean(string(filepath.Separator))
-}
-
-func safeVersionToken(value string) bool {
-	if value == "" || value != strings.TrimSpace(value) || len(value) > 64 {
-		return false
-	}
-	for _, char := range value {
-		if (char >= '0' && char <= '9') || char == '.' || char == '-' {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func (r Refusal) String() string { return string(r) }

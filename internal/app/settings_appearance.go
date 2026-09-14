@@ -945,7 +945,7 @@ func (c *settingsCommand) currentStatusbarDecorations() statusbarDecorationSet {
 
 func (c *settingsCommand) setStatusbarDecoration(value string) error {
 	target, mode := parseStatusbarDecorationSetting(value)
-	paths, err := statusbarConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}

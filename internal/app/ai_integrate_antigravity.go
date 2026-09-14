@@ -133,7 +133,7 @@ func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Wri
 		{statusLinePlan.path, statusLinePlan.changed, "settings"},
 	} {
 		if target.changed {
-			if err := preflightAntigravityWrite(target.path); err != nil {
+			if err := preflightManagedIngestWrite(target.path); err != nil {
 				return fmt.Errorf("write Antigravity %s %s: %w", target.label, target.path, err)
 			}
 		}
@@ -162,27 +162,6 @@ func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Wri
 	}
 	_, err = fmt.Fprintln(stdout, statusLinePlan.action)
 	return err
-}
-
-func preflightAntigravityWrite(path string) error {
-	current := path
-	for {
-		info, err := os.Stat(current)
-		if err == nil {
-			if info.Mode().Perm()&0o222 == 0 {
-				return os.ErrPermission
-			}
-			return nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return os.ErrPermission
-		}
-		current = parent
-	}
 }
 
 func (c *aiCommand) planAntigravityStatusLineIntegration(remove bool) (antigravityStatusLinePlan, error) {

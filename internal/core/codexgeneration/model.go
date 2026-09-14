@@ -157,7 +157,7 @@ func RefusalOf(err error) TopologyRefusal {
 // handover-pending, recovering, and blocked generations also occupy one of the
 // two live slots; retired receipt rows do not.
 func (p Pool) Validate() error {
-	if !validIdentityToken(p.StateDomainID) {
+	if !metadata.ValidCodexIdentityToken(p.StateDomainID) {
 		return &TopologyError{Refusal: RefusalStateDomainRequired}
 	}
 	seen := make(map[string]Generation, len(p.Generations))
@@ -165,7 +165,7 @@ func (p Pool) Validate() error {
 	for _, generation := range p.Generations {
 		id := strings.TrimSpace(generation.Endpoint.EndpointGenerationID)
 		if !generation.Endpoint.Valid() || !validGenerationState(generation.State) ||
-			!validOwnerClass(generation.Owner) || !validIdentityToken(generation.BundleID) {
+			!validOwnerClass(generation.Owner) || !metadata.ValidCodexIdentityToken(generation.BundleID) {
 			return &TopologyError{Refusal: RefusalGenerationInvalid}
 		}
 		if generation.Endpoint.StateDomainID != p.StateDomainID {
@@ -196,8 +196,8 @@ func (p Pool) Validate() error {
 	}
 	liveObligations := 0
 	for _, obligation := range p.Obligations {
-		if !validIdentityToken(obligation.AgentUID) ||
-			!validIdentityToken(obligation.EndpointGenerationID) ||
+		if !metadata.ValidCodexIdentityToken(obligation.AgentUID) ||
+			!metadata.ValidCodexIdentityToken(obligation.EndpointGenerationID) ||
 			!validObligationState(obligation.State) {
 			return &TopologyError{Refusal: RefusalObligationInvalid}
 		}
@@ -228,17 +228,3 @@ func (p Pool) Current() (Generation, bool) {
 // String keeps TopologyError values from gaining contextual or sensitive
 // material through fmt wrapping in tests and diagnostics.
 func (r TopologyRefusal) String() string { return string(r) }
-
-func validIdentityToken(value string) bool {
-	if value == "" || value != strings.TrimSpace(value) || len(value) > 128 {
-		return false
-	}
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' || char == ':' {
-			continue
-		}
-		return false
-	}
-	return true
-}

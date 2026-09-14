@@ -3,6 +3,7 @@ package codexgeneration
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/metadata"
 	"slices"
 	"strings"
 )
@@ -64,7 +65,7 @@ func PlanUpgrade(pool Pool, targetGenerationID string, qualification *Qualificat
 		poolValid = false
 		plan.Blockers = append(plan.Blockers, Blocker{Code: BlockerInvalidTopology, Reason: RefusalOf(err).String()})
 	}
-	if !validIdentityToken(targetGenerationID) {
+	if !metadata.ValidCodexIdentityToken(targetGenerationID) {
 		plan.Blockers = append(plan.Blockers, Blocker{Code: BlockerInvalidTopology, Reason: "target-generation-required"})
 	} else {
 		plan.TargetGeneration = targetGenerationID

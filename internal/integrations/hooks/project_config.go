@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
 
@@ -140,7 +141,7 @@ func ParseProjectConfig(content string) (ProjectConfig, error) {
 	}
 	section := ""
 	for lineNo, raw := range strings.Split(content, "\n") {
-		line := strings.TrimSpace(stripConfigComment(raw))
+		line := strings.TrimSpace(layout.StripComment(raw))
 		if line == "" {
 			continue
 		}
@@ -416,29 +417,6 @@ func parseQuotedConfigString(value string) (string, error) {
 		return "", fmt.Errorf("invalid quoted string: %w", err)
 	}
 	return decoded, nil
-}
-
-func stripConfigComment(line string) string {
-	inString := false
-	escaped := false
-	for i, r := range line {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if inString && r == '\\' {
-			escaped = true
-			continue
-		}
-		if r == '"' {
-			inString = !inString
-			continue
-		}
-		if !inString && r == '#' {
-			return line[:i]
-		}
-	}
-	return line
 }
 
 func mergeConfigEnv(base, overlay map[string]string) map[string]string {

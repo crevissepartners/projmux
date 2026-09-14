@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/resources"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -2515,7 +2516,7 @@ func testPersistentSessionCreator(runner commandRunner) PersistentSessionCreator
 	return func(ctx context.Context, request PersistentSessionCreateRequest) (intmux.NewSessionResult, error) {
 		format := strings.Join([]string{"#{session_id}", "#{window_id}", "#{pane_id}"}, tmuxEscapedFieldSep)
 		args := []string{"new-session", "-d", "-s", request.SessionName, "-c", request.RuntimeCWD}
-		for _, key := range sortedMapKeys(request.Environment) {
+		for _, key := range resources.SortedKeys(request.Environment) {
 			args = append(args, "-e", key+"="+request.Environment[key])
 		}
 		args = append(args, "-P", "-F", format)

@@ -3,6 +3,7 @@ package aisessions
 import (
 	"encoding/json"
 	"fmt"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"reflect"
 	"strings"
 	"testing"
@@ -53,13 +54,13 @@ func TestSessionScanRecordPreservesLegacyFields(t *testing.T) {
 				}
 				var want sessionScanRecord
 				if details.id == "" {
-					want.id = firstNestedString(fields, "sessionId", "session_id", "id")
+					want.id = inttmux.FirstNestedString(fields, "sessionId", "session_id", "id")
 				}
 				if details.cwd == "" {
-					want.cwd = firstNestedString(fields, "cwd", "current_dir", "currentDir", "project_dir", "projectDir", "project_path", "projectPath", "working_directory", "workingDirectory")
+					want.cwd = inttmux.FirstNestedString(fields, "cwd", "current_dir", "currentDir", "project_dir", "projectDir", "project_path", "projectPath", "working_directory", "workingDirectory")
 				}
 				if details.branch == "" {
-					want.branch = firstNestedString(fields, "gitBranch", "git_branch", "branch")
+					want.branch = inttmux.FirstNestedString(fields, "gitBranch", "git_branch", "branch")
 				}
 				seekCanonical := (provider == AgentClaude && details.titleProvenance != TitleExplicitProvider) || (provider == AgentCodex && details.titleProvenance != TitleDerivedUserPrompt)
 				if details.title == "" || seekCanonical || titleIsResumeID(details.title, want.id) {

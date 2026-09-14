@@ -178,7 +178,7 @@ func EvaluateQualification(versions VersionPair, evidence QualificationEvidence)
 }
 
 func (r QualificationResult) Validate() error {
-	if r.SchemaVersion != QualificationSchemaVersion || !validVersionToken(r.Versions.Old) || !validVersionToken(r.Versions.New) {
+	if r.SchemaVersion != QualificationSchemaVersion || !ValidVersionToken(r.Versions.Old) || !ValidVersionToken(r.Versions.New) {
 		return fmt.Errorf("codex generation qualification receipt is incomplete")
 	}
 	want := EvaluateQualification(r.Versions, r.Evidence)
@@ -188,7 +188,7 @@ func (r QualificationResult) Validate() error {
 	return nil
 }
 
-func validVersionToken(value string) bool {
+func ValidVersionToken(value string) bool {
 	if value == "" || value != strings.TrimSpace(value) || len(value) > 64 {
 		return false
 	}

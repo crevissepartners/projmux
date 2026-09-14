@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
+	"github.com/crevissepartners/projmux/internal/core/resources"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
@@ -812,7 +813,7 @@ func (c *Client) projectSessionEnv(cwd string) map[string]string {
 }
 
 func (c *Client) applyProjectSessionEnv(ctx context.Context, sessionName string, env map[string]string) {
-	for _, key := range sortedMapKeys(env) {
+	for _, key := range resources.SortedKeys(env) {
 		if key == createOperationEnvironment {
 			continue
 		}
@@ -1076,15 +1077,6 @@ func (c *Client) resolveTargetCWD(ctx context.Context, target string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(output))
-}
-
-func sortedMapKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // SwitchClient switches the active tmux client to the target session.

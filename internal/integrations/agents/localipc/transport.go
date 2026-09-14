@@ -234,7 +234,7 @@ func socketIdentity(info os.FileInfo) (SocketIdentity, bool) {
 	if !ok {
 		return SocketIdentity{}, false
 	}
-	seconds, nanoseconds := statChangeTime(stat)
+	seconds, nanoseconds := StatChangeTime(stat)
 	return SocketIdentity{
 		Device:                uint64(stat.Dev),
 		Inode:                 stat.Ino,
@@ -253,7 +253,7 @@ func sameSocketIdentity(first, second SocketIdentity) bool {
 // Stat_t spells the change-time field Ctim on Linux and Ctimespec on Darwin.
 // Reflection keeps this package inside the repository's explicit two-OS
 // contract without build constraints or narrowing conversions.
-func statChangeTime(stat *syscall.Stat_t) (int64, int64) {
+func StatChangeTime(stat *syscall.Stat_t) (int64, int64) {
 	value := reflect.ValueOf(stat).Elem()
 	for _, name := range []string{"Ctim", "Ctimespec"} {
 		field := value.FieldByName(name)

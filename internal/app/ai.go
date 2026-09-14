@@ -35,6 +35,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -3008,14 +3009,14 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 	binName := provider.BinaryName
 
 	home := c.homeOrEmpty()
-	if path := firstExecutable(
+	if path := sessionstate.FirstExecutable(
 		c.readTrimmed("command", "-v", binName),
 		filepath.Join(home, ".npm-global", "bin", binName),
 		filepath.Join(home, ".local", "bin", binName),
 	); path != "" {
 		return path
 	}
-	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
+	if path := newestExecutable(sessionstate.NodeManagerCandidates(home, binName)); path != "" {
 		return path
 	}
 	if provider.ID == aiprovider.Codex {
@@ -3027,28 +3028,6 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 
 func (c *aiCommand) missingAgentRunnerMessage(mode string) string {
 	return fmt.Sprintf("selected runner is not installed: %s", mode)
-}
-
-// nodeManagerCandidates returns possible install paths for a globally-installed
-// npm CLI when the user manages Node via nvm / fnm / asdf / volta. These tools
-// install into versioned prefixes that aren't on PATH unless the shell ran
-// their init script, so we probe the on-disk layouts directly.
-func nodeManagerCandidates(home, binName string) []string {
-	if home == "" || binName == "" {
-		return nil
-	}
-	var candidates []string
-	globs := []string{
-		filepath.Join(home, ".nvm", "versions", "node", "*", "bin", binName),
-		filepath.Join(home, ".fnm", "node-versions", "*", "installation", "bin", binName),
-		filepath.Join(home, ".asdf", "installs", "nodejs", "*", "bin", binName),
-	}
-	for _, pattern := range globs {
-		matches, _ := filepath.Glob(pattern)
-		candidates = append(candidates, matches...)
-	}
-	candidates = append(candidates, filepath.Join(home, ".volta", "bin", binName))
-	return candidates
 }
 
 func (c *aiCommand) displayMessage(message string) error {
@@ -4374,15 +4353,6 @@ func isDir(path string) bool {
 func isExecutable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
-}
-
-func firstExecutable(paths ...string) string {
-	for _, path := range paths {
-		if isExecutable(path) {
-			return path
-		}
-	}
-	return ""
 }
 
 func newestExecutable(paths []string) string {

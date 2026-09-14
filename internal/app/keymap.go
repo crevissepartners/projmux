@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 )
 
@@ -563,7 +564,7 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 	currentID := ""
 	schemaVersionLine := 0
 	for lineNo, original := range strings.Split(raw, "\n") {
-		line := strings.TrimSpace(stripKeymapComment(original))
+		line := strings.TrimSpace(layout.StripComment(original))
 		if line == "" {
 			continue
 		}
@@ -683,29 +684,6 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 		out.Bindings[currentID] = override
 	}
 	return out, nil
-}
-
-func stripKeymapComment(line string) string {
-	inString := false
-	escaped := false
-	for i, r := range line {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if inString && r == '\\' {
-			escaped = true
-			continue
-		}
-		if r == '"' {
-			inString = !inString
-			continue
-		}
-		if !inString && r == '#' {
-			return line[:i]
-		}
-	}
-	return line
 }
 
 // parseKeymapSchemaVersion reads the root `schema_version` marker.

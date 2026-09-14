@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -511,11 +512,11 @@ func codexRolloutSessionMetaFromPrefix(content []byte) (id, cwd string, hasCWD, 
 		if payload == nil {
 			payload = fields
 		}
-		id = firstNestedString(payload, "id", "session_id", "sessionId")
+		id = FirstNestedString(payload, "id", "session_id", "sessionId")
 		if id == "" {
 			continue
 		}
-		cwd = firstNestedString(payload, "cwd", "current_dir", "currentDir", "project_dir", "projectDir", "project_path", "projectPath", "working_directory", "workingDirectory")
+		cwd = FirstNestedString(payload, "cwd", "current_dir", "currentDir", "project_dir", "projectDir", "project_path", "projectPath", "working_directory", "workingDirectory")
 		return id, cwd, cwd != "", true
 	}
 	return "", "", false, false
@@ -529,7 +530,9 @@ func isCodexSessionMetaRecord(fields map[string]any) bool {
 	return payload != nil && strings.EqualFold(stringJSONField(payload, "type"), "session_meta")
 }
 
-func firstNestedString(fields map[string]any, keys ...string) string {
+// FirstNestedString returns the first non-empty string value reachable under
+// any of keys, searching fields and then its nested objects.
+func FirstNestedString(fields map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value := stringJSONField(fields, key); value != "" {
 			return value
@@ -540,7 +543,7 @@ func firstNestedString(fields map[string]any, keys ...string) string {
 		if !ok {
 			continue
 		}
-		if value := firstNestedString(nested, keys...); value != "" {
+		if value := FirstNestedString(nested, keys...); value != "" {
 			return value
 		}
 	}
@@ -557,29 +560,10 @@ func stringJSONField(fields map[string]any, key string) string {
 
 func claudeResumeIDFromTranscriptFilename(path string) string {
 	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	if isUUIDLikeSessionStateID(stem) {
+	if antigravity.IsUUIDLike(stem) {
 		return stem
 	}
 	return ""
-}
-
-func isUUIDLikeSessionStateID(id string) bool {
-	if len(id) != 36 {
-		return false
-	}
-	for i, r := range id {
-		switch i {
-		case 8, 13, 18, 23:
-			if r != '-' {
-				return false
-			}
-		default:
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func (c *Client) listSessionStateWindows(ctx context.Context, sessionName string) ([]sessionStateWindowRow, error) {

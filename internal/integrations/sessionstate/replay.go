@@ -481,14 +481,14 @@ func findAgentBinary(agent string) string {
 	binName = provider.BinaryName
 
 	home, _ := os.UserHomeDir()
-	if path := firstExecutable(
+	if path := FirstExecutable(
 		lookPath(binName),
 		filepath.Join(home, ".npm-global", "bin", binName),
 		filepath.Join(home, ".local", "bin", binName),
 	); path != "" {
 		return path
 	}
-	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
+	if path := newestExecutable(NodeManagerCandidates(home, binName)); path != "" {
 		return path
 	}
 	if provider.ID == aiprovider.Codex {
@@ -519,7 +519,7 @@ func lookPath(binName string) string {
 	return path
 }
 
-func firstExecutable(paths ...string) string {
+func FirstExecutable(paths ...string) string {
 	for _, path := range paths {
 		if isExecutable(path) {
 			return path
@@ -545,7 +545,7 @@ func newestExecutable(paths []string) string {
 	return newest
 }
 
-func nodeManagerCandidates(home, binName string) []string {
+func NodeManagerCandidates(home, binName string) []string {
 	if home == "" || binName == "" {
 		return nil
 	}

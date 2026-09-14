@@ -3,7 +3,6 @@ package app
 import (
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -146,7 +145,7 @@ func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryH
 			Quiet:       quiet[source],
 			Opaque:      opaque[source],
 			PathBearing: pathBearing[source],
-			Reasons:     aiIngestDeliveryReasons(reasons[source]),
+			Reasons:     aiIngestAttributionReasons(reasons[source]),
 		})
 	}
 	return health
@@ -210,16 +209,4 @@ func aiIngestDetailCarriesAPath(reason string) bool {
 
 func isAIIngestHookSource(source string) bool {
 	return slices.Contains(aiIngestAttributionSources, source)
-}
-
-func aiIngestDeliveryReasons(counts map[string]int) []aiIngestAttributionReason {
-	if len(counts) == 0 {
-		return nil
-	}
-	ordered := make([]aiIngestAttributionReason, 0, len(counts))
-	for reason, count := range counts {
-		ordered = append(ordered, aiIngestAttributionReason{Reason: reason, Count: count})
-	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Reason < ordered[j].Reason })
-	return ordered
 }

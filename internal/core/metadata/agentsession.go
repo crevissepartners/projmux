@@ -93,9 +93,9 @@ type CodexHandoverResumeReceipt struct {
 
 func (r CodexHandoverResumeReceipt) ValidFor(old *CodexEndpointRef) bool {
 	return old != nil && old.Valid() && r.SuccessorEndpoint.Valid() && old.StateDomainID == r.SuccessorEndpoint.StateDomainID &&
-		!old.Same(r.SuccessorEndpoint) && validCodexIdentityToken(r.OperationID) && validCodexIdentityToken(r.AgentUID) &&
-		validCodexIdentityToken(r.PaneUID) && strings.TrimSpace(r.PaneRuntimeID) != "" && strings.TrimSpace(r.PaneGeneration) != "" &&
-		validCodexIdentityToken(r.ThreadID)
+		!old.Same(r.SuccessorEndpoint) && ValidCodexIdentityToken(r.OperationID) && ValidCodexIdentityToken(r.AgentUID) &&
+		ValidCodexIdentityToken(r.PaneUID) && strings.TrimSpace(r.PaneRuntimeID) != "" && strings.TrimSpace(r.PaneGeneration) != "" &&
+		ValidCodexIdentityToken(r.ThreadID)
 }
 
 // CodexGenerationState is the closed durable generation vocabulary shared by
@@ -123,7 +123,7 @@ type CodexGenerationOperationRef struct {
 // ValidFor requires an exact endpoint match. A syntactically valid operation
 // from another endpoint is never authority.
 func (r CodexGenerationOperationRef) ValidFor(endpoint *CodexEndpointRef) bool {
-	return endpoint != nil && validCodexIdentityToken(r.ID) && r.Endpoint.Same(*endpoint)
+	return endpoint != nil && ValidCodexIdentityToken(r.ID) && r.Endpoint.Same(*endpoint)
 }
 
 // CodexGenerationLifecycleRef is the durable semantic input to lifecycle
@@ -164,7 +164,7 @@ type CodexEndpointRef struct {
 
 // Valid reports whether both dimensions of an endpoint identity are present.
 func (r CodexEndpointRef) Valid() bool {
-	return validCodexIdentityToken(r.StateDomainID) && validCodexIdentityToken(r.EndpointGenerationID)
+	return ValidCodexIdentityToken(r.StateDomainID) && ValidCodexIdentityToken(r.EndpointGenerationID)
 }
 
 // Same reports exact endpoint identity. Empty or partial references never
@@ -174,7 +174,10 @@ func (r CodexEndpointRef) Same(other CodexEndpointRef) bool {
 		r.StateDomainID == other.StateDomainID && r.EndpointGenerationID == other.EndpointGenerationID
 }
 
-func validCodexIdentityToken(value string) bool {
+// ValidCodexIdentityToken reports whether value is a bounded, trimmed identity
+// token: 1-128 bytes of letters, digits, and "-_.:".
+
+func ValidCodexIdentityToken(value string) bool {
 	if value == "" || value != strings.TrimSpace(value) || len(value) > 128 {
 		return false
 	}

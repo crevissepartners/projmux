@@ -152,7 +152,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	if err := c.agents.RequireAgentEnabled(provider); err != nil {
 		return err
 	}
-	mode, err := c.resolveProjection(spelling, flags.output)
+	mode, err := resolveLifecycleProjection(spelling, flags.output)
 	if err != nil {
 		return err
 	}

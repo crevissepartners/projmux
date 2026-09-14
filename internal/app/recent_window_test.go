@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -229,10 +230,10 @@ func TestRecentWindowPaneSummaryUsesLabelTopicShellTitleOrder(t *testing.T) {
 func TestRecentWindowTruncateIsRuneAware(t *testing.T) {
 	t.Parallel()
 
-	if got := recentWindowTruncate("héllo", 10); got != "héllo" {
+	if got := usagecmd.TruncateDisplayRunes("héllo", 10); got != "héllo" {
 		t.Fatalf("recentWindowTruncate short = %q, want unchanged", got)
 	}
-	if got := recentWindowTruncate("héllo", 3); got != "hé…" {
+	if got := usagecmd.TruncateDisplayRunes("héllo", 3); got != "hé…" {
 		t.Fatalf("recentWindowTruncate = %q, want rune-aware ellipsis", got)
 	}
 }

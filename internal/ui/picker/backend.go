@@ -1851,7 +1851,7 @@ func nativeRuneLen(value string) int {
 
 func insertNativeQueryText(query string, cursor int, text string) (string, int) {
 	runes := []rune(query)
-	cursor = clampNativeQueryCursor(runes, cursor)
+	cursor = projmuxpicker.ClampCursor(runes, cursor)
 	insert := []rune(text)
 	next := make([]rune, 0, len(runes)+len(insert))
 	next = append(next, runes[:cursor]...)
@@ -1866,7 +1866,7 @@ func deleteNativeQueryBeforeCursor(query string, cursor int) (string, int) {
 
 func deleteNativeQueryBeforeCursorN(query string, cursor, count int) (string, int) {
 	runes := []rune(query)
-	cursor = clampNativeQueryCursor(runes, cursor)
+	cursor = projmuxpicker.ClampCursor(runes, cursor)
 	if cursor == 0 || count <= 0 {
 		return query, cursor
 	}
@@ -1879,7 +1879,7 @@ func deleteNativeQueryBeforeCursorN(query string, cursor, count int) (string, in
 
 func deleteNativeQueryAtCursor(query string, cursor int) (string, int) {
 	runes := []rune(query)
-	cursor = clampNativeQueryCursor(runes, cursor)
+	cursor = projmuxpicker.ClampCursor(runes, cursor)
 	if cursor >= len(runes) {
 		return query, cursor
 	}
@@ -1891,7 +1891,7 @@ func deleteNativeQueryAtCursor(query string, cursor int) (string, int) {
 
 func trimNativeQueryWordBeforeCursor(query string, cursor int) (string, int) {
 	runes := []rune(query)
-	cursor = clampNativeQueryCursor(runes, cursor)
+	cursor = projmuxpicker.ClampCursor(runes, cursor)
 	if cursor == 0 {
 		return query, cursor
 	}
@@ -1906,16 +1906,6 @@ func trimNativeQueryWordBeforeCursor(query string, cursor int) (string, int) {
 	next = append(next, runes[:start]...)
 	next = append(next, runes[cursor:]...)
 	return string(next), start
-}
-
-func clampNativeQueryCursor(runes []rune, cursor int) int {
-	if cursor < 0 {
-		return 0
-	}
-	if cursor > len(runes) {
-		return len(runes)
-	}
-	return cursor
 }
 
 func renderNativeInteractive(w io.Writer, options Options, items []Item, query string, selected, previewOffset int, layout nativeLayout) {

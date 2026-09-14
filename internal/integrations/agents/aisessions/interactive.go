@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 const (
@@ -206,9 +207,9 @@ func previewRecord(record map[string]any, session SessionMeta) (string, string) 
 		payload, _ := record["payload"].(map[string]any)
 		switch strings.ToLower(stringJSONField(payload, "type")) {
 		case "user_message":
-			return "user", firstNestedString(payload, "message")
+			return "user", inttmux.FirstNestedString(payload, "message")
 		case "agent_message":
-			return "assistant", firstNestedString(payload, "message")
+			return "assistant", inttmux.FirstNestedString(payload, "message")
 		}
 	}
 	if typ == "user" || typ == "assistant" {

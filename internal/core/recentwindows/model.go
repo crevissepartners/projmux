@@ -137,7 +137,7 @@ func (s Snapshot) Valid() error {
 
 func BuildLabel(snapshot Snapshot) Label {
 	snapshot = normalizeSnapshot(snapshot)
-	primary := firstNonEmpty(snapshot.WindowName, snapshot.Project, snapshot.Session, snapshot.LastPaneTitle, snapshot.LastPaneTopic, snapshot.LastCommand)
+	primary := FirstNonEmpty(snapshot.WindowName, snapshot.Project, snapshot.Session, snapshot.LastPaneTitle, snapshot.LastPaneTopic, snapshot.LastCommand)
 	debug := debugTarget(snapshot)
 	if primary == "" {
 		primary = debug
@@ -322,7 +322,7 @@ func liveWindowSet(live []LiveWindow) map[WindowKey]struct{} {
 	return out
 }
 
-func firstNonEmpty(values ...string) string {
+func FirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {
 			return value

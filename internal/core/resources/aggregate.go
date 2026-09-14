@@ -276,8 +276,8 @@ func buildPaneUsages(topology map[paneKey]*paneTopology, acc map[paneKey]*usageA
 			PaneID:        pane.key.paneID,
 			WindowID:      pane.window.windowID,
 			WindowName:    pane.windowName,
-			SessionIDs:    sortedKeys(pane.sessionIDs),
-			Sessions:      sortedKeys(pane.sessions),
+			SessionIDs:    SortedKeys(pane.sessionIDs),
+			Sessions:      SortedKeys(pane.sessions),
 			PanePID:       pane.pid,
 			PaneTTY:       pane.tty,
 			ProjectKey:    projectKey,
@@ -344,7 +344,7 @@ func buildWindowUsages(panes []PaneUsage, host HostSample) []WindowUsage {
 				project = candidate
 			}
 		}
-		row := WindowUsage{Socket: key.socket, WindowID: key.windowID, WindowName: value.windowName, SessionIDs: sortedKeys(value.sessionIDs), Sessions: sortedKeys(value.sessions), ProjectKey: project, PaneCount: value.panes, ProcessCount: value.processCount, Memory: memoryUsage(value.rssBytes, host.MemoryTotalBytes)}
+		row := WindowUsage{Socket: key.socket, WindowID: key.windowID, WindowName: value.windowName, SessionIDs: SortedKeys(value.sessionIDs), Sessions: SortedKeys(value.sessions), ProjectKey: project, PaneCount: value.panes, ProcessCount: value.processCount, Memory: memoryUsage(value.rssBytes, host.MemoryTotalBytes)}
 		if value.cpuKnown {
 			row.CPU = cpuUsage(value.cpuShare, host.LogicalCPUs)
 		}
@@ -464,7 +464,7 @@ func memoryUsage(rss, hostTotal uint64) MemoryUsage {
 	return usage
 }
 
-func sortedKeys(values map[string]struct{}) []string {
+func SortedKeys[V any](values map[string]V) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

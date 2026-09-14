@@ -103,8 +103,8 @@ type ClaudeAuthorityRef struct {
 func (ClaudeAuthorityRef) Provider() string   { return "claude" }
 func (ClaudeAuthorityRef) providerAuthority() {}
 func (a ClaudeAuthorityRef) Valid() bool {
-	return validCodexIdentityToken(a.SessionID) && a.Process.Valid() &&
-		validCodexIdentityToken(a.RegistrationGeneration) && a.LeaseProcess.Valid()
+	return ValidCodexIdentityToken(a.SessionID) && a.Process.Valid() &&
+		ValidCodexIdentityToken(a.RegistrationGeneration) && a.LeaseProcess.Valid()
 }
 func (a ClaudeAuthorityRef) sameAuthority(other ProviderAuthorityRef) bool {
 	b, ok := other.(ClaudeAuthorityRef)

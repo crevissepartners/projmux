@@ -575,7 +575,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	if err != nil {
 		return err
 	}
-	mode, err := c.resolveProjection(spelling, flags.output)
+	mode, err := resolveLifecycleProjection(spelling, flags.output)
 	if err != nil {
 		return err
 	}
@@ -647,7 +647,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
-	mode, err := c.resolveProjection(spelling, flags.output)
+	mode, err := resolveLifecycleProjection(spelling, flags.output)
 	if err != nil {
 		return err
 	}
@@ -1629,22 +1629,6 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 	}
 	c.runtime.clearCreateOperations(ctx, ledger)
 	return nil
-}
-
-// resolveProjection maps the `-o` token onto the shared output catalog of the
-// canonical route.
-func (c *createCommand) resolveProjection(spelling, token string) (cli.OutputMode, error) {
-	if token == "" {
-		return cli.OutputModeDefault, nil
-	}
-	mode, field, err := cli.ResolveOutputToken(spelling, token)
-	if err != nil {
-		return "", usageError(err.Error())
-	}
-	if field != "" {
-		return "", usageError(fmt.Sprintf("-o %s is not a %s projection", field, spelling))
-	}
-	return mode, nil
 }
 
 // writeResults renders a committed create through the shared output catalog.

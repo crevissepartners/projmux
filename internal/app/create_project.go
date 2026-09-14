@@ -49,7 +49,7 @@ func (c *createCommand) runResourceProject(args []string, stdout, stderr io.Writ
 	if fs.NArg() != 0 {
 		return usageError(fmt.Sprintf("%s does not accept positional arguments; pass the root with --root", spelling))
 	}
-	mode, err := c.resolveProjection(spelling, *output)
+	mode, err := resolveLifecycleProjection(spelling, *output)
 	if err != nil {
 		return err
 	}

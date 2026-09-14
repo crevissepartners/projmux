@@ -20,7 +20,7 @@ var adapter = agents.ResumeAdapter{
 		return []string{"agy", "--conversation", id}
 	},
 	ValidateID: func(id string) error {
-		if !isUUIDLike(id) {
+		if !IsUUIDLike(id) {
 			return fmt.Errorf("%w: expected conversation uuid", ErrInvalidResumeID)
 		}
 		return nil
@@ -46,7 +46,8 @@ func NormalizeResumeID(resumeID string) (string, error) {
 	return adapter.NormalizeResumeID(resumeID)
 }
 
-func isUUIDLike(id string) bool {
+// IsUUIDLike reports whether id is a canonical 36-character UUID spelling.
+func IsUUIDLike(id string) bool {
 	if len(id) != 36 {
 		return false
 	}
