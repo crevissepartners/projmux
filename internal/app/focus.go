@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"slices"
 	"sort"
 	"strconv"
@@ -100,7 +99,7 @@ func newFocusCommand(recorders ...*diagnostics.LifecycleRecorder) *focusCommand 
 	}
 	cmd := &focusCommand{
 		diagnostics:   recorder,
-		runner:        focusExecRunner{},
+		runner:        statusbarExecRunner{},
 		lookupEnv:     os.Getenv,
 		homeDir:       os.UserHomeDir,
 		notifyStoreFn: defaultStatusNotifyStore,
@@ -925,21 +924,6 @@ type focusExitError struct {
 func (e focusExitError) Error() string { return e.err.Error() }
 func (e focusExitError) Unwrap() error { return e.err }
 func (e focusExitError) ExitCode() int { return e.code }
-
-type focusExecRunner struct{}
-
-func (focusExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		trimmed := strings.TrimSpace(string(out))
-		if trimmed != "" {
-			return out, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, trimmed)
-		}
-		return out, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
-	}
-	return out, nil
-}
 
 func isNoServerLikeError(err error) bool {
 	if err == nil {

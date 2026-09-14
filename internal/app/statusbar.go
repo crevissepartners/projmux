@@ -1490,6 +1490,8 @@ func printStatusbarUsage(w io.Writer) {
 	fmt.Fprintln(w, "Range ids: session pwd git usage notify resources settings")
 }
 
+// statusbarExecRunner is the shared combined-output exec seam for the
+// statusbar and focus commands.
 type statusbarExecRunner struct{}
 
 func (statusbarExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {

@@ -2123,8 +2123,10 @@ func (c *aiCommand) codexAdvancedLaunchRow(locale i18n.Locale) intpickercompat.E
 	}
 }
 
-func (c *aiCommand) enabledAIAgents() []config.AIAgentProvider {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+// aiEnabledAgents reads the persisted AI agent enablement, falling back to the
+// shipped default set whenever the paths or the file cannot be read.
+func aiEnabledAgents(homeDir func() (string, error), lookupEnv func(string) string) []config.AIAgentProvider {
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
 	}
@@ -2133,6 +2135,10 @@ func (c *aiCommand) enabledAIAgents() []config.AIAgentProvider {
 		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
 	}
 	return agents
+}
+
+func (c *aiCommand) enabledAIAgents() []config.AIAgentProvider {
+	return aiEnabledAgents(c.homeDir, c.lookupEnv)
 }
 
 func (c *aiCommand) requireAIAgentEnabled(mode string, path aiSplitLaunchPath) error {

@@ -12,7 +12,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
 )
@@ -44,10 +43,7 @@ func (c *describeCommand) readSnapshot(registry coremetadata.Registry) resourceR
 	if c != nil && c.reads != nil {
 		return c.reads(registry)
 	}
-	return resourceReadSnapshot{
-		runtime:  c.runtime.observation(),
-		contexts: registryview.NewContextProjector(registry),
-	}
+	return newResourceReadSnapshot(c.runtime, registry)
 }
 
 func newDescribeCommand() *describeCommand {

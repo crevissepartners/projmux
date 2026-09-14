@@ -601,15 +601,7 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) currentAIEnabledAgents() []config.AIAgentProvider {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
-	}
-	agents, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
-	if err != nil {
-		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
-	}
-	return agents
+	return aiEnabledAgents(c.homeDir, c.lookupEnv)
 }
 
 func (c *settingsCommand) toggleAIEnabledAgent(provider string) error {

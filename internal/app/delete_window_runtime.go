@@ -61,12 +61,7 @@ func (p windowLiveDeletePlan) endsSessions() int {
 }
 
 func (p windowLiveDeletePlan) hasSelfTarget() bool {
-	for _, target := range p.Targets {
-		if target.Self {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Targets, func(target windowLiveDeleteTarget) bool { return target.Self })
 }
 
 type tmuxWindowDeleteRuntime struct {
@@ -91,10 +86,7 @@ func (r *tmuxWindowDeleteRuntime) useExactTarget(target tmuxTransport) {
 	if r == nil {
 		return
 	}
-	r.target = target
-	r.expectedSocketPath = ""
-	r.expectedLogicalSocket = ""
-	r.routeAuthority = nil
+	bindExactDeleteTarget(target, &r.target, &r.expectedSocketPath, &r.expectedLogicalSocket, &r.routeAuthority)
 }
 
 type liveWindowRow struct {

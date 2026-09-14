@@ -4,12 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"github.com/crevissepartners/projmux/internal/core/storelock"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -30,20 +29,13 @@ var (
 type Clock func() time.Time
 
 type Store struct {
-	path     string
-	lockPath string
-	clock    Clock
-	rngMu    sync.Mutex
-	rng      *rand.Rand
+	// lock owns the data path, the sibling lock path, the clock and the
+	// backoff jitter source; see internal/core/storelock.
+	lock storelock.Guard
 }
 
 func NewStore(path string) *Store {
-	return &Store{
-		path:     path,
-		lockPath: path + lockFileSuffix,
-		clock:    time.Now,
-		rng:      rand.New(rand.NewSource(time.Now().UnixNano())),
-	}
+	return &Store{lock: storelock.NewGuard(path, lockFileSuffix)}
 }
 
 func NewDefaultStore(paths config.Paths, socket string) *Store {
@@ -66,12 +58,12 @@ func (s *Store) Path() string {
 	if s == nil {
 		return ""
 	}
-	return s.path
+	return s.lock.Path
 }
 
 func (s *Store) SetClock(clock Clock) {
 	if s != nil && clock != nil {
-		s.clock = clock
+		s.lock.Clock = clock
 	}
 }
 
@@ -169,13 +161,13 @@ func (s *Store) Candidates(current WindowKey, live []LiveWindow, limit int) ([]C
 }
 
 func (s *Store) read() (State, bool, error) {
-	localstate.RepairPrivateFile(s.path)
-	data, err := os.ReadFile(s.path)
+	localstate.RepairPrivateFile(s.lock.Path)
+	data, err := os.ReadFile(s.lock.Path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return State{Version: Version}, false, nil
 		}
-		return State{}, false, fmt.Errorf("recentwindows: read state %s: %w", s.path, err)
+		return State{}, false, fmt.Errorf("recentwindows: read state %s: %w", s.lock.Path, err)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return State{Version: Version}, false, nil
@@ -191,7 +183,7 @@ func (s *Store) read() (State, bool, error) {
 }
 
 func (s *Store) write(state State) error {
-	dir := filepath.Dir(s.path)
+	dir := filepath.Dir(s.lock.Path)
 	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("recentwindows: create state dir %s: %w", dir, err)
 	}
@@ -201,7 +193,7 @@ func (s *Store) write(state State) error {
 	}
 	data = append(data, '\n')
 
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(s.path)+".tmp-*")
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(s.lock.Path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("recentwindows: create temp state: %w", err)
 	}
@@ -219,49 +211,49 @@ func (s *Store) write(state State) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("recentwindows: close temp state: %w", err)
 	}
-	if err := os.Rename(tmpName, s.path); err != nil {
+	if err := os.Rename(tmpName, s.lock.Path); err != nil {
 		return fmt.Errorf("recentwindows: rename temp state: %w", err)
 	}
 	cleanup = false
-	localstate.RepairPrivateFile(s.path)
+	localstate.RepairPrivateFile(s.lock.Path)
 	return nil
 }
 
 func (s *Store) backupCorrupt() error {
-	if _, err := os.Stat(s.path); err != nil {
+	if _, err := os.Stat(s.lock.Path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("recentwindows: stat corrupt state %s: %w", s.path, err)
+		return fmt.Errorf("recentwindows: stat corrupt state %s: %w", s.lock.Path, err)
 	}
-	stamp := s.clock().UTC().Format("20060102T150405Z")
-	backup := s.path + ".corrupt." + stamp
+	stamp := s.lock.Clock().UTC().Format("20060102T150405Z")
+	backup := s.lock.Path + ".corrupt." + stamp
 	for i := 1; ; i++ {
 		if _, err := os.Stat(backup); err == nil {
-			backup = fmt.Sprintf("%s.corrupt.%s.%d", s.path, stamp, i)
+			backup = fmt.Sprintf("%s.corrupt.%s.%d", s.lock.Path, stamp, i)
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("recentwindows: stat corrupt backup %s: %w", backup, err)
 		}
-		if err := os.Rename(s.path, backup); err == nil {
+		if err := os.Rename(s.lock.Path, backup); err == nil {
 			return nil
 		} else if errors.Is(err, os.ErrNotExist) {
 			return nil
 		} else {
-			return fmt.Errorf("recentwindows: backup corrupt state %s: %w", s.path, err)
+			return fmt.Errorf("recentwindows: backup corrupt state %s: %w", s.lock.Path, err)
 		}
 	}
 }
 
 func (s *Store) withLock(fn func() error) error {
-	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
+	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lock.LockPath)); err != nil {
 		return fmt.Errorf("recentwindows: create lock dir: %w", err)
 	}
 	if err := s.acquireLock(); err != nil {
 		return err
 	}
 	defer func() {
-		_ = os.Remove(s.lockPath)
+		_ = os.Remove(s.lock.LockPath)
 	}()
 	return fn()
 }
@@ -269,7 +261,7 @@ func (s *Store) withLock(fn func() error) error {
 func (s *Store) acquireLock() error {
 	delay := defaultLockBaseDelay
 	for range defaultLockMaxAttempts {
-		f, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		f, err := os.OpenFile(s.lock.LockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			_, _ = fmt.Fprintf(f, "pid=%d\n", os.Getpid())
 			_ = f.Close()
@@ -291,25 +283,13 @@ func (s *Store) acquireLock() error {
 			}
 		}
 	}
-	return fmt.Errorf("recentwindows: acquire lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.lockPath)
+	return fmt.Errorf("recentwindows: acquire lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.lock.LockPath)
 }
 
 func (s *Store) lockJitter() time.Duration {
-	s.rngMu.Lock()
-	defer s.rngMu.Unlock()
-	return time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
+	return s.lock.Jitter(defaultLockBaseDelay)
 }
 
 func (s *Store) tryBreakStaleLock() bool {
-	info, err := os.Stat(s.lockPath)
-	if err != nil {
-		return false
-	}
-	if s.clock().Sub(info.ModTime()) < defaultLockStaleAfter {
-		return false
-	}
-	if err := os.Remove(s.lockPath); err != nil {
-		return false
-	}
-	return true
+	return s.lock.TryBreakStale(defaultLockStaleAfter)
 }

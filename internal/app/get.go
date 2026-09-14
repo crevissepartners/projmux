@@ -69,14 +69,20 @@ type getCommand struct {
 	now func() time.Time
 }
 
+// newResourceReadSnapshot is the default read snapshot for one registry load:
+// the live-tmux observation plus a context projector over that registry.
+func newResourceReadSnapshot(runtime runtimeLookup, registry coremetadata.Registry) resourceReadSnapshot {
+	return resourceReadSnapshot{
+		runtime:  runtime.observation(),
+		contexts: registryview.NewContextProjector(registry),
+	}
+}
+
 func (c *getCommand) readSnapshot(registry coremetadata.Registry) resourceReadSnapshot {
 	if c != nil && c.reads != nil {
 		return c.reads(registry)
 	}
-	return resourceReadSnapshot{
-		runtime:  c.runtime.observation(),
-		contexts: registryview.NewContextProjector(registry),
-	}
+	return newResourceReadSnapshot(c.runtime, registry)
 }
 
 // clock answers the invocation's current time, defaulting to the wall clock.

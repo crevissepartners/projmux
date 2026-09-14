@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/storelock"
 	"io"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -45,25 +44,14 @@ type Clock func() time.Time
 
 // Store persists notifications to a JSON file inside StateDir.
 type Store struct {
-	path     string
-	lockPath string
-	clock    Clock
-
-	// rng is used by the lock-acquisition backoff to add jitter. Contenders
-	// access it before acquiring the file lock, so rngMu serializes the
-	// concurrency-unsafe seeded source.
-	rngMu sync.Mutex
-	rng   *rand.Rand
+	// lock owns the data path, the sibling lock path, the clock and the
+	// backoff jitter source; see internal/core/storelock.
+	lock storelock.Guard
 }
 
 // NewStore builds a Store rooted at the supplied path.
 func NewStore(path string) *Store {
-	return &Store{
-		path:     path,
-		lockPath: path + lockFileSuffix,
-		clock:    time.Now,
-		rng:      rand.New(rand.NewSource(time.Now().UnixNano())),
-	}
+	return &Store{lock: storelock.NewGuard(path, lockFileSuffix)}
 }
 
 // NewDefaultStore builds a Store that uses the canonical notify.json under
@@ -74,13 +62,13 @@ func NewDefaultStore(paths config.Paths) *Store {
 
 // Path returns the underlying queue file path.
 func (s *Store) Path() string {
-	return s.path
+	return s.lock.Path
 }
 
 // SetClock replaces the time source. Intended for tests.
 func (s *Store) SetClock(c Clock) {
 	if c != nil {
-		s.clock = c
+		s.lock.Clock = c
 	}
 }
 
@@ -148,7 +136,7 @@ func (s *Store) Push(in PushInput) (Notification, PushResult, error) {
 		id = generated
 	}
 
-	now := s.clock()
+	now := s.lock.Clock()
 	entry := Notification{
 		ID:        id,
 		Text:      truncateText(strings.TrimSpace(in.Text)),
@@ -289,7 +277,7 @@ func (s *Store) Reconcile(targetExists TargetExistsFunc) (ReconcileResult, error
 			return err
 		}
 
-		entries, result = reconcileEntries(entries, s.clock(), targetExists, MaxQueueEntries)
+		entries, result = reconcileEntries(entries, s.lock.Clock(), targetExists, MaxQueueEntries)
 		return s.write(entries)
 	})
 	if err != nil {
@@ -357,8 +345,8 @@ func sortRecencyDesc(entries []Notification) []Notification {
 
 // read parses the queue file. Missing/empty file decodes as an empty queue.
 func (s *Store) read() ([]Notification, error) {
-	localstate.RepairPrivateFile(s.path)
-	file, err := os.Open(s.path)
+	localstate.RepairPrivateFile(s.lock.Path)
+	file, err := os.Open(s.lock.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -383,7 +371,7 @@ func (s *Store) read() ([]Notification, error) {
 
 // write replaces the queue file atomically.
 func (s *Store) write(entries []Notification) error {
-	dir := filepath.Dir(s.path)
+	dir := filepath.Dir(s.lock.Path)
 	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("create notify state dir: %w", err)
 	}
@@ -397,7 +385,7 @@ func (s *Store) write(entries []Notification) error {
 	}
 	data = append(data, '\n')
 
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(s.path)+".tmp-*")
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(s.lock.Path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create notify temp file: %w", err)
 	}
@@ -416,11 +404,11 @@ func (s *Store) write(entries []Notification) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close notify temp file: %w", err)
 	}
-	if err := os.Rename(tmpName, s.path); err != nil {
+	if err := os.Rename(tmpName, s.lock.Path); err != nil {
 		return fmt.Errorf("rename notify temp file: %w", err)
 	}
 	cleanup = false
-	localstate.RepairPrivateFile(s.path)
+	localstate.RepairPrivateFile(s.lock.Path)
 	return nil
 }
 
@@ -429,7 +417,7 @@ func (s *Store) write(entries []Notification) error {
 // stale lock older than defaultLockStaleAfter is broken to recover from a
 // crashed peer.
 func (s *Store) withLock(fn func() error) error {
-	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
+	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lock.LockPath)); err != nil {
 		return fmt.Errorf("create notify lock dir: %w", err)
 	}
 
@@ -437,7 +425,7 @@ func (s *Store) withLock(fn func() error) error {
 		return err
 	}
 	defer func() {
-		_ = os.Remove(s.lockPath)
+		_ = os.Remove(s.lock.LockPath)
 	}()
 
 	return fn()
@@ -446,7 +434,7 @@ func (s *Store) withLock(fn func() error) error {
 func (s *Store) acquireLock() error {
 	delay := defaultLockBaseDelay
 	for range defaultLockMaxAttempts {
-		f, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		f, err := os.OpenFile(s.lock.LockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			_, _ = fmt.Fprintf(f, "pid=%d\n", os.Getpid())
 			_ = f.Close()
@@ -470,28 +458,13 @@ func (s *Store) acquireLock() error {
 			}
 		}
 	}
-	return fmt.Errorf("acquire notify lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.lockPath)
+	return fmt.Errorf("acquire notify lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.lock.LockPath)
 }
 
 func (s *Store) lockJitter() time.Duration {
-	s.rngMu.Lock()
-	defer s.rngMu.Unlock()
-	return time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
+	return s.lock.Jitter(defaultLockBaseDelay)
 }
 
-// tryBreakStaleLock removes the lock file if it is older than
-// defaultLockStaleAfter. The check is best-effort: if the stat or remove
-// fails we treat the lock as held and the caller will retry.
 func (s *Store) tryBreakStaleLock() bool {
-	info, err := os.Stat(s.lockPath)
-	if err != nil {
-		return false
-	}
-	if s.clock().Sub(info.ModTime()) < defaultLockStaleAfter {
-		return false
-	}
-	if err := os.Remove(s.lockPath); err != nil {
-		return false
-	}
-	return true
+	return s.lock.TryBreakStale(defaultLockStaleAfter)
 }

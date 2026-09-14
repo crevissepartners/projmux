@@ -126,12 +126,7 @@ func (p paneLiveDeletePlan) endsSessions() int {
 }
 
 func (p paneLiveDeletePlan) hasSelfTarget() bool {
-	for _, target := range p.Targets {
-		if target.Self {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Targets, func(target paneLiveDeleteTarget) bool { return target.Self })
 }
 
 type tmuxPaneDeleteRuntime struct {
@@ -155,14 +150,21 @@ func newTmuxPaneDeleteRuntime() *tmuxPaneDeleteRuntime {
 	return &tmuxPaneDeleteRuntime{runner: inttmux.ExecRunner{}, getenv: os.Getenv, processAlive: notifyQueueEventProcessAlive}
 }
 
+// bindExactDeleteTarget pins a delete seam to one resolved server and drops
+// every expectation the previous binding derived from the old one.
+func bindExactDeleteTarget(target tmuxTransport, bound *tmuxTransport,
+	expectedSocketPath, expectedLogicalSocket *string, routeAuthority **runtimeMutationRouteAuthority) {
+	*bound = target
+	*expectedSocketPath = ""
+	*expectedLogicalSocket = ""
+	*routeAuthority = nil
+}
+
 func (r *tmuxPaneDeleteRuntime) useExactTarget(target tmuxTransport) {
 	if r == nil {
 		return
 	}
-	r.target = target
-	r.expectedSocketPath = ""
-	r.expectedLogicalSocket = ""
-	r.routeAuthority = nil
+	bindExactDeleteTarget(target, &r.target, &r.expectedSocketPath, &r.expectedLogicalSocket, &r.routeAuthority)
 }
 
 func (r *tmuxPaneDeleteRuntime) useRouteAnchor(paneID string) {
