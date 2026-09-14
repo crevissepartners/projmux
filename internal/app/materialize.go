@@ -1050,13 +1050,18 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 // A session that already exists is reused untouched, which is what keeps the
 // pre-create/post-create hooks on their documented trigger: they fire when a
 // session is created, and only then.
+//
+// firstWindowName is the Registry name of the Window the caller adopts as the
+// new session's own first Window. mirrorWindow turns automatic-rename off, so
+// that Window has to be born with its Registry name; a blank name keeps tmux's
+// default name for a caller with no Window to adopt.
 func (m *materializer) ensureSession(
 	ctx context.Context,
 	project coremetadata.Project,
-	sessionName string,
+	sessionName, firstWindowName string,
 	ledger *runtimeLedger,
 ) (intmux.NewSessionResult, error) {
-	return m.ensureSessionAt(ctx, project, sessionName, project.Spec.Root, ledger)
+	return m.ensureSessionAt(ctx, project, sessionName, project.Spec.Root, firstWindowName, ledger)
 }
 
 // ensureSessionAt is ensureSession with an explicit initial-shell-Pane cwd.
@@ -1068,7 +1073,7 @@ func (m *materializer) ensureSession(
 func (m *materializer) ensureSessionAt(
 	ctx context.Context,
 	project coremetadata.Project,
-	sessionName, runtimeCWD string,
+	sessionName, runtimeCWD, firstWindowName string,
 	ledger *runtimeLedger,
 ) (intmux.NewSessionResult, error) {
 	// Bind an existing invocation server to its physical socket before the
@@ -1128,7 +1133,11 @@ func (m *materializer) ensureSessionAt(
 		}
 		args = append(args, "-f", configPath)
 	}
-	args = append(args, "-d", "-P", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"), "-s", request.SessionName, "-c", request.RuntimeCWD)
+	args = append(args, "-d", "-P", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"), "-s", request.SessionName)
+	if strings.TrimSpace(firstWindowName) != "" {
+		args = append(args, "-n", firstWindowName)
+	}
+	args = append(args, "-c", request.RuntimeCWD)
 	keys := make([]string, 0, len(request.Environment))
 	for key := range request.Environment {
 		keys = append(keys, key)

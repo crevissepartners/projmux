@@ -546,7 +546,7 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 		if !ok || current.Spec.Root != project.Spec.Root {
 			return errors.New("bootstrapped Project declaration drifted before canonical materialization")
 		}
-		created, err := runtime.ensureSession(ctx, *current, sessionName, ledger)
+		created, err := runtime.ensureSession(ctx, *current, sessionName, initialWindowName(working, current.Metadata.UID), ledger)
 		if err != nil {
 			return err
 		}

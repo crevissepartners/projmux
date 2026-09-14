@@ -75,6 +75,115 @@ func (f *fakeProjectTopologyMaterializer) MaterializeProjectTopology(_ context.C
 	return f.materialized, nil
 }
 
+// TestCanonicalProjectStartupNamesTheFirstWindowItAdopts pins that canonical
+// Project startup passes new-session the Registry name of the Window
+// adoptInitialWindow adopts, and that a Project with no Window to adopt keeps
+// tmux's default name (no -n).
+func TestCanonicalProjectStartupNamesTheFirstWindowItAdopts(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// continueZero deletes every Window and lets Continue allocate its
+		// automatic Window, as the shipped zero-Window Continue route does.
+		continueZero bool
+		// zeroWindows deletes every Window and starts the Project as-is, as a
+		// registration reuse of a zero-Window Project does.
+		zeroWindows bool
+	}{
+		{name: "first stored Window"},
+		{name: "zero-Window Continue adopts its automatic Window", continueZero: true},
+		{name: "no Window to adopt", zeroWindows: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
+			project, ok := store.registry.Project("prj-beta")
+			if !ok {
+				t.Fatal("fixture Project prj-beta is absent")
+			}
+			startupProject := *project
+			if test.zeroWindows || test.continueZero {
+				for _, window := range store.registry.WindowsOf("prj-beta") {
+					if err := store.mutator().DeleteWindow(&store.registry, window.Metadata.UID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				current, ok := store.registry.Project("prj-beta")
+				if !ok {
+					t.Fatal("zero-Window fixture Project prj-beta is absent")
+				}
+				startupProject = *current
+			}
+			if test.continueZero {
+				opened, err := (&registryProjectFreshStarter{resources: store.store()}).ContinueProject(context.Background(), root, "beta")
+				if err != nil {
+					t.Fatal(err)
+				}
+				startupProject = opened.project
+				allocated := store.registry.WindowsOf("prj-beta")
+				if len(allocated) != 1 || allocated[0].Metadata.Name != allocated[0].Metadata.UID {
+					t.Fatalf("zero-Window Continue allocated %+v, want one automatic Window named by its uid", allocated)
+				}
+			}
+			windows := store.registry.WindowsOf("prj-beta")
+			if test.zeroWindows != (len(windows) == 0) {
+				t.Fatalf("fixture Project has %d Windows, zeroWindows=%t", len(windows), test.zeroWindows)
+			}
+			// The canonical session client spells literal field separators; the
+			// app fake renders the escaped separator, as in the canonical
+			// recovery test.
+			runner := lifecycleTmuxRunnerFunc(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				adapted := append([]string(nil), args...)
+				literal := false
+				for i, arg := range adapted {
+					if strings.Contains(arg, "\x1f") {
+						literal = true
+						adapted[i] = strings.ReplaceAll(arg, "\x1f", tmuxRowSepFormat)
+					}
+				}
+				out, err := activation.runner.Run(ctx, name, adapted...)
+				if literal {
+					out = bytes.ReplaceAll(out, []byte(tmuxRowSepFormat), []byte("\x1f"))
+				}
+				return out, err
+			})
+			recorder, _, _ := topologyJournalFixture(t)
+			if err := materializeProjectSessionCanonical(context.Background(), store.store(), runner,
+				runtimeMutationRoute{target: activation.target, socketName: defaultAppSocket}, recorder,
+				"beta", root, startupProject); err != nil {
+				t.Fatalf("canonical Project startup: %v", err)
+			}
+			var creates [][]string
+			for _, call := range server.calls {
+				if argv := tmuxCommandArgv(call); slices.Contains(argv, "new-session") {
+					creates = append(creates, argv)
+				}
+			}
+			if len(creates) != 1 {
+				t.Fatalf("new-session calls = %d, want 1: %#v", len(creates), server.calls)
+			}
+			if test.zeroWindows {
+				if slices.Contains(creates[0], "-n") {
+					t.Fatalf("Project with no Window still named new-session: %#v", creates[0])
+				}
+				return
+			}
+			first := windows[0]
+			if got := flagValue(creates[0], "-n"); got != first.Metadata.Name {
+				t.Fatalf("new-session -n = %q, want adopted Window Registry name %q: %#v", got, first.Metadata.Name, creates[0])
+			}
+			session := server.session("beta")
+			if session == nil || len(session.windows) == 0 {
+				t.Fatalf("canonical startup did not create beta:\n%s", server.state())
+			}
+			if got := session.windows[0].opts[tmuxopts.WindowUID]; got != first.Metadata.UID {
+				t.Fatalf("adopted Window uid = %q, want %q", got, first.Metadata.UID)
+			}
+			if got := session.windows[0].opts[tmuxopts.WindowName]; got != first.Metadata.Name {
+				t.Fatalf("adopted Window stable-name mirror = %q, want %q", got, first.Metadata.Name)
+			}
+		})
+	}
+}
+
 // newProjectStartupTopologyFixture builds the same offline two-Window,
 // three-shell-Pane Project the explicit materialization tests use, wired to a
 // startup activation instead of the reconcile route. Stored commands are

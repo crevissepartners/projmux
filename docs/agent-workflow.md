@@ -1526,6 +1526,36 @@ quiet Antigravity event is one hook marking, not two.
   PostToolUse with and without an error, and an unknown event: final Pane option
   state, the Agent session ref and activation, and the ingest records.
 
+### First Window registry name tests
+
+`new-session` creates a Project session's first tmux Window under the Registry
+name of the Window the caller adopts, so on create and on Continue
+`#{window_name}`, `#{@projmux_window_name}`, and the Registry
+`metadata.name` agree once `mirrorWindow` turns automatic-rename off.
+
+- `TestMaterializerCreateSessionNamesTheFirstWindow` owns the
+  `ensureSessionAt` argv: exactly one `-n <name>` for a non-blank name, no `-n`
+  for a blank or whitespace name, and a fresh-server `-f <config>` declaration
+  with `-n` that still validates and assembles with `-f` before `new-session`.
+- `TestRegistryTopologyContinueNamesFirstWindowFromRegistry` owns the Continue
+  path: the one `new-session` carries the first planned Window's Registry name,
+  and the adopted first Window's uid and stable-name mirror match that row.
+- `TestCreateSessionNamesTheFirstWindowItAdopts` owns the create path: the
+  `new-session` name is the Window `adoptInitialWindow` adopts, for a stored
+  first Window and for the automatic idx0 Window of a default registration
+  whose Registry name is its own uid, with `--name` landing on the second
+  Window.
+- `TestCanonicalProjectStartupNamesTheFirstWindowItAdopts` owns canonical
+  Project startup (`materializeProjectSessionCanonical`): `new-session` carries
+  the Registry name of the Window `adoptInitialWindow` adopts, both for a stored
+  first Window and for the automatic Window a zero-Window Continue allocates,
+  and a Project that reaches startup with no Window to adopt gets no `-n`.
+- `test/integration/linux-smoke.sh` `assert_first_window_registry_name` owns
+  the real-tmux check: after the Session State Project's first `switch open`
+  and after its `switch sidebar-open --mode continue` recreation, the first
+  Window's `#{window_name}` and `#{@projmux_window_name}` both equal the
+  Registry name of its `@projmux_window_uid`.
+
 ### Settled Codex authority admission tests
 
 `aiCodexLifecycleSink.SetAuthority` publishes one native authority transition as

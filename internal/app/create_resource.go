@@ -1344,7 +1344,7 @@ func (c *createCommand) ensureProjectRuntime(
 			}
 		}
 	}
-	created, err := c.runtime.ensureSession(ctx, project, sessionName, ledger)
+	created, err := c.runtime.ensureSession(ctx, project, sessionName, initialWindowName(working, project.Metadata.UID), ledger)
 	if err != nil {
 		return "", err
 	}
@@ -1389,6 +1389,18 @@ func (c *createCommand) ensureProjectRuntime(
 		return "", err
 	}
 	return created.SessionID, nil
+}
+
+// initialWindowName is the Registry name of the Window adoptInitialWindow binds
+// a freshly created session's own first Window to, so new-session can create
+// that Window under its Registry name. A Project with no Window has nothing to
+// adopt, and the blank name keeps tmux's default.
+func initialWindowName(registry *coremetadata.Registry, projectUID string) string {
+	windows := registry.WindowsOf(projectUID)
+	if len(windows) == 0 {
+		return ""
+	}
+	return windows[0].Metadata.Name
 }
 
 // adoptInitialWindow binds the window and pane a freshly created session came

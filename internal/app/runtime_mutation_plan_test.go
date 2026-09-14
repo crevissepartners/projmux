@@ -2099,7 +2099,7 @@ func TestMaterializerFirstSessionBindsPhysicalRouteBeforeFollowUpWrites(t *testi
 		Metadata: coremetadata.ObjectMeta{UID: "prj-first", Name: "first"},
 		Spec:     coremetadata.ProjectSpec{Root: "/work/first"},
 	}
-	result, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, newRuntimeLedger("op-first"))
+	result, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, "", newRuntimeLedger("op-first"))
 	if err != nil {
 		t.Fatalf("first-session materialize: %v", err)
 	}
@@ -2151,7 +2151,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 	t.Run("config precedes create and marker precedes managed identity", func(t *testing.T) {
 		runtime, server, project, configPath := newFixture(t, "1", "")
 		ledger := newRuntimeLedger("op-fresh")
-		result, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, ledger)
+		result, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", ledger)
 		if err != nil {
 			t.Fatalf("fresh Project materialize: %v", err)
 		}
@@ -2201,7 +2201,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		server.fail = []string{"new-session"}
 		server.failAfterMutation = true
 		server.failMessage = "synchronous hook failed after create"
-		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, newRuntimeLedger("op-after-effect"))
+		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", newRuntimeLedger("op-after-effect"))
 		if err == nil || !strings.Contains(err.Error(), "synchronous hook failed after create") {
 			t.Fatalf("fresh create after-effect error = %v", err)
 		}
@@ -2304,7 +2304,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		if err := os.Remove(configPath); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, newRuntimeLedger("op-existing")); err != nil {
+		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", newRuntimeLedger("op-existing")); err != nil {
 			t.Fatalf("materialize on existing app server: %v", err)
 		}
 		foundCreate := false
@@ -2333,7 +2333,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtime, server, project, _ := newFixture(t, test.appMarker, test.logicalMarker)
-			_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, newRuntimeLedger("op-refuse"))
+			_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", newRuntimeLedger("op-refuse"))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("fresh forged config error = %v, want %q", err, test.want)
 			}
@@ -2354,7 +2354,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		if err := os.Remove(configPath); err != nil {
 			t.Fatal(err)
 		}
-		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, newRuntimeLedger("op-missing-config"))
+		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", newRuntimeLedger("op-missing-config"))
 		if err == nil || !strings.Contains(err.Error(), "is unavailable") {
 			t.Fatalf("missing generated config error = %v", err)
 		}
@@ -2362,6 +2362,126 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 			if slices.Contains(call, "new-session") || slices.Contains(call, "set-option") || slices.Contains(call, "kill-session") {
 				t.Fatalf("missing config reached a write: %#v", server.calls)
 			}
+		}
+	})
+}
+
+// TestMaterializerCreateSessionNamesTheFirstWindow pins the new-session argv
+// half of first-Window naming: the caller's first-Window Registry name rides as
+// exactly one -n, a blank name adds none, and the fresh-server -f form still
+// validates and assembles with -n present.
+func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
+	newSessionArgv := func(t *testing.T, server *fakeTmux) []string {
+		t.Helper()
+		var found []string
+		for _, call := range server.calls {
+			argv := tmuxCommandArgv(call)
+			if !slices.Contains(argv, "new-session") {
+				continue
+			}
+			if found != nil {
+				t.Fatalf("more than one new-session call: %#v", server.calls)
+			}
+			found = argv
+		}
+		if found == nil {
+			t.Fatalf("no new-session call: %#v", server.calls)
+		}
+		return found
+	}
+	countFlag := func(argv []string, flag string) int {
+		count := 0
+		for _, arg := range argv {
+			if arg == flag {
+				count++
+			}
+		}
+		return count
+	}
+	project := coremetadata.Project{
+		Metadata: coremetadata.ObjectMeta{UID: "prj-first", Name: "first"},
+		Spec:     coremetadata.ProjectSpec{Root: "/work/first"},
+	}
+
+	for _, test := range []struct {
+		name, windowName, want string
+	}{
+		{name: "registry name rides as -n", windowName: "w-first", want: "w-first"},
+		{name: "blank name keeps tmux default", windowName: ""},
+		{name: "whitespace name keeps tmux default", windowName: "   "},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := newFakeTmux()
+			target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
+			routed := explicitTmuxRunner{runner: server, target: target}
+			runtime := &materializer{
+				runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server}, target: target,
+			}
+			if _, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, test.windowName, newRuntimeLedger("op-first-window")); err != nil {
+				t.Fatalf("materialize session: %v", err)
+			}
+			argv := newSessionArgv(t, server)
+			if test.want == "" {
+				if slices.Contains(argv, "-n") {
+					t.Fatalf("blank first-Window name still carried -n: %#v", argv)
+				}
+				return
+			}
+			if countFlag(argv, "-n") != 1 || flagValue(argv, "-n") != test.want {
+				t.Fatalf("new-session -n = %q (count %d), want exactly one %q: %#v", flagValue(argv, "-n"), countFlag(argv, "-n"), test.want, argv)
+			}
+		})
+	}
+
+	t.Run("fresh server -f form validates and assembles with -n", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "projmux", "tmux.conf")
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(configPath, []byte("set-option -g @projmux_app 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		server := newFakeTmux()
+		server.serverAbsent = true
+		server.appMarker = "1"
+		server.socketName = ""
+		target := tmuxTransport{Kind: tmuxSocketName, Value: "first-window-fresh", Source: tmuxSocketNameSource}
+		routed := explicitTmuxRunner{runner: server, target: target}
+		runtime := &materializer{
+			runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
+			target: target, configPath: configPath,
+		}
+
+		// The printable declaration itself: -f stays operand 0 and -n is an
+		// ordinary value-carrying operand after the one -s session operand.
+		declared := materializeMutationAction(mutationCreateSession,
+			runtime.boundMutationTarget("project-declaration", "fresh", project.Metadata.UID),
+			"unique Project declaration", "one detached owned session exists",
+			"-f", configPath, "-d", "-P", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"),
+			"-s", "fresh", "-n", "w-first", "-c", project.Spec.Root, "-e", createOperationEnvironment+"=op-declared")
+		if declared.Target.PhysicalSocket != runtimeMutationSocketAbsentBeforeCreate {
+			t.Fatalf("fresh declaration physical socket = %q, want absent-before-create", declared.Target.PhysicalSocket)
+		}
+		if err := newRuntimeMutationPlan(declared).validate(); err != nil {
+			t.Fatalf("fresh create-session plan with -n rejected: %v", err)
+		}
+		assembled, err := runtimeMutationArgv(declared)
+		if err != nil {
+			t.Fatalf("assemble fresh create-session with -n: %v", err)
+		}
+		if !reflect.DeepEqual(assembled[:3], []string{"-f", configPath, "new-session"}) || flagValue(assembled, "-n") != "w-first" {
+			t.Fatalf("assembled fresh create-session argv = %#v", assembled)
+		}
+
+		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "w-first", newRuntimeLedger("op-fresh-first-window")); err != nil {
+			t.Fatalf("fresh Project materialize with first-Window name: %v", err)
+		}
+		argv := newSessionArgv(t, server)
+		if !reflect.DeepEqual(argv[:3], []string{"-f", configPath, "new-session"}) {
+			t.Fatalf("fresh create global argv = %#v, want -f config before new-session", argv)
+		}
+		if countFlag(argv, "-n") != 1 || flagValue(argv, "-n") != "w-first" {
+			t.Fatalf("fresh create -n = %q (count %d), want exactly one w-first: %#v", flagValue(argv, "-n"), countFlag(argv, "-n"), argv)
 		}
 	})
 }
@@ -2461,7 +2581,7 @@ func TestStandaloneInheritedRouteMaterializesWithPrintablePIDAndPaneAuthority(t 
 		Metadata: coremetadata.ObjectMeta{UID: "prj-standalone", Name: "standalone"},
 		Spec:     coremetadata.ProjectSpec{Root: t.TempDir()},
 	}
-	result, err := runtime.ensureSessionAt(context.Background(), project, "standalone-project", project.Spec.Root, newRuntimeLedger("op-standalone"))
+	result, err := runtime.ensureSessionAt(context.Background(), project, "standalone-project", project.Spec.Root, "", newRuntimeLedger("op-standalone"))
 	if err != nil {
 		t.Fatalf("materialize on inherited standalone route: %v", err)
 	}

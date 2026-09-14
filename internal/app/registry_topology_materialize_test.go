@@ -137,6 +137,45 @@ func TestRegistryTopologyMaterializationDryRunExecuteAndRepeatNoop(t *testing.T)
 	}
 }
 
+// TestRegistryTopologyContinueNamesFirstWindowFromRegistry pins that Continue
+// creates the Project session with the first planned Window's Registry name on
+// new-session. mirrorWindow freezes that name with automatic-rename off, so it
+// has to be the Registry name from the start, not tmux's default.
+func TestRegistryTopologyContinueNamesFirstWindowFromRegistry(t *testing.T) {
+	command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
+	windows := store.registry.WindowsOf("prj-beta")
+	if len(windows) < 2 {
+		t.Fatalf("fixture Project has %d Windows, want the first Window plus a sibling", len(windows))
+	}
+	if _, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "uid:prj-beta", "-o", "json"); err != nil {
+		t.Fatalf("Continue materialization: err=%v stderr=%q", err, stderr)
+	}
+	var creates [][]string
+	for _, call := range server.calls {
+		if argv := tmuxCommandArgv(call); len(argv) > 0 && argv[0] == "new-session" {
+			creates = append(creates, argv)
+		}
+	}
+	if len(creates) != 1 {
+		t.Fatalf("new-session calls = %d, want 1: %#v", len(creates), server.calls)
+	}
+	session := server.session("beta")
+	if session == nil || len(session.windows) == 0 {
+		t.Fatalf("Continue did not create the Project session:\n%s", server.state())
+	}
+	adoptedUID := session.windows[0].opts[tmuxopts.WindowUID]
+	first, ok := store.registry.Window(adoptedUID)
+	if !ok || adoptedUID != windows[0].Metadata.UID {
+		t.Fatalf("session first Window uid = %q, want the first planned Window %q", adoptedUID, windows[0].Metadata.UID)
+	}
+	if got := flagValue(creates[0], "-n"); got != first.Metadata.Name {
+		t.Fatalf("new-session -n = %q, want first Window Registry name %q: %#v", got, first.Metadata.Name, creates[0])
+	}
+	if got := session.windows[0].opts[tmuxopts.WindowName]; got != first.Metadata.Name {
+		t.Fatalf("first Window stable-name mirror = %q, want %q", got, first.Metadata.Name)
+	}
+}
+
 func TestRegistryTopologyMaterializationRefusesBeforeFirstCreate(t *testing.T) {
 	command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
 	main, _ := store.registry.Window("win-beta-main")

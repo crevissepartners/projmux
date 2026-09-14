@@ -410,6 +410,86 @@ func TestCreateWindowPersistsOnlyTheExplicitRegistryName(t *testing.T) {
 	}
 }
 
+// TestCreateSessionNamesTheFirstWindowItAdopts pins that create passes the
+// Registry name of the exact Window adoptInitialWindow adopts to new-session,
+// both for a stored first Window and for the automatic idx0 Window a default
+// Project registration creates (whose Registry name is its own UID).
+func TestCreateSessionNamesTheFirstWindowItAdopts(t *testing.T) {
+	t.Parallel()
+
+	assertNamedAdoption := func(t *testing.T, store *fakeResourceStore, tmux *fakeTmux, sessionName string, want coremetadata.Window) {
+		t.Helper()
+		var creates [][]string
+		for _, call := range tmux.calls {
+			if argv := tmuxCommandArgv(call); containsAll(argv, []string{"new-session"}) {
+				creates = append(creates, argv)
+			}
+		}
+		if len(creates) != 1 {
+			t.Fatalf("new-session calls = %d, want 1: %#v", len(creates), tmux.calls)
+		}
+		if got := flagValue(creates[0], "-n"); got != want.Metadata.Name {
+			t.Fatalf("new-session -n = %q, want adopted Window Registry name %q: %#v", got, want.Metadata.Name, creates[0])
+		}
+		session := tmux.session(sessionName)
+		if session == nil || len(session.windows) == 0 {
+			t.Fatalf("create did not materialize session %q:\n%s", sessionName, tmux.state())
+		}
+		if got := session.windows[0].opts[tmuxopts.WindowUID]; got != want.Metadata.UID {
+			t.Fatalf("adopted Window uid = %q, want %q", got, want.Metadata.UID)
+		}
+		if got := session.windows[0].opts[tmuxopts.WindowName]; got != want.Metadata.Name {
+			t.Fatalf("adopted Window stable-name mirror = %q, want %q", got, want.Metadata.Name)
+		}
+		stored, ok := store.registry.Window(want.Metadata.UID)
+		if !ok || stored.Metadata.Name != want.Metadata.Name {
+			t.Fatalf("adopted Window Registry row = %+v, want name %q", stored, want.Metadata.Name)
+		}
+	}
+
+	t.Run("stored first Window", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		tmux := newFakeTmux()
+		create, _ := newTestResourceCreateCommand(t, store, tmux)
+		first := store.registry.WindowsOf("prj-beta")[0]
+		if _, _, err := runRoute(t, create, "window", "--project", "beta", "--name", "w-first"); err != nil {
+			t.Fatalf("create window: %v", err)
+		}
+		assertNamedAdoption(t, store, tmux, "beta", first)
+	})
+
+	t.Run("implicit automatic idx0 Window", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		store.dirs["/srv/gamma"] = true
+		registered, err := store.mutator().RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{
+			Root: "/srv/gamma", SessionName: "gamma", OperationID: "op-register-gamma",
+		})
+		if err != nil {
+			t.Fatalf("register default-topology Project: %v", err)
+		}
+		if len(registered.Windows) != 1 {
+			t.Fatalf("default registration created %d Windows, want one automatic Window", len(registered.Windows))
+		}
+		implicit := registered.Windows[0]
+		if implicit.Metadata.Name != implicit.Metadata.UID {
+			t.Fatalf("automatic Window name = %q, want its own uid %q", implicit.Metadata.Name, implicit.Metadata.UID)
+		}
+		tmux := newFakeTmux()
+		create, _ := newTestResourceCreateCommand(t, store, tmux)
+		projectUID := registered.Project.Metadata.UID
+		if _, _, err := runRoute(t, create, "window", "--project", "uid:"+projectUID, "--name", "w-first"); err != nil {
+			t.Fatalf("create window on offline Project: %v", err)
+		}
+		windows := store.registry.WindowsOf(projectUID)
+		if len(windows) != 2 || windows[0].Metadata.UID != implicit.Metadata.UID || windows[1].Metadata.Name != "w-first" {
+			t.Fatalf("Project Windows = %+v, want [automatic idx0, w-first]", windows)
+		}
+		assertNamedAdoption(t, store, tmux, "gamma", implicit)
+	})
+}
+
 // TestCreateResultKindsFollowTheRouteNotTheSideEffects is acceptance criterion 2.
 //
 // `create window` creates a Pane too, and `create pane --create-window` creates

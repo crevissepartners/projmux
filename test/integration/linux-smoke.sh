@@ -1298,6 +1298,33 @@ if [[ "$session_state_handoff_session" != "$session_state_name" || ! "$session_s
   echo "Session State handoff lost its exact Session/Pane receipt: got=$session_state_handoff want=$session_state_name/%N" >&2
   exit 1
 fi
+# new-session names a Project session's first tmux Window from the Registry.
+# mirrorWindow turns automatic-rename off, so a tmux default name here would
+# never recover: the raw name, the stable-name mirror, and the Registry row of
+# the Window's own uid must agree after create and after Continue.
+assert_first_window_registry_name() {
+  local session="$1" phase="$2"
+  local first first_uid first_name first_mirror registry_name
+  first="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-windows -t "=$session" \
+    -F '#{@projmux_window_uid}|#{window_name}|#{@projmux_window_name}' | sed -n '1p')"
+  IFS='|' read -r first_uid first_name first_mirror <<<"$first"
+  registry_name="$(python3 - "$XDG_STATE_HOME/projmux/metadata/registry.json" "$first_uid" <<'FIRST_WINDOW_NAME'
+import json
+import pathlib
+import sys
+
+registry = json.loads(pathlib.Path(sys.argv[1]).read_text())
+names = [window["metadata"]["name"] for window in registry["windows"]
+         if window["metadata"]["uid"] == sys.argv[2]]
+print(names[0] if len(names) == 1 else "")
+FIRST_WINDOW_NAME
+)"
+  if [[ -z "$first_uid" || -z "$registry_name" || "$first_name" != "$registry_name" || "$first_mirror" != "$registry_name" ]]; then
+    echo "$phase: first Window name disagrees with the Registry: uid=$first_uid window_name=$first_name mirror=$first_mirror registry=$registry_name" >&2
+    exit 1
+  fi
+}
+assert_first_window_registry_name "$session_state_name" "Session State create"
 session_state_tmux_env="$PROJMUX_SMOKE_TMUX_ACTUAL,$server_pid,0"
 session_state_create_hooks="$(
   env -u TMUX -u TMUX_PANE tmux -S "$PROJMUX_SMOKE_TMUX_ACTUAL" show-hooks -g after-new-window
@@ -1416,6 +1443,7 @@ if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-m
   echo "Continue project did not use the exact client as its final handoff" >&2
   exit 1
 fi
+assert_first_window_registry_name "$session_state_name" "Session State Continue"
 cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
 

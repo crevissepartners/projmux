@@ -1202,7 +1202,7 @@ func executeRegistryTopology(
 	// The session's own first Window and Pane arrive with the atomic
 	// new-session result. Adopting those exact ids, rather than re-listing the
 	// session, is what keeps a concurrently created sibling from being claimed.
-	created, err := runtime.ensureSessionAt(ctx, plan.project, plan.sessionName, firstCWD, ledger)
+	created, err := runtime.ensureSessionAt(ctx, plan.project, plan.sessionName, firstCWD, first.window.Metadata.Name, ledger)
 	if err != nil {
 		return err
 	}
