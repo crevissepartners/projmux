@@ -240,8 +240,9 @@ func claudeHookLogEntry(paneID string, payload claudeHookPayload, result string,
 	return aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: result, Reason: reason, Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID}
 }
 
+// quietClaudeHook only records the quiet outcome. Every caller is reached from
+// ingestClaudeHook, which already marked the Pane before dispatching.
 func (c *aiCommand) quietClaudeHook(paneID string, payload claudeHookPayload, reason aiIngestReason) {
-	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
 	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", reason))
 }
 

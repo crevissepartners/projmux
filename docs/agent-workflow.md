@@ -1486,6 +1486,20 @@ decision itself are separate concerns.
   equivalent belongs to the recurrence gate, so green here is not a claim about
   any other file.
 
+### Claude quiet hook marking tests
+
+`ingestClaudeHook` marks the attributed Pane before it dispatches, so a quiet
+Claude event is one hook marking, not two.
+
+- `TestClaudeQuietHookMarksThePaneOnce` owns the cost of one quiet event
+  (PreToolUse, PostToolUse, PostToolBatch, an unknown event) on an owned Pane
+  and PreToolUse on an unbound one: one set-option per marker option, the exact
+  tmux command count, and the exact Registry read count.
+- `TestClaudeHookOutcomeIsUnchangedByMarkingOnce` pins golden outcomes for
+  SessionStart, state and runtime-quiet UserPromptSubmit, PreToolUse,
+  PostToolBatch, Stop, and an unknown event: final Pane option state, the Agent
+  session ref and activation, and the ingest records.
+
 ### Settled Codex authority admission tests
 
 `aiCodexLifecycleSink.SetAuthority` publishes one native authority transition as
