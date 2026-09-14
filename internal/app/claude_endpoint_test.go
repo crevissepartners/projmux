@@ -97,7 +97,7 @@ func TestClaudeEndpointHookMigrationPreservesStatusAndUserHooks(t *testing.T) {
 	}
 }
 
-func newClaudeEndpointTestFixture(t *testing.T) *claudeEndpointTestFixture {
+func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 	t.Helper()
 	root, err := os.MkdirTemp("", "pce-test-")
 	if err != nil {
@@ -164,7 +164,7 @@ func (f *claudeEndpointTestFixture) route(t *testing.T) (coremetadata.AgentRoute
 	return coremetadata.ResolveAgentRoute(reg, f.bootstrap.AgentUID)
 }
 
-func (f *claudeEndpointTestFixture) start(t *testing.T) (context.CancelFunc, <-chan error) {
+func (f *claudeEndpointTestFixture) start(t testing.TB) (context.CancelFunc, <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

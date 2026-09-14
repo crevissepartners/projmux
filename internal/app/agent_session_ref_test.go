@@ -35,7 +35,7 @@ type sessionRefHarness struct {
 	envTMUXPane   string
 }
 
-func newSessionRefHarness(t *testing.T, provider string) *sessionRefHarness {
+func newSessionRefHarness(t testing.TB, provider string) *sessionRefHarness {
 	t.Helper()
 
 	mutator := coremetadata.Mutator{
