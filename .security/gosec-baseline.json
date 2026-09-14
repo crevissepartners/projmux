@@ -10,7 +10,7 @@
     },
     {
       "rule": "G404",
-      "scope": "notify and recent-window store lock jitter",
+      "scope": "internal/core/storelock lock jitter shared by the notify and recent-window stores",
       "reason": "non-cryptographic retry timing"
     },
     {
@@ -908,14 +908,7 @@
     },
     {
       "rule": "G404",
-      "path": "internal/core/notify/store.go",
-      "message": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
-      "source": "rng: rand.New(rand.NewSource(time.Now().UnixNano())),",
-      "max_count": 1
-    },
-    {
-      "rule": "G404",
-      "path": "internal/core/recentwindows/store.go",
+      "path": "internal/core/storelock/guard.go",
       "message": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
       "source": "rng: rand.New(rand.NewSource(time.Now().UnixNano())),",
       "max_count": 1
