@@ -1509,6 +1509,23 @@ Claude event is one hook marking, not two.
   PostToolBatch, Stop, and an unknown event: final Pane option state, the Agent
   session ref and activation, and the ingest records.
 
+### Antigravity quiet hook marking tests
+
+`ingestAntigravityHook` marks the attributed Pane before it dispatches, so a
+quiet Antigravity event is one hook marking, not two.
+
+- `TestAntigravityQuietHookMarksThePaneOnce` owns the cost of one quiet event
+  (PostToolUse with and without an error, PostInvocation, an unknown event, the
+  idle, default and late-busy Statusline branches, and runtime-quiet Stop,
+  PreInvocation and approval Statusline) on an owned Pane and PostToolUse on an
+  unbound one: one set-option per marker option, the exact tmux command count,
+  and the exact Registry read count.
+- `TestAntigravityHookOutcomeIsUnchangedByMarkingOnce` pins golden outcomes for
+  notify, state and runtime-quiet Stop and approval Statusline, busy, late, idle
+  and default Statusline, state and runtime-quiet PreInvocation, PostInvocation,
+  PostToolUse with and without an error, and an unknown event: final Pane option
+  state, the Agent session ref and activation, and the ingest records.
+
 ### Settled Codex authority admission tests
 
 `aiCodexLifecycleSink.SetAuthority` publishes one native authority transition as

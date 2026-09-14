@@ -285,8 +285,9 @@ func (c *aiCommand) usageStateDir() (string, error) {
 	return filepath.Join(paths.StateDir, "usage"), nil
 }
 
+// quietAntigravityHook only records the quiet outcome. Every caller is reached
+// from ingestAntigravityHook, which already marked the Pane before dispatching.
 func (c *aiCommand) quietAntigravityHook(paneID string, payload antigravityHookPayload, reason aiIngestReason) {
-	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, payload.ConversationID, payload.TranscriptPath)
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 }
 
