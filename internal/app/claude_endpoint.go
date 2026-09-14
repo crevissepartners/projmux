@@ -31,6 +31,9 @@ const claudeRegistrationHookCommand = "exec projmux internal claude-endpoint-reg
 
 const claudeEndpointPollInterval = 100 * time.Millisecond
 
+// claudeEndpointIdleRegistryFloor bounds helper exit under a stat identity collision to <=2s including the 100ms tick granularity.
+const claudeEndpointIdleRegistryFloor = 1800 * time.Millisecond
+
 // claudeEndpointBootstrap travels only over an anonymous pipe from the exact
 // SessionStart hook to its detached helper. Never log or persist this value.
 type claudeEndpointBootstrap struct {
@@ -386,7 +389,51 @@ func cleanupClaudeActivationLeases(spec superviseSpec) {
 	_ = os.Remove(dir)
 }
 
+// claudeEndpointIdleOptions carries the idle Registry gate's inputs. Only the
+// accept-loop tick consumes stat, now, and floor; delivery-time checks never do.
+type claudeEndpointIdleOptions struct {
+	stat  func(*intmetadata.Store) (intmetadata.RegistryFileIdentity, error)
+	now   func() time.Time
+	floor time.Duration
+	// poster, when set, receives the helper's provider poster. Tests only.
+	poster func(*liveClaudeProviderPoster)
+}
+
+// claudeEndpointIdleRegistryGate decides whether one idle accept-loop tick
+// reloads the Registry. The accept-loop goroutine owns it alone; every
+// delivery-time check keeps calling the full current closure.
+type claudeEndpointIdleRegistryGate struct {
+	stat      func() (intmetadata.RegistryFileIdentity, error)
+	now       func() time.Time
+	floor     time.Duration
+	evaluated bool
+	identity  intmetadata.RegistryFileIdentity
+	at        time.Time
+}
+
+// current runs the identity part on every tick and the Registry part only when
+// the Registry stat identity changed, the stat failed, or the floor elapsed.
+func (g *claudeEndpointIdleRegistryGate) current(identity, registry func() bool) bool {
+	if !identity() {
+		return false
+	}
+	// The stat is captured before the load, so a write racing the load leaves a
+	// newer identity behind and forces another evaluation on the next tick.
+	observed, err := g.stat()
+	now := g.now()
+	if g.evaluated && err == nil && observed == g.identity && now.Sub(g.at) < g.floor {
+		return true
+	}
+	g.evaluated, g.identity, g.at = err == nil, observed, now
+	return registry()
+}
+
 func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer) error {
+	return serveClaudeEndpointWithIdleGate(ctx, bootstrap, ack, claudeEndpointIdleOptions{
+		stat: (*intmetadata.Store).RegistryFileIdentity, now: time.Now, floor: claudeEndpointIdleRegistryFloor})
+}
+
+func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer, idle claudeEndpointIdleOptions) error {
 	if exactActivationRegistryPath(bootstrap.RegistryPath) != nil || bootstrap.Token == "" {
 		return errors.New("claude helper admission failed")
 	}
@@ -471,7 +518,7 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 	if reason != "" || !coordinationTarget.matches(expectedRoute) {
 		return errors.New("claude registration is unavailable")
 	}
-	current := func() bool {
+	identityCurrent := func() bool {
 		if observed, err := inspectClaudeSocket(leasePath); err != nil || observed != leaseIdentity {
 			return false
 		}
@@ -486,6 +533,9 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 		if err != nil || observed != socketIdentity {
 			return false
 		}
+		return true
+	}
+	registryCurrent := func() bool {
 		reg, err := store.LoadDegradedReadOnly()
 		if err != nil {
 			return false
@@ -494,12 +544,20 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 		authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
 		return reason == "" && ok && route.Same(expectedRoute) && route.PaneUID == bootstrap.PaneUID && route.Generation == bootstrap.Generation && authority == bootstrap.Registration.Authority
 	}
+	current := func() bool {
+		return identityCurrent() && registryCurrent()
+	}
+	idleRegistry := claudeEndpointIdleRegistryGate{stat: func() (intmetadata.RegistryFileIdentity, error) { return idle.stat(store) },
+		now: idle.now, floor: idle.floor}
 	dialogueBroker, err := newLiveClaudeDialogueBroker(bootstrap.RegistryPath)
 	if err != nil {
 		return err
 	}
 	providerPoster := &liveClaudeProviderPoster{socket: bootstrap.Socket, token: bootstrap.Token,
 		socketIdentity: socketIdentity, process: bootstrap.Registration.Authority.Process, current: current}
+	if idle.poster != nil {
+		idle.poster(providerPoster)
+	}
 	var replyTool *claudeReplyToolGate
 	if bootstrap.ReplyTool != nil {
 		replyTool, err = newClaudeReplyToolGate(*bootstrap.ReplyTool)
@@ -517,7 +575,7 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 		return errors.New("claude helper acknowledgement failed")
 	}
 	for {
-		if ctx.Err() != nil || !current() {
+		if ctx.Err() != nil || !idleRegistry.current(identityCurrent, registryCurrent) {
 			return nil
 		}
 		_ = listener.SetDeadline(time.Now().Add(claudeEndpointPollInterval))

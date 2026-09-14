@@ -34,12 +34,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -198,6 +200,36 @@ func (s *Store) Path() string {
 		return ""
 	}
 	return s.path
+}
+
+// RegistryFileIdentity is the stat identity of the Registry file. Writers only
+// replace the file atomically, so any rewrite changes at least one field.
+type RegistryFileIdentity struct {
+	Device                uint64
+	Inode                 uint64
+	Size                  int64
+	ModTimeNanoseconds    int64
+	ChangeTimeSeconds     int64
+	ChangeTimeNanoseconds int64
+}
+
+// RegistryFileIdentity stats the Registry file without reading, locking, or
+// repairing it. A missing file is an error, never a zero identity.
+func (s *Store) RegistryFileIdentity() (RegistryFileIdentity, error) {
+	if s == nil {
+		return RegistryFileIdentity{}, errors.New("metadata: nil registry store")
+	}
+	info, err := os.Stat(s.path)
+	if err != nil {
+		return RegistryFileIdentity{}, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return RegistryFileIdentity{}, fmt.Errorf("metadata: registry %s has no stat identity", s.path)
+	}
+	seconds, nanoseconds := localipc.StatChangeTime(stat)
+	return RegistryFileIdentity{Device: uint64(stat.Dev), Inode: stat.Ino, Size: info.Size(),
+		ModTimeNanoseconds: info.ModTime().UnixNano(), ChangeTimeSeconds: seconds, ChangeTimeNanoseconds: nanoseconds}, nil
 }
 
 // SetClock overrides the timestamp source used for backups, recovery stamps,

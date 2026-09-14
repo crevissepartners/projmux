@@ -1160,6 +1160,15 @@
   exact SessionStart registration, process/Pane/generation authority, private
   lease and coord-socket inode cleanup, helper-death invalidation, and
   same-path replacement preservation.
+- `TestClaudeEndpointIdleRegistryGateEvaluatesOnlyOnChangeFailureOrFloor`,
+  `TestClaudeEndpointRegistryStatIdentityTracksReplacementAndMissingFile`,
+  `TestClaudeEndpointIdleTickReloadsChangedRegistryBeforeFloor`,
+  `TestClaudeEndpointIdleRegistryFloorBoundsExitUnderStatCollision`, and
+  `TestClaudeEndpointDeliveryFenceStaysFreshWhileIdleRegistryGateHolds` keep
+  the idle tick's Registry gate (reload only on a stat identity change, a stat
+  failure, or the 1.8s floor) separate from the delivery-time fence: lease
+  readiness, coordination requests, and provider push prewrite still run the
+  full current check.
 - `TestClaudeEndpointProcessIntegration` uses a synthetic provider process and
   the real supervisor/helper entrypoints. It accepts exactly the auth line and
   one frozen user frame, completes exact Stop-marker qualification, pushes a

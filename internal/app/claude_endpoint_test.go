@@ -29,6 +29,8 @@ type claudeEndpointTestFixture struct {
 	provider  *exec.Cmd
 	inbox     *net.UnixListener
 	root      string
+	// idle, when set, replaces the production idle Registry gate inputs.
+	idle *claudeEndpointIdleOptions
 }
 
 func TestClaudeEndpointHookMigrationPreservesStatusAndUserHooks(t *testing.T) {
@@ -170,7 +172,14 @@ func (f *claudeEndpointTestFixture) start(t testing.TB) (context.CancelFunc, <-c
 	t.Cleanup(cancel)
 	readAck, writeAck := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- serveClaudeEndpoint(ctx, f.bootstrap, writeAck); close(done); _ = writeAck.Close() }()
+	serve := serveClaudeEndpoint
+	if f.idle != nil {
+		idle := *f.idle
+		serve = func(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer) error {
+			return serveClaudeEndpointWithIdleGate(ctx, bootstrap, ack, idle)
+		}
+	}
+	go func() { done <- serve(ctx, f.bootstrap, writeAck); close(done); _ = writeAck.Close() }()
 	ackDone := make(chan bool, 1)
 	go func() {
 		var ack [1]byte
