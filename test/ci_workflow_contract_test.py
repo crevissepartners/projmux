@@ -525,5 +525,334 @@ class CIWorkflowContractTest(unittest.TestCase):
                 )
 
 
+DOCKER_INVOCATION_END = "--projmux-fake-docker-invocation-end--"
+SUITE_RUNNER_STRIPPED_ENV = (
+    "PROJMUX_TEST_DOCKER_NETWORK",
+    "GOMAXPROCS",
+    "GOFLAGS",
+    "PROJMUX_TEST_PREBUILT_BIN",
+    "PROJMUX_TEST_PREBUILT_SHA256",
+    "XDG_CACHE_HOME",
+    "PROJMUX_TEST_GOCACHE",
+    "PROJMUX_TEST_GOMODCACHE",
+    "PROJMUX_TEST_SKIP_PREFETCH",
+    "PROJMUX_TEST_BASH_TRACE",
+    "PROJMUX_TEST_IMAGE",
+    "PROJMUX_E2E_ARTIFACTS",
+    "GOCACHE",
+)
+GOCACHE_ASSIGNMENT = re.compile(r"(?<![\w${])GOCACHE=")
+
+
+def docker_run_options(argv: list[str]) -> dict[str, object]:
+    if not argv or argv[0] != "run":
+        raise AssertionError(f"not a docker run invocation: {argv}")
+    valued = {
+        "--network": "network",
+        "--user": "user",
+        "-e": "env",
+        "-v": "volume",
+        "-w": "workdir",
+    }
+    parsed: dict[str, list[str]] = {name: [] for name in valued.values()}
+    index = 1
+    while index < len(argv) and argv[index].startswith("-"):
+        option = argv[index]
+        if option == "--rm":
+            index += 1
+            continue
+        if option not in valued or index + 1 >= len(argv):
+            raise AssertionError(f"unexpected docker run option {option!r} in {argv}")
+        parsed[valued[option]].append(argv[index + 1])
+        index += 2
+    env: dict[str, list[str]] = {}
+    for pair in parsed["env"]:
+        name, _, value = pair.partition("=")
+        env.setdefault(name, []).append(value)
+    volumes = []
+    for spec in parsed["volume"]:
+        host, container, mode = spec.rsplit(":", 2)
+        volumes.append((host, container, mode))
+    return {
+        "network": parsed["network"],
+        "env": env,
+        "volumes": volumes,
+        "command": argv[index:],
+    }
+
+
+def shell_word(text: str) -> str:
+    if text.startswith('"'):
+        end = 1
+        while end < len(text) and text[end] != '"':
+            end += 2 if text[end] == "\\" else 1
+        return text[1:end]
+    if text.startswith("'"):
+        return text[1 : text.find("'", 1)]
+    return re.split(r"[\s;&|]", text, maxsplit=1)[0]
+
+
+def inherits_gocache(value: str) -> bool:
+    if not value.startswith("${GOCACHE:-") or not value.endswith("}"):
+        return False
+    depth = 0
+    for index, char in enumerate(value):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index == len(value) - 1
+    return False
+
+
+def gocache_overwrites(text: str) -> list[tuple[int, str]]:
+    lines = text.splitlines()
+
+    def assignments(name: str) -> list[tuple[int, str]]:
+        pattern = re.compile(rf"(?<![\w${{]){re.escape(name)}=")
+        found = []
+        for number, line in enumerate(lines, start=1):
+            if line.lstrip().startswith("#"):
+                continue
+            for match in pattern.finditer(line):
+                found.append((number, shell_word(line[match.end() :])))
+        return found
+
+    offending = []
+    for number, value in assignments("GOCACHE"):
+        if inherits_gocache(value):
+            continue
+        indirect = re.fullmatch(r"\$(\w+)|\$\{(\w+)\}", value)
+        if indirect:
+            sources = assignments(indirect.group(1) or indirect.group(2))
+            if sources and all(inherits_gocache(source) for _, source in sources):
+                continue
+        offending.append((number, lines[number - 1].strip()))
+    return offending
+
+
+class SuiteContainerBuildCacheContractTest(unittest.TestCase):
+    suite = "test/integration/build-cache-contract-suite.sh"
+
+    def run_suite_runner(
+        self, temporary: Path, overrides: dict[str, str]
+    ) -> list[list[str]]:
+        fake_bin = temporary / "bin"
+        fake_bin.mkdir()
+        calls = temporary / "docker-calls"
+        docker = fake_bin / "docker"
+        docker.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$@" >> "$FAKE_DOCKER_CALLS"\n'
+            f'printf "%s\\n" "{DOCKER_INVOCATION_END}" >> "$FAKE_DOCKER_CALLS"\n'
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        docker.chmod(0o700)
+        home = temporary / "home"
+        home.mkdir()
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in SUITE_RUNNER_STRIPPED_ENV
+        }
+        env.update(
+            {
+                "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+                "HOME": str(home),
+                "FAKE_DOCKER_CALLS": str(calls),
+                "PROJMUX_TEST_SKIP_IMAGE_BUILD": "1",
+                "PROJMUX_E2E_ARTIFACTS": str(temporary / "evidence"),
+            }
+        )
+        env.update(overrides)
+        completed = subprocess.run(
+            ["bash", str(ROOT / "scripts/test-docker-run.sh"), self.suite],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        invocations: list[list[str]] = [[]]
+        for line in calls.read_text(encoding="utf-8").splitlines():
+            if line == DOCKER_INVOCATION_END:
+                invocations.append([])
+            else:
+                invocations[-1].append(line)
+        self.assertEqual(invocations.pop(), [])
+        return invocations
+
+    def suite_invocation(self, invocations: list[list[str]]) -> dict[str, object]:
+        suites = [argv for argv in invocations if argv and argv[-1] == self.suite]
+        self.assertEqual(len(suites), 1, invocations)
+        parsed = docker_run_options(suites[0])
+        self.assertEqual(parsed["command"][-2:], ["bash", self.suite])
+        return parsed
+
+    def prepared_caches(self, temporary: Path) -> dict[str, str]:
+        modcache = temporary / "gomodcache"
+        modcache.mkdir()
+        shutil.copyfile(ROOT / "go.sum", modcache / ".projmux-go-sum")
+        return {
+            "PROJMUX_TEST_GOMODCACHE": str(modcache),
+            "PROJMUX_TEST_GOCACHE": str(temporary / "gocache"),
+        }
+
+    def test_suite_run_mounts_the_runner_build_cache_at_gocache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory).resolve()
+            caches = self.prepared_caches(temporary)
+            invocations = self.run_suite_runner(temporary, caches)
+            self.assertEqual(
+                len(invocations), 1, "a stamped module cache must not prefetch"
+            )
+            suite = self.suite_invocation(invocations)
+            self.assertEqual(suite["env"].get("GOCACHE"), ["/gocache"])
+            build_mounts = [
+                volume for volume in suite["volumes"] if volume[1] == "/gocache"
+            ]
+            self.assertEqual(
+                build_mounts, [(caches["PROJMUX_TEST_GOCACHE"], "/gocache", "rw")]
+            )
+            self.assertTrue(Path(caches["PROJMUX_TEST_GOCACHE"]).is_dir())
+            for argv in invocations:
+                for argument in argv:
+                    self.assertNotIn("/tmp/projmux-gocache", argument)
+
+    def test_suite_run_defaults_the_build_cache_to_the_prefetch_location(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory).resolve()
+            invocations = self.run_suite_runner(temporary, {})
+            default = str(temporary / "home/.cache/projmux/test-gocache")
+            suite = self.suite_invocation(invocations)
+            self.assertEqual(suite["env"].get("GOCACHE"), ["/gocache"])
+            self.assertEqual(
+                [volume for volume in suite["volumes"] if volume[1] == "/gocache"],
+                [(default, "/gocache", "rw")],
+            )
+            prefetch = [
+                argv for argv in invocations if argv[-3:] == ["go", "mod", "download"]
+            ]
+            self.assertEqual(len(prefetch), 1, invocations)
+            self.assertEqual(
+                [
+                    volume
+                    for volume in docker_run_options(prefetch[0])["volumes"]
+                    if volume[1] == "/gocache"
+                ],
+                [(default, "/gocache", "rw")],
+            )
+
+    def test_suite_run_keeps_network_workspace_and_home_isolation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory).resolve()
+            caches = self.prepared_caches(temporary)
+            suite = self.suite_invocation(self.run_suite_runner(temporary, caches))
+            self.assertEqual(suite["network"], ["none"])
+            volumes = suite["volumes"]
+            self.assertIn((str(ROOT), "/workspace", "ro"), volumes)
+            self.assertEqual(
+                [volume for volume in volumes if volume[1] == "/workspace"],
+                [(str(ROOT), "/workspace", "ro")],
+            )
+            isolated = {
+                "HOME": "/tmp/projmux-home",
+                "XDG_CACHE_HOME": "/tmp/projmux-cache",
+                "XDG_CONFIG_HOME": "/tmp/projmux-config",
+                "XDG_RUNTIME_DIR": "/tmp/projmux-runtime",
+                "XDG_STATE_HOME": "/tmp/projmux-state",
+            }
+            for name, value in isolated.items():
+                self.assertEqual(suite["env"].get(name), [value], name)
+            self.assertEqual(
+                {container for _, container, mode in volumes if mode == "rw"},
+                {"/evidence", "/gocache"},
+            )
+            self.assertIn((str(temporary / "evidence"), "/evidence", "rw"), volumes)
+            self.assertEqual(
+                [volume for volume in volumes if volume[1] == "/gomodcache"],
+                [(caches["PROJMUX_TEST_GOMODCACHE"], "/gomodcache", "ro")],
+            )
+            build_cache = Path("/gocache")
+            for protected in (*isolated.values(), "/workspace"):
+                protected_path = Path(protected)
+                self.assertNotEqual(build_cache, protected_path)
+                self.assertNotIn(protected_path, build_cache.parents)
+                self.assertNotIn(build_cache, protected_path.parents)
+
+    def test_smoke_env_honors_an_inherited_build_cache(self) -> None:
+        script = (
+            'set -euo pipefail\nsource "$1"\nsmoke_setup_env\n'
+            'printf "%s\\n%s\\n" "$GOCACHE" "$PROJMUX_SMOKE_WORKDIR"\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory).resolve()
+            inherited = temporary / "inherited-gocache"
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if key not in ("GOCACHE", "PROJMUX_E2E_ARTIFACTS", "PROJMUX_E2E_SUITE")
+            }
+            env["TMPDIR"] = str(temporary)
+            cases = (("inherited", {"GOCACHE": str(inherited)}), ("unset", {}))
+            smoke = str(ROOT / "test/lib/smoke.sh")
+            for label, overrides in cases:
+                with self.subTest(gocache=label):
+                    completed = subprocess.run(
+                        ["bash", "-c", script, "smoke-env", smoke],
+                        cwd=ROOT,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        env={**env, **overrides},
+                    )
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    gocache, workdir = completed.stdout.splitlines()
+                    self.assertEqual(Path(workdir).parent, temporary)
+                    if overrides:
+                        self.assertEqual(gocache, str(inherited))
+                        self.assertTrue(inherited.is_dir())
+                        self.assertFalse((Path(workdir) / "go-cache").exists())
+                    else:
+                        self.assertEqual(gocache, f"{workdir}/go-cache")
+                        self.assertTrue(Path(gocache).is_dir())
+
+    def test_no_suite_script_overwrites_an_inherited_build_cache(self) -> None:
+        self.assertEqual(
+            gocache_overwrites('export GOCACHE="$X/go-cache"\n'),
+            [(1, 'export GOCACHE="$X/go-cache"')],
+        )
+        self.assertEqual(
+            gocache_overwrites('cache="$X"\nGOCACHE="$cache" make build\n'),
+            [(2, 'GOCACHE="$cache" make build')],
+        )
+        self.assertEqual(
+            gocache_overwrites('export GOCACHE="${GOCACHE:-${X}/go-cache}"\n'), []
+        )
+        self.assertEqual(
+            gocache_overwrites(
+                'cache="${GOCACHE:-$X/go-cache}"\nGOCACHE="$cache" make build\n'
+            ),
+            [],
+        )
+
+        smoke = ROOT / "test/lib/smoke.sh"
+        scripts = [smoke, *sorted((ROOT / "test/integration").glob("*.sh"))]
+        self.assertTrue(
+            GOCACHE_ASSIGNMENT.search(smoke.read_text(encoding="utf-8")),
+            "the scan must see the smoke lib build cache assignment",
+        )
+        offending = [
+            f"{script.relative_to(ROOT)}:{number}: {line}"
+            for script in scripts
+            for number, line in gocache_overwrites(script.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual(
+            offending, [], "GOCACHE assignments must keep an inherited cache"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

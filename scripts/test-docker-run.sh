@@ -131,6 +131,12 @@ if [[ "${PROJMUX_TEST_BASH_TRACE:-}" == "1" ]]; then
   suite_shell+=(-x)
 fi
 
+# Suites share the harness-owned compiler cache, so a later suite reuses the
+# compile actions an earlier suite already ran instead of rebuilding the binary
+# and test binaries from an empty cache. The Go build cache is safe for
+# concurrent go invocations. The mount is the one dedicated cache directory,
+# outside HOME/XDG and /workspace, so network isolation, the read-only
+# workspace, and HOME/XDG isolation are unchanged.
 docker run --rm \
   --network "$docker_network" \
   --user "$(id -u):$(id -g)" \
@@ -139,7 +145,7 @@ docker run --rm \
   -e XDG_CONFIG_HOME=/tmp/projmux-config \
   -e XDG_RUNTIME_DIR=/tmp/projmux-runtime \
   -e XDG_STATE_HOME=/tmp/projmux-state \
-  -e GOCACHE=/tmp/projmux-gocache \
+  -e GOCACHE=/gocache \
   -e GOMODCACHE=/gomodcache \
   -e GOTOOLCHAIN=local \
   -e GOMAXPROCS="$suite_gomaxprocs" \
@@ -152,6 +158,7 @@ docker run --rm \
   -e E2E_WAIT_SCALE="${E2E_WAIT_SCALE:-}" \
   -v "$root:/workspace:ro" \
   -v "$modcache:/gomodcache:ro" \
+  -v "$buildcache:/gocache:rw" \
   -v "$evidence:/evidence:rw" \
   "${prebuilt_docker_args[@]}" \
   -w /workspace \
