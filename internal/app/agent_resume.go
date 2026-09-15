@@ -383,6 +383,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		}
 	}
 
+	nameReason := ""
 	if err := r.create.transact(func(
 		ctx context.Context,
 		working *coremetadata.Registry,
@@ -390,6 +391,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		operationID string,
 		ledger *runtimeLedger,
 	) error {
+		nameReason = ""
 		agent, ok := working.Agent(plan.agentUID)
 		if !ok {
 			return fmt.Errorf("%s: agent %q disappeared before the rebind ran", spelling, plan.agentUID)
@@ -426,16 +428,27 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// pre-Phase6 spec was empty, before any runtime object is created.
 		agent.Spec.Workspace = workspace
 
+		// Name handoff. The new managed Pane carries the non-automatic name of
+		// the Agent's old Pane row that selectAgentPaneNameHandoff picks, and
+		// that row is released first so the name has exactly one holder. A name
+		// that cannot be carried is disclosed and never refuses the resume.
+		paneName, reason := r.handOffResumedPaneName(ctx, working, mutator, *agent, plan)
+		nameReason = reason
+		if agent, ok = working.Agent(plan.agentUID); !ok {
+			return fmt.Errorf("%s: agent %q disappeared before the rebind ran", spelling, plan.agentUID)
+		}
+
 		// Metadata phase. AttachAgentPane creates the managed Pane owned by this
 		// existing Agent and moves it Offline/Failed -> Running through the
 		// closed transition table. No Agent is created and no name is allocated
 		// for one, so the uid and metadata.name are structurally untouchable
 		// here.
-		pane, err := mutator.AttachAgentPane(working, plan.agentUID, coremetadata.BootstrapPane{
-			CWD: contextDir,
-		}, operationID)
+		pane, attachReason, err := attachAgentPaneWithName(working, mutator, plan.agentUID, contextDir, paneName, operationID)
 		if err != nil {
 			return MapMetadataError(err)
+		}
+		if attachReason != "" {
+			nameReason = attachReason
 		}
 
 		// Runtime phase, on the create routes' own materializer.
@@ -533,7 +546,81 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	if nativeLifecycleTargetAfterCommit.valid() {
 		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTargetAfterCommit)
 	}
+	if nameReason != "" {
+		// A lost disclosure must not turn a committed resume into a failure.
+		fmt.Fprintln(stderr, agentPaneNameNotice(plan.agentName, nameReason))
+	}
 
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)
 	return err
+}
+
+// handOffResumedPaneName chooses the name the resumed Agent's new Pane carries
+// and releases the old Pane row that held it.
+//
+// Resume keeps an Offline Agent's old Pane rows as evidence, and each row still
+// holds its name reservation. The candidates are the rows proven live nowhere
+// by the same server-wide owner inventory Continue replay uses; only the
+// selected source row is released, and only when releasing it leaves the
+// Window's stored anchor where it is. Every outcome that
+// carries no non-automatic name comes back as a reason instead of an error.
+func (r *agentRebinder) handOffResumedPaneName(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	agent coremetadata.Agent,
+	plan agentResumePlan,
+) (string, string) {
+	var owned []coremetadata.Pane
+	named := false
+	for _, pane := range working.PanesOf(agent.Metadata.UID) {
+		if pane.Metadata.UID == agent.Status.PaneRef {
+			continue
+		}
+		owned = append(owned, pane)
+		named = named || agentPaneNameCandidate(pane, agent.Metadata.UID)
+	}
+	if !named {
+		// Nothing could be carried, so no runtime inventory is taken.
+		return "", ""
+	}
+	guard, err := newTopologyOwnerGuard(ctx, r.create.runtime)
+	if err != nil {
+		return "", fmt.Sprintf("old Pane rows could not be proven live nowhere on this socket: %v", err)
+	}
+	var nonLive []string
+	var liveCandidate error
+	for _, pane := range owned {
+		if claimErr := guard.requireSolePaneUID(pane.Metadata.UID, "", plan.agentName); claimErr != nil {
+			if liveCandidate == nil && agentPaneNameCandidate(pane, agent.Metadata.UID) {
+				liveCandidate = claimErr
+			}
+			continue
+		}
+		nonLive = append(nonLive, pane.Metadata.UID)
+	}
+	handoff := selectAgentPaneNameHandoff(*working, agent, nonLive)
+	if handoff.name == "" {
+		if handoff.reason == "" && liveCandidate != nil {
+			return "", liveCandidate.Error()
+		}
+		return "", handoff.reason
+	}
+	window, ok := working.Window(plan.windowUID)
+	if !ok {
+		return "", fmt.Sprintf("window %q is not in the Registry", plan.windowUID)
+	}
+	anchor := window.Spec.AnchorPaneRef
+	before := working.Clone()
+	if err := mutator.DeletePane(working, handoff.sourceUID); err != nil {
+		*working = before
+		return "", fmt.Sprintf("old pane/%s (uid:%s) could not be released: %v", handoff.name, handoff.sourceUID, err)
+	}
+	// The rebind splits the Window's stored anchor, so a release that re-anchored
+	// the Window would turn a name into a refused resume. Keep the row instead.
+	if window, ok := working.Window(plan.windowUID); !ok || window.Spec.AnchorPaneRef != anchor {
+		*working = before
+		return "", fmt.Sprintf("releasing old pane/%s (uid:%s) would move window %s's anchor", handoff.name, handoff.sourceUID, plan.windowUID)
+	}
+	return handoff.name, ""
 }

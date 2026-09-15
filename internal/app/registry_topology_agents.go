@@ -62,6 +62,10 @@ type registryTopologyAgentPlan struct {
 	// It is used for an Agent Window anchor so materialization never deletes the
 	// required anchor and mints a replacement UID.
 	reusePaneUID string
+	// paneName is the non-automatic name the new Pane carries from one of the
+	// released rows, chosen by selectAgentPaneNameHandoff. Empty means the new
+	// Pane gets its automatic name.
+	paneName string
 }
 
 // topologyAgentReplayAuthority names why a stored Agent is being considered
@@ -315,6 +319,15 @@ func planTopologyWindowAgents(
 		}
 		work.releaseUIDs = release
 		work.reusePaneUID = reusePaneUID
+		if reusePaneUID == "" {
+			// The released rows are exactly the Agent's non-live old Pane rows,
+			// and the owner guard proves them live nowhere before any release.
+			handoff := selectAgentPaneNameHandoff(registry, agent, release)
+			work.paneName = handoff.name
+			if handoff.reason != "" {
+				plan.notices = append(plan.notices, agentPaneNameNotice(label, handoff.reason))
+			}
+		}
 		plan.addItem(windowOrder*1000+500+order, coremetadata.KindAgent, label, agent.Metadata.UID, "materialize")
 		out = append(out, work)
 	}
@@ -456,9 +469,13 @@ func replayTopologyWindowAgents(
 		if replay.reusePaneUID != "" {
 			pane, err = mutator.RebindAgentPane(registry, replay.agent.Metadata.UID, replay.reusePaneUID)
 		} else {
-			pane, err = mutator.AttachAgentPane(registry, replay.agent.Metadata.UID, coremetadata.BootstrapPane{
-				CWD: replay.cwd,
-			}, operationID)
+			// The released rows gave their name reservations up above, so the
+			// carried name is free for the new Pane.
+			var nameReason string
+			pane, nameReason, err = attachAgentPaneWithName(registry, mutator, replay.agent.Metadata.UID, replay.cwd, replay.paneName, operationID)
+			if nameReason != "" && runtime.warn != nil {
+				fmt.Fprintln(runtime.warn, agentPaneNameNotice(work.window.Metadata.Name+"/"+replay.agent.Metadata.Name, nameReason))
+			}
 		}
 		if err != nil {
 			return nil, MapMetadataError(err)

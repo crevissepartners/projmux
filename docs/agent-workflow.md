@@ -1572,6 +1572,48 @@ name of the Window the caller adopts, so on create and on Continue
   Window's `#{window_name}` and `#{@projmux_window_name}` both equal the
   Registry name of its `@projmux_window_uid`.
 
+### Resumed Agent Pane name handoff tests
+
+Continue topology replay and `projmux agent resume` give a new Agent Pane the
+non-automatic `metadata.name` of that Agent's non-live old Pane row through one
+rule, `selectAgentPaneNameHandoff`. Only Agent-owned `agent` role rows proven
+live nowhere are candidates, a row named by its own UID is automatic and never
+carried, several candidates are resolved only by the last termination receipt
+Pane, and a name another resource reserves is not carried. A name that cannot be
+carried leaves the automatic name and one
+`projmux: agent/<label> new Pane keeps an automatic name: <reason>` line; it
+never refuses Continue or resume.
+
+- `TestSelectAgentPaneNameHandoffTable` owns the rule: explicit,
+  `<agent>-pane` and `-L` names are carried; automatic, live, other-Agent and
+  shell rows are not candidates; the receipt Pane wins among several
+  candidates and no receipt match carries nothing; a name reserved by another
+  resource is not carried.
+- `TestAttachAgentPaneWithNameFallsBackToAutomaticName` owns the mutation
+  side: a name the Registry refuses at attach yields an automatic name and one
+  reason instead of an error.
+- `TestRegistryTopologyContinueCarriesOldAgentPaneName` and
+  `TestRegistryTopologyContinueResolvesSeveralOldPaneNamesByTerminationReceipt`
+  own Continue: the new Pane UID differs, the Registry name and the fake tmux
+  `@projmux_pane_label` equal the old name, only the new Pane holds it, an
+  automatic old UID is no name anywhere, and an unresolvable set of names
+  converges with exactly one notice.
+- `TestAgentResumeCarriesOldAgentPaneName`,
+  `TestAgentResumeResolvesSeveralOldPaneNamesByTerminationReceipt` and
+  `TestAgentResumeKeepsAutomaticNameWhenOldPaneIsNotProvenNonLive` own
+  `agent resume`: the selected old row is released under the replay owner
+  inventory and its name lands on the new Pane, unselected and automatic rows
+  stay as evidence, and a row still claimed live elsewhere is kept with an
+  automatic new name and one stderr line.
+- `TestContinueReplayCarriesOldAgentPaneNamesThroughRealTmux` and
+  `TestAgentResumeCarriesOldAgentPaneNamesThroughRealTmux` own the real-tmux
+  check: on an isolated server with a `tail -f /dev/null` provider, old names
+  `reviewer`, `default-pane` and `-L` land on new Pane UIDs in the Registry and
+  in `#{@projmux_pane_label}`, and the automatic control is named by its new
+  UID. Both run in `make test-integration` through
+  `test/integration/resumed-agent-pane-names.sh`, which requires tmux and both
+  PASS lines.
+
 ### Flag-shaped Window name tests
 
 `runtimeMutationArgv` reads each operand as a tmux flag or value slot the way

@@ -189,6 +189,17 @@ func (r *Registry) nameOwner(scope string, kind Kind, name string) (string, bool
 	return "", false
 }
 
+// PaneNameHolder reports the uid holding a Pane name in the root-wide Pane
+// namespace ownerUID resolves to. It reports false when nothing holds the name
+// or ownerUID resolves to no root.
+func (r Registry) PaneNameHolder(ownerUID, name string) (string, bool) {
+	scope, err := r.scopeFor(KindPane, ownerUID)
+	if err != nil {
+		return "", false
+	}
+	return r.nameOwner(scope, KindPane, name)
+}
+
 // reserveExplicitName claims an operator-supplied name. A collision fails with
 // ErrNameConflict and never falls back to an implicit suffix.
 func (r *Registry) reserveExplicitName(op, ownerUID string, kind Kind, name, uid string) error {
