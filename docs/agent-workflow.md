@@ -2067,6 +2067,41 @@ Nothing in this feature terminates, starts, signals, or restarts a process.
 The census is two file reads per process; replacing the residual processes is a
 separate decision this measurement exists to inform.
 
+### Registry read result fence tests
+
+- `make test`: `TestRegistryReadResultFence`,
+  `TestRegistryReadEntryPointResultFence`, and
+  `TestClassifyRegistryBytesResultFence` pin, as literals observed on main,
+  what the Registry envelope read returns for one shared input matrix: the
+  current schema, every registered migration version (1, 2, 3), and newer,
+  negative, zero, absent, `null`, string, float, and overflowing
+  `schemaVersion` values; truncated documents with a known and an unknown
+  version; trailing bytes; the version as the last key; duplicate and
+  case-variant version keys in both orders; a version only inside a child
+  object; top-level array, string, number, and `null`; a UTF-8 BOM; body type
+  errors behind a current, a migration, and an unknown version; invalid graphs;
+  empty and whitespace-only files with and without the initialized marker; and
+  a generated document over 1 MiB with a current and an unknown version.
+  `readWithoutRepairWithReport` pins the whole 5-tuple (Registry digest,
+  on-disk version, existed, MigrationReport digest, error), the error's
+  `errors.Is` sentinel set and `errors.As` types, and its message with temp
+  paths normalized. `LoadDegradedReadOnly`, `LoadReadOnly`, and
+  `LoadWithMigrationResult` pin the same error facts, the Registry digest, and
+  the migration result fields; `classifyRegistryBytes` pins State,
+  SchemaVersion, Detail, and Contents. The matrix rows and pinned values must
+  not be edited to follow a product change: a change that moves one is a
+  behavior change, not a fence update.
+- `make test`: `TestRegistryReadMatchesLegacyTwoPassReference` and
+  `FuzzRegistryReadMatchesLegacyTwoPassReference` compare the product read and
+  classifier against frozen test-only copies of the two-pass order (envelope
+  decode, schema classification, then body decode), `legacyReadWithoutRepairWithReport`
+  and `legacyClassifyRegistryBytes`, under an identically reset deterministic
+  environment: equal Registry and report values, version, existed, error text,
+  and error facts, and an equal `RegistryFileInfo`. The fuzz target seeds every
+  matrix row with its marker flag, runs its seeds under `make test`, and covers
+  both the read path and the classifier in one `-fuzz` run. The legacy copies
+  are the reference and are not kept in step with the product.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.
