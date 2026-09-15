@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -289,36 +290,54 @@ func TestSettingsRootResultLandsOnItsOwningRow(t *testing.T) {
 // as exactly one row but whose value and name are both chosen at render time
 // from state the result walk must not read:
 //
-//   - tokens.item.fallback ("Use preset fallback"): the row is
-//     `theme:color-set:<token>:` and renders as "Set <saved preset>", and the
-//     value's prefix would grab the "Terminal default" row in front of it;
 //   - trust.approve ("Trust or refresh approval"): the View renders "Trust this
 //     config" (trust:apply) or "Refresh trust" (trust:refresh) depending on the
 //     on-disk trust state, so there are two candidate rows and no way to choose.
 var settingsLandingUnnameableRenderTimeNodes = []string{
-	settingsNavAppearanceTheme + ".tokens.item.fallback",
 	settingsNavProjectTrust + ".approve",
 }
 
 // settingsLandingUnnameableReason explains why a result row can name no row,
-// or returns "" when it should have. Besides the render-time nodes above, the
-// only class is a passive State node: one catalog entry that stands for several
-// rendered rows and whose label enumerates them ("Effective / Saved / Source"),
-// so there is no single row to land on.
+// or returns "" when it should have. Besides the render-time nodes above there
+// are two classes:
+//
+//   - a passive State node: one catalog entry that stands for several rendered
+//     rows and whose label enumerates them ("Effective / Saved / Source"), so
+//     there is no single row to land on;
+//   - a "Use preset fallback" row whose empty-hex value a built-in preset's
+//     "Set <preset>" row repeats, so the value names two rows. Every other
+//     fallback row is named by value and must land.
 func settingsLandingUnnameableReason(row string) string {
 	value, _, _ := strings.Cut(row, " [")
-	nodeID, _, ok := parseSettingsRootResultValue(value)
+	nodeID, instances, ok := parseSettingsRootResultValue(value)
 	if !ok {
 		return ""
 	}
 	if slices.Contains(settingsLandingUnnameableRenderTimeNodes, nodeID) {
 		return "render-time value and name"
 	}
+	if nodeID == settingsNavAppearanceTheme+".tokens.item.fallback" && len(instances) > 0 &&
+		settingsLandingPresetRepeatsFallback(theme.ColorToken(instances[len(instances)-1])) {
+		return "fallback value repeated by a built-in preset row"
+	}
 	node, found := settingsNavByID(nodeID)
 	if found && node.Kind == settingsNavState && node.Value == settingsNoopValue {
 		return "State node standing for several rows"
 	}
 	return ""
+}
+
+// settingsLandingPresetRepeatsFallback reads the built-in preset table the way
+// themeColorEntries does, without borrowing the production helper: a preset
+// that has the token but no hex for it renders "Set <preset>" with the
+// empty-hex value, which is the "Use preset value" row's own value.
+func settingsLandingPresetRepeatsFallback(token theme.ColorToken) bool {
+	for _, preset := range theme.PresetNames() {
+		if hex, ok := theme.PresetColorHex(preset, token); ok && hex == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // settingsLandingResultPathLeaf is the last segment of the path a result row
@@ -437,6 +456,252 @@ func TestSettingsRootResultConfirmAndActionRowsAreFocusedNotRun(t *testing.T) {
 	}
 	if after := settingsNavConfigSnapshot(t, home); after != before {
 		t.Fatalf("a result row changed the temporary HOME")
+	}
+}
+
+// settingsLandingFallbackRow is one "Use preset fallback" result row: the row
+// that clears a token's explicit override so the saved preset applies again.
+type settingsLandingFallbackRow struct {
+	value   string
+	token   theme.ColorToken
+	landing settingsRootResultLanding
+	// repeated is true when a built-in preset row renders the same empty-hex
+	// value, so the result row deliberately names no row.
+	repeated bool
+}
+
+// settingsLandingFallbackRows returns the Global tab's "Use preset fallback"
+// result rows, fails unless there is exactly one per theme token, and pins each
+// target: the exact empty-hex value, or nothing where a preset row repeats it.
+func settingsLandingFallbackRows(t *testing.T, cmd *settingsCommand) []settingsLandingFallbackRow {
+	t.Helper()
+
+	node := settingsNavAppearanceTheme + ".tokens.item.fallback"
+	entries, landings := settingsRootResultLandings(settingsRootTabGlobal, cmd.locale())
+	var rows []settingsLandingFallbackRow
+	for _, entry := range entries {
+		nodeID, instances, ok := parseSettingsRootResultValue(entry.Value)
+		if !ok || nodeID != node {
+			continue
+		}
+		if len(instances) == 0 {
+			t.Fatalf("%s: fallback result row carries no token", entry.Value)
+		}
+		token := theme.ColorToken(instances[len(instances)-1])
+		rows = append(rows, settingsLandingFallbackRow{
+			value:    entry.Value,
+			token:    token,
+			landing:  landings[entry.Value],
+			repeated: settingsLandingPresetRepeatsFallback(token),
+		})
+	}
+	tokens := 0
+	for _, group := range themeTokenGroups {
+		tokens += len(group.Tokens)
+	}
+	if len(rows) != tokens || tokens == 0 {
+		t.Fatalf("got %d fallback result rows, want one per theme token (%d)", len(rows), tokens)
+	}
+	named := 0
+	for _, row := range rows {
+		want := themeAction("color-set:" + string(row.token) + ":")
+		if row.repeated {
+			want = ""
+		} else {
+			named++
+		}
+		if row.landing.Focus != want {
+			t.Fatalf("%s: target %q, want %q (a preset row repeats the value: %v)", row.token, row.landing.Focus, want, row.repeated)
+		}
+	}
+	if named == 0 {
+		t.Fatalf("no fallback result row is named by value")
+	}
+	return rows
+}
+
+// settingsLandingValueCount counts the rows of a frame that carry value.
+func settingsLandingValueCount(options intpicker.Options, value string) int {
+	count := 0
+	for _, item := range options.Items {
+		if strings.TrimSpace(item.Value) == value {
+			count++
+		}
+	}
+	return count
+}
+
+// TestSettingsRootResultFallbackLandingFocusesThePresetValueRow saves a real
+// preset, which is what makes the token View render "Use preset value", and
+// proves each fallback result row lands the cursor on that row by its exact
+// empty-hex value, never on the "Terminal default" row whose value shares the
+// `theme:color-set:<token>:` prefix. Where a built-in preset's "Set <preset>"
+// row repeats that value, the frame really renders two such rows and the
+// landing focuses neither.
+func TestSettingsRootResultFallbackLandingFocusesThePresetValueRow(t *testing.T) {
+	presets := theme.PresetNames()
+	if len(presets) == 0 {
+		t.Fatal("no built-in theme presets")
+	}
+	preset := presets[0]
+	cmd, home, writes := settingsSearchFixture(t, settingsSearchScenario{
+		name:   "fallback-preset-saved",
+		locale: "en-US",
+		files:  map[string]string{"config.toml": "[theme]\npreset = \"" + preset + "\"\n"},
+	})
+	if cfg, err := cmd.currentGlobalProjectConfig(); err != nil || cfg.Theme.Preset != preset {
+		t.Fatalf("fixture did not save preset %q: got %q, err %v", preset, cfg.Theme.Preset, err)
+	}
+	before := settingsNavConfigSnapshot(t, home)
+	quitRunner := &countingSettingsQuitRunner{}
+	cmd.quit = quitRunner
+
+	named, repeated, besideTerminalDefault := 0, 0, 0
+	for _, row := range settingsLandingFallbackRows(t, cmd) {
+		fallback := themeAction("color-set:" + string(row.token) + ":")
+		terminalDefault := themeAction("color-set:" + string(row.token) + ":" + theme.ThemeDefaultSentinel)
+
+		runner := &settingsLandingRunner{script: []string{row.value}}
+		cmd.nativePicker = runner
+		if err := cmd.Run(nil, &strings.Builder{}, &strings.Builder{}); err != nil {
+			t.Fatalf("%s: settings run: %v", row.token, err)
+		}
+		landed, ok := runner.landed()
+		if !ok {
+			t.Fatalf("%s: expected 2 frames (root + token View), got %d", row.token, len(runner.frames))
+		}
+		if cmd.pendingNavigation != nil || cmd.pendingFocus != "" || cmd.pendingFocusLabel != "" {
+			t.Errorf("%s: landing left pending state: %q / %q / %q", row.token, cmd.pendingNavigation, cmd.pendingFocus, cmd.pendingFocusLabel)
+		}
+		if !settingsLandingRendersValue(landed, themeAction("color-type:"+string(row.token))) {
+			t.Fatalf("%s: landed on %q, not the token View; rows %q", row.token, landed.UI, settingsLandingItemValues(landed))
+		}
+		carriers := settingsLandingValueCount(landed, fallback)
+		if carriers == 0 {
+			t.Fatalf("%s: a saved preset did not render the fallback row %q; rows %q", row.token, fallback, settingsLandingItemValues(landed))
+		}
+
+		if row.repeated {
+			repeated++
+			if carriers < 2 {
+				t.Errorf("%s: a built-in preset should repeat %q, but %d row carries it; rows %q", row.token, fallback, carriers, settingsLandingItemValues(landed))
+			}
+			if landed.InitialIndexSet {
+				t.Errorf("%s: %q names %d rows, yet the frame focused index %d", row.token, fallback, carriers, landed.InitialIndex)
+			}
+			continue
+		}
+
+		named++
+		if carriers != 1 {
+			t.Errorf("%s: %d rows carry the fallback value %q; rows %q", row.token, carriers, fallback, settingsLandingItemValues(landed))
+		}
+		if settingsLandingRendersValue(landed, terminalDefault) {
+			besideTerminalDefault++
+		}
+		if !landed.InitialIndexSet {
+			t.Errorf("%s: the fallback row is rendered but the token View opened unfocused; rows %q", row.token, settingsLandingItemValues(landed))
+			continue
+		}
+		focused, ok := settingsLandingFocused(landed)
+		if !ok {
+			t.Fatalf("%s: focused index %d is not a row", row.token, landed.InitialIndex)
+		}
+		got := strings.TrimSpace(focused.Value)
+		if got != fallback {
+			t.Errorf("%s: focused %q, want the preset fallback row %q; rows %q", row.token, got, fallback, settingsLandingItemValues(landed))
+		}
+		if got == terminalDefault {
+			t.Errorf("%s: focused the Terminal default row %q instead of the preset fallback row", row.token, got)
+		}
+		if name := settingsLandingRowName(focused.Label); name != "Use preset value" {
+			t.Errorf("%s: focused row renders %q, want %q", row.token, name, "Use preset value")
+		}
+	}
+	if named == 0 {
+		t.Errorf("no fallback result row landed on the fallback row")
+	}
+	if besideTerminalDefault == 0 {
+		t.Errorf("no named fallback row rendered beside Terminal default; the neighbour a prefix target would grab is untested")
+	}
+	t.Logf("fallback landings with preset %q saved: %d focused the fallback row (%d beside Terminal default), %d name nothing because a preset row repeats the value", preset, named, besideTerminalDefault, repeated)
+
+	if len(*writes) > 0 {
+		t.Fatalf("fallback landings attempted writes: %q", *writes)
+	}
+	if quitRunner.calls != 0 {
+		t.Fatalf("fallback landings ran the quit flow %d times", quitRunner.calls)
+	}
+	if after := settingsNavConfigSnapshot(t, home); after != before {
+		t.Fatalf("fallback landings changed the temporary HOME")
+	}
+}
+
+// TestSettingsRootResultFallbackLandingWithoutPresetOpensUnfocused is the other
+// half: with no preset saved the fallback row is not rendered, the target's
+// prefix form `…::` matches no row, and its catalog name "Use preset fallback"
+// is no rendered name, so the token View opens on its first row — no
+// `start:pos`, no error, and the pending landing spent. On a token whose value
+// a "Set <preset>" row repeats, that preset row is still rendered here: it is
+// the row a value target would wrongly focus, which is why those name nothing.
+func TestSettingsRootResultFallbackLandingWithoutPresetOpensUnfocused(t *testing.T) {
+	cmd, home, writes := settingsSearchFixture(t, settingsSearchScenario{name: "fallback-no-preset", locale: "en-US"})
+	if cfg, err := cmd.currentGlobalProjectConfig(); err != nil || strings.TrimSpace(cfg.Theme.Preset) != "" {
+		t.Fatalf("default fixture unexpectedly saves preset %q (err %v)", cfg.Theme.Preset, err)
+	}
+	before := settingsNavConfigSnapshot(t, home)
+
+	for _, row := range settingsLandingFallbackRows(t, cmd) {
+		fallback := themeAction("color-set:" + string(row.token) + ":")
+
+		// The seam: the token View this fixture renders, handed the landing.
+		entries := cmd.themeColorEntries(row.token)
+		for _, entry := range entries {
+			if settingsLandingRowName(entry.Label) == "Use preset value" {
+				t.Fatalf("%s: the fallback row rendered without a saved preset", row.token)
+			}
+		}
+		if got := settingsOptionsHaveValue(intpickercompat.Options{Entries: entries}, fallback); got != row.repeated {
+			t.Fatalf("%s: a row carries %q = %v, want %v", row.token, fallback, got, row.repeated)
+		}
+		cmd.pendingFocus = row.landing.Focus
+		cmd.pendingFocusLabel = row.landing.FocusLabel
+		options := cmd.withSettingsLandingFocus(intpickercompat.Options{Entries: entries})
+		for _, binding := range options.Bindings {
+			if strings.HasPrefix(binding, "start:pos") {
+				t.Errorf("%s: an absent fallback row still added %q", row.token, binding)
+			}
+		}
+		if cmd.pendingFocus != "" || cmd.pendingFocusLabel != "" {
+			t.Errorf("%s: pending landing state survived: %q / %q", row.token, cmd.pendingFocus, cmd.pendingFocusLabel)
+		}
+
+		// The whole landing through Settings Run.
+		runner := &settingsLandingRunner{script: []string{row.value}}
+		cmd.nativePicker = runner
+		if err := cmd.Run(nil, &strings.Builder{}, &strings.Builder{}); err != nil {
+			t.Fatalf("%s: settings run: %v", row.token, err)
+		}
+		landed, ok := runner.landed()
+		if !ok {
+			t.Fatalf("%s: expected 2 frames (root + token View), got %d", row.token, len(runner.frames))
+		}
+		if !settingsLandingRendersValue(landed, themeAction("color-type:"+string(row.token))) {
+			t.Fatalf("%s: landed on %q, not the token View; rows %q", row.token, landed.UI, settingsLandingItemValues(landed))
+		}
+		if landed.InitialIndexSet {
+			t.Errorf("%s: an absent fallback row still focused index %d; rows %q", row.token, landed.InitialIndex, settingsLandingItemValues(landed))
+		}
+		if cmd.pendingNavigation != nil || cmd.pendingFocus != "" || cmd.pendingFocusLabel != "" {
+			t.Errorf("%s: landing left pending state: %q / %q / %q", row.token, cmd.pendingNavigation, cmd.pendingFocus, cmd.pendingFocusLabel)
+		}
+	}
+
+	if len(*writes) > 0 {
+		t.Fatalf("fallback landings attempted writes: %q", *writes)
+	}
+	if after := settingsNavConfigSnapshot(t, home); after != before {
+		t.Fatalf("fallback landings changed the temporary HOME")
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -533,6 +534,23 @@ func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootRe
 		// "Set value" covers the typed-hex row, the 256-colour grid and one
 		// preset row per preset; the typed-hex row is the direct editor.
 		return themeAction("color-type:" + key), true
+	case settingsNavAppearanceTheme + ".tokens.item.fallback":
+		// "Use preset fallback" is the "Use preset value" row, rendered only
+		// while a preset is saved. Its value is the empty-hex color-set form,
+		// ending in the colon with nothing after it (themeColorEntries), and
+		// "Terminal default" carries a value after that colon, so the exact
+		// value passes it by and its prefix form `…::` matches no row.
+		//
+		// A built-in preset that leaves the token at the terminal default has
+		// no hex, so its "Set <preset>" row renders that same empty-hex value.
+		// On those tokens the value names two rows, and with no preset saved
+		// only the preset row is left to take the focus. Naming nothing opens
+		// the View on its first row instead of on a control the user did not
+		// search for.
+		if settingsRootResultPresetRepeatsFallback(theme.ColorToken(key)) {
+			return "", false
+		}
+		return themeAction("color-set:" + key + ":"), true
 	case settingsNavAppearanceTheme + ".reset":
 		return themeAction("reset"), true
 
@@ -607,6 +625,19 @@ func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootRe
 		return settingsActionPrefixKeymap + key, true
 	}
 	return "", false
+}
+
+// settingsRootResultPresetRepeatsFallback reports whether a built-in preset
+// renders its "Set <preset>" row for token with the empty hex, the value the
+// "Use preset value" row also carries. It reads the static preset table the
+// token View is built from, never the saved theme.
+func settingsRootResultPresetRepeatsFallback(token theme.ColorToken) bool {
+	for _, preset := range theme.PresetNames() {
+		if hex, ok := theme.PresetColorHex(preset, token); ok && hex == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // settingsRootResultVisibilityPrefix is the leading segment of a Status Bar
