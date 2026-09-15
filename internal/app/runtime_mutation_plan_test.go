@@ -1782,6 +1782,185 @@ func TestRuntimeMutationArgvBindsBootstrapAndRouteMarkerToPrintableRoute(t *test
 	}
 }
 
+// TestRuntimeMutationArgvAcceptsFlagShapedNamesInTmuxValueSlots pins the
+// producer operand shapes that carry a Registry Window name: tmux 3.6 reads the
+// token after -n, and the value after a set-option option name, as a value, so
+// a name spelled like a tmux flag reaches argv unchanged and the -t/-s/-f
+// declarations still bind to the real operands.
+func TestRuntimeMutationArgvAcceptsFlagShapedNamesInTmuxValueSlots(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	const configPath, cwd = "/tmp/property/tmux.conf", "/work/project"
+	windowRow := tmuxRowFormat("#{window_id}", "#{pane_id}")
+	sessionRow := tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}")
+	environment := createOperationEnvironment + "=op-flag-name"
+	windowParent := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window-parent", ID: "$1"}
+	existingSession := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "project-declaration", ID: "project-a", UID: "prj-a"}
+	absentSession := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: runtimeMutationSocketAbsentBeforeCreate, Kind: "project-declaration", ID: "project-a", UID: "prj-a"}
+	window := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window", ID: "@2", UID: "win-2", Parent: "$1/root=prj-a/role="}
+	type drift struct {
+		mutate func(*plannedRuntimeMutation)
+		want   string
+	}
+	windowDrift := func(verb string) []drift {
+		return []drift{{func(a *plannedRuntimeMutation) { a.Target.ID = "@3" },
+			`runtime mutation plan: action "` + verb + `" operand target "@2" does not match printable target "@3"`}}
+	}
+	sessionDrift := drift{func(a *plannedRuntimeMutation) { a.Target.ID = "project-b" },
+		`runtime mutation plan: action "create-session" session operand "project-a" does not match printable declaration "project-b"`}
+
+	for _, name := range []string{"-L", "-S", "-s", "-t", "-f", "-n", "-Lx", "-Sx", "-sfoo", "-tfoo", "ok-name"} {
+		for _, tc := range []struct {
+			shape    string
+			verb     runtimeMutationVerb
+			target   runtimeMutationTarget
+			operands []string
+			want     []string
+			nameAt   int
+			drifts   []drift
+		}{
+			{
+				shape: "create-window -n", verb: mutationCreateWindow, target: windowParent,
+				operands: []string{"-d", "-P", "-F", windowRow, "-t", "$1:", "-n", name, "-c", cwd},
+				want:     []string{"new-window", "-d", "-P", "-F", windowRow, "-t", "$1:", "-n", name, "-c", cwd},
+				nameAt:   8,
+				drifts: []drift{{func(a *plannedRuntimeMutation) { a.Target.ID = "$2" },
+					`runtime mutation plan: action "create-window" operand target "$1:" does not match printable target "$2:"`}},
+			},
+			{
+				shape: "existing-server create-session -n", verb: mutationCreateSession, target: existingSession,
+				operands: []string{"-d", "-P", "-F", sessionRow, "-s", "project-a", "-n", name, "-c", cwd, "-e", environment},
+				want:     []string{"new-session", "-d", "-P", "-F", sessionRow, "-s", "project-a", "-n", name, "-c", cwd, "-e", environment},
+				nameAt:   8,
+				drifts: []drift{sessionDrift, {func(a *plannedRuntimeMutation) {
+					a.Target.PhysicalSocket, a.Target.RouteAuthority = runtimeMutationSocketAbsentBeforeCreate, ""
+				}, "runtime mutation plan: absent-server create-session has 0 generated configs, want exactly one"}},
+			},
+			{
+				shape: "absent-server create-session -f -n", verb: mutationCreateSession, target: absentSession,
+				operands: []string{"-f", configPath, "-d", "-P", "-F", sessionRow, "-s", "project-a", "-n", name, "-c", cwd, "-e", environment},
+				want:     []string{"-f", configPath, "new-session", "-d", "-P", "-F", sessionRow, "-s", "project-a", "-n", name, "-c", cwd, "-e", environment},
+				nameAt:   10,
+				drifts: []drift{sessionDrift, {func(a *plannedRuntimeMutation) { a.Target.PhysicalSocket = "/tmp/property" },
+					"runtime mutation plan: existing-server create-session unexpectedly carries a startup config"}},
+			},
+			{
+				shape: "write-identity stable-name mirror", verb: mutationWriteIdentity, target: window,
+				operands: []string{"-w", "-t", "@2", "-q", tmuxopts.WindowName, name},
+				want:     []string{"set-option", "-w", "-t", "@2", "-q", tmuxopts.WindowName, name},
+				nameAt:   6, drifts: windowDrift("write-identity"),
+			},
+			{
+				shape: "write-stable-name", verb: mutationWriteStableName, target: window,
+				operands: []string{"-w", "-t", "@2", "-q", tmuxopts.WindowName, name},
+				want:     []string{"set-option", "-w", "-t", "@2", "-q", tmuxopts.WindowName, name},
+				nameAt:   6, drifts: windowDrift("write-stable-name"),
+			},
+			{
+				shape: "controller write-option", verb: mutationWriteOption, target: window,
+				operands: []string{"-w", "-t", "@2", "-q", tmuxopts.WindowName, name},
+				want:     []string{"set-option", "-w", "-t", "@2", "-q", tmuxopts.WindowName, name},
+				nameAt:   6, drifts: windowDrift("write-option"),
+			},
+		} {
+			t.Run(tc.shape+"/"+name, func(t *testing.T) {
+				action := newRuntimeMutation(1, tc.verb, tc.target)
+				action.Operands = slices.Clone(tc.operands)
+				argv, err := runtimeMutationArgv(action)
+				if err != nil {
+					t.Fatalf("runtimeMutationArgv(%q) refused a tmux value slot: %v", tc.operands, err)
+				}
+				if !reflect.DeepEqual(argv, tc.want) || argv[tc.nameAt] != name {
+					t.Fatalf("argv = %q, want %q with name %q at %d", argv, tc.want, name, tc.nameAt)
+				}
+				for _, d := range tc.drifts {
+					candidate := action
+					candidate.Operands = slices.Clone(tc.operands)
+					d.mutate(&candidate)
+					if _, err := runtimeMutationArgv(candidate); err == nil || err.Error() != d.want {
+						t.Fatalf("drifted declaration error = %v, want %q", err, d.want)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestRuntimeMutationArgvKeepsRefusingFlagSlotRouteAndAttachedOperands pins
+// the refusals the value-slot classification must not weaken, with their exact
+// existing messages.
+func TestRuntimeMutationArgvKeepsRefusingFlagSlotRouteAndAttachedOperands(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	const configPath = "/tmp/property/tmux.conf"
+	windowParent := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window-parent", ID: "$1"}
+	existingSession := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "project-declaration", ID: "project-a", UID: "prj-a"}
+	absentSession := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: runtimeMutationSocketAbsentBeforeCreate, Kind: "project-declaration", ID: "project-a", UID: "prj-a"}
+	window := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window", ID: "@2", UID: "win-2", Parent: "$1/root=prj-a/role="}
+	route := func(verb runtimeMutationVerb) string {
+		return `runtime mutation plan: action "` + string(verb) + `" carries an embedded route selector`
+	}
+	attached := func(verb runtimeMutationVerb, operand string) string {
+		return `runtime mutation plan: action "` + string(verb) + `" carries attached control operand "` + operand + `"`
+	}
+	separator := func(verb runtimeMutationVerb) string {
+		return `runtime mutation plan: action "` + string(verb) + `" carries a tmux command separator`
+	}
+	type refusal struct {
+		name     string
+		verb     runtimeMutationVerb
+		target   runtimeMutationTarget
+		operands []string
+		want     string
+	}
+	tests := []refusal{
+		{"flag-slot -L", mutationCreateWindow, windowParent, []string{"-d", "-L", "foreign", "-t", "$1:", "-n", "ok"}, route(mutationCreateWindow)},
+		{"flag-slot -S", mutationCreateWindow, windowParent, []string{"-d", "-S", "/tmp/foreign", "-t", "$1:", "-n", "ok"}, route(mutationCreateWindow)},
+		{"flag-slot -S before the set-option name", mutationWriteStableName, window, []string{"-w", "-S", "-t", "@2", "-q", tmuxopts.WindowName, "ok"}, route(mutationWriteStableName)},
+		{"attached -Lx", mutationCreateWindow, windowParent, []string{"-d", "-Lx", "-t", "$1:"}, attached(mutationCreateWindow, "-Lx")},
+		{"attached -Sx", mutationCreateWindow, windowParent, []string{"-d", "-Sx", "-t", "$1:"}, attached(mutationCreateWindow, "-Sx")},
+		{"attached -tx", mutationCreateWindow, windowParent, []string{"-t", "$1:", "-n", "ok", "-tx"}, attached(mutationCreateWindow, "-tx")},
+		{"attached -sx", mutationCreateSession, existingSession, []string{"-d", "-sx", "-s", "project-a"}, attached(mutationCreateSession, "-sx")},
+		{"set-option -s takes no argument", mutationWriteIdentity, window, []string{"-w", "-s", "-Lx", "-t", "@2", "-q", tmuxopts.WindowName, "ok"}, attached(mutationWriteIdentity, "-Lx")},
+		{"real duplicate -t around a value -t", mutationCreateWindow, windowParent, []string{"-t", "$1:", "-n", "-t", "-t", "$1:"},
+			`runtime mutation plan: action "create-window" has 2 executable target operands, want exactly one for printable target "$1:"`},
+		{"real duplicate -s around a value -s", mutationCreateSession, existingSession, []string{"-d", "-s", "project-a", "-n", "-s", "-s", "project-a"},
+			`runtime mutation plan: action "create-session" has 2 executable session operands, want exactly one`},
+		{"real duplicate -f around a value -f", mutationCreateSession, absentSession, []string{"-f", configPath, "-d", "-s", "project-a", "-n", "-f", "-f", configPath},
+			"runtime mutation plan: create-session config must precede the managed verb"},
+		{"flag-slot separator", mutationCreateWindow, windowParent, []string{"-d", ";", "-t", "$1:"}, separator(mutationCreateWindow)},
+		{"flag-slot escaped separator", mutationCreateWindow, windowParent, []string{"-d", "\\;", "-t", "$1:"}, separator(mutationCreateWindow)},
+		{"value-slot separator", mutationCreateWindow, windowParent, []string{"-t", "$1:", "-n", ";"}, separator(mutationCreateWindow)},
+		{"value-slot escaped separator", mutationCreateWindow, windowParent, []string{"-t", "$1:", "-n", "\\;"}, separator(mutationCreateWindow)},
+		{"set-option value separator", mutationWriteStableName, window, []string{"-w", "-t", "@2", "-q", tmuxopts.WindowName, ";"}, separator(mutationWriteStableName)},
+		{"a value -n does not make -L a value", mutationCreateWindow, windowParent, []string{"-t", "$1:", "-n", "-n", "-L", "x"}, route(mutationCreateWindow)},
+		{"a value -L does not make -S a value", mutationCreateWindow, windowParent, []string{"-t", "$1:", "-n", "-L", "-S", "x"}, route(mutationCreateWindow)},
+	}
+	for _, name := range []string{"-L", "-S"} {
+		tests = append(tests, refusal{"canonical rename-window " + name, mutationRenameWindow, window, []string{"-t", "@2", name}, route(mutationRenameWindow)})
+	}
+	for _, name := range []string{"-Lx", "-Sx", "-tx", "-sx"} {
+		tests = append(tests, refusal{"canonical rename-window " + name, mutationRenameWindow, window, []string{"-t", "@2", name}, attached(mutationRenameWindow, name)})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action := newRuntimeMutation(1, tt.verb, tt.target)
+			action.Operands = tt.operands
+			if _, err := runtimeMutationArgv(action); err == nil || err.Error() != tt.want {
+				t.Fatalf("runtimeMutationArgv(%q) error = %v, want %q", tt.operands, err, tt.want)
+			}
+		})
+	}
+	// A verb with no tmux argument row has no value slots: a non-dash token
+	// never turns the tokens after it into values.
+	relaunch := newRuntimeMutation(1, mutationCodexHandoverRelaunch, runtimeMutationTarget{
+		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "pane", ID: "%1", UID: "pan-1", Parent: "codex.handover",
+	})
+	relaunch.Operands = []string{"op-1", "-tfoo"}
+	relaunch.Command = []string{"/bin/true"}
+	if _, err := runtimeMutationArgv(relaunch); err == nil || err.Error() != attached(mutationCodexHandoverRelaunch, "-tfoo") {
+		t.Fatalf("no-row relaunch operands error = %v, want %q", err, attached(mutationCodexHandoverRelaunch, "-tfoo"))
+	}
+}
+
 func TestPrintedPhysicalSocketIsExecutionAuthority(t *testing.T) {
 	action := newRuntimeMutation(1, mutationKillPane, runtimeMutationTarget{
 		Socket: "-L=logical", PhysicalSocket: "/tmp/printed.sock", Kind: "pane", ID: "%7", UID: "pan-7", Parent: "$1/@2",

@@ -408,15 +408,16 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 			}
 		}
 	}
+	values := runtimeMutationOperandValueSlots(action)
 	for index, operand := range action.Operands {
 		if operand == ";" || operand == "\\;" {
 			return fmt.Errorf("runtime mutation plan: action %q carries a tmux command separator", action.Verb)
 		}
+		if values[index] {
+			continue
+		}
 		if action.Verb != mutationBootstrapControlSession && action.Verb != mutationWriteRouteMarker && (operand == "-L" || operand == "-S") {
 			return fmt.Errorf("runtime mutation plan: action %q carries an embedded route selector", action.Verb)
-		}
-		if runtimeMutationOperandIsValue(action.Operands, index) {
-			continue
 		}
 		for _, prefix := range []string{"-t", "-s", "-L", "-S"} {
 			if strings.HasPrefix(operand, prefix) && operand != prefix {
@@ -456,7 +457,7 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 		if action.Verb == mutationCreateSession {
 			configFlags := 0
 			for i := 0; i < len(action.Operands); i++ {
-				if action.Operands[i] != "-f" {
+				if values[i] || action.Operands[i] != "-f" {
 					continue
 				}
 				configFlags++
@@ -488,7 +489,7 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 		}
 		matches := 0
 		for i := 0; i+1 < len(action.Operands); i++ {
-			if action.Operands[i] != "-s" {
+			if values[i] || action.Operands[i] != "-s" {
 				continue
 			}
 			matches++
@@ -572,7 +573,7 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 	}
 	matches := 0
 	for i := 0; i+1 < len(action.Operands); i++ {
-		if action.Operands[i] != "-t" {
+		if values[i] || action.Operands[i] != "-t" {
 			continue
 		}
 		matches++
@@ -586,16 +587,75 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 	return nil
 }
 
-func runtimeMutationOperandIsValue(operands []string, index int) bool {
-	if index <= 0 {
-		return false
+// runtimeMutationArgumentFlags names the flag letters that take a separate
+// argument in the tmux command runtimeMutationArgv assembles for action, per
+// tmux 3.6 `tmux list-commands`:
+//
+//	new-window [-abdkPS] [-c] [-e] [-F] [-n] [-t] [shell-command]
+//	split-window [-bdefhIPvZ] [-c] [-e] [-F] [-l] [-t] [shell-command]
+//	new-session [-AdDEPX] [-c] [-e] [-F] [-f] [-n] [-s] [-t] [-x] [-y] [shell-command]
+//	set-option [-aFgopqsuUw] [-t] option [value]
+//	set-environment [-Fhgru] [-t] variable [value]
+//	resize-pane [-DLMRTUZ] [-x] [-y] [-t] [adjustment]
+//	kill-pane/kill-window [-a] [-t]; kill-session [-aC] [-t]
+//	rename-window [-t] new-name
+//
+// The global prefix adds -f <config> (create-session, bootstrap) and -L/-S
+// (bootstrap, route marker). A verb without a row has no value slots.
+func runtimeMutationArgumentFlags(action plannedRuntimeMutation) string {
+	switch action.Verb {
+	case mutationCreateWindow:
+		return "ceFnt"
+	case mutationCreatePane:
+		return "ceFlt"
+	case mutationCreateSession:
+		return "ceFfnstxy"
+	case mutationBootstrapControlSession:
+		return "LSf" + "ceFfnstxy"
+	case mutationTombstonePane, mutationRestorePane, mutationWriteIdentity, mutationWriteOption, mutationWritePresentationOption, mutationWriteStableName, mutationWriteProjectAnchor:
+		return "t"
+	case mutationWriteRouteMarker:
+		return "LS" + "t"
+	case mutationWriteLease, mutationClearLease, mutationFinalizeSession:
+		return "t"
+	case mutationWriteLayout:
+		return "xyt"
+	case mutationKillPane, mutationKillWindow, mutationStopManagedSession, mutationStopUnmanagedSession, mutationRenameWindow:
+		return "t"
+	case mutationKillOwned:
+		switch action.Target.Kind {
+		case "session", "window", "pane":
+			return "t"
+		}
 	}
-	switch operands[index-1] {
-	case "-t", "-s", "-L", "-S", "-f", "-F", "-c", "-e", "-n", "-x", "-y":
-		return true
-	default:
-		return false
+	return ""
+}
+
+// runtimeMutationOperandValueSlots reads operands left to right the way tmux
+// getopt does. An exact argument-taking flag makes only the next token a
+// value; any other dash token stays a flag; the first non-dash token is a
+// positional and every later token is a value. "--" and "-" have no
+// end-of-options meaning here, so an unsure token is a flag, never a value.
+func runtimeMutationOperandValueSlots(action plannedRuntimeMutation) []bool {
+	argumentFlags := runtimeMutationArgumentFlags(action)
+	values := make([]bool, len(action.Operands))
+	if argumentFlags == "" {
+		return values
 	}
+	nextIsValue, positional := false, false
+	for index, operand := range action.Operands {
+		if positional || nextIsValue {
+			values[index] = true
+			nextIsValue = false
+			continue
+		}
+		if !strings.HasPrefix(operand, "-") {
+			positional = true
+			continue
+		}
+		nextIsValue = len(operand) == 2 && strings.IndexByte(argumentFlags, operand[1]) >= 0
+	}
+	return values
 }
 
 func runRuntimeMutationCommand(ctx context.Context, runner tmuxCommandRunner, action plannedRuntimeMutation) ([]byte, error) {

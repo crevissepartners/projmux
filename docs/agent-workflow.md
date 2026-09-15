@@ -1556,6 +1556,31 @@ name of the Window the caller adopts, so on create and on Continue
   Window's `#{window_name}` and `#{@projmux_window_name}` both equal the
   Registry name of its `@projmux_window_uid`.
 
+### Flag-shaped Window name tests
+
+`runtimeMutationArgv` reads each operand as a tmux flag or value slot the way
+tmux 3.6 getopt reads the assembled command, so a Registry Window name spelled
+like a tmux flag (`-L`, `-t`, `-Lx`) is accepted where tmux reads a value and
+still refused where tmux would read a flag.
+
+- `TestRuntimeMutationArgvAcceptsFlagShapedNamesInTmuxValueSlots` owns the
+  producer shapes that carry a Window name: create-window `-n`, create-session
+  `-n` with and without the fresh-server `-f <config>`, and the write-identity,
+  write-stable-name and write-option stable-name value. Each name reaches argv
+  unchanged and `-t`, `-s` and `-f` still bind to the real declaration.
+- `TestRuntimeMutationArgvKeepsRefusingFlagSlotRouteAndAttachedOperands` owns
+  the exact refusals: flag-slot `-L`/`-S`, attached `-Lx -Sx -tx -sx`
+  (including canonical `rename-window -t @N <name>`), real duplicate `-t`, `-s`
+  and `-f`, `;` and `\;` in flag and value slots, a value token that never
+  makes the next token a value, and a verb with no tmux argument row (Codex
+  relaunch) that keeps every operand a flag slot.
+- `TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux` owns the
+  real-tmux check: `newWindow`, the Window UID claim and `mirrorWindow` on an
+  isolated server create Windows named `-L`, `-t` and `-Lx`, and each
+  `#{window_name}` and `#{@projmux_window_name}` equals the input. It runs in
+  `make test-integration` through `test/integration/flag-shaped-window-names.sh`,
+  which requires tmux and its PASS line.
+
 ### Generated rename Registry tests
 
 The Window rename key, the Window menu Rename item, and the Pane rename key
