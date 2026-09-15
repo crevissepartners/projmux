@@ -79,10 +79,13 @@ type agentCommand struct {
 	// coordination turn body. It exists so the content-build failure branch of
 	// the native push is reachable in tests; it is not a public surface.
 	messageCodexContent func(coremessage.Envelope) (string, error)
-	focus               rawArgvCommand
-	codexUpgrade        rawArgvCommand
-	codexHandover       rawArgvCommand
-	handover            codexDrainingHandoverRequester
+	// messageExecutable is the sender's own executable for the Claude push
+	// frame pre-check render. Nil means os.Executable.
+	messageExecutable func() (string, error)
+	focus             rawArgvCommand
+	codexUpgrade      rawArgvCommand
+	codexHandover     rawArgvCommand
+	handover          codexDrainingHandoverRequester
 }
 
 type codexDrainingHandoverRequester interface {

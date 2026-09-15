@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -103,9 +104,7 @@ func (liveAgentMessageClaudeAdapter) Submit(ctx context.Context, registryPath st
 	if !ok {
 		return agentdelivery.Delivery{}, errors.New("claude target authority is unavailable")
 	}
-	private := claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: envelope.MessageRef, Target: target,
-		Source:   claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"},
-		Deadline: envelope.Deadline, BrokerEnvelope: &envelope}
+	private := claudePrivateCoordinationEnvelope(target, envelope)
 	now := time.Now()
 	if !private.valid(now, route) {
 		return agentdelivery.Delivery{MessageRef: envelope.MessageRef, State: agentdelivery.StateRefused,
@@ -215,6 +214,68 @@ func claudeResponseDelivery(messageRef string, response claudeCoordinationRespon
 func ambiguousClaudeDelivery(messageRef string) agentdelivery.Delivery {
 	return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateFailed,
 		Reason: "provider-handoff-outcome-unknown", Ambiguous: true}
+}
+
+// claudePrivateCoordinationEnvelope is the one private envelope a Claude push
+// carries. Submit sends it and the send pre-check renders it.
+func claudePrivateCoordinationEnvelope(target claudeCoordinationTarget, envelope coremessage.Envelope) claudeCoordinationEnvelope {
+	return claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: envelope.MessageRef, Target: target,
+		Source:   claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"},
+		Deadline: envelope.Deadline, BrokerEnvelope: &envelope}
+}
+
+// claudeSendAssumedTokenBytes is the auth token length the sender assumes. The
+// sender never reads a messaging token; only the target helper holds one.
+const claudeSendAssumedTokenBytes = 48
+
+type claudeSendRender struct{ frameBytes, contentBytes int }
+
+// claudeSendFrameRender renders the push the target helper will build, through
+// the helper's own content and frame builders. The executable slot is rendered
+// both as this sender's executable and as the fixed phrase, and the larger
+// frame and content are kept.
+func (c *agentCommand) claudeSendFrameRender(route coremetadata.AgentRouteRef, envelope coremessage.Envelope) (claudeSendRender, error) {
+	target, _ := claudeTargetForRoute(route)
+	private := claudePrivateCoordinationEnvelope(target, envelope)
+	executables := []string{""}
+	executable := os.Executable
+	if c != nil && c.messageExecutable != nil {
+		executable = c.messageExecutable
+	}
+	if own, err := executable(); err == nil && own != "" {
+		executables = append(executables, own)
+	}
+	token := strings.Repeat("0", claudeSendAssumedTokenBytes)
+	var render claudeSendRender
+	for _, candidate := range executables {
+		content, err := providerCoordinationContent(private, candidate)
+		if err != nil {
+			return claudeSendRender{}, err
+		}
+		frameBytes, err := claudeSendFrameBytes(token, content)
+		if err != nil {
+			return claudeSendRender{}, err
+		}
+		render.frameBytes = max(render.frameBytes, frameBytes)
+		render.contentBytes = max(render.contentBytes, len(content))
+	}
+	return render, nil
+}
+
+// claudeSendFrameBytes measures with the real frame builder. An oversized frame
+// is reported by the builder's canonical size reason, which carries the size.
+func claudeSendFrameBytes(token, content string) (int, error) {
+	frame, err := buildClaudeProviderPushFrame(token, content)
+	if err == nil {
+		return len(frame), nil
+	}
+	var size int
+	if reason := err.Error(); isClaudeProviderFrameSizeReason(reason) {
+		if _, scanErr := fmt.Sscanf(reason, "provider-frame-too-large: frameBytes=%d", &size); scanErr == nil {
+			return size, nil
+		}
+	}
+	return 0, err
 }
 
 type agentMessageReceipt struct {
@@ -364,6 +425,20 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			return fmt.Errorf("%s: %w; %w", spelling, err, c.replyCorrelationRefusal(replyTo, "invalid-explicit-reply-correlation"))
 		}
 	}
+	// A Claude target's push frame is judged here, before any receipt exists.
+	// An invalid envelope keeps the store's own refusal below.
+	claudeContentBytes := 0
+	if target.Spec.Provider == string(aiprovider.Claude) && envelope.Validate() == nil {
+		render, renderErr := c.claudeSendFrameRender(targetRoute, envelope)
+		if renderErr != nil {
+			return fmt.Errorf("%s: claude push frame unavailable before acceptance: %w", spelling, renderErr)
+		}
+		if render.frameBytes > claudeProviderFrameMaxBytes {
+			return fmt.Errorf("%s: refused before acceptance: %s; reduce payload before retrying; frame bytes include auth and serialized content",
+				spelling, claudeProviderFrameSizeReason(render.frameBytes))
+		}
+		claudeContentBytes = render.contentBytes
+	}
 	if source.Spec.Provider == string(aiprovider.Claude) && replyTo != "" {
 		if adapter, ok := c.messageClaude.(interface {
 			ExplicitReply(context.Context, string, coremetadata.AgentRouteRef, coremessage.Envelope) (string, bool, error)
@@ -383,7 +458,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			if created {
 				record, pushErr = c.pushCoordination(record, target, targetRoute, record.Envelope)
 			}
-			if err := writeAgentMessageReceipt(stdout, receiptFor(record), false); err != nil {
+			if err := writeAgentMessageReceiptText(stdout, receiptFor(record), claudeContentBytes); err != nil {
 				return err
 			}
 			if pushErr != nil {
@@ -392,7 +467,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			if record.Delivery.State.Terminal() && record.Delivery.State != coremessage.StateDelivered {
 				return fmt.Errorf("%s: explicit reply not delivered: previousRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
 					spelling, ref, record.Delivery.State, record.Delivery.Reason, record.Delivery.OutcomeUnknown,
-					agentMessageReplyFailureAction(record))
+					agentMessageReplyFailureAction(record, claudeContentBytes))
 			}
 			return nil
 		}
@@ -412,7 +487,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	}
 	// The receipt is written before the failure is returned, so the sender sees
 	// the terminal state, reason, and action on stdout and still exits nonzero.
-	if err := writeAgentMessageReceipt(stdout, receiptFor(record), false); err != nil {
+	if err := writeAgentMessageReceiptText(stdout, receiptFor(record), claudeContentBytes); err != nil {
 		return err
 	}
 	if pushErr != nil {
@@ -908,11 +983,21 @@ func writeAgentMessageReceipt(stdout io.Writer, receipt agentMessageReceipt, asJ
 	if asJSON {
 		return json.NewEncoder(stdout).Encode(receipt)
 	}
+	return writeAgentMessageReceiptText(stdout, receipt, 0)
+}
+
+// writeAgentMessageReceiptText writes the text receipt. claudeContentBytes is
+// the sender's rendered Claude push content size, or 0 when it is not known.
+func writeAgentMessageReceiptText(stdout io.Writer, receipt agentMessageReceipt, claudeContentBytes int) error {
+	if receipt.Target.Provider != string(aiprovider.Claude) {
+		claudeContentBytes = 0
+	}
 	if receipt.Delivery.State.Terminal() && receipt.Delivery.State != coremessage.StateDelivered {
-		action := agentMessageFailureAction(receipt.Delivery)
+		action := agentMessageSendFailureAction(receipt.Delivery, claudeContentBytes)
 		if receipt.ReplyTo != "" {
 			action = agentMessageReplyFailureAction(messagestore.Record{Envelope: coremessage.Envelope{
-				ReplyTo: receipt.ReplyTo, Deadline: receipt.Deadline}, Adapter: adapterForReplyReceipt(receipt), Delivery: receipt.Delivery})
+				ReplyTo: receipt.ReplyTo, Deadline: receipt.Deadline}, Adapter: adapterForReplyReceipt(receipt), Delivery: receipt.Delivery},
+				claudeContentBytes)
 		}
 		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", receipt.MessageRef, receipt.Delivery.State,
 			receipt.Delivery.Reason, action)
@@ -929,11 +1014,24 @@ func adapterForReplyReceipt(receipt agentMessageReceipt) string {
 	return "codex-inbox"
 }
 
-func agentMessageReplyFailureAction(record messagestore.Record) string {
+func agentMessageReplyFailureAction(record messagestore.Record, claudeContentBytes int) string {
 	if messagestore.KnownZeroReply(record) {
-		return agentMessageFailureAction(record.Delivery) + "; retry manually with the same --reply-to and a new --message-ref (or omit --message-ref); original deadline and exact routes must remain valid"
+		return agentMessageSendFailureAction(record.Delivery, claudeContentBytes) + "; retry manually with the same --reply-to and a new --message-ref (or omit --message-ref); original deadline and exact routes must remain valid"
 	}
 	return "inspect original and previous reply status and provider outcome; do not resend"
+}
+
+// agentMessageSendFailureAction names the mixed-version cause of an
+// invalid-content failure: an older target helper still caps push content at
+// the 4096-byte payload limit. The persisted reason is never changed.
+func agentMessageSendFailureAction(delivery coremessage.Delivery, claudeContentBytes int) string {
+	if !delivery.OutcomeUnknown && delivery.Reason == "provider-frame-invalid-content" &&
+		claudeContentBytes > coremessage.MaxPayloadBytes {
+		return fmt.Sprintf("rendered push content is %d bytes, above the %d-byte content limit of an older target helper; "+
+			"re-activate (restart) the target Agent to load the current helper before retrying",
+			claudeContentBytes, coremessage.MaxPayloadBytes)
+	}
+	return agentMessageFailureAction(delivery)
 }
 
 func agentMessageFailureAction(delivery coremessage.Delivery) string {

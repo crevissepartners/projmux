@@ -132,6 +132,18 @@ auth+user frame bounds it, and a size excess ends as
 `provider-frame-too-large: frameBytes=N limitBytes=8192` with zero provider
 bytes; the reply tool argv body stays at 4096 bytes.
 
+`agent message send` applies the same budget to a Claude target before
+acceptance, for plain sends and `--reply-to` alike. The sender renders the
+content with the helper's renderer, once with its own executable and once with
+the fixed executable phrase, keeps the longer frame, and counts an assumed
+48-byte auth token; it never reads a messaging token. A frame over 8192 bytes
+exits nonzero with `provider-frame-too-large: frameBytes=N limitBytes=8192`
+before any receipt is stored or the helper is called. Codex targets are not
+pre-checked. A helper started before this rule still caps push content at 4096
+bytes and fails a larger body with `provider-frame-invalid-content`; the
+sender's receipt then names the rendered content bytes and asks to re-activate
+(restart) the target Agent.
+
 The frozen frame is closed to Claude Code `2.1.263`. A different provider
 version, helper replacement, provider restart, registration replacement, or
 activation restart inherits no qualification. An ordinary send cannot qualify

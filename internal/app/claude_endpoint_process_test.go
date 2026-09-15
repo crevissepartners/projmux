@@ -637,9 +637,20 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 			return receipt
 		}
 		const failedRef, retryRef = "process-reply-failed", "process-reply-manual"
-		// The body fits the send and private envelope limits, but its escaped
-		// frame exceeds the budget, so the reply fails known-zero with a size.
-		payload := claudeFrameBudgetSymbolBody()
+		// The body passes the sender's frame pre-check, which assumes a 48-byte
+		// token, but this provider's real 4096-byte token pushes the helper's
+		// frame over the budget, so the reply fails known-zero with a size.
+		payload := strings.Repeat("x", coremessage.MaxPayloadBytes)
+		rendered := coremessage.Envelope{Version: coremessage.Version, MessageRef: failedRef,
+			ConversationRef: original.Envelope.ConversationRef, ReplyTo: originalRef,
+			Source: original.Envelope.Target, Target: original.Envelope.Source, Payload: payload}
+		sender := &agentCommand{messageExecutable: func() (string, error) { return binary, nil }}
+		precheck, renderErr := sender.claudeSendFrameRender(third, rendered)
+		helperContent, contentErr := providerCoordinationContent(claudeCoordinationEnvelope{BrokerEnvelope: &rendered}, binary)
+		if renderErr != nil || contentErr != nil || precheck.frameBytes > claudeProviderFrameMaxBytes ||
+			len(serializedClaudeTestFrame(t, private.Token, helperContent)) <= claudeProviderFrameMaxBytes {
+			t.Fatalf("reply fixture must pass the sender pre-check (%d bytes) and exceed the helper frame", precheck.frameBytes)
+		}
 		out, refusal, exit := callReply(failedRef, payload)
 		failed := status(failedRef)
 		if exit == 0 || failed.Delivery.State != coremessage.StateFailed || failed.Delivery.OutcomeUnknown ||

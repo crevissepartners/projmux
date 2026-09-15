@@ -2223,6 +2223,24 @@ separate decision this measurement exists to inform.
   `provider-frame-unsupported`; empty, invalid UTF-8, and NUL content stay
   invalid-content. `TestClaudeReplyToolArgvBodyKeepsPayloadByteLimit` keeps the
   reply tool argv body at 4096 bytes.
+- `TestAgentMessageSendRefusesClaudeBodyWhoseRenderedFrameExceedsBudgetBeforeAcceptance`
+  refuses an over-budget Claude body on plain send, Claude-source reply and
+  Codex-source reply with the independently computed `frameBytes`, a nonzero
+  exit, and no receipt, reply receipt, adapter or explicit-reply call.
+  `TestAgentMessageSendWithinFrameBudgetBodyKeepsAcceptThenPushOrder` accepts
+  the exact 8192-byte frame with `route,route,store-put,adapter` and refuses
+  one byte more. `TestAgentMessageSendCodexTargetHasNoClaudeFramePrecheck`
+  leaves Codex targets unchecked.
+  `TestAgentMessageSendFramePrecheckUsesLongerExecutableAndAssumedTokenLength`
+  renders the longer of the sender executable and the fixed phrase with a
+  48-byte token and never reads the messaging token.
+  `TestAgentMessageSendFramePrecheckCoversEveryPrivateEnvelopeSizeRefusal`
+  sweeps escape-heavy, Korean and ASCII bodies with production-length refs so
+  no private envelope size refusal escapes the pre-check.
+  `TestAgentMessageFailureActionNamesRenderedContentBytesForOldHelperInvalidContent`
+  names the rendered content bytes, the old 4096-byte content limit and
+  re-activation for an older helper's invalid-content failure; the persisted
+  reason and every other action stay unchanged.
 - `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
   requires an explicit choice of the original request; Stop text has no reply
   authority regardless of human activity or pending request count.
