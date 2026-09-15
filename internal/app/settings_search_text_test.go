@@ -703,6 +703,312 @@ func settingsSearchAssertE2EFirstRows(t *testing.T, walker *settingsSearchWalker
 	}
 }
 
+// TestSettingsSearchTextSplitCWDOptionNamesSelectTheirRow types the config
+// name of each New splits start in option into the chooser. Both options share
+// one description that mentions the Pane directory, so a join that appended it
+// after the Project root key let "split_cwd_from pane" select Project root first
+// and Enter applied the sibling.
+func TestSettingsSearchTextSplitCWDOptionNamesSelectTheirRow(t *testing.T) {
+	t.Parallel()
+
+	seeds := []struct {
+		name   string
+		files  map[string]string
+		source splitCWDSource
+	}{
+		{"default", nil, splitCWDFromProject},
+		{"global-pane", map[string]string{"config.toml": "[ai]\nsplit_cwd_from = \"pane\"\n"}, splitCWDFromPane},
+	}
+	for _, locale := range []string{"en-US", "ko-KR"} {
+		for _, seed := range seeds {
+			name := locale + "-" + seed.name
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				walker := settingsSearchWalk(t, settingsSearchScenario{name: name, locale: locale, files: seed.files, within: []string{settingsNavAISplitCWD}})
+				if got := walker.cmd.currentSplitCWDFrom().Source; got != seed.source {
+					t.Fatalf("%s: seeded split start source = %q, want %q", name, got, seed.source)
+				}
+				var chooser []settingsSearchCapture
+				for _, frame := range walker.frames {
+					if frame.options.UI == "settings-ai-split-cwd-from" {
+						chooser = append(chooser, frame)
+					}
+				}
+				if len(chooser) != 1 {
+					t.Fatalf("%s: New splits start in chooser matched %d frames, want 1", name, len(chooser))
+				}
+				for _, source := range []splitCWDSource{splitCWDFromProject, splitCWDFromPane} {
+					query := "split_cwd_from " + string(source)
+					want := settingsActionPrefixAISplitCWD + string(source)
+					got := "(no row)"
+					if survivors := intpicker.FilterItems(chooser[0].options.Items, query); len(survivors) > 0 {
+						got = survivors[0].Value
+					}
+					if got != want {
+						t.Errorf("%s: New splits start in query %q selects %q first, want %q", name, query, got, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+// settingsSearchPreJoinKey recovers the SearchKey a row builder wrote before
+// runPicker's rendered-label join. The join delimits the builder key with tabs
+// ("key\tafter" or "before\tkey\tafter"); the earlier join form, key + " " +
+// label, is still recognised so the guard below measures that rule too.
+func settingsSearchPreJoinKey(item intpicker.Item) string {
+	text := item.SearchText
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	switch fields := strings.Split(text, "\t"); len(fields) {
+	case 2:
+		return fields[0]
+	case 3:
+		return fields[1]
+	}
+	label := strings.TrimSpace(stripSettingsLabelANSI(item.Label))
+	if cut, ok := strings.CutSuffix(text, " "+label); ok && label != "" && !strings.Contains(cut, label) {
+		return cut
+	}
+	return text
+}
+
+// TestSettingsSearchTextKeepsOptionNamesOnTheirRow walks every searchable
+// Settings View in en-US and ko-KR and types each row's rendered name (en-US
+// also in lowercase). When that row is the first survivor over the pre-join
+// texts, it must still be the first survivor over the joined rows the native
+// picker receives. The pre-join text of a keyed row is its builder SearchKey
+// alone, and separately its name column + " " + SearchKey; a row without a
+// SearchKey keeps its picker text. The join may make a row newly first, but it
+// may never move Enter off a row the typed name already selected.
+func TestSettingsSearchTextKeepsOptionNamesOnTheirRow(t *testing.T) {
+	t.Parallel()
+
+	for _, scenario := range []settingsSearchScenario{
+		{name: "en-US", locale: "en-US", inject: map[string][]string{
+			"usage-claude":           {"Claude Weekly complete"},
+			"detail-project-sidebar": {"Keybinding complete"},
+		}},
+		{name: "ko-KR", locale: "ko-KR", inject: map[string][]string{"usage-claude": {"Claude Weekly complete"}}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+
+			settingsSearchAssertOptionNamesKeepFirstRow(t, settingsSearchWalk(t, scenario))
+		})
+	}
+}
+
+func settingsSearchAssertOptionNamesKeepFirstRow(t *testing.T, walker *settingsSearchWalker) {
+	t.Helper()
+
+	baselines := []string{"SearchKey alone", "name column + SearchKey"}
+	violations := make([][]string, len(baselines))
+	var lostKeyMatches []string
+	frames, queries := 0, 0
+	for _, frame := range walker.frames {
+		items := frame.options.Items
+		// A View without a keyed row stays in the picker's scored mode and the
+		// join does not touch it.
+		if !settingsSearchSearchable(frame.options) || !slices.ContainsFunc(items, func(item intpicker.Item) bool { return strings.TrimSpace(item.SearchText) != "" }) {
+			continue
+		}
+		frames++
+		baseItems := make([][]intpicker.Item, len(baselines))
+		for i, item := range items {
+			texts := make([]string, len(baselines))
+			if key := settingsSearchPreJoinKey(item); strings.TrimSpace(key) != "" {
+				texts[0] = key
+				texts[1] = settingsSearchLabelName(settingsSearchRenderedLabel(item)) + " " + key
+			} else {
+				texts[0] = item.EffectiveSearchText()
+				texts[1] = texts[0]
+			}
+			for b, text := range texts {
+				if strings.TrimSpace(text) != "" {
+					baseItems[b] = append(baseItems[b], intpicker.Item{Value: fmt.Sprint(i), SearchText: text})
+				}
+			}
+		}
+		// Keyed Views keep input order, so survivors map back to row indexes by
+		// walking the rows once.
+		survivorIndexes := func(query string) []int {
+			survivors := intpicker.FilterItems(items, query)
+			var indexes []int
+			for i, item := range items {
+				if len(indexes) < len(survivors) {
+					next := survivors[len(indexes)]
+					if item.Value == next.Value && item.Label == next.Label && item.SearchText == next.SearchText {
+						indexes = append(indexes, i)
+					}
+				}
+			}
+			return indexes
+		}
+		baseIndexes := func(b int, query string) []int {
+			var indexes []int
+			for _, survivor := range intpicker.FilterItems(baseItems[b], query) {
+				var index int
+				fmt.Sscan(survivor.Value, &index)
+				indexes = append(indexes, index)
+			}
+			return indexes
+		}
+		for i, item := range items {
+			name := settingsSearchLabelName(settingsSearchRenderedLabel(item))
+			if name == "" || settingsSearchIsFeedbackRow(item) {
+				continue
+			}
+			typed := []string{name}
+			if walker.scenario.locale != "ko-KR" && strings.ToLower(name) != name {
+				typed = append(typed, strings.ToLower(name))
+			}
+			for _, query := range typed {
+				queries++
+				after := survivorIndexes(query)
+				first := -1
+				if len(after) > 0 {
+					first = after[0]
+				}
+				for b := range baselines {
+					before := baseIndexes(b, query)
+					if b == 0 {
+						// Every row the builder SearchKey finds is still found.
+						for _, index := range before {
+							if !slices.Contains(after, index) {
+								lostKeyMatches = append(lostKeyMatches, fmt.Sprintf("%s %q: %q no longer finds %q", frame.options.UI, frame.options.Prompt, query, items[index].Value))
+							}
+						}
+					}
+					if len(before) == 0 || before[0] != i || first == i {
+						continue
+					}
+					got := "(no row)"
+					if first >= 0 {
+						got = items[first].Value
+					}
+					violations[b] = append(violations[b], fmt.Sprintf("%s %q: %q selects %q instead of %q", frame.options.UI, frame.options.Prompt, query, got, item.Value))
+				}
+			}
+		}
+	}
+	if frames == 0 || queries == 0 {
+		t.Fatalf("%s: no keyed View or name query was checked", walker.scenario.name)
+	}
+	if len(lostKeyMatches) > 0 {
+		t.Errorf("%s: %d typed option names no longer find a row their builder SearchKey found; first: %s",
+			walker.scenario.name, len(lostKeyMatches), strings.Join(lostKeyMatches[:min(len(lostKeyMatches), 8)], "; "))
+	}
+	for b, found := range violations {
+		if len(found) > 0 {
+			t.Errorf("%s: %d of %d typed option names over %d keyed Views lose their first row against pre-join %s; first: %s",
+				walker.scenario.name, len(found), queries, frames, baselines[b], strings.Join(found[:min(len(found), 8)], "; "))
+		}
+	}
+}
+
+// TestSettingsSearchTextJoinGuardsLaterOptionNames pins the guard on small row
+// lists: a label column that would let a row match an option name a later row
+// already selects goes before the key instead, is joined word by word, or is
+// left out, and the typed names keep their first row.
+func TestSettingsSearchTextJoinGuardsLaterOptionNames(t *testing.T) {
+	t.Parallel()
+
+	const splitDescription = "Pane directory is used only inside the Project root; the CLI does not follow this setting"
+	tests := []struct {
+		name    string
+		entries []intpickercompat.Entry
+		want    []string
+		first   map[string]string
+	}{
+		{
+			name: "a shared description does not hand the sibling name to the row above",
+			entries: []intpickercompat.Entry{
+				{Label: "←  Back", Value: settingsBackValue},
+				{Label: "·  New splits start in    Project root  (default)", Value: settingsNoopValue},
+				{Label: "◉  Project root              " + splitDescription, Value: "ai-split-cwd:project", SearchKey: "new splits start in split_cwd_from project"},
+				{Label: "○  Current Pane directory    " + splitDescription, Value: "ai-split-cwd:pane", SearchKey: "new splits start in split_cwd_from pane"},
+			},
+			// The description after the Project root key would supply "pane" to
+			// "split_cwd_from pane", which the Current Pane directory row selects,
+			// so it goes before the key; the last row has no later row to guard.
+			want: []string{
+				"",
+				"",
+				splitDescription + "\tnew splits start in split_cwd_from project\t◉  Project root",
+				"new splits start in split_cwd_from pane\t○  Current Pane directory    " + splitDescription,
+			},
+			first: map[string]string{
+				"split_cwd_from pane":    "ai-split-cwd:pane",
+				"split_cwd_from project": "ai-split-cwd:project",
+				"Current Pane directory": "ai-split-cwd:pane",
+			},
+		},
+		{
+			name: "a name column goes before the key when after it would spell a later name",
+			entries: []intpickercompat.Entry{
+				{Label: "·  Name", Value: settingsNoopValue, SearchKey: "git co"},
+				{Label: "▸  Icon", Value: "icon", SearchKey: "icon"},
+			},
+			// "git co" + "Name" spells "icon"; "Name" + "git co" does not.
+			want:  []string{"Name\tgit co\t·", "icon\t▸  Icon"},
+			first: map[string]string{"icon": "icon", "Name": settingsNoopValue},
+		},
+		{
+			name: "a column blocked on both sides is joined word by word",
+			entries: []intpickercompat.Entry{
+				{Label: "◉  PermissionRequest         폴백에서만 - notify - catalog - in-app queue + OS toast supported by specialized handler", Value: "permission-request", SearchKey: "codex PermissionRequest notify catalog quiet notify state"},
+				{Label: "◉  Stop                      notify - catalog", Value: "stop", SearchKey: "codex Stop notify catalog quiet notify state"},
+			},
+			// "OS toast supported" spells "Stop" on either side of the key, so the
+			// description is joined word by word: "supported" is left out, two
+			// words fit only before the key, and the Korean word still joins. The
+			// name column spells "stop" on both sides and the key already carries it.
+			want: []string{
+				"in-app specialized\tcodex PermissionRequest notify catalog quiet notify state\t◉         폴백에서만 - notify - catalog - queue + OS toast by handler",
+				"codex Stop notify catalog quiet notify state\t◉  Stop                      notify - catalog",
+			},
+			first: map[string]string{"Stop": "stop", "폴백에서만": "permission-request", "PermissionRequest": "permission-request"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			original := slices.Clone(tt.entries)
+			once := withSettingsRenderedLabelSearchText(intpickercompat.Options{Entries: tt.entries})
+			if !slices.Equal(tt.entries, original) {
+				t.Fatalf("input entries mutated")
+			}
+			for i, entry := range once.Entries {
+				if entry.SearchKey != tt.want[i] {
+					t.Errorf("row %d SearchKey = %q, want %q", i, entry.SearchKey, tt.want[i])
+				}
+				if key := original[i].SearchKey; key != "" && settingsSearchPreJoinKey(intpicker.Item{Label: entry.Label, SearchText: entry.SearchKey}) != key {
+					t.Errorf("row %d SearchKey %q does not keep the builder key %q as its delimited field", i, entry.SearchKey, key)
+				}
+			}
+			twice := withSettingsRenderedLabelSearchText(once)
+			if !slices.Equal(twice.Entries, once.Entries) {
+				t.Fatalf("second join changed the rows: %#v, want idempotent %#v", twice.Entries, once.Entries)
+			}
+			items := intpickercompat.PickerOptions(once).Items
+			for query, want := range tt.first {
+				got := "(no row)"
+				if survivors := intpicker.FilterItems(items, query); len(survivors) > 0 {
+					got = survivors[0].Value
+				}
+				if got != want {
+					t.Errorf("query %q selects %q first, want %q", query, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSettingsSearchTextJoinsRenderedLabel(t *testing.T) {
 	t.Parallel()
 
@@ -714,12 +1020,12 @@ func TestSettingsSearchTextJoinsRenderedLabel(t *testing.T) {
 		{
 			name:  "CSI colour label is stripped and joined",
 			entry: intpickercompat.Entry{Label: "\x1b[38;5;81m▸\x1b[0m  상태 표시줄  \x1b[2mon - default\x1b[0m", Value: "appearance:status-bar", SearchKey: "status bar components"},
-			want:  "status bar components ▸  상태 표시줄  on - default",
+			want:  "status bar components\t▸  상태 표시줄  on - default",
 		},
 		{
 			name:  "bare escape bytes are dropped",
 			entry: intpickercompat.Entry{Label: "Git\x1bM  branch\x1b", Value: "git", SearchKey: "git branch working tree"},
-			want:  "git branch working tree Git  branch",
+			want:  "git branch working tree\tGit  branch",
 		},
 		{
 			name:  "empty key stays empty",
@@ -770,5 +1076,36 @@ func TestSettingsSearchTextJoinsRenderedLabel(t *testing.T) {
 				t.Fatalf("second join = %q, want idempotent %q", twice.Entries[0].SearchKey, got)
 			}
 		})
+	}
+}
+
+// BenchmarkSettingsSearchTextJoinScale keeps the join's cost visible on a
+// keyed View whose rows come from user data, shaped like Pinned Projects: a
+// Back row and n keyed rows, each with a unique path or one shared description.
+func BenchmarkSettingsSearchTextJoinScale(b *testing.B) {
+	for _, shared := range []bool{false, true} {
+		for _, n := range []int{50, 200, 500} {
+			entries := []intpickercompat.Entry{{Label: "↩  Back", Value: settingsBackValue}}
+			for i := range n {
+				description := fmt.Sprintf("/home/user/source/repos/project-%03d", i)
+				if shared {
+					description = "Pinned Project root; opens the project session and focuses the first pane"
+				}
+				entries = append(entries, intpickercompat.Entry{
+					Label:     settingsResolvedLabelLocale("en-US", "▸", "", fmt.Sprintf("project-%03d", i), description),
+					Value:     fmt.Sprintf("switch:pin:uid:proj-%03d", i),
+					SearchKey: fmt.Sprintf("pinned project switch pin project-%03d", i),
+				})
+			}
+			variant := "unique-description"
+			if shared {
+				variant = "shared-description"
+			}
+			b.Run(fmt.Sprintf("rows=%d/%s", n, variant), func(b *testing.B) {
+				for b.Loop() {
+					withSettingsRenderedLabelSearchText(intpickercompat.Options{Entries: entries})
+				}
+			})
+		}
 	}
 }
