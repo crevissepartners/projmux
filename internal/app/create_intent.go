@@ -504,7 +504,7 @@ func (c *createCommand) canonicalIntentGuards(scope canonicalIntentScope) []crea
 	return guards
 }
 
-func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, intent agentPaneIntent, stdout io.Writer) error {
+func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, intent agentPaneIntent, launchDir string, stdout io.Writer) error {
 	var result createResult
 	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
@@ -521,6 +521,11 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 			if err != nil {
 				return usageError(fmt.Sprintf("canonical create: ControlSession origin Pane launch cwd %q: %v", scope.cwd, err))
 			}
+		}
+		// launchDir is the resolved split start directory. scope.cwd keeps
+		// naming the Project root the session was derived from.
+		if launchDir != "" {
+			cwd = launchDir
 		}
 		pane, err := mutator.AddPane(working, scope.windowUID, coremetadata.BootstrapPane{CWD: cwd}, c.shell, operationID)
 		if err != nil {
@@ -561,7 +566,7 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 	return c.writeResults(stdout, canonicalCreatePane, cli.OutputModeDefault, coremetadata.KindPane, []createResult{result})
 }
 
-func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, intent agentPaneIntent, provider string, flags resourceCreateFlags, stdout io.Writer) error {
+func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, intent agentPaneIntent, provider, launchDir string, flags resourceCreateFlags, stdout io.Writer) error {
 	if c.agents == nil {
 		return errors.New("create agent: the provider launcher is not configured")
 	}
@@ -638,7 +643,11 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 			if resolver == nil {
 				resolver = resolveAgentWorkspace
 			}
-			workspace, err = resolver(*working, *project, provider, flags.cwd, flags.addDirs)
+			cwd := flags.cwd
+			if launchDir != "" {
+				cwd = launchDir
+			}
+			workspace, err = resolver(*working, *project, provider, cwd, flags.addDirs)
 		} else {
 			workspace.CWD, err = canonicalExistingDir(scope.cwd)
 			if err != nil {

@@ -1265,7 +1265,21 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 		// this call is a foreground tmux `run-shell` job, and tmux paints
 		// whatever such a job writes -- diagnostics included -- as a view-mode
 		// screen over the pane the operator was working in. The new Pane is the
-		// feedback a successful create owes them.
+		// feedback a successful create owes them. The one exception is the
+		// split start notice: the requested Pane directory was not used, and
+		// that is shown once on the originating client.
+		if notice := strings.Join(strings.Fields(diagnostics.String()), " "); notice != "" {
+			message := tmuxLiteralMessage("projmux: " + notice)
+			var displayErr error
+			if intent.targetClient != "" {
+				displayErr = c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", message)
+			} else {
+				displayErr = c.run("tmux", "display-message", "-d", "10000", message)
+			}
+			if displayErr != nil {
+				return fmt.Errorf("%s; display split start notice to client %q: %v", notice, intent.targetClient, displayErr)
+			}
+		}
 		return nil
 	}
 	reason := canonicalCreateFailureReason(err, diagnostics.String())

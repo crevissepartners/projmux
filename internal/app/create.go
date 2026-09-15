@@ -133,6 +133,10 @@ type createCommand struct {
 	// Pane's supervisor quotes back when its child stops.
 	newGeneration    func() (string, error)
 	resolveWorkspace func(coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
+	// homeDir and lookupEnv locate the global config the split start source
+	// reads. A nil homeDir skips the global tier.
+	homeDir   func() (string, error)
+	lookupEnv func(string) string
 	// bindWindowRuntime records the exact last-positive tmux owner pair for a
 	// canonical Window create. Nil selects Mutator.ObserveWindowRuntimeBinding;
 	// the seam exists so transaction/ledger rollback can be exercised at this
@@ -190,6 +194,8 @@ func newCreateCommand() *createCommand {
 		now:              time.Now,
 		newGeneration:    coremetadata.NewGeneration,
 		resolveWorkspace: resolveAgentWorkspace,
+		homeDir:          os.UserHomeDir,
+		lookupEnv:        os.Getenv,
 	}
 	bind := func(ctx context.Context, explicit bool) error {
 		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, os.Getenv, command.routeAnchor, explicit)
@@ -441,8 +447,11 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 	if err != nil {
 		return err
 	}
+	// Where the split starts is resolved here, before the Registry transaction
+	// opens, and stays separate from the scope's identity fields.
+	launchDir, notice := c.intentSplitLaunchDir(scope, conversation)
 	if provider == "" {
-		return visibleCanonicalCreateError(c.createCanonicalIntentPane(scope, intent, stdout))
+		return finishSplitIntent(stderr, notice, c.createCanonicalIntentPane(scope, intent, launchDir, stdout))
 	}
 	// A resume cannot be spelled: `create` has no public `--resume`. The intent
 	// route still parses the exact public argv before attaching its private
@@ -457,7 +466,7 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 	flags.resumeEndpoint = intent.resumeEndpoint
 	flags.resumeGenerationState = intent.resumeGenerationState
 	flags.codexCapability = intent.codexCapability
-	return visibleCanonicalCreateError(c.createCanonicalIntentAgent(scope, intent, provider, flags, stdout))
+	return finishSplitIntent(stderr, notice, c.createCanonicalIntentAgent(scope, intent, provider, launchDir, flags, stdout))
 }
 
 // visibleCanonicalCreateError prevents a subprocess ExitCode from escaping a

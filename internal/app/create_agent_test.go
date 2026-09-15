@@ -1657,6 +1657,7 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			fs.Bool("all-windows", false, "")
 			fs.Bool("primary-window", false, "")
 			fs.String("placement", "", "")
+			fs.String(splitCWDFromFlag, "", "")
 			fs.String("cwd", "", "")
 			fs.Var(&out.addDirs, "add-dir", "")
 			fs.Bool("interactive-only", false, "")

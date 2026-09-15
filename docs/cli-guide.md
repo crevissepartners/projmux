@@ -252,8 +252,18 @@ The contract:
 `create window|pane|agent|<provider>` is resource-backed on every spelling.
 There is no mode flag and no second parser: the same argv means the same thing
 whether or not `--project` is present, and `-w`, `--create-window`, `--pane`,
-`--selector`, `--placement`, `--name`, `--label`, `--cwd`, `--add-dir`, `-o`,
-and the `--` payload all reach the same parser either way.
+`--selector`, `--placement`, `--cwd-from`, `--name`, `--label`, `-o`, and the
+`--` payload all reach the same parser either way. `--cwd` and `--add-dir` are
+provider create flags: they are defined on `create agent` and the three provider
+shortcuts, not on `create window` or `create pane`.
+
+`--cwd-from project|pane` selects where the new split starts. `project` (the
+default) starts it in the owner Project root. `pane` starts it in the active
+Pane's live directory while that directory is inside the owner Project root, and
+otherwise starts it in the root and says so in one stderr line; it never
+refuses. The flag overrides the `[ai] split_cwd_from` config for one call and
+cannot be combined with `--cwd`, which names an Agent working directory
+outright. See [configuration.md](configuration.md).
 
 The scope resolves in two branches:
 

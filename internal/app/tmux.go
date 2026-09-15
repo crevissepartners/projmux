@@ -648,7 +648,13 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 		}
 		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+summary)
 	}
-	return c.displayPaneMenuMessage(strings.TrimSpace(*client), paneMenuCreatedMessage)
+	// A committed split writes stderr only for its split start notice, which
+	// rides on the one success message instead of replacing it.
+	message := paneMenuCreatedMessage
+	if notice := strings.TrimSpace(actionErr.String()); notice != "" {
+		message += ": " + notice
+	}
+	return c.displayPaneMenuMessage(strings.TrimSpace(*client), message)
 }
 
 // windowCreatedUnshownMessage leads the line a pressing client sees when the

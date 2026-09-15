@@ -58,16 +58,22 @@ func (r createResult) receiptAction() cli.ReceiptAction {
 
 // resourceCreateFlags is the parsed argv of a resource-backed create route.
 type resourceCreateFlags struct {
-	projects     repeatedFlag
-	windows      repeatedFlag
-	panes        repeatedFlag
-	selectors    repeatedFlag
-	labels       repeatedFlag
-	name         string
-	provider     string
-	providerSet  bool
-	cwd          string
-	addDirs      repeatedFlag
+	projects    repeatedFlag
+	windows     repeatedFlag
+	panes       repeatedFlag
+	selectors   repeatedFlag
+	labels      repeatedFlag
+	name        string
+	provider    string
+	providerSet bool
+	cwd         string
+	addDirs     repeatedFlag
+	// cwdSet records that --cwd was spelled at all. An explicit Agent working
+	// directory never reads the split start config.
+	cwdSet bool
+	// cwdFrom is the spelled --cwd-from split start source; empty defers to
+	// config. It is launch data only and never selects a scope.
+	cwdFrom      string
 	placement    string
 	createWindow bool
 	// allWindows and primaryWindow are the two explicit target-cardinality
@@ -390,6 +396,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.BoolVar(&out.primaryWindow, "primary-window", false,
 			"target exactly the Project scope's spec.primaryWindowRef Window; what a --project scope with no Window selector already means")
 		fs.StringVar(&out.placement, "placement", defaultPlacement, "split placement: "+strings.Join(placementDirections, "|"))
+		fs.StringVar(&out.cwdFrom, splitCWDFromFlag, "",
+			"split start directory: project|pane; defaults to [ai] split_cwd_from, then project")
 	}
 	fs.StringVar(&out.name, "name", "", "explicit Projmux metadata.name for the created resource")
 	fs.Var(&out.labels, "label", "repeatable creation label: key=value")
@@ -405,9 +413,15 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	if fs.NArg() != 0 {
 		return resourceCreateFlags{}, usageError(fmt.Sprintf("%s does not accept positional arguments; got %q", spelling, fs.Arg(0)))
 	}
+	cwdFromSet := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "provider" {
+		switch f.Name {
+		case "provider":
 			out.providerSet = true
+		case "cwd":
+			out.cwdSet = true
+		case splitCWDFromFlag:
+			cwdFromSet = true
 		}
 	})
 	if len(out.projects) > 1 {
@@ -417,6 +431,17 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	if pane && !slices.Contains(placementDirections, out.placement) {
 		return resourceCreateFlags{}, usageError(fmt.Sprintf("%s --placement must be one of: %s",
 			spelling, strings.Join(placementDirections, ", ")))
+	}
+	if cwdFromSet {
+		if _, ok := parseSplitCWDSource(out.cwdFrom); !ok {
+			return resourceCreateFlags{}, usageError(fmt.Sprintf("%s --%s must be one of: %s, %s",
+				spelling, splitCWDFromFlag, splitCWDFromProject, splitCWDFromPane))
+		}
+		if out.cwdSet {
+			return resourceCreateFlags{}, usageError(fmt.Sprintf(
+				"%s --%s cannot be combined with --cwd: --cwd already names the Agent working directory; nothing was created",
+				spelling, splitCWDFromFlag))
+		}
 	}
 	if err := out.refuseConflictingWindowScope(spelling); err != nil {
 		return resourceCreateFlags{}, err
@@ -667,6 +692,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 
 	var results []createResult
 	var selectedWindowUIDs []string
+	var notices []string
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -675,6 +701,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 		if err := c.refuseMissingRoot(project); err != nil {
 			return err
 		}
+		source := c.splitCWDSource(flags.cwdFrom, project.Spec.Root)
 
 		// Full preflight plus the metadata half of the Window ensure. Every
 		// target Window and every anchor Pane is fixed, and every Window this
@@ -732,8 +759,24 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			if err != nil {
 				return err
 			}
+			launchDir := project.Spec.Root
+			if source == splitCWDFromPane {
+				var notice string
+				launchDir, notice = c.splitPaneLaunchDir(ctx, anchorPaneID, project.Spec.Root)
+				if notice != "" {
+					notices = append(notices, splitCWDNoticeLine(spelling, work.windowName, notice))
+				}
+				if launchDir != project.Spec.Root {
+					// The Pane this operation allocated starts where its split
+					// starts; the Window's own anchor and owner are untouched.
+					if stored, ok := working.Pane(work.pane.Metadata.UID); ok {
+						stored.Spec.CWD = launchDir
+					}
+					work.pane.Spec.CWD = launchDir
+				}
+			}
 			launch := c.runtime.supervisedLaunch(ctx, work.activation, flags.payload)
-			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, project.Spec.Root, launch)
+			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, launchDir, launch)
 			if paneID != "" {
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
@@ -770,6 +813,9 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 		}
 		return nil
 	}, c.projectOwnershipGuard(scope)); err != nil {
+		return err
+	}
+	if err := writeSplitCWDNotices(stderr, notices); err != nil {
 		return err
 	}
 	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindPane, results,

@@ -60,6 +60,12 @@ type AIConfig struct {
 	// is identical to the historical exact-cwd behaviour (depth 0). Stored
 	// values are clamped to [0, AIResumeScanDepthMax].
 	ResumeScanDepth int
+
+	// SplitCWDFrom selects where a new split starts: "project" (the owner
+	// Project root, the default) or "pane" (the active Pane's live directory
+	// while it is inside that root). Empty means unset. The value is kept
+	// verbatim, so an unknown value skips its tier instead of failing the file.
+	SplitCWDFrom string
 }
 
 // AIResumePickerLimit bounds. A configured value outside this range is clamped
@@ -296,6 +302,8 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 				return fmt.Errorf("line %d: invalid ai resume_scan_depth %q: %w", lineNo, value, err)
 			}
 			cfg.AI.ResumeScanDepth = depth
+		case "split_cwd_from":
+			cfg.AI.SplitCWDFrom = value
 		default:
 			return fmt.Errorf("line %d: unsupported ai key %q", lineNo, key)
 		}
@@ -450,6 +458,7 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	cfg.UI.Locale = strings.TrimSpace(cfg.UI.Locale)
 	cfg.AI.ResumePickerLimit = ClampAIResumePickerLimit(cfg.AI.ResumePickerLimit)
 	cfg.AI.ResumeScanDepth = ClampAIResumeScanDepth(cfg.AI.ResumeScanDepth)
+	cfg.AI.SplitCWDFrom = strings.TrimSpace(cfg.AI.SplitCWDFrom)
 	cfg.Update.ReleaseChannel = strings.TrimSpace(cfg.Update.ReleaseChannel)
 }
 
@@ -664,7 +673,7 @@ func renderProjectConfig(cfg ProjectConfig) string {
 		}
 		sections = append(sections, b.String())
 	}
-	if cfg.AI.ResumePickerLimit != 0 || cfg.AI.ResumeScanDepth != 0 {
+	if cfg.AI.ResumePickerLimit != 0 || cfg.AI.ResumeScanDepth != 0 || cfg.AI.SplitCWDFrom != "" {
 		var b strings.Builder
 		b.WriteString("[ai]\n")
 		if cfg.AI.ResumePickerLimit != 0 {
@@ -672,6 +681,9 @@ func renderProjectConfig(cfg ProjectConfig) string {
 		}
 		if cfg.AI.ResumeScanDepth != 0 {
 			fmt.Fprintf(&b, "resume_scan_depth = %d\n", cfg.AI.ResumeScanDepth)
+		}
+		if cfg.AI.SplitCWDFrom != "" {
+			fmt.Fprintf(&b, "split_cwd_from = %s\n", strconv.Quote(cfg.AI.SplitCWDFrom))
 		}
 		sections = append(sections, b.String())
 	}

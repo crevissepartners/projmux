@@ -170,6 +170,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 
 	var results []createResult
 	var selectedWindowUIDs []string
+	var notices []string
 	var activationTargets []agentActivationTarget
 	var nativeLifecycleTargets []codexLifecycleObserverTarget
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
@@ -218,6 +219,12 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		title, launchArgv, err := c.planAgentPaneLaunch(provider, workspace, flags)
 		if err != nil {
 			return err
+		}
+		// An explicit --cwd names the working directory outright and never
+		// reads the split start config.
+		source := splitCWDFromProject
+		if !flags.cwdSet {
+			source = c.splitCWDSource(flags.cwdFrom, project.Spec.Root)
 		}
 
 		// The declared <create, Agent> cell is this route's fan-out cardinality:
@@ -326,8 +333,35 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if err != nil {
 				return err
 			}
+			workWorkspace := workspace
 			workTitle := title
 			workLaunchArgv := launchArgv
+			if source == splitCWDFromPane {
+				dir, notice := c.splitPaneLaunchDir(ctx, anchorPaneID, project.Spec.Root)
+				if notice != "" {
+					notices = append(notices, splitCWDNoticeLine(spelling, work.windowName, notice))
+				}
+				if dir != project.Spec.Root {
+					// The Pane directory becomes this Agent's working directory
+					// through the unchanged workspace validation, and its launch is
+					// planned again for that workspace.
+					workWorkspace, err = resolver(*working, project, provider, dir, flags.addDirs)
+					if err != nil {
+						return err
+					}
+					workTitle, workLaunchArgv, err = c.planAgentPaneLaunch(provider, workWorkspace, flags)
+					if err != nil {
+						return err
+					}
+					if stored, ok := working.Agent(work.agent.Metadata.UID); ok {
+						stored.Spec.Workspace = workWorkspace
+					}
+					if stored, ok := working.Pane(work.pane.Metadata.UID); ok {
+						stored.Spec.CWD = workWorkspace.CWD
+					}
+					work.pane.Spec.CWD = workWorkspace.CWD
+				}
+			}
 			var nativeBinding coremetadata.CodexActivationBinding
 			usedNative := false
 			if nativeEligible {
@@ -335,11 +369,11 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					return MapMetadataError(err)
 				}
 				nativeCtx, cancel := prepareNativeContext(ctx)
-				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workspace, prompt, work.activation.Generation)
+				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workWorkspace, prompt, work.activation.Generation)
 				cancel()
 				switch {
 				case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
-					workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
+					workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workWorkspace, prepared.ThreadID)
 					if err != nil {
 						return nativeLaunchError(spelling, err)
 					}
@@ -364,7 +398,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					return nativeLaunchError(spelling, nativeErr)
 				}
 			}
-			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workspace.CWD,
+			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD,
 				c.runtime.supervisedLaunch(ctx, work.activation, workLaunchArgv))
 			if paneID != "" {
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
@@ -384,7 +418,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			// pipeline. They are applied after the pane exists and before the
 			// result is reported.
 			if usedNative {
-				if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workspace.CWD, workTitle, "", nativeBinding.ThreadID); err != nil {
+				if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workWorkspace.CWD, workTitle, "", nativeBinding.ThreadID); err != nil {
 					return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
 				}
 				if nativeLifecycleCapable {
@@ -396,7 +430,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 						Route: c.runtime.target, NativeRoute: nativeRoute,
 					})
 				}
-			} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, workTitle,
+			} else if err := c.bindAgentPane(ctx, paneID, provider, workWorkspace.CWD, workTitle,
 				declaredPlainCodexLane(provider, flags, prompt), flags); err != nil {
 				return tmuxError("%s: bind Agent Pane %s presentation metadata: %v", spelling, paneID, err)
 			}
@@ -423,6 +457,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		}
 		return nil
 	}, c.projectOwnershipGuard(scope)); err != nil {
+		return err
+	}
+	if err := writeSplitCWDNotices(stderr, notices); err != nil {
 		return err
 	}
 	// The exact Registry binding becomes observable only after the transaction

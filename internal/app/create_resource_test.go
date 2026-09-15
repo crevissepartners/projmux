@@ -2340,6 +2340,7 @@ func TestCreateHelpAdvertisesOnlyImplementedProjections(t *testing.T) {
 				fs.Bool("all-windows", false, "")
 				fs.Bool("primary-window", false, "")
 				fs.String("placement", "", "")
+				fs.String(splitCWDFromFlag, "", "")
 			}
 			fs.String("name", "", "")
 			fs.Var(&out.labels, "label", "")
