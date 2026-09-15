@@ -224,6 +224,7 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 }
 
 func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
+	options = withSettingsRenderedLabelSearchText(options)
 	options = c.withSettingsFeedback(options)
 	options = c.withSettingsScopeTabs(options)
 	options = c.withSettingsClosePolicy(options)
