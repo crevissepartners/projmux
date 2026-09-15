@@ -54,13 +54,9 @@ func runtimeReaderObservation(reader *runtimeDiagnosticsReader) pruneAgentObserv
 		if err != nil {
 			return unavailablePruneAgentInventory("the exact tmux server could not be resolved: " + err.Error())
 		}
-		if !transport.Present() {
-			// The observer would answer an absent transport with zero tmux calls
-			// and every scope unavailable too; its reason advises socket flags
-			// this route does not accept, so the same observation is stated here
-			// in terms of what the invocation actually lacks.
-			return unavailablePruneAgentInventory("this invocation names no exact tmux server ($TMUX carries no absolute socket path)")
-		}
+		// An absent transport is handed to the observer too: it answers with
+		// zero tmux calls and every scope unavailable, so the classification of
+		// every outcome stays the shared inventory's own.
 		return reader.observe(ctx, transport)
 	}
 }
@@ -385,31 +381,64 @@ type pruneAgentPaneLiveness struct {
 // shared resource graph, so a Pane is judged by exactly the claim rules every
 // read verb uses.
 //
-// The observer's own classification is kept as is. A server that is not
-// running is knowledge: the Pane scope is available and empty, so every Pane is
-// offline. A failed query, or an invocation that names no exact server at all,
-// leaves the Pane scope unavailable, and that is unknown rather than offline.
+// "No live Pane" is a destructive verdict here, so it is admitted only from an
+// actual read of a server confirmed to be a projmux app host: an exact
+// transport, an observed host mode of HostModeAppOwned, and a readable Pane
+// scope. The shared inventory deliberately reports a server with no
+// @projmux_app marker as standalone with the Pane scope available, and a socket
+// with no server behind it as available and empty with only host ownership
+// unavailable. Both are right for the views that consume it and both are wrong
+// evidence for deletion: a $TMUX that names someone else's server or a dead
+// socket would read every live projmux Pane as offline. So standalone,
+// unknown, server-absent, a Pane list failure, and a Registry-only snapshot
+// with no transport are all "cannot observe" on this side only; the inventory
+// itself is untouched.
 func observePruneAgentPanes(registry coremetadata.Registry, observe pruneAgentObservation) pruneAgentPaneLiveness {
 	if observe == nil {
 		return pruneAgentPaneLiveness{reason: "the live tmux observer is not configured"}
 	}
 	inventory := observe(context.Background())
-	out := pruneAgentPaneLiveness{
-		live:      map[string]bool{},
-		available: inventory.Transport.Present() && inventory.Available(resourcegraph.ScopePanes),
-	}
-	if !out.available {
-		out.reason = "no exact tmux server was observed"
-		if unavailable, ok := inventory.Unavailability(resourcegraph.ScopePanes); ok {
-			out.reason = unavailable.Reason
-		}
-	}
+	out := pruneAgentPaneLiveness{live: map[string]bool{}}
+	out.available, out.reason = pruneAgentObservationAuthority(inventory)
 	for _, node := range resourcegraph.Resolve(registry, inventory).Panes {
 		if node.Runtime != nil || node.Class == resourcegraph.ClassConflict {
 			out.live[node.Pane.Metadata.UID] = true
 		}
 	}
 	return out
+}
+
+// noTransportObserverReason is the prefix of the shared observer's reason for
+// an absent transport. That reason advises socket flags this route does not
+// accept, so it is restated in terms of what the invocation lacks; any other
+// wording is shown verbatim.
+const noTransportObserverReason = "no exact tmux transport"
+
+// pruneAgentObservationAuthority reports whether inventory may answer "no live
+// Pane", and why not when it may not.
+func pruneAgentObservationAuthority(inventory resourcegraph.Inventory) (bool, string) {
+	if !inventory.Transport.Present() {
+		if unavailable, ok := inventory.Unavailability(resourcegraph.ScopePanes); ok && !strings.HasPrefix(unavailable.Reason, noTransportObserverReason) {
+			return false, unavailable.Reason
+		}
+		return false, "this invocation names no exact tmux server ($TMUX carries no absolute socket path)"
+	}
+	if unavailable, ok := inventory.Unavailability(resourcegraph.ScopeHostMode); ok {
+		// Includes a socket with no server behind it: host ownership cannot be
+		// observed, so its empty object scopes prove nothing.
+		return false, unavailable.Reason
+	}
+	switch inventory.HostMode {
+	case resourcegraph.HostModeAppOwned:
+	case resourcegraph.HostModeStandalone:
+		return false, "the observed tmux server on " + inventory.Transport.String() + " is not projmux app-owned (no @projmux_app marker)"
+	default:
+		return false, "host ownership of the observed tmux server on " + inventory.Transport.String() + " is " + string(inventory.HostMode)
+	}
+	if unavailable, ok := inventory.Unavailability(resourcegraph.ScopePanes); ok {
+		return false, unavailable.Reason
+	}
+	return true, ""
 }
 
 func (l pruneAgentPaneLiveness) judge(panes []coremetadata.Pane) pruneAgentPanesVerdict {

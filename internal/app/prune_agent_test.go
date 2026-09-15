@@ -682,21 +682,32 @@ func TestPruneAgentContinueColumnComesFromTopologyEligibility(t *testing.T) {
 	}
 }
 
-// pruneAgentTmuxRunner scripts the exact-socket inventory commands.
+type pruneAgentTmuxReply struct {
+	out string
+	err error
+}
+
+// pruneAgentTmuxRunner scripts the exact-socket inventory commands by tmux
+// subcommand; an unscripted subcommand answers empty output.
 type pruneAgentTmuxRunner struct {
-	fail  map[string]error
-	calls []string
+	replies map[string]pruneAgentTmuxReply
+	calls   []string
 }
 
 func (r *pruneAgentTmuxRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, strings.Join(args, " "))
 	for _, arg := range args {
-		if err, ok := r.fail[arg]; ok {
-			r.calls = append(r.calls, arg)
-			return nil, err
+		if reply, ok := r.replies[arg]; ok {
+			return []byte(reply.out), reply.err
 		}
 	}
-	r.calls = append(r.calls, strings.Join(args, " "))
 	return nil, nil
+}
+
+// pruneAgentMirroredPaneRow is one nine-field `list-panes -a` row whose pane
+// mirrors uid.
+func pruneAgentMirroredPaneRow(uid string) string {
+	return strings.Join([]string{"%70", "@7", uid, "", "", "", "", "", ""}, "\x1f") + "\n"
 }
 
 func pruneAgentReaderObservation(runner *pruneAgentTmuxRunner, tmuxEnv string) pruneAgentObservation {
@@ -710,79 +721,157 @@ func pruneAgentReaderObservation(runner *pruneAgentTmuxRunner, tmuxEnv string) p
 	return runtimeReaderObservation(reader)
 }
 
-// TestPruneAgentObservationUnavailableShowsUnknownAndRefusesYes is acceptance
-// criterion 3's fail-closed half, driven through the shared runtime reader and
-// inventory observer: an invocation that names no server and an inventory
-// error are unknown, while a missing server on the exact socket is knowledge
-// that nothing is live.
-func TestPruneAgentObservationUnavailableShowsUnknownAndRefusesYes(t *testing.T) {
+// TestPruneAgentLivenessRequiresAnObservedAppOwnedHost is acceptance criterion
+// 9 and the fail-closed half of criterion 3. "No live Pane" is admitted only
+// from an actual read of a projmux app-owned host. Each observed case runs the
+// real runtime reader and InventoryObserver over a scripted tmux runner, so the
+// scope and host-mode classification is inventory.go's own; the fallback cases
+// hand the route a Registry-only snapshot or no observer at all. Every case
+// that is not an app-owned host lists Pane-holding matches as unknown with the
+// reason, and --yes refuses with the registry file unchanged, while Pane-free
+// matches are still judged from the Registry alone.
+func TestPruneAgentLivenessRequiresAnObservedAppOwnedHost(t *testing.T) {
 	t.Parallel()
 
+	const socket = "/tmp/projmux-prune-test/sock"
+	appOwned := pruneAgentTmuxReply{out: "1\n"}
 	for _, test := range []struct {
 		name    string
 		tmuxEnv string
-		fail    map[string]error
-		reason  string
-		calls   bool
+		replies map[string]pruneAgentTmuxReply
+		// fallback replaces the reader with a non-observing source.
+		fallback     func() pruneAgentObservation
+		reason       string
+		wantCalls    bool
+		liveMirrored bool
+		appOwned     bool
 	}{
-		{name: "no exact server outside tmux", tmuxEnv: "", reason: "names no exact tmux server"},
-		{name: "exact socket inventory error", tmuxEnv: "/tmp/projmux-prune-test/sock,1,0", fail: map[string]error{"list-panes": errors.New("tmux: boom")}, reason: "tmux panes could not be listed", calls: true},
+		{name: "no transport outside tmux", tmuxEnv: "", replies: map[string]pruneAgentTmuxReply{"show-options": appOwned}, reason: "names no exact tmux server"},
+		{
+			name: "Registry-only fallback snapshot",
+			fallback: func() pruneAgentObservation {
+				return func(context.Context) resourcegraph.Inventory { return resourcegraph.Inventory{} }
+			},
+			reason: "names no exact tmux server",
+		},
+		{name: "no observer configured", fallback: func() pruneAgentObservation { return nil }, reason: "live tmux observer is not configured"},
+		{
+			name: "standalone server without the @projmux_app marker", tmuxEnv: socket + ",1,0",
+			replies: map[string]pruneAgentTmuxReply{
+				"show-options": {err: errors.New("tmux: invalid option: @projmux_app")},
+				"list-panes":   {out: pruneAgentMirroredPaneRow("pan-live-pane")},
+			},
+			reason: "is not projmux app-owned (no @projmux_app marker)", wantCalls: true, liveMirrored: true,
+		},
+		{
+			name: "standalone server with a non-app marker value", tmuxEnv: socket + ",1,0",
+			replies: map[string]pruneAgentTmuxReply{"show-options": {out: "0\n"}},
+			reason:  "is not projmux app-owned (no @projmux_app marker)", wantCalls: true,
+		},
+		{
+			name: "no server running on the socket", tmuxEnv: socket + ",1,0",
+			replies: map[string]pruneAgentTmuxReply{"show-options": {err: errors.New("no server running on " + socket)}},
+			reason:  "no tmux server on", wantCalls: true,
+		},
+		{
+			name: "Pane list failure on an app-owned host", tmuxEnv: socket + ",1,0",
+			replies: map[string]pruneAgentTmuxReply{"show-options": appOwned, "list-panes": {err: errors.New("tmux: boom")}},
+			reason:  "tmux panes could not be listed", wantCalls: true,
+		},
+		{
+			name: "app-owned host with an empty Pane scope", tmuxEnv: socket + ",1,0",
+			replies:   map[string]pruneAgentTmuxReply{"show-options": appOwned},
+			wantCalls: true, appOwned: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			store := newPruneAgentFakeStore(t)
-			before := store.snapshot()
-			runner := &pruneAgentTmuxRunner{fail: test.fail}
-			cmd := &pruneAgentCommand{store: store.store(), now: fixedPruneAgentClock, observe: pruneAgentReaderObservation(runner, test.tmuxEnv)}
+			disk := newPruneAgentDiskStore(t, pruneAgentFixtureRegistry(t))
+			beforeSHA, beforeTree := disk.registrySHA(t), disk.tree(t)
+			runner := &pruneAgentTmuxRunner{replies: test.replies}
+			observe := pruneAgentReaderObservation(runner, test.tmuxEnv)
+			if test.fallback != nil {
+				observe = test.fallback()
+			}
+			cmd := &pruneAgentCommand{store: disk.resourceStore(), now: fixedPruneAgentClock, observe: observe}
 			args := []string{"--older-than", "720h", "--no-session-ref"}
+
 			stdout, _, err := runRoute(t, cmd, args...)
 			if err != nil {
 				t.Fatalf("dry-run error = %v", err)
 			}
+			if (len(runner.calls) > 0) != test.wantCalls {
+				t.Fatalf("tmux calls = %v, want calls=%t", runner.calls, test.wantCalls)
+			}
+			// A Pane-free match needs no observation and is a candidate in
+			// every case.
+			for _, want := range []string{"  agent/stale-failed uid=agt-stale-failed ", "dry-run: nothing was deleted"} {
+				if !strings.Contains(stdout, want) {
+					t.Fatalf("dry-run is missing %q:\n%s", want, stdout)
+				}
+			}
+
+			if test.appOwned {
+				if strings.Contains(stdout, "unknown") {
+					t.Fatalf("an app-owned host with an empty Pane scope was reported unknown:\n%s", stdout)
+				}
+				for _, want := range []string{"  agent/dead-pane uid=agt-dead-pane ", "  agent/live-pane uid=agt-live-pane "} {
+					if !strings.Contains(stdout, want) {
+						t.Fatalf("an offline Pane on an app-owned host did not make its Agent a candidate %q:\n%s", want, stdout)
+					}
+				}
+				if got := disk.registrySHA(t); got != beforeSHA {
+					t.Fatal("the dry-run changed registry.json")
+				}
+				if _, _, err := runRoute(t, cmd, append(args, "--yes")...); err != nil {
+					t.Fatalf("--yes on an app-owned host error = %v", err)
+				}
+				after, err := disk.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, ok := after.Agent("agt-dead-pane"); ok {
+					t.Fatal("an Agent whose Pane is offline on an app-owned host survived --yes")
+				}
+				return
+			}
+
 			for _, want := range []string{
 				"  unknown agent/dead-pane uid=agt-dead-pane ",
 				" live=unknown\n",
-				"  unknown agent/live-pane uid=agt-live-pane ",
 				"live tmux observation unavailable: ",
 				test.reason,
 				"--yes is refused",
-				"  agent/stale-failed uid=agt-stale-failed ",
-				"dry-run: nothing was deleted",
 			} {
 				if !strings.Contains(stdout, want) {
 					t.Fatalf("dry-run is missing %q:\n%s", want, stdout)
 				}
 			}
-			if (len(runner.calls) > 0) != test.calls {
-				t.Fatalf("tmux calls = %v, want calls=%t", runner.calls, test.calls)
+			// A uid mirrored on the observed server is still live evidence, and
+			// it is judged before unknown.
+			liveListed := strings.Contains(stdout, "agent/live-pane uid=agt-live-pane ")
+			if liveListed == test.liveMirrored {
+				t.Fatalf("live-pane listed=%t with its Pane mirrored=%t:\n%s", liveListed, test.liveMirrored, stdout)
+			}
+			if strings.Contains(stdout, "  agent/dead-pane uid=agt-dead-pane ") {
+				t.Fatalf("an unobserved Pane was read as offline:\n%s", stdout)
 			}
 
 			stdout, _, err = runRoute(t, cmd, append(args, "--yes")...)
 			if err == nil || !strings.Contains(err.Error(), "nothing was deleted") || !strings.Contains(err.Error(), test.reason) {
 				t.Fatalf("--yes error = %v, want a refusal naming %q and `nothing was deleted`", err, test.reason)
 			}
-			if stdout != "" || store.transactions != 0 || store.writes != 0 || store.snapshot() != before {
-				t.Fatalf("refused --yes changed state: stdout=%q transactions=%d writes=%d", stdout, store.transactions, store.writes)
+			if stdout != "" {
+				t.Fatalf("refused --yes wrote %q", stdout)
+			}
+			if got := disk.registrySHA(t); got != beforeSHA {
+				t.Fatalf("refused --yes changed registry.json sha256: %s -> %s", beforeSHA, got)
+			}
+			if got := disk.tree(t); got != beforeTree {
+				t.Fatalf("refused --yes changed the state directory:\n--- before ---\n%s\n--- after ---\n%s", beforeTree, got)
 			}
 		})
 	}
-
-	t.Run("no server on the exact socket is offline, not unknown", func(t *testing.T) {
-		t.Parallel()
-		store := newPruneAgentFakeStore(t)
-		runner := &pruneAgentTmuxRunner{fail: map[string]error{"show-options": errors.New("no server running on /tmp/projmux-prune-test/sock")}}
-		cmd := &pruneAgentCommand{store: store.store(), now: fixedPruneAgentClock, observe: pruneAgentReaderObservation(runner, "/tmp/projmux-prune-test/sock,1,0")}
-		stdout, _, err := runRoute(t, cmd, "--older-than", "720h", "--no-session-ref", "--exclude", "live-pane", "--yes")
-		if err != nil {
-			t.Fatalf("--yes with no server error = %v", err)
-		}
-		if strings.Contains(stdout, "unknown") {
-			t.Fatalf("an absent server was reported as unknown:\n%s", stdout)
-		}
-		if _, ok := store.registry.Agent("agt-dead-pane"); ok || store.writes != 1 {
-			t.Fatalf("an Agent whose Pane is offline on a stopped server was not pruned: writes=%d\n%s", store.writes, stdout)
-		}
-	})
 }
 
 // TestPruneAgentWithoutRemainingPanesNeedsNoTmux keeps the observation lazy:
