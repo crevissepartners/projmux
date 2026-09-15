@@ -2,10 +2,12 @@ package app
 
 import (
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 // The Settings root answers a query with one result row per catalogued setting.
@@ -125,6 +127,7 @@ func TestSettingsRootResultLandsOnItsOwningRow(t *testing.T) {
 	type landingCase struct {
 		tab     settingsRootTab
 		value   string
+		label   string
 		landing settingsRootResultLanding
 	}
 	var cases []landingCase
@@ -142,13 +145,14 @@ func TestSettingsRootResultLandsOnItsOwningRow(t *testing.T) {
 				t.Errorf("result row %q has an empty navigation chain", entry.Value)
 				continue
 			}
-			cases = append(cases, landingCase{tab: tab, value: entry.Value, landing: landing})
+			cases = append(cases, landingCase{tab: tab, value: entry.Value, label: entry.Label, landing: landing})
 		}
 	}
 
-	unnamedTargets := 0
+	var unnameable []string
 	var firstRowLandings []string
 	var ancestorLandings []string
+	landedByValue, landedByLabel := 0, 0
 	for _, tc := range cases {
 		// The landing press: the tab chip (Project only), then the result row.
 		// Every step of the chain below is answered without rendering, so the
@@ -203,36 +207,54 @@ func TestSettingsRootResultLandsOnItsOwningRow(t *testing.T) {
 			}
 			continue
 		}
-		if tc.landing.Focus == "" {
-			// The walk could not name the row without runtime state. The View
-			// still opens, on its first row.
-			unnamedTargets++
-			if landed.InitialIndexSet {
-				t.Errorf("%s: no target row was named, yet the frame set InitialIndex %d", tc.value, landed.InitialIndex)
-			}
+		// The row is named twice over: by the picker Value its builder emits,
+		// and by the name it renders — which is the last segment of the path
+		// this very result row displays. Either naming is enough to land.
+		wantName := settingsLandingResultPathLeaf(tc.label)
+		if wantName == "" {
+			t.Errorf("%s: result row %q has no trailing path segment", tc.value, tc.label)
 			continue
 		}
-		wantIndex, present := settingsLandingExpectedIndex(landed, tc.landing.Focus)
+		wantIndex, by, present := settingsLandingExpectedIndex(landed, tc.landing.Focus, wantName)
 		if !present {
-			// Acceptance 5: the target row is not rendered here, so the View
-			// opens on its first row rather than failing.
-			firstRowLandings = append(firstRowLandings, tc.value)
+			if tc.landing.Focus == "" {
+				// Neither naming reaches a row of this View. The View still
+				// opens, on its first row.
+				unnameable = append(unnameable, tc.value+" ["+wantName+"]")
+			} else {
+				// Acceptance 5: the target row is not rendered here, so the
+				// View opens on its first row rather than failing.
+				firstRowLandings = append(firstRowLandings, tc.value)
+			}
 			if landed.InitialIndexSet {
-				t.Errorf("%s: target %q is not rendered, yet the frame set InitialIndex %d", tc.value, tc.landing.Focus, landed.InitialIndex)
+				t.Errorf("%s: neither target %q nor name %q is rendered, yet the frame set InitialIndex %d", tc.value, tc.landing.Focus, wantName, landed.InitialIndex)
 			}
 			continue
 		}
 		if !landed.InitialIndexSet {
-			t.Errorf("%s: target %q is rendered at index %d but the frame opened unfocused", tc.value, tc.landing.Focus, wantIndex)
+			t.Errorf("%s: target %q / name %q is rendered at index %d but the frame opened unfocused", tc.value, tc.landing.Focus, wantName, wantIndex)
 			continue
 		}
 		if landed.InitialIndex != wantIndex {
-			t.Errorf("%s: focused index %d, want %d (target %q)", tc.value, landed.InitialIndex, wantIndex, tc.landing.Focus)
+			t.Errorf("%s: focused index %d, want %d (target %q, name %q)", tc.value, landed.InitialIndex, wantIndex, tc.landing.Focus, wantName)
 			continue
 		}
+		// Per row: the focused row is the one the result row named. A row the
+		// value target reached is pinned by that value; a row only the label
+		// reached is pinned by its rendered name being exactly the last segment
+		// of the path the user read on the result row.
 		got := strings.TrimSpace(focused.Value)
-		if got != tc.landing.Focus && !strings.HasPrefix(got, tc.landing.Focus+":") {
-			t.Errorf("%s: focused row value %q does not match target %q; rows %q", tc.value, got, tc.landing.Focus, settingsLandingItemValues(landed))
+		switch by {
+		case settingsLandingByValue:
+			landedByValue++
+			if got != tc.landing.Focus && !strings.HasPrefix(got, tc.landing.Focus+":") {
+				t.Errorf("%s: focused row value %q does not match target %q; rows %q", tc.value, got, tc.landing.Focus, settingsLandingItemValues(landed))
+			}
+		default:
+			landedByLabel++
+			if name := settingsLandingRowName(focused.Label); name != wantName {
+				t.Errorf("%s: focused row name %q does not match the result path leaf %q; rows %q", tc.value, name, wantName, settingsLandingItemValues(landed))
+			}
 		}
 	}
 
@@ -248,25 +270,119 @@ func TestSettingsRootResultLandsOnItsOwningRow(t *testing.T) {
 	if len(firstRowLandings) == 0 {
 		t.Errorf("no result row exercised the missing-target branch; the first-row fallback is untested")
 	}
-	t.Logf("landings: %d rows; %d named no target row; %d had a target this fixture does not render (%q); %d stopped at an ancestor View (%q)",
-		len(cases), unnamedTargets, len(firstRowLandings), firstRowLandings, len(ancestorLandings), ancestorLandings)
+	if landedByLabel == 0 {
+		t.Errorf("no result row landed through its rendered name; the label target is untested")
+	}
+	// The rows that remain are the ones neither naming can decide, and every
+	// one of them must belong to an understood class. A row outside these
+	// classes that names nothing is a regression, not a degradation.
+	for _, row := range unnameable {
+		if reason := settingsLandingUnnameableReason(row); reason == "" {
+			t.Errorf("%s names no target row and is not a known undecidable class", row)
+		}
+	}
+	t.Logf("landings: %d rows; %d landed by value, %d by rendered name; %d can name no row (%q); %d had a target this fixture does not render (%q); %d stopped at an ancestor View (%q)",
+		len(cases), landedByValue, landedByLabel, len(unnameable), unnameable, len(firstRowLandings), firstRowLandings, len(ancestorLandings), ancestorLandings)
 }
+
+// settingsLandingUnnameableRenderTimeNodes are the catalog nodes that render
+// as exactly one row but whose value and name are both chosen at render time
+// from state the result walk must not read:
+//
+//   - tokens.item.fallback ("Use preset fallback"): the row is
+//     `theme:color-set:<token>:` and renders as "Set <saved preset>", and the
+//     value's prefix would grab the "Terminal default" row in front of it;
+//   - trust.approve ("Trust or refresh approval"): the View renders "Trust this
+//     config" (trust:apply) or "Refresh trust" (trust:refresh) depending on the
+//     on-disk trust state, so there are two candidate rows and no way to choose.
+var settingsLandingUnnameableRenderTimeNodes = []string{
+	settingsNavAppearanceTheme + ".tokens.item.fallback",
+	settingsNavProjectTrust + ".approve",
+}
+
+// settingsLandingUnnameableReason explains why a result row can name no row,
+// or returns "" when it should have. Besides the render-time nodes above, the
+// only class is a passive State node: one catalog entry that stands for several
+// rendered rows and whose label enumerates them ("Effective / Saved / Source"),
+// so there is no single row to land on.
+func settingsLandingUnnameableReason(row string) string {
+	value, _, _ := strings.Cut(row, " [")
+	nodeID, _, ok := parseSettingsRootResultValue(value)
+	if !ok {
+		return ""
+	}
+	if slices.Contains(settingsLandingUnnameableRenderTimeNodes, nodeID) {
+		return "render-time value and name"
+	}
+	node, found := settingsNavByID(nodeID)
+	if found && node.Kind == settingsNavState && node.Value == settingsNoopValue {
+		return "State node standing for several rows"
+	}
+	return ""
+}
+
+// settingsLandingResultPathLeaf is the last segment of the path a result row
+// displays — the name of the row it points at, as the user read it.
+func settingsLandingResultPathLeaf(label string) string {
+	path := strings.TrimSpace(stripSettingsLabelANSI(label))
+	if index := strings.LastIndex(path, settingsRootResultSeparator); index >= 0 {
+		path = path[index+len(settingsRootResultSeparator):]
+	}
+	return strings.TrimSpace(path)
+}
+
+// settingsLandingRowName reads a rendered row's name column back out without
+// borrowing the production parser, so a parser bug cannot make the assertion
+// agree with itself: drop the glyph column, then take everything up to the next
+// column gap.
+func settingsLandingRowName(label string) string {
+	columns := strings.SplitN(stripSettingsLabelANSI(label), "  ", 3)
+	if len(columns) < 2 {
+		return strings.TrimSpace(stripSettingsLabelANSI(label))
+	}
+	return strings.TrimSpace(columns[1])
+}
+
+// settingsLandingBy says which naming reached the row.
+type settingsLandingBy int
+
+const (
+	settingsLandingByValue settingsLandingBy = iota
+	settingsLandingByName
+)
 
 // settingsLandingExpectedIndex resolves the target independently of the
 // production matcher, so a matcher bug cannot make the assertion agree with
-// itself: the exact value wins, otherwise the first row under `target:`.
-func settingsLandingExpectedIndex(options intpicker.Options, target string) (int, bool) {
-	for i, item := range options.Items {
-		if strings.TrimSpace(item.Value) == target {
-			return i, true
+// itself: the exact value wins, otherwise the first row under `target:`,
+// otherwise the one row whose rendered name is exactly the wanted name. Two
+// rows with that name resolve to nothing, like no row at all.
+func settingsLandingExpectedIndex(options intpicker.Options, target, name string) (int, settingsLandingBy, bool) {
+	if target != "" {
+		for i, item := range options.Items {
+			if strings.TrimSpace(item.Value) == target {
+				return i, settingsLandingByValue, true
+			}
+		}
+		for i, item := range options.Items {
+			if strings.HasPrefix(strings.TrimSpace(item.Value), target+":") {
+				return i, settingsLandingByValue, true
+			}
 		}
 	}
+	found := -1
 	for i, item := range options.Items {
-		if strings.HasPrefix(strings.TrimSpace(item.Value), target+":") {
-			return i, true
+		if name == "" || settingsLandingRowName(item.Label) != name {
+			continue
 		}
+		if found >= 0 {
+			return 0, settingsLandingByName, false
+		}
+		found = i
 	}
-	return 0, false
+	if found < 0 {
+		return 0, settingsLandingByName, false
+	}
+	return found, settingsLandingByName, true
 }
 
 // TestSettingsRootResultConfirmAndActionRowsAreFocusedNotRun pins the rows the
@@ -348,6 +464,7 @@ func TestSettingsRootResultAbandonsALandingWhoseChainRowIsGone(t *testing.T) {
 	cmd.nativePicker = runner
 	cmd.pendingNavigation = append(append([]string(nil), landing.Navigation[1:len(landing.Navigation)-1]...), "theme:group:[nonexistent]")
 	cmd.pendingFocus = landing.Focus
+	cmd.pendingFocusLabel = landing.FocusLabel
 	if err := cmd.Run(nil, &strings.Builder{}, &strings.Builder{}); err != nil {
 		t.Fatalf("settings run: %v", err)
 	}
@@ -358,8 +475,8 @@ func TestSettingsRootResultAbandonsALandingWhoseChainRowIsGone(t *testing.T) {
 	if landed.InitialIndexSet {
 		t.Errorf("an abandoned landing still focused index %d in %q", landed.InitialIndex, landed.UI)
 	}
-	if cmd.pendingNavigation != nil || cmd.pendingFocus != "" {
-		t.Errorf("an abandoned landing left pending state: %q / %q", cmd.pendingNavigation, cmd.pendingFocus)
+	if cmd.pendingNavigation != nil || cmd.pendingFocus != "" || cmd.pendingFocusLabel != "" {
+		t.Errorf("an abandoned landing left pending state: %q / %q / %q", cmd.pendingNavigation, cmd.pendingFocus, cmd.pendingFocusLabel)
 	}
 	if len(*writes) > 0 {
 		t.Fatalf("an abandoned landing attempted writes: %q", *writes)
@@ -376,4 +493,96 @@ type countingSettingsQuitRunner struct {
 func (q *countingSettingsQuitRunner) Run(_ []string, _, _ io.Writer) error {
 	q.calls++
 	return nil
+}
+
+// TestSettingsLandingLabelTargetRefusesAmbiguousRows pins the rule that keeps
+// the label target honest: it names a row only when exactly one row renders
+// that name. Two rows with the same name focus neither — and nothing about that
+// is an error, because opening the View on its first row is the same outcome a
+// vanished row already produces.
+func TestSettingsLandingLabelTargetRefusesAmbiguousRows(t *testing.T) {
+	row := func(name, description, value string) intpickercompat.Entry {
+		return intpickercompat.Entry{Label: settingsLabel(settingsGlyphOpen, settingsColorType, name, description), Value: value}
+	}
+	for _, tt := range []struct {
+		name    string
+		entries []intpickercompat.Entry
+		focus   string
+		label   string
+		want    int
+		wantOK  bool
+	}{
+		{
+			name:    "one row carries the name",
+			entries: []intpickercompat.Entry{row("Back", "", settingsBackValue), row("Remove command", "clears it", settingsNoopValue)},
+			label:   "Remove command",
+			want:    1,
+			wantOK:  true,
+		},
+		{
+			name: "two rows carry the same name",
+			entries: []intpickercompat.Entry{
+				row("Back", "", settingsBackValue),
+				row("Remove command", "global scope", settingsNoopValue),
+				row("Remove command", "project scope", settingsNoopValue),
+			},
+			label: "Remove command",
+		},
+		{
+			name: "a description that repeats the name is not the name",
+			entries: []intpickercompat.Entry{
+				row("Back", "", settingsBackValue),
+				row("Storage", "Remove command and its storage", settingsNoopValue),
+			},
+			label: "Remove command",
+		},
+		{
+			name:    "the value target still wins over a row that renders the name",
+			entries: []intpickercompat.Entry{row("Remove command", "", settingsNoopValue), row("Other", "", "hook-remove:project:pre-create")},
+			focus:   "hook-remove:project:pre-create",
+			label:   "Remove command",
+			want:    1,
+			wantOK:  true,
+		},
+		{
+			name:    "no label and no value names nothing",
+			entries: []intpickercompat.Entry{row("Back", "", settingsBackValue)},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			index, ok := settingsOptionsFocusIndex(intpickercompat.Options{Entries: tt.entries}, tt.focus, tt.label)
+			if ok != tt.wantOK {
+				t.Fatalf("matched=%v, want %v (index %d)", ok, tt.wantOK, index)
+			}
+			if ok && index != tt.want {
+				t.Fatalf("index %d, want %d", index, tt.want)
+			}
+		})
+	}
+}
+
+// TestSettingsLandingAmbiguousLabelLeavesTheViewUnfocused drives the same case
+// through the seam the landing actually uses: an ambiguous label appends no
+// `start:pos` binding, so the View opens on its first row, and the pending
+// state is spent either way.
+func TestSettingsLandingAmbiguousLabelLeavesTheViewUnfocused(t *testing.T) {
+	entries := []intpickercompat.Entry{
+		{Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Back", ""), Value: settingsBackValue},
+		{Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Remove command", "global scope"), Value: settingsNoopValue},
+		{Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Remove command", "project scope"), Value: settingsNoopValue},
+	}
+	cmd := &settingsCommand{pendingFocusLabel: "Remove command"}
+	got := cmd.withSettingsLandingFocus(intpickercompat.Options{Entries: entries, Bindings: []string{"esc:abort"}})
+	if len(got.Bindings) != 1 || got.Bindings[0] != "esc:abort" {
+		t.Errorf("an ambiguous label added bindings: %q", got.Bindings)
+	}
+	if cmd.pendingFocus != "" || cmd.pendingFocusLabel != "" {
+		t.Errorf("pending landing state survived: %q / %q", cmd.pendingFocus, cmd.pendingFocusLabel)
+	}
+
+	cmd = &settingsCommand{pendingFocusLabel: "Remove command"}
+	got = cmd.withSettingsLandingFocus(intpickercompat.Options{Entries: entries[:2]})
+	if len(got.Bindings) != 1 || got.Bindings[0] != "start:pos(2)" {
+		t.Errorf("a unique label did not focus its row: %q", got.Bindings)
+	}
 }

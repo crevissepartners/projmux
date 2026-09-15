@@ -65,6 +65,13 @@ type settingsCommand struct {
 	// not mean to.
 	pendingNavigation []string
 	pendingFocus      string
+	// pendingFocusLabel is the same target named a second way: the localized
+	// text the row renders in its name column. Rows whose picker Value is the
+	// shared no-op sentinel, or is only assembled at render time from a saved
+	// path, a resolved hex or a present/absent hook, have no value to match; the
+	// name they display is the name the user searched for, so that is what the
+	// landing matches when the value target finds nothing.
+	pendingFocusLabel string
 }
 
 type settingsFeedback struct {
@@ -178,6 +185,7 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			// is entered here; runPicker replays the rest.
 			c.pendingNavigation = landing.Navigation[1:]
 			c.pendingFocus = landing.Focus
+			c.pendingFocusLabel = landing.FocusLabel
 			if err := c.runSection(landing.Navigation[0], stdout, stderr); err != nil {
 				c.clearSettingsLanding()
 				if errors.Is(err, errSettingsClosed) {
@@ -331,12 +339,13 @@ func (c *settingsCommand) settingsLandingStep(options intpickercompat.Options) (
 // result row is a destination, and a destination that is no longer rendered is
 // not an error.
 func (c *settingsCommand) withSettingsLandingFocus(options intpickercompat.Options) intpickercompat.Options {
-	if c == nil || len(c.pendingNavigation) > 0 || c.pendingFocus == "" {
+	if c == nil || len(c.pendingNavigation) > 0 || (c.pendingFocus == "" && c.pendingFocusLabel == "") {
 		return options
 	}
-	focus := c.pendingFocus
+	focus, label := c.pendingFocus, c.pendingFocusLabel
 	c.pendingFocus = ""
-	index, ok := settingsOptionsFocusIndex(options, focus)
+	c.pendingFocusLabel = ""
+	index, ok := settingsOptionsFocusIndex(options, focus, label)
 	if !ok {
 		return options
 	}
@@ -352,6 +361,7 @@ func (c *settingsCommand) clearSettingsLanding() {
 	}
 	c.pendingNavigation = nil
 	c.pendingFocus = ""
+	c.pendingFocusLabel = ""
 }
 
 func settingsOptionsHaveValue(options intpickercompat.Options, value string) bool {
@@ -365,19 +375,76 @@ func settingsOptionsHaveValue(options intpickercompat.Options, value string) boo
 
 // settingsOptionsFocusIndex resolves a landing target to a row index. An exact
 // value wins; otherwise the target is the stable leading segment of a row whose
-// value carries the state Enter would apply, and the first row under it wins.
-func settingsOptionsFocusIndex(options intpickercompat.Options, focus string) (int, bool) {
-	for i, entry := range options.Entries {
-		if strings.TrimSpace(entry.Value) == focus {
-			return i, true
+// value carries the state Enter would apply, and the first row under it wins;
+// otherwise the row is named by the text it renders.
+//
+// The order matters: a value is what the builder emits, so it identifies the
+// row without reading anything the row displays. The label is the weaker of the
+// two and is only reached when the value target named nothing or is not here.
+func settingsOptionsFocusIndex(options intpickercompat.Options, focus, label string) (int, bool) {
+	if focus != "" {
+		for i, entry := range options.Entries {
+			if strings.TrimSpace(entry.Value) == focus {
+				return i, true
+			}
+		}
+		for i, entry := range options.Entries {
+			if strings.HasPrefix(strings.TrimSpace(entry.Value), focus+":") {
+				return i, true
+			}
 		}
 	}
-	for i, entry := range options.Entries {
-		if strings.HasPrefix(strings.TrimSpace(entry.Value), focus+":") {
-			return i, true
-		}
+	return settingsOptionsLabelFocusIndex(options, label)
+}
+
+// settingsOptionsLabelFocusIndex finds the row whose name column reads exactly
+// like the target label.
+//
+// Only the name column counts, and only an exact match of it: a description is
+// prose that neighbouring rows routinely repeat, and a containment test on the
+// whole row would let "Storage" pick the row that merely mentions storage. Two
+// rows with the same name focus neither — a wrong focus moves the user's cursor
+// onto a control they did not search for, which is worse than opening on the
+// View's first row, so an ambiguous target is dropped exactly like an unnamed
+// one.
+func settingsOptionsLabelFocusIndex(options intpickercompat.Options, label string) (int, bool) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return 0, false
 	}
-	return 0, false
+	found := -1
+	for i, entry := range options.Entries {
+		if settingsRowNameColumn(entry.Label) != label {
+			continue
+		}
+		if found >= 0 {
+			return 0, false
+		}
+		found = i
+	}
+	if found < 0 {
+		return 0, false
+	}
+	return found, true
+}
+
+// settingsRowNameColumn is the name a rendered Settings row displays, with the
+// escapes and the surrounding columns removed.
+//
+// Every row builder in settings_render.go writes the same shape: a one-cell
+// glyph, the two-space gap, the name padded out to the name column, and — when
+// the row has one — the two-space gap again and the description. So the name is
+// what lies between the first and the second gap. This splits on that literal
+// gap rather than measuring cells: the padding is already written into the
+// string, and a second character-width table here would be a second authority
+// on how wide a row is.
+func settingsRowNameColumn(label string) string {
+	plain := stripSettingsLabelANSI(label)
+	if _, rest, ok := strings.Cut(plain, settingsLabelColumnGap); ok {
+		plain = rest
+	}
+	name, _, _ := strings.Cut(plain, settingsLabelColumnGap)
+	return strings.TrimSpace(name)
 }
 
 // settingsRootResultLanding resolves a rendered result row back to its

@@ -114,9 +114,16 @@ type settingsRootResultLanding struct {
 	// exact picker Value where the builder emits a fixed one, and its stable
 	// leading segment where the value carries the state Enter would apply (a
 	// Toggle row's value names the NEXT state, which this walk must not read).
-	// Empty means the walk could not name the row; the View then opens on its
-	// first row.
+	// Empty means the walk could not name the row by value; the landing then
+	// falls back to FocusLabel.
 	Focus string
+	// FocusLabel is the localized text the target row renders in its name
+	// column — the last segment of the path this result row displays. It is the
+	// second way to name the same row, for the nodes whose picker Value is the
+	// shared no-op sentinel or is only decidable at render time. The landing
+	// consults it only after the value target found nothing, and only accepts it
+	// when exactly one rendered row carries that name.
+	FocusLabel string
 }
 
 type settingsRootResultWalker struct {
@@ -164,7 +171,9 @@ func (w *settingsRootResultWalker) emit(child settingsNavNode, label string, pat
 	w.entries = append(w.entries, entry)
 
 	value, named := settingsRootResultRowValue(child, instances)
-	w.landings[entry.Value] = settingsRootResultLanding{Navigation: chain, Focus: value}
+	// The label is already in hand: it is the last segment of the path this row
+	// renders, so the row and its label target cannot drift apart either.
+	w.landings[entry.Value] = settingsRootResultLanding{Navigation: chain, Focus: value, FocusLabel: label}
 	childChain := chain
 	if named && child.Kind == settingsNavView {
 		childChain = settingsRootResultAppend(chain, value)
@@ -472,6 +481,13 @@ func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootRe
 		return settingsSessionStateSidebarStartupPickerDetail, true
 	case settingsNavProjectsSidebar + ".runtime-diagnostics":
 		return settingsRuntimeDiagnosticsVisibilityDetail, true
+	case settingsNavProjectsPins + ".pin-current":
+		// The row's value ends in the current Project's path, which is runtime
+		// state, but the segment in front of it is not and no other row of the
+		// Pinned Projects View starts with it, so the prefix rule names the row
+		// exactly. The label cannot: the catalog calls the node "Pin current
+		// Project" and the builder renders "Add Current Project".
+		return settingsActionPrefixSwitch + "add", true
 
 	// AI -------------------------------------------------------------------
 	case settingsNavAIProviders + ".item":

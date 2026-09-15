@@ -49,6 +49,12 @@ const (
 // Names in this codebase are ASCII so byte-len padding is good enough.
 const settingsLabelNameWidth = 24
 
+// settingsLabelColumnGap separates the columns of a rendered row: glyph, name,
+// description. Every builder below writes it, and settingsRowNameColumn reads
+// the name back out by splitting on it, so the two stay one authority on where
+// a row's name ends.
+const settingsLabelColumnGap = "  "
+
 // settingsLabel formats a single picker row with a glyph + colored name +
 // dim description. An empty glyph falls back to a single space so that rows
 // without a glyph align with rows that use a single-cell glyph (followed by
@@ -74,7 +80,7 @@ func settingsResolvedLabelLocale(locale i18n.Locale, glyph, color, name, descrip
 	} else {
 		b.WriteString(glyph)
 	}
-	b.WriteString("  ")
+	b.WriteString(settingsLabelColumnGap)
 
 	padded := padRight(name, settingsLabelNameWidth)
 	if color == "" {
@@ -86,7 +92,7 @@ func settingsResolvedLabelLocale(locale i18n.Locale, glyph, color, name, descrip
 	}
 
 	if description != "" {
-		b.WriteString("  ")
+		b.WriteString(settingsLabelColumnGap)
 		b.WriteString(settingsColorDim)
 		b.WriteString(description)
 		b.WriteString(settingsColorReset)
@@ -110,12 +116,12 @@ func settingsResolvedLabelDimLocale(locale i18n.Locale, name, description string
 	description = settingsCatalogExactTextOrFallbackLocale(locale, description)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
-	b.WriteString("  ")
+	b.WriteString(settingsLabelColumnGap)
 	b.WriteString(settingsColorDim)
 	b.WriteString(padRight(name, settingsLabelNameWidth))
 	b.WriteString(settingsColorReset)
 	if description != "" {
-		b.WriteString("  ")
+		b.WriteString(settingsLabelColumnGap)
 		b.WriteString(settingsColorDim)
 		b.WriteString(description)
 		b.WriteString(settingsColorReset)
@@ -143,18 +149,18 @@ func settingsResolvedLabelInfoLocale(locale i18n.Locale, name, value, source str
 	source = settingsCatalogExactTextOrFallbackLocale(locale, source)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
-	b.WriteString("  ")
+	b.WriteString(settingsLabelColumnGap)
 	b.WriteString(settingsColorInfo)
 	b.WriteString(padRight(name, settingsLabelNameWidth))
 	b.WriteString(settingsColorReset)
 	if value != "" {
-		b.WriteString("  ")
+		b.WriteString(settingsLabelColumnGap)
 		b.WriteString(settingsColorActive)
 		b.WriteString(value)
 		b.WriteString(settingsColorReset)
 	}
 	if source != "" {
-		b.WriteString("  ")
+		b.WriteString(settingsLabelColumnGap)
 		b.WriteString(settingsColorDim)
 		b.WriteString("(" + source + ")")
 		b.WriteString(settingsColorReset)
