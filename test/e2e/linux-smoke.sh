@@ -4954,10 +4954,19 @@ if [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_name
   echo "rename/rebind e2e immediate mirrors did not converge" >&2
   exit 1
 fi
+# The Window tab follows the committed Registry name inside the runtime; the
+# session name and the Pane title are still off limits to an explicit rename.
+if [[ "$(rename_tmux display-message -p -t "$rename_window" '#{window_name}')" != stable-window ]]; then
+  echo "rename window did not converge the raw tmux window_name" >&2
+  exit 1
+fi
+if [[ "$rename_window_name_before" == stable-window ]]; then
+  echo "rename/rebind e2e fixture started at the renamed tab name" >&2
+  exit 1
+fi
 if [[ "$(rename_tmux display-message -p -t "$rename_session" '#{session_name}')" != "$rename_session_name_before" ]] || \
-  [[ "$(rename_tmux display-message -p -t "$rename_window" '#{window_name}')" != "$rename_window_name_before" ]] || \
   [[ "$(rename_tmux display-message -p -t "$rename_pane" '#{pane_title}')" != "$rename_pane_title_before" ]]; then
-  echo "rename/rebind changed a raw runtime session/window/pane name" >&2
+  echo "rename/rebind changed a raw runtime session/pane name" >&2
   exit 1
 fi
 

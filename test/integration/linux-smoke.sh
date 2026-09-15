@@ -2237,8 +2237,9 @@ PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$prima
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
   "$bin" rename window "uid:$primary_window_uid" --name stable-window >"$PROJMUX_SMOKE_WORKDIR/reconcile-rename-window.out"
 rename_window_immediate="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -wqv -t "=$PROJMUX_RECONCILE_SESSION:0" @projmux_window_name)"
-if [[ "$rename_window_immediate" != stable-window ]]; then
-  echo "Window stable-name mirror did not converge immediately: got=$rename_window_immediate want=stable-window" >&2
+rename_window_tab="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION:0" '#{window_name}')"
+if [[ "$rename_window_immediate" != stable-window ]] || [[ "$rename_window_tab" != stable-window ]]; then
+  echo "Window name did not converge immediately: mirror=$rename_window_immediate tab=$rename_window_tab want=stable-window" >&2
   exit 1
 fi
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
@@ -2256,10 +2257,15 @@ if [[ "$rename_project_mirror" != stable-project ]] || \
   echo "rename/rebind integration mirrors did not converge: project=$rename_project_mirror window=$rename_window_mirror pane=$rename_pane_mirror root=$rebind_project_mirror" >&2
   exit 1
 fi
+# The Window tab is the one raw runtime name an explicit rename owns; the
+# session name and the Pane title are still off limits.
 if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION" '#{session_name}')" != "$primary_session_name_before" ]] || \
-  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION:0" '#{window_name}')" != "$primary_window_name_before" ]] || \
   [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION:0.0" '#{pane_title}')" != "$primary_pane_title_before" ]]; then
   echo "rename/rebind integration changed a raw runtime name" >&2
+  exit 1
+fi
+if [[ "$primary_window_name_before" == stable-window ]]; then
+  echo "rename/rebind integration fixture started at the renamed tab name" >&2
   exit 1
 fi
 resource_tmux_snapshot "$PROJMUX_RECONCILE_SECONDARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.after"
