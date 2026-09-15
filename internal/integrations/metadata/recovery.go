@@ -499,25 +499,22 @@ func classifyRegistryBytes(info *RegistryFileInfo, data []byte, migrations corem
 		info.Detail = fmt.Sprintf("%s holds no content", info.Path)
 		return
 	}
-	var envelope struct {
-		SchemaVersion int `json:"schemaVersion"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
+	// The same decoder as the read path: the envelope is classified before the
+	// body is decoded, so a version this build does not know is refused without
+	// any field of it being reinterpreted.
+	registry, version, stage, err := decodeRegistryDocument(data, migrations)
+	if stage == registryEnvelopeMalformed {
 		info.State = RegistryStateMalformed
 		info.Detail = fmt.Sprintf("%s is not decodable JSON: %v", info.Path, err)
 		return
 	}
-	info.SchemaVersion = envelope.SchemaVersion
-	// Classify the envelope before decoding the body, exactly as the read path
-	// does: a version this build does not know must be refused without any
-	// field of it being reinterpreted.
-	if _, err := coremetadata.ClassifySchemaVersionWith(migrations, envelope.SchemaVersion); err != nil {
+	info.SchemaVersion = version
+	switch stage {
+	case registrySchemaRefused:
 		info.State = RegistryStateSchemaTooNew
 		info.Detail = fmt.Sprintf("%s: %v", info.Path, err)
 		return
-	}
-	var registry coremetadata.Registry
-	if err := json.Unmarshal(data, &registry); err != nil {
+	case registryBodyMalformed:
 		info.State = RegistryStateMalformed
 		info.Detail = fmt.Sprintf("%s does not decode into a registry: %v", info.Path, err)
 		return

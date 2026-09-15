@@ -2127,6 +2127,37 @@ separate decision this measurement exists to inform.
   both the read path and the classifier in one `-fuzz` run. The legacy copies
   are the reference and are not kept in step with the product.
 
+### Registry single decode tests
+
+- `make test`: `TestScanTopLevelSchemaVersion` pins the allocation-free
+  top-level `schemaVersion` scanner that lets a current or migratable Registry
+  document be decoded by encoding/json once instead of twice. Rows it must read
+  exactly: the key first, in the middle, last, or absent; `schemaVersion` only
+  inside child objects, arrays, and string values; escaped quotes and
+  backslashes and brackets inside skipped strings; case-variant keys;
+  duplicate keys with the last one winning; `null` alone and after an integer;
+  zero, negative, `-0`, and the int range limits. Every such row is also held
+  to `json.Valid` and to the real envelope decode. Rows it must leave to
+  encoding/json: non-object top levels, a UTF-8 BOM, float and exponent
+  values, string, bool, object, and array values, integer overflow, escaped
+  and non-ASCII keys (including one that Unicode-folds to `schemaVersion`),
+  and malformed separators or trailing bytes.
+- `make test`: `FuzzScanTopLevelSchemaVersionMatchesEnvelopeDecode` holds the
+  scanner to its contract: for any valid JSON input on which it answers, the
+  envelope decode succeeds with the same version. It seeds every Registry read
+  fence matrix row and every scanner table row.
+- `make test`: `TestDecodeRegistryDocumentStages` pins where
+  `decodeRegistryDocument` stops: newer, negative, zero, absent, and `null`
+  versions with a body type error behind them are refused as schema errors
+  rather than malformed; a known version followed by a syntax error falls back
+  to the envelope decode and reports malformed JSON with version 0; a body
+  type error behind a current or migration version is a body decode failure
+  carrying that version; and valid documents, including one whose version key
+  is escaped, decode.
+- The Registry read result fence tests above are the equivalence gate for this
+  decoder: the scanner only selects the single-decode path, and every refusal
+  and error is still produced by the envelope-then-body sequence.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

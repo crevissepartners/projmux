@@ -607,29 +607,21 @@ func (s *Store) readWithoutRepairWithReport() (coremetadata.Registry, int, bool,
 		return registry, version, existed, coremetadata.MigrationReport{}, absentErr
 	}
 
-	var envelope struct {
-		SchemaVersion int `json:"schemaVersion"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		return coremetadata.Registry{}, 0, true, coremetadata.MigrationReport{}, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
-	}
-	// Classify before decoding the body so an unknown envelope is refused
-	// without this build reinterpreting fields it does not understand. An
-	// absent schemaVersion decodes as 0, which is unknown rather than
-	// pre-release, so it is refused here too.
-	if _, err := coremetadata.ClassifySchemaVersionWith(s.migrations, envelope.SchemaVersion); err != nil {
-		return coremetadata.Registry{}, envelope.SchemaVersion, true, coremetadata.MigrationReport{}, fmt.Errorf("metadata: %s: %w", s.path, err)
-	}
-
-	var registry coremetadata.Registry
-	if err := json.Unmarshal(data, &registry); err != nil {
-		return coremetadata.Registry{}, envelope.SchemaVersion, true, coremetadata.MigrationReport{}, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
+	// decodeRegistryDocument classifies the envelope before it decodes the
+	// body, so an unknown envelope is refused here without any body field
+	// being reinterpreted.
+	registry, version, stage, err := decodeRegistryDocument(data, s.migrations)
+	switch stage {
+	case registryEnvelopeMalformed, registryBodyMalformed:
+		return coremetadata.Registry{}, version, true, coremetadata.MigrationReport{}, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
+	case registrySchemaRefused:
+		return coremetadata.Registry{}, version, true, coremetadata.MigrationReport{}, fmt.Errorf("metadata: %s: %w", s.path, err)
 	}
 	migrated, _, report, err := coremetadata.MigrateRegistryWithEnvironment(s.migrations, registry, s.migrationEnv)
 	if err != nil {
-		return coremetadata.Registry{}, envelope.SchemaVersion, true, report, fmt.Errorf("metadata: %s: %w", s.path, err)
+		return coremetadata.Registry{}, version, true, report, fmt.Errorf("metadata: %s: %w", s.path, err)
 	}
-	return migrated, envelope.SchemaVersion, true, report, nil
+	return migrated, version, true, report, nil
 }
 
 // absentRegistry answers the two ways registry.json can carry no content. Which
