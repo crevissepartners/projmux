@@ -1,11 +1,13 @@
 package usagecmd
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/usage"
+	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -45,10 +47,13 @@ func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.S
 		return
 	}
 	for _, adapterErr := range adapterErrs {
+		provider := usageDiagnosticsProvider(adapterErr.Model)
 		failure := diagnostics.UsageFailureCollect
 		source := diagnostics.UsageSource("")
 		if adapterErr.Partial() {
 			failure = diagnostics.UsageFailureRowsSkipped
+		} else if provider == diagnostics.ProviderClaude {
+			failure = claudeCollectFailure(adapterErr.Err)
 		}
 		if snapshot, ok := usageDiagnosticSnapshot(snapshots, adapterErr.Model); ok {
 			if adapterErr.Partial() {
@@ -59,7 +64,7 @@ func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.S
 				failure = usageDiagnosticsReason(snapshot.StaleReason)
 			}
 		}
-		journal.RecordCollectOutcome(usageDiagnosticsProvider(adapterErr.Model), source, failure, started)
+		journal.RecordCollectOutcome(provider, source, failure, started)
 	}
 	seenFallback := map[string]bool{}
 	for _, snapshot := range snapshots {
@@ -73,6 +78,34 @@ func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.S
 			usageDiagnosticsReason(snapshot.FallbackReason), started,
 		)
 	}
+}
+
+// claudeCollectFailures maps each closed Claude failure class onto its journal
+// token. Collect attaches exactly one class to a failing return, so the order
+// only matters if that ever stops being true.
+var claudeCollectFailures = []struct {
+	class   error
+	failure diagnostics.UsageFailure
+}{
+	{claudeadapter.ErrCredentialsUnavailable, diagnostics.UsageFailureCredentialsUnavailable},
+	{claudeadapter.ErrCredentialsTokenEmpty, diagnostics.UsageFailureCredentialsTokenEmpty},
+	{claudeadapter.ErrAuthRejected, diagnostics.UsageFailureAuthRejected},
+	{claudeadapter.ErrRateLimited, diagnostics.UsageFailureRateLimited},
+	{claudeadapter.ErrHTTPStatus, diagnostics.UsageFailureHTTPStatus},
+	{claudeadapter.ErrNetwork, diagnostics.UsageFailureNetwork},
+	{claudeadapter.ErrResponseInvalid, diagnostics.UsageFailureResponseInvalid},
+}
+
+// claudeCollectFailure names why a whole Claude collection failed. It matches
+// the adapter's failure classes with errors.Is only, never the message text;
+// an error without a class keeps the generic collect-failed token.
+func claudeCollectFailure(err error) diagnostics.UsageFailure {
+	for _, entry := range claudeCollectFailures {
+		if errors.Is(err, entry.class) {
+			return entry.failure
+		}
+	}
+	return diagnostics.UsageFailureCollect
 }
 
 func usageDiagnosticSnapshot(snapshots []usage.Snapshot, model string) (usage.Snapshot, bool) {

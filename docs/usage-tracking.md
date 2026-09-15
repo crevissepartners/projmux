@@ -329,7 +329,19 @@ When a collection fails, the failure is visible in three places:
 
    The row carries the provider and closed source/failure enums and nothing else:
    `collect-failed` (whole-adapter failure, `level=error`) or `rows-skipped`
-   (partial failure, `level=info`). Codex rollout fallback records
+   (partial failure, `level=info`). A whole Claude failure names its class in
+   place of `collect-failed`, also at `level=error`:
+   `credentials-unavailable` (no credentials path resolved, or the credentials
+   file is missing, unreadable, or unparseable), `credentials-token-empty`,
+   `auth-rejected` (a 401 the stored refresh token could not recover from: no
+   refresh token, a failed refresh round-trip, or another 401 for the refreshed
+   token), `rate-limited` (429), `http-status` (any other non-200 response),
+   `network-error` (the request could not be built or sent, or its body could
+   not be read), or `response-invalid` (a 200 body that did not parse). The
+   class comes from the adapter's typed error, never from its message text. A
+   failure without a class stays `collect-failed`, and so does every whole
+   Codex or Antigravity failure. Status codes, paths, upstream bodies, and
+   credentials never reach the row. Codex rollout fallback records
    `source=rollout` plus its closed fallback reason; retained data records
    `source=last-known-good` plus its closed stale reason. A healthy native
    collection writes no row at all. Identical `(provider, source, failure)`

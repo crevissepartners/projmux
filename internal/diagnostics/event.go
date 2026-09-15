@@ -210,6 +210,9 @@ var (
 		string(UsageFailureAppServerUnavailable), string(UsageFailureAppServerUnsupported),
 		string(UsageFailureAccountUnsupported), string(UsageFailureAppServerTimeout),
 		string(UsageFailureAppServerProtocol), string(UsageFailureAppServerDisconnected),
+		string(UsageFailureCredentialsUnavailable), string(UsageFailureCredentialsTokenEmpty),
+		string(UsageFailureAuthRejected), string(UsageFailureRateLimited),
+		string(UsageFailureHTTPStatus), string(UsageFailureNetwork), string(UsageFailureResponseInvalid),
 	)
 	allowedUsageSources = stringSet(
 		string(UsageSourceAppServer), string(UsageSourceRollout), string(UsageSourceLastKnownGood),

@@ -23,7 +23,42 @@ const (
 	UsageFailureAppServerTimeout      UsageFailure = "app-server-timeout"
 	UsageFailureAppServerProtocol     UsageFailure = "app-server-protocol-error"
 	UsageFailureAppServerDisconnected UsageFailure = "app-server-disconnected"
+
+	// Closed classes of a whole Claude collection failure. Each one replaces
+	// collect-failed for Claude when the adapter named why nothing refreshed;
+	// a Claude failure without a class still records collect-failed.
+	//
+	// UsageFailureCredentialsUnavailable covers an unresolved credentials
+	// path and a credentials file that is missing, unreadable, or unparseable.
+	UsageFailureCredentialsUnavailable UsageFailure = "credentials-unavailable"
+	// UsageFailureCredentialsTokenEmpty is a credentials file without an
+	// access token.
+	UsageFailureCredentialsTokenEmpty UsageFailure = "credentials-token-empty"
+	// UsageFailureAuthRejected is a 401 the stored refresh token could not
+	// recover from, including a 401 for the refreshed token.
+	UsageFailureAuthRejected UsageFailure = "auth-rejected"
+	// UsageFailureRateLimited is a 429 that started or extended a backoff.
+	UsageFailureRateLimited UsageFailure = "rate-limited"
+	// UsageFailureHTTPStatus is any other non-200 usage response.
+	UsageFailureHTTPStatus UsageFailure = "http-status"
+	// UsageFailureNetwork is a usage request that could not be built or sent,
+	// or whose body could not be read.
+	UsageFailureNetwork UsageFailure = "network-error"
+	// UsageFailureResponseInvalid is a 200 usage response that did not parse.
+	UsageFailureResponseInvalid UsageFailure = "response-invalid"
 )
+
+// usageWholeCollectFailure reports whether failure means the adapter refreshed
+// nothing at all: the generic collect-failed or one of its closed classes.
+func usageWholeCollectFailure(failure UsageFailure) bool {
+	switch failure {
+	case UsageFailureCollect, UsageFailureCredentialsUnavailable, UsageFailureCredentialsTokenEmpty,
+		UsageFailureAuthRejected, UsageFailureRateLimited, UsageFailureHTTPStatus,
+		UsageFailureNetwork, UsageFailureResponseInvalid:
+		return true
+	}
+	return false
+}
 
 type UsageSource string
 
@@ -103,7 +138,7 @@ func (r *UsageRecorder) RecordCollectOutcome(provider Provider, source UsageSour
 		Result: "success", DurationMS: max(now.Sub(started).Milliseconds(), 0), RunID: r.runID, Version: r.version,
 		MuxBackend: r.muxBackend, Provider: string(provider), Source: string(source), Failure: string(failure),
 	}
-	if failure == UsageFailureCollect || source == UsageSourceLastKnownGood {
+	if usageWholeCollectFailure(failure) || source == UsageSourceLastKnownGood {
 		event.Level, event.Result, event.Kind = "error", "error", "runtime"
 	}
 	if r.writer != nil {
@@ -116,6 +151,13 @@ func usageTupleMatches(event Event) bool {
 	case UsageFailureCollect:
 		// A dropped collection is a runtime error: nothing refreshed.
 		return event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
+	case UsageFailureCredentialsUnavailable, UsageFailureCredentialsTokenEmpty,
+		UsageFailureAuthRejected, UsageFailureRateLimited, UsageFailureHTTPStatus,
+		UsageFailureNetwork, UsageFailureResponseInvalid:
+		// A classified whole collection failure is the same runtime error as
+		// collect-failed. It only exists on the sourceless path: retained or
+		// fallback data records its own closed reason instead.
+		return event.Source == "" && event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
 	case UsageFailureRowsSkipped:
 		// A partial collection still refreshed the healthy rows, so it stays
 		// an informational anomaly rather than a command-level error.

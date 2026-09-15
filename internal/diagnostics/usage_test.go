@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -89,6 +90,86 @@ func TestUsageRecorderClosedSourceFallbackAndStaleReasons(t *testing.T) {
 			}
 			if _, err := sanitizeEvent(event, "/private/home"); err != nil {
 				t.Fatalf("closed usage event rejected: %v", err)
+			}
+		})
+	}
+}
+
+// TestUsageRecorderClaudeWholeCollectFailureClasses pins each closed Claude
+// whole-failure token: the same runtime error severity as collect-failed, a
+// matching tuple, acceptance by the sanitizer and the store, and rejection of
+// any variant with a source or an informational severity.
+func TestUsageRecorderClaudeWholeCollectFailureClasses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		failure UsageFailure
+		token   string
+	}{
+		{UsageFailureCredentialsUnavailable, "credentials-unavailable"},
+		{UsageFailureCredentialsTokenEmpty, "credentials-token-empty"},
+		{UsageFailureAuthRejected, "auth-rejected"},
+		{UsageFailureRateLimited, "rate-limited"},
+		{UsageFailureHTTPStatus, "http-status"},
+		{UsageFailureNetwork, "network-error"},
+		{UsageFailureResponseInvalid, "response-invalid"},
+	}
+	for _, test := range tests {
+		t.Run(test.token, func(t *testing.T) {
+			t.Parallel()
+			if string(test.failure) != test.token {
+				t.Fatalf("token = %q, want %q", test.failure, test.token)
+			}
+			if _, ok := allowedUsageFailures[test.token]; !ok {
+				t.Fatalf("%q missing from allowedUsageFailures", test.token)
+			}
+			if !usageWholeCollectFailure(test.failure) {
+				t.Fatalf("%q is not a whole collection failure", test.token)
+			}
+
+			writer := &recordingEventWriter{}
+			recorder := NewUsageRecorder(writer, "usage-claude-class", "0.10.0", MuxBackend())
+			recorder.RecordCollectOutcome(ProviderClaude, "", test.failure, time.Now())
+			events := writer.snapshot()
+			if len(events) != 1 {
+				t.Fatalf("events = %#v, want one", events)
+			}
+			event := events[0]
+			if event.Provider != string(ProviderClaude) || event.Failure != test.token || event.Source != "" ||
+				event.Level != "error" || event.Result != "error" || event.Kind != "runtime" {
+				t.Fatalf("classified event = %#v, want claude/%s error/error/runtime without source", event, test.token)
+			}
+			if !usageTupleMatches(event) {
+				t.Fatalf("usageTupleMatches rejected %#v", event)
+			}
+			if _, err := sanitizeEvent(event, "/private/home"); err != nil {
+				t.Fatalf("sanitizeEvent() error = %v", err)
+			}
+
+			store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
+			if err := store.Append(event); err != nil {
+				t.Fatalf("store append: %v", err)
+			}
+			stored, err := store.Read()
+			if err != nil {
+				t.Fatalf("store read: %v", err)
+			}
+			if len(stored) != 1 || stored[0].Failure != test.token || stored[0].Provider != string(ProviderClaude) ||
+				stored[0].Level != "error" || stored[0].Result != "error" || stored[0].Kind != "runtime" || stored[0].Source != "" {
+				t.Fatalf("store round trip = %#v", stored)
+			}
+
+			for name, mutate := range map[string]func(*Event){
+				"informational severity": func(e *Event) { e.Level, e.Result, e.Kind = "info", "success", "" },
+				"rollout source":         func(e *Event) { e.Source = string(UsageSourceRollout) },
+				"last-known-good source": func(e *Event) { e.Source = string(UsageSourceLastKnownGood) },
+				"free-form message":      func(e *Event) { e.Message = "claude: usage endpoint returned status 401" },
+			} {
+				variant := event
+				mutate(&variant)
+				if _, err := sanitizeEvent(variant, ""); err == nil {
+					t.Fatalf("%s: sanitizeEvent accepted %#v", name, variant)
+				}
 			}
 		})
 	}

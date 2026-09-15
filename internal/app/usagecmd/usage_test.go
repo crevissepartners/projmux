@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/usage"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
@@ -1403,6 +1404,8 @@ func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
 		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	})
 	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
+	journalFn, journal := newTestUsageJournal(t)
+	c.journalFn = journalFn
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -1412,6 +1415,8 @@ func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty (adapter failures must be silent)", stderr.String())
 	}
+	// Silent on stderr, but still recorded where it can be found later.
+	requireSingleUsageJournalRow(t, journal, diagnostics.ProviderClaude, diagnostics.UsageFailureCollect)
 }
 
 func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
@@ -1438,6 +1443,8 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	})
 	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
+	journalFn, journal := newTestUsageJournal(t)
+	c.journalFn = journalFn
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -1447,6 +1454,7 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 	if !strings.Contains(stderr.String(), "network down") {
 		t.Fatalf("stderr = %q, want adapter error surfaced under PROJMUX_USAGE_DEBUG", stderr.String())
 	}
+	requireSingleUsageJournalRow(t, journal, diagnostics.ProviderClaude, diagnostics.UsageFailureCollect)
 }
 
 func TestFormatStatusUsageHUDConfinesTildeToAgeIndicator(t *testing.T) {

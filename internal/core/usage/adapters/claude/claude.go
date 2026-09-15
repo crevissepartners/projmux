@@ -208,32 +208,32 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 	a.mu.Unlock()
 
 	if a.credentialsPath == "" {
-		return nil, errors.New("claude: no credentials path resolved")
+		return nil, classify(ErrCredentialsUnavailable, errors.New("claude: no credentials path resolved"))
 	}
 	creds, raw, err := loadCredentials(a.credentialsPath)
 	if err != nil {
-		return nil, err
+		return nil, classify(ErrCredentialsUnavailable, err)
 	}
 	if creds.token() == "" {
-		return nil, errors.New("claude: empty access token")
+		return nil, classify(ErrCredentialsTokenEmpty, errors.New("claude: empty access token"))
 	}
 
 	body, status, retryAfter, err := a.fetchUsage(ctx, creds.token())
 	if err != nil {
-		return nil, err
+		return nil, classify(ErrNetwork, err)
 	}
 	if status == http.StatusTooManyRequests {
 		a.recordBackoff(now, retryAfter)
-		return nil, fmt.Errorf("claude: usage endpoint returned status 429 (backing off)")
+		return nil, classify(ErrRateLimited, fmt.Errorf("claude: usage endpoint returned status 429 (backing off)"))
 	}
 	if status == http.StatusUnauthorized {
 		// Try a single refresh round-trip. If that fails, give up.
 		if creds.refresh() == "" {
-			return nil, errors.New("claude: 401 and no refresh token available")
+			return nil, classify(ErrAuthRejected, errors.New("claude: 401 and no refresh token available"))
 		}
 		newAccess, newRefresh, expiresIn, refreshErr := a.refreshToken(ctx, creds.refresh())
 		if refreshErr != nil {
-			return nil, fmt.Errorf("claude: token refresh failed: %w", refreshErr)
+			return nil, classify(ErrAuthRejected, fmt.Errorf("claude: token refresh failed: %w", refreshErr))
 		}
 		// Persist the rotated tokens, preserving the file's original
 		// schema. Failure to write back is non-fatal: the new access
@@ -242,20 +242,20 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 		_ = writeCredentials(a.credentialsPath, raw, newAccess, newRefresh, expiresIn, a.now())
 		body, status, retryAfter, err = a.fetchUsage(ctx, newAccess)
 		if err != nil {
-			return nil, err
+			return nil, classify(ErrNetwork, err)
 		}
 		if status == http.StatusTooManyRequests {
 			a.recordBackoff(now, retryAfter)
-			return nil, fmt.Errorf("claude: usage endpoint returned status 429 (backing off)")
+			return nil, classify(ErrRateLimited, fmt.Errorf("claude: usage endpoint returned status 429 (backing off)"))
 		}
 	}
 	if status != http.StatusOK {
-		return nil, fmt.Errorf("claude: usage endpoint returned status %d", status)
+		return nil, usageStatusFailure(status, fmt.Errorf("claude: usage endpoint returned status %d", status))
 	}
 
 	resp, err := parseUsageResponse(body)
 	if err != nil {
-		return nil, err
+		return nil, classify(ErrResponseInvalid, err)
 	}
 	// Reset backoff on a clean 200.
 	a.mu.Lock()
