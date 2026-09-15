@@ -886,6 +886,8 @@ var uiTextKeys = map[string]i18n.Key{
 	"content-free runtime authority":                 "settings.desc.codex_content_free_authority",
 	"raw overrides below are preserved":              "settings.desc.codex_raw_overrides_preserved",
 	"fallback only":                                  "settings.text.codex_fallback_only",
+	"New splits start in":                            "settings.text.split_cwd_from_row",
+	"Pane directory is used only inside the Project root; the CLI does not follow this setting": "settings.desc.split_cwd_from",
 }
 
 // settingsTextKeys preserves the historical name for the shared registry so

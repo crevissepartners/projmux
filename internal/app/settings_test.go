@@ -2546,10 +2546,13 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 	if !hasEntryValue(root, settingsAIResumePicker) {
 		t.Fatalf("AI root entries = %#v, want Resume picker row", root)
 	}
+	if !hasEntryValue(root, settingsAISplitCWDFrom) {
+		t.Fatalf("AI root entries = %#v, want New splits start in row", root)
+	}
 	if hasEntryValue(root, settingsAINotifyDiagnostics) {
 		t.Fatalf("AI root entries = %#v, want Notify integrations moved to Notifications", root)
 	}
-	if got, want := len(root), 4; got != want {
+	if got, want := len(root), 5; got != want {
 		t.Fatalf("AI root entries = %#v, want back row plus AI detail rows", root)
 	}
 	for _, want := range []string{

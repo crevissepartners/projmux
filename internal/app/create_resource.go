@@ -397,7 +397,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			"target exactly the Project scope's spec.primaryWindowRef Window; what a --project scope with no Window selector already means")
 		fs.StringVar(&out.placement, "placement", defaultPlacement, "split placement: "+strings.Join(placementDirections, "|"))
 		fs.StringVar(&out.cwdFrom, splitCWDFromFlag, "",
-			"split start directory: project|pane; defaults to [ai] split_cwd_from, then project")
+			"split start directory: project|pane; defaults to project. The CLI does not read [ai] split_cwd_from")
 	}
 	fs.StringVar(&out.name, "name", "", "explicit Projmux metadata.name for the created resource")
 	fs.Var(&out.labels, "label", "repeatable creation label: key=value")
@@ -701,7 +701,9 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 		if err := c.refuseMissingRoot(project); err != nil {
 			return err
 		}
-		source := c.splitCWDSource(flags.cwdFrom, project.Spec.Root)
+		// A CLI split follows its own argv: only --cwd-from decides, and no
+		// config file is opened. See cliSplitCWDSource.
+		source := cliSplitCWDSource(flags.cwdFrom)
 
 		// Full preflight plus the metadata half of the Window ensure. Every
 		// target Window and every anchor Pane is fixed, and every Window this

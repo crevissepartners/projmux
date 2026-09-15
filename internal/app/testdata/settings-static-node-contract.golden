@@ -22,6 +22,7 @@ global.projects.candidate-pins|parent=global.projects|value=project:candidate-pi
 global.projects.sidebar|parent=global.projects|value=projects:sidebar|axis=1|nav=View|entry=navigation|owner=project-picker|label=Project Sidebar|key=settings.text.project_sidebar
 global.ai|parent=global|value=section:ai|axis=1|nav=View|entry=navigation|owner=root|label=AI|key=settings.node.ai
 global.ai.launch-target|parent=global.ai|value=ai-default-mode|axis=1|nav=Choice|entry=navigation|owner=ai|label=Default launch target|key=settings.text.default_launch_target
+global.ai.split-cwd|parent=global.ai|value=ai-split-cwd-from|axis=1|nav=Choice|entry=navigation|owner=ai|label=New splits start in|key=settings.text.split_cwd_from_row
 global.ai.enabled-providers|parent=global.ai|value=ai-enabled-agents|axis=1|nav=View|entry=navigation|owner=ai|label=Enabled providers|key=settings.text.enabled_providers
 global.ai.resume-picker|parent=global.ai|value=ai-resume-picker|axis=1|nav=View|entry=navigation|owner=ai|label=Agent Resume Picker|key=settings.text.agent_resume_picker
 global.ai.resume-picker.limit|parent=global.ai.resume-picker|value=ai-resume-picker-limit|axis=1|nav=Choice|entry=navigation|owner=ai|label=Picker limit|key=settings.text.ai_resume_picker_limit_row

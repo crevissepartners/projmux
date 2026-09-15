@@ -261,9 +261,18 @@ shortcuts, not on `create window` or `create pane`.
 default) starts it in the owner Project root. `pane` starts it in the active
 Pane's live directory while that directory is inside the owner Project root, and
 otherwise starts it in the root and says so in one stderr line; it never
-refuses. The flag overrides the `[ai] split_cwd_from` config for one call and
-cannot be combined with `--cwd`, which names an Agent working directory
-outright. See [configuration.md](configuration.md).
+refuses. The flag cannot be combined with `--cwd`, which names an Agent working
+directory outright.
+
+On the CLI the flag is the only input: `create pane`, `create agent`, and the
+provider shortcuts never read `[ai] split_cwd_from`, so with no `--cwd-from`
+they always start in the owner Project root, whatever the global or project
+config says. A CLI result is determined by its arguments, and scripts must not
+change behavior because someone changed a Settings value. That config (and the
+`AI > New splits start in` Settings row that writes it) only decides splits
+started from the UI -- keybinding splits, the launcher, the resume picker's new
+row, and the Pane menu -- in the order flag > project config > global config >
+default. See [configuration.md](configuration.md).
 
 The scope resolves in two branches:
 

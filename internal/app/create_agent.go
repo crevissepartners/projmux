@@ -220,11 +220,12 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		if err != nil {
 			return err
 		}
-		// An explicit --cwd names the working directory outright and never
-		// reads the split start config.
+		// An explicit --cwd names the working directory outright, so it wins
+		// over --cwd-from. Otherwise this CLI route follows its own argv:
+		// only --cwd-from decides, and no config file is opened.
 		source := splitCWDFromProject
 		if !flags.cwdSet {
-			source = c.splitCWDSource(flags.cwdFrom, project.Spec.Root)
+			source = cliSplitCWDSource(flags.cwdFrom)
 		}
 
 		// The declared <create, Agent> cell is this route's fan-out cardinality:

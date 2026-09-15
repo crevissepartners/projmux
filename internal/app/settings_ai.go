@@ -35,6 +35,10 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 			if err := c.runAIDefaultModeSection(stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsAISplitCWDFrom:
+			if err := c.runAISplitCWDFromSection(stdout, stderr); err != nil {
+				return err
+			}
 		case action == settingsAIEnabledAgents:
 			if err := c.runAIEnabledAgentsSection(stdout, stderr); err != nil {
 				return err
@@ -430,6 +434,11 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 			Label:     settingsNodeRowLabelLocale(locale, settingsNavAI+".launch-target", settingsGlyphOpen, settingsColorType, defaultDesc),
 			Value:     settingsAIDefaultMode,
 			SearchKey: "default launch target agent provider claude codex antigravity shell pane choose at launch",
+		},
+		intpickercompat.Entry{
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavAISplitCWD, settingsGlyphOpen, settingsColorType, c.splitCWDFromSummary()),
+			Value:     settingsAISplitCWDFrom,
+			SearchKey: "new splits start in split start directory split_cwd_from project root current pane directory cwd-from",
 		},
 		intpickercompat.Entry{
 			Label:     settingsNodeRowLabelLocale(locale, settingsNavAIProviders, settingsGlyphOpen, settingsColorType, c.aiEnabledAgentsSummary()),

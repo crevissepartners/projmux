@@ -38,20 +38,81 @@ func parseSplitCWDSource(raw string) (splitCWDSource, bool) {
 	}
 }
 
-// resolveSplitCWDSource picks the split start source: an explicit --cwd-from,
-// then `[ai] split_cwd_from` in the owner Project root's `.projmux/config.toml`,
-// then the global config, then project. The project tier is always read from
-// the owner Project root, never from a Pane directory, so where a Pane sits
-// cannot change which config decides. A tier whose value is missing, unknown,
-// or unreadable is skipped. There is no environment tier.
-func resolveSplitCWDSource(flagValue, projectRoot string, homeDir func() (string, error), lookupEnv func(string) string) splitCWDSource {
+// splitCWDOrigin names which tier decided a UI split's start source. It is a
+// display concern: only the UI surfaces (the Settings row) report it, and the
+// CLI has no tier to report.
+type splitCWDOrigin string
+
+const (
+	// splitCWDOriginFlag is an explicit per-call value.
+	splitCWDOriginFlag splitCWDOrigin = "flag"
+	// splitCWDOriginProject is `[ai] split_cwd_from` in the owner Project
+	// root's `.projmux/config.toml`.
+	splitCWDOriginProject splitCWDOrigin = "project"
+	// splitCWDOriginGlobal is `[ai] split_cwd_from` in the global config.
+	splitCWDOriginGlobal splitCWDOrigin = "global"
+	// splitCWDOriginDefault is the built-in fallback, `project`.
+	splitCWDOriginDefault splitCWDOrigin = "default"
+)
+
+// splitCWDResolution is a resolved UI split start source plus the tier that
+// decided it.
+type splitCWDResolution struct {
+	Source splitCWDSource
+	Origin splitCWDOrigin
+}
+
+// splitCWDConfigReaders is the pair of config seams the UI tier chain reads
+// through. It is a package variable so a test can count the reads on both
+// sides of the CLI/UI boundary: the whole point of that boundary is that the
+// CLI path reaches neither reader, and an absence that is only asserted from
+// the outcome would also pass if the file merely failed to parse.
+type splitCWDConfigReaders struct {
+	project func(path string) (hooks.ProjectConfig, error)
+	global  func(path string) (hooks.ProjectConfig, error)
+}
+
+var splitCWDConfigSeam = splitCWDConfigReaders{
+	project: hooks.LoadProjectConfigFile,
+	global:  hooks.LoadGlobalConfig,
+}
+
+// cliSplitCWDSource resolves where a CLI split starts: `--cwd-from` alone.
+//
+// A CLI result is determined by its arguments. `create pane`, `create agent`
+// and the provider shortcuts therefore open no config file at all on this
+// route, and with no flag every CLI split starts in the owner Project root.
+// Scripts and automation must not change behavior because a human changed a
+// Settings value, so the `[ai] split_cwd_from` tiers below are deliberately
+// out of reach here. `--cwd-from pane` still obeys the owner Project root rule
+// and still prints the fallback notice.
+func cliSplitCWDSource(flagValue string) splitCWDSource {
 	if source, ok := parseSplitCWDSource(flagValue); ok {
 		return source
 	}
+	return splitCWDFromProject
+}
+
+// resolveUISplitCWDSource picks a UI split's start source: an explicit
+// per-call value, then `[ai] split_cwd_from` in the owner Project root's
+// `.projmux/config.toml`, then the global config, then project. The project
+// tier is always read from the owner Project root, never from a Pane
+// directory, so where a Pane sits cannot change which config decides. A tier
+// whose value is missing, unknown, or unreadable is skipped. There is no
+// environment tier.
+//
+// This tiered chain belongs to the UI intents -- the keybinding split, the
+// Alt-7 launcher, the resume picker `new` row and the Pane right-click menu --
+// and to the Settings row that shows the same resolved value. The CLI uses
+// cliSplitCWDSource instead and never consults it.
+func resolveUISplitCWDSource(flagValue, projectRoot string, homeDir func() (string, error), lookupEnv func(string) string) splitCWDResolution {
+	if source, ok := parseSplitCWDSource(flagValue); ok {
+		return splitCWDResolution{Source: source, Origin: splitCWDOriginFlag}
+	}
 	if root := strings.TrimSpace(projectRoot); root != "" {
-		if cfg, err := hooks.LoadProjectConfigFile(filepath.Join(root, ".projmux", "config.toml")); err == nil {
+		if cfg, err := splitCWDConfigSeam.project(filepath.Join(root, ".projmux", "config.toml")); err == nil {
 			if source, ok := parseSplitCWDSource(cfg.AI.SplitCWDFrom); ok {
-				return source
+				return splitCWDResolution{Source: source, Origin: splitCWDOriginProject}
 			}
 		}
 	}
@@ -61,19 +122,20 @@ func resolveSplitCWDSource(flagValue, projectRoot string, homeDir func() (string
 			getenv = func(string) string { return "" }
 		}
 		if path, err := hooks.GlobalConfigPath(getenv, homeDir); err == nil {
-			if cfg, err := hooks.LoadGlobalConfig(path); err == nil {
+			if cfg, err := splitCWDConfigSeam.global(path); err == nil {
 				if source, ok := parseSplitCWDSource(cfg.AI.SplitCWDFrom); ok {
-					return source
+					return splitCWDResolution{Source: source, Origin: splitCWDOriginGlobal}
 				}
 			}
 		}
 	}
-	return splitCWDFromProject
+	return splitCWDResolution{Source: splitCWDFromProject, Origin: splitCWDOriginDefault}
 }
 
-// splitCWDSource resolves the source with this command's config seams.
-func (c *createCommand) splitCWDSource(flagValue, projectRoot string) splitCWDSource {
-	return resolveSplitCWDSource(flagValue, projectRoot, c.homeDir, c.lookupEnv)
+// uiSplitCWDSource resolves the UI split start source with this command's
+// config seams.
+func (c *createCommand) uiSplitCWDSource(flagValue, projectRoot string) splitCWDResolution {
+	return resolveUISplitCWDSource(flagValue, projectRoot, c.homeDir, c.lookupEnv)
 }
 
 // splitPaneLaunchDir reads one exact anchor Pane's live directory once and
@@ -147,6 +209,11 @@ func writeSplitCWDNotices(stderr io.Writer, notices []string) error {
 // active Pane is the intent's origin Pane: the Pane the key was pressed in, or
 // the Pane a menu was opened on.
 //
+// This is the one split route that reads the `[ai] split_cwd_from` tiers, via
+// resolveUISplitCWDSource. Every UI surface that starts a split funnels through
+// here, which is what makes the Settings row mean something; the CLI routes
+// resolve from `--cwd-from` alone.
+//
 // It returns "" -- the unchanged launch -- for a ControlSession root, a resumed
 // conversation, the project source, and a Pane sitting at the root, so only a
 // usable Pane directory inside the root changes anything. For a Project root
@@ -157,7 +224,7 @@ func (c *createCommand) intentSplitLaunchDir(scope canonicalIntentScope, convers
 		return "", ""
 	}
 	root := scope.cwd
-	if c.splitCWDSource("", root) != splitCWDFromPane {
+	if c.uiSplitCWDSource("", root).Source != splitCWDFromPane {
 		return "", ""
 	}
 	dir, notice := c.splitPaneLaunchDir(context.Background(), scope.anchorPaneID, root)

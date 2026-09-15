@@ -520,8 +520,10 @@ they are never inferred or copied into the semantic policy store.
 ## Split Start Directory
 
 New splits start in the owner Project root. `[ai] split_cwd_from = "pane"`
-starts them in the active Pane's live directory instead, while that directory is
-inside the owner Project root.
+starts UI splits in the active Pane's live directory instead, while that
+directory is inside the owner Project root. Settings exposes the same value as
+`AI > New splits start in` (`Project root` / `Current Pane directory`); choosing
+one writes only the global `[ai] split_cwd_from`.
 
 Config paths (global and project both honored):
 
@@ -537,27 +539,40 @@ Schema:
 split_cwd_from = "project" # project|pane; where a new shell or Agent split starts
 ```
 
-Resolution priority is:
+Resolution depends on who starts the split.
 
-1. `--cwd-from project|pane` on `create pane`, `create agent`, and the provider
-   shortcuts
+**CLI** (`create pane`, `create agent`, and the provider shortcuts) — the flag
+only:
+
+1. `--cwd-from project|pane`
+2. otherwise `project`
+
+The CLI opens no config file for this decision. A CLI result is determined by
+its arguments, so scripts and automation keep starting in the Project root when
+someone changes this setting.
+
+**UI** (keybinding splits, the launcher, the resume picker's new row, and the
+Pane menu) — the config tiers:
+
+1. an explicit per-call value (flag)
 2. project `[ai] split_cwd_from`, read from the owner Project root
 3. global/user `[ai] split_cwd_from`
 4. built-in default (`project`)
 
 There is no environment override, and an unknown value skips its own tier. The
 project tier is always read from the owner Project root, so where a Pane sits
-never changes which config decides.
+never changes which config decides. The Settings row shows the UI result and the
+tier that decided it (`project`, `global`, or `default`).
 
 With `pane` selected, the active Pane is the origin of the split: the Pane a
 keybinding ran in, the Pane a right-click menu was opened on, or the anchor Pane
 a CLI create resolved. Its live directory is used only when it is inside the
 owner Project root. `$HOME`, another registered Project tree, a directory that no
 longer exists, and an unreadable directory all start in the Project root and
-report one line naming the reason and that root — on stderr for a CLI create,
-and as one client message for a split started from the UI. A split is never
-refused for this reason. `--cwd` on `create agent` still names the Agent working
-directory outright and ignores this setting.
+report one line naming the reason and that root — on stderr for a CLI create
+with `--cwd-from pane`, and as one client message for a split started from the
+UI. A split is never refused for this reason. `--cwd` on `create agent` still
+names the Agent working directory outright and ignores this setting.
 
 ## AI Resume Picker
 

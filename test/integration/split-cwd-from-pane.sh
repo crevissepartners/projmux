@@ -9,7 +9,8 @@ set -euo pipefail
 # -- `#{pane_current_path}` and `split-window -c` -- are tmux behaviors. This
 # script drives the built binary end to end against a real server: a Pane whose
 # live cwd is a Project subdirectory, one whose live cwd is outside the Project
-# root, and the unchanged default.
+# root, the unchanged default, and a `pane` config in both tiers that a CLI
+# create must ignore.
 #
 # Isolation is three-fold, and every assertion is a PASS line so a skipped or
 # silently-empty run cannot pass. `TMUX`, `TMUX_PANE` and
@@ -168,14 +169,26 @@ grep -qF "is outside it" "$outside_err" || fail "stderr did not name the reason:
 grep -qF "$project_root" "$outside_err" || fail "stderr did not name the Project root: $(cat "$outside_err")"
 echo "PASS: an outside Pane directory falls back to the Project root with one notice"
 
-# 4. The project config selects the same source with no flag at all.
-mkdir -p "$project_root/.projmux"
+# 4. `[ai] split_cwd_from` is a UI setting. With both tiers asking for `pane`, a
+# CLI create with no `--cwd-from` still starts in the Project root: a CLI result
+# is determined by its arguments, so a Settings change cannot move a script.
+mkdir -p "$project_root/.projmux" "$XDG_CONFIG_HOME/projmux"
 printf '[ai]\nsplit_cwd_from = "pane"\n' >"$project_root/.projmux/config.toml"
+printf '[ai]\nsplit_cwd_from = "pane"\n' >"$XDG_CONFIG_HOME/projmux/config.toml"
 config_err="$root/config.err"
 config_pane="$(run_projmux create pane --project "uid:$project_uid" --pane subdir-anchor -o pane-id 2>"$config_err")"
-assert_one_pane_id "$config_pane" "configured pane source"
-assert_pane_path "$config_pane" "$sub" "configured pane source"
-[[ -s "$config_err" ]] && fail "the configured pane source wrote to stderr: $(cat "$config_err")"
-echo "PASS: [ai] split_cwd_from = \"pane\" starts in the active Pane directory"
+assert_one_pane_id "$config_pane" "configured pane source on the CLI"
+assert_pane_path "$config_pane" "$project_root" "configured pane source on the CLI"
+[[ -s "$config_err" ]] && fail "an ignored config wrote to stderr: $(cat "$config_err")"
+echo "PASS: a CLI create ignores [ai] split_cwd_from and starts in the Project root"
+
+# 5. The same configured tree still obeys an explicit flag, so case 4 is the
+# config being ignored rather than the Pane directory becoming unusable.
+flagged_err="$root/flagged.err"
+flagged_pane="$(run_projmux create pane --project "uid:$project_uid" --pane subdir-anchor --cwd-from pane -o pane-id 2>"$flagged_err")"
+assert_one_pane_id "$flagged_pane" "--cwd-from pane with the config set"
+assert_pane_path "$flagged_pane" "$sub" "--cwd-from pane with the config set"
+[[ -s "$flagged_err" ]] && fail "a usable Pane directory wrote to stderr: $(cat "$flagged_err")"
+echo "PASS: --cwd-from pane still starts in the active Pane directory with the config set"
 
 echo "PASS: split-cwd-from-pane real-tmux boundary"

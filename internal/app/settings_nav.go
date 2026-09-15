@@ -106,6 +106,7 @@ const (
 	settingsNavProjectsSidebar     = "global.projects.sidebar"
 	settingsNavAI                  = "global.ai"
 	settingsNavAIProviders         = "global.ai.enabled-providers"
+	settingsNavAISplitCWD          = "global.ai.split-cwd"
 	settingsNavAIResumePicker      = "global.ai.resume-picker"
 	settingsNavNotifications       = "global.notifications"
 	settingsNavNotifyDesktop       = "global.notifications.desktop-delivery"
@@ -196,6 +197,7 @@ var settingsNodeCatalog = []settingsNavNode{
 	// AI -------------------------------------------------------------------
 	{ID: settingsNavAI, Parent: settingsNavScopeGlobal, Label: "AI", LabelKey: "settings.node.ai", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsSectionAI, Owner: settingsOwnerRoot},
 	{ID: settingsNavAI + ".launch-target", Parent: settingsNavAI, Label: "Default launch target", LabelKey: "settings.text.default_launch_target", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsAIDefaultMode, Owner: settingsOwnerAI},
+	{ID: settingsNavAISplitCWD, Parent: settingsNavAI, Label: "New splits start in", LabelKey: "settings.text.split_cwd_from_row", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsAISplitCWDFrom, Owner: settingsOwnerAI, Note: "Project root / Current Pane directory; UI splits only"},
 	{ID: settingsNavAIProviders, Parent: settingsNavAI, Label: "Enabled providers", LabelKey: "settings.text.enabled_providers", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsAIEnabledAgents, Owner: settingsOwnerAI},
 	{ID: settingsNavAIProviders + ".item", Parent: settingsNavAIProviders, Label: "<Provider>", Kind: settingsNavToggle, Axis: settingsAxisGlobal, Dynamic: true, Note: "Claude / Codex / Antigravity; availability and source badge"},
 	{ID: settingsNavAI + ".codex-health", Parent: settingsNavAI, Label: "Codex control plane / App Server / Hook fallback / Unavailable", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue, Note: "read-only; capability selected"},

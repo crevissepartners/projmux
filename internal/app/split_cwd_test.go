@@ -255,10 +255,34 @@ func splitArgvCWD(t *testing.T, calls [][]string) string {
 	return found
 }
 
-// TestSplitCWDSourceResolvesFlagThenProjectThenGlobalThenDefault is acceptance
-// criterion 5: the closed precedence, the owner-root project tier, and the
-// skipped tier an unknown value produces.
-func TestSplitCWDSourceResolvesFlagThenProjectThenGlobalThenDefault(t *testing.T) {
+// TestCLISplitCWDSourceFollowsOnlyTheFlag pins the CLI half of the split: a
+// CLI result is determined by its arguments. cliSplitCWDSource takes no config
+// seam at all, so a human changing a Settings value cannot move where a script
+// starts; with no flag the source is unconditionally `project`.
+func TestCLISplitCWDSourceFollowsOnlyTheFlag(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		flag string
+		want splitCWDSource
+	}{
+		{flag: "", want: splitCWDFromProject},
+		{flag: "   ", want: splitCWDFromProject},
+		{flag: "project", want: splitCWDFromProject},
+		{flag: "pane", want: splitCWDFromPane},
+		{flag: "  pane  ", want: splitCWDFromPane},
+		{flag: "sideways", want: splitCWDFromProject},
+	} {
+		if got := cliSplitCWDSource(test.flag); got != test.want {
+			t.Fatalf("cliSplitCWDSource(%q) = %q, want %q", test.flag, got, test.want)
+		}
+	}
+}
+
+// TestUISplitCWDSourceResolvesFlagThenProjectThenGlobalThenDefault is the UI
+// half: the closed precedence, the owner-root project tier, the skipped tier an
+// unknown value produces, and the tier label the Settings row shows.
+func TestUISplitCWDSourceResolvesFlagThenProjectThenGlobalThenDefault(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -292,29 +316,33 @@ func TestSplitCWDSourceResolvesFlagThenProjectThenGlobalThenDefault(t *testing.T
 			t.Fatal(err)
 		}
 	}
+	resolve := func(flag, projectRoot string) splitCWDResolution {
+		t.Helper()
+		return resolveUISplitCWDSource(flag, projectRoot, homeDir, lookupEnv)
+	}
 
-	if got := resolveSplitCWDSource("", root, homeDir, lookupEnv); got != splitCWDFromProject {
-		t.Fatalf("no config source = %q, want project", got)
+	if got := resolve("", root); got.Source != splitCWDFromProject || got.Origin != splitCWDOriginDefault {
+		t.Fatalf("no config resolution = %+v, want project/default", got)
 	}
 	writeGlobal("[ai]\nsplit_cwd_from = \"pane\"\n")
-	if got := resolveSplitCWDSource("", root, homeDir, lookupEnv); got != splitCWDFromPane {
-		t.Fatalf("global source = %q, want pane", got)
+	if got := resolve("", root); got.Source != splitCWDFromPane || got.Origin != splitCWDOriginGlobal {
+		t.Fatalf("global resolution = %+v, want pane/global", got)
 	}
 	writeProject("[ai]\nsplit_cwd_from = \"project\"\n")
-	if got := resolveSplitCWDSource("", root, homeDir, lookupEnv); got != splitCWDFromProject {
-		t.Fatalf("project tier did not win over global: %q", got)
+	if got := resolve("", root); got.Source != splitCWDFromProject || got.Origin != splitCWDOriginProject {
+		t.Fatalf("project tier did not win over global: %+v", got)
 	}
-	if got := resolveSplitCWDSource("pane", root, homeDir, lookupEnv); got != splitCWDFromPane {
-		t.Fatalf("flag did not win over project config: %q", got)
+	if got := resolve("pane", root); got.Source != splitCWDFromPane || got.Origin != splitCWDOriginFlag {
+		t.Fatalf("flag did not win over project config: %+v", got)
 	}
 	// An unknown value skips its own tier rather than deciding or failing.
 	writeProject("[ai]\nsplit_cwd_from = \"sideways\"\n")
-	if got := resolveSplitCWDSource("", root, homeDir, lookupEnv); got != splitCWDFromPane {
-		t.Fatalf("unknown project value = %q, want the global pane tier", got)
+	if got := resolve("", root); got.Source != splitCWDFromPane || got.Origin != splitCWDOriginGlobal {
+		t.Fatalf("unknown project value = %+v, want the global pane tier", got)
 	}
 	writeGlobal("[ai]\nsplit_cwd_from = \"sideways\"\n")
-	if got := resolveSplitCWDSource("", root, homeDir, lookupEnv); got != splitCWDFromProject {
-		t.Fatalf("unknown global value = %q, want the project default", got)
+	if got := resolve("", root); got.Source != splitCWDFromProject || got.Origin != splitCWDOriginDefault {
+		t.Fatalf("unknown global value = %+v, want the project default", got)
 	}
 	// The project tier follows the owner Project root, never a Pane directory.
 	writeProject("[ai]\nsplit_cwd_from = \"pane\"\n")
@@ -326,11 +354,11 @@ func TestSplitCWDSourceResolvesFlagThenProjectThenGlobalThenDefault(t *testing.T
 		[]byte("[ai]\nsplit_cwd_from = \"project\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := resolveSplitCWDSource("", root, homeDir, lookupEnv); got != splitCWDFromPane {
-		t.Fatalf("owner root tier = %q, want pane", got)
+	if got := resolve("", root); got.Source != splitCWDFromPane || got.Origin != splitCWDOriginProject {
+		t.Fatalf("owner root tier = %+v, want pane/project", got)
 	}
-	if got := resolveSplitCWDSource("", elsewhere, homeDir, lookupEnv); got != splitCWDFromProject {
-		t.Fatalf("another root's config = %q, want project", got)
+	if got := resolve("", elsewhere); got.Source != splitCWDFromProject || got.Origin != splitCWDOriginProject {
+		t.Fatalf("another root's config = %+v, want project/project", got)
 	}
 }
 
@@ -407,11 +435,13 @@ func TestSplitPaneCWDStaysInsideTheOwnerProjectRoot(t *testing.T) {
 	}
 }
 
-// TestSplitCWDDefaultAndProjectSourceAreByteIdentical is acceptance criterion 1.
+// TestSplitCWDDefaultAndProjectSourceAreByteIdentical pins the CLI baseline.
 //
-// The default, an explicit `--cwd-from project`, and a configured `project`
-// must produce the same recorded tmux argv, the same Registry launch surface,
-// the same stdout and stderr, and no live directory read at all.
+// The default, an explicit `--cwd-from project`, a configured `project` and --
+// since the CLI stopped reading the config tiers -- a configured `pane` must
+// all produce the same recorded tmux argv, the same Registry launch surface,
+// the same stdout and stderr, and no live directory read at all. The last case
+// is the re-aimed one: config no longer decides anything on a CLI route.
 func TestSplitCWDDefaultAndProjectSourceAreByteIdentical(t *testing.T) {
 	t.Parallel()
 
@@ -439,10 +469,21 @@ func TestSplitCWDDefaultAndProjectSourceAreByteIdentical(t *testing.T) {
 			configured.writeProjectConfig("[ai]\nsplit_cwd_from = \"project\"\n")
 			configuredRun := configured.capture(route.argv...)
 
+			// Both config tiers ask for `pane`; a CLI create must not notice.
+			ignored := newSplitCWDFixture(t)
+			ignored.writeProjectConfig("[ai]\nsplit_cwd_from = \"pane\"\n")
+			ignored.writeGlobalConfig("[ai]\nsplit_cwd_from = \"pane\"\n")
+			ignored.runner.cwds[ignored.anchorID] = ignored.subdir("services", "api")
+			ignoredRun := ignored.capture(route.argv...)
+
 			for _, other := range []struct {
 				name string
 				run  splitCWDRun
-			}{{name: "--cwd-from project", run: flaggedRun}, {name: "configured project", run: configuredRun}} {
+			}{
+				{name: "--cwd-from project", run: flaggedRun},
+				{name: "configured project", run: configuredRun},
+				{name: "configured pane", run: ignoredRun},
+			} {
 				if other.run.calls != baselineRun.calls {
 					t.Fatalf("%s changed the recorded tmux argv: %s",
 						other.name, firstDivergence(baselineRun.calls, other.run.calls))
@@ -555,8 +596,7 @@ func TestCreateSplitStartsInTheActivePaneDirectory(t *testing.T) {
 			fx := newSplitCWDFixture(t)
 			sub := fx.subdir("services", provider)
 			fx.runner.cwds[fx.anchorID] = sub
-			fx.writeProjectConfig("[ai]\nsplit_cwd_from = \"pane\"\n")
-			run := fx.capture(provider, "-p", "alpha", "-o", "pane-id")
+			run := fx.capture(provider, "-p", "alpha", "--cwd-from", "pane", "-o", "pane-id")
 			if run.err != "" {
 				t.Fatalf("create failed: %s", run.err)
 			}
@@ -1010,6 +1050,84 @@ func TestSplitCWDNeverWritesTheScopeIdentity(t *testing.T) {
 	}
 	if got := splitArgvCWD(t, fx.tmux.calls); got != sub {
 		t.Fatalf("split -c = %q, want %q", got, sub)
+	}
+}
+
+// countSplitCWDConfigReads swaps the UI tier's two config readers for counting
+// wrappers and restores them afterwards. Counting at the seam is what makes the
+// CLI claim falsifiable: a test that only looked at the outcome would also pass
+// if the file had been opened and merely failed to parse.
+//
+// It mutates a package variable, so its callers must not run in parallel.
+func countSplitCWDConfigReads(t *testing.T) *int {
+	t.Helper()
+
+	original := splitCWDConfigSeam
+	count := 0
+	splitCWDConfigSeam = splitCWDConfigReaders{
+		project: func(path string) (hooks.ProjectConfig, error) {
+			count++
+			return original.project(path)
+		},
+		global: func(path string) (hooks.ProjectConfig, error) {
+			count++
+			return original.global(path)
+		},
+	}
+	t.Cleanup(func() { splitCWDConfigSeam = original })
+	return &count
+}
+
+// TestCLISplitCreateOpensNoSplitStartConfig measures the CLI/UI boundary at the
+// config seam itself. With `[ai] split_cwd_from = "pane"` set in *both* tiers, a
+// CLI create with no `--cwd-from` starts in the Project root and opens neither
+// config file; the same configuration still moves a UI intent, which proves the
+// counter is wired and the tiers still work where they are supposed to.
+//
+// No t.Parallel: this test swaps the package-level config seam.
+func TestCLISplitCreateOpensNoSplitStartConfig(t *testing.T) {
+	reads := countSplitCWDConfigReads(t)
+
+	fx := newSplitCWDFixture(t)
+	sub := fx.subdir("services", "api")
+	fx.runner.cwds[fx.anchorID] = sub
+	fx.writeProjectConfig("[ai]\nsplit_cwd_from = \"pane\"\n")
+	fx.writeGlobalConfig("[ai]\nsplit_cwd_from = \"pane\"\n")
+
+	run := fx.capture("pane", "-p", "alpha", "-o", "pane-id")
+	if run.err != "" {
+		t.Fatalf("create failed: %s (stderr %q)", run.err, run.stderr)
+	}
+	if *reads != 0 {
+		t.Fatalf("a CLI create opened %d split start config file(s); it must resolve from --cwd-from alone", *reads)
+	}
+	if got := splitArgvCWD(t, fx.tmux.calls); got != fx.root {
+		t.Fatalf("split -c = %q, want the Project root %q", got, fx.root)
+	}
+	if len(fx.runner.reads) != 0 {
+		t.Fatalf("a CLI create read a live Pane directory: %v", fx.runner.reads)
+	}
+	if run.stderr != "" {
+		t.Fatalf("an ignored config wrote to stderr: %q", run.stderr)
+	}
+
+	// The control: the identical project config still decides a UI split.
+	*reads = 0
+	ui := newSplitCWDIntentFixture(t)
+	uiSub := ui.subdir("services", "ui")
+	ui.runner.cwds[ui.anchorID] = uiSub
+	ui.writeProjectConfig("[ai]\nsplit_cwd_from = \"pane\"\n")
+	var stdout, stderr bytes.Buffer
+	if err := ui.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: ui.anchorID,
+	}, &stdout, &stderr); err != nil {
+		t.Fatalf("UI intent create failed: %v (stderr %q)", err, stderr.String())
+	}
+	if *reads == 0 {
+		t.Fatal("the UI intent opened no split start config; the CLI count above would prove nothing")
+	}
+	if got := splitArgvCWD(t, ui.tmux.calls); got != uiSub {
+		t.Fatalf("UI split -c = %q, want the active Pane directory %q", got, uiSub)
 	}
 }
 

@@ -88,6 +88,12 @@ step, never a silent no-op.
   - `Default launch target [Choice]` — an Agent Provider, a Shell Pane, or
     choose-at-launch. It is a keybinding/picker preference and does not weaken
     the canonical `create agent` explicit-provider requirement.
+  - `New splits start in [Choice]` — `Project root` (default) or
+    `Current Pane directory`, shown with the tier that decided it (`project`,
+    `global`, `default`). It writes only the global `[ai] split_cwd_from` and
+    decides UI splits only; the Pane directory is used only inside the Project
+    root, and the CLI does not follow this setting (`create pane|agent` obey
+    `--cwd-from` alone).
   - `Enabled providers [View]` — Claude, Codex, and Antigravity are Providers;
     `Shell`, `Selective` and `Resume` are not Providers and never appear here.
   - `Agent Resume Picker [View]` — states that resume targets an existing Agent

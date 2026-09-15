@@ -131,6 +131,7 @@ var settingsDynamicEntryCatalog = []struct {
 	{settingsActionPrefixAINotifyDedupe, "", settingsActionMeta("Dedupe window", "settings.text.dedupe_window", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAIResumeLimit, "", settingsActionMeta("Agent Resume Picker", "settings.text.agent_resume_picker", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAIResumeDepth, "", settingsActionMeta("Scan depth", "settings.text.ai_resume_picker_depth_row", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAISplitCWD, "", settingsActionMeta("New splits start in", "settings.text.split_cwd_from_row", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAIHookProvider, settingsNavNotifyAgentEvents + ".item", settingsNavigationMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAIHookEvent, settingsNavNotifyAgentEvents + ".item.event", settingsNavigationMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAIHookSet, "", settingsActionMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
@@ -250,8 +251,10 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 	case settingsOwnerAI:
 		return value == settingsAIDefaultMode || value == settingsAIEnabledAgents ||
 			value == settingsAIResumePicker || value == settingsAIResumePickerLimit ||
-			value == settingsAIResumePickerDepth || value == settingsAINotifyDiagnostics ||
+			value == settingsAIResumePickerDepth || value == settingsAISplitCWDFrom ||
+			value == settingsAINotifyDiagnostics ||
 			strings.HasPrefix(value, settingsActionPrefixAI) ||
+			strings.HasPrefix(value, settingsActionPrefixAISplitCWD) ||
 			strings.HasPrefix(value, settingsActionPrefixAIEnabledAgent) ||
 			strings.HasPrefix(value, settingsActionPrefixAIResumeLimit) ||
 			strings.HasPrefix(value, settingsActionPrefixAIResumeDepth)
@@ -346,6 +349,7 @@ const (
 	settingsActionPrefixAINotifyDedupe     = "ai-notify-dedupe:"
 	settingsActionPrefixAIResumeLimit      = "ai-resume-limit:"
 	settingsActionPrefixAIResumeDepth      = "ai-resume-depth:"
+	settingsActionPrefixAISplitCWD         = "ai-split-cwd:"
 	settingsActionPrefixAIHookProvider     = "ai-hook-provider:"
 	settingsActionPrefixAIHookEvent        = "ai-hook-event:"
 	settingsActionPrefixAIHookSet          = "ai-hook-set:"
@@ -404,6 +408,7 @@ const (
 	settingsAIResumePicker                         = "ai-resume-picker"
 	settingsAIResumePickerLimit                    = "ai-resume-picker-limit"
 	settingsAIResumePickerDepth                    = "ai-resume-picker-depth"
+	settingsAISplitCWDFrom                         = "ai-split-cwd-from"
 	settingsAINotifyDiagnostics                    = "ai-notify-diagnostics"
 	settingsNotificationsDesktop                   = "notifications:desktop"
 	settingsNotificationsAIDedupe                  = "notifications:ai-dedupe"
