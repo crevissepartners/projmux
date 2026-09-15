@@ -38,22 +38,16 @@ func TestGenerationLifecycleProjectionUsesIsolatedRealTmuxAndExactCleanup(t *tes
 	runner := shellTmuxExecRunner{env: func() []string { return environment }}
 	socketCandidate := filepath.Join(root, fmt.Sprintf("phase1-%d-%x.sock", os.Getpid(), uint32(time.Now().UnixNano())))
 	out, err := runner.Run(ctx, "tmux", "-S", socketCandidate, "-f", "/dev/null", "new-session", "-d",
-		"-s", "phase1-lifecycle", "-P", "-F", "#{pane_id}\t#{socket_path}", "tail", "-f", "/dev/null")
-	if err != nil {
-		t.Fatal(err)
-	}
+		"-s", "phase1-lifecycle", "-P", "-F", "#{pane_id}\t#{socket_path}\t#{pid}", "tail", "-f", "/dev/null")
+	// The server may be up even when the receipt is not what this test wants,
+	// so the cleanup below is registered before any of those checks can stop
+	// the test. It kills the candidate path it asked for and proves that path
+	// is the server's own socket first; the checks confirm they agree.
 	fields := strings.Split(strings.TrimSpace(string(out)), "\t")
-	if len(fields) != 2 || !strings.HasPrefix(fields[0], "%") {
-		t.Fatalf("new-session exact Pane/socket receipt=%q", out)
-	}
-	paneID := fields[0]
-	socketPath := filepath.Clean(fields[1])
-	if socketPath != filepath.Clean(socketCandidate) {
-		t.Fatalf("new-session reported socket %q, want exact candidate %q", socketPath, socketCandidate)
-	}
-	rel, relErr := filepath.Rel(root, socketPath)
-	if relErr != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		t.Fatalf("isolated tmux socket %q escaped root %q", socketPath, root)
+	socketPath := filepath.Clean(socketCandidate)
+	serverPID := 0
+	if len(fields) == 3 {
+		serverPID = realTmuxServerPID(t, fields[2])
 	}
 	closed := false
 	t.Cleanup(func() {
@@ -75,6 +69,7 @@ func TestGenerationLifecycleProjectionUsesIsolatedRealTmuxAndExactCleanup(t *tes
 			t.Errorf("isolated tmux still answers after kill-server")
 			return
 		}
+		assertRealTmuxServerGone(t, serverPID)
 		if removeErr := os.Remove(socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			t.Errorf("remove exact isolated tmux socket: %v", removeErr)
 			return
@@ -87,6 +82,20 @@ func TestGenerationLifecycleProjectionUsesIsolatedRealTmuxAndExactCleanup(t *tes
 			t.Errorf("remove exact isolated tmux root: %v", removeErr)
 		}
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 || !strings.HasPrefix(fields[0], "%") {
+		t.Fatalf("new-session exact Pane/socket receipt=%q", out)
+	}
+	paneID := fields[0]
+	if reported := filepath.Clean(fields[1]); reported != socketPath {
+		t.Fatalf("new-session reported socket %q, want exact candidate %q", reported, socketCandidate)
+	}
+	rel, relErr := filepath.Rel(root, socketPath)
+	if relErr != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		t.Fatalf("isolated tmux socket %q escaped root %q", socketPath, root)
+	}
 	route := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: socketPath, Source: tmuxSocketPathSource}}
 	if _, err := route.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, tmuxopts.PaneUID, "pan-alpha-codex"); err != nil {
 		t.Fatal(err)

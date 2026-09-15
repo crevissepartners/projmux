@@ -74,13 +74,19 @@ func TestGeneratedWindowRenameProjectsFlagShapedNamesThroughRealTmux(t *testing.
 	if err != nil {
 		t.Fatalf("start isolated tmux: %v: %s", err, created)
 	}
-	t.Cleanup(func() { _, _ = tmux("kill-server") })
 	fields := strings.Split(created, "\t")
-	if len(fields) != 5 || exactTmuxHandle(fields[0], "$") == "" || exactTmuxHandle(fields[1], "@") == "" ||
-		exactTmuxHandle(fields[2], "%") == "" || fields[4] != socket {
+	var sessionID, windowID, paneID, serverPID string
+	if len(fields) == 5 {
+		sessionID, windowID, paneID, serverPID = fields[0], fields[1], fields[2], fields[3]
+	}
+	// Registered before the receipt is judged, so no t.Fatalf below leaves the
+	// server running, and after the root removal above, so LIFO kills it while
+	// its socket still exists.
+	killRealTmuxServerOnCleanup(t, environment, socket, realTmuxServerPID(t, serverPID))
+	if len(fields) != 5 || exactTmuxHandle(sessionID, "$") == "" || exactTmuxHandle(windowID, "@") == "" ||
+		exactTmuxHandle(paneID, "%") == "" || fields[4] != socket {
 		t.Fatalf("isolated tmux receipt = %q, want session/window/pane/pid on %s", created, socket)
 	}
-	sessionID, windowID, paneID, serverPID := fields[0], fields[1], fields[2], fields[3]
 	for _, option := range [][]string{
 		{"-g", tmuxopts.AppGlobal, "1"},
 		{"-g", runtimeMutationSocketNameOption, logical},

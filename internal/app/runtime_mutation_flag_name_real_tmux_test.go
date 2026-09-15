@@ -56,11 +56,14 @@ func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
 		out, err := command.CombinedOutput()
 		return strings.TrimSpace(string(out)), err
 	}
-	sessionID, err := tmux("new-session", "-d", "-s", "flag-names", "-P", "-F", "#{session_id}", "tail", "-f", "/dev/null")
+	receipt, err := tmux("new-session", "-d", "-s", "flag-names", "-P", "-F", "#{session_id}\t#{pid}", "tail", "-f", "/dev/null")
 	if err != nil {
-		t.Fatalf("start isolated tmux: %v: %s", err, sessionID)
+		t.Fatalf("start isolated tmux: %v: %s", err, receipt)
 	}
-	t.Cleanup(func() { _, _ = tmux("kill-server") })
+	sessionID, serverPID, _ := strings.Cut(receipt, "\t")
+	// Registered after the root removal above, so LIFO kills the server first,
+	// while its socket still exists.
+	killRealTmuxServerOnCleanup(t, environment, socket, realTmuxServerPID(t, serverPID))
 	for _, option := range [][2]string{{tmuxopts.AppGlobal, "1"}, {runtimeMutationSocketNameOption, "flag-names"}} {
 		if out, err := tmux("set-option", "-g", option[0], option[1]); err != nil {
 			t.Fatalf("mark isolated tmux app-owned: %v: %s", err, out)

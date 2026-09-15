@@ -554,10 +554,13 @@ func TestGeneratedRenameBindingDeliversHostileResponsesVerbatimThroughRealTmux(t
 		command.Env = environment
 		return command.CombinedOutput()
 	}
-	if out, err := tmux("new-session", "-d", "-s", "rename-transport"); err != nil {
-		t.Fatalf("start isolated tmux: %v: %s", err, out)
+	started, err := tmux("new-session", "-d", "-s", "rename-transport", "-P", "-F", "#{pid}")
+	if err != nil {
+		t.Fatalf("start isolated tmux: %v: %s", err, started)
 	}
-	t.Cleanup(func() { _, _ = tmux("kill-server") })
+	// Registered after the root removal above, so LIFO kills the server first,
+	// while its socket still exists.
+	killRealTmuxServerOnCleanup(t, environment, socket, realTmuxServerPID(t, string(started)))
 
 	recorder := filepath.Join(root, "rec")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >'" + root + "/argv'\ncat >'" + root + "/stdin.tmp' && mv '" + root + "/stdin.tmp' '" + root + "/stdin'\n"

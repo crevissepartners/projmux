@@ -88,12 +88,12 @@ func TestSharedPaneRoutingRealTmux(t *testing.T) {
 	panes := []string{}
 	for _, name := range []string{fmt.Sprintf("app-%d", os.Getpid()), otherName} {
 		pane := tmux("-L", name, "-f", "/dev/null", "new-session", "-d", "-s", "fixture", "-P", "-F", "#{pane_id}", "sleep 600")
-		socket := tmux("-L", name, "display-message", "-p", "-t", pane, "#{socket_path}")
-		if !strings.HasPrefix(socket, root+string(os.PathSeparator)) {
-			t.Fatalf("unsafe smoke socket %q", socket)
-		}
-		sockets = append(sockets, socket)
-		panes = append(panes, pane)
+		// The server is up. Read its socket and PID through the non-fatal
+		// runner and register the cleanup before judging either, so nothing
+		// below this point can stop the test with the server still running.
+		receipt, receiptErr := run(nil, "tmux", "-L", name, "display-message", "-p", "-t", pane, "#{socket_path}\t#{pid}")
+		socket, serverPIDField, _ := strings.Cut(strings.TrimSpace(string(receipt)), "\t")
+		serverPID := realTmuxServerPID(t, serverPIDField)
 		t.Cleanup(func() {
 			// Re-observe exactly the owned route before exact-path cleanup.
 			out, queryErr := run(nil, "tmux", "-S", socket, "display-message", "-p", "#{socket_path}")
@@ -110,8 +110,18 @@ func TestSharedPaneRoutingRealTmux(t *testing.T) {
 			if out, err := run(nil, "tmux", "-S", socket, "kill-server"); err != nil {
 				cleanupVerified = false
 				t.Errorf("cleanup: %v: %s", err, out)
+				return
 			}
+			assertRealTmuxServerGone(t, serverPID)
 		})
+		if receiptErr != nil {
+			t.Fatalf("isolated tmux socket receipt %q: %v: %s", name, receiptErr, receipt)
+		}
+		if !strings.HasPrefix(socket, root+string(os.PathSeparator)) {
+			t.Fatalf("unsafe smoke socket %q", socket)
+		}
+		sockets = append(sockets, socket)
+		panes = append(panes, pane)
 	}
 	// Detached production lookup keeps its fixed logical name. The servers
 	// themselves are created with unique names; this private alias names only
