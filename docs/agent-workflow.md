@@ -2245,6 +2245,88 @@ separate decision this measurement exists to inform.
   decoder: the scanner only selects the single-decode path, and every refusal
   and error is still produced by the envelope-then-body sequence.
 
+### Route guard identity reuse tests
+
+Within one create, Continue, or resume transaction, the route guards reuse a
+tmux server identity that the same transaction already proved against tmux.
+The identity is the exact `-S`/`-L` route, `#{socket_path}`, authority class,
+`#{pid}`, `@projmux_app` and `@projmux_socket_name`. The first proof always
+reads tmux. Every guarded write the materializer executes runs through
+`materializer.guardedWriteSteps`, which drops the reused proofs after each
+Apply and Undo, so the write's post-effect observation proves the route against
+tmux again. Any differing key component, a route rebind or re-resolution, a
+probe failure, or the end of the transaction also forces a full proof. The
+split-layout batch keeps its pre-write revalidation, and a transaction that
+reused any proof proves the route once more before the Registry commits.
+Nothing is persisted or shared across processes or transactions.
+
+- `make test`: `TestRuntimeRouteIdentityCacheReusesOnlyTheExactProvenTuple`
+  owns the key. Only the exact tuple is reused. A differing PID, physical
+  socket, socket flag, `-L` name, authority class (including standalone versus
+  standalone-explicit), socket-name marker, app marker, or guard scope misses.
+  A nil cache, a blank operation id, a cold cache, and incomplete identities
+  never reuse.
+- `make test`: `TestRuntimeRouteIdentityCacheInvalidationTriggers` owns
+  invalidation. A server swap and an idempotent transaction-end close drop every
+  proof. On a real guarded write, a server PID change, a socket path change,
+  reconnection (`route-bind`), route re-resolution, a probe error, and
+  transaction end each make the next write's pre-write guards read tmux again,
+  while the control case reuses the previous write's post-effect proof.
+- `make test`: `TestMaterializerRouteGuardReprovesIdentityAfterEveryGuardedWrite`
+  counts tmux calls. The first proof and the segment after every guarded write
+  each read `#{socket_path}` and `#{pid}` from tmux, identity reads per write
+  are fewer than without a cache, and the ordered write argv is identical.
+- `make test`: `TestMaterializerPlansRunOnlyThroughTheGuardedWriteSeam` parses
+  the package and fails when a `materializer` method passes steps to
+  `executeRuntimeMutationPlan` without wrapping them in `guardedWriteSteps`, or
+  builds runtime mutation steps without running any through that seam. Every
+  materializer plan site still calls `executeRuntimeMutationPlan` directly, so
+  `TestPlanOnlyMutationNegativeAuditHasZeroBypass` is unchanged.
+- `make test`: `TestRouteIdentityCacheMatchesUncachedCreateUnderDriftAfterEachGuardedWrite`
+  enumerates every guarded write of a canonical `create pane` and a `create
+  agent` transaction, restarts the server generation with objects surviving
+  immediately after each one, and requires the error string, ordered write argv,
+  Registry commit, and final Pane set to be byte-identical with and without the
+  cache.
+- `make test`: `TestRouteIdentityCommitReproofRefusesDriftBeforeCommitWithoutAWrite`
+  moves the server generation at the final reconcile pass, after the last
+  post-effect proof and with no write before commit. The commit re-proof
+  refuses, the runtime ledger rollback re-proves and refuses its kills, and the
+  Registry is not committed; without reuse the same window commits.
+- `make test`: `TestCachedRouteGuardRefusalsKeepTheirErrorFamily` requires
+  socket path drift, server generation drift, a cleared app marker, and a
+  drifted logical marker to refuse with byte-identical `runtime mutation plan:`
+  wording with and without a cache, with zero writes and nothing cached.
+- `make test`: `TestStaleRouteIdentityCacheIsCaughtByTheNextFullProof` moves the
+  server generation after a post-effect proof, shows that a guard with no write
+  since that proof reuses it, and requires a pre-write revalidation to refuse
+  with the uncached wording, drop every scope's proof, and make the next guarded
+  write refuse exactly as it does without a cache.
+- `make test`: `TestSplitLayoutRevalidationNeverReusesTransactionIdentity`
+  keeps the split-layout batch's full four-read proof immediately before its
+  first resize. `TestCanonicalCreatePaneLayoutServerGenerationDriftWritesZeroResizes`
+  and `TestCanonicalCreatePaneMultiPaneLayoutUsesBoundedBatchInsideRegistryUpdate`
+  are unchanged.
+- `make test`: `TestCreateTransactionScopesRouteIdentityReuseToOneOperation`
+  drives consecutive `create pane` transactions. Each must prove the generation
+  and both markers before its first write and close its identity scope.
+- `make test`: `TestStaleRouteIdentityDriftDuringCreateRollsBackThroughRuntimeLedger`
+  restarts the server right after the split write inside `create pane`, both
+  losing runtime objects and keeping them. Both fail with the same residual-plan
+  message as without a cache, leave the Registry uncommitted, and reach the
+  uncached Pane end state through the runtime ledger rollback with the identity
+  scope closed.
+- `make test-integration`: `test/integration/route-guard-identity-cache.sh`
+  drives the built binary against an isolated real tmux server (dropped
+  `TMUX`/`TMUX_PANE`/`__PROJMUX_RUNTIME_ANCHOR_PANE`, owned `HOME`/XDG, short
+  `TMUX_TMPDIR`, run-unique `-L`, cleanup of the exact queried socket path
+  only). It prints a PASS line when `create pane` and `create window` keep
+  their result shape, when a PATH tmux wrapper's argv log shows the
+  `#{socket_path}`, `#{pid}` and `@projmux_app` reads before the transaction's
+  first write, and when both creates refuse a server without `@projmux_app`
+  with the existing `runtime mutation route: exact invocation server is not
+  app-owned; ...` wording and leave the Pane and Window sets unchanged.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

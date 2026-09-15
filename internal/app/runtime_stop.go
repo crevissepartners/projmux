@@ -407,7 +407,19 @@ func observeExactManagedRuntimeStopTarget(ctx context.Context, runner tmuxComman
 }
 
 func guardResolvedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute) error {
-	return guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, false)
+	return guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, false, nil)
+}
+
+// guardResolvedRuntimeMutationRouteWithIdentity is the same guard, allowed to
+// reuse an identity this transaction already proved against tmux. A nil cache,
+// a first proof, or any differing key component reads tmux exactly as before.
+func guardResolvedRuntimeMutationRouteWithIdentity(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	route runtimeMutationRoute,
+	identity *runtimeRouteIdentityCache,
+) error {
+	return guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, false, identity)
 }
 
 // guardResolvedRuntimeMutationRouteBeforeMarkerWrite preserves the physical
@@ -415,14 +427,40 @@ func guardResolvedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRu
 // guard while allowing the logical marker to be absent for the one action that
 // creates it. An already-present foreign marker is still drift. Callers must
 // use guardResolvedRuntimeMutationRoute after the write to prove the effect.
-func guardResolvedRuntimeMutationRouteBeforeMarkerWrite(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute) error {
-	return guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, true)
+func guardResolvedRuntimeMutationRouteBeforeMarkerWrite(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, identity *runtimeRouteIdentityCache) error {
+	return guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, true, identity)
 }
 
-func guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, allowMissingLogicalMarker bool) error {
+// guardResolvedRuntimeMutationRouteWithMarkerPolicy proves the resolved route
+// against the live server. identity may reuse the result of an identical proof
+// already made in this transaction; the marker-write phase exception is never
+// cacheable, because the logical marker it tolerates is ambiguous evidence.
+func guardResolvedRuntimeMutationRouteWithMarkerPolicy(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	route runtimeMutationRoute,
+	allowMissingLogicalMarker bool,
+	identity *runtimeRouteIdentityCache,
+) error {
 	if runner == nil || route.target.Flag() == "" || route.target.Value == "" {
 		return errors.New("runtime mutation route is not exact")
 	}
+	key, cacheable := runtimeRouteIdentityKeyForRoute(routeIdentityScopeResolvedRoute, route)
+	cacheable = cacheable && !allowMissingLogicalMarker
+	if cacheable && identity.reuse(key) {
+		return nil
+	}
+	if err := proveResolvedRuntimeMutationRoute(ctx, runner, route, allowMissingLogicalMarker); err != nil {
+		identity.invalidate("resolved-route-probe-error")
+		return err
+	}
+	if cacheable {
+		identity.record(key)
+	}
+	return nil
+}
+
+func proveResolvedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, allowMissingLogicalMarker bool) error {
 	// Once a physical socket has been observed, it is the execution authority.
 	// Re-resolving the logical alias here would let an alias replacement make a
 	// pre-observation report the effect from the wrong server.
@@ -473,7 +511,19 @@ func guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runn
 }
 
 func guardPrintedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, action plannedRuntimeMutation) error {
-	return guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, action, false)
+	return guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, action, false, nil)
+}
+
+// guardPrintedRuntimeMutationRouteWithIdentity is the same guard, allowed to
+// reuse an identity this transaction already proved against tmux.
+func guardPrintedRuntimeMutationRouteWithIdentity(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	route runtimeMutationRoute,
+	action plannedRuntimeMutation,
+	identity *runtimeRouteIdentityCache,
+) error {
+	return guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, action, false, identity)
 }
 
 // guardPrintedRuntimeMutationRouteBeforeMarkerWrite is deliberately limited to
@@ -484,10 +534,17 @@ func guardPrintedRuntimeMutationRouteBeforeMarkerWrite(ctx context.Context, runn
 	if action.Verb != mutationWriteRouteMarker {
 		return errors.New("pre-marker route guard requires a write-route-marker action")
 	}
-	return guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, action, true)
+	return guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, action, true, nil)
 }
 
-func guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, action plannedRuntimeMutation, allowMissingLogicalMarker bool) error {
+func guardPrintedRuntimeMutationRouteWithMarkerPolicy(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	route runtimeMutationRoute,
+	action plannedRuntimeMutation,
+	allowMissingLogicalMarker bool,
+	identity *runtimeRouteIdentityCache,
+) error {
 	printed := strings.TrimSpace(action.Target.PhysicalSocket)
 	if printed == runtimeMutationSocketAbsentBeforeCreate {
 		if route.expectedSocketPath != "" || (action.Verb != mutationCreateSession && action.Verb != mutationBootstrapControlSession) {
@@ -511,7 +568,7 @@ func guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runne
 		}
 	}
 	if allowMissingLogicalMarker {
-		return guardResolvedRuntimeMutationRouteBeforeMarkerWrite(ctx, runner, route)
+		return guardResolvedRuntimeMutationRouteBeforeMarkerWrite(ctx, runner, route, identity)
 	}
-	return guardResolvedRuntimeMutationRoute(ctx, runner, route)
+	return guardResolvedRuntimeMutationRouteWithIdentity(ctx, runner, route, identity)
 }

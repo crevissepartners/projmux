@@ -1644,6 +1644,12 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 		return err
 	}
 	ledger := newRuntimeLedgerAt(operationID, c.operationClock()())
+	// One transaction is one identity-reuse scope. The first route guard still
+	// proves the exact server against tmux; later guards for the same tuple
+	// reuse that proof instead of re-reading it under the registry lock. The
+	// scope closes before rollback, so unwinding re-proves identity in full.
+	c.runtime.openRouteIdentityCache(operationID)
+	defer c.runtime.closeRouteIdentityCache()
 	guard := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
 		var selected liveSessionIdentity
 		for _, candidate := range guards {
@@ -1680,8 +1686,15 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 		// defers while this transaction owns the registry lock. Re-run the same
 		// reconciler after all explicit mirrors are in place so the committed
 		// status and the live tmux projection agree before create returns.
-		return c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, guard)
+		if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, guard); err != nil {
+			return err
+		}
+		// Any identity reused inside this transaction is proved once more
+		// before commit, so a server that drifted after the first proof rolls
+		// the whole operation back instead of committing on stale evidence.
+		return c.runtime.reproveReusedRouteIdentity(ctx)
 	})
+	c.runtime.closeRouteIdentityCache()
 	if err != nil {
 		c.runtime.rollback(ctx, ledger)
 		c.runtime.clearCreateOperations(ctx, ledger)

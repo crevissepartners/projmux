@@ -271,6 +271,110 @@ type materializer struct {
 	configPath     string
 	socketName     string
 	routeAuthority *runtimeMutationRouteAuthority
+	// routeIdentity reuses, within one runtime-mutation transaction, an exact
+	// server identity this materializer already proved against tmux. It is nil
+	// outside a transaction, and a nil cache reads tmux on every guard.
+	routeIdentity *runtimeRouteIdentityCache
+	// routeIdentityDisabled is a test seam that keeps openRouteIdentityCache
+	// from opening a cache, so every guard reads tmux as it did before reuse
+	// existed. Production leaves it false.
+	routeIdentityDisabled bool
+	// afterGuardedWrite is a test seam that runs after every guarded Apply this
+	// materializer executes. Production leaves it nil.
+	afterGuardedWrite func()
+}
+
+// guardedWriteSteps is the materializer's guarded-write seam: every materializer
+// plan passes its steps through it on the way into executeRuntimeMutationPlan.
+// Each Apply and Undo it returns is a guarded write, and each one drops every
+// identity proof this transaction could reuse. The step's post-effect
+// reobservation, and any later guard, therefore proves the route against tmux
+// again: no guarded write relies on a proof older than the previous guarded
+// write.
+func (m *materializer) guardedWriteSteps(steps []runtimeMutationStep) []runtimeMutationStep {
+	guarded := slices.Clone(steps)
+	for i := range guarded {
+		if apply := guarded[i].Apply; apply != nil {
+			guarded[i].Apply = func(ctx context.Context) error {
+				err := apply(ctx)
+				m.invalidateRouteIdentity("guarded-write")
+				if m.afterGuardedWrite != nil {
+					m.afterGuardedWrite()
+				}
+				return err
+			}
+		}
+		if undo := guarded[i].Undo; undo != nil {
+			guarded[i].Undo = func(ctx context.Context) error {
+				err := undo(ctx)
+				m.invalidateRouteIdentity("guarded-write")
+				return err
+			}
+		}
+	}
+	return guarded
+}
+
+// openRouteIdentityCache begins one transaction's identity-reuse scope. The
+// first guard still proves the identity against tmux; only an exactly equal
+// tuple may reuse that proof, and only until closeRouteIdentityCache.
+func (m *materializer) openRouteIdentityCache(operationID string) {
+	if m == nil {
+		return
+	}
+	if m.routeIdentityDisabled {
+		m.routeIdentity = nil
+		return
+	}
+	m.routeIdentity = newRuntimeRouteIdentityCache(operationID)
+}
+
+// closeRouteIdentityCache ends the scope. It is idempotent, and everything
+// after it -- runtime ledger rollback included -- re-proves identity.
+func (m *materializer) closeRouteIdentityCache() {
+	if m == nil {
+		return
+	}
+	m.routeIdentity.close()
+	m.routeIdentity = nil
+}
+
+// invalidateRouteIdentity drops every cached proof. Callers use it when the
+// route itself is re-resolved or rebound onto a different server.
+func (m *materializer) invalidateRouteIdentity(reason string) {
+	if m == nil {
+		return
+	}
+	m.routeIdentity.invalidate(reason)
+}
+
+// exactRouteIdentityKey names the identity guardExactRouteOwnership proves when
+// it requires the logical marker. A route without a bound physical socket or a
+// captured server generation is not cacheable.
+func (m *materializer) exactRouteIdentityKey(target tmuxTransport) (runtimeRouteIdentityKey, bool) {
+	if m == nil || m.routeAuthority == nil {
+		return runtimeRouteIdentityKey{}, false
+	}
+	return runtimeRouteIdentityKeyForRoute(routeIdentityScopeExactRoute, runtimeMutationRoute{
+		target: target, expectedSocketPath: m.expectedSocketPath,
+		socketName: m.logicalSocketName(target), authority: m.routeAuthority,
+	})
+}
+
+// reproveReusedRouteIdentity bounds the window a reused proof leaves open. When
+// this transaction reused any identity, the exact route is proved against tmux
+// once more before the Registry commits. A drifted server refuses the commit,
+// and the caller unwinds through the runtime ledger like any other failure. A
+// transaction that reused nothing issues no extra tmux call.
+func (m *materializer) reproveReusedRouteIdentity(ctx context.Context) error {
+	if m == nil || m.routeIdentity.snapshot().Reuses == 0 {
+		return nil
+	}
+	m.invalidateRouteIdentity("commit-reproof")
+	if err := m.guardExactRoute(ctx, false, m.expectedSocketPath); err != nil {
+		return fmt.Errorf("runtime mutation plan: route identity refused commit after reused proofs: %w", err)
+	}
+	return nil
 }
 
 func (m *materializer) read(ctx context.Context, args ...string) (string, error) {
@@ -380,7 +484,20 @@ func (m *materializer) targetRouteGuard(action plannedRuntimeMutation) func(cont
 			target: target, expectedSocketPath: m.expectedSocketPath,
 			socketName: m.logicalSocketName(target), authority: m.routeAuthority,
 		}
-		return guardPrintedRuntimeMutationRoute(ctx, m.baseRunner(), route, action)
+		return guardPrintedRuntimeMutationRouteWithIdentity(ctx, m.baseRunner(), route, action, m.routeIdentity)
+	}
+}
+
+// revalidatedTargetRouteGuard is targetRouteGuard for a guard whose contract is
+// to re-prove the physical server generation at that exact point, such as the
+// split-layout batch that revalidates immediately before its first resize. It
+// drops any identity reused in this transaction first, so the guard always
+// reads tmux; a successful proof is recorded again for later guards.
+func (m *materializer) revalidatedTargetRouteGuard(action plannedRuntimeMutation) func(context.Context) error {
+	guard := m.targetRouteGuard(action)
+	return func(ctx context.Context) error {
+		m.invalidateRouteIdentity("pre-write-revalidation")
+		return guard(ctx)
 	}
 }
 
@@ -427,6 +544,36 @@ func (m *materializer) guardExactRouteOwnership(ctx context.Context, allowNoServ
 			return fmt.Errorf("printed physical socket %q disagrees with materializer route %q", planned, m.expectedSocketPath)
 		}
 	}
+	// The printable checks above are pure and always run. Only the tmux read set
+	// below is reusable, and only when this transaction already proved the exact
+	// same identity. The app-route variant is deliberately never cached: it does
+	// not read the logical marker, so it cannot answer for the full identity.
+	if requireLogical {
+		target, _, err := m.exactMutationRoute()
+		if err != nil {
+			return err
+		}
+		if key, ok := m.exactRouteIdentityKey(target); ok && m.routeIdentity.reuse(key) {
+			return nil
+		}
+	}
+	if err := m.proveExactRouteOwnership(ctx, allowNoServer, requireLogical, plannedPhysical...); err != nil {
+		m.routeIdentity.invalidate("exact-route-probe-error")
+		return err
+	}
+	if requireLogical {
+		// The proof may have bound the route authority, so the key is built from
+		// what was actually proved rather than from the pre-proof state.
+		if target, _, err := m.exactMutationRoute(); err == nil {
+			if key, ok := m.exactRouteIdentityKey(target); ok {
+				m.routeIdentity.record(key)
+			}
+		}
+	}
+	return nil
+}
+
+func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServer, requireLogical bool, plannedPhysical ...string) error {
 	target, route, err := m.exactMutationRoute()
 	if err != nil {
 		return err
@@ -471,6 +618,9 @@ func (m *materializer) guardExactRouteOwnership(ctx context.Context, allowNoServ
 		if bound.expectedSocketPath != m.expectedSocketPath || bound.authority == nil {
 			return errors.New("materializer exact route has no server-generation authority")
 		}
+		// Re-resolving the route rebinds the server generation this materializer
+		// speaks for, so every earlier proof is void.
+		m.invalidateRouteIdentity("route-re-resolution")
 		m.target = bound.target
 		target = bound.target
 		m.socketName = bound.socketName
@@ -488,10 +638,10 @@ func (m *materializer) guardExactRouteOwnership(ctx context.Context, allowNoServ
 			}
 			return nil
 		}
-		return guardResolvedRuntimeMutationRoute(ctx, m.baseRunner(), runtimeMutationRoute{
+		return guardResolvedRuntimeMutationRouteWithIdentity(ctx, m.baseRunner(), runtimeMutationRoute{
 			target: target, expectedSocketPath: m.expectedSocketPath,
 			socketName: m.logicalSocketName(target), authority: m.routeAuthority,
-		})
+		}, m.routeIdentity)
 	}
 	if requireLogical {
 		if err := guardRuntimeMutationServerOwnership(ctx, probe, target); err != nil {
@@ -559,7 +709,7 @@ func materializeMutationAction(kind runtimeMutationVerb, target runtimeMutationT
 
 func (m *materializer) runMutation(ctx context.Context, action plannedRuntimeMutation) ([]byte, error) {
 	var output []byte
-	err := executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
+	err := executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
 		Action:           action,
 		TargetRouteGuard: m.targetRouteGuard(action),
 		Reobserve:        func(ctx context.Context) (bool, error) { return m.observeMutationEffect(ctx, action) },
@@ -574,12 +724,12 @@ func (m *materializer) runMutation(ctx context.Context, action plannedRuntimeMut
 			output, err = runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)
 			return err
 		},
-	}})
+	}}))
 	return output, err
 }
 
 func (m *materializer) runMaterializeMutation(ctx context.Context, action plannedRuntimeMutation, guard, execute func() error, observer ...func(context.Context) (bool, error)) error {
-	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
+	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
 		Action:           action,
 		TargetRouteGuard: m.targetRouteGuard(action),
 		Reobserve: func(ctx context.Context) (bool, error) {
@@ -619,7 +769,7 @@ func (m *materializer) runMaterializeMutation(ctx context.Context, action planne
 		Apply: func(context.Context) error {
 			return execute()
 		},
-	}})
+	}}))
 }
 
 func materializeEffectRequiresInvariant(verb runtimeMutationVerb) bool {
@@ -1040,7 +1190,7 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 			},
 		})
 	}
-	if err := executeRuntimeMutationPlan(ctx, steps); err != nil && m.warn != nil {
+	if err := executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps)); err != nil && m.warn != nil {
 		fmt.Fprintf(m.warn, "projmux: rollback stopped before an unguarded runtime write: %v\n", err)
 	}
 }
@@ -1337,7 +1487,7 @@ func (m *materializer) writeCreatedProjectRouteMarker(ctx context.Context, resul
 		}
 		return m.observeCreatedProjectReceipt(ctx, result, marker)
 	}
-	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
+	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
 		Action:           action,
 		TargetRouteGuard: m.targetRouteGuard(action),
 		Reobserve: func(ctx context.Context) (bool, error) {
@@ -1374,7 +1524,7 @@ func (m *materializer) writeCreatedProjectRouteMarker(ctx context.Context, resul
 			_, err := runRuntimeMutationCommand(ctx, m.runner, action)
 			return err
 		},
-	}})
+	}}))
 }
 
 func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result intmux.NewSessionResult, marker string) error {
@@ -1422,7 +1572,7 @@ func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result 
 		target,
 		"exact created Project tuple and operation lease="+marker,
 		"lease-owned created Project session is absent", "-t", result.SessionID)
-	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
+	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
 		Action:           action,
 		TargetRouteGuard: m.targetRouteGuard(action),
 		Reobserve: func(ctx context.Context) (bool, error) {
@@ -1449,7 +1599,7 @@ func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result 
 			_, err := runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)
 			return err
 		},
-	}})
+	}}))
 }
 
 // bindCreatedProjectRecoveryRoute is deliberately weaker than the normal app
@@ -1709,7 +1859,7 @@ func (m *materializer) runIdentityWrites(ctx context.Context, kind, target, uid 
 			},
 		})
 	}
-	return executeRuntimeMutationPlan(ctx, steps)
+	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps))
 }
 
 func (m *materializer) recordErrorCreatedSession(
@@ -1822,7 +1972,7 @@ func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtim
 			})
 		}
 	}
-	if err := executeRuntimeMutationPlan(ctx, steps); err != nil && m.warn != nil {
+	if err := executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps)); err != nil && m.warn != nil {
 		fmt.Fprintf(m.warn, "projmux: could not clear guarded create-operation lease(s): %v\n", err)
 	}
 }
@@ -2262,7 +2412,7 @@ func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, pl
 			return errors.New("split layout action route disagrees with printable batch authority")
 		}
 		if !routeChecked {
-			routeErr = m.targetRouteGuard(action)(ctx)
+			routeErr = m.revalidatedTargetRouteGuard(action)(ctx)
 			routeChecked = true
 		}
 		return routeErr
@@ -2272,7 +2422,7 @@ func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, pl
 			// Revalidate the same physical generation immediately before the first
 			// write, then require the complete ordered identity/geometry receipt to
 			// be byte-identical to planning. Unknown or drifted state writes zero.
-			semanticErr = m.targetRouteGuard(action)(ctx)
+			semanticErr = m.revalidatedTargetRouteGuard(action)(ctx)
 			if semanticErr == nil {
 				var current splitLayoutBatchReceipt
 				current, semanticErr = m.observeSplitLayoutBatch(ctx, anchorPaneID)
@@ -2319,7 +2469,7 @@ func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, pl
 	// Layout remains best effort: a failed or partial resize cannot turn an
 	// already successful managed create into a topology rollback. The important
 	// boundary is that every attempted write came from one fully guarded plan.
-	_ = executeRuntimeMutationPlan(ctx, steps)
+	_ = executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps))
 }
 
 var splitLayoutBatchFormat = tmuxRowFormat(

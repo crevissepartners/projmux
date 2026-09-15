@@ -204,6 +204,9 @@ func newCreateCommand() *createCommand {
 		}
 		exact := explicitTmuxRunner{runner: runner, target: route.target}
 		client := defaultTmuxClientWithSocketRunner(exact, route.socketName)
+		// Binding the route reconnects the materializer to a freshly resolved
+		// server, so no identity proved before this point may be reused.
+		command.runtime.invalidateRouteIdentity("route-bind")
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
