@@ -327,6 +327,25 @@ func pruneProjectEffects() *AllowedEffects {
 	)
 }
 
+// pruneAgentEffects is the bounded stale-Agent prune. Every deletion it
+// commits is exactly Mutator.DeleteAgent, the Registry cascade `delete agent`
+// already records as removed: the Agent and its remaining managed Pane
+// identities go, their name reservations are released, their ownership edges
+// are removed, and their desired state is removed. The route has no live half,
+// so no tmux object stops and the current client never moves, and a run that
+// selects nothing is a legal zero-cardinality outcome.
+func pruneAgentEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityRemoved},
+		[]AddressEffect{AddressReleased},
+		[]TopologyEffect{TopologyRemoved},
+		[]DesiredStateEffect{DesiredStateRemoved},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityZeroOrMore},
+	)
+}
+
 func restoreSnapshotEffects() *AllowedEffects {
 	return allowedEffects(
 		[]IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityReused, IdentityRemoved, IdentityReplaced},
@@ -1550,14 +1569,24 @@ var routes = []Route{
 		Name:           "prune",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 16,
-		Summary:        "Prune stale Projects and snapshots",
+		Summary:        "Prune stale Projects, Agents, and snapshots",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux prune snapshot [--older-than <duration>]",
 			"projmux prune project --missing --older-than <duration> [--yes]",
+			"projmux prune agent --older-than <duration> [--no-session-ref] [--no-pane] [--exclude <agent-ref>]... [--yes]",
 		},
-		Canonical: []string{"prune project", "prune snapshot"},
+		Canonical: []string{"prune agent", "prune project", "prune snapshot"},
 		Children: []Route{
+			{
+				Effects:          pruneAgentEffects(),
+				Name:             "agent",
+				Invocation:       InvocationFanOut,
+				Summary:          "Delete Offline or Failed Agents past a bounded age whose session ref or managed Panes are gone; live Panes and Running Agents are never selected",
+				CanonicalSummary: "Prune stale Offline and Failed Agents by age and session-ref or Pane evidence",
+				Usage:            []string{"projmux prune agent --older-than <duration> [--no-session-ref] [--no-pane] [--exclude <agent-ref>]... [--yes]"},
+				Canonical:        []string{"prune agent"},
+			},
 			{
 				Effects:          pruneProjectEffects(),
 				Name:             "project",

@@ -185,7 +185,7 @@ func TestRemovedPublicArgvMatrixReturnsReplacementUsageWithoutHandlerReach(t *te
 		{"attach auto", legacyRouteGate{name: "attach", target: &retirementProbe{}, allowedFirst: []string{"project"}, replacement: func([]string) string { return "`projmux runtime attach ...`" }}, []string{"auto"}, "runtime attach"},
 		{"focus target", legacyRouteGate{name: "focus", target: &retirementProbe{}, allowedFirst: focusKinds, replacement: func([]string) string { return "`projmux focus project|window|pane ...`" }}, []string{"--target", "alpha"}, "focus project|window|pane"},
 		{"pin direct", legacyRouteGate{name: "pin", target: &retirementProbe{}, allowedFirst: []string{"project"}, replacement: func([]string) string { return "`projmux pin project ...`" }}, []string{"toggle", "/repo"}, "pin project"},
-		{"prune ephemeral", legacyRouteGate{name: "prune", target: &retirementProbe{}, allowedFirst: []string{"project", "snapshot"}, replacement: pruneReplacement}, []string{"ephemeral"}, "runtime prune"},
+		{"prune ephemeral", legacyRouteGate{name: "prune", target: &retirementProbe{}, allowedFirst: []string{"agent", "project", "snapshot"}, replacement: pruneReplacement}, []string{"ephemeral"}, "runtime prune"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -215,8 +215,9 @@ func TestMixedLegacyRootsForwardOnlySurvivingCanonicalChildren(t *testing.T) {
 		{"focus window", focusKinds, []string{"window", "win", "--project", "alpha"}},
 		{"focus pane", focusKinds, []string{"pane", "pan", "--project", "alpha", "--window", "win"}},
 		{"pin project", []string{"project"}, []string{"project", "list"}},
-		{"prune project", []string{"project", "snapshot"}, []string{"project", "--missing"}},
-		{"prune snapshot", []string{"project", "snapshot"}, []string{"snapshot", "--older-than", "24h"}},
+		{"prune agent", []string{"agent", "project", "snapshot"}, []string{"agent", "--older-than", "720h", "--no-pane"}},
+		{"prune project", []string{"agent", "project", "snapshot"}, []string{"project", "--missing"}},
+		{"prune snapshot", []string{"agent", "project", "snapshot"}, []string{"snapshot", "--older-than", "24h"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

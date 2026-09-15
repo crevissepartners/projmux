@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 190 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 191 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -75,7 +75,7 @@ projmux <command> [args...]
 | [`projmux notification`](#projmux-notification) | canonical | Manage pending notification workflow state |
 | [`projmux open`](#projmux-open) | canonical | Open a Project runtime and move the current client to it |
 | [`projmux pin`](#projmux-pin) | canonical | Manage pinned project directories |
-| [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects and snapshots |
+| [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects, Agents, and snapshots |
 | [`projmux quit`](#projmux-quit) | shortcut | Quit the app-owned projmux tmux runtime |
 | [`projmux reconcile`](#projmux-reconcile) | canonical | Preview or repair Registry and exact tmux resource drift |
 | [`projmux rebind`](#projmux-rebind) | canonical | Rebind a Project to a new absolute root without moving files |
@@ -2600,7 +2600,7 @@ projmux pin project list|add|remove|toggle|clear
 
 ## `projmux prune`
 
-Prune stale Projects and snapshots
+Prune stale Projects, Agents, and snapshots
 
 Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
@@ -2618,16 +2618,39 @@ Allowed effects:
 ```
 projmux prune snapshot [--older-than <duration>]
 projmux prune project --missing --older-than <duration> [--yes]
+projmux prune agent --older-than <duration> [--no-session-ref] [--no-pane] [--exclude <agent-ref>]... [--yes]
 ```
 
 Subcommands:
 
 | Route | Summary |
 | --- | --- |
+| [`projmux prune agent`](#projmux-prune-agent) | Delete Offline or Failed Agents past a bounded age whose session ref or managed Panes are gone; live Panes and Running Agents are never selected |
 | [`projmux prune project`](#projmux-prune-project) | Delete Projects whose spec.root has been missing for a bounded age |
 | [`projmux prune snapshot`](#projmux-prune-snapshot) | Inspect or delete preserved session snapshots (canonical spelling) |
 
-Canonical spelling: `projmux prune project`, `projmux prune snapshot`
+Canonical spelling: `projmux prune agent`, `projmux prune project`, `projmux prune snapshot`
+
+### `projmux prune agent`
+
+Delete Offline or Failed Agents past a bounded age whose session ref or managed Panes are gone; live Panes and Running Agents are never selected
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=removed`
+- `address=released`
+- `topology=removed`
+- `desired-state=removed`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=zero-or-more`
+- `domain-effect=null`
+
+```
+projmux prune agent --older-than <duration> [--no-session-ref] [--no-pane] [--exclude <agent-ref>]... [--yes]
+```
 
 ### `projmux prune project`
 

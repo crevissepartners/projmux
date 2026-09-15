@@ -44,6 +44,7 @@ scenario=delete-window-live route=delete window identity=removed address=release
 scenario=delete-pane-live-active route=delete pane identity=removed address=released topology=removed desired-state=removed runtime=stopped focus=moved-current-client cardinality=one-or-more domain-effect=null
 scenario=delete-agent-offline route=delete agent identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=one-or-more domain-effect=null
 scenario=prune-project route=prune project identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+scenario=prune-agent route=prune agent identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 scenario=shell-control-bootstrap route=shell identity=created address=allocated topology=established desired-state=created runtime=materialized focus=attached-caller cardinality=one-or-more domain-effect=null
 scenario=shell-project-reuse-materialize route=shell identity=reused address=unchanged topology=unchanged desired-state=reused runtime=materialized focus=attached-caller cardinality=exact-one domain-effect=null
 scenario=shell-existing-runtime route=shell identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=attached-caller cardinality=exact-one domain-effect=null

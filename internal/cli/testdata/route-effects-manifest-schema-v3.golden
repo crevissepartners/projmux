@@ -101,6 +101,7 @@ route=open project identity=unchanged address=unchanged topology=unchanged desir
 route=pin identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=pin project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=prune identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=prune agent identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=prune project identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=prune snapshot identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=quit identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=zero-or-more domain-effect=null

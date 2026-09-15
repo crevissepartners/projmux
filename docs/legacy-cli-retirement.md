@@ -37,7 +37,7 @@ unknown-command contract.
 | direct `tag list|toggle|clear`, `tag project ...` | `runtime tag ...` |
 
 The surviving mixed-root commands are exactly `attach project`, `focus
-project|window|pane`, `pin project`, and `prune project|snapshot`. The Shortcut
+project|window|pane`, `pin project`, and `prune agent|project|snapshot`. The Shortcut
 routes `doctor`, `quit`, `resources`, `settings`, `shell`, `switch`, and
 `welcome` remain. Singular/plural resource-kind aliases remain.
 

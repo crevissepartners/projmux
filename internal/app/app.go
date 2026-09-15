@@ -541,7 +541,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			replacement: func([]string) string { return "`projmux pin project ...`" },
 		},
 		"prune": legacyRouteGate{
-			name: "prune", target: a.prune, allowedFirst: []string{"project", "snapshot"},
+			name: "prune", target: a.prune, allowedFirst: []string{"agent", "project", "snapshot"},
 			replacement: pruneReplacement,
 		},
 		"open":       openProject,

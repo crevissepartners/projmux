@@ -494,7 +494,7 @@ func TestOnlyCanonicalChildrenSurviveOnMixedLegacyRoots(t *testing.T) {
 		want   []string
 	}{
 		{parent: "pin", want: []string{"project"}},
-		{parent: "prune", want: []string{"project", "snapshot"}},
+		{parent: "prune", want: []string{"agent", "project", "snapshot"}},
 		{parent: "attach", want: []string{"project"}},
 		{parent: "focus", want: []string{"project", "window", "pane"}},
 	} {

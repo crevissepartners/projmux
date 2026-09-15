@@ -71,6 +71,7 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"delete-pane-live-active", "delete pane", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimeStopped, FocusMovedCurrentClient, CardinalityOneOrMore, nil},
 		{"delete-agent-offline", "delete agent", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimeUnchanged, FocusUnchanged, CardinalityOneOrMore, nil},
 		{"prune-project", "prune project", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimeUnchanged, FocusUnchanged, CardinalityZeroOrMore, nil},
+		{"prune-agent", "prune agent", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimeUnchanged, FocusUnchanged, CardinalityZeroOrMore, nil},
 		{"shell-control-bootstrap", "shell", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusAttachedCaller, CardinalityOneOrMore, nil},
 		{"shell-project-reuse-materialize", "shell", IdentityReused, AddressUnchanged, TopologyUnchanged, DesiredStateReused, RuntimeMaterialized, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"shell-existing-runtime", "shell", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusAttachedCaller, CardinalityExactOne, nil},

@@ -48,6 +48,10 @@ type pruneCommand struct {
 	// handler because it prunes resource metadata rather than tmux runtime
 	// state, which is the split the runtime/resource namespace boundary makes.
 	project rawArgvCommand
+	// agent owns the canonical `prune agent` route for the same reason: it
+	// deletes stale Agent resources through the Registry alone and has no live
+	// tmux half.
+	agent rawArgvCommand
 }
 
 type previewSelectionDeleter interface {
@@ -89,6 +93,7 @@ func newPruneCommand(recorders ...*diagnostics.LifecycleRecorder) *pruneCommand 
 		sessionStore: sessionstate.NewDefaultStoreFromEnv,
 		now:          time.Now,
 		project:      newPruneProjectCommand(),
+		agent:        newPruneAgentCommand(),
 	}
 }
 
@@ -112,7 +117,8 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 	// `prune snapshot` is the canonical spelling of the existing session-state
 	// retention route and forwards raw argv to it, so both spellings share one
 	// implementation. `prune project` is the new bounded missing-root prune and
-	// has no current public counterpart.
+	// has no current public counterpart. `prune agent` is its stale-Agent
+	// sibling.
 	case "snapshot":
 		return c.runSessionState(fs.Args()[1:], stdout, stderr)
 	case "project":
@@ -120,6 +126,11 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return errors.New("prune project: the resource registry handler is not configured")
 		}
 		return c.project.Run(fs.Args()[1:], stdout, stderr)
+	case "agent":
+		if c.agent == nil {
+			return errors.New("prune agent: the resource registry handler is not configured")
+		}
+		return c.agent.Run(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printPruneUsage(stdout)
 		return nil
