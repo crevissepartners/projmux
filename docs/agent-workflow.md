@@ -1254,6 +1254,19 @@
   steer after a successful start, no new event or delivery change from a second
   push over a terminal record, and a delivered reason that names only the
   provider turn push, never model consumption, acknowledgement, or completion.
+- `TestAgentMessageSendExitCodeFollowsReceiptStateForEveryDeliveryState`,
+  `TestAgentMessageSendAndExplicitReplyShareTheUndeliveredJudgment`,
+  `TestAgentMessageSendReplayOfTerminalUndeliveredReceiptExitsNonzero`,
+  `TestAgentMessageSendCodexTargetTerminalFailureExitsNonzeroUnderTheSameJudgment`,
+  and `TestClassifyCodexTurnPushNeverReturnsUndeliveredWithoutCause` pin the
+  send exit contract: `agent message send` exits 0 only when its receipt is
+  `delivered` or not yet terminal (`accepted`, `held`, or an observed handoff),
+  and a `failed`, `refused`, `expired`, or `stale` receipt exits nonzero without
+  a usage dump after the receipt line is printed. One judgment decides the plain
+  send, the Claude-source explicit reply, and the Codex-source reply; a same-ref
+  replay of a stored undelivered receipt exits nonzero without a second push; an
+  expired Claude deadline stays `refused`/`claude-private-frame-unsupported`;
+  and every undelivered native Codex push outcome carries a cause.
 - The offline Claude dialogue fixtures reply to a Codex source, so they now
   accept a terminal Codex push failure receipt from the qualification reply --
   the four-field `ref/state/reason/action` line for a fresh reply ref, read

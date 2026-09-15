@@ -464,7 +464,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			if pushErr != nil {
 				return fmt.Errorf("%s: %w", spelling, pushErr)
 			}
-			if record.Delivery.State.Terminal() && record.Delivery.State != coremessage.StateDelivered {
+			if agentMessageUndelivered(record.Delivery) {
 				return fmt.Errorf("%s: explicit reply not delivered: previousRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
 					spelling, ref, record.Delivery.State, record.Delivery.Reason, record.Delivery.OutcomeUnknown,
 					agentMessageReplyFailureAction(record, claudeContentBytes))
@@ -487,13 +487,44 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	}
 	// The receipt is written before the failure is returned, so the sender sees
 	// the terminal state, reason, and action on stdout and still exits nonzero.
-	if err := writeAgentMessageReceiptText(stdout, receiptFor(record), claudeContentBytes); err != nil {
+	receipt := receiptFor(record)
+	if err := writeAgentMessageReceiptText(stdout, receipt, claudeContentBytes); err != nil {
 		return err
 	}
 	if pushErr != nil {
 		return fmt.Errorf("%s: %w", spelling, pushErr)
 	}
+	// A push that returned no cause, and a same-ref replay that pushed nothing,
+	// still exit by the receipt they printed.
+	if agentMessageUndelivered(record.Delivery) {
+		return fmt.Errorf("%s: message not delivered: messageRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
+			spelling, record.Envelope.MessageRef, record.Delivery.State, record.Delivery.Reason, record.Delivery.OutcomeUnknown,
+			agentMessageReceiptFailureAction(receipt, claudeContentBytes))
+	}
 	return nil
+}
+
+// agentMessageUndelivered is the one judgment of a send's exit: a terminal
+// state other than delivered. accepted, held, and an observed handoff (which
+// stays accepted) are not terminal and exit 0. The general send and the
+// explicit Claude reply both read it.
+func agentMessageUndelivered(delivery coremessage.Delivery) bool {
+	return delivery.State.Terminal() && delivery.State != coremessage.StateDelivered
+}
+
+// agentMessageReceiptFailureAction is the one action selection for a terminal
+// undelivered receipt. writeAgentMessageReceiptText prints it and a nonzero send
+// error names it, so the two cannot drift.
+func agentMessageReceiptFailureAction(receipt agentMessageReceipt, claudeContentBytes int) string {
+	if receipt.Target.Provider != string(aiprovider.Claude) {
+		claudeContentBytes = 0
+	}
+	if receipt.ReplyTo != "" {
+		return agentMessageReplyFailureAction(messagestore.Record{Envelope: coremessage.Envelope{
+			ReplyTo: receipt.ReplyTo, Deadline: receipt.Deadline}, Adapter: adapterForReplyReceipt(receipt), Delivery: receipt.Delivery},
+			claudeContentBytes)
+	}
+	return agentMessageSendFailureAction(receipt.Delivery, claudeContentBytes)
 }
 
 func (c *agentCommand) replyCorrelationRefusal(originalRef, reason string) error {
@@ -989,18 +1020,9 @@ func writeAgentMessageReceipt(stdout io.Writer, receipt agentMessageReceipt, asJ
 // writeAgentMessageReceiptText writes the text receipt. claudeContentBytes is
 // the sender's rendered Claude push content size, or 0 when it is not known.
 func writeAgentMessageReceiptText(stdout io.Writer, receipt agentMessageReceipt, claudeContentBytes int) error {
-	if receipt.Target.Provider != string(aiprovider.Claude) {
-		claudeContentBytes = 0
-	}
-	if receipt.Delivery.State.Terminal() && receipt.Delivery.State != coremessage.StateDelivered {
-		action := agentMessageSendFailureAction(receipt.Delivery, claudeContentBytes)
-		if receipt.ReplyTo != "" {
-			action = agentMessageReplyFailureAction(messagestore.Record{Envelope: coremessage.Envelope{
-				ReplyTo: receipt.ReplyTo, Deadline: receipt.Deadline}, Adapter: adapterForReplyReceipt(receipt), Delivery: receipt.Delivery},
-				claudeContentBytes)
-		}
+	if agentMessageUndelivered(receipt.Delivery) {
 		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", receipt.MessageRef, receipt.Delivery.State,
-			receipt.Delivery.Reason, action)
+			receipt.Delivery.Reason, agentMessageReceiptFailureAction(receipt, claudeContentBytes))
 		return err
 	}
 	_, err := fmt.Fprintf(stdout, "%s\t%s\n", receipt.MessageRef, receipt.Delivery.State)

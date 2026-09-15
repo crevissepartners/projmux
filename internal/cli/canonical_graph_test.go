@@ -15,17 +15,17 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when the send summary described --source as an
-// anchor rather than caller authentication. The prior move added exact-version
-// Claude target qualification to the provider-neutral Agent message routes. An earlier
-// move added message and wait on top of steer's explicit provider-acceptance
-// summary. The earlier
-// move added the Project lifecycle verbs:
-// `start|open|stop project` and the canonical `unregister project` are new
-// rows, `delete` became a source edge of the last of those instead of a
-// canonical owner, `switch` became a source of `create project` and
-// `open project` instead of `focus project`, and the mutation routes gained the
-// `receipt` projection.
+// The baseline last moved when the send summary named its exit rule: nonzero
+// after printing a failed, refused, expired, or stale receipt. The prior move
+// described --source as an anchor rather than caller authentication. Before
+// that, a move added exact-version Claude target qualification to the
+// provider-neutral Agent message routes, and an earlier one added message and
+// wait on top of steer's explicit provider-acceptance summary. The earliest
+// recorded move added the Project lifecycle verbs: `start|open|stop project`
+// and the canonical `unregister project` are new rows, `delete` became a source
+// edge of the last of those instead of a canonical owner, `switch` became a
+// source of `create project` and `open project` instead of `focus project`, and
+// the mutation routes gained the `receipt` projection.
 func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 	t.Parallel()
 
@@ -35,7 +35,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "3aab3a6da088ea0c8b2b2c268d2cd7d035339b4376a55c8f798d6c7ae0e536bd"
+	const want = "76af6edf74daf42e3e8c920381b5755f7b5222e074a673d381e7d2e67e3f6a65"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

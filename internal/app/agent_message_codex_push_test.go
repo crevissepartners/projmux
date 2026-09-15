@@ -260,6 +260,11 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 			if getErr != nil || !found || stored.Delivery != updated.Delivery {
 				t.Fatalf("stored delivery = %+v found=%t err=%v, want the receipt's %+v", stored.Delivery, found, getErr, updated.Delivery)
 			}
+			// The send exit reads the shared judgment, and a push cause exists
+			// exactly when that judgment holds for the stored receipt.
+			if agentMessageUndelivered(stored.Delivery) != (err != nil) {
+				t.Fatalf("undelivered judgment = %t for %+v, push error = %v", agentMessageUndelivered(stored.Delivery), stored.Delivery, err)
+			}
 		})
 	}
 }
@@ -364,6 +369,10 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 			state, reason := receiptStateAndReason(t, statusOut)
 			if state != test.wantState || reason != test.wantReason {
 				t.Fatalf("status = %s/%s, want the send receipt's %s/%s", state, reason, test.wantState, test.wantReason)
+			}
+			if stored, found, getErr := fixture.store.Get("message-send-failure"); getErr != nil || !found ||
+				!agentMessageUndelivered(stored.Delivery) {
+				t.Fatalf("stored = %+v found=%t err=%v, want a receipt the shared judgment calls undelivered", stored.Delivery, found, getErr)
 			}
 		})
 	}

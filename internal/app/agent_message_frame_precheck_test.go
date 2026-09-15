@@ -585,10 +585,9 @@ func TestAgentMessageFailureActionNamesRenderedContentBytesForOldHelperInvalidCo
 				t.Fatalf("fixture frame=%d content=%d", frameBytes, contentBytes)
 			}
 			stdout, err := f.send(t, sourceUID, test.ref, test.reply, test.body)
-			// Only the Claude-source reply path already returns its failure;
-			// the exit status of other accepted-then-failed sends is unchanged.
-			if claudeReply := test.reply && !test.codex; (err != nil) != claudeReply {
-				t.Fatalf("error = %v", err)
+			// Every row ends failed, so every send exits nonzero after its receipt.
+			if err == nil || IsUsageError(err) {
+				t.Fatalf("error = %v, want a nonzero non-usage exit for a failed receipt", err)
 			}
 			prefix := test.ref + "\tfailed\t" + test.reason + "\t"
 			if !strings.HasPrefix(stdout, prefix) || !strings.HasSuffix(stdout, "\n") {
@@ -597,7 +596,7 @@ func TestAgentMessageFailureActionNamesRenderedContentBytesForOldHelperInvalidCo
 			action := strings.TrimSuffix(strings.TrimPrefix(stdout, prefix), "\n")
 			if test.diagnose {
 				for _, want := range diagnosis(contentBytes) {
-					if !strings.Contains(action, want) || (err != nil && !strings.Contains(err.Error(), want)) {
+					if !strings.Contains(action, want) || !strings.Contains(err.Error(), want) {
 						t.Fatalf("action %q or error %v omits %q", action, err, want)
 					}
 				}

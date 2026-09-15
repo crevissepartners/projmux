@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -488,7 +489,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		if expectedReason == "" {
 			t.Fatal("fixture could not reach full-frame size rejection with valid content")
 		}
-		callCLI := func(args ...string) []byte {
+		runCLI := func(args ...string) ([]byte, error) {
 			t.Helper()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -499,13 +500,24 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 			if bytes.Contains(output, []byte(private.Token)) || bytes.Contains(output, []byte(envelope.BrokerEnvelope.Payload)) {
 				t.Fatal("sender output exposed auth or payload")
 			}
+			return output, err
+		}
+		callCLI := func(args ...string) []byte {
+			t.Helper()
+			output, err := runCLI(args...)
 			if err != nil {
 				t.Fatalf("isolated sender command failed: %v", err)
 			}
 			return output
 		}
-		output := callCLI("agent", "message", "send", "uid:"+first.AgentUID, "--source", "uid:"+sourceRoute.AgentUID,
+		// The helper fails the push with its sized reason, so the send prints
+		// that failed receipt and then exits nonzero.
+		output, sendErr := runCLI("agent", "message", "send", "uid:"+first.AgentUID, "--source", "uid:"+sourceRoute.AgentUID,
 			"--message-ref", ref, "--", envelope.BrokerEnvelope.Payload)
+		var sendExit *exec.ExitError
+		if !errors.As(sendErr, &sendExit) {
+			t.Fatalf("isolated sender exit = %v, want nonzero after a failed receipt", sendErr)
+		}
 		if !bytes.Contains(output, []byte(expectedReason)) || !bytes.Contains(output, []byte("reduce payload")) {
 			t.Fatalf("sender did not preserve frame size/action: %s", output)
 		}

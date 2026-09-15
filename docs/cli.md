@@ -761,7 +761,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux agent message send`](#projmux-agent-message-send) | Submit bounded peer coordination; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
+| [`projmux agent message send`](#projmux-agent-message-send) | Submit bounded peer coordination; --source selects a source Agent anchor, not caller authentication (default: active Pane); exits nonzero after printing a failed, refused, expired, or stale receipt |
 | [`projmux agent message status`](#projmux-agent-message-status) | Read a payload-free broker delivery receipt |
 | [`projmux agent message qualify`](#projmux-agent-message-qualify) | Explicitly qualify one exact Claude target using owned current-version isolation evidence and one marker push |
 
@@ -769,7 +769,7 @@ Canonical spelling: `projmux agent message send`, `projmux agent message status`
 
 #### `projmux agent message send`
 
-Submit bounded peer coordination; --source selects a source Agent anchor, not caller authentication (default: active Pane)
+Submit bounded peer coordination; --source selects a source Agent anchor, not caller authentication (default: active Pane); exits nonzero after printing a failed, refused, expired, or stale receipt
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
