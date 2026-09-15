@@ -364,6 +364,8 @@ func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lin
 		cfg.PaneActiveBg = value
 	case "focus":
 		cfg.Focus = value
+	case "provenance":
+		cfg.Provenance = value
 	case "font_family", "font_size":
 		// Deprecated theme font keys (removed in Phase 1b). They never applied
 		// to the terminal, so leftover keys are accepted for backward
@@ -721,6 +723,7 @@ func renderThemeConfigSection(cfg theme.ThemeConfig) string {
 		{"action_required", cfg.ActionRequired},
 		{"pane_active_bg", cfg.PaneActiveBg},
 		{"focus", cfg.Focus},
+		{"provenance", cfg.Provenance},
 	} {
 		if field.value == "" {
 			continue

@@ -139,30 +139,48 @@ func TestCodexCompactIdentityLabelGolden(t *testing.T) {
 		name     string
 		snapshot usage.Snapshot
 		want     string
+		// labelFg is the tmux role the HUD paints the identity with. A fallback
+		// lane is the one that leaves the AI label color: it carries no bracket
+		// tag any more, so the color IS the signal.
+		labelFg  string
+		fallback bool
 	}{
 		{
 			name:     "native",
 			snapshot: usage.Snapshot{Source: usage.SourceAppServer},
 			want:     "Codex",
+			labelFg:  theme.TmuxAccentAIFg,
 		},
 		{
 			name: "fallback",
 			snapshot: usage.Snapshot{
 				Source: usage.SourceRollout, FallbackReason: usage.ReasonAppServerUnsupported,
 			},
-			want: "Codex [fallback]",
+			want:     "Codex",
+			labelFg:  theme.TmuxProvenanceFg,
+			fallback: true,
 		},
 		{
 			name: "stale",
 			snapshot: usage.Snapshot{
 				Source: usage.SourceAppServer, StaleReason: usage.ReasonAppServerDisconnected,
 			},
-			want: "Codex [stale]",
+			want:    "Codex [stale]",
+			labelFg: theme.TmuxAccentAIFg,
 		},
 		{
 			name:     "unknown",
 			snapshot: usage.Snapshot{Source: usage.SnapshotSource("future-source")},
-			want:     "Codex [fallback]",
+			want:     "Codex",
+			labelFg:  theme.TmuxProvenanceFg,
+			fallback: true,
+		},
+		{
+			name:     "blank",
+			snapshot: usage.Snapshot{},
+			want:     "Codex",
+			labelFg:  theme.TmuxProvenanceFg,
+			fallback: true,
 		},
 	}
 	for _, test := range tests {
@@ -182,7 +200,17 @@ func TestCodexCompactIdentityLabelGolden(t *testing.T) {
 			if want := "X" + strings.TrimPrefix(test.want, "Codex"); shortLabel != want {
 				t.Fatalf("compact short label = %q, want %q", shortLabel, want)
 			}
-			got := intrender.StripTmuxEscapes(formatStatusUsage([]usage.Snapshot{snapshot}, 0, now))
+			if got := compactModelFallbackProvenance(snapshot); got != test.fallback {
+				t.Fatalf("fallback provenance = %v, want %v", got, test.fallback)
+			}
+			raw := formatStatusUsage([]usage.Snapshot{snapshot}, 0, now)
+			if wantPaint := "#[fg=" + test.labelFg + ",bold]" + test.want + "#[default]"; !strings.HasPrefix(raw, wantPaint) {
+				t.Fatalf("HUD label paint = %q, want prefix %q", raw, wantPaint)
+			}
+			if strings.Contains(raw, "[fallback]") {
+				t.Fatalf("HUD reintroduced the bracket tag: %q", raw)
+			}
+			got := intrender.StripTmuxEscapes(raw)
 			if !strings.HasPrefix(got, test.want+" ") {
 				t.Fatalf("HUD identity = %q, want prefix %q", got, test.want+" ")
 			}
@@ -231,6 +259,55 @@ func TestCodexCompactIdentityLabelGolden(t *testing.T) {
 	}
 	if !strings.Contains(table.String(), "app-server-disconnected") {
 		t.Fatalf("last-known-good table = %q", table.String())
+	}
+}
+
+// TestCodexFallbackHUDUsesProvenanceRoleNotThresholdColors closes C-2 on the
+// consumer side: the fallback Codex label is painted with the dedicated
+// provenance role, that role is never a usage threshold color or the native AI
+// label color, and the other providers in the same segment keep theirs.
+func TestCodexFallbackHUDUsesProvenanceRoleNotThresholdColors(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	fallback := usage.Snapshot{
+		Model: "codex", Window: usage.Window5h, Pct: 17,
+		ResetsAt: now.Add(time.Hour), UpdatedAt: now,
+		Source: usage.SourceRollout, FallbackReason: usage.ReasonAppServerUnsupported,
+	}
+	roles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+	for role, other := range map[string]string{
+		"state.warning":  roles.StateWarning,
+		"state.critical": roles.StateCritical,
+		"accent.ai_fg":   roles.AccentAIFg,
+	} {
+		if roles.ProvenanceFg == other {
+			t.Fatalf("usage.provenance_fg %q collapsed into %s", roles.ProvenanceFg, role)
+		}
+	}
+
+	got := formatStatusUsage([]usage.Snapshot{fallback}, 0, now)
+	if want := "#[fg=" + roles.ProvenanceFg + ",bold]Codex#[default]"; !strings.HasPrefix(got, want) {
+		t.Fatalf("fallback HUD label = %q, want prefix %q", got, want)
+	}
+	if strings.Contains(got, "#[fg="+roles.AccentAIFg+",bold]Codex") || strings.Contains(got, "[fallback]") {
+		t.Fatalf("fallback HUD kept the native paint or the bracket tag: %q", got)
+	}
+
+	mixed := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		fallback,
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	segment := formatStatusUsage(mixed, 0, now)
+	for _, want := range []string{
+		"#[fg=" + roles.AccentAIFg + ",bold]Claude#[default]",
+		"#[fg=" + roles.AccentAIFg + ",bold]Antigravity#[default]",
+		"#[fg=" + roles.ProvenanceFg + ",bold]Codex#[default]",
+	} {
+		if !strings.Contains(segment, want) {
+			t.Fatalf("mixed HUD missing %q: %q", want, segment)
+		}
 	}
 }
 

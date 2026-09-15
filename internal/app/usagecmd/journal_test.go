@@ -172,8 +172,11 @@ func TestCodexFallbackAndLastKnownGoodDiagnosticsExposeClosedSourceReason(t *tes
 		Model: "codex", Window: usage.Window5h, Pct: 19, UpdatedAt: now,
 		Source: usage.SourceRollout, FallbackReason: usage.ReasonAppServerUnsupported,
 	}
-	if label, _ := compactModelDisplayLabels(fallback); label != "Codex [fallback]" {
-		t.Fatalf("fallback compact identity = %q", label)
+	if label, short := compactModelDisplayLabels(fallback); label != "Codex" || short != "X" {
+		t.Fatalf("fallback compact identity = %q / %q, want the bare Codex identity", label, short)
+	}
+	if !compactModelFallbackProvenance(fallback) {
+		t.Fatal("fallback row lost the provenance signal the renderers paint")
 	}
 	h := newJournalHarness(t, &stubAdapter{name: "codex", snaps: []usage.Snapshot{fallback}})
 	h.run("--model", "codex")
@@ -187,6 +190,9 @@ func TestCodexFallbackAndLastKnownGoodDiagnosticsExposeClosedSourceReason(t *tes
 	stale.StaleReason = usage.ReasonAppServerDisconnected
 	if label, _ := compactModelDisplayLabels(stale); label != "Codex [stale]" {
 		t.Fatalf("last-known-good compact identity = %q", label)
+	}
+	if compactModelFallbackProvenance(stale) {
+		t.Fatal("a stale row must not also claim the fallback provenance signal")
 	}
 	h.cmd.recordCollectDiagnostics(
 		&usage.AdapterError{Model: "codex", Err: &usage.StaleReasonError{

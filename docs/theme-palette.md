@@ -54,6 +54,7 @@ onto these stable names:
 | `action_required` | AI needs-input/approval badge color | AI action-required badge (independent of `critical`) |
 | `pane_active_bg` | active-pane background tint | active-pane window-active-style tint (tmux pane chrome) |
 | `focus` | active-pane border color | active-pane border (tmux pane chrome) |
+| `provenance` | fallback-data-source label color | compact usage label for a row served by a fallback source (never a usage threshold color) |
 
 `text_primary` and `chrome_foreground` split the old broad foreground behavior:
 changing primary content text no longer repaints frame/title/search/border/status
@@ -70,6 +71,17 @@ repainting `critical` never changes it. `critical` remains reserved for error,
 failure, destructive, over-limit, or risk states. `pane_active_bg` and `focus`
 are also public keys driving the active-pane tint and border (tmux-only pane
 chrome, with no ANSI/native role).
+
+`provenance` colors a compact usage label whose numbers came from a fallback
+data source instead of the provider's authoritative one (today: a Codex row
+outside a healthy app-server). It is deliberately neither `warning` nor
+`critical` — those mean usage thresholds — nor the `accent.ai` label color a
+healthy row uses, because it is the only signal that row carries. Every built-in
+preset defines it as an orange (hue 15-45°) whose nearest tmux color differs
+from that preset's five state colors and from `colour121`; the fallback theme
+uses `colour208`, and an explicit light `status_background` darkens that literal
+the same way it darkens the other statusbar text roles. It is a tmux-only role
+(`usage.provenance_fg`) with no ANSI/native counterpart.
 
 Renderer-only role names such as `accent.ai`, `state.progress`, `git.branch`,
 and trust colors remain in `internal/theme/palette.go` until Phase 2+ maps each
@@ -200,6 +212,7 @@ light experience with `daylight` also requires a light terminal theme.
 | `action_required` | `#d97706` | `colour172` |
 | `pane_active_bg` | `#e8e4dc` | `colour254` |
 | `focus` | `#2563eb` | `colour26` |
+| `provenance` | `#944400` | `colour94` |
 
 ## Fallback Inventory
 
@@ -221,6 +234,7 @@ Accents and state:
 | `accent.action` | `141;205;142`, strong `122;199;173` | `colour29` bg / `colour230` fg |
 | `accent.attention` | notify HUD background/project family | `colour53`, project `colour90` |
 | `accent.ai` | notify agent `colour37` family | `colour37` bg / `colour121` fg |
+| `usage.provenance_fg` | not emitted on native surfaces | `colour208` (public `provenance` token) |
 | `state.progress` | `255;204;102`; switch attention/busy dot, pane-border in-progress badge, and pending notify title/bell/badge `colour220` | `colour220` |
 | `state.action_required` | AI approval/input-required status badge amber-orange; currently aliases the established warning token | `colour214` |
 | `state.warning` | usage/status popup warning ANSI 256 wrapper; non-AI warning chrome | `colour214` |

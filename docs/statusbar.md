@@ -254,10 +254,16 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 ## Usage element drop order
 
 The compact Codex provider identity is native-first. An authoritative healthy
-app-server snapshot renders as `Codex`; only degraded lanes are qualified as
-`Codex [fallback]` or `Codex [stale]`. Unknown non-stale provenance uses the
-conservative fallback label. These labels are locale-invariant, including on
-en-US and ko-KR narrow rows. The full Usage table, JSON, and diagnostics retain
+app-server snapshot renders as `Codex`; a retained last-known-good snapshot is
+qualified as `Codex [stale]`. A fallback lane carries no text qualifier: it
+keeps the bare `Codex` label, painted in the `provenance` theme color (user
+decision: *"codex[fallback] 하단 status 바대신 주황색의 Codex가나오는게어때"* →
+*"B로 가자"*, a role color of its own rather than a reused threshold color, with
+`[stale]` kept). The text tiers below the bars emit no color, so the same row
+spells `Codex^ 5h:17%` / `X^ 5h:17%` — one ASCII cell instead of the former
+11-cell ` [fallback]` tag. Unknown non-stale provenance uses that same
+conservative fallback presentation. These labels are locale-invariant,
+including on en-US and ko-KR narrow rows. The full Usage table, JSON, and diagnostics retain
 the raw source and closed reason; the statusbar label is presentation only.
 
 The usage segment does not pick a whole-segment tier. It starts from its

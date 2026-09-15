@@ -99,6 +99,10 @@ const (
 	TmuxAttentionProjectBg = "colour90"
 	TmuxAccentAIBg         = "colour37"
 	TmuxAccentAIFg         = "colour121"
+	// TmuxProvenanceFg is the fallback literal for usage.provenance_fg: the
+	// standard orange that none of the fallback state literals
+	// (colour214/160/220/72) or the AI label colour121 occupy.
+	TmuxProvenanceFg = "colour208"
 
 	TmuxStateProgressFg = "colour220"
 	TmuxStateWarningFg  = "colour214"

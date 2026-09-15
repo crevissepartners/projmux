@@ -826,6 +826,13 @@ const (
 	statusDefaultReset   = "#[default]"
 )
 
+// usageFallbackTextMarker is the one ASCII cell the colorless text tiers glue
+// right after a fallback-provenance Codex label (`Codex^ 5h:17%`, `X^`). The
+// HUD tier carries the same signal as the provenance role color instead, and
+// the text tiers never emit tmux escapes, so they need a glyph. `~` is the
+// stale marker, `*` the table STALE column and `?` the empty model label.
+const usageFallbackTextMarker = "^"
+
 // modelDisplay is the in-memory representation of a single model's
 // snapshots. Pct values are floats so the >100% over-limit branch can
 // surface the actual number (e.g. `319%`) instead of capping at 100%.
@@ -837,12 +844,16 @@ const (
 // a cosmetic age; retained last-known-good rows opt in through StaleReason.
 type modelDisplay struct {
 	model      string // canonical lowercase key.
-	label      string // user-facing compact identity (Claude / Codex [fallback] / ...).
+	label      string // user-facing compact identity (Claude / Codex / Codex [stale] / ...).
 	shortLabel string // legacy single-letter (C / X / ...).
-	hasFive    bool
-	fivePct    float64
-	hasWeek    bool
-	weekPct    float64
+	// fallbackProvenance marks a Codex row the compact qualifier classifies as
+	// fallback. Its labels stay bare: the HUD paints them with the provenance
+	// role color and the text tiers append usageFallbackTextMarker.
+	fallbackProvenance bool
+	hasFive            bool
+	fivePct            float64
+	hasWeek            bool
+	weekPct            float64
 	// lastSync is max(fiveUpdatedAt, weekUpdatedAt). Used together
 	// with `now` to compute the age indicator. Zero when no row
 	// supplied an UpdatedAt timestamp.
@@ -1104,7 +1115,13 @@ func renderUsageHUD(models []modelDisplay, now time.Time, plan usageSegmentPlan)
 			continue
 		}
 		var b strings.Builder
-		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
+		labelFg := statusRoles.AccentAIFg
+		if m.fallbackProvenance {
+			// A fallback Codex row keeps the bare `Codex` identity and signals its
+			// lane through the provenance role, never a usage threshold color.
+			labelFg = statusRoles.ProvenanceFg
+		}
+		b.WriteString("#[fg=" + labelFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
 		b.WriteString(renderHUDAgeSuffix(m, now, plan.ageMode(i)))
@@ -1146,6 +1163,11 @@ func renderUsageText(models []modelDisplay, now time.Time, plan usageSegmentPlan
 		label := m.shortLabel
 		if plan.longLabels {
 			label = m.label
+		}
+		if m.fallbackProvenance {
+			// No color reaches these tiers, so one ASCII cell carries the
+			// fallback signal the HUD paints as the provenance role.
+			label += usageFallbackTextMarker
 		}
 		text := renderTextPair(m, label, staleMarkerText(modelStaleLevel(m, now)))
 		if text != "" {
@@ -1364,7 +1386,9 @@ func snapshotProvenanceLabel(snapshot usage.Snapshot) string {
 // compactModelDisplayLabels maps one snapshot's typed provenance onto the
 // compact HUD/statusbar identity. Healthy authoritative Codex is the default
 // product identity; every other non-stale lane is conservatively presented as
-// fallback. The full table, JSON, and operations journal continue to read the
+// fallback, which keeps the bare identity and is signalled by the renderers
+// (see compactModelFallbackProvenance). Only stale adds a bracket qualifier.
+// The full table, JSON, and operations journal continue to read the
 // Snapshot source/reason fields directly and therefore remain lossless.
 //
 // Non-Codex providers deliberately retain their existing compact provenance
@@ -1382,7 +1406,7 @@ func compactModelDisplayLabels(snapshot usage.Snapshot) (string, string) {
 	}
 
 	qualifier := codexCompactQualifier(snapshot)
-	if qualifier == "" {
+	if qualifier != "stale" {
 		return longLabel, shortLabel
 	}
 	suffix := " [" + qualifier + "]"
@@ -1403,6 +1427,14 @@ func codexCompactQualifier(snapshot usage.Snapshot) string {
 		return ""
 	}
 	return "fallback"
+}
+
+// compactModelFallbackProvenance reports whether a snapshot is the Codex
+// fallback lane: exactly the rows codexCompactQualifier classifies as
+// fallback (rollout, blank, malformed, or future non-stale provenance).
+// Non-Codex providers never carry it.
+func compactModelFallbackProvenance(snapshot usage.Snapshot) bool {
+	return strings.EqualFold(strings.TrimSpace(snapshot.Model), "codex") && codexCompactQualifier(snapshot) == "fallback"
 }
 
 func boundedOpaqueDisplayID(id string, maxRunes int) string {
@@ -1654,9 +1686,10 @@ func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 		if !ok {
 			label, shortLabel := compactModelDisplayLabels(s)
 			row = &modelDisplay{
-				model:      s.Model,
-				label:      label,
-				shortLabel: shortLabel,
+				model:              s.Model,
+				label:              label,
+				shortLabel:         shortLabel,
+				fallbackProvenance: compactModelFallbackProvenance(s),
 			}
 			byModel[s.Model] = row
 			order = append(order, s.Model)

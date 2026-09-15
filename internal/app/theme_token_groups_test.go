@@ -120,3 +120,35 @@ func themeTokenRows(t *testing.T, cmd *settingsCommand) []intpickercompat.Entry 
 	}
 	return rows
 }
+
+// TestThemeStateGroupCarriesProvenanceLast pins the Settings placement of the
+// `provenance` token — the end of the signal-color [state] group — and that
+// the Settings get/set/effective paths all route it.
+func TestThemeStateGroupCarriesProvenanceLast(t *testing.T) {
+	t.Parallel()
+
+	group, ok := themeGroupByPrefix("[state]")
+	if !ok {
+		t.Fatal("themeTokenGroups lost the [state] group")
+	}
+	if last := group.Tokens[len(group.Tokens)-1]; last != theme.TokenProvenance {
+		t.Fatalf("[state] group ends with %q, want provenance", last)
+	}
+	if _, ok := parseThemeColorAction(string(theme.TokenProvenance)); !ok {
+		t.Fatal("provenance is not a selectable theme color action")
+	}
+
+	var cfg theme.ThemeConfig
+	setThemeColorField(&cfg, theme.TokenProvenance, "#123456")
+	if cfg.Provenance != "#123456" || themeColorFieldValue(cfg, theme.TokenProvenance) != "#123456" {
+		t.Fatalf("Settings set/get drifted: %#v", cfg)
+	}
+	field := effectiveColorField(theme.ResolveTheme(cfg), theme.TokenProvenance)
+	if field.Value.Hex != "#123456" || field.Source != theme.SourceGlobal {
+		t.Fatalf("effective provenance = %#v", field)
+	}
+	fallback := effectiveColorField(theme.ResolveTheme(theme.ThemeConfig{}), theme.TokenProvenance)
+	if fallback.Source != theme.SourceFallback || fallback.Value.Hex == "" {
+		t.Fatalf("fallback provenance = %#v", fallback)
+	}
+}

@@ -37,6 +37,7 @@ var themeTokenGroups = []themeTokenGroup{
 	}},
 	{Prefix: "[state]", Tokens: []theme.ColorToken{
 		theme.TokenCritical, theme.TokenWarning, theme.TokenProgress, theme.TokenSuccess, theme.TokenActionRequired,
+		theme.TokenProvenance,
 	}},
 	{Prefix: "[chrome]", Tokens: []theme.ColorToken{
 		theme.TokenChromeForeground, theme.TokenPaneActiveBg, theme.TokenFocus,
@@ -815,6 +816,8 @@ func effectiveColorField(effective theme.EffectiveTheme, token theme.ColorToken)
 		return effective.PaneActiveBg
 	case theme.TokenFocus:
 		return effective.Focus
+	case theme.TokenProvenance:
+		return effective.Provenance
 	default:
 		return theme.ColorField{}
 	}
@@ -938,6 +941,8 @@ func themeColorFieldValue(cfg theme.ThemeConfig, token theme.ColorToken) string 
 		return strings.TrimSpace(cfg.PaneActiveBg)
 	case theme.TokenFocus:
 		return strings.TrimSpace(cfg.Focus)
+	case theme.TokenProvenance:
+		return strings.TrimSpace(cfg.Provenance)
 	default:
 		return ""
 	}
@@ -977,5 +982,7 @@ func setThemeColorField(cfg *theme.ThemeConfig, token theme.ColorToken, value st
 		cfg.PaneActiveBg = value
 	case theme.TokenFocus:
 		cfg.Focus = value
+	case theme.TokenProvenance:
+		cfg.Provenance = value
 	}
 }

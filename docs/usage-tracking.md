@@ -248,11 +248,26 @@ provider or an opaque bucket cannot manufacture a window row.
 For native Codex multi-bucket rows, the exact `codex` bucket wins the HUD
 projection, then the legacy empty bucket, then lexical bucket order. The HUD
 compact identity is derived from that same row: a healthy authoritative
-`app-server` row is simply `Codex`, a fresh rollout row is
-`Codex [fallback]`, and a retained last-known-good row is `Codex [stale]`.
-Blank, malformed, or future non-stale provenance also fails conservatively to
-the existing `[fallback]` identity rather than looking native or expanding the
-compact vocabulary. The exact raw source and closed fallback/stale reason stay
+`app-server` row is simply `Codex`, a retained last-known-good row is
+`Codex [stale]`, and a fallback row keeps the bare `Codex` text while the HUD
+paints its label with the dedicated `provenance` theme color. Blank, malformed,
+or future non-stale provenance also fails conservatively to that same fallback
+presentation rather than looking native or expanding the compact vocabulary.
+
+That label used to spend 11 cells on a ` [fallback]` tag. It now spends none in
+the HUD and one in the text tiers, which is what the user asked for:
+*"이거 간단한 로드맵 거리긴한대 codex[fallback] 하단 status 바대신 주황색의 Codex가나오는게어때"*
+and, once the color-rule options were laid out, *"B로 가자"* — a role color of its
+own rather than a reused threshold color, with `[stale]` left alone. That role
+color is the public `provenance` theme token (`colour208` in the fallback
+theme); see [theme-palette.md](theme-palette.md).
+
+Below the bar tiers the segment is colorless, so a fallback row spells
+`Codex^ 5h:17%` there, or `X^ 5h:17%` at the single-letter tier: one ASCII cell
+in place of the tag. A client that cannot paint color, or a theme that sets
+`provenance` to the ordinary label color, therefore shows no fallback signal in
+the HUD at all — the recovery path is the full surface below.
+The exact raw source and closed fallback/stale reason stay
 in `agent usage --model codex` table/JSON output and in
 `projmux diagnostics log --component usage`; compact labels never replace
 those fields.

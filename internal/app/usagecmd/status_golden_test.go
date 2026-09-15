@@ -84,23 +84,46 @@ func TestStatusUsageGoldensDifferByStalenessTier(t *testing.T) {
 func TestCodexIdentityNarrowStatusbarLocaleFixture(t *testing.T) {
 	t.Parallel()
 
-	fallback := usage.Snapshot{
-		Model: "codex", Window: usage.Window5h, Pct: 17,
-		ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow,
-		Source: usage.SourceRollout, FallbackReason: usage.ReasonAppServerUnsupported,
+	codex := func(source usage.SnapshotSource, fallback, stale usage.SnapshotReason) usage.Snapshot {
+		return usage.Snapshot{
+			Model: "codex", Window: usage.Window5h, Pct: 17,
+			ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow,
+			Source: source, FallbackReason: fallback, StaleReason: stale,
+		}
 	}
-	const width = 23
-	const want = "Codex [fallback] 5h:17%"
-	for _, locale := range []string{"en-US", "ko-KR"} {
-		t.Run(locale, func(t *testing.T) {
-			got := intrender.StripTmuxEscapes(formatStatusUsage([]usage.Snapshot{fallback}, width, statusGoldenNow))
-			if got != want {
-				t.Fatalf("%s narrow statusbar = %q, want %q", locale, got, want)
-			}
-			if intrender.VisualLen(got) != width {
-				t.Fatalf("%s narrow statusbar width = %d, want %d", locale, intrender.VisualLen(got), width)
-			}
-		})
+	rollout := codex(usage.SourceRollout, usage.ReasonAppServerUnsupported, "")
+	cases := []struct {
+		name     string
+		snapshot usage.Snapshot
+		width    int
+		want     string
+	}{
+		// A fallback row spends ONE ASCII cell here instead of the 11-cell
+		// ` [fallback]` tag: these tiers emit no tmux escapes, so the HUD's
+		// provenance color cannot reach them.
+		{name: "fallback-long", snapshot: rollout, width: 13, want: "Codex^ 5h:17%"},
+		{name: "fallback-short", snapshot: rollout, width: 12, want: "X^ 5h:17%"},
+		{name: "blank-provenance-long", snapshot: codex("", "", ""), width: 13, want: "Codex^ 5h:17%"},
+		// Native and last-known-good rows are byte-identical to main.
+		{name: "native", snapshot: codex(usage.SourceAppServer, "", ""), width: 13, want: "Codex 5h:17%"},
+		{name: "stale-long", snapshot: codex(usage.SourceAppServer, "", usage.ReasonAppServerDisconnected), width: 20, want: "Codex [stale] 5h:17%"},
+		{name: "stale-short", snapshot: codex(usage.SourceAppServer, "", usage.ReasonAppServerDisconnected), width: 16, want: "X [stale] 5h:17%"},
+	}
+	for _, tc := range cases {
+		for _, locale := range []string{"en-US", "ko-KR"} {
+			t.Run(tc.name+"/"+locale, func(t *testing.T) {
+				got := formatStatusUsage([]usage.Snapshot{tc.snapshot}, tc.width, statusGoldenNow)
+				if strings.Contains(got, "#[") {
+					t.Fatalf("%s text tier emitted tmux escapes: %q", locale, got)
+				}
+				if got != tc.want {
+					t.Fatalf("%s narrow statusbar = %q, want %q", locale, got, tc.want)
+				}
+				if width := intrender.VisualLen(got); width > tc.width {
+					t.Fatalf("%s narrow statusbar width = %d, want <= %d", locale, width, tc.width)
+				}
+			})
+		}
 	}
 }
 

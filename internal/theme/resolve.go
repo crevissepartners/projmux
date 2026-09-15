@@ -42,6 +42,7 @@ const (
 	TokenActionRequired   ColorToken = "action_required"
 	TokenPaneActiveBg     ColorToken = "pane_active_bg"
 	TokenFocus            ColorToken = "focus"
+	TokenProvenance       ColorToken = "provenance"
 )
 
 // ResolverColorTokens is the stable display/serialization order for theme
@@ -63,6 +64,7 @@ var ResolverColorTokens = []ColorToken{
 	TokenActionRequired,
 	TokenPaneActiveBg,
 	TokenFocus,
+	TokenProvenance,
 }
 
 // ThemeConfig is the user-configurable theme section from global or project
@@ -86,6 +88,7 @@ type ThemeConfig struct {
 	ActionRequired   string
 	PaneActiveBg     string
 	Focus            string
+	Provenance       string
 }
 
 // HasContent reports whether the config carries any theme override.
@@ -108,6 +111,7 @@ func (c ThemeConfig) HasContent() bool {
 		c.ActionRequired,
 		c.PaneActiveBg,
 		c.Focus,
+		c.Provenance,
 	} {
 		if strings.TrimSpace(value) != "" {
 			return true
@@ -136,6 +140,7 @@ func (c *ThemeConfig) Normalize() {
 	c.ActionRequired = strings.TrimSpace(c.ActionRequired)
 	c.PaneActiveBg = strings.TrimSpace(c.PaneActiveBg)
 	c.Focus = strings.TrimSpace(c.Focus)
+	c.Provenance = strings.TrimSpace(c.Provenance)
 }
 
 // ColorSpec carries exact truecolor plus a nearest xterm-256 approximation.
@@ -209,6 +214,7 @@ type EffectiveTheme struct {
 	ActionRequired   ColorField
 	PaneActiveBg     ColorField
 	Focus            ColorField
+	Provenance       ColorField
 	Warnings         []Warning
 }
 
@@ -321,6 +327,15 @@ type RenderRoles struct {
 	AccentAIFg          string // accent.ai_fg          Tier B luma-gated vs status_background (colour121) — usage HUD model label
 	UsageBarEmpty       string // usage.bar_empty       Tier B luma-gated vs status_background (colour238)
 	PaneBorderMutedFg   string // pane.border_muted_fg  Tier B luma-gated vs background (colour244) — inactive pane border label
+
+	// usage.provenance_fg — the compact usage label color for a provider row
+	// served by a fallback source (today: Codex outside a healthy app-server).
+	// Tier A (public token `provenance`): a preset or explicit token is used
+	// verbatim; the fallback-sourced token takes the same luma gate as
+	// AccentAIFg, so the fallback theme keeps the literal colour208 and an
+	// explicit light status_background darkens it. It is a role of its own and
+	// never aliases the usage threshold colors (warning/critical).
+	ProvenanceFg string
 }
 
 // RenderRolesFromEffective derives the semantic role map from an effective
@@ -413,6 +428,10 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		AccentAIFg:          tmuxLumaContrastOrLiteral(effective.StatusBackground, TmuxAccentAIFg),
 		UsageBarEmpty:       tmuxLumaContrastOrLiteral(effective.StatusBackground, TmuxUsageEmptyFg),
 		PaneBorderMutedFg:   tmuxLumaContrastOrLiteral(effective.Background, TmuxMutedFg),
+
+		// usage provenance label: Tier A token, luma-gated only when the token
+		// itself is fallback-sourced (see tmuxProvenanceFg).
+		ProvenanceFg: tmuxProvenanceFg(effective.Provenance, effective.StatusBackground),
 	}
 }
 
@@ -464,6 +483,7 @@ func (t EffectiveTheme) Fields() []EffectiveField {
 		{Name: string(TokenActionRequired), Value: t.ActionRequired.Value.Hex, Source: t.ActionRequired.Source},
 		{Name: string(TokenPaneActiveBg), Value: t.PaneActiveBg.Value.Hex, Source: t.PaneActiveBg.Source},
 		{Name: string(TokenFocus), Value: t.Focus.Value.Hex, Source: t.Focus.Source},
+		{Name: string(TokenProvenance), Value: t.Provenance.Value.Hex, Source: t.Provenance.Source},
 	}
 }
 
@@ -581,6 +601,19 @@ func tmuxLumaContrastOrLiteral(bg ColorField, literal string) string {
 	return fmt.Sprintf("#%02x%02x%02x", dr, dg, db)
 }
 
+// tmuxProvenanceFg derives usage.provenance_fg. A fallback-sourced token (or an
+// unresolved zero field) renders the literal colour208 through the same luma
+// gate AccentAIFg uses, so the fallback theme stays on the literal and an
+// explicit light status_background gets a darkened, hue-preserving hex. A
+// preset or explicit token is emitted verbatim: the preset rubric owns preset
+// contrast, and an explicit value is the user's choice.
+func tmuxProvenanceFg(provenance, statusBackground ColorField) string {
+	if provenance.Source == SourceFallback || strings.TrimSpace(provenance.Value.Hex) == "" {
+		return tmuxLumaContrastOrLiteral(statusBackground, TmuxProvenanceFg)
+	}
+	return provenance.Value.Hex
+}
+
 type preset struct {
 	Name   string
 	Colors map[ColorToken]ColorSpec
@@ -606,6 +639,7 @@ var builtinPresets = map[string]preset{
 			TokenActionRequired:   {Hex: "#ffaf00", Tmux: TmuxAIBadgeActionRequiredFg},
 			TokenPaneActiveBg:     {Tmux: ThemeDefaultSentinel},
 			TokenFocus:            {Hex: "#00ffff", Tmux: TmuxPaneActiveBorderFg},
+			TokenProvenance:       {Hex: "#ff8700", Tmux: TmuxProvenanceFg},
 		},
 	},
 	"blue-hour": {
@@ -615,7 +649,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#acb6bf", TokenTextPrimary: "#acb6bf", TokenForeground: "#acb6bf", TokenMuted: "#4a5878", TokenAccent: "#3d8fd1",
 			TokenCritical: "#ec6a88", TokenWarning: "#efb472",
 			TokenProgress: "#5ca7e4", TokenSuccess: "#3fdaa4", TokenActionRequired: "#ffca85",
-			TokenPaneActiveBg: "#161a3a", TokenFocus: "#5ca7e4",
+			TokenPaneActiveBg: "#161a3a", TokenFocus: "#5ca7e4", TokenProvenance: "#ff8700",
 		}),
 	},
 	"carbon-violet": {
@@ -625,7 +659,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#d6d3df", TokenTextPrimary: "#d6d3df", TokenForeground: "#d6d3df", TokenMuted: "#8d8996", TokenAccent: "#b48ead",
 			TokenCritical: "#ff5f5f", TokenWarning: "#d7af5f",
 			TokenProgress: "#87afff", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
-			TokenPaneActiveBg: "#000000", TokenFocus: "#b48ead",
+			TokenPaneActiveBg: "#000000", TokenFocus: "#b48ead", TokenProvenance: "#d7875f",
 		}),
 	},
 	"daylight": {
@@ -635,7 +669,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#3a4550", TokenTextPrimary: "#2c3338", TokenForeground: "#2c3338", TokenMuted: "#6b7680", TokenAccent: "#0f766e",
 			TokenCritical: "#c62828", TokenWarning: "#b45309",
 			TokenProgress: "#1d4ed8", TokenSuccess: "#15803d", TokenActionRequired: "#d97706",
-			TokenPaneActiveBg: "#e8e4dc", TokenFocus: "#2563eb",
+			TokenPaneActiveBg: "#e8e4dc", TokenFocus: "#2563eb", TokenProvenance: "#944400",
 		}),
 	},
 	"ember": {
@@ -645,7 +679,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#f3e4d7", TokenTextPrimary: "#f3e4d7", TokenForeground: "#f3e4d7", TokenMuted: "#b09282", TokenAccent: "#ff9f5f",
 			TokenCritical: "#ff5f5f", TokenWarning: "#d7af00",
 			TokenProgress: "#ffd75f", TokenSuccess: "#87af5f", TokenActionRequired: "#ff8700",
-			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#ffaf5f",
+			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#ffaf5f", TokenProvenance: "#d7875f",
 		}),
 	},
 	"forest": {
@@ -655,7 +689,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#e0ebe4", TokenTextPrimary: "#e0ebe4", TokenForeground: "#e0ebe4", TokenMuted: "#8fa196", TokenAccent: "#9bcf8f",
 			TokenCritical: "#ff7a70", TokenWarning: "#e5c45f",
 			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
-			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
+			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff", TokenProvenance: "#ff8700",
 		}),
 	},
 	"rose": {
@@ -665,7 +699,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#f0e3ea", TokenTextPrimary: "#f0e3ea", TokenForeground: "#f0e3ea", TokenMuted: "#aa8d9c", TokenAccent: "#e12672",
 			TokenCritical: "#ff6b6b", TokenWarning: "#f0c36a",
 			TokenProgress: "#ffcc66", TokenSuccess: "#5faf87", TokenActionRequired: "#ffaf00",
-			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff",
+			TokenPaneActiveBg: "#1c1c1c", TokenFocus: "#00ffff", TokenProvenance: "#ff8700",
 		}),
 	},
 	"high-contrast": {
@@ -675,7 +709,7 @@ var builtinPresets = map[string]preset{
 			TokenChromeForeground: "#ffffff", TokenTextPrimary: "#ffffff", TokenForeground: "#ffffff", TokenMuted: "#bfbfbf", TokenAccent: "#00ffff",
 			TokenCritical: "#ff0000", TokenWarning: "#ffff00",
 			TokenProgress: "#00bfff", TokenSuccess: "#00ff66", TokenActionRequired: "#ffaf00",
-			TokenPaneActiveBg: "#080808", TokenFocus: "#00ffff",
+			TokenPaneActiveBg: "#080808", TokenFocus: "#00ffff", TokenProvenance: "#ff8700",
 		}),
 	},
 }
@@ -757,6 +791,7 @@ func ResolveTheme(global ThemeConfig) EffectiveTheme {
 	result.ActionRequired = resolveColor(valid, TokenActionRequired)
 	result.PaneActiveBg = resolveColor(valid, TokenPaneActiveBg)
 	result.Focus = resolveColor(valid, TokenFocus)
+	result.Provenance = resolveColor(valid, TokenProvenance)
 	return result
 }
 
@@ -811,6 +846,7 @@ func resolveLayer(input layerInput) (resolvedLayer, []Warning, bool) {
 		{TokenActionRequired, cfg.ActionRequired},
 		{TokenPaneActiveBg, cfg.PaneActiveBg},
 		{TokenFocus, cfg.Focus},
+		{TokenProvenance, cfg.Provenance},
 	} {
 		if !hasThemeValue(item.value) {
 			continue

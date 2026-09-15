@@ -253,6 +253,7 @@ func TestRenderRolesFallbackUsesTerminalDefaultPaneAndPopupBackgrounds(t *testin
 		AccentAIFg:          TmuxAccentAIFg,
 		UsageBarEmpty:       TmuxUsageEmptyFg,
 		PaneBorderMutedFg:   TmuxMutedFg,
+		ProvenanceFg:        TmuxProvenanceFg,
 	}
 	if got != want {
 		t.Fatalf("fallback render roles = %#v, want %#v", got, want)
@@ -625,4 +626,116 @@ func requireThemeWarning(t *testing.T, got EffectiveTheme, source Source, field 
 		}
 	}
 	t.Fatalf("warnings = %#v, want %s.%s warning", got.Warnings, source, field)
+}
+
+// TestProvenanceTokenIsAPublicResolverToken pins the Tier A wiring of the
+// `provenance` token: it serializes with the other public tokens, carries
+// config content, resolves from an explicit value, appears in Fields(), and an
+// invalid value warns and drops only its own layer.
+func TestProvenanceTokenIsAPublicResolverToken(t *testing.T) {
+	t.Parallel()
+
+	var listed bool
+	for _, token := range ResolverColorTokens {
+		if token == TokenProvenance {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatalf("ResolverColorTokens = %v, want provenance", ResolverColorTokens)
+	}
+	if !(ThemeConfig{Provenance: "#ff8700"}).HasContent() {
+		t.Fatal("a provenance-only ThemeConfig must report content")
+	}
+	cfg := ThemeConfig{Provenance: "  #ff8700  "}
+	cfg.Normalize()
+	if cfg.Provenance != "#ff8700" {
+		t.Fatalf("Normalize() left provenance = %q", cfg.Provenance)
+	}
+
+	explicit := ResolveTheme(ThemeConfig{Provenance: "#123456"})
+	if explicit.Provenance.Value.Hex != "#123456" || explicit.Provenance.Source != SourceGlobal {
+		t.Fatalf("explicit provenance = %#v", explicit.Provenance)
+	}
+	var found bool
+	for _, field := range explicit.Fields() {
+		if field.Name != string(TokenProvenance) {
+			continue
+		}
+		found = true
+		if field.Value != "#123456" || field.Source != SourceGlobal {
+			t.Fatalf("provenance field = %#v", field)
+		}
+	}
+	if !found {
+		t.Fatal("Fields() does not list provenance")
+	}
+
+	fallback := ResolveTheme(ThemeConfig{})
+	if fallback.Provenance.Source != SourceFallback || fallback.Provenance.Value.Hex == "" {
+		t.Fatalf("fallback provenance = %#v, want the built-in preset value", fallback.Provenance)
+	}
+
+	invalid := ResolveTheme(ThemeConfig{Provenance: "orange"})
+	requireThemeWarning(t, invalid, SourceGlobal, string(TokenProvenance))
+	if invalid.Provenance.Source != SourceFallback {
+		t.Fatalf("invalid provenance layer survived: %#v", invalid.Provenance)
+	}
+}
+
+// TestProvenanceRoleLumaGateMatchesAccentAI pins the derivation of
+// usage.provenance_fg: the fallback-sourced token takes the same luma gate as
+// AccentAIFg (historical literal on dark chrome, darkened hex on an explicit
+// light status background), while a preset or explicit token is used verbatim.
+// It also closes C-2 on the role side: the color never collapses into a usage
+// threshold color or the native AI label color.
+func TestProvenanceRoleLumaGateMatchesAccentAI(t *testing.T) {
+	t.Parallel()
+
+	fallback := RenderRolesFromEffective(ResolveTheme(ThemeConfig{}))
+	if fallback.ProvenanceFg != TmuxProvenanceFg {
+		t.Fatalf("fallback usage.provenance_fg = %q, want the literal %q", fallback.ProvenanceFg, TmuxProvenanceFg)
+	}
+
+	light := RenderRolesFromEffective(ResolveTheme(ThemeConfig{StatusBackground: "#e8e8e2"}))
+	if want := "#9d5300"; light.ProvenanceFg != want {
+		t.Fatalf("light status background usage.provenance_fg = %q, want darkened %q", light.ProvenanceFg, want)
+	}
+	lr, lg, lb := parseTestHexRGB(t, light.ProvenanceFg)
+	if luma := rec601Luma(lr, lg, lb); luma > contrastDarkenTargetLuma {
+		t.Fatalf("darkened usage.provenance_fg luma %.1f, want <= %.1f", luma, contrastDarkenTargetLuma)
+	}
+
+	explicit := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Provenance: "#123456"}))
+	if explicit.ProvenanceFg != "#123456" {
+		t.Fatalf("explicit provenance role = %q, want the token verbatim", explicit.ProvenanceFg)
+	}
+	explicitLight := RenderRolesFromEffective(ResolveTheme(ThemeConfig{StatusBackground: "#e8e8e2", Provenance: "#123456"}))
+	if explicitLight.ProvenanceFg != "#123456" {
+		t.Fatalf("explicit provenance role on a light status bar = %q, want the token verbatim", explicitLight.ProvenanceFg)
+	}
+	presetHex, ok := PresetColorHex("daylight", TokenProvenance)
+	if !ok {
+		t.Fatal("daylight preset has no provenance value")
+	}
+	if got := RenderRolesFromEffective(ResolveTheme(ThemeConfig{Preset: "daylight"})).ProvenanceFg; got != presetHex {
+		t.Fatalf("daylight provenance role = %q, want the preset hex %q", got, presetHex)
+	}
+
+	configs := map[string]ThemeConfig{"fallback": {}, "light": lightThemeConfig()}
+	for _, name := range PresetNames() {
+		configs["preset:"+name] = ThemeConfig{Preset: name}
+	}
+	for label, cfg := range configs {
+		roles := RenderRolesFromEffective(ResolveTheme(cfg))
+		for role, other := range map[string]string{
+			"state.warning":  roles.StateWarning,
+			"state.critical": roles.StateCritical,
+			"accent.ai_fg":   roles.AccentAIFg,
+		} {
+			if roles.ProvenanceFg == other {
+				t.Fatalf("%s: usage.provenance_fg %q collapsed into %s", label, roles.ProvenanceFg, role)
+			}
+		}
+	}
 }

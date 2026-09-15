@@ -342,6 +342,7 @@ success = "#5faf87"
 action_required = "#ffaf00"
 pane_active_bg = "default"
 focus = "#00ffff"
+provenance = "#ff8700"
 ```
 
 `text_primary` controls primary content text in native terminal-rendered UI.
@@ -359,6 +360,13 @@ AI "needs input/approval" badge color and is intentionally independent of
 active-pane background tint, and `focus` is the active-pane border color. Each
 of these is a public token: leave it unset to keep the historical built-in
 color, or set it to repaint the matching chrome.
+
+`provenance` is the compact usage label color for a provider row whose numbers
+came from a fallback data source rather than its authoritative one (today: a
+Codex row outside a healthy app-server). It is independent of `warning` and
+`critical`, which stay reserved for usage thresholds, and of the ordinary AI
+label color; the fallback value is orange. See `docs/usage-tracking.md` for what
+the label looks like and `docs/theme-palette.md` for the preset contract.
 
 Supported presets are `projmux`, `high-contrast`, `blue-hour`, `carbon-violet`,
 `daylight`, `ember`, `forest`, and `rose`. `daylight` is the fully-light

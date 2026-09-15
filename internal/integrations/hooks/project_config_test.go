@@ -302,6 +302,38 @@ focus = "#0d0e0f"
 	}
 }
 
+func TestProjectThemeConfigRoundTripsProvenance(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig(`
+[theme]
+provenance = "#ff8700"
+`)
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.Theme.Provenance != "#ff8700" {
+		t.Fatalf("Theme = %#v, want the provenance key parsed", cfg.Theme)
+	}
+
+	rendered := renderThemeConfigSection(cfg.Theme)
+	if want := `provenance = "#ff8700"`; !strings.Contains(rendered, want) {
+		t.Fatalf("rendered theme section %q missing %q", rendered, want)
+	}
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.Theme != cfg.Theme {
+		t.Fatalf("re-parsed theme = %#v, want %#v", reparsed.Theme, cfg.Theme)
+	}
+
+	// The theme key set stays closed: a near miss is still rejected.
+	if _, err := ParseProjectConfig("\n[theme]\nprovenanc = \"#ff8700\"\n"); err == nil {
+		t.Fatal("expected unsupported theme key error")
+	}
+}
+
 func TestParseProjectConfigRejectsInternalTmuxHooks(t *testing.T) {
 	t.Parallel()
 
