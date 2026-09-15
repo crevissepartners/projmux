@@ -86,8 +86,14 @@ func TestRenameGenericDescendantsUseExactManagedRootNamespace(t *testing.T) {
 			active := insideTmux("pan-home-shell", "win-home")
 			stdout, stderr, err := runRoute(t, newTestRenameCommandWithActiveTarget(store, active),
 				row.kind, row.ref, "--name", row.name)
-			if err != nil || stderr != "" {
-				t.Fatalf("rename control-owned %s: stdout=%q stderr=%q err=%v", row.kind, stdout, stderr, err)
+			// A Window rename with no live runtime route says so on stderr: the
+			// Registry name is committed and the tmux tab is not converged.
+			wantStderr := ""
+			if row.kind == "window" {
+				wantStderr = windowDisplayNotConvergedNotice(row.uid, row.name) + "\n"
+			}
+			if err != nil || stderr != wantStderr {
+				t.Fatalf("rename control-owned %s: stdout=%q stderr=%q want stderr=%q err=%v", row.kind, stdout, stderr, wantStderr, err)
 			}
 			_, meta, ok := resourceFor(store.registry, resourceKindTokens[row.kind], row.uid)
 			if !ok || meta.Name != row.name || active.calls != 1 || store.writes != 1 {

@@ -36,6 +36,7 @@ type mutationRoutingRunner struct {
 	windowID, sessionID                 string
 	listWindowReads, driftAt            int
 	driftWindowID, driftSessionID       string
+	renameWindowErr                     error
 }
 
 func (r *mutationRoutingRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -99,6 +100,12 @@ func (r *mutationRoutingRunner) Run(_ context.Context, name string, args ...stri
 		return []byte(strings.Join([]string{r.windowID, r.windowUID, r.sessionID, r.projectUID, r.sessionRole, r.stableName, r.windowName}, tmuxRowSep) + "\n"), nil
 	case len(argv) > 0 && argv[0] == "set-option" && slices.Contains(argv, tmuxopts.WindowName):
 		r.stableName = argv[len(argv)-1]
+		return nil, nil
+	case len(argv) > 0 && argv[0] == "rename-window":
+		if r.renameWindowErr != nil {
+			return nil, r.renameWindowErr
+		}
+		r.windowName = argv[len(argv)-1]
 		return nil, nil
 	}
 	for _, arg := range argv {
@@ -179,8 +186,8 @@ func TestRenameImmediatelyConvergesOnlyTheStableNameMirror(t *testing.T) {
 			if !reflect.DeepEqual(test.mirror.calls, test.want) {
 				t.Fatalf("mirror calls = %v, want %v", test.mirror.calls, test.want)
 			}
-			if typedRunner != nil && (typedRunner.stableName != "renamed" || typedRunner.windowName != "Runtime Review") {
-				t.Fatalf("typed Window rename stable/display effects = %q/%q, want renamed/Runtime Review", typedRunner.stableName, typedRunner.windowName)
+			if typedRunner != nil && (typedRunner.stableName != "renamed" || typedRunner.windowName != "renamed") {
+				t.Fatalf("typed Window rename stable/display effects = %q/%q, want renamed/renamed", typedRunner.stableName, typedRunner.windowName)
 			}
 		})
 	}
@@ -202,7 +209,8 @@ func TestWindowRenameAlreadyMatchingEffectStillRefusesRecycledRuntimeHandle(t *t
 		t.Fatalf("recycled already-matching Window rename = %v", err)
 	}
 	for _, call := range runner.calls {
-		if slices.Contains(tmuxCommandArgv(call[1:]), "set-option") {
+		argv := tmuxCommandArgv(call[1:])
+		if slices.Contains(argv, "set-option") || slices.Contains(argv, "rename-window") {
 			t.Fatalf("recycled already-matching Window reached a write: %#v", runner.calls)
 		}
 	}
@@ -225,12 +233,12 @@ func TestWindowRenameUsesInheritedAppPIDAuthorityWithoutPaneReceipt(t *testing.T
 	if _, stderr, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", "stable-window"); err != nil {
 		t.Fatalf("PID-authorized Window rename: %v stderr=%s", err, stderr)
 	}
-	if runner.stableName != "stable-window" || runner.windowName != "Runtime Review" {
+	if runner.stableName != "stable-window" || runner.windowName != "stable-window" {
 		t.Fatalf("stable/display names = %q/%q", runner.stableName, runner.windowName)
 	}
 	for _, call := range runner.calls {
 		argv := tmuxCommandArgv(call[1:])
-		if slices.Contains(argv, "set-option") && (len(call) < 3 || call[1] != "-S" || call[2] != path) {
+		if (slices.Contains(argv, "set-option") || slices.Contains(argv, "rename-window")) && (len(call) < 3 || call[1] != "-S" || call[2] != path) {
 			t.Fatalf("Window rename write escaped inherited physical route: %#v", call)
 		}
 	}
@@ -299,11 +307,12 @@ func TestWindowRenamePIDAuthorityStillRequiresExactUIDAndContainment(t *testing.
 			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("containment error = %v, want %q", err, tc.want)
 			}
-			if runner.stableName == "stable-window" {
-				t.Fatal("unattributed Window received the stable-name projection")
+			if runner.stableName == "stable-window" || runner.windowName == "stable-window" {
+				t.Fatal("unattributed Window received the stable-name or display projection")
 			}
 			for _, call := range runner.calls {
-				if slices.Contains(tmuxCommandArgv(call[1:]), "set-option") {
+				argv := tmuxCommandArgv(call[1:])
+				if slices.Contains(argv, "set-option") || slices.Contains(argv, "rename-window") {
 					t.Fatalf("unattributed Window reached a write: %#v", runner.calls)
 				}
 			}
@@ -576,3 +585,168 @@ func TestOutsideTmuxMutationIsRegistryOnlyAndNeverProbesDefaultServer(t *testing
 }
 
 var _ resourceMutationMirror = (*fakeMutationMirror)(nil)
+
+// TestWindowRenameConvergesTheTmuxTabOnTheRegistryName is the Window half of
+// the rename display contract. Inside a proven runtime route the Registry name,
+// @projmux_window_name and tmux #{window_name} end the rename as one value, and
+// the display write is the canonical `rename-window -t @N -- <name>` so a name
+// that looks like a tmux flag lands verbatim instead of being parsed as one.
+func TestWindowRenameConvergesTheTmuxTabOnTheRegistryName(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"renamed", "-L", "-s", "-Lx", "-tfoo"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			runner := &mutationRoutingRunner{}
+			cmd := newTestRenameCommand(store)
+			cmd.mirror = &fakeMutationMirror{windowTarget: "@7"}
+			cmd.tmuxRunner = runner
+			cmd.lookupEnv = func(string) string { return "" }
+
+			_, stderr, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", name)
+			if err != nil {
+				t.Fatalf("rename to %q: %v (stderr=%s)", name, err, stderr)
+			}
+			if stderr != "" {
+				t.Fatalf("converged rename wrote a display notice: %q", stderr)
+			}
+			window, ok := store.registry.Window("win-alpha-review")
+			if !ok || window.Metadata.Name != name {
+				t.Fatalf("Registry Window name = %q, want %q", window.Metadata.Name, name)
+			}
+			if runner.stableName != name || runner.windowName != name {
+				t.Fatalf("stable/display names = %q/%q, want %q for both", runner.stableName, runner.windowName, name)
+			}
+			renames := 0
+			for _, call := range runner.calls {
+				argv := tmuxCommandArgv(call[1:])
+				if len(argv) == 0 || argv[0] != "rename-window" {
+					continue
+				}
+				renames++
+				if want := []string{"rename-window", "-t", "@7", "--", name}; !slices.Equal(argv, want) {
+					t.Fatalf("display rename argv = %v, want %v", argv, want)
+				}
+			}
+			if renames != 1 {
+				t.Fatalf("display rename ran %d times, want exactly one: %#v", renames, runner.calls)
+			}
+		})
+	}
+}
+
+// TestWindowRenameConvergesAStaleTabWithoutRewritingTheStableName is the
+// Recovery the keybinding rename contract points at: a display write that never
+// landed leaves #{window_name} stale while the Registry name and its mirror
+// already agree. Re-running `rename window` with the same name converges only
+// the tab, and the already-satisfied stable-name write replans to empty.
+func TestWindowRenameConvergesAStaleTabWithoutRewritingTheStableName(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	runner := &mutationRoutingRunner{stableName: "review", windowName: "stale-tab"}
+	cmd := newTestRenameCommand(store)
+	cmd.mirror = &fakeMutationMirror{windowTarget: "@7"}
+	cmd.tmuxRunner = runner
+	cmd.lookupEnv = func(string) string { return "" }
+
+	if _, stderr, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", "review"); err != nil {
+		t.Fatalf("recovery rename: %v (stderr=%s)", err, stderr)
+	}
+	if runner.windowName != "review" || runner.stableName != "review" {
+		t.Fatalf("stable/display names = %q/%q, want review for both", runner.stableName, runner.windowName)
+	}
+	stableWrites, displayWrites := 0, 0
+	for _, call := range runner.calls {
+		argv := tmuxCommandArgv(call[1:])
+		switch {
+		case len(argv) > 0 && argv[0] == "set-option" && slices.Contains(argv, tmuxopts.WindowName):
+			stableWrites++
+		case len(argv) > 0 && argv[0] == "rename-window":
+			displayWrites++
+		}
+	}
+	if stableWrites != 0 || displayWrites != 1 {
+		t.Fatalf("stable/display writes = %d/%d, want 0/1: %#v", stableWrites, displayWrites, runner.calls)
+	}
+}
+
+// TestWindowRenameOutsideAnyRuntimeRouteIsRegistryOnlyAndSaysSo pins the
+// no-route half of the contract: the Registry name is committed, the exit code
+// is zero, no tmux call is made at all, and the operator is told in the output
+// that the tab did not converge. The notice is not an error and there is no
+// flag that turns it into one.
+func TestWindowRenameOutsideAnyRuntimeRouteIsRegistryOnlyAndSaysSo(t *testing.T) {
+	t.Parallel()
+
+	for _, inherited := range []string{"", "relative-socket,4242,0"} {
+		runner := &mutationRoutingRunner{}
+		lookupEnv := func(key string) string {
+			if key == "TMUX" {
+				return inherited
+			}
+			return ""
+		}
+		mirror := inheritedResourceMutationMirror(lookupEnv, runner)
+		if mirror != nil {
+			t.Fatalf("TMUX=%q enabled an immediate mirror", inherited)
+		}
+
+		store := newFakeResourceStore(t)
+		cmd := newTestRenameCommand(store)
+		cmd.mirror = mirror
+		cmd.tmuxRunner = runner
+		cmd.lookupEnv = lookupEnv
+
+		stdout, stderr, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", "registry-only")
+		if err != nil {
+			t.Fatalf("Registry-only Window rename: %v (stderr=%s)", err, stderr)
+		}
+		window, _ := store.registry.Window("win-alpha-review")
+		if window.Metadata.Name != "registry-only" || store.writes != 1 {
+			t.Fatalf("Registry-only result = %+v writes=%d", window.Metadata, store.writes)
+		}
+		if want := windowDisplayNotConvergedNotice("win-alpha-review", "registry-only") + "\n"; stderr != want {
+			t.Fatalf("display notice = %q, want %q", stderr, want)
+		}
+		if strings.Contains(stdout, "no live tmux route") {
+			t.Fatalf("display notice reached the result projection: %q", stdout)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("outside-tmux Window rename probed a server: %v", runner.calls)
+		}
+	}
+}
+
+// TestWindowDisplayRenameFailureIsNonzeroAfterTheDurableRegistryCommit pins the
+// detection half: a tab rename that fails after the Registry transaction is a
+// committed-mirror failure, not a silent success. The durable name stays, the
+// message names the exact retry, and the exit is nonzero.
+func TestWindowDisplayRenameFailureIsNonzeroAfterTheDurableRegistryCommit(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	runner := &mutationRoutingRunner{renameWindowErr: mutationExitError{}}
+	cmd := newTestRenameCommand(store)
+	cmd.mirror = &fakeMutationMirror{windowTarget: "@7"}
+	cmd.tmuxRunner = runner
+	cmd.lookupEnv = func(string) string { return "" }
+
+	_, _, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", "renamed")
+	if err == nil {
+		t.Fatal("failed tab rename exited zero")
+	}
+	for _, want := range []string{"committed Registry state but could not converge its exact live tmux mirror", "projmux reconcile resources"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("committed-mirror error = %v, want it to contain %q", err, want)
+		}
+	}
+	window, ok := store.registry.Window("win-alpha-review")
+	if !ok || window.Metadata.Name != "renamed" || store.writes != 1 {
+		t.Fatalf("durable Registry name = %+v writes=%d, want renamed committed once", window.Metadata, store.writes)
+	}
+	if runner.windowName == "renamed" {
+		t.Fatal("injected failure still moved the tab")
+	}
+}

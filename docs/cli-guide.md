@@ -428,11 +428,19 @@ disabling the keys.
 ### Rename and rebind live convergence
 
 `rename project|window|pane` commits the selected Registry `metadata.name` and
-then updates only its exact UID-bound live transport field:
+then updates only its exact UID-bound live transport fields:
 
 - Project: `@projmux_project_name` (never the tmux session name)
-- Window: `@projmux_window_name` (never tmux `window_name`)
+- Window: `@projmux_window_name` and the tmux tab `window_name` (never
+  `displayName`)
 - Pane: `@projmux_pane_label` (never raw `pane_title`)
+
+The Window tab converges only when the invocation has a proven runtime route,
+which is what running inside the projmux tmux runtime gives it. Outside one the
+rename is Registry-only: it exits zero and prints one line on stderr saying the
+tab still shows the old name until a rename runs inside that runtime. There is
+no flag for either behavior; the next time that Window is materialized from the
+Registry, the tab carries the committed name.
 
 `rename agent` changes only the Agent's stable root-scoped `metadata.name`.
 It does not change the Agent topic, provider, lifecycle state, or managed Pane

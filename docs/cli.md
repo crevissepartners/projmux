@@ -2870,7 +2870,7 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux rename project`](#projmux-rename-project) | Rename a Projmux Project resource; with no selector inside tmux, the active Project |
-| [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window |
+| [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession, no selector means the active Window, and the tmux tab is renamed with it |
 | [`projmux rename pane`](#projmux-rename-pane) | Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title |
 | [`projmux rename agent`](#projmux-rename-agent) | Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane |
 
@@ -2903,7 +2903,7 @@ Output modes (`-o`): `receipt`, `none`
 
 ### `projmux rename window`
 
-Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window
+Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession, no selector means the active Window, and the tmux tab is renamed with it
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 

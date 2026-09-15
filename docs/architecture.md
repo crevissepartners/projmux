@@ -1008,10 +1008,14 @@ tmux transport mirror:
   recovery route.
 - `rename pane` changes `Pane.metadata.name` and its `@projmux_pane_label`
   mirror only. It never writes the raw tmux `pane_title`.
-- `rename window` is the explicit stable-identity path: it changes only
-  `Window.metadata.name`, its root-scoped same-kind name reservation, and the
-  exact live `@projmux_window_name` transport mirror. It does not change tmux
-  `window_name`.
+- `rename window` is the explicit stable-identity path: it changes
+  `Window.metadata.name`, its root-scoped same-kind name reservation, the exact
+  live `@projmux_window_name` transport mirror and, when the invocation has a
+  proven runtime route, the tmux tab `window_name` through the canonical
+  `rename-window -t @N -- <name>` -- the same argv shape the rename key and the
+  Window menu Rename item go through. With no route it stays Registry-only and
+  says on stderr that the tab did not converge. It never changes
+  `metadata.displayName`.
 - `rename project` likewise writes only `Project.metadata.name` and the exact
   live session's `@projmux_project_name`; it never renames the tmux session.
   `rebind project` preserves the Project uid and session name while updating

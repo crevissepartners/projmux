@@ -271,7 +271,10 @@ func (c *createCommand) commitRenameFromIntent(kind coremetadata.Kind, producer 
 	if kind == coremetadata.KindPane {
 		uid = scope.paneUID
 	}
-	committed, err := renamer.commitRename(context.Background(), kind, uid, name, c.canonicalIntentRenameGuard(scope))
+	// A key press or menu item always runs inside the runtime it renames, so
+	// commitRename's no-route display notice cannot arise here; the tab is
+	// converged by that route and, for a Window, again by this one.
+	committed, _, err := renamer.commitRename(context.Background(), kind, uid, name, c.canonicalIntentRenameGuard(scope))
 	if err != nil {
 		if !committed && !strings.Contains(err.Error(), "nothing was") {
 			err = fmt.Errorf("%w; nothing was changed", err)
