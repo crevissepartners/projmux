@@ -377,7 +377,7 @@ func controllerClosedWrite(scope resourcegraph.ObjectKind, target, uid, field, b
 		Authority: controller.AuthorityAllow, Scope: scope, Target: target, Field: field, Before: before, After: after, Guards: guards,
 	}
 	if field == "window_name" {
-		write.Args = []string{"rename-window", "-t", target, after}
+		write.Args = []string{"rename-window", "-t", target, "--", after}
 		return write
 	}
 	write.Args = []string{"set-option"}
@@ -483,6 +483,115 @@ func TestControllerRuntimeMutationClosedProductionFieldAndArgvGrammar(t *testing
 		if _, err := controllerRuntimeMutationAction(1, route, write, nil); err == nil {
 			t.Fatalf("unclassified field %q acquired controller execution", field)
 		}
+	}
+}
+
+// TestControllerWindowNameRenameEndsOptionsAndRollsBackFlagShapedName pins the
+// controller's Window display rename. The declared effect, the executed argv
+// and the owned reverse all spell `rename-window -t @N -- <name>`, so a Window
+// name shaped like a tmux flag is a printable forward effect and a restorable
+// rollback preimage, and a declaration without "--" is refused.
+func TestControllerWindowNameRenameEndsOptionsAndRollsBackFlagShapedName(t *testing.T) {
+	_, _, fixtureRoute, _ := controllerMutationFixture(t)
+	final := map[string]string{"@1\x00" + tmuxopts.WindowUID: "window-1"}
+	for _, tc := range []struct{ before, after string }{{"-Lx", "-t"}, {"-L", "-s"}, {"-tfoo", "-Sx"}, {"old", "-n"}, {"-S", "new"}} {
+		t.Run("declare "+tc.before+" to "+tc.after, func(t *testing.T) {
+			write := controllerClosedWrite(resourcegraph.ObjectWindow, "@1", "window-1", "window_name", tc.before, tc.after)
+			forward, err := controllerRuntimeMutationAction(1, fixtureRoute, write, final)
+			if err != nil {
+				t.Fatalf("forward rename declaration: %v", err)
+			}
+			wantForward := []string{"rename-window", "-t", "@1", "--", tc.after}
+			if argv, err := runtimeMutationArgv(forward); err != nil || !slices.Equal(argv, wantForward) || !slices.Equal(write.Args, wantForward) ||
+				forward.Verb != mutationRenameWindow || forward.Controller == nil || forward.Controller.After != tc.after {
+				t.Fatalf("forward argv = %q (err %v), declared args %q effect %#v, want %q", argv, err, write.Args, forward.Controller, wantForward)
+			}
+			if _, err := newRuntimeMutationPlan(forward).printableBytes(); err != nil {
+				t.Fatalf("print forward rename: %v", err)
+			}
+			reverse, err := controllerRuntimeMutationUndo(write, fixtureRoute, final)
+			if err != nil {
+				t.Fatalf("owned reverse rename: %v", err)
+			}
+			wantReverse := []string{"rename-window", "-t", "@1", "--", tc.before}
+			if argv, err := runtimeMutationArgv(reverse); err != nil || !slices.Equal(argv, wantReverse) || reverse.Verb != mutationRenameWindow ||
+				reverse.Controller == nil || reverse.Controller.Mode != controllerRuntimeMutationOwnedReverse || reverse.Controller.After != tc.before {
+				t.Fatalf("reverse argv = %q (err %v), effect %#v, want %q", argv, err, reverse.Controller, wantReverse)
+			}
+			if _, err := newRuntimeMutationPlan(reverse).printableBytes(); err != nil {
+				t.Fatalf("print owned reverse rename: %v", err)
+			}
+		})
+	}
+
+	forged := controllerClosedWrite(resourcegraph.ObjectWindow, "@1", "window-1", "window_name", "-Lx", "-t")
+	forged.Args = []string{"rename-window", "-t", "@1", "-t"}
+	const wantForged = `controller write "closed/window_name" rename declaration disagrees with executable argv`
+	if _, err := controllerRuntimeMutationAction(1, fixtureRoute, forged, final); err == nil || err.Error() != wantForged {
+		t.Fatalf("rename declaration without -- error = %v, want %q", err, wantForged)
+	}
+	printed, err := controllerRuntimeMutationAction(1, fixtureRoute, controllerClosedWrite(resourcegraph.ObjectWindow, "@1", "window-1", "window_name", "old", "new"), final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	printed.Operands = []string{"-t", "@1", "new"}
+	if _, err := newRuntimeMutationPlan(printed).printableBytes(); err == nil || !strings.Contains(err.Error(), "rename declaration disagrees with executable argv") {
+		t.Fatalf("printed rename without -- error = %v", err)
+	}
+
+	for _, tc := range []struct{ before, after string }{{"-Lx", "-t"}, {"-L", "-s"}, {"-t", "-Sx"}} {
+		t.Run("rollback "+tc.before+" to "+tc.after, func(t *testing.T) {
+			server := newFakeTmux()
+			server.socketPath = "/tmp/fake-tmux/controller-window-name"
+			session := server.addSession("alpha")
+			window := session.windows[0]
+			window.name = tc.before
+			window.opts[tmuxopts.WindowUID] = "window-flag"
+			window.opts[tmuxopts.WindowName] = tc.before
+			runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+			route := runtimeMutationRoute{
+				target: tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}, expectedSocketPath: server.socketPath, socketName: "primary",
+				authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
+			}
+			guards := []controller.Guard{{Field: tmuxopts.WindowUID, Expect: "window-flag"}, {Field: "session_id", Expect: session.id}}
+			write := func(key, field string, args ...string) controller.Action {
+				return controller.Action{
+					Key: key, Surface: controller.SurfaceTmux, Intent: controller.IntentRepairMirror, Authority: controller.AuthorityAllow,
+					Scope: resourcegraph.ObjectWindow, Target: window.id, Field: field, Before: tc.before, After: tc.after,
+					Guards: slices.Clone(guards), Args: args,
+				}
+			}
+			writes := []controller.Action{
+				write("a-display-name", "window_name", "rename-window", "-t", window.id, "--", tc.after),
+				write("b-stable-name", tmuxopts.WindowName, "set-option", "-w", "-t", window.id, "-q", tmuxopts.WindowName, tc.after),
+			}
+			server.fail, server.failMessage = []string{"set-option", tmuxopts.WindowName}, "injected stable-name failure"
+			err := executeControllerRuntimeMutations(context.Background(), runner, route, writes)
+			if err == nil || !strings.Contains(err.Error(), "injected stable-name failure") || strings.Contains(err.Error(), "owned reverse rollback incomplete") {
+				t.Fatalf("injected failure after the display rename = %v; calls=%#v", err, server.calls)
+			}
+			if window.name != tc.before {
+				t.Fatalf("rollback left window_name %q, want the flag-shaped preimage %q; calls=%#v", window.name, tc.before, server.calls)
+			}
+			var renames [][]string
+			for _, call := range server.calls {
+				if argv := tmuxCommandArgv(call); len(argv) > 0 && argv[0] == "rename-window" {
+					renames = append(renames, argv)
+				}
+			}
+			want := [][]string{{"rename-window", "-t", window.id, "--", tc.after}, {"rename-window", "-t", window.id, "--", tc.before}}
+			if !slices.EqualFunc(renames, want, func(a, b []string) bool { return slices.Equal(a, b) }) {
+				t.Fatalf("executed renames = %q, want forward then owned reverse %q", renames, want)
+			}
+
+			server.fail = nil
+			if err := executeControllerRuntimeMutations(context.Background(), runner, route, writes); err != nil {
+				t.Fatalf("display rename without an injected failure: %v", err)
+			}
+			if window.name != tc.after || window.opts[tmuxopts.WindowName] != tc.after {
+				t.Fatalf("converged window_name=%q %s=%q, want %q", window.name, tmuxopts.WindowName, window.opts[tmuxopts.WindowName], tc.after)
+			}
+		})
 	}
 }
 

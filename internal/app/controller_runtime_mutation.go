@@ -190,7 +190,7 @@ func validateControllerRuntimeMutationArgv(write controller.Action, mode string)
 		return fmt.Errorf("controller write %q field %q is outside the closed %s option set", write.Key, write.Field, kind)
 	}
 	if write.Field == "window_name" {
-		want := []string{"rename-window", "-t", write.Target, write.After}
+		want := []string{"rename-window", "-t", write.Target, "--", write.After}
 		if kind != "window" || strings.TrimSpace(write.After) == "" || !slices.Equal(write.Args, want) {
 			return fmt.Errorf("controller write %q rename declaration disagrees with executable argv", write.Key)
 		}
@@ -455,7 +455,7 @@ func controllerRuntimeMutationUndo(write controller.Action, route runtimeMutatio
 		return plannedRuntimeMutation{}, errors.New("controller rollback has no managed argv")
 	}
 	if write.Args[0] == "rename-window" {
-		reverse.Args = []string{"rename-window", "-t", write.Target, write.Before}
+		reverse.Args = []string{"rename-window", "-t", write.Target, "--", write.Before}
 	} else {
 		reverse.Args = []string{"set-option"}
 		if slices.Contains(write.Args, "-w") {

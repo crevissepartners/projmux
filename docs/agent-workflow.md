@@ -1559,9 +1559,13 @@ name of the Window the caller adopts, so on create and on Continue
 ### Flag-shaped Window name tests
 
 `runtimeMutationArgv` reads each operand as a tmux flag or value slot the way
-tmux 3.6 getopt reads the assembled command, so a Registry Window name spelled
-like a tmux flag (`-L`, `-t`, `-Lx`) is accepted where tmux reads a value and
-still refused where tmux would read a flag.
+tmux getopt reads the assembled command (the argument-flag table is checked
+against `tmux list-commands` on tmux 3.4 and 3.6), so a Registry Window name
+spelled like a tmux flag (`-L`, `-t`, `-Lx`) is accepted where tmux reads a
+value and still refused where tmux would read a flag. `--` ends options only
+for rename-window: every producer spells the Window display rename
+`rename-window -t @N -- <name>`, and for every other verb `--` stays a flag
+slot.
 
 - `TestRuntimeMutationArgvAcceptsFlagShapedNamesInTmuxValueSlots` owns the
   producer shapes that carry a Window name: create-window `-n`, create-session
@@ -1570,16 +1574,39 @@ still refused where tmux would read a flag.
   unchanged and `-t`, `-s` and `-f` still bind to the real declaration.
 - `TestRuntimeMutationArgvKeepsRefusingFlagSlotRouteAndAttachedOperands` owns
   the exact refusals: flag-slot `-L`/`-S`, attached `-Lx -Sx -tx -sx`
-  (including canonical `rename-window -t @N <name>`), real duplicate `-t`, `-s`
-  and `-f`, `;` and `\;` in flag and value slots, a value token that never
+  (including a rename-window name with no `--` before it), real duplicate `-t`,
+  `-s` and `-f`, `;` and `\;` in flag and value slots, a value token that never
   makes the next token a value, and a verb with no tmux argument row (Codex
   relaunch) that keeps every operand a flag slot.
+- `TestRuntimeMutationArgvAcceptsFlagShapedWindowNamesAfterRenameWindowEndOfOptions`
+  owns the canonical Window display rename: `-L -S -s -t -f -n -Lx -Sx -sfoo
+  -tfoo ok-name` and `--` itself each reach argv as
+  `rename-window -t @2 -- <name>`, the action prints, and a drifted `-t` still
+  refuses.
+- `TestRuntimeMutationArgvRefusesRenameWindowWithoutSingleEndOfOptionsName`
+  owns the rename-window shape rule: no `--` (the old `-t @2 <name>` shape and
+  flag-shaped `-s`, `-f`, `-n`), two `--`, `--` not directly before the name,
+  `--` with no name, and two operands after `--` refuse with `must end options
+  with -- before exactly one Window name`; flag-slot `-L`/`-S` and attached
+  operands before `--` keep their existing messages; kill-window, create-window
+  and write-stable-name keep `--` a flag slot.
+- `TestControllerWindowNameRenameEndsOptionsAndRollsBackFlagShapedName` owns
+  the controller `window_name` effect: the declared, executed and owned-reverse
+  argv all spell `rename-window -t @N -- <name>` and print, a declaration or
+  printed action without `--` is refused, and a failed sibling write rolls a
+  flag-shaped old name back onto the fake tmux Window.
 - `TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux` owns the
   real-tmux check: `newWindow`, the Window UID claim and `mirrorWindow` on an
   isolated server create Windows named `-L`, `-t` and `-Lx`, and each
-  `#{window_name}` and `#{@projmux_window_name}` equals the input. It runs in
+  `#{window_name}` and `#{@projmux_window_name}` equals the input.
+- `TestGeneratedWindowRenameProjectsFlagShapedNamesThroughRealTmux` owns the
+  real-tmux check for the key and Window menu rename: `renameWindowFromIntent`,
+  wired like `newCreateCommand` and `newRenameCommand` over an isolated server,
+  renames one Window to `-L -t -s -Lx -S -Sx -sfoo -tfoo -f -n` in turn, and
+  after each rename `#{window_name}`, `#{@projmux_window_name}` and the
+  Registry name equal the input. Both real-tmux tests run in
   `make test-integration` through `test/integration/flag-shaped-window-names.sh`,
-  which requires tmux and its PASS line.
+  which requires tmux and both PASS lines.
 
 ### Generated rename Registry tests
 

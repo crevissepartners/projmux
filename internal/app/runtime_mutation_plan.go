@@ -425,6 +425,21 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 			}
 		}
 	}
+	if action.Verb == mutationRenameWindow {
+		// tmux reads a leading-dash new-name as a flag unless "--" ends options,
+		// so the only executable shape is one flag-slot "--" and then exactly
+		// one Window name.
+		endOfOptions, at := 0, -1
+		for index, operand := range action.Operands {
+			if operand == "--" && !values[index] {
+				endOfOptions++
+				at = index
+			}
+		}
+		if endOfOptions != 1 || at != len(action.Operands)-2 {
+			return fmt.Errorf("runtime mutation plan: action %q must end options with -- before exactly one Window name", action.Verb)
+		}
+	}
 	if action.Verb == mutationBootstrapControlSession || action.Verb == mutationWriteRouteMarker {
 		flag, value, ok := strings.Cut(action.Target.Socket, "=")
 		if !ok || (flag != "-L" && flag != "-S") || strings.TrimSpace(value) == "" {
@@ -589,7 +604,7 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 
 // runtimeMutationArgumentFlags names the flag letters that take a separate
 // argument in the tmux command runtimeMutationArgv assembles for action, per
-// tmux 3.6 `tmux list-commands`:
+// `tmux list-commands`, checked on tmux 3.4 and 3.6 (the rows are identical):
 //
 //	new-window [-abdkPS] [-c] [-e] [-F] [-n] [-t] [shell-command]
 //	split-window [-bdefhIPvZ] [-c] [-e] [-F] [-l] [-t] [shell-command]
@@ -601,7 +616,10 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 //	rename-window [-t] new-name
 //
 // The global prefix adds -f <config> (create-session, bootstrap) and -L/-S
-// (bootstrap, route marker). A verb without a row has no value slots.
+// (bootstrap, route marker). A verb without a row has no value slots. Only
+// rename-window ends its options with "--": every producer spells it
+// `rename-window -t @N -- <name>`, so a Window name shaped like a flag reaches
+// tmux as new-name.
 func runtimeMutationArgumentFlags(action plannedRuntimeMutation) string {
 	switch action.Verb {
 	case mutationCreateWindow:
@@ -634,8 +652,11 @@ func runtimeMutationArgumentFlags(action plannedRuntimeMutation) string {
 // runtimeMutationOperandValueSlots reads operands left to right the way tmux
 // getopt does. An exact argument-taking flag makes only the next token a
 // value; any other dash token stays a flag; the first non-dash token is a
-// positional and every later token is a value. "--" and "-" have no
-// end-of-options meaning here, so an unsure token is a flag, never a value.
+// positional and every later token is a value. "-" never ends options. "--"
+// ends options only for rename-window, and only as the flag slot directly
+// before the final operand, which makes that Window name a value slot. For
+// every other verb, and anywhere else in rename-window, "--" stays a flag slot,
+// so an unsure token is a flag, never a value.
 func runtimeMutationOperandValueSlots(action plannedRuntimeMutation) []bool {
 	argumentFlags := runtimeMutationArgumentFlags(action)
 	values := make([]bool, len(action.Operands))
@@ -651,6 +672,10 @@ func runtimeMutationOperandValueSlots(action plannedRuntimeMutation) []bool {
 		}
 		if !strings.HasPrefix(operand, "-") {
 			positional = true
+			continue
+		}
+		if operand == "--" && action.Verb == mutationRenameWindow && index == len(action.Operands)-2 {
+			nextIsValue = true
 			continue
 		}
 		nextIsValue = len(operand) == 2 && strings.IndexByte(argumentFlags, operand[1]) >= 0

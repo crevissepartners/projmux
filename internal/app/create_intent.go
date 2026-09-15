@@ -185,7 +185,7 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, rename
 			stableTarget,
 			"exact root="+string(scope.rootKind)+"/"+scope.rootUID+";session="+scope.sessionID+";window="+windowID+"/"+scope.windowUID,
 			"exact owned Window display name="+displayName,
-			"-t", windowID, displayName)
+			"-t", windowID, "--", displayName)
 		observeContainment := func(ctx context.Context) (bool, error) {
 			observed, err := c.runtime.read(ctx, "display-message", "-p", "-t", scope.anchorPaneID, "-F",
 				tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))

@@ -93,7 +93,7 @@ func printableRuntimeMutationInventory() runtimeMutationPlan {
 			action.Target.Kind, action.Target.ID = "window", "@1"
 			action.Operands = []string{"-t", "@1"}
 			if verb == mutationRenameWindow {
-				action.Operands = append(action.Operands, "inventory")
+				action.Operands = append(action.Operands, "--", "inventory")
 			}
 		case mutationWriteStableName:
 			action.Target.Kind, action.Target.ID = "window", "@1"
@@ -1958,6 +1958,85 @@ func TestRuntimeMutationArgvKeepsRefusingFlagSlotRouteAndAttachedOperands(t *tes
 	relaunch.Command = []string{"/bin/true"}
 	if _, err := runtimeMutationArgv(relaunch); err == nil || err.Error() != attached(mutationCodexHandoverRelaunch, "-tfoo") {
 		t.Fatalf("no-row relaunch operands error = %v, want %q", err, attached(mutationCodexHandoverRelaunch, "-tfoo"))
+	}
+}
+
+// TestRuntimeMutationArgvAcceptsFlagShapedWindowNamesAfterRenameWindowEndOfOptions
+// pins the canonical Window display rename `rename-window -t @N -- <name>`.
+// tmux ends options at "--", so a Registry Window name spelled like a tmux flag,
+// or "--" itself, is the new-name value and reaches argv unchanged.
+func TestRuntimeMutationArgvAcceptsFlagShapedWindowNamesAfterRenameWindowEndOfOptions(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	window := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window", ID: "@2", UID: "win-2", Parent: "$1/root=prj-a/role="}
+	for _, name := range []string{"-L", "-S", "-s", "-t", "-f", "-n", "-Lx", "-Sx", "-sfoo", "-tfoo", "ok-name", "--"} {
+		t.Run(name, func(t *testing.T) {
+			action := materializeMutationAction(mutationRenameWindow, window, "exact owned Window", "", "-t", "@2", "--", name)
+			argv, err := runtimeMutationArgv(action)
+			if err != nil {
+				t.Fatalf("runtimeMutationArgv(%q) refused the canonical rename: %v", action.Operands, err)
+			}
+			if want := []string{"rename-window", "-t", "@2", "--", name}; !reflect.DeepEqual(argv, want) {
+				t.Fatalf("argv = %q, want %q", argv, want)
+			}
+			if _, err := newRuntimeMutationPlan(action).printableBytes(); err != nil {
+				t.Fatalf("canonical rename %q is unprintable: %v", name, err)
+			}
+			drifted := action
+			drifted.Operands = []string{"-t", "@9", "--", name}
+			want := `runtime mutation plan: action "rename-window" operand target "@9" does not match printable target "@2"`
+			if _, err := runtimeMutationArgv(drifted); err == nil || err.Error() != want {
+				t.Fatalf("drifted target error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+// TestRuntimeMutationArgvRefusesRenameWindowWithoutSingleEndOfOptionsName pins
+// the rename-window shape rule and its precedence: route and attached refusals
+// before "--" keep their existing messages, every other shape that is not one
+// flag-slot "--" followed by exactly one Window name gets the one new message,
+// and "--" stays a flag slot for every other verb.
+func TestRuntimeMutationArgvRefusesRenameWindowWithoutSingleEndOfOptionsName(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	windowParent := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window-parent", ID: "$1"}
+	window := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window", ID: "@2", UID: "win-2", Parent: "$1/root=prj-a/role="}
+	const endOfOptions = `runtime mutation plan: action "rename-window" must end options with -- before exactly one Window name`
+	route := func(verb runtimeMutationVerb) string {
+		return `runtime mutation plan: action "` + string(verb) + `" carries an embedded route selector`
+	}
+	attached := func(verb runtimeMutationVerb, operand string) string {
+		return `runtime mutation plan: action "` + string(verb) + `" carries attached control operand "` + operand + `"`
+	}
+	for _, tt := range []struct {
+		name     string
+		verb     runtimeMutationVerb
+		target   runtimeMutationTarget
+		operands []string
+		want     string
+	}{
+		{"-- then two operands", mutationRenameWindow, window, []string{"-t", "@2", "--", "a", "b"}, endOfOptions},
+		{"old shape without --", mutationRenameWindow, window, []string{"-t", "@2", "ok-name"}, endOfOptions},
+		{"flag-shaped -s without --", mutationRenameWindow, window, []string{"-t", "@2", "-s"}, endOfOptions},
+		{"flag-shaped -f without --", mutationRenameWindow, window, []string{"-t", "@2", "-f"}, endOfOptions},
+		{"flag-shaped -n without --", mutationRenameWindow, window, []string{"-t", "@2", "-n"}, endOfOptions},
+		{"two --", mutationRenameWindow, window, []string{"-t", "@2", "--", "--", "x"}, endOfOptions},
+		{"-- not directly before the name", mutationRenameWindow, window, []string{"--", "-t", "@2", "x"}, endOfOptions},
+		{"-- with no name", mutationRenameWindow, window, []string{"-t", "@2", "--"}, endOfOptions},
+		{"flag-slot -L before --", mutationRenameWindow, window, []string{"-t", "@2", "-L", "--", "x"}, route(mutationRenameWindow)},
+		{"flag-slot -S before --", mutationRenameWindow, window, []string{"-t", "@2", "-S", "--", "x"}, route(mutationRenameWindow)},
+		{"attached -Lx before --", mutationRenameWindow, window, []string{"-t", "@2", "-Lx", "--", "y"}, attached(mutationRenameWindow, "-Lx")},
+		{"attached -tfoo before --", mutationRenameWindow, window, []string{"-t", "@2", "-tfoo", "--", "y"}, attached(mutationRenameWindow, "-tfoo")},
+		{"kill-window keeps -- a flag slot", mutationKillWindow, window, []string{"-t", "@2", "--", "-L"}, route(mutationKillWindow)},
+		{"create-window keeps -- a flag slot", mutationCreateWindow, windowParent, []string{"-d", "-t", "$1:", "--", "-Lx"}, attached(mutationCreateWindow, "-Lx")},
+		{"write-stable-name keeps -- a flag slot", mutationWriteStableName, window, []string{"-w", "-t", "@2", "-q", "--", "-S"}, route(mutationWriteStableName)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			action := newRuntimeMutation(1, tt.verb, tt.target)
+			action.Operands = tt.operands
+			if _, err := runtimeMutationArgv(action); err == nil || err.Error() != tt.want {
+				t.Fatalf("runtimeMutationArgv(%q) error = %v, want %q", tt.operands, err, tt.want)
+			}
+		})
 	}
 }
 
