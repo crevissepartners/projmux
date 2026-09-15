@@ -304,13 +304,20 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 			accepted, refreshErr = c.applyFreshNativeEventBatch(mgr, stateDir)
 			refreshed = accepted
 		}
-		if !accepted {
-			var collected bool
-			var collectErr error
-			collected, collectErr = mgr.MaybeCollect(context.Background(), statusRefreshThrottle)
-			refreshed = refreshed || collected
-			refreshErr = errors.Join(refreshErr, collectErr)
+		// Accepting a batch refreshes Codex and only Codex, so it stands in
+		// for the Codex source decision on this tick — not for the adapter
+		// walk. Any other adapter past its own floor is still due and is
+		// collected here; otherwise a watcher that publishes on every tick
+		// starves the 5-minute Claude adapter indefinitely.
+		var exclude []string
+		if accepted {
+			exclude = append(exclude, codexadapter.Name)
 		}
+		collected, collectErr := mgr.MaybeCollectExcept(
+			context.Background(), statusRefreshThrottle, exclude...,
+		)
+		refreshed = refreshed || collected
+		refreshErr = errors.Join(refreshErr, collectErr)
 	}
 	if refreshErr != nil {
 		if c.env(usageDebugEnvVar) != "" {

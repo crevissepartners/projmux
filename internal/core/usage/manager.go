@@ -59,7 +59,7 @@ func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 	// Throttle of 0 → unconditional: every adapter runs (subject to
 	// adapter-internal backoff). Used by `projmux agent usage` where the user
 	// explicitly asked for fresh data.
-	return m.collect(ctx, 0, false)
+	return m.collect(ctx, 0, false, nil)
 }
 
 // ForceCollect runs every registered adapter unconditionally, bypassing
@@ -73,7 +73,7 @@ func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 // `projmux internal status usage --force`) when the user wants the latest
 // numbers right now and accepts that they may re-trigger 429.
 func (m *Manager) ForceCollect(ctx context.Context) ([]Snapshot, error) {
-	return m.collect(ctx, 0, true)
+	return m.collect(ctx, 0, true, nil)
 }
 
 // ApplySnapshots commits one already-normalized adapter event through the
@@ -137,7 +137,10 @@ func (m *Manager) ApplySnapshots(model string, snapshots []Snapshot) ([]Snapshot
 // even if there's an active 429 cooldown). Adapters that implement
 // BackoffResetter have ResetBackoff() invoked after LoadBackoff so the
 // in-memory state matches the cleared on-disk view.
-func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, force bool) ([]Snapshot, error) {
+//
+// Adapters named in `skip` are not walked at all; their prior rows survive
+// through the same merge step that preserves a throttled adapter's rows.
+func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, force bool, skip map[string]bool) ([]Snapshot, error) {
 	if m == nil {
 		return nil, errors.New("usage: nil manager")
 	}
@@ -177,6 +180,12 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 	adapters := m.registry.All()
 	for _, adapter := range adapters {
 		name := adapter.Name()
+
+		// A caller that already committed this adapter from a fresher
+		// source in the same refresh excludes it here.
+		if skip[name] {
+			continue
+		}
 
 		// Per-adapter throttle gate. Skip adapters whose effective
 		// interval has not elapsed; their prior rows survive via the
@@ -280,26 +289,57 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 // `throttle` is the floor used for adapters that do not implement
 // ThrottleHinter. Adapters with a hint use max(throttle, hint).
 func (m *Manager) MaybeCollect(ctx context.Context, throttle time.Duration) (bool, error) {
+	return m.MaybeCollectExcept(ctx, throttle)
+}
+
+// MaybeCollectExcept is MaybeCollect with the named adapters left out of
+// both the due check and the walk.
+//
+// Callers use it when a fresher source already committed those adapters in
+// this same refresh: ApplySnapshots' contract is that an accepted event
+// batch suppresses a second source decision for that model in the same
+// pass. Every OTHER registered adapter is still walked when it is due, so
+// accepting a batch for one model never starves an unrelated adapter that
+// has passed its own floor.
+func (m *Manager) MaybeCollectExcept(ctx context.Context, throttle time.Duration, exclude ...string) (bool, error) {
 	if m == nil {
 		return false, errors.New("usage: nil manager")
 	}
 	if m.store == nil {
 		return false, errors.New("usage: nil store")
 	}
+	skip := adapterNameSet(exclude)
 	now := m.now().UTC()
-	if !m.shouldCollect(now, throttle) {
+	if !m.shouldCollect(now, throttle, skip) {
 		return false, nil
 	}
-	_, collectErr := m.collect(ctx, throttle, false)
+	_, collectErr := m.collect(ctx, throttle, false, skip)
 	return true, collectErr
+}
+
+// adapterNameSet normalizes adapter names into a lookup set. Adapter names
+// are lower-case model identifiers, so the comparison matches Registry keys.
+func adapterNameSet(names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(names))
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "" {
+			set[name] = true
+		}
+	}
+	return set
 }
 
 // shouldCollect reports whether MaybeCollect should run adapters. It
 // consults per-adapter timestamps so a slow adapter (Claude OAuth,
 // 5min) does not block a fast one (Codex, 30s). The Manager runs the
 // full adapter walk if ANY adapter is due, then Collect's own merge
-// preserves the not-yet-due adapters' prior rows.
-func (m *Manager) shouldCollect(now time.Time, defaultThrottle time.Duration) bool {
+// preserves the not-yet-due adapters' prior rows. Adapters in `skip` are
+// ignored here exactly as they are ignored by the walk itself.
+func (m *Manager) shouldCollect(now time.Time, defaultThrottle time.Duration, skip map[string]bool) bool {
 	if defaultThrottle <= 0 {
 		return true
 	}
@@ -312,6 +352,9 @@ func (m *Manager) shouldCollect(now time.Time, defaultThrottle time.Duration) bo
 	}
 	for _, adapter := range m.registry.All() {
 		name := adapter.Name()
+		if skip[name] {
+			continue
+		}
 		interval := adapterInterval(adapter, defaultThrottle)
 		// During backoff the adapter is effectively "not due" — we must
 		// not run Collect just to no-op the network call. Defer to the
