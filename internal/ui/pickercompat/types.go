@@ -54,7 +54,12 @@ type Entry struct {
 	// SearchOnly gates the row on a non-empty query. It is the same opt-in as
 	// picker.Item.SearchOnly and carries the same name so the concept has one
 	// spelling across the two packages.
-	SearchOnly bool
+	//
+	// It is `json:"-"` because nothing in production marshals an Entry; only a
+	// column-profile test does, and its golden records the shipped row shape.
+	// A render-gating flag is not part of that shape, so it must not appear in
+	// the golden just because the struct grew a field.
+	SearchOnly bool `json:"-"`
 }
 
 type Result struct {

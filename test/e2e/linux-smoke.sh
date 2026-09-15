@@ -461,10 +461,55 @@ recorder_popup_pid=$!
 
 smoke_wait_for "Settings root" grep -aFq "Settings >" "$recorder_log"
 
-# Deep search lands on the owning View and never executes a control on the way.
-# Searching a Status Bar component name from the root walks Appearance > Status
-# Bar; reaching the container must not write a decoration value. Each wait is
-# anchored to a byte offset so a frame from an earlier screen cannot satisfy it.
+# A deep query at the Settings root lists every setting of the scope as one
+# "path > label" list and choosing a result opens the View that owns the row
+# with the cursor already on it. "Git Icon" survives as exactly one row,
+# "Appearance > Status Bar > Git > Icon"; selecting it must enter the Git View
+# three levels down in one press, and entering it is navigation, so no
+# decoration value may be written. Each wait is anchored to a byte offset so a
+# frame from an earlier screen cannot satisfy it.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Git Icon\r' >&9
+smoke_wait_for "Status Bar Git view from a root result" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > Status Bar > Git > '"
+if [[ -e "$XDG_CONFIG_HOME/projmux/statusbar-decoration-git" ]]; then
+  echo "landing on the Git View from a root search result wrote a decoration value" >&2
+  exit 1
+fi
+# The cursor is on the target row, not on the View's first row: a bare Enter
+# with no query opens Icon rather than following Back out of the View. This is
+# the focus assertion — a rendered cursor is not observable in the log, the row
+# Enter accepts is.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf '\r' >&9
+smoke_wait_for "Git Icon chooser from the focused row" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > Status Bar > Git > Icon > '"
+if [[ -e "$XDG_CONFIG_HOME/projmux/statusbar-decoration-git" ]]; then
+  echo "opening the Git Icon chooser wrote a decoration value" >&2
+  exit 1
+fi
+# Back unwinds the whole descent the landing performed, one View per press.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Git view after Back from Icon" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > Status Bar > Git > '"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Status Bar view after Back from Git" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > Status Bar > '"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Appearance view after Back from Status Bar" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Agent attention badge style'"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Settings root after the root-result landing" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Keybindings'"
+
+# Search inside a View still filters that View's own rows, so the same
+# destination is also reachable one screen at a time. Searching a Status Bar
+# component name from the root walks Appearance > Status Bar; reaching the
+# container must not write a decoration value.
 settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'Status Bar\r' >&9
 smoke_wait_for "Appearance view" sh -c \

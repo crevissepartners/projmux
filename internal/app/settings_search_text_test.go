@@ -281,10 +281,13 @@ func settingsSearchStackHas(fragment string) bool {
 // scripted walker until a pass enters nothing new, and proves the walk wrote
 // nothing: the temporary HOME is byte-identical and only read-only tmux
 // observations were attempted.
-func settingsSearchWalk(t *testing.T, scenario settingsSearchScenario) *settingsSearchWalker {
+// settingsSearchFixture seeds the temporary HOME every Settings tree walk runs
+// against and wires the refusing seams: no command, no tmux write, no Registry.
+// `writes` records every refused attempt so a caller can prove none happened.
+func settingsSearchFixture(t *testing.T, scenario settingsSearchScenario) (cmd *settingsCommand, home string, writes *[]string) {
 	t.Helper()
 
-	home := t.TempDir()
+	home = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, "source", "repos", "app", ".git"), 0o755); err != nil {
 		t.Fatalf("seed project marker: %v", err)
 	}
@@ -294,7 +297,7 @@ func settingsSearchWalk(t *testing.T, scenario settingsSearchScenario) *settings
 	store := &stubSwitchPinStore{set: pins.Set{Format: pins.FormatTyped}.
 		With(pins.Pin{Kind: pins.KindProject, Value: "proj-seeded"}).
 		With(pins.Pin{Kind: pins.KindCandidate, Value: filepath.Join(home, "source", "candidate")})}
-	cmd := settingsNavTestCommand(t, home)
+	cmd = settingsNavTestCommand(t, home)
 	switcher := testSettingsSwitchCommandWithHome(t, home, store)
 	switcher.loadWorkdirs = func(string) ([]string, error) { return []string{filepath.Join(home, "source", "extra")}, nil }
 	cmd.switcher = switcher
@@ -311,21 +314,28 @@ func settingsSearchWalk(t *testing.T, scenario settingsSearchScenario) *settings
 		}
 		return baseEnv(name)
 	}
-	var writes []string
+	recorded := &[]string{}
 	cmd.runCommand = func(name string, args ...string) error {
-		writes = append(writes, name+" "+strings.Join(args, " "))
+		*recorded = append(*recorded, name+" "+strings.Join(args, " "))
 		return errors.New("settings search walk refuses commands")
 	}
 	cmd.runOutput = func(name string, args ...string) ([]byte, error) {
-		writes = append(writes, name+" "+strings.Join(args, " "))
+		*recorded = append(*recorded, name+" "+strings.Join(args, " "))
 		return nil, errors.New("settings search walk refuses commands")
 	}
 	cmd.tmuxRunner = settingsDirectionalTmuxRunnerFunc(func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if len(args) == 0 || !slices.Contains(settingsSearchReadOnlyTmux, args[0]) {
-			writes = append(writes, name+" "+strings.Join(args, " "))
+			*recorded = append(*recorded, name+" "+strings.Join(args, " "))
 		}
 		return nil, errors.New("settings search walk refuses tmux")
 	})
+	return cmd, home, recorded
+}
+
+func settingsSearchWalk(t *testing.T, scenario settingsSearchScenario) *settingsSearchWalker {
+	t.Helper()
+
+	cmd, home, recorded := settingsSearchFixture(t, scenario)
 	walker := &settingsSearchWalker{
 		t:        t,
 		cmd:      cmd,
@@ -354,8 +364,8 @@ func settingsSearchWalk(t *testing.T, scenario settingsSearchScenario) *settings
 	if after := settingsNavConfigSnapshot(t, home); after != before {
 		t.Fatalf("%s: settings walk changed the temporary HOME", scenario.name)
 	}
-	if len(writes) > 0 {
-		t.Fatalf("%s: settings walk attempted writes: %q", scenario.name, writes)
+	if len(*recorded) > 0 {
+		t.Fatalf("%s: settings walk attempted writes: %q", scenario.name, *recorded)
 	}
 	for _, frame := range walker.frames {
 		// A frame that reached the native picker without runPicker would also
@@ -509,6 +519,9 @@ const (
 var settingsSearchE2ESteps = []struct {
 	scenario, view, feedback, query, want string
 }{
+	// The root-result landing: one deep query at the root, one surviving row,
+	// and the Git View opens three levels down with Icon focused.
+	{"default", "root", "", "Git Icon", "root-result:global.appearance.status-bar.git.icon"},
 	{"default", "root", "", "Status Bar", "section:statusbar"},
 	{"default", "appearance", "", "status bar components", "appearance:status-bar"},
 	{"default", "status-bar", "", "Back", "__settings_back__"},

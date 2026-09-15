@@ -1,12 +1,14 @@
 package app
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -49,56 +51,125 @@ var settingsRootResultExcludedSubtrees = []string{
 // settingsRootResultInstance is one runtime member of a code-enumerated
 // template node. Key identifies the member inside the result value; Label is
 // the localized text substituted for the template's <placeholder>.
+//
+// GroupLabel and GroupValue carry a container the live UI renders between the
+// template's parent View and the member row but the catalog does not model:
+// Theme > Tokens opens a <group> View (Core / Surface / State / Chrome) and
+// only that group lists its tokens (runThemeTokensSection, then
+// runThemeTokenGroupSection). Adding or moving a catalog node is forbidden, so
+// the instance carries the missing level instead, and both the rendered path
+// and the landing chain stay exactly what the user clicks through.
 type settingsRootResultInstance struct {
-	Key   string
-	Label string
+	Key        string
+	Label      string
+	GroupLabel string
+	GroupValue string
 }
 
 // settingsRootResultEntries renders the global result rows for one scope tab.
 // The rows are SearchOnly, so they are invisible until the user types.
 func settingsRootResultEntries(tab settingsRootTab, locale i18n.Locale) []intpickercompat.Entry {
+	entries, _ := settingsRootResultLandings(tab, locale)
+	return entries
+}
+
+// settingsRootResultLandings renders the result rows and, in the same walk, the
+// destination each one encodes. One walk produces both, so a row can never name
+// a destination the walk did not derive, and the map is keyed by the row's own
+// picker Value.
+func settingsRootResultLandings(tab settingsRootTab, locale i18n.Locale) ([]intpickercompat.Entry, map[string]settingsRootResultLanding) {
 	axis := settingsAxisGlobal
 	scope := settingsNavScopeGlobal
 	if tab == settingsRootTabProject {
 		axis = settingsAxisProject
 		scope = settingsNavScopeProject
 	}
-	var entries []intpickercompat.Entry
+	walk := &settingsRootResultWalker{locale: locale, axis: axis, landings: map[string]settingsRootResultLanding{}}
 	// The depth-1 children of the scope root are the visible root rows, so the
 	// walk starts one level below them and never emits a duplicate category.
 	for _, category := range settingsNavChildren(scope) {
 		if category.Hidden || category.Axis&axis == 0 {
 			continue
 		}
-		path := []string{settingsRootResultNodeLabel(locale, category)}
-		entries = settingsRootResultWalk(entries, locale, axis, category, path, nil)
-	}
-	return entries
-}
-
-func settingsRootResultWalk(entries []intpickercompat.Entry, locale i18n.Locale, axis SettingsAxis, node settingsNavNode, path []string, instances []settingsRootResultInstance) []intpickercompat.Entry {
-	for _, child := range settingsNavChildren(node.ID) {
-		if child.Hidden || child.Axis&axis == 0 || settingsRootResultExcluded(child.ID) {
+		value, ok := settingsRootResultRowValue(category, nil)
+		if !ok {
 			continue
 		}
-		members, template := settingsRootResultInstances(child.ID, locale, instances)
+		path := []string{settingsRootResultNodeLabel(locale, category)}
+		walk.walk(category, path, []string{value}, nil)
+	}
+	return walk.entries, walk.landings
+}
+
+// settingsRootResultLanding is the destination one result row encodes: the
+// chain of real picker Values that opens the owning View, and the row to focus
+// once it is open.
+type settingsRootResultLanding struct {
+	// Navigation is the chain of picker Values, from the value pressed on the
+	// Settings root frame down to the value that opens the owning View. Every
+	// element is the Value a catalogued View node renders, so pressing one can
+	// only navigate.
+	Navigation []string
+	// Focus identifies the target row inside the owning View. It is the row's
+	// exact picker Value where the builder emits a fixed one, and its stable
+	// leading segment where the value carries the state Enter would apply (a
+	// Toggle row's value names the NEXT state, which this walk must not read).
+	// Empty means the walk could not name the row; the View then opens on its
+	// first row.
+	Focus string
+}
+
+type settingsRootResultWalker struct {
+	locale   i18n.Locale
+	axis     SettingsAxis
+	entries  []intpickercompat.Entry
+	landings map[string]settingsRootResultLanding
+}
+
+func (w *settingsRootResultWalker) walk(node settingsNavNode, path, chain []string, instances []settingsRootResultInstance) {
+	for _, child := range settingsNavChildren(node.ID) {
+		if child.Hidden || child.Axis&w.axis == 0 || settingsRootResultExcluded(child.ID) {
+			continue
+		}
+		members, template := settingsRootResultInstances(child.ID, w.locale, instances)
 		if !template {
 			// Every other Dynamic node is a single row whose value is supplied
 			// at runtime, not a 0..N template: it is emitted once, exactly like
 			// a static node.
-			childPath := settingsRootResultAppend(path, settingsRootResultNodeLabel(locale, child))
-			entries = append(entries, settingsRootResultEntry(child.ID, instances, childPath))
-			entries = settingsRootResultWalk(entries, locale, axis, child, childPath, instances)
+			w.emit(child, settingsRootResultNodeLabel(w.locale, child), path, chain, instances)
 			continue
 		}
 		for _, member := range members {
-			childPath := settingsRootResultAppend(path, member.Label)
-			childInstances := append(append([]settingsRootResultInstance(nil), instances...), member)
-			entries = append(entries, settingsRootResultEntry(child.ID, childInstances, childPath))
-			entries = settingsRootResultWalk(entries, locale, axis, child, childPath, childInstances)
+			memberPath := path
+			memberChain := chain
+			if member.GroupLabel != "" {
+				memberPath = settingsRootResultAppend(memberPath, member.GroupLabel)
+			}
+			if member.GroupValue != "" {
+				memberChain = settingsRootResultAppend(memberChain, member.GroupValue)
+			}
+			w.emit(child, member.Label, memberPath, memberChain, append(append([]settingsRootResultInstance(nil), instances...), member))
 		}
 	}
-	return entries
+}
+
+// emit adds one result row and records where it lands. A child of a View node
+// is reached by pressing that View's own row, so the chain grows by exactly the
+// values whose node is a View and whose row value the walk could name; a node
+// the walk cannot name contributes no step, and its descendants land on the
+// nearest ancestor View instead of on an invented row.
+func (w *settingsRootResultWalker) emit(child settingsNavNode, label string, path, chain []string, instances []settingsRootResultInstance) {
+	childPath := settingsRootResultAppend(path, label)
+	entry := settingsRootResultEntry(child.ID, instances, childPath)
+	w.entries = append(w.entries, entry)
+
+	value, named := settingsRootResultRowValue(child, instances)
+	w.landings[entry.Value] = settingsRootResultLanding{Navigation: chain, Focus: value}
+	childChain := chain
+	if named && child.Kind == settingsNavView {
+		childChain = settingsRootResultAppend(chain, value)
+	}
+	w.walk(child, childPath, childChain, instances)
 }
 
 func settingsRootResultAppend(path []string, label string) []string {
@@ -106,12 +177,7 @@ func settingsRootResultAppend(path []string, label string) []string {
 }
 
 func settingsRootResultExcluded(nodeID string) bool {
-	for _, excluded := range settingsRootResultExcludedSubtrees {
-		if nodeID == excluded {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(settingsRootResultExcludedSubtrees, nodeID)
 }
 
 // settingsRootResultNodeLabel is the localized text of one catalog row. Nodes
@@ -223,12 +289,19 @@ func settingsRootResultInstances(nodeID string, locale i18n.Locale, enclosing []
 		return out, true
 
 	case settingsNavAppearanceTheme + ".tokens.item":
+		// Tokens opens a <group> View first and only that group lists its
+		// tokens. The catalog does not model the group level and must not gain
+		// a node for it, so each token instance carries its group: the result
+		// path reads "Theme > Tokens > Core > background", exactly the rows the
+		// user clicks, and the landing chain can press the group row.
 		var out []settingsRootResultInstance
 		for _, group := range themeTokenGroups {
 			for _, token := range group.Tokens {
 				out = append(out, settingsRootResultInstance{
-					Key:   string(token),
-					Label: settingsCatalogTextLocale(locale, themeColorLabel(token)),
+					Key:        string(token),
+					Label:      settingsCatalogTextLocale(locale, themeColorLabel(token)),
+					GroupLabel: settingsCatalogTextLocale(locale, themeGroupLabel(group.Prefix)),
+					GroupValue: themeAction("group:" + group.Prefix),
 				})
 			}
 		}
@@ -360,4 +433,173 @@ func settingsRootResultNearestKey(instances []settingsRootResultInstance) string
 		return ""
 	}
 	return instances[len(instances)-1].Key
+}
+
+// settingsRootResultRowValue names the picker Value the owning builder renders
+// for one catalog node. It is the seam between the static IA catalog and the
+// twelve section loops: the catalog says where a row belongs, this says what
+// the row's value actually is, and every case below was read off the builder
+// rather than inferred from the node ID.
+//
+// The second return value is false when the row's value cannot be named without
+// reading runtime state the result walk must not touch (a user path, a saved
+// command, a resolved hex). Such a node still gets a result row; it just lands
+// on the nearest ancestor View the walk can reach instead of on a guessed row.
+//
+// Rows whose value carries the state Enter would apply (every Toggle, whose
+// value names the NEXT state) return the stable leading segment instead, which
+// the landing matches as a prefix.
+func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootResultInstance) (string, bool) {
+	// A passive State row's value is the shared no-op sentinel, and a single
+	// State node routinely stands for several rendered rows ("Effective / Saved
+	// / Source"). There is no row to name, so these land on the owning View.
+	if node.Value == settingsNoopValue {
+		return "", false
+	}
+	if !node.Dynamic && node.Value != "" {
+		return node.Value, true
+	}
+
+	key := settingsRootResultNearestKey(instances)
+	enclosing := ""
+	if len(instances) >= 2 {
+		enclosing = instances[len(instances)-2].Key
+	}
+
+	switch node.ID {
+	// Projects -------------------------------------------------------------
+	case settingsNavProjectsSidebar + ".closed-startup":
+		return settingsSessionStateSidebarStartupPickerDetail, true
+	case settingsNavProjectsSidebar + ".runtime-diagnostics":
+		return settingsRuntimeDiagnosticsVisibilityDetail, true
+
+	// AI -------------------------------------------------------------------
+	case settingsNavAIProviders + ".item":
+		return settingsActionPrefixAIEnabledAgent + key, true
+
+	// Notifications --------------------------------------------------------
+	case settingsNavNotifyDesktop + ".mode":
+		return settingsActionPrefixDesktopNotifyMode + "choose", true
+	case settingsNavNotifyProviders + ".item":
+		return settingsActionPrefixAINotifyDiagnostic + key, true
+	case settingsNavNotifyProviders + ".item.check":
+		return settingsActionPrefixAINotifyCheck + key, true
+	case settingsNavNotifyProviders + ".item.setup":
+		// The node covers the install / remove / dry-run copy rows; the install
+		// row is the first of them (aiNotifyDiagnosticCommandEntryLocale).
+		return settingsActionPrefixAINotifyCommand + key + ":install", true
+	case settingsNavNotifyTmuxSource + ".check":
+		return settingsActionPrefixAINotifyCheck + settingsTmuxBellDiagnosticID, true
+	case settingsNavNotifyAgentEvents + ".item":
+		return settingsActionPrefixAIHookProvider + key, true
+	case settingsNavNotifyAgentEvents + ".item.event":
+		// Codex renders its two native semantic rows above the hook events and
+		// gives them their own prefix.
+		if key == string(config.AISemanticApprovalRequired) || key == string(config.AISemanticResponseComplete) {
+			return settingsActionPrefixAISemanticEvent + key, true
+		}
+		return settingsActionPrefixAIHookEvent + enclosing + ":" + key, true
+
+	// Automation -----------------------------------------------------------
+	case settingsNavAutomationLifecycle + ".event":
+		return settingsActionPrefixHookEvent + hookScopeGlobal + ":" + key, true
+	case settingsNavAutomation + ".project-policy":
+		return settingsRootResultTogglePrefix(settingsActionPrefixHooks), true
+
+	// Appearance -----------------------------------------------------------
+	case settingsNavAppearanceTheme + ".preset":
+		return themeAction("preset"), true
+	case settingsNavAppearanceTheme + ".tokens":
+		return themeAction("tokens"), true
+	case settingsNavAppearanceTheme + ".tokens.item":
+		return themeAction("color:" + key), true
+	case settingsNavAppearanceTheme + ".tokens.item.set":
+		// "Set value" covers the typed-hex row, the 256-colour grid and one
+		// preset row per preset; the typed-hex row is the direct editor.
+		return themeAction("color-type:" + key), true
+	case settingsNavAppearanceTheme + ".reset":
+		return themeAction("reset"), true
+
+	case settingsNavStatusBar + ".notifications-hud.visible":
+		return settingsRootResultVisibilityPrefix(string(statusbarHUDNotifications)), true
+	case settingsNavStatusBar + ".notifications-hud.icon":
+		return settingsActionPrefixStatusbar + string(statusbarDecorationTargetNotify) + ":icon", true
+	case settingsNavStatusBar + ".agent-usage-hud.visible":
+		return settingsRootResultVisibilityPrefix(string(statusbarHUDAgentUsage)), true
+	case settingsNavStatusBar + ".agent-usage-hud.provider":
+		return settingsAppearanceAgentUsageProviderPrefix + key, true
+	case settingsNavStatusBar + ".agent-usage-hud.provider.visible":
+		return settingsRootResultVisibilityPrefix(agentUsageProviderVisibilityAction + ":" + key), true
+	case settingsNavStatusBar + ".agent-usage-hud.provider.window":
+		return settingsRootResultVisibilityPrefix(agentUsageWindowVisibilityAction + ":" + enclosing + ":" + key), true
+	case settingsNavStatusBar + ".project":
+		return settingsRootResultVisibilityPrefix(string(statusbarRowOneProject)), true
+	case settingsNavStatusBar + ".working-directory.visible":
+		return settingsRootResultVisibilityPrefix(string(statusbarRowOneWorkingDirectory)), true
+	case settingsNavStatusBar + ".working-directory.icon":
+		return settingsActionPrefixStatusbar + string(statusbarDecorationTargetCwd) + ":icon", true
+	case settingsNavStatusBar + ".git.visible":
+		return settingsRootResultVisibilityPrefix(string(statusbarRowOneGit)), true
+	case settingsNavStatusBar + ".git.icon":
+		return settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit) + ":icon", true
+	case settingsNavStatusBar + ".resources":
+		return settingsRootResultTogglePrefix(settingsActionPrefixLiveResources), true
+	case settingsNavStatusBar + ".clock":
+		return settingsRootResultVisibilityPrefix(string(statusbarRowOneClock)), true
+	case settingsNavStatusBar + ".settings-launcher":
+		return settingsRootResultVisibilityPrefix(string(statusbarRowOneSettingsLauncher)), true
+
+	// Snapshots ------------------------------------------------------------
+	case settingsNavSnapshots + ".autosave":
+		return settingsSessionStateAutosaveDetail, true
+	case settingsNavSnapshots + ".autosave.enabled":
+		return settingsRootResultTogglePrefix(settingsActionPrefixSessionState + "autosave:"), true
+	case settingsNavSnapshots + ".autosave.interval":
+		return settingsSessionStateAutosaveIntervalSet, true
+
+	// Project scope --------------------------------------------------------
+	case settingsNavProjectTrust + ".revoke":
+		return settingsTrustUntrust, true
+	case settingsNavProjectHooks + ".lifecycle.event":
+		return settingsActionPrefixHookEvent + hookScopeProject + ":" + key, true
+	case settingsNavProjectHooks + ".lifecycle.event.remove":
+		return settingsActionPrefixHookRemove + hookScopeProject + ":" + key, true
+	case settingsNavProjectHooks + ".send-noti.remove":
+		return settingsActionPrefixHookRemove + hookScopeProject + ":" + string(hooks.EventSendNoti), true
+	case settingsNavProjectSnapshots + ".autosave":
+		return settingsProjectSessionStateAutosaveDetail, true
+	case settingsNavProjectSnapshots + ".autosave.choice":
+		return settingsRootResultTogglePrefix(settingsActionPrefixSessionState + "project-autosave:"), true
+	case settingsNavProjectSnapshots + ".saved":
+		return settingsProjectSessionStateActionsDetail, true
+	case settingsNavProjectSnapshots + ".saved.save-latest":
+		return settingsProjectSessionStateSaveLatest, true
+	case settingsNavProjectSnapshots + ".saved.save-named":
+		return settingsProjectSessionStateSaveNamed, true
+	}
+
+	// Keybindings ----------------------------------------------------------
+	switch node.ID {
+	case settingsNavKeybindings + "." + keyBindingCategorySurfaces + ".surface":
+		return settingsActionPrefixKeymapSurface + key, true
+	case settingsNavKeybindings + "." + keyBindingCategorySurfaces + ".surface.action":
+		return settingsActionPrefixKeymap + key, true
+	}
+	// Every other per-category `<action detail>` template is one row in its
+	// category View, keyed by the action ID.
+	if _, ok := settingsRootResultKeybindingCategory(node.ID); ok {
+		return settingsActionPrefixKeymap + key, true
+	}
+	return "", false
+}
+
+// settingsRootResultVisibilityPrefix is the leading segment of a Status Bar
+// visibility Toggle's value. The full value ends in the state the row would
+// apply, which depends on what is saved, so only this part is stable.
+func settingsRootResultVisibilityPrefix(component string) string {
+	return settingsActionPrefixHUDVisibility + component
+}
+
+func settingsRootResultTogglePrefix(prefix string) string {
+	return strings.TrimSuffix(prefix, ":")
 }

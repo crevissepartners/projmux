@@ -226,6 +226,31 @@ step, never a silent no-op.
 Without an actionable project context the Project surface renders a single
 passive guidance row rather than repeating a disabled reason per row.
 
+## Search
+
+Search reaches every setting from the Settings root. A non-empty query at the
+root lists the current scope's settings as one `path > label` list (rendered
+with `›`) built by walking the navigation catalog, and choosing a result opens
+the owning View with the cursor on that row without running its control --
+Confirm and Action rows included, so `Quit Projmux` and `Reset theme` are
+focused and never fired. The list is scope-pure: a Global query never returns
+Project nodes and a Project query never returns Global ones, and with no project
+context the Project tab returns nothing. User-data collection items -- an
+individual discovery root, pinned Project, candidate or snapshot -- are data
+rather than settings, so results stop at their parent View and at the
+collection-level controls. Inside a View the query still filters that View's
+rows, and category rows carry their members' search text so search crosses
+categories.
+
+The result rows are built from the catalog alone: no Registry, tmux,
+filesystem or snapshot read participates, because a result is a destination
+rather than a rendered value. Where that leaves a row unnameable -- a saved
+user path, a command whose row spelling depends on whether a command is
+already stored, a read-only state row that stands for several rendered lines --
+the result still appears and opens the owning View on its first row instead of
+guessing a row. The same happens when the target row is simply not rendered any
+more: the View opens, unfocused, and nothing errors.
+
 ## Vocabulary and compatibility
 
 Visible nouns follow the shared resource vocabulary: `Project`, `Window`,
