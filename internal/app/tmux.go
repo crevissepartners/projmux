@@ -70,7 +70,7 @@ type tmuxRunner interface {
 
 type paneMenuCreateFunc func(agentPaneIntent, io.Writer, io.Writer) error
 type paneMenuDeleteFunc func(string, io.Writer, io.Writer) error
-type windowCreateIntentFunc func(windowCreateIntent, io.Writer, io.Writer) error
+type windowCreateIntentFunc func(windowCreateIntent, io.Writer, io.Writer) (createdWindowRuntime, error)
 type windowRenameIntentFunc func(windowRenameIntent, io.Writer, io.Writer) error
 type paneRenameIntentFunc func(paneRenameIntent, io.Writer, io.Writer) error
 
@@ -147,7 +147,7 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 			return newCreateCommand().createFromIntent(intent, stdout, stderr)
 		},
 		paneMenuDelete: deletePaneThroughCanonicalRoute,
-		windowCreate: func(intent windowCreateIntent, stdout, stderr io.Writer) error {
+		windowCreate: func(intent windowCreateIntent, stdout, stderr io.Writer) (createdWindowRuntime, error) {
 			return newCreateCommand().createWindowFromIntent(intent, stdout, stderr)
 		},
 		windowRename: func(intent windowRenameIntent, stdout, stderr io.Writer) error {
@@ -651,6 +651,11 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 	return c.displayPaneMenuMessage(strings.TrimSpace(*client), paneMenuCreatedMessage)
 }
 
+// windowCreatedUnshownMessage leads the line a pressing client sees when the
+// Window was committed but the client could not be moved onto it. The Window
+// stays; nothing is rolled back.
+const windowCreatedUnshownMessage = "Created Window, but projmux could not move this client to it: "
+
 func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("tmux window-create", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -666,8 +671,51 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 		return errors.New("canonical Window create route is not configured")
 	}
 	var actionOut, actionErr bytes.Buffer
-	err := c.windowCreate(windowCreateIntent{anchorPaneID: *anchor, targetClient: *client}, &actionOut, &actionErr)
-	return c.finishWindowIntent(*client, "Create Window", windowCreatedMessage, actionErr.String(), err)
+	created, err := c.windowCreate(windowCreateIntent{anchorPaneID: *anchor, targetClient: *client}, &actionOut, &actionErr)
+	if err != nil {
+		return c.finishWindowIntent(*client, "Create Window", windowCreatedMessage, actionErr.String(), err)
+	}
+	// The create has committed. A human asked for this Window, so the client
+	// that pressed the key now shows it. A failed move keeps the Window.
+	if moveErr := c.moveIntentClientToCreatedWindow(context.Background(), strings.TrimSpace(*client), created); moveErr != nil {
+		return c.displayPaneMenuMessage(strings.TrimSpace(*client), windowCreatedUnshownMessage+strings.TrimSpace(moveErr.Error()))
+	}
+	return c.finishWindowIntent(*client, "Create Window", windowCreatedMessage, "", nil)
+}
+
+// moveIntentClientToCreatedWindow moves exactly the pressing client onto a
+// Window a generated create committed. It reuses the focus core's
+// switch-client and select-window path but never its client picker. If the
+// pressing client is gone, nobody is moved: select-window changes the
+// Session's current Window, so it would move every other client on that
+// Session. Both tmux targets are the committed `$N`/`@N` handles, never names.
+// `--client` only picks who moves; it is not identity evidence.
+func (c *tmuxCommand) moveIntentClientToCreatedWindow(ctx context.Context, client string, created createdWindowRuntime) error {
+	if exactTmuxHandle(created.sessionID, "$") == "" || exactTmuxHandle(created.windowID, "@") == "" {
+		return fmt.Errorf("the create returned no exact runtime placement (session %q, window %q)", created.sessionID, created.windowID)
+	}
+	if c.runner == nil {
+		return errors.New("tmux runner is not configured")
+	}
+	focus := &focusCommand{runner: c.runner}
+	clients, err := focus.listClients(ctx, "")
+	if err != nil {
+		return err
+	}
+	attached := false
+	for _, candidate := range clients {
+		if candidate.Name == client {
+			attached = true
+			break
+		}
+	}
+	if !attached {
+		return fmt.Errorf("client %q is not attached", client)
+	}
+	if err := focus.switchClient(ctx, "", client, created.sessionID); err != nil {
+		return err
+	}
+	return focus.selectWindow(ctx, "", created.sessionID+":"+created.windowID)
 }
 
 // runWindowRenameIntent is the generated Window rename: the catalog key and the

@@ -30,6 +30,10 @@ type fakeTmux struct {
 	// clientMessages records the exact-client status messages interactive tmux
 	// actions converge on, in order.
 	clientMessages []fakeTmuxClientMessage
+	// clients models attached clients for the routes that move one. It is nil
+	// for every fixture that does not model clients; once set, a client-scoped
+	// message to a client that is not attached fails the way tmux does.
+	clients []*fakeTmuxClient
 	// fail injects a failure for the first command whose argv contains every
 	// token of the trigger. It fires once unless failAlways is set.
 	fail        []string
@@ -73,6 +77,38 @@ type fakeTmuxSession struct {
 	opts    map[string]string
 	env     map[string]string
 	windows []*fakeTmuxWindow
+	// current is the Session's current Window id, a Session property in tmux.
+	// Empty means the first Window.
+	current string
+}
+
+// fakeTmuxClient is one attached client and the Session it shows.
+type fakeTmuxClient struct {
+	name    string
+	session string
+}
+
+// attachClient models a client attached to session.
+func (f *fakeTmux) attachClient(name string, session *fakeTmuxSession) {
+	f.clients = append(f.clients, &fakeTmuxClient{name: name, session: session.id})
+}
+
+// clientView returns the Session id and current Window id a client shows.
+func (f *fakeTmux) clientView(name string) (string, string) {
+	for _, client := range f.clients {
+		if client.name != name {
+			continue
+		}
+		session := f.session(client.session)
+		if session == nil || len(session.windows) == 0 {
+			return client.session, ""
+		}
+		if session.current != "" {
+			return session.id, session.current
+		}
+		return session.id, session.windows[0].id
+	}
+	return "", ""
 }
 
 type fakeTmuxWindow struct {
@@ -360,6 +396,12 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		out, err = f.runSetOption(args)
 	case "select-pane":
 		return f.runSelectPane(args)
+	case "list-clients":
+		return f.runListClients(args)
+	case "switch-client":
+		return f.runSwitchClient(args)
+	case "select-window":
+		return f.runSelectWindow(args)
 	case "set-environment":
 		return f.runSetEnvironment(args)
 	case "show-environment":
@@ -521,6 +563,56 @@ func (f *fakeTmux) runSelectPane(args []string) ([]byte, error) {
 	return nil, nil
 }
 
+// runListClients renders the modeled attached clients with the requested format.
+func (f *fakeTmux) runListClients(args []string) ([]byte, error) {
+	format := flagValue(args, "-F")
+	if format == "" {
+		format = "#{client_name}"
+	}
+	var b strings.Builder
+	for _, client := range f.clients {
+		sessionName := ""
+		if session := f.session(client.session); session != nil {
+			sessionName = session.name
+		}
+		fmt.Fprintf(&b, "%s\n", strings.NewReplacer("#{client_name}", client.name, "#{client_session}", sessionName).Replace(format))
+	}
+	return []byte(b.String()), nil
+}
+
+// runSwitchClient requires an exact -c: without one tmux would pick a client
+// itself, which is exactly the fallback a move route must never take.
+func (f *fakeTmux) runSwitchClient(args []string) ([]byte, error) {
+	name := flagValue(args, "-c")
+	if name == "" {
+		return nil, fmt.Errorf("fake tmux: switch-client without an exact -c client: %v", args)
+	}
+	session := f.session(flagValue(args, "-t"))
+	if session == nil {
+		return nil, fmt.Errorf("fake tmux: switch-client: can't find session %q", flagValue(args, "-t"))
+	}
+	for _, client := range f.clients {
+		if client.name == name {
+			client.session = session.id
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("fake tmux: switch-client: can't find client %q", name)
+}
+
+// runSelectWindow accepts only an exact `$N:@N` target inside one Session.
+func (f *fakeTmux) runSelectWindow(args []string) ([]byte, error) {
+	target := flagValue(args, "-t")
+	sessionPart, windowPart, ok := strings.Cut(target, ":")
+	session := f.session(sessionPart)
+	owner, window := f.window(windowPart)
+	if !ok || session == nil || window == nil || owner != session {
+		return nil, fmt.Errorf("fake tmux: select-window: can't find exact window %q", target)
+	}
+	session.current = window.id
+	return nil, nil
+}
+
 // trailingCommand returns the shell-command tail of a new-window/split-window
 // argv: everything after the last recognized option pair.
 func trailingCommand(args []string) []string {
@@ -675,6 +767,9 @@ func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 	// A client-scoped message with no format is a status write, not a read:
 	// this is where every interactive action's bounded result lands.
 	if client := flagValue(args, "-c"); client != "" && format == "" && len(args) > 0 {
+		if f.clients != nil && !slices.ContainsFunc(f.clients, func(candidate *fakeTmuxClient) bool { return candidate.name == client }) {
+			return nil, fmt.Errorf("fake tmux: display-message: can't find client %q", client)
+		}
 		f.clientMessages = append(f.clientMessages, fakeTmuxClientMessage{client: client, text: args[len(args)-1]})
 		return nil, nil
 	}

@@ -377,7 +377,7 @@ func TestCanonicalWindowCreateBindsInvocationRouteBeforeRuntimeMutationObservati
 		bound = true
 		return nil
 	}
-	if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+	if _, err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
 		t.Fatalf("canonical Window create: %v", err)
 	}
 	if bindCalls != 1 {
@@ -405,7 +405,7 @@ func TestCanonicalWindowCreateCommitsExactOwnerPairAndInitialActivationForManage
 				return mutator.ObserveWindowRuntimeBinding(registry, windowUID, sessionID, windowID)
 			}
 
-			if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+			if _, err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
 				t.Fatalf("canonical %s Window create: %v", rootName, err)
 			}
 			if bindingCalls != 2 {
@@ -500,7 +500,7 @@ func TestCanonicalWindowOwnerPairBindingFailureRollsBackRegistryAndRuntime(t *te
 			}
 
 			var stdout bytes.Buffer
-			err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, &stdout, ioDiscard{})
+			_, err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, &stdout, ioDiscard{})
 			if err == nil || !strings.Contains(err.Error(), "injected canonical owner-pair binding failure") {
 				t.Fatalf("binding failure = %v", err)
 			}
@@ -529,7 +529,7 @@ func TestCanonicalWindowCreateFeedsExactLastPaneCausalCleanupForManagedRoots(t *
 			for _, window := range fx.store.registry.Windows {
 				before[window.Metadata.UID] = true
 			}
-			if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+			if _, err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
 				t.Fatalf("canonical %s Window create: %v", rootName, err)
 			}
 
@@ -620,7 +620,7 @@ func TestCanonicalWindowCreateLifecycleAuthorityMatrixIsClosed(t *testing.T) {
 			for _, window := range fx.store.registry.Windows {
 				before[window.Metadata.UID] = true
 			}
-			if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+			if _, err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
 				t.Fatal(err)
 			}
 			var window coremetadata.Window
@@ -1035,6 +1035,305 @@ func FuzzCanonicalUIIntentStaysManaged(f *testing.F) {
 		}
 		if got := fmt.Sprint(fx.store.registry.WindowsOf(fx.rootUID)[0].Metadata.OwnerRef.Kind); got != string(fx.rootKind) {
 			t.Fatalf("root kind = %s, want %s", got, fx.rootKind)
+		}
+	})
+}
+
+const (
+	windowCreatePressingClient  = "/dev/pts/2"
+	windowCreateBystanderClient = "/dev/pts/9"
+	windowCreateOtherClient     = "/dev/pts/7"
+)
+
+// windowCreateIntentRoute wires the hidden `internal tmux window-create` route
+// onto the real canonical Window create over the fixture's fake server. A
+// bystander client shows the origin Session and another client shows a
+// different Session; the pressing client is attached to the origin Session
+// only when the test says so. commitCall is the number of tmux calls recorded
+// when the last Registry commit returned, so a move can be proved to follow it.
+type windowCreateIntentRoute struct {
+	canonicalRootFixture
+	cmd        *tmuxCommand
+	commitCall int
+}
+
+func newWindowCreateIntentRoute(t *testing.T, control, pressingAttached bool) *windowCreateIntentRoute {
+	t.Helper()
+	fx := canonicalFixture(t, control)
+	origin, _, _ := fx.tmux.pane(fx.originID)
+	if origin == nil {
+		t.Fatal("fixture origin Pane has no runtime Session")
+	}
+	route := &windowCreateIntentRoute{canonicalRootFixture: fx, commitCall: -1}
+	if pressingAttached {
+		fx.tmux.attachClient(windowCreatePressingClient, origin)
+	}
+	fx.tmux.attachClient(windowCreateBystanderClient, origin)
+	fx.tmux.attachClient(windowCreateOtherClient, fx.tmux.addSession("other-view"))
+	update := fx.create.store.update
+	fx.create.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		registry, err := update(fn)
+		if err == nil {
+			route.commitCall = len(fx.tmux.calls)
+		}
+		return registry, err
+	}
+	route.cmd = &tmuxCommand{runner: fx.tmux, windowCreate: fx.create.createWindowFromIntent}
+	return route
+}
+
+func (r *windowCreateIntentRoute) run() error {
+	return r.cmd.Run([]string{"window-create", "--client", windowCreatePressingClient, "--anchor", r.originID}, ioDiscard{}, ioDiscard{})
+}
+
+func (r *windowCreateIntentRoute) windowUIDs() map[string]bool {
+	uids := map[string]bool{}
+	for _, window := range r.store.registry.Windows {
+		uids[window.Metadata.UID] = true
+	}
+	return uids
+}
+
+func (r *windowCreateIntentRoute) clientViews() map[string][2]string {
+	views := map[string][2]string{}
+	for _, client := range r.tmux.clients {
+		session, window := r.tmux.clientView(client.name)
+		views[client.name] = [2]string{session, window}
+	}
+	return views
+}
+
+// keptWindow returns the one Window the route created and fails unless its
+// Registry row, its exact runtime binding, and its initial Pane are all live.
+func (r *windowCreateIntentRoute) keptWindow(t *testing.T, before map[string]bool) coremetadata.Window {
+	t.Helper()
+	var created []coremetadata.Window
+	for _, window := range r.store.registry.Windows {
+		if !before[window.Metadata.UID] {
+			created = append(created, window)
+		}
+	}
+	if len(created) != 1 {
+		t.Fatalf("created Windows = %d, want exactly one kept Window\n%s", len(created), r.store.snapshot())
+	}
+	window := created[0]
+	session, live := r.tmux.window(window.Status.RuntimeID)
+	if session == nil || live == nil || session.id != window.Status.RuntimeSessionID ||
+		exactTmuxHandle(window.Status.RuntimeSessionID, "$") == "" || live.opts[tmuxopts.WindowUID] != window.Metadata.UID {
+		t.Fatalf("created Window %s is not kept live: binding=%q/%q\n%s", window.Metadata.UID,
+			window.Status.RuntimeSessionID, window.Status.RuntimeID, r.tmux.state())
+	}
+	panes := r.store.registry.PanesOf(window.Metadata.UID)
+	if len(panes) != 1 {
+		t.Fatalf("created Window %s kept Panes %+v, want its one initial Pane", window.Metadata.UID, panes)
+	}
+	livePaneWithUID(t, r.tmux, panes[0].Metadata.UID)
+	return window
+}
+
+// clientMovingCalls returns every recorded call that can move a client, with
+// its route prefix stripped, and the index of the first one (-1 when none).
+func clientMovingCalls(calls [][]string) ([][]string, int) {
+	var moves [][]string
+	first := -1
+	for i, call := range calls {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && slices.Contains(focusMovingCommands, argv[0]) {
+			if first < 0 {
+				first = i
+			}
+			moves = append(moves, argv)
+		}
+	}
+	return moves, first
+}
+
+func equalArgvs(got, want [][]string) bool {
+	return slices.EqualFunc(got, want, func(a, b []string) bool { return slices.Equal(a, b) })
+}
+
+// TestWindowCreateIntentMovesOnlyThePressingClientToTheCreatedWindow is C-1
+// acceptance 1 and 2: once the canonical create has committed, exactly the
+// pressing client is moved, addressed by the committed `$N` and `@N`, and a
+// client showing a different Session keeps its Session and Window. The
+// bystander on the same Session follows the Session's current Window; that is
+// the declared Non-Guarantee, so it is not asserted either way.
+func TestWindowCreateIntentMovesOnlyThePressingClientToTheCreatedWindow(t *testing.T) {
+	for _, control := range []bool{false, true} {
+		rootName := "Project"
+		if control {
+			rootName = "ControlSession"
+		}
+		t.Run(rootName, func(t *testing.T) {
+			route := newWindowCreateIntentRoute(t, control, true)
+			before := route.windowUIDs()
+			otherBefore := route.clientViews()[windowCreateOtherClient]
+
+			if err := route.run(); err != nil {
+				t.Fatalf("window-create route: %v", err)
+			}
+			created := route.keptWindow(t, before)
+			sessionID, windowID := created.Status.RuntimeSessionID, created.Status.RuntimeID
+			want := [][]string{
+				{"switch-client", "-c", windowCreatePressingClient, "-t", sessionID},
+				{"select-window", "-t", sessionID + ":" + windowID},
+			}
+			moves, first := clientMovingCalls(route.tmux.calls)
+			if !equalArgvs(moves, want) {
+				t.Fatalf("client moves = %v, want exactly %v", moves, want)
+			}
+			if route.commitCall < 0 || first < route.commitCall {
+				t.Fatalf("first client move at call %d, Registry commit at call %d: the move must follow the commit", first, route.commitCall)
+			}
+			if got := route.clientViews()[windowCreatePressingClient]; got != [2]string{sessionID, windowID} {
+				t.Fatalf("pressing client shows %v, want the created Window %s/%s", got, sessionID, windowID)
+			}
+			if got := route.clientViews()[windowCreateOtherClient]; got != otherBefore {
+				t.Fatalf("client on a different Session moved: %v -> %v", otherBefore, got)
+			}
+			wantMessages := []fakeTmuxClientMessage{{client: windowCreatePressingClient, text: windowCreatedMessage}}
+			if !slices.Equal(route.tmux.clientMessages, wantMessages) {
+				t.Fatalf("client messages = %+v, want %+v", route.tmux.clientMessages, wantMessages)
+			}
+		})
+	}
+}
+
+// TestWindowCreateIntentWithAbsentPressingClientMovesNoClientAndKeepsTheCreate
+// is C-1 acceptance 3 for a pressing client that is gone: the committed Window
+// stays, no switch-client or select-window is issued at all -- not even to the
+// bystander already showing the origin Session, which is the focus core's own
+// fallback -- and every client keeps what it showed.
+func TestWindowCreateIntentWithAbsentPressingClientMovesNoClientAndKeepsTheCreate(t *testing.T) {
+	route := newWindowCreateIntentRoute(t, false, false)
+	before := route.windowUIDs()
+	viewsBefore := route.clientViews()
+
+	err := route.run()
+	if err == nil || !strings.Contains(err.Error(), windowCreatedUnshownMessage) || !strings.Contains(err.Error(), "is not attached") {
+		t.Fatalf("route error = %v, want the undeliverable unshown-create line", err)
+	}
+	route.keptWindow(t, before)
+	if moves, _ := clientMovingCalls(route.tmux.calls); len(moves) != 0 {
+		t.Fatalf("absent pressing client still issued client moves %v", moves)
+	}
+	for name, view := range route.clientViews() {
+		if view != viewsBefore[name] {
+			t.Fatalf("client %s moved: %v -> %v", name, viewsBefore[name], view)
+		}
+	}
+	if len(route.tmux.clientMessages) != 0 {
+		t.Fatalf("client messages = %+v, want none for an absent pressing client", route.tmux.clientMessages)
+	}
+}
+
+// TestWindowCreateIntentMoveFailureKeepsTheCreateAndTellsThePressingClientWhy
+// is C-1 acceptance 3 under fault injection on each move command: the Window
+// stays, no other client move is issued, a client on a different Session is
+// unchanged, and the pressing client is told the create happened and why it
+// was not moved.
+func TestWindowCreateIntentMoveFailureKeepsTheCreateAndTellsThePressingClientWhy(t *testing.T) {
+	for _, verb := range []string{"switch-client", "select-window"} {
+		t.Run(verb, func(t *testing.T) {
+			route := newWindowCreateIntentRoute(t, false, true)
+			failure := "injected " + verb + " failure"
+			route.tmux.fail = []string{verb}
+			route.tmux.failMessage = failure
+			before := route.windowUIDs()
+			viewsBefore := route.clientViews()
+
+			if err := route.run(); err != nil {
+				t.Fatalf("displayed move failure escaped as an exit code: %v", err)
+			}
+			created := route.keptWindow(t, before)
+			sessionID, windowID := created.Status.RuntimeSessionID, created.Status.RuntimeID
+			want := [][]string{{"switch-client", "-c", windowCreatePressingClient, "-t", sessionID}}
+			if verb == "select-window" {
+				want = append(want, []string{"select-window", "-t", sessionID + ":" + windowID})
+			}
+			if moves, _ := clientMovingCalls(route.tmux.calls); !equalArgvs(moves, want) {
+				t.Fatalf("client moves = %v, want exactly %v", moves, want)
+			}
+			if got := route.clientViews()[windowCreateOtherClient]; got != viewsBefore[windowCreateOtherClient] {
+				t.Fatalf("client on a different Session moved: %v -> %v", viewsBefore[windowCreateOtherClient], got)
+			}
+			if verb == "switch-client" {
+				for name, view := range route.clientViews() {
+					if view != viewsBefore[name] {
+						t.Fatalf("failed switch-client still moved client %s: %v -> %v", name, viewsBefore[name], view)
+					}
+				}
+			}
+			if len(route.tmux.clientMessages) != 1 || route.tmux.clientMessages[0].client != windowCreatePressingClient {
+				t.Fatalf("client messages = %+v, want one line on the pressing client", route.tmux.clientMessages)
+			}
+			text := route.tmux.clientMessages[0].text
+			if !strings.HasPrefix(text, windowCreatedUnshownMessage) || !strings.Contains(text, failure) {
+				t.Fatalf("message = %q, want %q with the reason %q", text, windowCreatedUnshownMessage, failure)
+			}
+			for _, banned := range []string{"rolled back", "reverted", "nothing was created"} {
+				if strings.Contains(text, banned) {
+					t.Fatalf("message = %q, must not claim %q", text, banned)
+				}
+			}
+		})
+	}
+}
+
+// TestWindowCreateIntentCreateFailureIssuesNoClientMoveAndKeepsItsMessage is
+// C-1 acceptance 4: a create that does not commit issues no client move and no
+// client inventory read, and its refusal line is the one the route always
+// showed.
+func TestWindowCreateIntentCreateFailureIssuesNoClientMoveAndKeepsItsMessage(t *testing.T) {
+	t.Run("canonical refusal", func(t *testing.T) {
+		route := newWindowCreateIntentRoute(t, false, true)
+		registryBefore, runtimeBefore := route.store.snapshot(), route.tmux.state()
+		bindingCalls := 0
+		route.create.bindWindowRuntime = func(mutator coremetadata.Mutator, registry *coremetadata.Registry,
+			windowUID, sessionID, windowID string,
+		) (coremetadata.Window, error) {
+			bindingCalls++
+			if bindingCalls == 1 {
+				return mutator.ObserveWindowRuntimeBinding(registry, windowUID, sessionID, windowID)
+			}
+			return coremetadata.Window{}, errors.New("injected canonical owner-pair binding failure")
+		}
+
+		if err := route.run(); err != nil {
+			t.Fatalf("displayed create refusal escaped as an exit code: %v", err)
+		}
+		if moves, _ := clientMovingCalls(route.tmux.calls); len(moves) != 0 || route.tmux.argvContains("list-clients") {
+			t.Fatalf("failed create reached the client move: moves=%v calls=%v", moves, route.tmux.calls)
+		}
+		if route.store.snapshot() != registryBefore || route.tmux.state() != runtimeBefore {
+			t.Fatal("failed create left Registry or runtime state behind")
+		}
+		if len(route.tmux.clientMessages) != 1 || route.tmux.clientMessages[0].client != windowCreatePressingClient {
+			t.Fatalf("client messages = %+v, want one refusal line", route.tmux.clientMessages)
+		}
+		text := route.tmux.clientMessages[0].text
+		if !strings.HasPrefix(text, "projmux Create Window failed: ") ||
+			!strings.Contains(text, "injected canonical owner-pair binding failure") || strings.Contains(text, windowCreatedMessage) {
+			t.Fatalf("refusal line = %q", text)
+		}
+	})
+	t.Run("exact refusal line", func(t *testing.T) {
+		server := newFakeTmux()
+		server.attachClient(windowCreatePressingClient, server.addSession("alpha"))
+		cmd := &tmuxCommand{
+			runner: server,
+			windowCreate: func(_ windowCreateIntent, _, stderr io.Writer) (createdWindowRuntime, error) {
+				_, _ = io.WriteString(stderr, "exact anchor drifted")
+				return createdWindowRuntime{sessionID: "$1", windowID: "@2"}, errors.New("create window refused")
+			},
+		}
+		if err := cmd.Run([]string{"window-create", "--client", windowCreatePressingClient, "--anchor", "%9"}, ioDiscard{}, ioDiscard{}); err != nil {
+			t.Fatalf("displayed create refusal escaped as an exit code: %v", err)
+		}
+		want := [][]string{{"display-message", "-c", windowCreatePressingClient, "-d", "10000",
+			"projmux Create Window failed: create window refused: exact anchor drifted"}}
+		if !equalArgvs(server.calls, want) {
+			t.Fatalf("tmux calls = %v, want only the unchanged refusal line %v", server.calls, want)
 		}
 	})
 }

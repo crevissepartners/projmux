@@ -10186,6 +10186,17 @@ menu_assert_no_overlay "Vertical Kill menu item"
 #    report one bounded line to the exact client, and neither paints the pane.
 menu_overlay_offset="$(stat -c %s "$menu_client_log")"
 menu_run_producer "$menu_origin_pane" internal tmux window-create --client "$menu_client" --anchor "$menu_origin_pane"
+# The window-create intent moves the pressing client to the Window it created.
+# Per-client state comes from list-clients: `display-message -c` formats against
+# the most recent session, not the named client's.
+menu_client_window() {
+  menu_tmux list-clients -F '#{client_name}|#{window_id}' | awk -F'|' -v client="$menu_client" '$1 == client { print $2 }'
+}
+if [[ "$(menu_client_window)" != "$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | tail -n 1)" ]]; then
+  echo "Window create did not move the pressing client to the created Window: client-window=$(menu_client_window)" >&2
+  exit 1
+fi
+menu_tmux select-window -t "$menu_origin_pane"
 menu_assert_no_overlay "Window create"
 smoke_wait_for "Create Window client message" menu_client_saw "$menu_overlay_offset" "Created Window"
 menu_created_window="$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | tail -n 1)"
@@ -10494,7 +10505,6 @@ menu_press C-b '<'
 menu_select_open_item "$menu_offset" "New At End" W
 smoke_wait_for "Window menu New At End client message" menu_client_saw "$menu_offset" "Created Window"
 menu_settle_run_shell
-menu_assert_no_overlay "Window menu New At End"
 menu_target_window="$(menu_new_window_except "$menu_windows_before")"
 menu_target_window_uid="$(menu_tmux show-options -wqv -t "$menu_target_window" @projmux_window_uid)"
 menu_target_pane="$(menu_tmux display-message -p -t "$menu_target_window" '#{pane_id}')"
@@ -10504,6 +10514,13 @@ if [[ -z "$menu_target_window" || -z "$menu_target_window_uid" || -z "$menu_targ
   echo "Window menu New At End did not create a Registry-backed Window: window=$menu_target_window uid=$menu_target_window_uid pane-uid=$menu_target_pane_uid" >&2
   exit 1
 fi
+if [[ "$(menu_client_window)" != "$menu_target_window" ]]; then
+  echo "Window menu New At End did not move the pressing client to the created Window: window=$menu_target_window client-window=$(menu_client_window)" >&2
+  exit 1
+fi
+# 6b and 6c act on the created Window as a non-current one: return the client.
+menu_refocus_origin
+menu_assert_no_overlay "Window menu New At End"
 menu_wait_status_row "$menu_offset"
 
 # 6b. MouseDown3Status on that non-current Window: Rename prompts with the
@@ -10512,8 +10529,8 @@ menu_offset="$(stat -c %s "$menu_client_log")"
 menu_run_producer "$menu_target_pane" internal tmux window-rename --client "$menu_client" --anchor "$menu_target_pane" -- menu-target-e2e
 smoke_wait_for "menu target Window rename" menu_client_saw "$menu_offset" "Renamed Window: menu-target-e2e"
 menu_origin_window_name="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{window_name}')"
-if [[ "$(menu_tmux display-message -p -c "$menu_client" '#{window_id}')" == "$menu_target_window" ]]; then
-  echo "managed menu fixture: the menu target Window is the focused Window" >&2
+if [[ "$(menu_client_window)" != "$(menu_tmux display-message -p -t "$menu_origin_pane" '#{window_id}')" ]]; then
+  echo "managed menu fixture: the client does not show the origin Window, so the menu target Window may be the focused one: client-window=$(menu_client_window)" >&2
   exit 1
 fi
 menu_offset="$(stat -c %s "$menu_client_log")"

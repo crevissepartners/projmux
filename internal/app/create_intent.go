@@ -43,6 +43,15 @@ type windowCreateIntent struct {
 	targetClient string
 }
 
+// createdWindowRuntime is the exact runtime placement of the Window a committed
+// intent create made: the stable `$N` Session and `@N` Window handles the
+// transaction bound into the Registry. It carries no identity authority; the
+// generated route only uses it to address the pressing client's move.
+type createdWindowRuntime struct {
+	sessionID string
+	windowID  string
+}
+
 // windowRenameIntent and paneRenameIntent are the generated rename surfaces'
 // complete input: the exact anchor Pane the key or menu item targeted, the
 // client that sees the result, and the raw prompt response. The response is
@@ -76,18 +85,19 @@ func (c *createCommand) projectCanonicalOriginWindowBinding(
 	return err
 }
 
-func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout, stderr io.Writer) error {
+func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout, stderr io.Writer) (createdWindowRuntime, error) {
 	anchor := strings.TrimSpace(intent.anchorPaneID)
 	if exactTmuxHandle(anchor, "%") == "" {
-		return usageError("canonical Window create intent requires an exact anchor Pane; nothing was created")
+		return createdWindowRuntime{}, usageError("canonical Window create intent requires an exact anchor Pane; nothing was created")
 	}
 	scope, err := c.resolveCanonicalIntentScope(agentPaneIntent{
 		producer: canonicalProducerWindowCreate, anchorPaneID: anchor, targetClient: intent.targetClient,
 	})
 	if err != nil {
-		return visibleCanonicalCreateError(err)
+		return createdWindowRuntime{}, visibleCanonicalCreateError(err)
 	}
 	var result createResult
+	var placement createdWindowRuntime
 	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
@@ -139,12 +149,13 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		observeActivationRuntime(working, mutator, activation, created.PaneID, c.runtime.warn)
 		result = createResult{kind: coremetadata.KindWindow, uid: window.Metadata.UID, name: window.Metadata.Name,
 			paneID: created.PaneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
+		placement = createdWindowRuntime{sessionID: scope.sessionID, windowID: created.WindowID}
 		return createErr
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
-		return visibleCanonicalCreateError(err)
+		return createdWindowRuntime{}, visibleCanonicalCreateError(err)
 	}
-	return c.writeResults(stdout, canonicalCreateWindow, cli.OutputModeDefault, coremetadata.KindWindow, []createResult{result})
+	return placement, c.writeResults(stdout, canonicalCreateWindow, cli.OutputModeDefault, coremetadata.KindWindow, []createResult{result})
 }
 
 // renameWindowFromIntent is the generated Window rename (the catalog key and

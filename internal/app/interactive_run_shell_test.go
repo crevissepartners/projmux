@@ -223,11 +223,19 @@ func TestWindowIntentsReportOneBoundedLineToTheExactClient(t *testing.T) {
 		name string
 		argv []string
 		want string
+		// moves are the exact-client move a committed create issues before
+		// its line; a rename moves nobody.
+		moves []recordedTmuxCall
 	}{
 		{
 			name: "create",
 			argv: []string{"window-create", "--client", "/dev/pts/2", "--anchor", "%9"},
 			want: windowCreatedMessage,
+			moves: []recordedTmuxCall{
+				{name: "tmux", args: []string{"list-clients", "-F", "#{client_name}" + focusFieldSeparator + "#{client_session}"}},
+				{name: "tmux", args: []string{"switch-client", "-c", "/dev/pts/2", "-t", "$1"}},
+				{name: "tmux", args: []string{"select-window", "-t", "$1:@5"}},
+			},
 		},
 		{
 			name: "rename",
@@ -236,12 +244,14 @@ func TestWindowIntentsReportOneBoundedLineToTheExactClient(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			runner := &recordingTmuxRunner{}
+			runner := &recordingTmuxRunner{outputs: map[string]string{
+				recordedTmuxCallKey("tmux", "list-clients", "-F", "#{client_name}"+focusFieldSeparator+"#{client_session}"): "/dev/pts/2" + focusFieldSeparator + "alpha\n",
+			}}
 			cmd := &tmuxCommand{
 				runner: runner,
-				windowCreate: func(_ windowCreateIntent, stdout, _ io.Writer) error {
+				windowCreate: func(_ windowCreateIntent, stdout, _ io.Writer) (createdWindowRuntime, error) {
 					_, _ = io.WriteString(stdout, "created: window/uid=win-3 name=zsh\n")
-					return nil
+					return createdWindowRuntime{sessionID: "$1", windowID: "@5"}, nil
 				},
 				windowRename: func(intent windowRenameIntent, stdout, _ io.Writer) error {
 					_, _ = fmt.Fprintf(stdout, "renamed: window/uid=win-3 -> %s\n", intent.response)
@@ -255,10 +265,10 @@ func TestWindowIntentsReportOneBoundedLineToTheExactClient(t *testing.T) {
 			if stdout.Len() != 0 || stderr.Len() != 0 {
 				t.Fatalf("Window intent wrote to the foreground job: stdout=%q stderr=%q", stdout.String(), stderr.String())
 			}
-			want := recordedTmuxCall{name: "tmux", args: []string{
+			want := append(append([]recordedTmuxCall(nil), test.moves...), recordedTmuxCall{name: "tmux", args: []string{
 				"display-message", "-c", "/dev/pts/2", "-d", "10000", test.want,
-			}}
-			if !reflect.DeepEqual(runner.calls, []recordedTmuxCall{want}) {
+			}})
+			if !reflect.DeepEqual(runner.calls, want) {
 				t.Fatalf("tmux calls = %#v, want %#v", runner.calls, want)
 			}
 		})
