@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
@@ -54,7 +55,7 @@ func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
 	if token == "" || len(token) > 4096 || strings.ContainsAny(token, "\r\n\x00") {
 		return nil, errors.New("provider-frame-invalid-auth")
 	}
-	if content == "" || !validClaudeAssistantReply(content) {
+	if !validClaudeProviderPushContent(content) {
 		return nil, errors.New("provider-frame-invalid-content")
 	}
 	auth, err := json.Marshal(claudeProviderAuthFrame{Type: "auth", Token: token})
@@ -74,6 +75,13 @@ func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
 		return nil, errors.New(claudeProviderFrameSizeReason(len(frame)))
 	}
 	return frame, nil
+}
+
+// validClaudeProviderPushContent judges push content shape only. Its size is
+// bounded by the serialized frame budget, never by the reply payload limit that
+// validClaudeAssistantReply keeps for the reply tool argv body.
+func validClaudeProviderPushContent(content string) bool {
+	return content != "" && utf8.ValidString(content) && !strings.ContainsRune(content, '\x00')
 }
 
 // Reasons cross the helper/public boundary and are persisted in existing

@@ -1302,8 +1302,8 @@
 - `TestClaudeExplicitReplyGuardRetryRetainsQualificationAndRouteFences` keeps
   known-zero recovery behind the existing exact qualification, provider caller,
   route and bounded-command gates. `TestClaudeEndpointProcessIntegration/explicit-reply-known-zero-manual-retry`
-  runs the public CLI as the synthetic provider's real descendant: invalid
-  content fails with stderr/ref/action, a corrected manual reply reaches the
+  runs the public CLI as the synthetic provider's real descendant: an oversized
+  frame fails with stderr/ref/action, a corrected manual reply reaches the
   provider once, same/different-ref duplicates write zero, and independent
   public status processes preserve both attempts. The provider checks for
   unexpected queued connections before exit.
@@ -2140,7 +2140,8 @@ separate decision this measurement exists to inform.
 - `TestClaudeProviderFrameSerializedByteBoundaryAndSafeRejection` fixes the
   complete auth/user frame boundary at 8191/8192/8193 serialized bytes.
   `TestClaudeProviderPostPreservesConstructionReasonBeforeAnyRouteOrWrite`
-  separates invalid auth/content from size rejection before route or write.
+  separates invalid auth/content shape from size rejection before route or
+  write; content above the 4096-byte reply payload limit is judged by the frame.
   `TestClaudeProviderWriteReasonsRequireOneActualWrite` distinguishes actual
   zero/partial writes and invalid-count/full-with-error unknown outcomes.
   `TestClaudeProviderRejectionReasonsSurviveHubReceiptStatusAndStoreReload`
@@ -2153,6 +2154,17 @@ separate decision this measurement exists to inform.
   exercises the built binary's public send/status against the isolated provider:
   size/action survive, credentials stay absent, and the rejected frame adds no
   provider connection before the next expected message.
+- `TestClaudePushAcceptedPayloadLimitBodyIsDeliveredInOneFrameWithinBudget`
+  pushes a real envelope with a 4096-byte ASCII and a 4095-byte Korean body
+  through the hub: delivered, one full frame, frame within 8192 bytes.
+  `TestClaudePushSymbolHeavyPayloadLimitBodyReportsSizedFrameRefusalThroughReceipt`
+  requires the independently serialized `frameBytes`, zero provider writes, a
+  known outcome, and survival through public receipt and store reload.
+  `TestClaudePushSizeExcessEndsSizedNeverInvalidContentOrUnsupported` keeps
+  every push size excess off `provider-frame-invalid-content` and
+  `provider-frame-unsupported`; empty, invalid UTF-8, and NUL content stay
+  invalid-content. `TestClaudeReplyToolArgvBodyKeepsPayloadByteLimit` keeps the
+  reply tool argv body at 4096 bytes.
 - `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
   requires an explicit choice of the original request; Stop text has no reply
   authority regardless of human activity or pending request count.

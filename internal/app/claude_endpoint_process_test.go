@@ -471,12 +471,12 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		envelope.BrokerEnvelope.Source = publicMessageRoute(sourceRoute)
 		envelope.BrokerEnvelope.ConversationRef = conversationRefFor(ref)
 		var expectedReason string
-		// Select from actual serialized bytes, not payload length. Keep the
-		// content valid so this fixture observes the frame cap specifically.
+		// Select from actual serialized bytes, not payload length. Push content
+		// has no length cap of its own, so this fixture observes the frame cap.
 		for count := 1; count <= coremessage.MaxPayloadBytes; count++ {
 			envelope.BrokerEnvelope.Payload = strings.Repeat("<", count)
 			content, err := providerCoordinationContent(envelope, binary)
-			if err != nil || !validClaudeAssistantReply(content) {
+			if err != nil {
 				continue
 			}
 			size := len(serializedClaudeTestFrame(t, private.Token, content))
@@ -637,11 +637,13 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 			return receipt
 		}
 		const failedRef, retryRef = "process-reply-failed", "process-reply-manual"
-		payload := strings.Repeat("x", coremessage.MaxPayloadBytes)
+		// The body fits the send and private envelope limits, but its escaped
+		// frame exceeds the budget, so the reply fails known-zero with a size.
+		payload := claudeFrameBudgetSymbolBody()
 		out, refusal, exit := callReply(failedRef, payload)
 		failed := status(failedRef)
 		if exit == 0 || failed.Delivery.State != coremessage.StateFailed || failed.Delivery.OutcomeUnknown ||
-			failed.Delivery.Reason != "provider-frame-invalid-content" || !strings.Contains(refusal, "previousRef="+failedRef) ||
+			!isClaudeProviderFrameSizeReason(failed.Delivery.Reason) || !strings.Contains(refusal, "previousRef="+failedRef) ||
 			!strings.Contains(refusal, failed.Delivery.Reason) || !strings.Contains(out+refusal, "new --message-ref") {
 			t.Fatalf("known-zero reply did not expose cause/ref/action: exit=%d out=%s stderr=%s", exit, out, refusal)
 		}

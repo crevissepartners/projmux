@@ -38,7 +38,7 @@ func TestClaudeProviderFrameSerializedByteBoundaryAndSafeRejection(t *testing.T)
 	for _, size := range []int{8191, 8192, 8193} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			content := prefix + strings.Repeat("x", size-baseSize)
-			if !validClaudeAssistantReply(content) || len(serializedClaudeTestFrame(t, token, content)) != size {
+			if !validClaudeProviderPushContent(content) || len(serializedClaudeTestFrame(t, token, content)) != size {
 				t.Fatal("fixture does not reach exact valid-content serialized byte boundary")
 			}
 			frame, err := buildClaudeProviderPushFrame(token, content)
@@ -68,7 +68,8 @@ func TestClaudeProviderPostPreservesConstructionReasonBeforeAnyRouteOrWrite(t *t
 		{name: "empty content", token: "private-token", reason: "provider-frame-invalid-content"},
 		{name: "invalid content", token: "private-token", content: "private-payload\x00", reason: "provider-frame-invalid-content"},
 		{name: "invalid utf8 content", token: "private-token", content: "private-payload\xff", reason: "provider-frame-invalid-content"},
-		{name: "content too long", token: "private-token", content: strings.Repeat("x", coremessage.MaxPayloadBytes+1), reason: "provider-frame-invalid-content"},
+		// Content above the reply payload limit is judged only by the frame.
+		{name: "content above reply payload limit", token: strings.Repeat("t", 4096), content: strings.Repeat("x", coremessage.MaxPayloadBytes+1)},
 		{name: "serialized frame too large", token: strings.Repeat("t", 4096), content: strings.Repeat("x", 4096)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -119,11 +120,17 @@ func TestClaudeProviderWriteReasonsRequireOneActualWrite(t *testing.T) {
 type rejectionFixturePoster struct {
 	poster liveClaudeProviderPoster
 	writer *singleWriteRecorder
-	calls  int
+	// content replaces the hub envelope at the construction boundary. The hub
+	// always serializes valid content, so an invalid shape must be injected.
+	content string
+	calls   int
 }
 
 func (p *rejectionFixturePoster) Post(content string, fence func() bool) (claudeProviderPostOutcome, error) {
 	p.calls++
+	if p.content != "" {
+		content = p.content
+	}
 	if p.writer == nil {
 		return p.poster.Post(content, fence)
 	}
@@ -137,14 +144,14 @@ func (p *rejectionFixturePoster) Post(content string, fence func() bool) (claude
 
 func TestClaudeProviderRejectionReasonsSurviveHubReceiptStatusAndStoreReload(t *testing.T) {
 	for _, test := range []struct {
-		name, token, reason, action string
-		payloadBytes                int
-		writer                      *singleWriteRecorder
-		unknown                     bool
+		name, token, content, reason, action string
+		payloadBytes                         int
+		writer                               *singleWriteRecorder
+		unknown                              bool
 	}{
 		{name: "invalid auth", token: "private-token\n", reason: "provider-frame-invalid-auth", action: "check provider auth"},
-		{name: "invalid content", token: "private-token", payloadBytes: 4096, reason: "provider-frame-invalid-content", action: "correct message content"},
-		{name: "serialized size", token: strings.Repeat("t", 4096), payloadBytes: -1, action: "reduce payload"},
+		{name: "invalid content", token: "private-token", content: "private-payload\x00", reason: "provider-frame-invalid-content", action: "correct message content"},
+		{name: "serialized size", token: strings.Repeat("t", 4096), payloadBytes: coremessage.MaxPayloadBytes, action: "reduce payload"},
 		{name: "prewrite refusal", token: "private-token", reason: "provider-prewrite-refused", action: "check current provider route"},
 		{name: "actual zero write", token: "private-token", writer: &singleWriteRecorder{}, reason: "provider-write-zero", action: "check provider connection"},
 		{name: "partial write", token: "private-token", writer: &singleWriteRecorder{n: 2}, reason: "provider-write-partial", unknown: true, action: "automatic resend disabled"},
@@ -164,18 +171,14 @@ func TestClaudeProviderRejectionReasonsSurviveHubReceiptStatusAndStoreReload(t *
 			if err != nil {
 				t.Fatal("fixture content unavailable")
 			}
-			if test.payloadBytes == -1 {
-				envelope.Payload += strings.Repeat("x", coremessage.MaxPayloadBytes-len(content))
-				content, err = providerCoordinationContent(private)
-				if err != nil || !validClaudeAssistantReply(content) {
-					t.Fatal("size fixture must pass content validation")
-				}
+			if test.payloadBytes > 0 && (len(content) <= coremessage.MaxPayloadBytes || !validClaudeProviderPushContent(content)) {
+				t.Fatal("size fixture must be valid push content above the reply payload limit")
 			}
 			want := test.reason
 			if want == "" {
 				want = fmt.Sprintf("provider-frame-too-large: frameBytes=%d limitBytes=8192", len(serializedClaudeTestFrame(t, test.token, content)))
 			}
-			poster := &rejectionFixturePoster{poster: liveClaudeProviderPoster{token: test.token}, writer: test.writer}
+			poster := &rejectionFixturePoster{poster: liveClaudeProviderPoster{token: test.token}, writer: test.writer, content: test.content}
 			fixture.server.poster = poster
 			fixture.server.broker = &failingClaudeDialogueBroker{}
 			adapter := liveAgentMessageClaudeAdapter{}

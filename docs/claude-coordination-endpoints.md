@@ -127,6 +127,10 @@ failure before any byte is a non-ambiguous `provider-write-zero`; partial bytes,
 a write error after bytes, or a lost helper response is ambiguous and has
 `autoResend=false`. A complete write plus helper return is only a transport
 handoff, not proof that Claude parsed, displayed, processed, or answered it.
+Push content has no length cap of its own: only the 8192-byte serialized
+auth+user frame bounds it, and a size excess ends as
+`provider-frame-too-large: frameBytes=N limitBytes=8192` with zero provider
+bytes; the reply tool argv body stays at 4096 bytes.
 
 The frozen frame is closed to Claude Code `2.1.263`. A different provider
 version, helper replacement, provider restart, registration replacement, or
