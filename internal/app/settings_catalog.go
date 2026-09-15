@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -120,6 +121,7 @@ var settingsDynamicEntryCatalog = []struct {
 	nodeID string
 	meta   settingsEntryMeta
 }{
+	{settingsActionPrefixRootResult, "", settingsActionMeta("Settings", string(i18n.KeySettingsRootTitle), settingsAxisBoth, settingsOwnerRoot)},
 	{settingsAppearanceAgentUsageProviderPrefix, settingsNavStatusBar + ".agent-usage-hud.provider", settingsNavigationMeta("Agent Usage HUD provider", "settings.node.agent_usage_hud", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixAI, "", settingsActionMeta("Default launch target", "settings.text.default_launch_target", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAIEnabledAgent, "", settingsActionMeta("Enabled providers", "settings.text.enabled_providers", settingsAxisGlobal, settingsOwnerAI)},
@@ -235,6 +237,9 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			settingsSectionProjectAutomation, settingsSectionProjectSessionState:
 			return true
 		}
+		// A global result row is owned by the root loop: it names a destination
+		// inside the catalog and never runs the target row's control.
+		return strings.HasPrefix(value, settingsActionPrefixRootResult) && len(value) > len(settingsActionPrefixRootResult)
 	case settingsOwnerProjectPicker:
 		switch value {
 		case settingsProjectAdd, settingsProjectPins, settingsProjectCandidatePins,
@@ -371,6 +376,10 @@ const (
 	// than a `sessionstate:` reuse because the preference is a sidebar
 	// presentation policy and touches no snapshot state.
 	settingsActionPrefixRuntimeDiagnostics = "runtime-diagnostics:"
+	// settingsActionPrefixRootResult owns the global Settings-root search
+	// results. The suffix is the catalog node ID of the target row plus, for a
+	// code-enumerated template, its instance chain.
+	settingsActionPrefixRootResult = "root-result:"
 	// settingsActionPrefixSessionStateSidebarStartup keeps the shipped
 	// `sessionstate:` config/action spelling while the row itself moves under
 	// Projects > Project Sidebar. Only the destination and the label change.

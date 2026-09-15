@@ -12,6 +12,11 @@ type Item struct {
 	MetaLines     []string
 	Badges        []string
 	PreviewTarget string
+	// SearchOnly hides the row while the query is empty and lets it take part
+	// normally once the query is non-empty. It is the one opt-in a caller needs
+	// for a query-gated result row; an Item that leaves it false behaves exactly
+	// as it did before the field existed.
+	SearchOnly bool
 }
 
 func (i Item) EffectiveLabel() string {

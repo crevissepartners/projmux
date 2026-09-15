@@ -46,9 +46,10 @@ func compatOptionsFromNativePickerForTest(options intpicker.Options) intpickerco
 	entries := make([]intpickercompat.Entry, 0, len(options.Items))
 	for _, item := range options.Items {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     item.EffectiveLabel(),
-			Value:     item.Value,
-			SearchKey: item.EffectiveSearchText(),
+			Label:      item.EffectiveLabel(),
+			Value:      item.Value,
+			SearchKey:  item.EffectiveSearchText(),
+			SearchOnly: item.SearchOnly,
 		})
 	}
 

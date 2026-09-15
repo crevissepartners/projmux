@@ -233,7 +233,7 @@ func CustomActions(keys ...string) []Action {
 func FilterItems(items []Item, query string) []Item {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return append([]Item(nil), items...)
+		return itemsVisibleAtEmptyQuery(items)
 	}
 	caseSensitive := nativeSmartCaseSensitive(query)
 	needle := nativeSearchPattern(query, caseSensitive)
@@ -297,6 +297,53 @@ func nativeSmartCaseSensitive(query string) bool {
 		}
 	}
 	return false
+}
+
+// itemsVisibleAtEmptyQuery drops the SearchOnly rows, which exist only to be
+// found by a query. Every other row is returned untouched and in input order,
+// and a list without a SearchOnly row is copied exactly as the empty-query
+// branch always copied it.
+func itemsVisibleAtEmptyQuery(items []Item) []Item {
+	for i, item := range items {
+		if !item.SearchOnly {
+			continue
+		}
+		visible := append([]Item(nil), items[:i]...)
+		for _, next := range items[i+1:] {
+			if next.SearchOnly {
+				continue
+			}
+			visible = append(visible, next)
+		}
+		return visible
+	}
+	return append([]Item(nil), items...)
+}
+
+func hasSearchOnlyItem(items []Item) bool {
+	for _, item := range items {
+		if item.SearchOnly {
+			return true
+		}
+	}
+	return false
+}
+
+// nativeVisibleItemTotal is the denominator the prompt line renders. A
+// SearchOnly row is not part of the list the user is looking at while the query
+// is empty, so it is not counted there either.
+func nativeVisibleItemTotal(options Options, query string) int {
+	if strings.TrimSpace(query) != "" {
+		return len(options.Items)
+	}
+	total := 0
+	for _, item := range options.Items {
+		if item.SearchOnly {
+			continue
+		}
+		total++
+	}
+	return total
 }
 
 func hasNativeSearchKey(items []Item) bool {
@@ -1064,7 +1111,13 @@ func leaveNativeInteractiveScreen(out io.Writer) {
 
 func nativeFilteredItems(options Options, query string) []Item {
 	if options.DisableSearch {
-		return options.Items
+		// A search-disabled picker never sees a query, so its SearchOnly rows
+		// can never become reachable: drop them here too rather than rendering
+		// a row the gate promises is invisible.
+		if !hasSearchOnlyItem(options.Items) {
+			return options.Items
+		}
+		return itemsVisibleAtEmptyQuery(options.Items)
 	}
 	return FilterItems(options.Items, query)
 }
@@ -1962,7 +2015,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		if prompt == "" {
 			prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 		}
-		fmt.Fprintln(&screen, nativePromptLineWithCursorAndThemeForOptions(pickerTheme, options, prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
+		fmt.Fprintln(&screen, nativePromptLineWithCursorAndThemeForOptions(pickerTheme, options, prompt, query, queryCursor, len(items), nativeVisibleItemTotal(options, query), layout.Cols))
 		fmt.Fprintln(&screen, nativeSearchSeparatorLineWithTheme(pickerTheme, layout.Cols))
 	}
 

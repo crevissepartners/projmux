@@ -149,6 +149,12 @@ func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if section == settingsNoopValue {
 			continue
 		}
+		if _, _, ok := parseSettingsRootResultValue(section); ok {
+			// TODO(slice 2): open the owning View with the cursor on the target
+			// row instead of re-rendering the root. parseSettingsRootResultValue
+			// is the seam; selecting a result must never run the row's control.
+			continue
+		}
 
 		if err := c.runSection(section, stdout, stderr); err != nil {
 			if errors.Is(err, errSettingsClosed) {

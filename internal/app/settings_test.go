@@ -109,7 +109,23 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 	if got, want := options.Bindings, []string{"esc:abort", "ctrl-c:abort", "ctrl-alt-s:abort", "alt-5:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings close bindings = %#v, want %#v", got, want)
 	}
-	if got, want := entryValues(options.Entries), []string{
+	assertSettingsRootVisibleEntryOrder(t, options)
+}
+
+// assertSettingsRootVisibleEntryOrder pins the rows the root actually shows at
+// an empty query. The global search results follow them in Items, but they are
+// SearchOnly, so they are not part of the visible root order.
+func assertSettingsRootVisibleEntryOrder(t *testing.T, options intpickercompat.Options) {
+	t.Helper()
+
+	var visible []string
+	for _, entry := range options.Entries {
+		if entry.SearchOnly {
+			continue
+		}
+		visible = append(visible, entry.Value)
+	}
+	want := []string{
 		settingsSectionProject,
 		settingsSectionAI,
 		settingsSectionNotifications,
@@ -118,8 +134,17 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 		settingsSectionSessionState,
 		settingsSectionKeybindings,
 		settingsSectionAbout,
-	}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(visible, want) {
+		t.Fatalf("root settings entry order = %#v, want %#v", visible, want)
+	}
+	for i, entry := range options.Entries {
+		if i < len(want) {
+			continue
+		}
+		if !entry.SearchOnly {
+			t.Fatalf("root settings entry %d = %#v, want the search results to stay behind the visible rows", i, entry)
+		}
 	}
 }
 
@@ -190,6 +215,12 @@ func TestSettingsRootOptionsKoreanCatalogDoesNotOverflow(t *testing.T) {
 		t.Fatalf("project picker footer = %q, want %q", got, want)
 	}
 	for _, entry := range options.Entries {
+		// The global search results carry a whole "path > label" chain and are
+		// deliberately left unpadded and untruncated for the picker's own
+		// VisibleLen accounting, so the root-row width budget is not theirs.
+		if entry.SearchOnly {
+			continue
+		}
 		if width := i18n.TerminalCellWidth(entry.Label); width > 96 {
 			t.Fatalf("Korean root row width = %d, want <= 96: %q", width, entry.Label)
 		}
@@ -807,6 +838,12 @@ func TestSettingsRootRowsUsePhase0ChromePalette(t *testing.T) {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
 	for _, entry := range options.Entries {
+		// Search results are not root rows: they render in the shared row
+		// palette because they stand for a row inside a section, not for a
+		// section itself.
+		if entry.SearchOnly {
+			continue
+		}
 		if !strings.Contains(entry.Label, settingsRootColorOpen) {
 			t.Fatalf("root settings row label = %q, want root action color %q", entry.Label, settingsRootColorOpen)
 		}
@@ -820,6 +857,9 @@ func TestSettingsRootRowsUsePhase0ChromePalette(t *testing.T) {
 
 	projectOptions := (&settingsCommand{}).rootOptions(settingsRootTabProject)
 	for _, entry := range projectOptions.Entries {
+		if entry.SearchOnly {
+			continue
+		}
 		if !strings.Contains(entry.Label, settingsRootColorDim) {
 			t.Fatalf("project root disabled row label = %q, want root secondary color %q", entry.Label, settingsRootColorDim)
 		}
@@ -1479,18 +1519,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got, want := rootOptions.Footer, "Open rows or click a scope chip to switch tabs.  |  →: open row"; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
-	if got, want := entryValues(rootOptions.Entries), []string{
-		settingsSectionProject,
-		settingsSectionAI,
-		settingsSectionNotifications,
-		settingsSectionAutomation,
-		settingsSectionStatusbar,
-		settingsSectionSessionState,
-		settingsSectionKeybindings,
-		settingsSectionAbout,
-	}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
-	}
+	assertSettingsRootVisibleEntryOrder(t, rootOptions)
 	if !hasEntryLabelContaining(rootOptions.Entries, "Appearance") {
 		t.Fatalf("root settings entries = %#v, want generic appearance section label", rootOptions.Entries)
 	}

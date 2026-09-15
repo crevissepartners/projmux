@@ -73,6 +73,7 @@ func pickerItemsFromEntries(entries []Entry) []picker.Item {
 			Title:      entry.Label,
 			Value:      entry.Value,
 			SearchText: entry.SearchKey,
+			SearchOnly: entry.SearchOnly,
 		})
 	}
 	return items

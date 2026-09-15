@@ -16,8 +16,11 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 	ctx := c.resolveSettingsProjectContext()
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	return intpickercompat.Options{
-		UI:         "settings",
-		Entries:    c.rootEntriesForTabLocale(tab, locale),
+		UI: "settings",
+		// The visible root rows stay first and keep their order; the global
+		// result rows are appended behind them and are invisible until the user
+		// types, so Enter's first surviving row at the root stays deterministic.
+		Entries:    append(c.rootEntriesForTabLocale(tab, locale), settingsRootSearchResults(tab, ctx, locale)...),
 		Title:      localizeText(locale, i18n.KeySettingsRootTitle, "Settings"),
 		TitleChips: settingsRootTabChipsLocale(tab, ctx.hasProject(), locale),
 		Prompt:     settingsRootPromptLocale(tab, locale),
@@ -26,6 +29,16 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 		ExpectKeys: []string{"enter", "ctrl-g", "ctrl-p", "alt-shift-left", "alt-shift-right"},
 		Bindings:   c.settingsCloseBindings(),
 	}
+}
+
+// settingsRootSearchResults gates the Project tab's results on an actual
+// project context: without one the Project tab renders the passive guidance row
+// alone, and a result row would name a View the tab cannot open.
+func settingsRootSearchResults(tab settingsRootTab, ctx settingsProjectContext, locale i18n.Locale) []intpickercompat.Entry {
+	if tab == settingsRootTabProject && !ctx.hasProject() {
+		return nil
+	}
+	return settingsRootResultEntries(tab, locale)
 }
 
 func settingsRootTabChipsLocale(active settingsRootTab, hasProject bool, locale i18n.Locale) []projmuxpicker.Chip {
@@ -147,18 +160,33 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 		// Snapshots carries live autosave state in its description, so it
 		// keeps its own label builder; every other root is a static summary.
 		if node.ID == settingsNavSnapshots {
-			entries = append(entries, intpickercompat.Entry{
+			entries = append(entries, settingsRootEntryWithSearchKey(intpickercompat.Entry{
 				Label: c.sessionStateSettingsRootLabelLocale(locale),
 				Value: node.Value,
-			})
+			}))
 			continue
 		}
-		entries = append(entries, intpickercompat.Entry{
+		entries = append(entries, settingsRootEntryWithSearchKey(intpickercompat.Entry{
 			Label: settingsNodeRootLabelLocale(locale, node.ID, settingsGlyphOpen, settingsRootDescriptions[node.ID]),
 			Value: node.Value,
-		})
+		}))
 	}
 	return entries
+}
+
+// settingsRootEntryWithSearchKey gives a root row an explicit SearchKey equal
+// to its own rendered label with the escapes removed. The appended result rows
+// are keyed, which puts the whole root list into the picker's keyed
+// (input-order) mode; a root row without a key would then be matched on its
+// value instead of on the text the user reads. Giving every row the key it
+// already renders keeps the root's order and its matches deterministic, and the
+// Phase 0 rendered-label join sees the label already present and adds nothing.
+func settingsRootEntryWithSearchKey(entry intpickercompat.Entry) intpickercompat.Entry {
+	if strings.TrimSpace(entry.SearchKey) != "" {
+		return entry
+	}
+	entry.SearchKey = stripSettingsLabelANSI(entry.Label)
+	return entry
 }
 
 // settingsRootColorOpen/Dim default to fallback literals; applyNativeUITheme

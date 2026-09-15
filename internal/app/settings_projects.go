@@ -57,10 +57,10 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 			Value:     settingsSectionProjectAutomation,
 			SearchKey: "automation trust project hooks lifecycle send-noti config.toml",
 		},
-		{
+		settingsRootEntryWithSearchKey(intpickercompat.Entry{
 			Label: c.projectSessionStateSettingsRootLabel(ctx),
 			Value: settingsSectionProjectSessionState,
-		},
+		}),
 	}
 }
 

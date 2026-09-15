@@ -145,112 +145,134 @@ sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   {
     "Label": "↩  \u001b[38;2;164;176;182mBack                    \u001b[0m",
     "Value": "__settings_back__",
-    "SearchKey": ""
+    "SearchKey": "",
+    "SearchOnly": false
   },
   {
     "Label": "host app-owned  transport tmux -S /tmp/column-fixture/primary  source inherited-tmux-env",
     "Value": "__settings_noop__",
-    "SearchKey": ""
+    "SearchKey": "",
+    "SearchOnly": false
   },
   {
     "Label": "KIND             NAME                                                                                                                                                                                     STATUS        PROGRESS  TERMINATION  ACTIONS        RUNTIME  UID",
     "Value": "__settings_noop__",
-    "SearchKey": ""
+    "SearchKey": "",
+    "SearchOnly": false
   },
   {
     "Label": "project          alpha                                                                                                                                                                                    live          -         -            open,delete    alpha    prj-alpha",
     "Value": "uid:prj-alpha",
-    "SearchKey": "project alpha alpha project-root-basename live prj-alpha /srv/alpha $1 alpha"
+    "SearchKey": "project alpha alpha project-root-basename live prj-alpha /srv/alpha $1 alpha",
+    "SearchOnly": false
   },
   {
     "Label": "└ window         live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창                                                     live          -         -            open,delete    alpha:0  win-alpha-main",
     "Value": "uid:win-alpha-main",
-    "SearchKey": "window main live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창 live-window-name live win-alpha-main /srv/alpha @2 alpha:0"
+    "SearchKey": "window main live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창 live-window-name live win-alpha-main /srv/alpha @2 alpha:0",
+    "SearchOnly": false
   },
   {
     "Label": "└ pane           live shell full title full title full title full title full title full title full title full title full title full title full title full title (shell)                                   live          -         -            open,delete    %3       pan-alpha-zsh",
     "Value": "uid:pan-alpha-zsh",
-    "SearchKey": "pane zsh live shell full title full title full title full title full title full title full title full title full title full title full title full title live-pane-title live pan-alpha-zsh shell /srv/alpha %3 %3"
+    "SearchKey": "pane zsh live shell full title full title full title full title full title full title full title full title full title full title full title full title live-pane-title live pan-alpha-zsh shell /srv/alpha %3 %3",
+    "SearchOnly": false
   },
   {
     "Label": "└ pane           zsh (shell)                                                                                                                                                                              offline       -         -            start,delete   -        pan-alpha-log",
     "Value": "uid:pan-alpha-log",
-    "SearchKey": "pane log zsh command-executable offline pan-alpha-log shell /srv/alpha"
+    "SearchKey": "pane log zsh command-executable offline pan-alpha-log shell /srv/alpha",
+    "SearchOnly": false
   },
   {
     "Label": "└ agent          릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context (codex Running)  live          -         -            open,delete    %4       agt-alpha-codex",
     "Value": "uid:agt-alpha-codex",
-    "SearchKey": "agent codex 릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context agent-topic live agt-alpha-codex codex Running /srv/alpha %4 %4"
+    "SearchKey": "agent codex 릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context agent-topic live agt-alpha-codex codex Running /srv/alpha %4 %4",
+    "SearchOnly": false
   },
   {
     "Label": "└ pane           릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context (agent)          live          -         -            open,delete    %4       pan-alpha-codex",
     "Value": "uid:pan-alpha-codex",
-    "SearchKey": "pane codex-pane 릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context agent-topic live pan-alpha-codex agent /srv/alpha %4 %4"
+    "SearchKey": "pane codex-pane 릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context agent-topic live pan-alpha-codex agent /srv/alpha %4 %4",
+    "SearchOnly": false
   },
   {
     "Label": "└ window         zsh                                                                                                                                                                                      offline       -         -            start,delete   -        win-alpha-review",
     "Value": "uid:win-alpha-review",
-    "SearchKey": "window review zsh command-executable offline win-alpha-review /srv/alpha"
+    "SearchKey": "window review zsh command-executable offline win-alpha-review /srv/alpha",
+    "SearchOnly": false
   },
   {
     "Label": "└ pane           zsh (shell)                                                                                                                                                                              offline       -         -            start,delete   -        pan-alpha-review",
     "Value": "uid:pan-alpha-review",
-    "SearchKey": "pane review-zsh zsh command-executable offline pan-alpha-review shell /srv/alpha"
+    "SearchKey": "pane review-zsh zsh command-executable offline pan-alpha-review shell /srv/alpha",
+    "SearchOnly": false
   },
   {
     "Label": "project          beta                                                                                                                                                                                     offline       -         -            start,delete   -        prj-beta",
     "Value": "uid:prj-beta",
-    "SearchKey": "project beta beta project-root-basename offline prj-beta /srv/beta"
+    "SearchKey": "project beta beta project-root-basename offline prj-beta /srv/beta",
+    "SearchOnly": false
   },
   {
     "Label": "└ window         zsh                                                                                                                                                                                      offline       -         -            start,delete   -        win-beta-main",
     "Value": "uid:win-beta-main",
-    "SearchKey": "window main zsh command-executable offline win-beta-main /srv/beta"
+    "SearchKey": "window main zsh command-executable offline win-beta-main /srv/beta",
+    "SearchOnly": false
   },
   {
     "Label": "└ pane           zsh (shell)                                                                                                                                                                              offline       -         -            start,delete   -        pan-beta-zsh",
     "Value": "uid:pan-beta-zsh",
-    "SearchKey": "pane zsh zsh command-executable offline pan-beta-zsh shell /srv/beta"
+    "SearchKey": "pane zsh zsh command-executable offline pan-beta-zsh shell /srv/beta",
+    "SearchOnly": false
   },
   {
     "Label": "└ agent          agent task (codex Offline)                                                                                                                                                               offline       -         -            resume,delete  -        agt-beta-codex",
     "Value": "uid:agt-beta-codex",
-    "SearchKey": "agent codex agent task agent-topic offline agt-beta-codex codex Offline /srv/beta"
+    "SearchKey": "agent codex agent task agent-topic offline agt-beta-codex codex Offline /srv/beta",
+    "SearchOnly": false
   },
   {
     "Label": "project          gone                                                                                                                                                                                     missing-root  -         -            rebind,delete  -        prj-gone",
     "Value": "uid:prj-gone",
-    "SearchKey": "project gone gone project-root-basename missing-root prj-gone /srv/gone"
+    "SearchKey": "project gone gone project-root-basename missing-root prj-gone /srv/gone",
+    "SearchOnly": false
   },
   {
     "Label": "└ window         zsh                                                                                                                                                                                      missing-root  -         -            rebind,delete  -        win-gone-main",
     "Value": "uid:win-gone-main",
-    "SearchKey": "window main zsh command-executable missing-root win-gone-main /srv/gone"
+    "SearchKey": "window main zsh command-executable missing-root win-gone-main /srv/gone",
+    "SearchOnly": false
   },
   {
     "Label": "└ pane           zsh (shell)                                                                                                                                                                              missing-root  -         -            rebind,delete  -        pan-gone-zsh",
     "Value": "uid:pan-gone-zsh",
-    "SearchKey": "pane zsh zsh command-executable missing-root pan-gone-zsh shell /srv/gone"
+    "SearchKey": "pane zsh zsh command-executable missing-root pan-gone-zsh shell /srv/gone",
+    "SearchOnly": false
   },
   {
     "Label": "control-session  Home                                                                                                                                                                                     live          -         -            -              Home     ctl-home",
     "Value": "uid:ctl-home",
-    "SearchKey": "control-session home Home control-session live ctl-home $5 Home"
+    "SearchKey": "control-session home Home control-session live ctl-home $5 Home",
+    "SearchOnly": false
   },
   {
     "Label": "└ window         tmux                                                                                                                                                                                     live          -         -            -              Home:0   win-home",
     "Value": "uid:win-home",
-    "SearchKey": "window home-window tmux live-window-name live win-home @6 Home:0"
+    "SearchKey": "window home-window tmux live-window-name live win-home @6 Home:0",
+    "SearchOnly": false
   },
   {
     "Label": "└ pane           zsh (shell)                                                                                                                                                                              live          -         -            -              %7       pan-home",
     "Value": "uid:pan-home",
-    "SearchKey": "pane home-shell zsh command-executable live pan-home shell %7 %7"
+    "SearchKey": "pane home-shell zsh command-executable live pan-home shell %7 %7",
+    "SearchOnly": false
   },
   {
     "Label": "runtime-link     Runtime                                                                                                                                                                                  live          -         -            runtime        -        -",
     "Value": "runtime:diagnostics",
-    "SearchKey": "runtime-link runtime Runtime runtime-link live"
+    "SearchKey": "runtime-link runtime Runtime runtime-link live",
+    "SearchOnly": false
   }
 ]
 == runtime picker wide ==
@@ -258,51 +280,61 @@ sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   {
     "Label": "host app-owned  transport tmux -S /tmp/column-fixture/primary  source inherited-tmux-env",
     "Value": "__settings_noop__",
-    "SearchKey": ""
+    "SearchKey": "",
+    "SearchOnly": false
   },
   {
     "Label": "managed 7",
     "Value": "__settings_noop__",
-    "SearchKey": ""
+    "SearchKey": "",
+    "SearchOnly": false
   },
   {
     "Label": "KIND     ID  IN  NAME                                                                                                                                            CLASS    RESOURCE             REASON",
     "Value": "__settings_noop__",
-    "SearchKey": ""
+    "SearchKey": "",
+    "SearchOnly": false
   },
   {
     "Label": "session  $1  -   alpha                                                                                                                                           managed  Project/alpha        bound to Project/alpha by mirrored uid prj-alpha",
     "Value": "runtime:session:$1",
-    "SearchKey": "session $1 alpha alpha managed prj-alpha $1 Project alpha prj-alpha"
+    "SearchKey": "session $1 alpha alpha managed prj-alpha $1 Project alpha prj-alpha",
+    "SearchOnly": false
   },
   {
     "Label": "session  $5  -   Home                                                                                                                                            managed  ControlSession/home  bound to ControlSession/home by mirrored uid",
     "Value": "runtime:session:$5",
-    "SearchKey": "session $5 Home Home managed $5 ControlSession home ctl-home"
+    "SearchKey": "session $5 Home Home managed $5 ControlSession home ctl-home",
+    "SearchOnly": false
   },
   {
     "Label": "window   @2  $1  live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창            managed  Window/main          bound to Window/main by mirrored uid win-alpha-main",
     "Value": "runtime:window:@2",
-    "SearchKey": "window @2 alpha:@2 live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창 managed win-alpha-main $1 $1 Window main win-alpha-main"
+    "SearchKey": "window @2 alpha:@2 live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창 managed win-alpha-main $1 $1 Window main win-alpha-main",
+    "SearchOnly": false
   },
   {
     "Label": "window   @6  $5  tmux                                                                                                                                            managed  Window/home-window   bound to Window/home-window by mirrored uid win-home",
     "Value": "runtime:window:@6",
-    "SearchKey": "window @6 Home:@6 tmux managed win-home $5 $5 Window home-window win-home"
+    "SearchKey": "window @6 Home:@6 tmux managed win-home $5 $5 Window home-window win-home",
+    "SearchOnly": false
   },
   {
     "Label": "pane     %3  @2  live shell full title full title full title full title full title full title full title full title full title full title full title full title  managed  Pane/zsh             bound to Pane/zsh by mirrored uid pan-alpha-zsh",
     "Value": "runtime:pane:%3",
-    "SearchKey": "pane %3 alpha:@2.%3 live shell full title full title full title full title full title full title full title full title full title full title full title full title managed pan-alpha-zsh $1 @2 Pane zsh pan-alpha-zsh"
+    "SearchKey": "pane %3 alpha:@2.%3 live shell full title full title full title full title full title full title full title full title full title full title full title full title managed pan-alpha-zsh $1 @2 Pane zsh pan-alpha-zsh",
+    "SearchOnly": false
   },
   {
     "Label": "pane     %4  @2  -                                                                                                                                               managed  Pane/codex-pane      bound to Pane/codex-pane by mirrored uid pan-alpha-codex",
     "Value": "runtime:pane:%4",
-    "SearchKey": "pane %4 alpha:@2.%4 managed pan-alpha-codex $1 @2 Pane codex-pane pan-alpha-codex"
+    "SearchKey": "pane %4 alpha:@2.%4 managed pan-alpha-codex $1 @2 Pane codex-pane pan-alpha-codex",
+    "SearchOnly": false
   },
   {
     "Label": "pane     %7  @6  -                                                                                                                                               managed  Pane/home-shell      bound to Pane/home-shell by mirrored uid pan-home",
     "Value": "runtime:pane:%7",
-    "SearchKey": "pane %7 Home:@6.%7 managed pan-home $5 @6 Pane home-shell pan-home"
+    "SearchKey": "pane %7 Home:@6.%7 managed pan-home $5 @6 Pane home-shell pan-home",
+    "SearchOnly": false
   }
 ]

@@ -51,6 +51,10 @@ type Entry struct {
 	Label     string
 	Value     string
 	SearchKey string
+	// SearchOnly gates the row on a non-empty query. It is the same opt-in as
+	// picker.Item.SearchOnly and carries the same name so the concept has one
+	// spelling across the two packages.
+	SearchOnly bool
 }
 
 type Result struct {
