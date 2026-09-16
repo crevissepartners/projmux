@@ -1,0 +1,74 @@
+// The one way the client talks to the server.
+//
+// Every write is JSON: the server refuses anything else, because a form or a
+// text/plain post is what a cross-site page can send without a preflight.
+
+export class ApiError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly details: Record<string, unknown>;
+
+  constructor(code: string, message: string, status: number, details: Record<string, unknown> = {}) {
+    super(message);
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
+interface Envelope {
+  error?: { code?: string; message?: string; status?: number; details?: Record<string, unknown> };
+}
+
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const init: RequestInit = { method, headers: { accept: "application/json" } };
+  if (body !== undefined) {
+    init.headers = { ...init.headers, "content-type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+  let res: Response;
+  try {
+    res = await fetch(path, init);
+  } catch (err) {
+    throw new ApiError("network", err instanceof Error ? err.message : String(err), 0);
+  }
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    /* an empty or non-JSON body is judged by the status alone */
+  }
+  if (!res.ok) {
+    const envelope = (data as Envelope | null)?.error;
+    throw new ApiError(
+      envelope?.code || "http",
+      envelope?.message || `HTTP ${res.status}`,
+      res.status,
+      envelope?.details || {},
+    );
+  }
+  return data as T;
+}
+
+export const get = <T>(path: string) => request<T>("GET", path);
+export const post = <T>(path: string, body: unknown = {}) => request<T>("POST", path, body);
+export const patch = <T>(path: string, body: unknown) => request<T>("PATCH", path, body);
+export const del = <T>(path: string, body: unknown = {}) => request<T>("DELETE", path, body);
+
+const seg = encodeURIComponent;
+
+export const paths = {
+  windows: (project: string) => `/api/v1/projects/${seg(project)}/windows`,
+  window: (project: string, window: string) => `/api/v1/projects/${seg(project)}/windows/${seg(window)}`,
+  pane: (project: string, window: string, pane: string) =>
+    `/api/v1/projects/${seg(project)}/windows/${seg(window)}/panes/${seg(pane)}`,
+  windowAgents: (project: string, window: string) =>
+    `/api/v1/projects/${seg(project)}/windows/${seg(window)}/agents`,
+  agentPreview: (project: string, window: string) =>
+    `/api/v1/web/projects/${seg(project)}/windows/${seg(window)}/agents/preview`,
+  agent: (agent: string) => `/api/v1/agents/${seg(agent)}`,
+  notificationAck: (id: string) => `/api/v1/notifications/${seg(id)}/ack`,
+  transcript: (agent: string) => `/api/v1/web/agents/${seg(agent)}/transcript`,
+  layout: (window: string) => `/api/v1/web/windows/${seg(window)}/layout`,
+  resumeCandidates: (window: string) => `/api/v1/web/windows/${seg(window)}/resume-candidates`,
+};
