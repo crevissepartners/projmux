@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -383,17 +384,17 @@ func TestFormatStatusNotifyLiveAIEntryUsesTopicBadge(t *testing.T) {
 	}
 }
 
-// TestStatusbarClickNotifyStaleHeadHasZeroAction pins the Phase 6 boundary:
-// inactive/queue-stale means live reply+agent mismatch, not an unroutable
-// target. The statusbar must still run the normal focus subprocess and only
-// ack after focus succeeds.
+// TestStatusbarClickNotifyStaleHeadFocusesAndAcks pins the documented
+// contract: inactive/queue-stale means live reply+agent mismatch, not an
+// unroutable target. The pane still exists, so a click must take the same
+// focus→ack path as a live head instead of refusing.
 //
 // We force the stale classification with a non-empty live response that
 // excludes the head entry. An empty live result is intentionally treated as
 // "no live data; fall back to live" by classifyHeadDisplayBestEffort (the
 // docker e2e harness hits that fallback), so we have to seed at least one
 // unrelated reply-state pane to keep the live map non-empty here.
-func TestStatusbarClickNotifyStaleHeadHasZeroAction(t *testing.T) {
+func TestStatusbarClickNotifyStaleHeadFocusesAndAcks(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
@@ -467,14 +468,117 @@ func TestStatusbarClickNotifyStaleHeadHasZeroAction(t *testing.T) {
 			focusCalls = append(focusCalls, call)
 		}
 	}
-	if len(focusCalls) != 0 {
-		t.Fatalf("focus calls = %#v, want stale action zero", focusCalls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one focus subprocess call for the stale head", focusCalls)
 	}
-	if !sawTmuxDisplayMessage(runner.calls, "notify target stale; no action") {
-		t.Fatalf("runner calls = %#v, want stale refusal toast", runner.calls)
+	if !sliceContainsPair(focusCalls[0].args, "--target", "main:1.%2") {
+		t.Fatalf("focus args = %#v, want the stale head target", focusCalls[0].args)
 	}
-	if len(store.ackedIDs) != 0 {
-		t.Fatalf("ackedIDs = %#v, want stale action zero", store.ackedIDs)
+	if sawTmuxDisplayMessage(runner.calls, "notify target stale; no action") {
+		t.Fatalf("runner calls = %#v, want no stale refusal toast", runner.calls)
+	}
+	// The head plus the older non-critical same-pane row drain together, the
+	// same bulk-ack a live head would produce.
+	if got, want := store.ackedIDs, []string{"ai:main:%2", "ai:main:%2:older-info"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want %#v", got, want)
+	}
+}
+
+// TestStatusbarClickNotifyStaleHeadWithoutInventoryFallsBackToFocusOutcome
+// covers the case the classifier cannot decide: the live-pane reply is empty
+// so the inventory is unavailable (nil paneSet) and membership-based GONE is
+// skipped, yet the head carries generation-authority metadata that no live
+// pane matches, so it classifies STALE. The pane is in fact gone, which only
+// the focus subprocess can discover.
+//
+// Both halves of the focus-failure contract are pinned here: the deterministic
+// exit code 2 clears the stuck row, any other exit code is transient and keeps
+// it queued for retry.
+func TestStatusbarClickNotifyStaleHeadWithoutInventoryFallsBackToFocusOutcome(t *testing.T) {
+	t.Parallel()
+
+	head := notify.Notification{
+		ID:      "ai:main:%9",
+		Text:    "Ready",
+		Source:  notify.SourceAI,
+		Session: "main",
+		Window:  "1",
+		Pane:    "%9",
+		Metadata: map[string]string{
+			"agent":                         "codex",
+			"category":                      "response_complete",
+			"state":                         "need",
+			notify.MetaAgentUID:             "agent-gen-1",
+			notify.MetaPaneUID:              "pane-gen-1",
+			notify.MetaStateDomainID:        "domain-1",
+			notify.MetaEndpointGenerationID: "gen-1",
+			notify.MetaAuthorityFence:       "fence-1",
+		},
+	}
+
+	tests := []struct {
+		name      string
+		focusErr  error
+		wantAcked string
+		wantToast string
+	}{
+		{
+			name:      "unresolved target clears the row",
+			focusErr:  &fakeExitError{code: focusExitNotResolved, msg: "target unresolved"},
+			wantAcked: "ai:main:%9",
+			wantToast: "notify target gone; cleared",
+		},
+		{
+			name:      "transient failure retains the row",
+			focusErr:  &fakeExitError{code: 1, msg: "focus boom"},
+			wantAcked: "",
+			wantToast: "focus failed: focus boom",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			runner := &statusbarFakeRunner{
+				respond: func(name string, args []string) ([]byte, error) {
+					if name == "/usr/local/bin/projmux" {
+						return nil, test.focusErr
+					}
+					if name == "tmux" && containsArg(args, "list-panes") {
+						// Empty reply: no reply-state panes and no pane
+						// inventory at all, so paneSet is nil.
+						return []byte(""), nil
+					}
+					return nil, nil
+				},
+			}
+			store := &stubNotifyStore{listEntries: []notify.Notification{head}}
+			cmd := newStatusbarTestCommand(runner, store)
+
+			if got := cmd.classifyHeadDisplayBestEffort(head); got != notifyDisplayStale {
+				t.Fatalf("classifyHeadDisplayBestEffort = %v, want stale premise", got)
+			}
+			if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v, want nil (clicks must never surface a tmux error popup)", err)
+			}
+
+			var focusCalls []statusbarFakeCall
+			for _, call := range runner.calls {
+				if call.name == "/usr/local/bin/projmux" {
+					focusCalls = append(focusCalls, call)
+				}
+			}
+			if len(focusCalls) != 1 {
+				t.Fatalf("focus calls = %#v, want one focus attempt for the stale head", focusCalls)
+			}
+			if store.ackedID != test.wantAcked {
+				t.Fatalf("store.ackedID = %q, want %q", store.ackedID, test.wantAcked)
+			}
+			if !sawTmuxDisplayMessage(runner.calls, test.wantToast) {
+				t.Fatalf("runner calls = %#v, want toast %q", runner.calls, test.wantToast)
+			}
+		})
 	}
 }
 

@@ -396,11 +396,6 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		if !ok {
 			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
 		}
-		liveByID, paneSet := c.notifyLiveStateBestEffort()
-		if classifyNotifyRowState(entry, liveByID, paneSet) == notifyDisplayStale {
-			c.displayNotifySidebarMessage("notify target stale; no action")
-			return nil
-		}
 		if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
 			if isFocusTargetUnresolved(err) {
 				if ackErr := store.Ack(id); ackErr != nil {
@@ -826,10 +821,6 @@ func (c *notifyCommand) focusAndAckNotifySidebarGroup(store notifyStore, entries
 			return err
 		}
 		c.displayNotifySidebarMessage(notifySidebarGroupCleanupMessage(display))
-		return nil
-	}
-	if display == notifyDisplayStale {
-		c.displayNotifySidebarMessage("notify target stale; no action")
 		return nil
 	}
 	if err := c.focusNotification(representative, "notify-sidebar", "group-select", clientTTY); err != nil {

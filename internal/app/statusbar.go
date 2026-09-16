@@ -601,19 +601,17 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		Pane:    head.Pane,
 	})
 
-	// Stale generation rows have no consumer action: do not focus and do not
-	// acknowledge them implicitly. Explicit queue acknowledgement remains the
-	// only way to remove such evidence. Gone targets keep the cleanup path.
+	// Stale/INACTIVE heads take the same focus→ack path as live ones: by
+	// construction of classifyNotifyRowState their pane still exists, so the
+	// click has somewhere to land and the row must drain like any other. Only
+	// gone (or unroutable) heads skip the focus round-trip.
 	//
-	// The fast path STILL acks the entry: "ack-only" means we skip the focus
-	// round-trip, *not* that we leave the row in the queue. Without the ack
-	// here the next click would re-classify the same head entry as gone
+	// That gone fast path STILL acks the entry: "ack-only" means we skip the
+	// focus round-trip, *not* that we leave the row in the queue. Without the
+	// ack here the next click would re-classify the same head entry as gone
 	// and the user would be stuck repeatedly toasting the same row. The toast
 	// remains as a UX signal that the focus side of the click was skipped.
 	display := c.classifyHeadDisplayBestEffort(head)
-	if display == notifyDisplayStale {
-		return c.displayStatusbarMessage(opts, stderr, "notify target stale; no action")
-	}
 	if display == notifyDisplayGone || strings.TrimSpace(target) == "" {
 		if ackErr := ackFocusedNotification(store, head, entries); ackErr != nil {
 			return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(notifyDisplayGone), focusFailureSummary(ackErr)))

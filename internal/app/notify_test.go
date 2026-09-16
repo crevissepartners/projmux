@@ -1139,6 +1139,92 @@ func TestNotifyListSidebarTargetGoneAcksSelectedRow(t *testing.T) {
 	}
 }
 
+// TestNotifyListSidebarEnterOnStaleRoutableRowFocusesAndAcks covers the
+// single-row Enter path (the group path has its own test): a stale but
+// routable `ai:` row is focused and acked exactly like a live one, because
+// its pane still exists. The empty live-pane reply keeps liveByID non-nil
+// while leaving the inventory unavailable, which is what makes the row stale.
+//
+// It also pins the "consume once" property: the row that was acked is gone
+// from the queue afterwards, so a second Enter cannot replay it.
+func TestNotifyListSidebarEnterOnStaleRoutableRowFocusesAndAcks(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	store := &stubNotifyStore{
+		listEntries: []notify.Notification{
+			{
+				ID:        "ai:main:%2",
+				Text:      "Ready",
+				Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
+				Severity:  notify.SeverityWarn,
+				Source:    notify.SourceAI,
+				Session:   "main",
+				Window:    "@1",
+				Pane:      "%2",
+				CreatedAt: now.Add(-30 * time.Second),
+				ExpiresAt: now.Add(time.Hour),
+			},
+		},
+	}
+	before, err := store.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if !notifyEntriesContainID(before, "ai:main:%2") {
+		t.Fatalf("queue before = %#v, want the stale row queued", before)
+	}
+
+	picker := &stubNotifyPicker{result: intpickercompat.Result{Value: "ai:main:%2"}}
+	runner := &focusFakeRunner{respond: func(args []string) ([]byte, error) {
+		if containsArg(args, "list-panes") {
+			return []byte{}, nil
+		}
+		return nil, nil
+	}}
+	cmd := newCmd(store)
+	cmd.now = func() time.Time { return now }
+	cmd.picker = picker
+	cmd.native = nativePickerFromCompatRunner(picker)
+	setNotifyLiveRunner(cmd, runner)
+	cmd.executable = func() (string, error) { return "/usr/local/bin/projmux", nil }
+
+	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+
+	focusCalls := filterFocusCalls(runner.calls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one focus call for the stale row", focusCalls)
+	}
+	if !sliceContainsPair(focusCalls[0].args, "--target", "main:@1.%2") {
+		t.Fatalf("focus args = %#v, want the stale row target", focusCalls[0].args)
+	}
+	if got, want := store.ackedIDs, []string{"ai:main:%2"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want %#v", got, want)
+	}
+	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify target stale; no action"}) {
+		t.Fatalf("runner calls = %#v, want no stale refusal message", runner.calls)
+	}
+
+	after, err := store.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if notifyEntriesContainID(after, "ai:main:%2") {
+		t.Fatalf("queue after = %#v, want the consumed stale row removed", after)
+	}
+}
+
+func notifyEntriesContainID(entries []notify.Notification, id string) bool {
+	for _, entry := range entries {
+		if entry.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 	t.Parallel()
 
@@ -1413,7 +1499,13 @@ func TestNotifyListSidebarEnterOnGroupTargetGoneCleansVisibleGroupWithoutFocus(t
 	}
 }
 
-func TestNotifyListSidebarEnterOnGroupStaleRoutableHasZeroAction(t *testing.T) {
+// TestNotifyListSidebarEnterOnGroupStaleRoutableFocusesAndAcks pins the
+// documented contract for a stale but routable group: the panes still exist,
+// so Enter focuses the representative and acks the whole group exactly like a
+// live group. The empty live-pane reply leaves the inventory unavailable
+// (nil paneSet) while keeping liveByID non-nil, which is what classifies the
+// `ai:` rows as stale here.
+func TestNotifyListSidebarEnterOnGroupStaleRoutableFocusesAndAcks(t *testing.T) {
 	t.Parallel()
 
 	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
@@ -1440,18 +1532,21 @@ func TestNotifyListSidebarEnterOnGroupStaleRoutableHasZeroAction(t *testing.T) {
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if len(store.ackedIDs) != 0 {
-		t.Fatalf("ackedIDs = %#v, want stale action zero", store.ackedIDs)
+	if got, want := store.ackedIDs, []string{"ai:main:%2", "ai:main:%2:critical"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ackedIDs = %#v, want stale group acked %#v", got, want)
 	}
 	focusCalls := filterFocusCalls(runner.calls)
-	if len(focusCalls) != 0 {
-		t.Fatalf("focus calls = %#v, want stale action zero", focusCalls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one representative focus call", focusCalls)
 	}
-	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify target stale; no action"}) {
-		t.Fatalf("runner calls = %#v, want stale refusal message", runner.calls)
+	if !sliceContainsPair(focusCalls[0].args, "--target", "main:@1.%2") {
+		t.Fatalf("focus args = %#v, want stale representative target", focusCalls[0].args)
 	}
-	if len(picker.updates) != 1 || len(picker.updates[0]) == 0 || picker.updates[0][0].Value == notifySidebarEmptyValue {
-		t.Fatalf("updates = %#v, want stale group retained", picker.updates)
+	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify target stale; no action"}) {
+		t.Fatalf("runner calls = %#v, want no stale refusal message", runner.calls)
+	}
+	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
+		t.Fatalf("updates = %#v, want empty state after stale group ack", picker.updates)
 	}
 }
 
