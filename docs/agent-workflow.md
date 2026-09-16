@@ -2317,6 +2317,28 @@ Nothing is persisted or shared across processes or transactions.
   message as without a cache, leave the Registry uncommitted, and reach the
   uncached Pane end state through the runtime ledger rollback with the identity
   scope closed.
+- `make test`: `TestContinueReplayProvesItsFirstRouteIdentityAgainstTmux` drives
+  one `start project` Continue replay of a closed Project. The replay reads
+  `#{socket_path}`, `#{pid}` and `@projmux_app` from tmux before its first
+  runtime write, its first reuse follows a recorded proof that really ran, the
+  exact tuple it proved is reusable while every differing component misses, and
+  a replay with the scope closed reuses nothing and reads identity far more.
+- `make test`:
+  `TestRouteIdentityCacheMatchesUncachedContinueReplayUnderDriftAfterEachGuardedWrite`
+  enumerates every guarded write of a Continue topology replay, restarts the
+  server generation with objects surviving immediately after each one, and
+  requires the error string, ordered write argv, Registry commit, and final Pane
+  set to be byte-identical with and without the cache.
+- `make test`: `TestContinueReplayClosesTheIdentityScopeBeforeItsRollback`
+  drifts the generation after the replay's split write. The transaction closes
+  its identity scope before the runtime ledger unwinds, never reopens it, and
+  the unwind re-reads `#{socket_path}` and `#{pid}` from tmux.
+- `make test`:
+  `TestContinueReplayCommitReproofRefusesDriftBeforeCommitWithoutAWrite` moves
+  the server generation in the write-free window the commit re-proof opens. The
+  replay refuses with `topology materialization: runtime mutation plan: route
+  identity refused commit after reused proofs: planned runtime server generation
+  drifted`, commits nothing, and unwinds through the runtime ledger.
 - `make test-integration`: `test/integration/route-guard-identity-cache.sh`
   drives the built binary against an isolated real tmux server (dropped
   `TMUX`/`TMUX_PANE`/`__PROJMUX_RUNTIME_ANCHOR_PANE`, owned `HOME`/XDG, short
@@ -2326,7 +2348,12 @@ Nothing is persisted or shared across processes or transactions.
   `#{socket_path}`, `#{pid}` and `@projmux_app` reads before the transaction's
   first write, and when both creates refuse a server without `@projmux_app`
   with the existing `runtime mutation route: exact invocation server is not
-  app-owned; ...` wording and leave the Pane and Window sets unchanged.
+  app-owned; ...` wording and leave the Pane and Window sets unchanged. It
+  prints two more PASS lines for the Continue half: `start project` rebuilds a
+  stopped Project's stored Window and Pane uid sets on the same exact server
+  with the `#{socket_path}`, `#{pid}` and `@projmux_app` reads ahead of the
+  replay's first write, and the same replay refuses a server without
+  `@projmux_app`, writes no stdout, and materializes no session.
 
 ## Review Checklist
 - The branch stays within its stated scope.

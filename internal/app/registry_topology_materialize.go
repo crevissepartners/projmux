@@ -630,6 +630,13 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 			runtime.routeAuthority = r.routeAuthority
 		}
 	}
+	// One transaction is one identity-reuse scope, exactly as the create
+	// transaction defines it. The first route guard still proves the exact
+	// server against tmux; later guards for the same tuple reuse that proof
+	// instead of re-reading it under the registry lock. The scope closes before
+	// rollback, so unwinding re-proves identity in full.
+	runtime.openRouteIdentityCache(operationID)
+	defer runtime.closeRouteIdentityCache()
 	_, registryChanged, updateErr := r.resources.updateConvergent(func(working *coremetadata.Registry) error {
 		current, buildErr := planner.build(ctx, working.Clone())
 		if buildErr != nil {
@@ -684,8 +691,19 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 			outcome.failedStage = "topology materialization"
 			return err
 		}
+		// Any identity reused inside this transaction is proved once more
+		// before commit, so a server that drifted after the first proof rolls
+		// the whole replay back instead of committing on stale evidence.
+		if err := runtime.reproveReusedRouteIdentity(ctx); err != nil {
+			outcome.failedStage = "topology materialization"
+			return err
+		}
 		return nil
 	})
+	// The scope ends with the transaction: the ledger rollback below re-proves
+	// identity against tmux rather than trusting anything this transaction
+	// proved earlier.
+	runtime.closeRouteIdentityCache()
 	outcome.registryChanged = registryChanged
 	if updateErr != nil {
 		runtime.rollback(ctx, ledger)

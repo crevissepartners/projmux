@@ -135,6 +135,52 @@ grep -qF 'display-message -p -F #{pid}' <<<"$before_write" || fail "no server ge
 grep -qF 'show-options -gqv @projmux_app' <<<"$before_write" || fail "no app ownership read before the first write"
 echo "PASS: first identity proof reads socket_path from tmux before the first write"
 
+# (d) Continue: `projmux start project` rebuilds a closed Project's stored
+# topology through topologyMaterializeRun.execute, which is the second
+# runtime-mutation transaction that opens an identity-reuse scope. The replay
+# must put the stored Window and Pane uids back on this exact server, and its
+# first identity proof must still be read from tmux before the first write.
+continue_root="$root/continue"
+mkdir -p "$continue_root"
+continue_uid="$(run_projmux create project --root "$continue_root" --name continue-replay -o uid)"
+[[ "$continue_uid" =~ ^proj-[a-z0-9]+$ ]] || fail "create project for the Continue replay returned $continue_uid"
+run_projmux create window --project "uid:$continue_uid" --name continue-w2 >/dev/null
+run_projmux create pane --project "uid:$continue_uid" --primary-window >/dev/null
+continue_session="$(run_projmux describe project "uid:$continue_uid" -o json |
+  awk '/"session": \{/ { inside = 1 } inside && /"name":/ { sub(/.*"name": "/, ""); sub(/".*/, ""); print; exit }')"
+[[ -n "$continue_session" ]] || fail "the Continue fixture Project projects no session name"
+windows_live="$(iso_tmux list-windows -t "=$continue_session" -F '#{@projmux_window_uid}' | sort)"
+panes_live="$(iso_tmux list-panes -s -t "=$continue_session" -F '#{@projmux_pane_uid}' | sort)"
+[[ "$(grep -c . <<<"$windows_live")" -ge 2 ]] || fail "the Continue fixture has no replayable Window topology: $windows_live"
+[[ "$(grep -c . <<<"$panes_live")" -ge 2 ]] || fail "the Continue fixture has no replayable Pane topology: $panes_live"
+
+run_projmux stop project "uid:$continue_uid" >/dev/null
+! iso_tmux has-session -t "=$continue_session" 2>/dev/null || fail "stop project left the Continue fixture session live"
+
+: >"$argv_log"
+continue_out="$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE PATH="$root/wrap:$PATH" \
+  TMUX="$socket_path,$server_pid,0" TMUX_PANE="$host_pane" "$bin" start project "uid:$continue_uid")"
+grep -qF "receipt operation=start.project" <<<"$continue_out" || fail "start project receipt changed: $continue_out"
+grep -qF "runtime=materialized" <<<"$continue_out" || fail "start project did not materialize the closed Project: $continue_out"
+iso_tmux has-session -t "=$continue_session" 2>/dev/null || fail "start project did not rebuild the exact session"
+[[ "$(iso_tmux list-windows -t "=$continue_session" -F '#{@projmux_window_uid}' | sort)" == "$windows_live" ]] ||
+  fail "the Continue replay rebuilt a different Window uid set"
+[[ "$(iso_tmux list-panes -s -t "=$continue_session" -F '#{@projmux_pane_uid}' | sort)" == "$panes_live" ]] ||
+  fail "the Continue replay rebuilt a different Pane uid set"
+echo "PASS: start project replays a closed Project's stored topology onto the exact server"
+
+continue_first_write="$(grep -nE ' (set-environment|set-option|split-window|new-window|new-session|resize-pane|rename-window|kill-session|kill-window|kill-pane|select-pane) ' "$argv_log" | head -1 | cut -d: -f1)"
+[[ -n "$continue_first_write" ]] || fail "the Continue replay logged no tmux write"
+continue_before_write="$(head -n "$((continue_first_write - 1))" "$argv_log")"
+grep -qF 'display-message -p -F #{socket_path}' <<<"$continue_before_write" || fail "the Continue replay wrote before reading socket_path"
+grep -qF 'display-message -p -F #{pid}' <<<"$continue_before_write" || fail "the Continue replay wrote before reading the server generation"
+grep -qF 'show-options -gqv @projmux_app' <<<"$continue_before_write" || fail "the Continue replay wrote before reading app ownership"
+echo "PASS: the Continue replay proves the server identity before its first write"
+
+# The replay is closed again so the ownership-refusal block below can ask it to
+# materialize on a server it must refuse.
+run_projmux stop project "uid:$continue_uid" >/dev/null
+
 # (b) Without the app ownership marker, create refuses with today's wording and
 # changes nothing.
 iso_tmux set-option -gu @projmux_app
@@ -159,5 +205,19 @@ done
 [[ "$(iso_tmux list-panes -a -F '#{pane_id}' | sort)" == "$panes_before" ]] || fail "refused create changed the Pane set"
 [[ "$(iso_tmux list-windows -a -F '#{window_id}' | sort)" == "$windows_before" ]] || fail "refused create changed the Window set"
 echo "PASS: create refuses a server without the app ownership marker with the existing wording"
+
+# The Continue replay refuses the same unowned server, writes no result, and
+# leaves the closed Project closed.
+continue_refusal_out="$root/refusal-continue.out"
+continue_refusal_err="$root/refusal-continue.err"
+status=0
+run_projmux start project "uid:$continue_uid" >"$continue_refusal_out" 2>"$continue_refusal_err" || status=$?
+[[ "$status" != 0 ]] || fail "start project succeeded on a server without the app ownership marker"
+[[ ! -s "$continue_refusal_out" ]] || fail "a refused Continue replay wrote stdout: $(cat "$continue_refusal_out")"
+grep -qF "app-owned" "$continue_refusal_err" || fail "refused Continue replay stderr changed: $(cat "$continue_refusal_err")"
+! iso_tmux has-session -t "=$continue_session" 2>/dev/null || fail "a refused Continue replay materialized a session"
+[[ "$(iso_tmux list-panes -a -F '#{pane_id}' | sort)" == "$panes_before" ]] || fail "a refused Continue replay changed the Pane set"
+[[ "$(iso_tmux list-windows -a -F '#{window_id}' | sort)" == "$windows_before" ]] || fail "a refused Continue replay changed the Window set"
+echo "PASS: the Continue replay refuses a server without the app ownership marker"
 
 echo "PASS: route-guard-identity-cache real-tmux boundary"
