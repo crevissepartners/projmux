@@ -7,6 +7,7 @@
   import { paneLabel, slotRef } from "../lib/tree";
   import { fullTime, shortTime } from "../lib/time";
   import type { Repository, Turn } from "../lib/types";
+  import TaskLine from "./TaskLine.svelte";
   import ToolView from "./ToolView.svelte";
 
   interface Props {
@@ -22,7 +23,9 @@
   // The label says who: the operator's own messages read as "me", the
   // agent's as its name.
   const label = $derived(
-    turn.role === "user"
+    turn.report
+      ? t("web.chat.report")
+      : turn.role === "user"
       ? t("web.chat.me")
       : turn.role === "assistant"
         ? agentName || turn.role
@@ -51,7 +54,10 @@
   });
 </script>
 
-<div class="turn {turn.role}" class:cont={continued}>
+{#if turn.task}
+  <TaskLine task={turn.task} at={turn.at} />
+{:else}
+<div class="turn {turn.role}" class:cont={continued} class:report={!!turn.report}>
   {#if !continued}
     <div class="who">
       <span>{label}</span>
@@ -73,7 +79,15 @@
       {#if turn.at}<span class="when" title={fullTime(turn.at)}>{shortTime(turn.at)}</span>{/if}
     </div>
   {/if}
-  {#if turn.text.trim()}
+  {#if turn.images}
+    <div class="body"><span class="flag">{t("web.chat.images", { n: turn.images })}</span></div>
+  {/if}
+  {#if turn.text.trim() && turn.report}
+    <details class="report-body" open>
+      <summary>{t("web.chat.report_summary")}</summary>
+      <div class="body" use:markdown={{ text: turn.text.trim(), repo }}></div>
+    </details>
+  {:else if turn.text.trim()}
     <div class="body" use:markdown={{ text: turn.text.trim(), repo }}></div>
   {:else if turn.thinking && !turn.tools?.length}
     <div class="body"><span class="flag">· {t("web.chat.thinking")}</span></div>
@@ -82,3 +96,4 @@
     <ToolView {call} {paneUID} {agentUID} />
   {/each}
 </div>
+{/if}

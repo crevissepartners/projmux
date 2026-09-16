@@ -33,21 +33,29 @@ func parseClaudeLine(raw map[string]any) (Turn, bool) {
 		return Turn{}, false
 	}
 	text, tools, thinking := flattenContent(message["content"])
-	if text == "" && len(tools) == 0 && !thinking {
+	images := countImages(message["content"])
+	if text == "" && len(tools) == 0 && !thinking && images == 0 {
 		return Turn{}, false
 	}
 	at := stringOf(raw["timestamp"])
 	if kind == "user" {
+		if turn, ok := harnessTurn(text, at); ok {
+			return turn, true
+		}
 		if turn, handled := localCommandTurn(text, at); handled {
 			return turn, turn.Text != ""
 		}
+	}
+	text = stripReminders(text)
+	if text == "" && len(tools) == 0 && !thinking && images == 0 {
+		return Turn{}, false
 	}
 	// A coordination frame arrives as a user turn; show the message rather
 	// than the transport envelope around it.
 	if frame, ok := unwrapCoordination(text); ok {
 		return frame.turn(at, coordinationKindDirect), true
 	}
-	return Turn{Role: kind, Text: text, At: at, Kind: kind, Thinking: thinking, Tools: tools}, true
+	return Turn{Role: kind, Text: text, At: at, Kind: kind, Thinking: thinking, Tools: tools, Images: images}, true
 }
 
 // parseClaudeAttachment reads a message that arrived while the session was
@@ -65,18 +73,28 @@ func parseClaudeAttachment(raw map[string]any) (Turn, bool) {
 	if attachment == nil || stringOf(attachment["type"]) != "queued_command" {
 		return Turn{}, false
 	}
-	text := strings.TrimSpace(stringOf(attachment["prompt"]))
-	if text == "" {
+	// The prompt is a string, or a content array when the message carries an
+	// image; reading only the string form dropped every such message.
+	text, _, _ := flattenContent(attachment["prompt"])
+	images := countImages(attachment["prompt"])
+	if text == "" && images == 0 {
 		return Turn{}, false
 	}
 	at := stringOf(attachment["timestamp"])
 	if at == "" {
 		at = stringOf(raw["timestamp"])
 	}
+	if turn, ok := harnessTurn(text, at); ok {
+		return turn, true
+	}
 	if frame, ok := unwrapCoordination(text); ok {
 		return frame.turn(at, coordinationKindQueued), true
 	}
-	return Turn{Role: "user", Text: text, At: at, Kind: "queued"}, true
+	text = stripReminders(text)
+	if text == "" && images == 0 {
+		return Turn{}, false
+	}
+	return Turn{Role: "user", Text: text, At: at, Kind: "queued", Images: images}, true
 }
 
 // fromPeer reports whether a record was delivered by another session.
@@ -252,6 +270,7 @@ func flattenContent(value any) (text string, tools []ToolCall, thinking bool) {
 				tools = append(tools, toolUseCall(block))
 			case "tool_result":
 				result, _, _ := flattenContent(block["content"])
+				result = stripReminders(result)
 				isError, _ := block["is_error"].(bool)
 				clipped, cut := clip(result, toolTextLimit)
 				tools = append(tools, ToolCall{
@@ -267,6 +286,18 @@ func flattenContent(value any) (text string, tools []ToolCall, thinking bool) {
 		return strings.TrimSpace(strings.Join(parts, "\n")), tools, thinking
 	}
 	return "", nil, false
+}
+
+// countImages counts image blocks in a content array.
+func countImages(value any) int {
+	items, _ := value.([]any)
+	n := 0
+	for _, item := range items {
+		if block, ok := item.(map[string]any); ok && stringOf(block["type"]) == "image" {
+			n++
+		}
+	}
+	return n
 }
 
 // toolUseCall reads one Claude `tool_use` block.

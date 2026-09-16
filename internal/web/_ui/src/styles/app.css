@@ -1574,3 +1574,31 @@ button.seg.notify { color: inherit; padding: 0 var(--s3); }
 .slot-btn.jump { width: auto; padding: 0 var(--s2); color: var(--warning); }
 button.send.jump { font-size: 11px; padding: 3px 10px; }
 .ask-note.err { color: var(--critical); }
+
+/* harness blocks: a finished task is a line, a subagent report a card ----- */
+
+.task-line {
+  margin: var(--s2) 0;
+  font-size: 11px;
+  color: var(--muted);
+  border-left: 2px solid var(--rule);
+  padding-left: var(--s3);
+}
+.task-line > summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  cursor: pointer;
+  list-style: none;
+}
+.task-line > summary::-webkit-details-marker { display: none; }
+.task-line .task-kind { color: var(--ink); font-weight: 600; }
+.task-line .task-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.task-line .task-fact { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.task-line .when { margin-left: auto; }
+.task-line.failed { border-left-color: var(--warning); }
+.task-line.failed .task-kind,
+.task-line.failed .task-fact:first-of-type { color: var(--warning); }
+.task-line dl.kv { margin-top: var(--s1); }
+.turn.report .body { border-left: 2px solid var(--provenance); }
+.report-body > summary { cursor: pointer; font-size: 11px; color: var(--muted); margin-bottom: var(--s1); }

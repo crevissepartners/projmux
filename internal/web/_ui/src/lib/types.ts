@@ -129,6 +129,20 @@ export interface ToolCall {
   clipped?: boolean;
 }
 
+export interface TaskNote {
+  id?: string;
+  toolUseID?: string;
+  kind?: "agent" | "command" | "";
+  name?: string;
+  status?: string;
+  exitCode?: number;
+  summary?: string;
+  outputFile?: string;
+  toolUses?: number;
+  durationMs?: number;
+  tokens?: number;
+}
+
 export interface Turn {
   role: string;
   text: string;
@@ -139,6 +153,9 @@ export interface Turn {
   messageRef?: string;
   from?: { agentUID: string; provider?: string };
   tools?: ToolCall[];
+  task?: TaskNote;
+  report?: { from?: string };
+  images?: number;
 }
 
 export interface Repository {

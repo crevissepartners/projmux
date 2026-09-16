@@ -47,6 +47,12 @@ type Turn struct {
 	// so. Empty for anything typed at the terminal.
 	Via   string     `json:"via,omitempty"`
 	Tools []ToolCall `json:"tools,omitempty"`
+	// Task is set on a task-notification turn, Report on a subagent's report.
+	Task   *Task   `json:"task,omitempty"`
+	Report *Report `json:"report,omitempty"`
+	// Images counts pictures attached to the message. They are not served;
+	// the count keeps an image-only message from vanishing.
+	Images int `json:"images,omitempty"`
 }
 
 // Sender identifies the peer a coordination message came from.
@@ -298,9 +304,12 @@ func linkTools(turns []Turn) []Turn {
 //
 // A coordination turn is kept even with an empty payload: a message was
 // delivered, and its sender and reference are what the client shows. A
-// thinking-only turn is kept for the same reason the marker exists at all.
+// thinking-only turn is kept for the same reason the marker exists at all, and
+// a task notification or an image-only message carries its content outside
+// Text.
 func hasContent(turn Turn) bool {
-	return turn.Text != "" || len(turn.Tools) > 0 || turn.Thinking || isCoordinationKind(turn.Kind)
+	return turn.Text != "" || len(turn.Tools) > 0 || turn.Thinking || isCoordinationKind(turn.Kind) ||
+		turn.Task != nil || turn.Images > 0
 }
 
 // filterCalls keeps only the entries that are real calls.

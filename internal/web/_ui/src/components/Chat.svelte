@@ -49,7 +49,8 @@
   // A turn whose only content is the reasoning flag says nothing a reader can
   // use, and on a busy session it is every other row.
   const noise = (turn: Turn) => turn.thinking && !turn.text.trim() && !turn.tools?.length;
-  const speaker = (turn: Turn) => `${turn.role}:${turn.via || ""}:${turn.from?.agentUID || ""}`;
+  const speaker = (turn: Turn) =>
+    turn.task ? `task:${turn.at}` : `${turn.role}:${turn.via || ""}:${turn.from?.agentUID || ""}:${turn.report ? "report" : ""}`;
 
   // A streamed tool result arrives as its own record, keyed by the id of the
   // call it answers. The full read stitches those server-side; the stream
@@ -69,7 +70,7 @@
       return true;
     });
     const merged = { ...turn, tools: calls };
-    if (!merged.text.trim() && !calls.length && !merged.thinking) return null;
+    if (!merged.text.trim() && !calls.length && !merged.thinking && !merged.task && !merged.images) return null;
     return merged;
   }
 
