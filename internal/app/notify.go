@@ -598,7 +598,7 @@ func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) 
 		return localizeText(locale, "picker.notify.footer.empty", "Esc: close")
 	}
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
-		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live / refuse stale / clean gone"},
+		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live/inactive / clean gone"},
 		{ActionID: "NotifySidebar:Ack", Label: "ack child"},
 		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},

@@ -458,7 +458,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Right: show child rows  |  Left: hide child rows  |  Enter: focus live / refuse stale / clean gone  |  a: ack child  |  A: ack group  |  x: clear non-critical  |  g: clear gone  |  Ctrl-X: clear all"; got != want {
+	if got, want := picker.options.Footer, "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  x: clear non-critical  |  g: clear gone  |  Ctrl-X: clear all"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
 	if got, want := picker.options.ExpectKeys, []string{"enter", "a", "A", "x", "g", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
@@ -540,7 +540,7 @@ keys = ["C-y"]
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := "Right: show child rows  |  Left: hide child rows  |  Enter: focus live / refuse stale / clean gone  |  a: ack child  |  A: ack group  |  c: clear non-critical  |  g: clear gone  |  Ctrl-Y: clear all"
+	want := "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  c: clear non-critical  |  g: clear gone  |  Ctrl-Y: clear all"
 	if got := picker.options.Footer; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
