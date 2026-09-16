@@ -6,7 +6,7 @@
   import { t } from "../lib/i18n.svelte";
   import { go } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
-  import { livePanes, paneLabel, type Located } from "../lib/tree";
+  import { livePanes, paneLabel, slotRef, type Located } from "../lib/tree";
   import Picker from "./Picker.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
@@ -33,7 +33,7 @@
 
   function pick(row: Located) {
     onClose();
-    go({ project: row.project.uid, window: row.win.uid, pane: row.pane.uid });
+    go({ project: row.project.uid, window: row.win.uid, pane: slotRef(row.pane) });
   }
 
   function keydown(e: KeyboardEvent) {

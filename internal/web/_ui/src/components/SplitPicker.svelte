@@ -11,7 +11,7 @@
   import { live, refresh } from "../lib/state.svelte";
   import { ago } from "../lib/time";
   import { fail } from "../lib/toast.svelte";
-  import { paneLabel, type Located } from "../lib/tree";
+  import { locateSlot, paneLabel, slotRef, type Located, type PaneView } from "../lib/tree";
   import type { Agent, Pane, ResumeCandidate } from "../lib/types";
   import { ui } from "../lib/ui.svelte";
   import Picker from "./Picker.svelte";
@@ -25,11 +25,12 @@
 
   const candidates = $derived.by(() => {
     const open = new Set([route.sel.pane, ...route.extras].filter(Boolean));
+    const isOpen = (pane: PaneView) => open.has(pane.uid) || (!!pane.agent && open.has(pane.agent.uid));
     const rows: Located[] = [];
     for (const project of live.tree.projects) {
       for (const win of project.windows) {
         for (const pane of win.panes) {
-          if (open.has(pane.uid) || !pane.runtimeId) continue;
+          if (isOpen(pane) || !pane.runtimeId) continue;
           if (!pane.agent && !ui.showShell) continue;
           rows.push({ project, win, pane });
         }
@@ -45,7 +46,7 @@
 
   function beside(row: Located) {
     onClose();
-    setExtras([...route.extras, row.pane.uid]);
+    setExtras([...route.extras, slotRef(row.pane)]);
   }
 
   // Resume candidates: agents this window owns whose pane is gone. Each row
@@ -64,11 +65,10 @@
   async function resume(candidate: ResumeCandidate) {
     resuming = candidate.uid;
     try {
-      const body = await post<{ pane?: Pane }>(`${paths.agent(candidate.uid)}/resume`, { confirm: true });
+      await post(`${paths.agent(candidate.uid)}/resume`, { confirm: true });
       await refresh();
       onClose();
-      const pane = body.pane?.metadata.uid;
-      if (pane && sel.project && sel.window) go({ project: sel.project, window: sel.window, pane });
+      if (sel.project && sel.window) go({ project: sel.project, window: sel.window, pane: candidate.uid });
     } catch (err) {
       fail(err);
     } finally {
@@ -84,9 +84,11 @@
   let previewError = $state("");
   let creating = $state(false);
 
-  const request = $derived({ provider: kind, anchorPane: sel.pane || "", cwdFrom: "pane", payload });
+  // The selection names a slot by agent or pane; the split anchors on the pane.
+  const anchor = $derived(sel.pane ? locateSlot(live.tree, sel.pane)?.pane.uid || "" : "");
+  const request = $derived({ provider: kind, anchorPane: anchor, cwdFrom: "pane", payload });
   $effect(() => {
-    if (!sel.project || !sel.window || !sel.pane) return;
+    if (!sel.project || !sel.window || !anchor) return;
     const body = request;
     post<{ argv: string[] }>(paths.agentPreview(sel.project, sel.window), body)
       .then((res) => {
@@ -110,8 +112,8 @@
       await refresh();
       onClose();
       // tmux puts the new pane beside the one it split, and so does this.
-      const pane = body.pane?.metadata.uid;
-      if (pane) setExtras([...route.extras, pane]);
+      const ref = body.agent?.metadata.uid || body.pane?.metadata.uid;
+      if (ref) setExtras([...route.extras, ref]);
     } catch (err) {
       fail(err);
     } finally {
@@ -176,7 +178,7 @@
 
   <div class="picker-create">
     <div class="picker-sub">{t("web.picker.create")}</div>
-    {#if !sel.pane}
+    {#if !anchor}
       <div class="empty">{t("web.picker.pick_pane_first")}</div>
     {:else}
       <div class="picker-kinds">

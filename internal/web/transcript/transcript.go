@@ -98,6 +98,9 @@ type Transcript struct {
 	// Note explains an empty result instead of leaving the panel blank. It is
 	// one of the Note* tokens above.
 	Note string `json:"note,omitempty"`
+	// Offset is the byte position after the last complete line read. A
+	// follower started there misses nothing written after this read.
+	Offset int64 `json:"offset"`
 }
 
 // toolTextLimit bounds an argument blob or a tool result. A single result can
@@ -177,6 +180,16 @@ func ReadTranscript(provider, path string, limit int) (*Transcript, error) {
 	// Transcript lines carry whole tool outputs and can be very long; the
 	// default 64KB token limit drops them silently.
 	scanner.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
+	// Offset counts only complete lines. A trailing line with no newline yet
+	// is a record the provider is still writing; a follower that starts here
+	// reads it whole once it is finished.
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		advance, token, err := bufio.ScanLines(data, atEOF)
+		if advance > 0 && data[advance-1] == '\n' {
+			out.Offset += int64(advance)
+		}
+		return advance, token, err
+	})
 
 	parse := parserFor(provider)
 	total := 0

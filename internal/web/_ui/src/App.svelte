@@ -4,10 +4,10 @@
   import { createWindow } from "./lib/commands";
   import { stopGeometry, followGeometry, geometry } from "./lib/geometry.svelte";
   import { loadMessages, t } from "./lib/i18n.svelte";
-  import { go, route } from "./lib/router.svelte";
+  import { canonicalize, go, route } from "./lib/router.svelte";
   import { connect, live, refresh } from "./lib/state.svelte";
   import { toast } from "./lib/toast.svelte";
-  import { findPane, findProject, findWindow, livePanes, paneLabel, type PaneView } from "./lib/tree";
+  import { findProject, findSlot, findWindow, livePanes, locateSlot, paneLabel, slotRef, type PaneView } from "./lib/tree";
   import { setToggle, ui } from "./lib/ui.svelte";
   import Help from "./components/Help.svelte";
   import LayoutPreview from "./components/LayoutPreview.svelte";
@@ -27,7 +27,21 @@
 
   const project = $derived(findProject(live.tree, route.sel.project));
   const win = $derived(findWindow(project, route.sel.window));
-  const pane = $derived(findPane(win, route.sel.pane));
+  const pane = $derived(findSlot(win, route.sel.pane));
+
+  // An address written before agents were addressed by their own uid names a
+  // pane an agent holds; it is rewritten to the agent's address in place.
+  $effect(() => {
+    if (!project || !win || !pane) return;
+    const extras = route.extras.map((ref) => {
+      const found = locateSlot(live.tree, ref);
+      return found ? slotRef(found.pane) : ref;
+    });
+    const canonical = slotRef(pane);
+    if (canonical !== route.sel.pane || extras.join() !== route.extras.join()) {
+      canonicalize({ project: project.uid, window: win.uid, pane: canonical }, extras);
+    }
+  });
 
   // Shell panes hold a place in the real window but carry nothing this page
   // shows, so they are left out unless asked for.
@@ -80,7 +94,7 @@
       });
       note.onclick = () => {
         window.focus();
-        go({ project: p.uid, window: w.uid, pane: row.uid });
+        go({ project: p.uid, window: w.uid, pane: slotRef(row) });
         note.close();
       };
     }
@@ -107,7 +121,7 @@
 
   function closeSidebar(which: "sidebar" | "notify") {
     setToggle(which, false);
-    if (route.sel.pane) ui.focusComposer = route.sel.pane;
+    if (pane) ui.focusComposer = pane.uid;
   }
 
   /**
@@ -118,9 +132,9 @@
    */
   function selectPane(direction: "left" | "right" | "up" | "down") {
     if (!project || !win || drawn.length < 2) return;
-    const at = drawn.findIndex((p) => p.uid === route.sel.pane);
+    const at = drawn.findIndex((p) => p.uid === pane?.uid);
     const current = drawn[at] || drawn[0];
-    const to = (node: PaneView | null) => node && go({ project: project.uid, window: win.uid, pane: node.uid });
+    const to = (node: PaneView | null) => node && go({ project: project.uid, window: win.uid, pane: slotRef(node) });
     const here = geometry.panes[current.runtimeId];
     if (!here) {
       const step = direction === "right" || direction === "down" ? 1 : -1;
@@ -167,7 +181,7 @@
     // Land on a pane: arriving with nothing focused is not what changing
     // Window means.
     const first = next.panes.find((p) => p.runtimeId && (ui.showShell || p.agent));
-    go({ project: project.uid, window: next.uid, pane: first?.uid ?? null });
+    go({ project: project.uid, window: next.uid, pane: first ? slotRef(first) : null });
   }
 
   const arrows: Record<string, "left" | "right" | "up" | "down"> = {

@@ -39,6 +39,23 @@ func NewTailer(provider, path string, fromStart bool) (*Tailer, error) {
 	return t, nil
 }
 
+// NewTailerAt starts following path at offset, which is where a previous
+// ReadTranscript or Tailer left off. An offset past the end of the file means
+// the file was replaced, and reading starts over.
+func NewTailerAt(provider, path string, offset int64) *Tailer {
+	if offset < 0 {
+		offset = 0
+	}
+	return &Tailer{path: path, provider: provider, parse: parserFor(provider), offset: offset}
+}
+
+// Offset is the position after the last complete line returned. Bytes of a
+// line still being written are not counted, so a follower resumed here reads
+// that line whole.
+func (t *Tailer) Offset() int64 {
+	return t.offset - int64(len(t.pending))
+}
+
 // Next returns the turns appended since the previous call.
 //
 // A missing file is not an error: a provider can rotate or recreate its

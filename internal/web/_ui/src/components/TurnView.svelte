@@ -4,7 +4,7 @@
   import { markdown } from "../lib/markdown";
   import { go } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
-  import { paneLabel } from "../lib/tree";
+  import { paneLabel, slotRef } from "../lib/tree";
   import { fullTime, shortTime } from "../lib/time";
   import type { Repository, Turn } from "../lib/types";
   import ToolView from "./ToolView.svelte";
@@ -14,8 +14,9 @@
     agentName: string;
     repo: Repository | null;
     continued: boolean;
+    paneUID: string;
   }
-  let { turn, agentName, repo, continued }: Props = $props();
+  let { turn, agentName, repo, continued, paneUID }: Props = $props();
 
   // The label says who: the operator's own messages read as "me", the
   // agent's as its name.
@@ -37,7 +38,7 @@
     for (const project of live.tree.projects) {
       for (const win of project.windows) {
         const pane = win.panes.find((p) => p.agent?.uid === uid && p.runtimeId);
-        if (pane) return { project: project.uid, window: win.uid, pane: pane.uid, name: paneLabel(pane).name };
+        if (pane) return { project: project.uid, window: win.uid, pane: slotRef(pane), name: paneLabel(pane).name };
       }
     }
     return null;
@@ -77,6 +78,6 @@
     <div class="body"><span class="flag">· {t("web.chat.thinking")}</span></div>
   {/if}
   {#each turn.tools || [] as call, i (call.id || i)}
-    <ToolView {call} />
+    <ToolView {call} {paneUID} />
   {/each}
 </div>

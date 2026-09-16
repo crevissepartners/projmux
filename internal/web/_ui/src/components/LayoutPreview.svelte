@@ -7,7 +7,7 @@
   import { t } from "../lib/i18n.svelte";
   import { go } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
-  import { paneByRuntime } from "../lib/tree";
+  import { paneByRuntime, slotRef } from "../lib/tree";
   import type { Layout, Run } from "../lib/types";
 
   interface Props {
@@ -88,7 +88,7 @@
             title="{pane.runtime} · {pane.command || '?'}"
             role="button"
             tabindex="-1"
-            onclick={() => target && go({ project: target.project.uid, window: target.win.uid, pane: target.pane.uid })}
+            onclick={() => target && go({ project: target.project.uid, window: target.win.uid, pane: slotRef(target.pane) })}
             onkeydown={() => {}}
           >
             <div class="layout-screen">

@@ -89,7 +89,7 @@ func TestWebFollowTranscriptReturnsAppendedTurns(t *testing.T) {
 	backend, path := webClientFixture(t,
 		`{"type":"user","message":{"role":"user","content":"old"}}`,
 	)
-	follower, err := backend.FollowTranscript(t.Context(), "agt-alpha-codex", false)
+	follower, err := backend.FollowTranscript(t.Context(), "agt-alpha-codex", -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestWebFollowTranscriptReturnsAppendedTurns(t *testing.T) {
 	if err != nil || len(items) != 1 {
 		t.Fatalf("Next = %v %v, want only the appended turn", items, err)
 	}
-	if _, err := backend.FollowTranscript(t.Context(), "agt-beta-codex", false); err == nil {
+	if _, err := backend.FollowTranscript(t.Context(), "agt-beta-codex", -1); err == nil {
 		t.Error("following an agent with no transcript succeeded")
 	}
 }

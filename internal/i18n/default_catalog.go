@@ -1129,6 +1129,9 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("web.provider.antigravity"):                                      textEntry("Antigravity"),
 		Key("web.provider.shell"):                                            textEntry("Shell"),
 		Key("web.window.untitled"):                                           textEntry("Window {n}"),
+		Key("web.chat.pending"):                                              textEntry("sending: shows when the agent reads it"),
+		Key("web.terminal.open"):                                             textEntry("Open in terminal"),
+		Key("web.terminal.open_title"):                                       textEntry("Move your terminal to this pane to answer there"),
 	},
 	Locale("ko-KR"): {
 		Key("startup.recovery.summary"):                                      textEntry("Continue: 복귀 %d, 건너뜀 %d; %s"),
@@ -2254,6 +2257,9 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("web.provider.antigravity"):                                      textEntry("Antigravity"),
 		Key("web.provider.shell"):                                            textEntry("셸"),
 		Key("web.window.untitled"):                                           textEntry("Window {n}"),
+		Key("web.chat.pending"):                                              textEntry("보냄: 에이전트가 읽으면 표시됩니다"),
+		Key("web.terminal.open"):                                             textEntry("터미널에서 열기"),
+		Key("web.terminal.open_title"):                                       textEntry("터미널을 이 칸으로 옮겨 거기서 답합니다"),
 	},
 }
 

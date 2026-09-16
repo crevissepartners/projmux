@@ -162,6 +162,7 @@ export interface TranscriptView {
     turns: Turn[] | null;
     truncated: boolean;
     note?: string;
+    offset: number;
   };
 }
 

@@ -15,7 +15,9 @@
     multiSelect?: boolean;
     options?: Option[];
   }
-  let { questions, result }: { questions: unknown[]; result: string } = $props();
+  import OpenInTerminal from "./OpenInTerminal.svelte";
+
+  let { questions, result, paneUID }: { questions: unknown[]; result: string; paneUID: string } = $props();
   const list = $derived(questions as Question[]);
 </script>
 
@@ -39,6 +41,9 @@
   {#if result}
     <pre class="ask-result">{result}</pre>
   {:else}
-    <div class="ask-foot"><span class="ask-note">{t("web.chat.answer_in_terminal")}</span></div>
+    <div class="ask-foot">
+      <OpenInTerminal {paneUID} />
+      <span class="ask-note">{t("web.chat.answer_in_terminal")}</span>
+    </div>
   {/if}
 </div>

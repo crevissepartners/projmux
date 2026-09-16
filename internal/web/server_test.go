@@ -159,6 +159,8 @@ func TestClientPathsServeTheClientAndNothingElse(t *testing.T) {
 		"/project/a":                   200,
 		"/project/a/window/b":          200,
 		"/project/a/window/b/pane/c":   200,
+		"/project/a/window/b/agent/c":  200,
+		"/project/a/window/b/other/c":  404,
 		"/project":                     404,
 		"/project/a/window":            404,
 		"/project/a/pane/c":            404,

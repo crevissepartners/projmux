@@ -21,9 +21,11 @@ type ClientBackend interface {
 	// Transcript returns an agent's input surface, its repository for linking,
 	// and a bounded tail of its conversation.
 	Transcript(ctx context.Context, agent string, limit int) (any, error)
-	// FollowTranscript starts reading the agent's transcript from its current
-	// end, or from the start.
-	FollowTranscript(ctx context.Context, agent string, fromStart bool) (Follower, error)
+	// FollowTranscript starts reading the agent's transcript at a byte
+	// offset: the `offset` a Transcript read returned, or the id of the last
+	// frame a reconnecting stream received. A negative offset means the
+	// current end of the file.
+	FollowTranscript(ctx context.Context, agent string, offset int64) (Follower, error)
 	// Layout captures a window's panes where tmux put them.
 	Layout(ctx context.Context, window string, contents bool) (any, error)
 	// Screen captures one pane's visible grid.
@@ -34,9 +36,11 @@ type ClientBackend interface {
 	PreviewAgent(ctx context.Context, project, window string, req CreateAgentRequest) (any, error)
 }
 
-// Follower yields what was appended since the previous call.
+// Follower yields what was appended since the previous call, and where it
+// got to.
 type Follower interface {
 	Next() ([]any, error)
+	Offset() int64
 }
 
 // Poll intervals. Variables only so a test can shorten them.
@@ -116,7 +120,27 @@ func (s *Server) registerClientRoutes(mux *http.ServeMux) {
 		if !ok {
 			return
 		}
-		follower, err := c.FollowTranscript(r.Context(), r.PathValue("agent"), r.URL.Query().Get("from") == "start")
+		// A reconnecting EventSource sends the id of the last frame it got,
+		// which is the offset to resume from; nothing written while it was
+		// away is lost.
+		offset := int64(-1)
+		from := r.Header.Get("Last-Event-ID")
+		if from == "" {
+			from = r.URL.Query().Get("from")
+		}
+		switch from {
+		case "", "end":
+		case "start":
+			offset = 0
+		default:
+			parsed, perr := strconv.ParseInt(from, 10, 64)
+			if perr != nil || parsed < 0 {
+				s.fail(w, r, InvalidRequest("from must be start, end, or a byte offset"))
+				return
+			}
+			offset = parsed
+		}
+		follower, err := c.FollowTranscript(r.Context(), r.PathValue("agent"), offset)
 		if err != nil {
 			s.fail(w, r, err)
 			return
@@ -183,12 +207,13 @@ func (s *Server) streamFollower(w http.ResponseWriter, r *http.Request, follower
 				}
 				continue
 			}
+			id := strconv.FormatInt(follower.Offset(), 10)
 			for _, item := range items {
 				frame, err := json.Marshal(item)
 				if err != nil {
 					continue
 				}
-				if out.event("turn", frame) != nil {
+				if out.eventID("turn", id, frame) != nil {
 					return
 				}
 			}

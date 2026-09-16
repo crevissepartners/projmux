@@ -70,6 +70,19 @@ func (w *sseWriter) event(name string, body []byte) error {
 	return nil
 }
 
+// eventID sends a frame carrying an id, which an EventSource echoes back as
+// Last-Event-ID when it reconnects.
+func (w *sseWriter) eventID(name, id string, body []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, err := fmt.Fprintf(w.w, "id: %s\nevent: %s\ndata: %s\n\n", id, name, body); err != nil {
+		return err
+	}
+	w.flusher.Flush()
+	w.last = time.Now()
+	return nil
+}
+
 func (w *sseWriter) keepalive() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

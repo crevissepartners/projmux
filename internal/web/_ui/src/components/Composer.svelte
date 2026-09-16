@@ -5,6 +5,7 @@
   import { t } from "../lib/i18n.svelte";
   import { drop, load, save } from "../lib/local";
   import { live } from "../lib/state.svelte";
+  import { addPending } from "../lib/pending.svelte";
   import { paneLabel, type AgentView } from "../lib/tree";
   import type { Surface } from "../lib/types";
   import { ui } from "../lib/ui.svelte";
@@ -90,19 +91,22 @@
         try {
           await post(`${paths.agent(agent.uid)}/turns`, { text });
           receipt = { text: t("web.composer.started"), err: false };
+          addPending(agent.uid, text);
         } catch (err) {
           // A running turn refuses a start. Adding to it is what sending
           // means then, and it is this client's call to make, not the server's.
           if (!(err instanceof ApiError && err.code === "turn-in-progress")) throw err;
           await post(`${paths.agent(agent.uid)}/turns/current/steer`, { text });
           receipt = { text: t("web.composer.steered"), err: false };
+          addPending(agent.uid, text);
         }
       } else {
-        const body = await post<{ delivery: { state: string } }>(`${paths.agent(agent.uid)}/messages`, {
-          body: text,
-          source,
-        });
+        const body = await post<{ delivery: { state: string; messageRef?: string } }>(
+          `${paths.agent(agent.uid)}/messages`,
+          { body: text, source },
+        );
         receipt = { text: deliveryText(body.delivery.state), err: false };
+        addPending(agent.uid, text, body.delivery.messageRef || "");
       }
       text = "";
       drop(draftKey);

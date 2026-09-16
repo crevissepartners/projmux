@@ -207,6 +207,31 @@ export function findPane(win: WindowView | null, uid: string | null): PaneView |
   return win?.panes.find((p) => p.uid === uid) || null;
 }
 
+/**
+ * How the URL names a slot: an agent's slot by its agent, a shell by its
+ * pane. Resuming an agent can give it a new pane, and a link or a split
+ * should still find it; the agent uid is what stays.
+ */
+export function slotRef(pane: PaneView): string {
+  return pane.agent?.uid || pane.uid;
+}
+
+/** The pane a slot ref names, by agent uid or pane uid. */
+export function findSlot(win: WindowView | null, ref: string | null): PaneView | null {
+  if (!win || !ref) return null;
+  return win.panes.find((p) => p.uid === ref || p.agent?.uid === ref) || null;
+}
+
+export function locateSlot(tree: Tree, ref: string): Located | null {
+  for (const project of tree.projects) {
+    for (const win of project.windows) {
+      const pane = findSlot(win, ref);
+      if (pane) return { project, win, pane };
+    }
+  }
+  return null;
+}
+
 export function locatePane(tree: Tree, uid: string): Located | null {
   for (const project of tree.projects) {
     for (const win of project.windows) {

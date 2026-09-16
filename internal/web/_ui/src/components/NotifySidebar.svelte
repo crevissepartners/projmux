@@ -5,7 +5,7 @@
   import { live } from "../lib/state.svelte";
   import { ago } from "../lib/time";
   import { fail } from "../lib/toast.svelte";
-  import { paneByRuntime } from "../lib/tree";
+  import { paneByRuntime, slotRef } from "../lib/tree";
   import { listKeys, resizable } from "../lib/actions";
   import type { Notification } from "../lib/types";
 
@@ -31,7 +31,7 @@
     try {
       const target = paneByRuntime(live.tree, entry.pane);
       if (target) {
-        go({ project: target.project.uid, window: target.win.uid, pane: target.pane.uid });
+        go({ project: target.project.uid, window: target.win.uid, pane: slotRef(target.pane) });
         await post(`${paths.pane(target.project.uid, target.win.uid, target.pane.uid)}/focus`).catch(fail);
       }
       await post(paths.notificationAck(entry.id));

@@ -6,6 +6,7 @@
 export interface Selection {
   project: string | null;
   window: string | null;
+  /** A slot ref: the agent uid for an agent's pane, the pane uid for a shell. */
   pane: string | null;
 }
 
@@ -17,7 +18,7 @@ function parse(): { sel: Selection; extras: string[] } {
     .map((uid) => uid.trim())
     .filter(Boolean);
   return {
-    sel: { project: at("project", 0), window: at("window", 2), pane: at("pane", 4) },
+    sel: { project: at("project", 0), window: at("window", 2), pane: at("agent", 4) || at("pane", 4) },
     extras,
   };
 }
@@ -30,8 +31,13 @@ export function pathFor(sel: Partial<Selection>): string {
   if (!sel.project) return "/";
   let path = `/project/${sel.project}`;
   if (sel.window) path += `/window/${sel.window}`;
-  if (sel.window && sel.pane) path += `/pane/${sel.pane}`;
+  if (sel.window && sel.pane) path += sel.pane.startsWith("agent-") ? `/agent/${sel.pane}` : `/pane/${sel.pane}`;
   return path;
+}
+
+/** Rewrite the current URL in place, for an old spelling of the same view. */
+export function canonicalize(sel: Selection, extras: string[]): void {
+  push(pathFor(sel), extras, true);
 }
 
 function push(path: string, extras: string[], replace = false): void {

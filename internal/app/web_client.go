@@ -113,6 +113,8 @@ func (b *webBackend) Transcript(ctx context.Context, agentUID string, limit int)
 
 type turnFollower struct{ tailer *transcript.Tailer }
 
+func (f turnFollower) Offset() int64 { return f.tailer.Offset() }
+
 func (f turnFollower) Next() ([]any, error) {
 	turns, err := f.tailer.Next()
 	if err != nil {
@@ -125,7 +127,7 @@ func (f turnFollower) Next() ([]any, error) {
 	return out, nil
 }
 
-func (b *webBackend) FollowTranscript(ctx context.Context, agentUID string, fromStart bool) (web.Follower, error) {
+func (b *webBackend) FollowTranscript(ctx context.Context, agentUID string, offset int64) (web.Follower, error) {
 	s, err := b.snapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -139,7 +141,11 @@ func (b *webBackend) FollowTranscript(ctx context.Context, agentUID string, from
 	if err != nil {
 		return nil, web.NewError(http.StatusConflict, transcript.NoteNoTranscript, err.Error())
 	}
-	tailer, err := transcript.NewTailer(strings.ToLower(agent.Spec.Provider), path, fromStart)
+	provider := strings.ToLower(agent.Spec.Provider)
+	if offset >= 0 {
+		return turnFollower{tailer: transcript.NewTailerAt(provider, path, offset)}, nil
+	}
+	tailer, err := transcript.NewTailer(provider, path, false)
 	if err != nil {
 		return nil, web.NewError(http.StatusConflict, transcript.NoteNoTranscript, err.Error())
 	}

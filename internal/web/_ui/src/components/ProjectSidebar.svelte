@@ -3,7 +3,7 @@
   import { t } from "../lib/i18n.svelte";
   import { go, route } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
-  import { livePanes, type ProjectView } from "../lib/tree";
+  import { livePanes, slotRef, type ProjectView } from "../lib/tree";
   import { listKeys, resizable } from "../lib/actions";
 
   interface Props {
@@ -20,7 +20,7 @@
   function open(project: ProjectView) {
     const ranked = livePanes(live.tree, project).sort(byAttention);
     if (ranked.length) {
-      go({ project: project.uid, window: ranked[0].win.uid, pane: ranked[0].pane.uid });
+      go({ project: project.uid, window: ranked[0].win.uid, pane: slotRef(ranked[0].pane) });
       return;
     }
     const first = project.windows.find((w) => !w.unbound && w.runtimeId);

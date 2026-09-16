@@ -7,7 +7,7 @@
   import type { ToolCall } from "../lib/types";
   import AskView from "./AskView.svelte";
 
-  let { call }: { call: ToolCall } = $props();
+  let { call, paneUID }: { call: ToolCall; paneUID: string } = $props();
 
   const question = $derived.by(() => {
     if (call.name !== "AskUserQuestion" || !call.input) return null;
@@ -21,7 +21,7 @@
 </script>
 
 {#if question}
-  <AskView questions={question} result={call.result || ""} />
+  <AskView questions={question} result={call.result || ""} {paneUID} />
 {:else}
   <details class="tool" class:err={call.error}>
     <summary>

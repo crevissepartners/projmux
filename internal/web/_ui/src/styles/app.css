@@ -1569,3 +1569,7 @@ button.seg.notify { color: inherit; padding: 0 var(--s3); }
   overflow: auto;
 }
 .tool .tflag.soft { color: var(--muted); border-color: var(--rule); background: none; }
+.turn.pending { opacity: 0.6; }
+.turn.pending .body { white-space: pre-wrap; }
+.slot-btn.jump { width: auto; padding: 0 var(--s2); color: var(--warning); }
+button.send.jump { font-size: 11px; padding: 3px 10px; }

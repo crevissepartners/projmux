@@ -8,7 +8,7 @@
   import { go } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
   import { ago } from "../lib/time";
-  import { livePanes, paneLabel, type ProjectView } from "../lib/tree";
+  import { livePanes, paneLabel, slotRef, type ProjectView } from "../lib/tree";
 
   let { project }: { project: ProjectView | null } = $props();
 
@@ -33,7 +33,7 @@
           class="card"
           data-provider={row.pane.agent?.provider}
           data-activity={state?.tone || ""}
-          onclick={() => go({ project: row.project.uid, window: row.win.uid, pane: row.pane.uid })}
+          onclick={() => go({ project: row.project.uid, window: row.win.uid, pane: slotRef(row.pane) })}
         >
           <div class="card-top">
             <span class="slot-dot"></span>

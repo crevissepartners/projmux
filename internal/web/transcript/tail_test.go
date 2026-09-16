@@ -90,3 +90,34 @@ func TestNewTailerFromEndNeedsFile(t *testing.T) {
 		t.Fatal("expected an error for a missing file")
 	}
 }
+
+func TestReadOffsetStopsBeforeAnUnfinishedLineAndTheTailerResumesThere(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	done := `{"type":"user","message":{"role":"user","content":"one"}}` + "\n"
+	partial := `{"type":"user","message":{"role":"user","content":"tw`
+	if err := os.WriteFile(path, []byte(done+partial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	read, err := ReadTranscript("claude", path, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Offset != int64(len(done)) || len(read.Turns) != 1 {
+		t.Fatalf("offset = %d turns = %d, want %d and 1", read.Offset, len(read.Turns), len(done))
+	}
+	tailer := NewTailerAt("claude", path, read.Offset)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.WriteString(`o"}}` + "\n")
+	_ = file.Close()
+	turns, err := tailer.Next()
+	if err != nil || len(turns) != 1 || turns[0].Text != "two" {
+		t.Fatalf("resumed turns = %+v %v, want the finished line", turns, err)
+	}
+	info, _ := os.Stat(path)
+	if tailer.Offset() != info.Size() {
+		t.Fatalf("tailer offset = %d, want %d", tailer.Offset(), info.Size())
+	}
+}

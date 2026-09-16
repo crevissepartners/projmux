@@ -6,9 +6,10 @@
   import { t } from "../lib/i18n.svelte";
   import { closeOnScreen, focusOnScreen } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
-  import { locatePane, paneLabel, type PaneView, type ProjectView, type WindowView } from "../lib/tree";
+  import { locateSlot, paneLabel, slotRef, type PaneView, type ProjectView, type WindowView } from "../lib/tree";
   import Chat from "./Chat.svelte";
   import InlineName from "./InlineName.svelte";
+  import OpenInTerminal from "./OpenInTerminal.svelte";
 
   interface Props {
     project: ProjectView;
@@ -32,12 +33,12 @@
   const chatKey = $derived(`${pane.agent?.uid}:${pane.agent?.phase}:${pane.runtimeId}`);
 
   function focus() {
-    focusOnScreen({ project: project.uid, window: win.uid, pane: pane.uid });
+    focusOnScreen({ project: project.uid, window: win.uid, pane: slotRef(pane) });
   }
 
-  function locate(uid: string) {
-    const found = locatePane(live.tree, uid);
-    return found ? { project: found.project.uid, window: found.win.uid, pane: found.pane.uid } : null;
+  function locate(ref: string) {
+    const found = locateSlot(live.tree, ref);
+    return found ? { project: found.project.uid, window: found.win.uid, pane: slotRef(found.pane) } : null;
   }
 </script>
 
@@ -76,6 +77,11 @@
       </span>
     {/if}
     <span class="grow"></span>
+    <!-- A slot waiting on input or approval is waiting on something the web
+         cannot answer yet; the terminal is one click away. -->
+    {#if activity?.tone === "wait" || activity?.tone === "alert"}
+      <OpenInTerminal paneUID={pane.uid} compact />
+    {/if}
     <button
       type="button"
       class="slot-btn"
@@ -83,7 +89,7 @@
       onmousedown={(e) => e.stopPropagation()}
       onclick={async (e) => {
         e.stopPropagation();
-        if (await closePane(project.uid, win.uid, pane.uid)) closeOnScreen(pane.uid, locate);
+        if (await closePane(project.uid, win.uid, pane.uid)) closeOnScreen(slotRef(pane), locate);
       }}>×</button
     >
   </div>

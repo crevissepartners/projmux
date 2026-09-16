@@ -11,6 +11,7 @@
   import type { Repository, Surface, TranscriptView, Turn } from "../lib/types";
   import Composer from "./Composer.svelte";
   import TurnView from "./TurnView.svelte";
+  import { pending, settle } from "../lib/pending.svelte";
 
   interface Props {
     agent: AgentView;
@@ -31,16 +32,54 @@
   let log: HTMLElement | undefined = $state();
   let source: EventSource | null = null;
 
+  // A reply can be recorded before the send that caused it returns, so a
+  // pending line the transcript already shows is not drawn.
+  const waiting = $derived(
+    pending.filter(
+      (p) =>
+        p.agent === agent.uid &&
+        !turns.some(
+          (turn) =>
+            (p.messageRef && turn.messageRef === p.messageRef) ||
+            (turn.role === "user" && turn.text.trim() === p.text.trim()),
+        ),
+    ),
+  );
+  const agentName = $derived(agent.name && agent.name !== agent.uid ? agent.name : providerText(agent.provider));
   // A turn whose only content is the reasoning flag says nothing a reader can
   // use, and on a busy session it is every other row.
-  const agentName = $derived(agent.name && agent.name !== agent.uid ? agent.name : providerText(agent.provider));
   const noise = (turn: Turn) => turn.thinking && !turn.text.trim() && !turn.tools?.length;
   const speaker = (turn: Turn) => `${turn.role}:${turn.via || ""}:${turn.from?.agentUID || ""}`;
 
+  // A streamed tool result arrives as its own record, keyed by the id of the
+  // call it answers. The full read stitches those server-side; the stream
+  // does it here, so the two paths show the same thing.
+  function merge(turn: Turn): Turn | null {
+    const calls = (turn.tools || []).filter((call) => {
+      if (call.name || !call.id) return true;
+      for (let i = turns.length - 1; i >= 0; i--) {
+        const target = turns[i].tools?.find((c) => c.name && c.id === call.id);
+        if (target) {
+          target.result = call.result;
+          target.error = call.error;
+          target.clipped = target.clipped || call.clipped;
+          return false;
+        }
+      }
+      return true;
+    });
+    const merged = { ...turn, tools: calls };
+    if (!merged.text.trim() && !calls.length && !merged.thinking) return null;
+    return merged;
+  }
+
   async function start(uid: string) {
+    let offset = -1;
     try {
       const body = await get<TranscriptView>(paths.transcript(uid));
+      offset = body.transcript.offset;
       turns = (body.transcript.turns || []).filter((turn) => !noise(turn));
+      for (const turn of turns) settle(uid, turn);
       note = body.transcript.note || "";
       truncated = body.transcript.truncated;
       repo = body.repository || null;
@@ -52,14 +91,18 @@
     }
     loading = false;
     if (note === "no-transcript") return;
-    const events = new EventSource(`${paths.transcript(uid)}/events`);
+    // The stream starts where this read ended, so nothing written in between
+    // is lost; a reconnect resumes from the last frame's id.
+    const events = new EventSource(`${paths.transcript(uid)}/events?from=${offset}`);
     source = events;
     events.addEventListener("open", () => (stream = "live"));
     events.addEventListener("error", () => (stream = "warn"));
     events.addEventListener("turn", (event) => {
       try {
-        const turn = JSON.parse((event as MessageEvent).data) as Turn;
-        if (!noise(turn)) {
+        const raw = JSON.parse((event as MessageEvent).data) as Turn;
+        settle(uid, raw);
+        const turn = merge(raw);
+        if (turn && !noise(turn)) {
           turns.push(turn);
           note = "";
         }
@@ -91,16 +134,22 @@
         {t("web.status.loading")}
       {:else if error}
         <div class="notice err">
-        {error.text}
-        <details class="toast-detail"><summary>{t("web.error.details")}</summary><pre>{error.detail}</pre></details>
-      </div>
+          {error.text}
+          <details class="toast-detail"><summary>{t("web.error.details")}</summary><pre>{error.detail}</pre></details>
+        </div>
       {:else}
         {#if truncated}<div class="notice">{t("web.chat.truncated")}</div>{/if}
         {#if !turns.length}
           <div class="notice">{note === "no-transcript" ? t("web.chat.no_transcript") : t("web.chat.empty")}</div>
         {/if}
         {#each turns as turn, i (i)}
-          <TurnView {turn} agentName={agentName} {repo} continued={i > 0 && speaker(turns[i - 1]) === speaker(turn)} />
+          <TurnView {turn} {agentName} {repo} {paneUID} continued={i > 0 && speaker(turns[i - 1]) === speaker(turn)} />
+        {/each}
+        {#each waiting as item (item.id)}
+          <div class="turn user pending">
+            <div class="who"><span>{t("web.chat.me")}</span><span class="flag">{t("web.chat.pending")}</span></div>
+            <div class="body">{item.text}</div>
+          </div>
         {/each}
       {/if}
     </div>

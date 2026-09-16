@@ -3,7 +3,7 @@
   import { closeWindow, createWindow, renameWindow } from "../lib/commands";
   import { t } from "../lib/i18n.svelte";
   import { go } from "../lib/router.svelte";
-  import type { ProjectView, WindowView } from "../lib/tree";
+  import { slotRef, type ProjectView, type WindowView } from "../lib/tree";
   import { setToggle, ui } from "../lib/ui.svelte";
   import InlineName from "./InlineName.svelte";
 
@@ -19,7 +19,8 @@
 
   /** The first pane worth landing on, so changing Window lands on a Pane. */
   function landing(win: WindowView) {
-    return win.panes.find((p) => p.runtimeId && (ui.showShell || p.agent))?.uid ?? null;
+    const first = win.panes.find((p) => p.runtimeId && (ui.showShell || p.agent));
+    return first ? slotRef(first) : null;
   }
 
   const shells = $derived((current?.panes || []).filter((p) => p.runtimeId && !p.agent).length);

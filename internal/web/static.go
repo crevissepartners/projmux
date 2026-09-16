@@ -48,9 +48,11 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(page)
 }
 
-// isClientPath accepts /, /project/x, /project/x/window/y and
-// /project/x/window/y/pane/z. The uids themselves are not checked here; the
-// client asks the API, which reports a miss.
+// isClientPath accepts /, /project/x, /project/x/window/y, and
+// /project/x/window/y/agent/z or .../pane/z: an agent's slot is addressed by
+// its agent, which survives a resume, and a shell's by its pane. The uids
+// themselves are not checked here; the client asks the API, which reports a
+// miss.
 func isClientPath(path string) bool {
 	if path == "/" {
 		return true
@@ -62,7 +64,7 @@ func isClientPath(path string) bool {
 	case 4:
 		return parts[0] == "project" && parts[2] == "window"
 	case 6:
-		return parts[0] == "project" && parts[2] == "window" && parts[4] == "pane"
+		return parts[0] == "project" && parts[2] == "window" && (parts[4] == "pane" || parts[4] == "agent")
 	}
 	return false
 }

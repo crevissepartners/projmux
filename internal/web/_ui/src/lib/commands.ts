@@ -31,7 +31,7 @@ export async function createWindow(project: string): Promise<void> {
     if (body.agentError) toast(body.agentError.message, "err");
     await refresh();
     const window = body.window?.metadata.uid;
-    if (window) go({ project, window, pane: body.pane?.metadata.uid ?? null });
+    if (window) go({ project, window, pane: body.agent?.metadata.uid ?? body.pane?.metadata.uid ?? null });
   } catch (err) {
     fail(err);
   }
