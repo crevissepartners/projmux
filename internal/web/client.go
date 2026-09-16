@@ -34,6 +34,19 @@ type ClientBackend interface {
 	ResumeCandidates(ctx context.Context, window string) (any, error)
 	// PreviewAgent renders the exact command a create-agent request would run.
 	PreviewAgent(ctx context.Context, project, window string, req CreateAgentRequest) (any, error)
+	// AnswerQuestion answers the agent's pending AskUserQuestion.
+	AnswerQuestion(ctx context.Context, agent string, req QuestionAnswer) (any, error)
+}
+
+// QuestionAnswer is the body of POST /web/agents/{agent}/question. It carries
+// only which options were picked; the question itself is read from the
+// agent's transcript, and ToolID must name the question still pending.
+type QuestionAnswer struct {
+	ToolID  string `json:"toolId"`
+	Answers []struct {
+		Picks []int  `json:"picks"`
+		Other string `json:"other"`
+	} `json:"answers"`
 }
 
 // Follower yields what was appended since the previous call, and where it
@@ -115,6 +128,27 @@ func (s *Server) registerClientRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, body)
 	})
 
+	mux.HandleFunc("POST /api/v1/web/agents/{agent}/question", func(w http.ResponseWriter, r *http.Request) {
+		c, ok := s.client(w, r)
+		if !ok {
+			return
+		}
+		var req QuestionAnswer
+		if err := decodeBody(w, r, &req); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if req.ToolID == "" {
+			s.fail(w, r, InvalidRequest("toolId is required"))
+			return
+		}
+		body, err := c.AnswerQuestion(r.Context(), r.PathValue("agent"), req)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
+	})
 	mux.HandleFunc("GET /api/v1/web/agents/{agent}/transcript/events", func(w http.ResponseWriter, r *http.Request) {
 		c, ok := s.client(w, r)
 		if !ok {

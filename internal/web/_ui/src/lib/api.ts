@@ -69,6 +69,7 @@ export const paths = {
   agent: (agent: string) => `/api/v1/agents/${seg(agent)}`,
   notificationAck: (id: string) => `/api/v1/notifications/${seg(id)}/ack`,
   transcript: (agent: string) => `/api/v1/web/agents/${seg(agent)}/transcript`,
+  question: (agent: string) => `/api/v1/web/agents/${seg(agent)}/question`,
   layout: (window: string) => `/api/v1/web/windows/${seg(window)}/layout`,
   resumeCandidates: (window: string) => `/api/v1/web/windows/${seg(window)}/resume-candidates`,
 };

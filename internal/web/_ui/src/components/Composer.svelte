@@ -4,9 +4,8 @@
   import { deliveryText, explain } from "../lib/errors";
   import { t } from "../lib/i18n.svelte";
   import { drop, load, save } from "../lib/local";
-  import { live } from "../lib/state.svelte";
   import { addPending } from "../lib/pending.svelte";
-  import { paneLabel, type AgentView } from "../lib/tree";
+  import type { AgentView } from "../lib/tree";
   import type { Surface } from "../lib/types";
   import { ui } from "../lib/ui.svelte";
 
@@ -27,33 +26,15 @@
   let receipt = $state<{ text: string; detail?: string; err: boolean } | null>(null);
   let input: HTMLTextAreaElement | undefined = $state();
 
-  // Only claude and codex agents can anchor a send: the broker checks the
-  // source's capability too. The target itself is offered first, because
-  // anchoring on it does not attribute a person's text to a third agent.
-  const sources = $derived.by(() => {
-    const capable: { uid: string; label: string }[] = [];
-    let self: { uid: string; label: string } | null = null;
-    for (const project of live.tree.projects) {
-      for (const win of project.windows) {
-        for (const pane of win.panes) {
-          const a = pane.agent;
-          if (!a || a.phase !== "Running" || !["claude", "codex"].includes(a.provider)) continue;
-          const name = paneLabel(pane).name;
-          if (a.uid === agent.uid) self = { uid: a.uid, label: t("web.composer.self_anchor", { name }) };
-          else capable.push({ uid: a.uid, label: `${name} · ${project.name}` });
-        }
-      }
-    }
-    return self ? [self, ...capable] : capable;
-  });
-  let source = $state("");
-  $effect(() => {
-    if (!sources.some((s) => s.uid === source)) source = sources[0]?.uid || "";
-  });
+  // A message is sent as the target agent itself: a browser has no pane of
+  // its own to send from, and naming the target keeps a person's text from
+  // being attributed to some other agent. The agent has to be running to
+  // take it.
+  const running = $derived(agent.phase === "Running");
 
   const bytes = $derived(new TextEncoder().encode(text).length);
   const over = $derived(!!surface.maxBytes && bytes > surface.maxBytes);
-  const blocked = $derived(surface.sourceRequired && !source);
+  const blocked = $derived(!!surface.sourceRequired && !running);
   const turnMode = $derived(surface.mode === "turn");
 
   // The box grows with what is typed instead of reserving lines for a message
@@ -103,7 +84,7 @@
       } else {
         const body = await post<{ delivery: { state: string; messageRef?: string } }>(
           `${paths.agent(agent.uid)}/messages`,
-          { body: text, source },
+          { body: text, source: agent.uid },
         );
         receipt = { text: deliveryText(body.delivery.state), err: false };
         addPending(agent.uid, text, body.delivery.messageRef || "");
@@ -132,6 +113,7 @@
   <div class="notice warn">{t("web.composer.no_input")}</div>
 {:else}
   <form class="composer" onsubmit={submit}>
+    {#if blocked}<div class="notice warn">{t("web.composer.not_running")}</div>{/if}
     <textarea
       bind:this={input}
       bind:value={text}
@@ -147,15 +129,6 @@
       }}
     ></textarea>
     <div class="controls">
-      {#if surface.sourceRequired}
-        <select bind:value={source} disabled={!sources.length} title={t("web.composer.source_title")}>
-          {#each sources as option (option.uid)}
-            <option value={option.uid}>{option.label}</option>
-          {:else}
-            <option value="">{t("web.composer.no_source")}</option>
-          {/each}
-        </select>
-      {/if}
       <button type="submit" class="send" disabled={sending || over || blocked || !text.trim()}>
         {sending ? t("web.composer.sending") : turnMode ? t("web.composer.send_turn") : t("web.composer.send_message")}
       </button>

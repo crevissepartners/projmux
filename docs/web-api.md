@@ -200,6 +200,7 @@ Registry, so they are kept out of the core surface. They live under
 | GET | `/api/v1/web/panes/{pane}/screen` | one `capture-pane -e` of the pane, parsed into styled runs |
 | GET | `/api/v1/web/panes/{pane}/screen/events` | SSE `screen` frames, sent on change; `gone` when the pane is no longer there |
 | GET | `/api/v1/web/windows/{window}/resume-candidates` | `{items}`: the window's agents with no live pane, each with its first and last transcript line |
+| POST | `/api/v1/web/agents/{agent}/question` | `{toolId, answers:[{picks, other}]}`: answers the Claude agent's pending AskUserQuestion; see *The question exception* |
 | POST | `/api/v1/web/projects/{project}/windows/{window}/agents/preview` | `{argv}`: the exact command a create-agent request with the same body would run; runs nothing |
 
 A turn is `{role, text, at, kind, thinking, from, messageRef, via, tools}`.
@@ -212,14 +213,34 @@ Web routes take a bare uid, because uids are global. Each route resolves the
 uid in the Registry and refuses a target that is not on the app-owned tmux
 server.
 
-### No keys into a Pane
+### The question exception
 
-The prototype answered AskUserQuestion by pressing the widget's keys, and
-could paste text into a Pane so it arrived as the operator's own words. Both
-are left out. projmux keeps agent input off raw pane keys, and
-`agent_message_test.go` enforces that for the message path; the web client
-does not get an exception. Where the prototype offered those inputs, the
-client shows that they are done in the terminal.
+projmux keeps agent input off raw pane keys. The web client makes one
+contained exception, chosen by the operator: answering a Claude Code
+AskUserQuestion, for which Claude Code has no channel a third party can call.
+**It is to be replaced by that channel when one exists.** Sending text as the
+operator's own words stays out.
+
+`internal/web/question` is the only code in the web server that sends keys
+to a pane; `TestPaneKeysStayInTheQuestionPackage` fails if any other web file
+does. The route:
+
+- takes only option indexes and free text. The question's shape is read from
+  the agent's transcript, and a `toolId` that is not the pending question is
+  refused (`question-changed`);
+- resolves the pane from this request's observation of the app server, and
+  refuses unless the pane still carries the agent's `@projmux_pane_uid`;
+- captures the pane first and refuses unless the widget and the question's
+  first line are on screen (`question-not-on-screen`);
+- presses the widget's own keys, as measured against a live session: the
+  option number for a single-select question, numbers and `Tab` for
+  multi-select, the "Type something" number then the text then `Enter` for
+  free text, and `1` on the review screen only when that screen is showing
+  (`question-review-not-shown` otherwise, with the answers left unsent);
+- refuses free text on a multi-select question, whose keys were not measured.
+
+Where the client cannot answer, the card and a waiting slot offer "Open in
+terminal", which moves the attached tmux client to the pane.
 
 ## Open
 
@@ -233,9 +254,8 @@ client shows that they are done in the terminal.
   - *Delivery.* The coordination broker always wraps a message in an
     envelope marked untrusted. There is no path that delivers it as the
     operator's own utterance.
-  - *Questions.* There is no known channel for answering a Claude
-    AskUserQuestion from outside the terminal. Finding out whether one exists
-    comes first.
+  - *Questions.* The web client answers Claude questions through the
+    contained key exception above until an answer channel exists.
 
   Codex is already covered: the app-server takes a turn as a user turn. The
   design is written up separately and agreed before anything is built.

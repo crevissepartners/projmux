@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/web"
+	"github.com/crevissepartners/projmux/internal/web/question"
 	"github.com/crevissepartners/projmux/internal/web/termview"
 	"github.com/crevissepartners/projmux/internal/web/transcript"
 )
@@ -312,4 +313,68 @@ func clipLine(text string) string {
 		cut--
 	}
 	return line[:cut] + "…"
+}
+
+// questionRunner runs the tmux calls that answer a question; tests replace it.
+var questionRunner question.Runner = inttmux.ExecRunner{}
+
+// AnswerQuestion answers the agent's pending question with the widget's own
+// keys. The question's shape comes from the transcript, the pane from this
+// request's observation of the app server, and the pane must still carry the
+// agent's pane uid before anything is pressed.
+func (b *webBackend) AnswerQuestion(ctx context.Context, agentUID string, req web.QuestionAnswer) (any, error) {
+	s, err := b.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := s.agent(agentUID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.ToLower(agent.Spec.Provider) != "claude" {
+		return nil, web.NewError(http.StatusBadRequest, web.CodeUnsupported, "only a Claude agent asks questions this way")
+	}
+	home, _ := os.UserHomeDir()
+	path, err := transcript.Path(agent, home)
+	if err != nil {
+		return nil, web.NewError(http.StatusConflict, transcript.NoteNoTranscript, err.Error())
+	}
+	read, err := transcript.ReadTranscript("claude", path, 40)
+	if err != nil {
+		return nil, web.NewError(http.StatusConflict, transcript.NoteNoTranscript, err.Error())
+	}
+	id, questions, err := question.Pending(read.Turns)
+	if err != nil {
+		return nil, questionError(err)
+	}
+	if req.ToolID != id {
+		return nil, web.NewError(http.StatusConflict, "question-changed", "the question on screen is not the one pending; reload")
+	}
+	paneUID := agent.Status.PaneRef
+	runtime, err := s.livePane(paneUID)
+	if err != nil {
+		return nil, err
+	}
+	answers := make([]question.Answer, len(req.Answers))
+	for i, a := range req.Answers {
+		answers[i] = question.Answer{Picks: a.Picks, Other: a.Other}
+	}
+	b.mutations.Lock()
+	defer b.mutations.Unlock()
+	pane := question.Pane{Runner: questionRunner, Server: b.transport.Args(), ID: runtime, UID: paneUID}
+	if err := pane.Answer(ctx, questions, answers); err != nil {
+		return nil, questionError(err)
+	}
+	return map[string]any{"ok": true, "toolId": id}, nil
+}
+
+func questionError(err error) error {
+	if refusal, ok := question.IsRefusal(err); ok {
+		status := http.StatusConflict
+		if refusal.Code == question.CodeInvalid || refusal.Code == question.CodeUnmeasured {
+			status = http.StatusBadRequest
+		}
+		return web.NewError(status, refusal.Code, refusal.Message)
+	}
+	return err
 }

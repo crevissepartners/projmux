@@ -11,7 +11,7 @@
   import type { Repository, Surface, TranscriptView, Turn } from "../lib/types";
   import Composer from "./Composer.svelte";
   import TurnView from "./TurnView.svelte";
-  import { pending, settle } from "../lib/pending.svelte";
+  import { PENDING_LATE_MS, pending, settle } from "../lib/pending.svelte";
 
   interface Props {
     agent: AgentView;
@@ -115,7 +115,13 @@
   // The slot is rebuilt when its agent changes, so one start per instance is right.
   start(untrack(() => agent.uid));
 
+  // Pending lines are always drawn after the recorded turns, so they never
+  // hide one; this clock only changes what a late one says.
+  let now = $state(Date.now());
+  const clock = setInterval(() => (now = Date.now()), 5000);
+
   onDestroy(() => {
+    clearInterval(clock);
     source?.close();
     stream = "";
   });
@@ -143,11 +149,14 @@
           <div class="notice">{note === "no-transcript" ? t("web.chat.no_transcript") : t("web.chat.empty")}</div>
         {/if}
         {#each turns as turn, i (i)}
-          <TurnView {turn} {agentName} {repo} {paneUID} continued={i > 0 && speaker(turns[i - 1]) === speaker(turn)} />
+          <TurnView {turn} {agentName} {repo} {paneUID} agentUID={agent.uid} continued={i > 0 && speaker(turns[i - 1]) === speaker(turn)} />
         {/each}
         {#each waiting as item (item.id)}
           <div class="turn user pending">
-            <div class="who"><span>{t("web.chat.me")}</span><span class="flag">{t("web.chat.pending")}</span></div>
+            <div class="who">
+              <span>{t("web.chat.me")}</span>
+              <span class="flag">{now - item.sentAt > PENDING_LATE_MS ? t("web.chat.pending_late") : t("web.chat.pending")}</span>
+            </div>
             <div class="body">{item.text}</div>
           </div>
         {/each}

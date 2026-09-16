@@ -15,8 +15,9 @@
     repo: Repository | null;
     continued: boolean;
     paneUID: string;
+    agentUID: string;
   }
-  let { turn, agentName, repo, continued, paneUID }: Props = $props();
+  let { turn, agentName, repo, continued, paneUID, agentUID }: Props = $props();
 
   // The label says who: the operator's own messages read as "me", the
   // agent's as its name.
@@ -78,6 +79,6 @@
     <div class="body"><span class="flag">· {t("web.chat.thinking")}</span></div>
   {/if}
   {#each turn.tools || [] as call, i (call.id || i)}
-    <ToolView {call} {paneUID} />
+    <ToolView {call} {paneUID} {agentUID} />
   {/each}
 </div>

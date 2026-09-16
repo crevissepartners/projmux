@@ -67,6 +67,9 @@ func (c *clientStub) ResumeCandidates(context.Context, string) (any, error) { re
 func (c *clientStub) PreviewAgent(context.Context, string, string, CreateAgentRequest) (any, error) {
 	return nil, nil
 }
+func (c *clientStub) AnswerQuestion(context.Context, string, QuestionAnswer) (any, error) {
+	return map[string]bool{"ok": true}, nil
+}
 
 func TestTranscriptEventsSendEachTurnAndSurviveAReadError(t *testing.T) {
 	stub := &clientStub{follower: &followerStub{queue: [][]any{
