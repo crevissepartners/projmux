@@ -138,6 +138,8 @@ func (s *Server) registerClientRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, body)
 	})
 
+	mux.HandleFunc("POST "+uploadPath, s.handleUpload)
+	mux.HandleFunc("GET "+uploadPath+"/{name}", s.serveUpload)
 	mux.HandleFunc("POST /api/v1/web/agents/{agent}/question", func(w http.ResponseWriter, r *http.Request) {
 		c, ok := s.client(w, r)
 		if !ok {

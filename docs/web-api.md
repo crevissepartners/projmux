@@ -202,6 +202,8 @@ Registry, so they are kept out of the core surface. They live under
 | GET | `/api/v1/web/statusbar` | which status bar parts Settings turned on: `{notifications, usage, project, workingDirectory, git, resources, clock}`, read with the functions the TUI renders from |
 | GET | `/api/v1/web/panes/{pane}/git` | `{cwd, repo, branch, dirty, staged, ahead, behind}` for the directory the Registry records for the pane |
 | GET | `/api/v1/web/windows/{window}/resume-candidates` | `{items}`: the window's agents with no live pane, each with its first and last transcript line |
+| POST | `/api/v1/web/uploads` | an image body sent as `image/png`, `image/jpeg`, `image/webp`, or `image/gif` (at most 10 MiB, format checked from the bytes); kept as `<sha256>.<ext>` with mode 0600 under `<state>/web-uploads` for 7 days and answered with `{path, type, bytes}`. The composer puts the path where the image was pasted. This route alone takes a non-JSON body; the image types need a preflight as JSON does |
+| GET | `/api/v1/web/uploads/{name}` | a stored image by its file name, for showing it in the conversation |
 | POST | `/api/v1/web/agents/{agent}/question` | `{toolId, answers:[{picks, other}]}`: answers the Claude agent's pending AskUserQuestion; see *The question exception* |
 | POST | `/api/v1/web/projects/{project}/windows/{window}/agents/preview` | `{argv}`: the exact command a create-agent request with the same body would run; runs nothing |
 

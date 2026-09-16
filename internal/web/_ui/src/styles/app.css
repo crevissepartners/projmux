@@ -1666,3 +1666,73 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
 @media (hover: none) {
   .code-copy { opacity: 1; }
 }
+
+/* images attached to a message ------------------------------------------- */
+
+.composer.dragging textarea { border-color: var(--accent); border-style: dashed; }
+.attachments { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s2); }
+.attachments li {
+  position: relative;
+  width: 72px;
+  height: 56px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--sunken);
+}
+.attachments img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attachments li.loading img { opacity: 0.45; }
+.attachments li.failed { border-color: var(--critical); }
+.attachments li.failed img { opacity: 0.3; }
+.attach-note {
+  position: absolute;
+  inset: auto 0 0 0;
+  font-size: 9.5px;
+  line-height: 1.3;
+  padding: 1px 3px;
+  color: var(--ink);
+  background: color-mix(in oklab, var(--base) 80%, transparent);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.attachments li.failed .attach-note { color: var(--critical); }
+.attach-x {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink);
+  background: color-mix(in oklab, var(--base) 85%, transparent);
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.attach-x:hover { border-color: var(--critical); color: var(--critical); }
+.pasted { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s2); }
+.pasted a {
+  position: relative;
+  display: block;
+  max-width: 220px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--sunken);
+}
+.pasted img { display: block; max-width: 220px; max-height: 160px; object-fit: contain; }
+.pasted span {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: var(--ink);
+  background: color-mix(in oklab, var(--base) 80%, transparent);
+}
+.pasted a:hover { border-color: var(--accent); }

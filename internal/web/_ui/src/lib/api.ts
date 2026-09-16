@@ -1,7 +1,8 @@
 // The one way the client talks to the server.
 //
 // Every write is JSON: the server refuses anything else, because a form or a
-// text/plain post is what a cross-site page can send without a preflight.
+// text/plain post is what a cross-site page can send without a preflight. The
+// one exception is an image upload, sent as the image's own type.
 
 export class ApiError extends Error {
   readonly code: string;
@@ -22,7 +23,10 @@ interface Envelope {
 
 export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method, headers: { accept: "application/json" } };
-  if (body !== undefined) {
+  if (body instanceof Blob) {
+    init.headers = { ...init.headers, "content-type": body.type };
+    init.body = body;
+  } else if (body !== undefined) {
     init.headers = { ...init.headers, "content-type": "application/json" };
     init.body = JSON.stringify(body);
   }
@@ -54,6 +58,18 @@ export const get = <T>(path: string) => request<T>("GET", path);
 export const post = <T>(path: string, body: unknown = {}) => request<T>("POST", path, body);
 export const patch = <T>(path: string, body: unknown) => request<T>("PATCH", path, body);
 export const del = <T>(path: string, body: unknown = {}) => request<T>("DELETE", path, body);
+
+export interface StoredUpload {
+  path: string;
+  type: string;
+  bytes: number;
+}
+
+/** The image types the server keeps, and its size cap. */
+export const UPLOAD_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+export const UPLOAD_LIMIT = 10 * 1024 * 1024;
+
+export const upload = (image: Blob) => request<StoredUpload>("POST", "/api/v1/web/uploads", image);
 
 const seg = encodeURIComponent;
 

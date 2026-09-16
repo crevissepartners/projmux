@@ -7,6 +7,8 @@
   import { paneLabel, slotRef } from "../lib/tree";
   import { fullTime, shortTime } from "../lib/time";
   import type { Repository, Turn } from "../lib/types";
+  import { withImages } from "../lib/uploads";
+  import Pasted from "./Pasted.svelte";
   import TaskLine from "./TaskLine.svelte";
   import ToolView from "./ToolView.svelte";
 
@@ -48,6 +50,12 @@
     return null;
   });
 
+  // Only what a person or a peer sent carries pasted images; an agent that
+  // mentions an upload path is quoting it.
+  const shown = $derived(
+    turn.role === "user" || turn.from || turn.via ? withImages(turn.text) : { text: turn.text, images: [] },
+  );
+
   const peerName = $derived.by(() => {
     if (!turn.from) return "";
     return peerTarget?.name || providerText(turn.from.provider || "");
@@ -82,16 +90,17 @@
   {#if turn.images}
     <div class="body"><span class="flag">{t("web.chat.images", { n: turn.images })}</span></div>
   {/if}
-  {#if turn.text.trim() && turn.report}
+  {#if shown.text.trim() && turn.report}
     <details class="report-body" open>
       <summary>{t("web.chat.report_summary")}</summary>
-      <div class="body" use:markdown={{ text: turn.text.trim(), repo }}></div>
+      <div class="body" use:markdown={{ text: shown.text.trim(), repo }}></div>
     </details>
-  {:else if turn.text.trim()}
-    <div class="body" use:markdown={{ text: turn.text.trim(), repo }}></div>
+  {:else if shown.text.trim()}
+    <div class="body" use:markdown={{ text: shown.text.trim(), repo }}></div>
   {:else if turn.thinking && !turn.tools?.length}
     <div class="body"><span class="flag">· {t("web.chat.thinking")}</span></div>
   {/if}
+  {#if shown.images.length}<Pasted images={shown.images} />{/if}
   {#each turn.tools || [] as call, i (call.id || i)}
     <ToolView {call} {paneUID} {agentUID} />
   {/each}

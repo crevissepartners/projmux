@@ -10,6 +10,8 @@
   import type { AgentView } from "../lib/tree";
   import type { Repository, Surface, TranscriptView, Turn } from "../lib/types";
   import Composer from "./Composer.svelte";
+  import { withImages } from "../lib/uploads";
+  import Pasted from "./Pasted.svelte";
   import TurnView from "./TurnView.svelte";
   import { PENDING_LATE_MS, pending, settle } from "../lib/pending.svelte";
 
@@ -151,12 +153,14 @@
           <TurnView {turn} {agentName} {repo} {paneUID} agentUID={agent.uid} continued={i > 0 && speaker(turns[i - 1]) === speaker(turn)} />
         {/each}
         {#each waiting as item (item.id)}
+          {@const shown = withImages(item.text)}
           <div class="turn user pending">
             <div class="who">
               <span>{t("web.chat.me")}</span>
               <span class="flag">{now - item.sentAt > PENDING_LATE_MS ? t("web.chat.pending_late") : t("web.chat.pending")}</span>
             </div>
-            <div class="body">{item.text}</div>
+            <div class="body">{shown.text}</div>
+            {#if shown.images.length}<Pasted images={shown.images} />{/if}
           </div>
         {/each}
       {/if}

@@ -32,7 +32,7 @@ func guardLoopback(port string, next http.Handler) http.Handler {
 			writeError(w, NewError(http.StatusForbidden, CodeForbiddenOrigin, "request origin is not this server"))
 			return
 		}
-		if needsJSON(r) && !jsonContentType(r.Header.Get("Content-Type")) {
+		if needsJSON(r) && !jsonContentType(r.Header.Get("Content-Type")) && !uploadContentType(r) {
 			writeError(w, NewError(http.StatusForbidden, CodeForbiddenOrigin, "a request that changes state must be application/json"))
 			return
 		}

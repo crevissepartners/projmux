@@ -250,3 +250,13 @@ func (b *webBackend) System(context.Context) (any, error) {
 	metrics := (systemstatus.Sampler{CachePath: paths.LiveResourcesSampleFile()}).Sample()
 	return webSystem{Supported: true, CPUPercent: metrics.CPUPercent, MemoryPercent: metrics.MemoryPercent}, nil
 }
+
+// UploadDir is where images pasted into the web composer are kept, beside
+// the rest of projmux state.
+func (b *webBackend) UploadDir() (string, error) {
+	paths, err := b.statePaths()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(paths.StateDir, "web-uploads"), nil
+}
