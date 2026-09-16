@@ -31,6 +31,26 @@ type Backend interface {
 	Pane(ctx context.Context, project, window, pane string) (any, error)
 	WindowAgents(ctx context.Context, project, window string) (any, error)
 	Agent(ctx context.Context, agent string) (any, error)
+
+	CreateWindow(ctx context.Context, project string, req CreateWindowRequest) (any, error)
+	RenameWindow(ctx context.Context, project, window, name string) (any, error)
+	DeleteWindow(ctx context.Context, project, window string, dryRun bool) (any, error)
+	RenamePane(ctx context.Context, project, window, pane, name string) (any, error)
+	DeletePane(ctx context.Context, project, window, pane string) (any, error)
+	FocusPane(ctx context.Context, project, window, pane string) (any, error)
+	CreateAgent(ctx context.Context, project, window string, req CreateAgentRequest) (any, error)
+	RenameAgent(ctx context.Context, agent, name string) (any, error)
+	ResumeAgent(ctx context.Context, agent string) (any, error)
+	Capabilities(ctx context.Context, agent string) (any, error)
+	StartTurn(ctx context.Context, agent, text string) (any, error)
+	SteerTurn(ctx context.Context, agent, text string) (any, error)
+	InterruptTurn(ctx context.Context, agent string) (any, error)
+	SendMessage(ctx context.Context, agent string, req MessageRequest) (any, error)
+
+	Notifications(ctx context.Context) (any, error)
+	AckNotification(ctx context.Context, id string) (any, error)
+	Usage(ctx context.Context) (any, error)
+	System(ctx context.Context) (any, error)
 }
 
 // Server routes requests to a Backend.
@@ -92,6 +112,146 @@ func (s *Server) Handler() http.Handler {
 	})
 	read("/api/v1/agents/{agent}", func(r *http.Request) (any, error) {
 		return s.backend.Agent(r.Context(), r.PathValue("agent"))
+	})
+
+	read("/api/v1/agents/{agent}/capabilities", func(r *http.Request) (any, error) {
+		return s.backend.Capabilities(r.Context(), r.PathValue("agent"))
+	})
+	read("/api/v1/notifications", func(r *http.Request) (any, error) {
+		return s.backend.Notifications(r.Context())
+	})
+	read("/api/v1/usage", func(r *http.Request) (any, error) {
+		return s.backend.Usage(r.Context())
+	})
+	read("/api/v1/system", func(r *http.Request) (any, error) {
+		return s.backend.System(r.Context())
+	})
+
+	write := func(pattern string, status int, fn func(w http.ResponseWriter, r *http.Request) (any, error)) {
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			body, err := fn(w, r)
+			if err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			writeJSON(w, status, body)
+		})
+	}
+	project := func(r *http.Request) string { return r.PathValue("project") }
+	window := func(r *http.Request) string { return r.PathValue("window") }
+	pane := func(r *http.Request) string { return r.PathValue("pane") }
+	agent := func(r *http.Request) string { return r.PathValue("agent") }
+
+	write("POST /api/v1/projects/{project}/windows", http.StatusCreated, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req CreateWindowRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		if !req.Confirm {
+			return nil, confirmRequired("creating a window")
+		}
+		return s.backend.CreateWindow(r.Context(), project(r), req)
+	})
+	write("PATCH /api/v1/projects/{project}/windows/{window}", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		name, err := decodeName(w, r)
+		if err != nil {
+			return nil, err
+		}
+		return s.backend.RenameWindow(r.Context(), project(r), window(r), name)
+	})
+	write("DELETE /api/v1/projects/{project}/windows/{window}", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		dryRun := r.URL.Query().Get("dryRun") == "true"
+		var req confirmRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		if !dryRun && !req.Confirm {
+			return nil, confirmRequired("deleting a window")
+		}
+		return s.backend.DeleteWindow(r.Context(), project(r), window(r), dryRun)
+	})
+	write("PATCH /api/v1/projects/{project}/windows/{window}/panes/{pane}", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		name, err := decodeName(w, r)
+		if err != nil {
+			return nil, err
+		}
+		return s.backend.RenamePane(r.Context(), project(r), window(r), pane(r), name)
+	})
+	write("DELETE /api/v1/projects/{project}/windows/{window}/panes/{pane}", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req confirmRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		if !req.Confirm {
+			return nil, confirmRequired("deleting a pane")
+		}
+		return s.backend.DeletePane(r.Context(), project(r), window(r), pane(r))
+	})
+	write("POST /api/v1/projects/{project}/windows/{window}/panes/{pane}/focus", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if err := decodeBody(w, r, &struct{}{}); err != nil {
+			return nil, err
+		}
+		return s.backend.FocusPane(r.Context(), project(r), window(r), pane(r))
+	})
+	write("POST /api/v1/projects/{project}/windows/{window}/agents", http.StatusCreated, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req CreateAgentRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		if !req.Confirm {
+			return nil, confirmRequired("creating an agent")
+		}
+		return s.backend.CreateAgent(r.Context(), project(r), window(r), req)
+	})
+	write("PATCH /api/v1/agents/{agent}", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		name, err := decodeName(w, r)
+		if err != nil {
+			return nil, err
+		}
+		return s.backend.RenameAgent(r.Context(), agent(r), name)
+	})
+	write("POST /api/v1/agents/{agent}/resume", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req confirmRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		if !req.Confirm {
+			return nil, confirmRequired("resuming an agent")
+		}
+		return s.backend.ResumeAgent(r.Context(), agent(r))
+	})
+	write("POST /api/v1/agents/{agent}/turns", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		text, err := decodeText(w, r)
+		if err != nil {
+			return nil, err
+		}
+		return s.backend.StartTurn(r.Context(), agent(r), text)
+	})
+	write("POST /api/v1/agents/{agent}/turns/current/steer", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		text, err := decodeText(w, r)
+		if err != nil {
+			return nil, err
+		}
+		return s.backend.SteerTurn(r.Context(), agent(r), text)
+	})
+	write("DELETE /api/v1/agents/{agent}/turns/current", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if err := decodeBody(w, r, &struct{}{}); err != nil {
+			return nil, err
+		}
+		return s.backend.InterruptTurn(r.Context(), agent(r))
+	})
+	write("POST /api/v1/agents/{agent}/messages", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req MessageRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		return s.backend.SendMessage(r.Context(), agent(r), req)
+	})
+	write("POST /api/v1/notifications/{id}/ack", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		if err := decodeBody(w, r, &struct{}{}); err != nil {
+			return nil, err
+		}
+		return s.backend.AckNotification(r.Context(), r.PathValue("id"))
 	})
 
 	// Anything else under the API prefix is an API miss, not the client page.

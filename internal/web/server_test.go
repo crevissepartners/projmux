@@ -15,6 +15,9 @@ import (
 
 // fakeBackend answers every read from fixed values and records what was asked.
 type fakeBackend struct {
+	// Backend is nil: a route this fake does not implement panics, which a
+	// test notices.
+	Backend
 	calls []string
 }
 

@@ -416,8 +416,20 @@ func (r agentControlResponse) Error() error {
 	if r.OK {
 		return nil
 	}
-	if r.Message == "" {
-		return fmt.Errorf("native Codex control unavailable (%s)", r.Code)
+	return &agentControlRefusal{Code: r.Code, Message: r.Message}
+}
+
+// agentControlRefusal is a refused control response. Its text is what the CLI
+// has always printed; the type keeps the refusal code reachable with
+// errors.As for callers that branch on it rather than on the text.
+type agentControlRefusal struct {
+	Code    string
+	Message string
+}
+
+func (e *agentControlRefusal) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("native Codex control unavailable (%s)", e.Code)
 	}
-	return fmt.Errorf("%s (%s)", r.Message, r.Code)
+	return fmt.Sprintf("%s (%s)", e.Message, e.Code)
 }

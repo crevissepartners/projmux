@@ -43,6 +43,14 @@ func NotFound(message string) *Error {
 	return NewError(http.StatusNotFound, CodeNotFound, message)
 }
 
+// InvalidRequest is the error for a request the server will not interpret.
+func InvalidRequest(message string) *Error {
+	return NewError(http.StatusBadRequest, CodeInvalidRequest, message)
+}
+
+// AsError is asError for backends that embed a refusal in a result.
+func AsError(err error) *Error { return asError(err) }
+
 // asError turns anything a backend returned into the envelope. A backend that
 // knows the refusal returns *Error; anything else is internal, because an
 // unclassified failure must not look like a deliberate refusal.

@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"strings"
+	"sync"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -28,6 +30,14 @@ type webBackend struct {
 	loadRegistry func() (coremetadata.Registry, error)
 	observe      func(ctx context.Context, transport resourcegraph.Transport) resourcegraph.Inventory
 	transport    resourcegraph.Transport
+
+	// mutations serializes every CLI handler call; see web_mutations.go.
+	mutations sync.Mutex
+	// runCLI and socketPath replace the in-process handler call and the app
+	// socket lookup in tests. Nil means the real ones.
+	runCLI     func(argv []string) (string, error)
+	socketPath func(ctx context.Context) (string, error)
+	paths      func() (config.Paths, error)
 }
 
 var _ web.Backend = (*webBackend)(nil)
