@@ -260,7 +260,9 @@
   }
 
   const closeOverlay = () => (ui.overlay = "");
-  const barSession = $derived(project?.sessionName || "");
+  // The badge names the Project, as the terminal status bar does; the tmux
+  // session name is an internal handle and only fills in for a missing name.
+  const barSession = $derived(project?.name || project?.sessionName || "");
   const barPath = $derived(pane?.cwd || project?.root || "");
 </script>
 
