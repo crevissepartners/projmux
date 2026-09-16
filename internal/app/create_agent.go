@@ -121,6 +121,9 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err := requireInteractiveOnlyProvider(spelling, provider, flags); err != nil {
 		return err
 	}
+	if err := requireClaudeLaunchOptions(spelling, provider, flags); err != nil {
+		return err
+	}
 	if err := requireClaudeDialogueMode(provider, flags.dialogueReplyOnly, flags.payload); err != nil {
 		return err
 	}
@@ -605,6 +608,13 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 				return "", nil, errors.New("create agent: Codex capability launch is not configured")
 			}
 			return launcher.PlanAgentLaunchWithCapability(provider, workspace, flags.payload, *flags.codexCapability)
+		}
+		if flags.model != "" || flags.effort != "" {
+			launcher, ok := c.agents.(claudeOptionsAgentLauncher)
+			if !ok {
+				return "", nil, errors.New("create agent: the Claude model launcher is not configured")
+			}
+			return launcher.PlanAgentLaunchWithOptions(provider, workspace, flags.payload, flags.model, flags.effort)
 		}
 		if provider == aiModeCodex && len(flags.payload) == 0 {
 			// A payload-free Codex create always takes the plain lane.

@@ -130,7 +130,7 @@ func TestWebPreviewAgentIsTheCreateArgv(t *testing.T) {
 	recorder.reply = func([]string) (string, error) {
 		return `{"items":[{"metadata":{"uid":"agt-alpha-codex"}}]}`, nil
 	}
-	body := `{"provider":"claude","anchorPane":"pan-alpha-log","payload":"do it"}`
+	body := `{"provider":"claude","anchorPane":"pan-alpha-log","payload":"do it","model":"sonnet","effort":"low"}`
 	code, preview := webSend(t, handler, "POST", "/api/v1/web/projects/prj-alpha/windows/win-alpha-main/agents/preview", body)
 	if code != 200 {
 		t.Fatalf("preview = %d %v", code, preview)
@@ -144,6 +144,9 @@ func TestWebPreviewAgentIsTheCreateArgv(t *testing.T) {
 	}
 	if code, _ := webSend(t, handler, "POST", webWindowAlpha+"/agents", strings.TrimSuffix(body, "}")+`,"confirm":true}`); code != 201 {
 		t.Fatalf("create = %d", code)
+	}
+	if !strings.Contains(strings.Join(shown, " "), "--model sonnet --effort low --") {
+		t.Fatalf("preview %q does not carry the model and effort", shown)
 	}
 	if got := "projmux " + recorder.calls[0]; strings.Join(shown, " ") != got {
 		t.Fatalf("preview %q\nran     %q", strings.Join(shown, " "), got)

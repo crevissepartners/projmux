@@ -1746,3 +1746,13 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.picker-options { display: flex; gap: var(--s3); flex-wrap: wrap; margin: var(--s2) 0; font-size: 11.5px; color: var(--muted); }
+.picker-options label { display: flex; align-items: center; gap: var(--s2); }
+.picker-options select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+}

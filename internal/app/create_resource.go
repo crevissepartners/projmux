@@ -94,6 +94,11 @@ type resourceCreateFlags struct {
 	// endpoint.
 	interactiveOnly   bool
 	dialogueReplyOnly bool
+	// model and effort choose what a new Claude Agent runs with. They are
+	// passed to the provider as its own --model and --effort and are not
+	// recorded; the provider's transcript says what it ran with.
+	model  string
+	effort string
 	// resumeConversation is set by the Projmux split UI's resume selection and by
 	// nothing else. It is deliberately not a parsed flag: no public spelling of
 	// `create` accepts it, so an operator cannot reach a resume through the create
@@ -384,6 +389,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.Var(&out.addDirs, "add-dir", "repeatable additional writable root")
 		fs.BoolVar(&out.interactiveOnly, "interactive-only", false,
 			"codex only: launch a plain interactive CLI Agent with no native thread binding")
+		fs.StringVar(&out.model, "model", "", "claude only: model alias or full name the new session runs")
+		fs.StringVar(&out.effort, "effort", "", "claude only: effort level: "+strings.Join(claudeEffortLevels, "|"))
 	}
 	if pane {
 		fs.Var(&out.windows, "window", "repeatable Window selector: <name> or uid:<uid>")

@@ -2363,6 +2363,25 @@ func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.Agen
 	return plan.title, plan.commandArgs, nil
 }
 
+// PlanAgentLaunchWithOptions is PlanAgentLaunch for a Claude Agent created
+// with --model or --effort. The options go before the workspace arguments, so
+// Claude's variadic --add-dir cannot take them.
+func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort string) (title string, argv []string, err error) {
+	if normalizeAIMode(provider) != aiModeClaude {
+		return "", nil, fmt.Errorf("provider %q does not accept --model or --effort", provider)
+	}
+	extra, err := providerLaunchArgs(provider, workspace, payload)
+	if err != nil {
+		return "", nil, err
+	}
+	extra = append(claudeLaunchOptionArgs(model, effort), extra...)
+	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
+	if err != nil {
+		return "", nil, err
+	}
+	return plan.title, plan.commandArgs, nil
+}
+
 // PlanAgentLaunchWithCapability is the narrow optional launch seam used only by
 // the Codex picker. Other providers and static Codex launches stay unchanged.
 func (c *aiCommand) PlanAgentLaunchWithCapability(provider string, workspace coremetadata.AgentWorkspace, payload []string, selection corecap.Selection) (title string, argv []string, err error) {

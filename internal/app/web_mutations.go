@@ -117,6 +117,7 @@ func (b *webBackend) CreateWindow(ctx context.Context, project string, req web.C
 	if req.Agent != nil {
 		agent, agentErr := b.CreateAgent(ctx, project, window, web.CreateAgentRequest{
 			Provider: req.Agent.Provider, Payload: req.Agent.Payload, CwdFrom: "project", Confirm: true,
+			Model: req.Agent.Model, Effort: req.Agent.Effort,
 		})
 		if agentErr != nil {
 			result["agentError"] = web.AsError(agentErr)
@@ -168,6 +169,12 @@ func createAgentArgv(s webSnapshot, project, window string, req web.CreateAgentR
 	}
 	// Placement is fixed. `down` is excluded on purpose, not left to callers.
 	argv = append(argv, "--placement", "right", "--cwd-from", cwdFrom, "-o", "json")
+	if model := strings.TrimSpace(req.Model); model != "" {
+		argv = append(argv, "--model", model)
+	}
+	if effort := strings.TrimSpace(req.Effort); effort != "" {
+		argv = append(argv, "--effort", effort)
+	}
 	if payload := strings.TrimSpace(req.Payload); payload != "" {
 		argv = append(argv, "--", payload)
 	}

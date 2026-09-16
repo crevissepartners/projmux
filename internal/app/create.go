@@ -53,6 +53,10 @@ type agentLauncher interface {
 	AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
 }
 
+type claudeOptionsAgentLauncher interface {
+	PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort string) (title string, argv []string, err error)
+}
+
 type codexCapabilityAgentLauncher interface {
 	PlanAgentLaunchWithCapability(provider string, workspace coremetadata.AgentWorkspace, payload []string, selection corecap.Selection) (title string, argv []string, err error)
 }

@@ -25,6 +25,8 @@ type CreateWindowRequest struct {
 type NewAgent struct {
 	Provider string `json:"provider"`
 	Payload  string `json:"payload,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 }
 
 // CreateAgentRequest is the body of POST /projects/{p}/windows/{w}/agents.
@@ -35,6 +37,10 @@ type CreateAgentRequest struct {
 	// CwdFrom is "pane" (the anchor's directory) or "project".
 	CwdFrom string `json:"cwdFrom,omitempty"`
 	Payload string `json:"payload,omitempty"`
+	// Model and Effort choose what a new Claude Agent runs with; create
+	// refuses them for another provider.
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 	Confirm bool   `json:"confirm"`
 }
 

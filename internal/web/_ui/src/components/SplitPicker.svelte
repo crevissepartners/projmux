@@ -80,13 +80,24 @@
   const kinds = ["claude", "codex", "antigravity"];
   let kind = $state("claude");
   let payload = $state("");
+  // A new Claude session can start on another model or effort. The choices
+  // are the aliases and levels `claude --help` names; empty keeps the
+  // operator's own default.
+  const claudeModels = ["", "opus", "sonnet", "fable"];
+  const claudeEfforts = ["", "low", "medium", "high", "xhigh", "max"];
+  let model = $state("");
+  let effort = $state("");
   let preview = $state("");
   let previewError = $state("");
   let creating = $state(false);
 
   // The selection names a slot by agent or pane; the split anchors on the pane.
   const anchor = $derived(sel.pane ? locateSlot(live.tree, sel.pane)?.pane.uid || "" : "");
-  const request = $derived({ provider: kind, anchorPane: anchor, cwdFrom: "pane", payload });
+  const request = $derived(
+    kind === "claude"
+      ? { provider: kind, anchorPane: anchor, cwdFrom: "pane", payload, model, effort }
+      : { provider: kind, anchorPane: anchor, cwdFrom: "pane", payload },
+  );
   $effect(() => {
     if (!sel.project || !sel.window || !anchor) return;
     const body = request;
@@ -186,6 +197,22 @@
           <button type="button" class="picker-kind" aria-pressed={kind === option} onclick={() => (kind = option)}>{option}</button>
         {/each}
       </div>
+      {#if kind === "claude"}
+        <div class="picker-options">
+          <label>
+            {t("web.picker.model")}
+            <select bind:value={model}>
+              {#each claudeModels as option (option)}<option value={option}>{option || t("web.picker.default")}</option>{/each}
+            </select>
+          </label>
+          <label>
+            {t("web.picker.effort")}
+            <select bind:value={effort}>
+              {#each claudeEfforts as option (option)}<option value={option}>{option || t("web.picker.default")}</option>{/each}
+            </select>
+          </label>
+        </div>
+      {/if}
       <input class="picker-query payload" placeholder={t("web.picker.payload")} bind:value={payload} />
       <pre class="picker-preview">{preview || previewError}</pre>
       {#if preview}

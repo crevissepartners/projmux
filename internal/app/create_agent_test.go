@@ -133,6 +133,8 @@ type fakeLaunchRequest struct {
 	provider  string
 	workspace coremetadata.AgentWorkspace
 	payload   []string
+	model     string
+	effort    string
 }
 
 type fakeBoundPane struct {
@@ -186,6 +188,17 @@ func (f *fakeAgentLauncher) PlanAgentLaunch(provider string, workspace coremetad
 		argv[2] += " " + strings.Join(payload, " ")
 	}
 	return provider + ":launch", argv, nil
+}
+
+func (f *fakeAgentLauncher) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort string) (string, []string, error) {
+	title, argv, err := f.PlanAgentLaunch(provider, workspace, payload)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err == nil {
+		f.plans[len(f.plans)-1].model = model
+		f.plans[len(f.plans)-1].effort = effort
+	}
+	return title, argv, err
 }
 
 func (f *fakeAgentLauncher) AwaitAgentActivation(_ context.Context, _ tmuxCommandRunner, paneID string, startupTimeout, acknowledgementTimeout time.Duration) (bool, string, error) {
@@ -1661,6 +1674,8 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			fs.String("cwd", "", "")
 			fs.Var(&out.addDirs, "add-dir", "")
 			fs.Bool("interactive-only", false, "")
+			fs.String("model", "", "")
+			fs.String("effort", "", "")
 			fs.String("name", "", "")
 			fs.Var(&out.labels, "label", "")
 			fs.String("output", "", "")

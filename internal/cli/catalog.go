@@ -997,7 +997,7 @@ var routes = []Route{
 			"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
 			"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 			"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
-			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create claude|antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]",
@@ -1070,7 +1070,7 @@ var routes = []Route{
 				Summary:          "Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required",
 				CanonicalSummary: "Create an Agent and its managed Pane",
 				Usage: []string{
-					"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+					"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 				},
 				Outputs:   receiptOutputModes,
 				Canonical: []string{"create agent"},
@@ -1101,7 +1101,7 @@ var routes = []Route{
 				Invocation: InvocationNatural,
 				Summary:    "Provider shortcut for create agent --provider claude",
 				Usage: []string{
-					"projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+					"projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
 				Outputs:          receiptOutputModes,
