@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.15.3](https://github.com/crevissepartners/projmux/compare/v0.15.2...v0.15.3) (2026-09-16)
+
+
+### Features
+
+* **cli:** add prune agent for stale Offline and Failed Agents ([#1002](https://github.com/crevissepartners/projmux/issues/1002)) ([c8ab919](https://github.com/crevissepartners/projmux/commit/c8ab91986a750a1aa6cc1130c9aa4306fdfe3ffc))
+* **create:** start splits in the active Pane directory on request ([#1007](https://github.com/crevissepartners/projmux/issues/1007)) ([3639b77](https://github.com/crevissepartners/projmux/commit/3639b77093e26fd594a5d50ca411393f0d5bffe0))
+* **settings:** choose where UI splits start ([#1010](https://github.com/crevissepartners/projmux/issues/1010)) ([abcf26f](https://github.com/crevissepartners/projmux/commit/abcf26f7795212823c56b1cda5b33c841b3e4443))
+* **settings:** search every setting from the Settings root ([#1011](https://github.com/crevissepartners/projmux/issues/1011)) ([da7e371](https://github.com/crevissepartners/projmux/commit/da7e37168895ab77fceba9e8326e0c9e2baae00a))
+* **usage:** color the Codex fallback label instead of tagging it ([#1016](https://github.com/crevissepartners/projmux/issues/1016)) ([502eae7](https://github.com/crevissepartners/projmux/commit/502eae71274b300d2fc5d900935a7648cd93f1a4))
+* **window:** move the pressing client to a Window created from the window-create intent ([#1004](https://github.com/crevissepartners/projmux/issues/1004)) ([b61b38b](https://github.com/crevissepartners/projmux/commit/b61b38b12b915bcd367882ebe3a81b1f5a5208ee))
+
+
+### Bug Fixes
+
+* **agent-message:** exit nonzero when a sent message ends undelivered ([#1001](https://github.com/crevissepartners/projmux/issues/1001)) ([4f0df7b](https://github.com/crevissepartners/projmux/commit/4f0df7ba362974e1c60a3eac18ad19bd8bfb22f3))
+* **agent-message:** judge Claude push content by the frame budget with a sized refusal ([#996](https://github.com/crevissepartners/projmux/issues/996)) ([2d3fe1a](https://github.com/crevissepartners/projmux/commit/2d3fe1a8471e4b03b7ce09b762d8679723b93020))
+* **agent-message:** refuse bodies whose rendered push frame exceeds the budget at send ([#1000](https://github.com/crevissepartners/projmux/issues/1000)) ([7be21da](https://github.com/crevissepartners/projmux/commit/7be21da13a5ff936c1c22b0c911c4debffec7c83))
+* **continue:** carry resumed Agent Pane names across Continue and resume ([#1003](https://github.com/crevissepartners/projmux/issues/1003)) ([5e97d75](https://github.com/crevissepartners/projmux/commit/5e97d75aefea5448378aa83196dbc90eae21aa11))
+* **e2e:** pin the local admission root to the caller EUID ([#981](https://github.com/crevissepartners/projmux/issues/981)) ([7733024](https://github.com/crevissepartners/projmux/commit/773302437d0beb0058e6e7c9d344710c597fceea))
+* **keybindings:** persist Window and Pane renames through the registry ([#994](https://github.com/crevissepartners/projmux/issues/994)) ([1e7888c](https://github.com/crevissepartners/projmux/commit/1e7888ca3c178d0a3589b53eaa1912f546da1287))
+* **materialize:** accept Window names that look like tmux flags ([#997](https://github.com/crevissepartners/projmux/issues/997)) ([b94d71d](https://github.com/crevissepartners/projmux/commit/b94d71d80b8e528fd46f0bd0e789b845320d2c21))
+* **materialize:** name the first Window from the registry on create and Continue ([#993](https://github.com/crevissepartners/projmux/issues/993)) ([341dad5](https://github.com/crevissepartners/projmux/commit/341dad501c18b3598374b7cdf61ce5a6ef0f79e4))
+* **metadata:** resolve the window anchor eligibility predicate in one owner ([#985](https://github.com/crevissepartners/projmux/issues/985)) ([a5002ab](https://github.com/crevissepartners/projmux/commit/a5002ab3a699c77095bf06cc3e92cb544ae5a5ad))
+* **notify:** focus and ack stale notification rows whose pane still exists ([#1017](https://github.com/crevissepartners/projmux/issues/1017)) ([b8e0ce8](https://github.com/crevissepartners/projmux/commit/b8e0ce8789091995dd0ed45a667c947b52589fad))
+* **rename:** converge the CLI window rename onto the tmux window name ([#1008](https://github.com/crevissepartners/projmux/issues/1008)) ([232baf3](https://github.com/crevissepartners/projmux/commit/232baf3f96b873090df11ee344b87e42cc274089))
+* **settings:** keep typed option names aimed at their own row ([#1015](https://github.com/crevissepartners/projmux/issues/1015)) ([d83e208](https://github.com/crevissepartners/projmux/commit/d83e208bf2881b6c2e9d9fa9941617038b606b12))
+* **settings:** match rendered locale labels when searching settings rows ([#1005](https://github.com/crevissepartners/projmux/issues/1005)) ([b21a481](https://github.com/crevissepartners/projmux/commit/b21a48106619573d4b217faab6050e94179b878b))
+* **tmux:** end rename-window options before the Window name ([#999](https://github.com/crevissepartners/projmux/issues/999)) ([c9ef054](https://github.com/crevissepartners/projmux/commit/c9ef054d998d2ce4063d692c8c97eedd5a7cb4e0))
+* **usage:** collect due adapters on status ticks that apply a native event batch ([#1009](https://github.com/crevissepartners/projmux/issues/1009)) ([b29cc53](https://github.com/crevissepartners/projmux/commit/b29cc538ecd6c2891e87131a38a6c2fb608b0101))
+* **usage:** record why Claude usage collection failed in the operations journal ([#1014](https://github.com/crevissepartners/projmux/issues/1014)) ([103881d](https://github.com/crevissepartners/projmux/commit/103881d9138a125df61a21964a78c8fdac7c2795))
+
+
+### Performance Improvements
+
+* **app:** reuse route guard identity proofs within one Continue replay ([#1018](https://github.com/crevissepartners/projmux/issues/1018)) ([e35651e](https://github.com/crevissepartners/projmux/commit/e35651e157222acad6d69f8d75f4628894ed5cf4))
+* **app:** reuse route guard identity proofs within one create transaction ([#1012](https://github.com/crevissepartners/projmux/issues/1012)) ([82df4a7](https://github.com/crevissepartners/projmux/commit/82df4a79c5d232ce2a91a532ad17e8a5f08b45eb))
+* **claude:** reload the registry on the idle helper tick only when it changed ([#991](https://github.com/crevissepartners/projmux/issues/991)) ([60f15a1](https://github.com/crevissepartners/projmux/commit/60f15a15eaaca52c30eef5341721b094f52a9197))
+* **hooks:** mark the pane once per quiet Antigravity hook event ([#992](https://github.com/crevissepartners/projmux/issues/992)) ([1e23f2e](https://github.com/crevissepartners/projmux/commit/1e23f2e9d7d3b8789ecc92c454e372d416036a6f))
+* **hooks:** mark the pane once per quiet Claude hook event ([#990](https://github.com/crevissepartners/projmux/issues/990)) ([6d9a85a](https://github.com/crevissepartners/projmux/commit/6d9a85a290ce09b3e00114ff3fa09bf0a735eaea))
+* **metadata:** classify the registry schema without a second full decode ([#998](https://github.com/crevissepartners/projmux/issues/998)) ([d589882](https://github.com/crevissepartners/projmux/commit/d589882c0b97537b0b4fa6c6a8299cf93e130c1d))
+
 ## [0.15.2](https://github.com/crevissepartners/projmux/compare/v0.15.1...v0.15.2) (2026-09-13)
 
 
