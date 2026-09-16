@@ -254,6 +254,8 @@ func (s *Server) Handler() http.Handler {
 		return s.backend.AckNotification(r.Context(), r.PathValue("id"))
 	})
 
+	mux.HandleFunc("GET /api/v1/events", s.handleEvents)
+
 	// Anything else under the API prefix is an API miss, not the client page.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, NotFound("no such route"))
