@@ -17,6 +17,7 @@ export interface Explained {
 // until projmux gives the refusal a token of its own.
 const patterns: [RegExp, string][] = [
   [/no current Running Agent activation/i, "web.error.agent_not_ready"],
+  [/registration lease is unavailable|not eligible/i, "web.error.agent_not_ready"],
   [/native (Codex )?control unavailable/i, "web.error.unavailable"],
   [/message not delivered/i, "web.error.not_delivered"],
   [/invalid-content|frame .*too large|too large/i, "web.error.message_too_large"],

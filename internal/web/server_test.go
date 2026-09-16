@@ -226,6 +226,7 @@ func TestLoopbackGuardKeepsOtherSitesOut(t *testing.T) {
 		{"simple post", "POST", map[string]string{"Content-Type": "text/plain"}},
 		{"form post", "POST", map[string]string{"Content-Type": "application/x-www-form-urlencoded"}},
 		{"post without a type", "POST", nil},
+		{"delete with a text body", "DELETE", map[string]string{"Content-Type": "text/plain"}},
 		{"json post from another site", "POST", map[string]string{"Content-Type": "application/json", "Origin": "http://attacker.example"}},
 	}
 	for _, tc := range refused {
@@ -246,6 +247,14 @@ func TestLoopbackGuardKeepsOtherSitesOut(t *testing.T) {
 		if got := send("GET", "/api/v1/projects", headers, ""); got != http.StatusOK {
 			t.Errorf("GET with %v: status %d, want 200", headers, got)
 		}
+	}
+	// A bodiless DELETE needs no type: a cross-site page cannot send one
+	// without a preflight.
+	if got := sendEmpty(t, srv.URL, "DELETE", "/api/v1/projects"); got == http.StatusForbidden {
+		t.Errorf("bodiless DELETE was refused by the guard")
+	}
+	if got := sendEmpty(t, srv.URL, "POST", "/api/v1/projects"); got != http.StatusForbidden {
+		t.Errorf("bodiless untyped POST = %d, want 403", got)
 	}
 	// A same-origin JSON write passes the guard; there is no POST route here
 	// yet, so the mux answers, not the guard.
@@ -310,4 +319,18 @@ func TestServeListensOnTCPAndSocket(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Serve did not stop")
 	}
+}
+
+func sendEmpty(t *testing.T, base, method, path string) int {
+	t.Helper()
+	req, err := http.NewRequest(method, base+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	return res.StatusCode
 }

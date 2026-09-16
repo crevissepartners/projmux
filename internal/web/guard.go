@@ -32,7 +32,7 @@ func guardLoopback(port string, next http.Handler) http.Handler {
 			writeError(w, NewError(http.StatusForbidden, CodeForbiddenOrigin, "request origin is not this server"))
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && !jsonContentType(r.Header.Get("Content-Type")) {
+		if needsJSON(r) && !jsonContentType(r.Header.Get("Content-Type")) {
 			writeError(w, NewError(http.StatusForbidden, CodeForbiddenOrigin, "a request that changes state must be application/json"))
 			return
 		}
@@ -61,6 +61,20 @@ func sameOrigin(origin, host string) bool {
 		return false
 	}
 	return strings.EqualFold(u.Host, host)
+}
+
+// needsJSON reports whether a request must declare a JSON body. A bodiless
+// DELETE is exempt: a cross-site page cannot send DELETE without a preflight,
+// which this server never answers, and a dry run has nothing to send. A
+// bodiless POST is not exempt, since a no-cors fetch can send one.
+func needsJSON(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		return false
+	case http.MethodDelete:
+		return r.ContentLength != 0
+	}
+	return true
 }
 
 func jsonContentType(value string) bool {
