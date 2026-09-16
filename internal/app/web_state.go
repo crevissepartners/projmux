@@ -3,12 +3,14 @@ package app
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
 	"github.com/crevissepartners/projmux/internal/web"
 )
@@ -63,11 +65,22 @@ func (b *webBackend) AckNotification(_ context.Context, id string) (any, error) 
 	return map[string]any{"id": id, "acked": true}, nil
 }
 
-// webUsage is the cached usage the status bar renders.
+// webUsage is the cached usage the status bar renders: every snapshot, and
+// the compact HUD row the bar draws from them.
 type webUsage struct {
-	Snapshots   any       `json:"snapshots"`
-	Unsupported any       `json:"unsupported,omitempty"`
-	CachedAt    time.Time `json:"cachedAt,omitzero"`
+	Snapshots   []coreusage.Snapshot           `json:"snapshots"`
+	HUD         []webUsageCell                 `json:"hud"`
+	Unsupported []usagecmd.UnsupportedProvider `json:"unsupported,omitempty"`
+	CachedAt    time.Time                      `json:"cachedAt,omitzero"`
+}
+
+// webUsageCell is one meter in the bar. Only the rolling 5h and weekly
+// windows are drawn there; quota rows repeat the same numbers.
+type webUsageCell struct {
+	Model  string `json:"model"`
+	Window string `json:"window"`
+	Pct    int    `json:"pct"`
+	Stale  bool   `json:"stale"`
 }
 
 func (b *webBackend) Usage(context.Context) (any, error) {
@@ -76,11 +89,22 @@ func (b *webBackend) Usage(context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	snapshots := state.Snapshots
-	if snapshots == nil {
-		return webUsage{Snapshots: []any{}, Unsupported: unsupported, CachedAt: cachedAt}, nil
+	out := webUsage{Snapshots: state.Snapshots, HUD: []webUsageCell{}, Unsupported: unsupported, CachedAt: cachedAt}
+	if out.Snapshots == nil {
+		out.Snapshots = []coreusage.Snapshot{}
 	}
-	return webUsage{Snapshots: snapshots, Unsupported: unsupported, CachedAt: cachedAt}, nil
+	for _, snap := range coreusage.SortedSnapshots(state.Snapshots) {
+		if snap.Window != coreusage.Window5h && snap.Window != coreusage.WindowWeekly {
+			continue
+		}
+		out.HUD = append(out.HUD, webUsageCell{
+			Model:  usagecmd.ModelDisplayLabel(snap.Model),
+			Window: string(snap.Window),
+			Pct:    int(math.Round(snap.Pct)),
+			Stale:  strings.TrimSpace(string(snap.StaleReason)) != "",
+		})
+	}
+	return out, nil
 }
 
 // webSystem is host load as the status bar shows it. A nil value is a

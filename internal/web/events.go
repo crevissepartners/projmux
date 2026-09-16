@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -97,7 +98,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	topics := eventTopics
 	if raw := r.URL.Query().Get("topics"); raw != "" {
 		topics = nil
-		for _, topic := range strings.Split(raw, ",") {
+		for topic := range strings.SplitSeq(raw, ",") {
 			topic = strings.TrimSpace(topic)
 			if !slices.Contains(eventTopics, topic) {
 				s.fail(w, r, InvalidRequest(fmt.Sprintf("unknown topic %q; topics are %s", topic, strings.Join(eventTopics, ","))))
@@ -196,8 +197,6 @@ func (s *Server) followTopic(ctx context.Context, out *sseWriter, topic string, 
 func withTopic(e *Error, topic string) *Error {
 	copied := *e
 	copied.Details = map[string]any{"topic": topic}
-	for k, v := range e.Details {
-		copied.Details[k] = v
-	}
+	maps.Copy(copied.Details, e.Details)
 	return &copied
 }

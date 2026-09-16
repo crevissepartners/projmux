@@ -80,8 +80,7 @@ func TestEventsSendOnChangeOnly(t *testing.T) {
 	srv := httptest.NewServer(New(backend, nil).Handler())
 	defer srv.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/events?topics=system", nil)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {

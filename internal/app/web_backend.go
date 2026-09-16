@@ -115,6 +115,15 @@ func (b *webBackend) Graph(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The graph carries Agents as stored. `get` reports what an Agent is doing
+	// through the same projection that ages a stale interaction out, so the
+	// graph is given that projection too; otherwise a client would show an
+	// hours-old "waiting" as current.
+	for i := range s.graph.Agents {
+		if projected, _, ok := resourceFor(s.registry, coremetadata.KindAgent, s.graph.Agents[i].Agent.Metadata.UID); ok {
+			s.graph.Agents[i].Agent = projected.(coremetadata.Agent)
+		}
+	}
 	return s.graph, nil
 }
 

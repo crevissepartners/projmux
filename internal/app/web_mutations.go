@@ -137,11 +137,10 @@ func (b *webBackend) CreateWindow(ctx context.Context, project string, req web.C
 	return result, nil
 }
 
-func (b *webBackend) CreateAgent(ctx context.Context, project, window string, req web.CreateAgentRequest) (any, error) {
-	s, err := b.snapshot(ctx)
-	if err != nil {
-		return nil, err
-	}
+// createAgentArgv is the one builder of a create-agent call. The preview
+// route renders it and CreateAgent runs it, so what the operator approves is
+// what runs.
+func createAgentArgv(s webSnapshot, project, window string, req web.CreateAgentRequest) ([]string, error) {
 	if _, err := s.window(project, window); err != nil {
 		return nil, err
 	}
@@ -171,6 +170,30 @@ func (b *webBackend) CreateAgent(ctx context.Context, project, window string, re
 	argv = append(argv, "--placement", "right", "--cwd-from", cwdFrom, "-o", "json")
 	if payload := strings.TrimSpace(req.Payload); payload != "" {
 		argv = append(argv, "--", payload)
+	}
+	return argv, nil
+}
+
+func (b *webBackend) PreviewAgent(ctx context.Context, project, window string, req web.CreateAgentRequest) (any, error) {
+	s, err := b.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	argv, err := createAgentArgv(s, project, window, req)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"argv": append([]string{"projmux"}, argv...)}, nil
+}
+
+func (b *webBackend) CreateAgent(ctx context.Context, project, window string, req web.CreateAgentRequest) (any, error) {
+	s, err := b.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	argv, err := createAgentArgv(s, project, window, req)
+	if err != nil {
+		return nil, err
 	}
 	out, err := b.cli(argv...)
 	if err != nil {
@@ -368,10 +391,11 @@ func (b *webBackend) appSocketPath(ctx context.Context) (string, error) {
 	if b.socketPath != nil {
 		return b.socketPath(ctx)
 	}
-	args := append(b.transport.Args(), "display-message", "-p", "#{socket_path}")
-	out, err := inttmux.ExecRunner{}.Run(ctx, "tmux", args...)
-	path := strings.TrimSpace(string(out))
-	if err != nil || path == "" {
+	// The diagnostics reader already asks the observed server for its own
+	// socket path; it is the one read that turns `-L projmux` into the path
+	// `focus --socket` takes.
+	path, ok := newRuntimeDiagnosticsReader(inttmux.ExecRunner{}).socketPath(ctx, b.transport)
+	if !ok {
 		return "", web.NewError(http.StatusConflict, web.CodeNotLive, "the projmux tmux server is not running")
 	}
 	return path, nil

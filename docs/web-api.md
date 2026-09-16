@@ -1,8 +1,8 @@
 # Web API
 
-Status: **design draft**. Nothing in this document is implemented yet; it is
-the contract `projmux web` is built against. Sections marked *Open* are
-decisions still to be made.
+Status: **in progress** on the `feat/projmux-web` branch. This is the
+contract `projmux web` is built against. Sections marked *Open* are decisions
+still to be made.
 
 `projmux web` serves one HTTP API and the browser client that uses it. The
 server runs in the projmux process and calls the same internal code the CLI
@@ -192,15 +192,21 @@ Registry, so they are kept out of the core surface. They live under
 
 | method | path | what it is |
 | --- | --- | --- |
-| GET | `/api/v1/web/i18n` | the `web.*` catalog for the resolved locale |
+| GET | `/api/v1/web/i18n` | `{locale, messages}`: the `web.*` catalog for the resolved locale |
+| GET | `/api/v1/web/agents/{agent}/transcript` | `{surface, repository, transcript}`: how the client may write to the agent, `{web, root, rev}` for linking references (GitHub origins only, else null), and the provider transcript flattened to turns (`?limit=`, 1–1000) |
+| GET | `/api/v1/web/agents/{agent}/transcript/events` | SSE `turn` frames from the end of the file (`?from=start` to replay), `error` frames on a failed read |
+| GET | `/api/v1/web/windows/{window}/layout` | pane geometry in cells (`?contents=1` adds each pane's screen) |
+| GET | `/api/v1/web/windows/{window}/layout/events` | SSE `layout` frames, sent on change; `gone` when the window is no longer there |
 | GET | `/api/v1/web/panes/{pane}/screen` | one `capture-pane -e` of the pane, parsed into styled runs |
-| GET | `/api/v1/web/panes/{pane}/screen/events` | SSE `screen` frames, sent on change |
-| GET | `/api/v1/web/windows/{window}/layout` | pane geometry in cells (`?contents=1` adds screens) |
-| GET | `/api/v1/web/windows/{window}/layout/events` | SSE `layout` frames, sent on change |
-| GET | `/api/v1/web/agents/{agent}/transcript` | the provider transcript flattened to turns (`?limit=`) |
-| GET | `/api/v1/web/agents/{agent}/transcript/events` | SSE `turn` and `error` frames from the end of the file (`?from=start` to replay) |
-| GET | `/api/v1/web/agents/{agent}/repository` | `{web, root, rev}` for linking references in the transcript; GitHub origins only |
-| GET | `/api/v1/web/windows/{window}/resume-candidates` | the Window's Offline agents, each with its first and last transcript line |
+| GET | `/api/v1/web/panes/{pane}/screen/events` | SSE `screen` frames, sent on change; `gone` when the pane is no longer there |
+| GET | `/api/v1/web/windows/{window}/resume-candidates` | `{items}`: the window's agents with no live pane, each with its first and last transcript line |
+| POST | `/api/v1/web/projects/{project}/windows/{window}/agents/preview` | `{argv}`: the exact command a create-agent request with the same body would run; runs nothing |
+
+A turn is `{role, text, at, kind, thinking, from, messageRef, via, tools}`.
+`from` is set only for a peer coordination message, and `via` is
+`projmux-web` for a message this client sent. Labels such as "thinking" or
+"clipped" are the client's to localize; the server sends flags and the note
+tokens `empty` and `no-transcript`.
 
 Web routes take a bare uid, because uids are global. Each route resolves the
 uid in the Registry and refuses a target that is not on the app-owned tmux

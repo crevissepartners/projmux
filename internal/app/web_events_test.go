@@ -33,8 +33,7 @@ func TestWebPollSignalsOnlyWhenTheMarkMoves(t *testing.T) {
 }
 
 func TestWebPollFallbackTicksWithoutAChange(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	changes := webPoll(ctx, 5*time.Millisecond, 20*time.Millisecond, func() string { return "same" })
 	select {
 	case <-changes:
