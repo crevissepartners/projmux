@@ -1,0 +1,3 @@
+# The embedded web client is built from internal/web/_ui and committed;
+# `make web-check` keeps it in step with its source.
+internal/web/dist/** linguist-generated=true

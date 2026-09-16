@@ -47,22 +47,22 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 34 {
-		t.Fatalf("public route count = %d, want 34", public)
+	if public != 35 {
+		t.Fatalf("public route count = %d, want 35", public)
 	}
 	if hidden != 1 {
 		t.Fatalf("hidden route count = %d, want 1", hidden)
 	}
 	wantPublicTally := map[Disposition]int{
 		DispositionCanonical: 27,
-		DispositionShortcut:  7,
+		DispositionShortcut:  8,
 	}
 	if !reflect.DeepEqual(publicTally, wantPublicTally) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)
 	}
 	wantTally := map[Disposition]int{
 		DispositionCanonical: 27,
-		DispositionShortcut:  7,
+		DispositionShortcut:  8,
 		DispositionInternal:  1,
 	}
 	if !reflect.DeepEqual(tally, wantTally) {
@@ -164,6 +164,7 @@ var shortcutRoutesWithoutACanonicalSpelling = map[string]string{
 	"resources": "diagnostics resources",
 	"settings":  "",
 	"shell":     "runtime open",
+	"web":       "",
 	"welcome":   "setup welcome",
 }
 

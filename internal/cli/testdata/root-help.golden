@@ -31,6 +31,7 @@ Commands:
   switch    Pick a project and compose create project with open project
   unregister  Unregister Projects from the Registry while preserving runtime and files
   update    Check installer-aware release update status
+  web       Serve the HTTP API and browser client
   welcome   Reprint the shell welcome guide
   window    Open recent window navigation surfaces
   help      Show bootstrap help

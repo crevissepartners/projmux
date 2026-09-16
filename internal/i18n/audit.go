@@ -164,7 +164,7 @@ func AuditGoStringLiteralsInDir(root string, opts StringAuditOptions) ([]StringA
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", ".wt", "vendor":
+			case ".git", ".wt", "vendor", "node_modules":
 				return filepath.SkipDir
 			default:
 				return nil

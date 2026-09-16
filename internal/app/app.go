@@ -154,6 +154,7 @@ type App struct {
 	tmux         *tmuxCommand
 	update       *updateCommand
 	usage        *usagecmd.Command
+	web          *webCommand
 	welcome      *welcomeCommand
 	window       *windowCommand
 	// lookupEnv and interactiveRunner are the two seams the generated
@@ -400,6 +401,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		tmux:               tmuxCmd,
 		update:             update,
 		usage:              usageCmd,
+		web:                newWebCommand(),
 		welcome:            newWelcomeCommand(update),
 		window:             windowCmd,
 	}
@@ -520,6 +522,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"switch":     a.switcher,
 		"unregister": unregister,
 		"update":     a.update,
+		"web":        a.web,
 		"welcome":    a.welcome,
 		"window":     a.window,
 	}

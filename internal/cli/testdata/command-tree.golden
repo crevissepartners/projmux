@@ -32,5 +32,6 @@ switch hidden=false disableFlagParsing=true args=true children=0
 unregister hidden=false disableFlagParsing=true args=true children=0
 update hidden=false disableFlagParsing=true args=true children=0
 version hidden=false disableFlagParsing=true args=true children=0
+web hidden=false disableFlagParsing=true args=true children=0
 welcome hidden=false disableFlagParsing=true args=true children=0
 window hidden=false disableFlagParsing=true args=true children=0

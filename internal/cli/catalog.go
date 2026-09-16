@@ -1814,6 +1814,14 @@ var routes = []Route{
 	},
 	{
 		Effects:     unchangedEffects(CardinalityUnchanged),
+		Name:        "web",
+		Invocation:  InvocationNatural,
+		Summary:     "Serve the HTTP API and browser client",
+		Disposition: DispositionShortcut,
+		Usage:       []string{"projmux web [--addr 127.0.0.1:8787] [--socket PATH|-] [-v]"},
+	},
+	{
+		Effects:     unchangedEffects(CardinalityUnchanged),
 		Name:        "welcome",
 		Invocation:  InvocationNatural,
 		Summary:     "Reprint the shell welcome guide",

@@ -11,4 +11,4 @@ paths = ['''^internal/app/effective_merge_test\.go$''']
 
 [[allowlists]]
 description = "Exclude repository metadata, sibling wt worktrees, and generated scanner binaries from dir scans"
-paths = ['''(^|/)\.git/''', '''(^|/)\.wt/''', '''(^|/)\.bin/security-tools/''']
+paths = ['''(^|/)\.git/''', '''(^|/)\.wt/''', '''(^|/)\.bin/security-tools/''', '''(^|/)node_modules/''']

@@ -104,6 +104,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "audits Project session projections and roots; the control-root invariants it needs live in Registry.Validate",
 	},
 	{
+		File: "internal/app/web_backend.go", Func: "webBackend.Projects",
+		Source: "Registry", Verdict: rootKindProjectOnly,
+		Why: "the web API lists Project resources the way `get projects` does; a ControlSession is not a web API resource",
+	},
+	{
 		File: "internal/app/pin_authority.go", Func: "projectRefsOf",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "a pin is uid-or-path and both spellings need a root; pins.KindProject is the only managed pin kind",
