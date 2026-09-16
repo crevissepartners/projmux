@@ -201,40 +201,38 @@ Registry, so they are kept out of the core surface. They live under
 | GET | `/api/v1/web/agents/{agent}/transcript/events` | SSE `turn` and `error` frames from the end of the file (`?from=start` to replay) |
 | GET | `/api/v1/web/agents/{agent}/repository` | `{web, root, rev}` for linking references in the transcript; GitHub origins only |
 | GET | `/api/v1/web/windows/{window}/resume-candidates` | the Window's Offline agents, each with its first and last transcript line |
-| POST | `/api/v1/web/agents/{agent}/question` | answers the agent's pending AskUserQuestion by pressing the widget's own keys |
-| POST | `/api/v1/web/agents/{agent}/typed` | pastes text into the agent's Pane and submits it, so it arrives as the operator's own words |
 
 Web routes take a bare uid, because uids are global. Each route resolves the
 uid in the Registry and refuses a target that is not on the app-owned tmux
 server.
 
-### Keys into a Pane
+### No keys into a Pane
 
-The last two routes put keys into a Pane. projmux otherwise keeps agent input
-off raw pane keys, and `agent_message_test.go` enforces that for the message
-path. These two routes are a deliberate, contained exception, kept for the
-browser only:
-
-- They live under `/api/v1/web`. The core message path does not change.
-- The Pane is resolved from the Agent's `paneRef` in the Registry, never from
-  the request. The Pane must answer on the app-owned server and carry the
-  matching `@projmux_pane_uid` before any key is sent.
-- **Question.** The request carries only the chosen option indexes. The
-  question's shape is read from the agent's transcript. The pane is captured
-  first, and a question that is no longer on screen is refused. Keys are the
-  widget's own: the option number, `Tab` between multi-select tabs, and the
-  review screen's `1` only when that screen is showing.
-- **Typed.** Bracketed paste, then `Enter`. Control characters other than tab
-  and newline are refused, and the buffer is deleted by the paste.
+The prototype answered AskUserQuestion by pressing the widget's keys, and
+could paste text into a Pane so it arrived as the operator's own words. Both
+are left out. projmux keeps agent input off raw pane keys, and
+`agent_message_test.go` enforces that for the message path; the web client
+does not get an exception. Where the prototype offered those inputs, the
+client shows that they are done in the terminal.
 
 ## Open
 
-- **Operator source.** A browser has no Pane, and `agent message send` needs a
-  source Agent. Until projmux has a source kind for an operator, the client
-  anchors on the target Agent itself and signs `messageRef` with the prefix
-  `projmux-web-`. The envelope then names an Agent as the sender of text a
-  person typed. The model for an operator source is a separate design
-  decision.
+- **Operator input.** Three gaps are one problem: text or an answer a person
+  gives in the browser has to reach an Agent as the operator's input.
+  - *Source.* A browser has no Pane, and `agent message send` needs a source
+    Agent. Until projmux has a source kind for an operator, the client anchors
+    on the target Agent itself and signs `messageRef` with the prefix
+    `projmux-web-`. The envelope then names an Agent as the sender of text a
+    person typed.
+  - *Delivery.* The coordination broker always wraps a message in an
+    envelope marked untrusted. There is no path that delivers it as the
+    operator's own utterance.
+  - *Questions.* There is no known channel for answering a Claude
+    AskUserQuestion from outside the terminal. Finding out whether one exists
+    comes first.
+
+  Codex is already covered: the app-server takes a turn as a user turn. The
+  design is written up separately and agreed before anything is built.
 - **Source maps.** Whether the built client's source maps are committed next
   to it depends on their size.
 - **CI for the built client.** `make web-check` rebuilds the client and fails
