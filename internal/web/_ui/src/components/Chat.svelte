@@ -2,7 +2,7 @@
   // The conversation. The tail is read once and then followed with server-sent
   // events from the end of the file, so a reply appears as the provider writes
   // it and nothing is rendered twice.
-  import { onDestroy, untrack, type Snippet } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { get, paths } from "../lib/api";
   import { stickToBottom } from "../lib/actions";
   import { explain, providerText } from "../lib/errors";
@@ -16,11 +16,9 @@
   interface Props {
     agent: AgentView;
     paneUID: string;
-    /** The registry record, folded between the log and the composer. */
-    record: Snippet;
     stream?: "" | "live" | "warn";
   }
-  let { agent, paneUID, record, stream = $bindable("") }: Props = $props();
+  let { agent, paneUID, stream = $bindable("") }: Props = $props();
 
   let turns = $state<Turn[]>([]);
   let note = $state("");
@@ -132,8 +130,8 @@
   }
 </script>
 
-<!-- Log first and growing, the record folded under it, the composer last
-     and pinned: a composer that scrolls with the log ends up mid-slot. -->
+<!-- Log first and growing, the composer right under it and pinned: a
+     composer that scrolls with the log ends up mid-slot. -->
 <div class="chat-area">
   <div class="chat">
     <div class="log" bind:this={log} use:stickToBottom>
@@ -165,10 +163,6 @@
     </div>
   </div>
 </div>
-<details class="record-fold">
-  <summary>{t("web.slot.record")}</summary>
-  {@render record()}
-</details>
 <div class="slot-foot">
   {#if surface}
     <Composer {agent} {paneUID} {surface} onSent={toEnd} />

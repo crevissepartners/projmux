@@ -10,6 +10,7 @@
   import Chat from "./Chat.svelte";
   import InlineName from "./InlineName.svelte";
   import OpenInTerminal from "./OpenInTerminal.svelte";
+  import Popover from "./Popover.svelte";
 
   interface Props {
     project: ProjectView;
@@ -82,6 +83,7 @@
     {#if activity?.tone === "wait" || activity?.tone === "alert"}
       <OpenInTerminal paneUID={pane.uid} compact />
     {/if}
+    <Popover face="ⓘ" title={t("web.slot.record")}>{@render record()}</Popover>
     <button
       type="button"
       class="slot-btn"
@@ -115,11 +117,11 @@
   {/snippet}
 
   {#if pane.agent}
-    <!-- Two panes side by side read as two chat windows, so the conversation
-         comes first and the record folds away under it. -->
+    <!-- Two panes side by side read as two chat windows: the conversation
+         and its composer fill the slot, and the details open from the head. -->
     <div class="slot-body chatting">
       {#key chatKey}
-        <Chat agent={pane.agent} paneUID={pane.uid} {record} bind:stream />
+        <Chat agent={pane.agent} paneUID={pane.uid} bind:stream />
       {/key}
     </div>
   {:else}

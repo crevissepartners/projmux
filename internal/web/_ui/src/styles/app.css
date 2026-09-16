@@ -758,32 +758,35 @@ body.resizing-y { cursor: row-resize; user-select: none; }
   padding-bottom: var(--s4);
 }
 .slot-body.chatting .chat-area { flex: 1; min-height: 0; display: flex; }
-.slot-body.chatting .record-fold { flex: none; margin-top: var(--s3); }
 .slot-body.chatting .slot-foot { flex: none; margin-top: var(--s3); }
 .slot-body::-webkit-scrollbar { width: 9px; }
 .slot-body::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 999px; }
 .slot-body { scrollbar-width: thin; scrollbar-color: var(--rule) transparent; }
 
-/* The registry record folds away under the conversation: with two panes open
-   these read as two chat windows, and the metadata was pushing the thing worth
-   reading off the top. */
-.record-fold { margin-top: 12px; border-top: 1px solid var(--rule); padding-top: 8px; }
-.record-fold > summary {
-  list-style: none;
-  cursor: pointer;
+/* A slot's details open over the content from its head. */
+.popover {
+  position: fixed;
+  z-index: 40;
+  min-width: 260px;
+  max-width: min(460px, calc(100vw - 16px));
+  max-height: 60vh;
+  overflow: auto;
+  padding: var(--s3) var(--s4);
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px color-mix(in oklab, var(--ink) 18%, transparent);
+  font-size: 11.5px;
+}
+.popover:focus { outline: none; }
+.popover-title {
   font-size: 9.5px;
   letter-spacing: 0.13em;
   text-transform: uppercase;
   color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  margin-bottom: var(--s2);
 }
-.record-fold > summary::-webkit-details-marker { display: none; }
-.record-fold > summary::before { content: "▸"; font-size: 9px; }
-.record-fold[open] > summary::before { content: "▾"; }
-.record-fold > summary:hover { color: var(--ink); }
-.record-fold .slot-info { margin-top: 8px; }
+.popover .kv dd { overflow-wrap: anywhere; }
 
 .slot-info h4:first-child { margin-top: 14px; }
 .slot-body h4 {
