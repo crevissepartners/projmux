@@ -38,9 +38,23 @@
       return found ? slotRef(found.pane) : ref;
     });
     const canonical = slotRef(pane);
-    if (canonical !== route.sel.pane || extras.join() !== route.extras.join()) {
+    if (canonical !== route.sel.pane || extras.join() !== route.extras.join() || route.legacy) {
       canonicalize({ project: project.uid, window: win.uid, pane: canonical }, extras);
     }
+  });
+
+  // A short `/a/{agent}` link becomes the agent's full address once the graph
+  // says where it is; an agent the graph does not have leads to the overview.
+  $effect(() => {
+    const agent = route.short;
+    if (!agent || !live.updatedAt) return;
+    const found = locateSlot(live.tree, agent);
+    canonicalize(
+      found
+        ? { project: found.project.uid, window: found.win.uid, pane: slotRef(found.pane) }
+        : { project: null, window: null, pane: null },
+      [],
+    );
   });
 
   // Shell panes hold a place in the real window but carry nothing this page

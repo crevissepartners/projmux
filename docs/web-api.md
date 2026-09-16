@@ -251,6 +251,26 @@ does. The route:
 Where the client cannot answer, the card and a waiting slot offer "Open in
 terminal", which moves the attached tmux client to the pane.
 
+## Client addresses
+
+Every path below serves the client; anything else outside `/api/` and
+`/assets/` is a 404.
+
+| path | view |
+| --- | --- |
+| `/` | the overview |
+| `/project/{project}` | a Project |
+| `/project/{project}/window/{window}` | a Window with all its slots |
+| `/project/{project}/window/{window}/agent/{agent}` | the Window, focused on an agent's slot |
+| `/project/{project}/window/{window}/pane/{pane}` | the Window, focused on a shell's slot |
+| `/a/{agent}` | a short link; the client replaces it with the agent's full address |
+
+`?with=a:{agent},p:{pane}` names the slots opened beside the focused one, each
+with its kind. An agent is addressed by its Agent uid because `agent resume`
+reuses the Agent but may allocate a new Pane. Names never go in an address; a
+bare uid in `with`, or a `/pane/` address for a pane an agent holds, is
+rewritten in place.
+
 ## Open
 
 - **Operator input.** Three gaps are one problem: text or an answer a person

@@ -4,10 +4,11 @@
   import { closePane, renamePane } from "../lib/commands";
   import { phaseText, providerText } from "../lib/errors";
   import { t } from "../lib/i18n.svelte";
-  import { closeOnScreen, focusOnScreen } from "../lib/router.svelte";
+  import { closeOnScreen, focusOnScreen, shortPath } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
   import { locateSlot, paneLabel, slotRef, type PaneView, type ProjectView, type WindowView } from "../lib/tree";
   import Chat from "./Chat.svelte";
+  import CopyButton from "./CopyButton.svelte";
   import InlineName from "./InlineName.svelte";
   import OpenInTerminal from "./OpenInTerminal.svelte";
   import Popover from "./Popover.svelte";
@@ -117,6 +118,10 @@
         {#if pane.agent}
           <dt>agent</dt>
           <dd>{pane.agent.uid}</dd>
+          <dt>link</dt>
+          <dd class="with-copy">
+            <span>{shortPath(pane.agent.uid)}</span><CopyButton text={location.origin + shortPath(pane.agent.uid)} />
+          </dd>
           <dt>provider</dt>
           <dd>{pane.agent.provider}</dd>
           <dt>phase</dt>

@@ -1,7 +1,9 @@
-// The URL is the selection: /project/{p}/window/{w}/pane/{id}, with
-// `?with=a,b` naming the panes opened beside the focused one. Pushing a URL is
-// how anything changes selection, so Back and Forward walk through them and
-// any view can be linked.
+// The URL is the selection: /project/{p}/window/{w}/agent/{a} for an agent's
+// slot or .../pane/{pane} for a shell's, with `?with=a:{uid},p:{uid}` naming
+// the slots opened beside the focused one by kind. `/a/{agent}` is the short
+// form a link uses; it is replaced by the full address once the agent is
+// found. Names never go in the URL. Pushing a URL is how anything changes
+// selection, so Back and Forward walk through them and any view can be linked.
 
 export interface Selection {
   project: string | null;
@@ -10,20 +12,40 @@ export interface Selection {
   pane: string | null;
 }
 
-function parse(): { sel: Selection; extras: string[] } {
+interface Route {
+  sel: Selection;
+  extras: string[];
+  /** The agent a short `/a/{agent}` address names, until it is resolved. */
+  short: string | null;
+  /** The query named a slot without its kind, as addresses once did. */
+  legacy: boolean;
+}
+
+const KIND = /^([ap]):/;
+
+function parse(): Route {
   const parts = location.pathname.split("/").filter(Boolean);
   const at = (head: string, i: number) => (parts[i] === head ? parts[i + 1] || null : null);
-  const extras = (new URLSearchParams(location.search).get("with") || "")
+  const entries = (new URLSearchParams(location.search).get("with") || "")
     .split(",")
-    .map((uid) => uid.trim())
+    .map((entry) => entry.trim())
     .filter(Boolean);
   return {
     sel: { project: at("project", 0), window: at("window", 2), pane: at("agent", 4) || at("pane", 4) },
-    extras,
+    extras: entries.map((entry) => entry.replace(KIND, "")),
+    short: parts.length === 2 ? at("a", 0) : null,
+    legacy: entries.some((entry) => !KIND.test(entry)),
   };
 }
 
-export const route = $state(parse());
+/** The short address for an agent, for links that leave this page. */
+export function shortPath(agent: string): string {
+  return `/a/${agent}`;
+}
+
+const withKind = (ref: string) => `${ref.startsWith("agent-") ? "a" : "p"}:${ref}`;
+
+export const route = $state<Route>(parse());
 
 window.addEventListener("popstate", () => Object.assign(route, parse()));
 
@@ -41,7 +63,7 @@ export function canonicalize(sel: Selection, extras: string[]): void {
 }
 
 function push(path: string, extras: string[], replace = false): void {
-  const query = extras.length ? `?with=${extras.join(",")}` : "";
+  const query = extras.length ? `?with=${extras.map(withKind).join(",")}` : "";
   const url = path + query;
   if (url === location.pathname + location.search) return;
   history[replace ? "replaceState" : "pushState"]({}, "", url);
