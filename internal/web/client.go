@@ -34,6 +34,10 @@ type ClientBackend interface {
 	ResumeCandidates(ctx context.Context, window string) (any, error)
 	// PreviewAgent renders the exact command a create-agent request would run.
 	PreviewAgent(ctx context.Context, project, window string, req CreateAgentRequest) (any, error)
+	// Statusbar reports which status bar parts Settings turned on.
+	Statusbar(ctx context.Context) (any, error)
+	// PaneGit reads the git branch and state of a pane's directory.
+	PaneGit(ctx context.Context, pane string) (any, error)
 	// AnswerQuestion answers the agent's pending AskUserQuestion.
 	AnswerQuestion(ctx context.Context, agent string, req QuestionAnswer) (any, error)
 }
@@ -106,6 +110,12 @@ func (s *Server) registerClientRoutes(mux *http.ServeMux) {
 	})
 	clientRead("/api/v1/web/panes/{pane}/screen", func(c ClientBackend, r *http.Request) (any, error) {
 		return c.Screen(r.Context(), r.PathValue("pane"))
+	})
+	clientRead("/api/v1/web/statusbar", func(c ClientBackend, r *http.Request) (any, error) {
+		return c.Statusbar(r.Context())
+	})
+	clientRead("/api/v1/web/panes/{pane}/git", func(c ClientBackend, r *http.Request) (any, error) {
+		return c.PaneGit(r.Context(), r.PathValue("pane"))
 	})
 	clientRead("/api/v1/web/windows/{window}/resume-candidates", func(c ClientBackend, r *http.Request) (any, error) {
 		return c.ResumeCandidates(r.Context(), r.PathValue("window"))

@@ -1605,3 +1605,64 @@ button.send.jump { font-size: 11px; padding: 3px 10px; }
 .task-line dl.kv { margin-top: var(--s1); }
 .turn.report .body { border-left: 2px solid var(--provenance); }
 .report-body > summary { cursor: pointer; font-size: 11px; color: var(--muted); margin-bottom: var(--s1); }
+
+/* status bar parts that open something ----------------------------------- */
+
+button.seg { font: inherit; border: 0; cursor: pointer; }
+button.seg:hover { background: var(--hover); color: var(--ink); }
+button.seg.session:hover { background: var(--accent); color: var(--on-accent); filter: brightness(1.08); }
+button.seg.path { text-align: right; max-width: 45vw; display: block; line-height: var(--bar); }
+.seg.git { color: var(--ink); gap: 5px; }
+.seg.git .branch { font-weight: 600; }
+.seg.git .mark { color: var(--warning); }
+.meter.fallback .label { color: var(--warning); }
+
+.popover.wide { min-width: min(640px, calc(100vw - 16px)); max-width: min(760px, calc(100vw - 16px)); }
+.popover-sub { margin: 0 0 var(--s3); color: var(--muted); }
+.popover .notice { margin: var(--s2) 0 0; }
+.with-copy { display: flex; align-items: baseline; gap: var(--s2); }
+.with-copy > span { min-width: 0; overflow-wrap: anywhere; }
+.copy-btn {
+  flex: none;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--base);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.copy-btn:hover { color: var(--ink); }
+.copy-btn.done { color: var(--success); border-color: var(--success); }
+
+.usage-sync { margin: 0 0 var(--s3); display: flex; gap: var(--s2); align-items: baseline; }
+.usage-sync .k { color: var(--muted); }
+.usage-sync.dim > span:not(.k) { color: var(--muted); }
+.usage-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.usage-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--rule);
+  padding: 3px 8px 3px 0;
+}
+.usage-table td { padding: 3px 8px 3px 0; border-bottom: 1px solid color-mix(in oklab, var(--rule) 50%, transparent); }
+.usage-table .num { text-align: right; }
+.usage-table .window { color: var(--muted); overflow-wrap: anywhere; }
+.usage-table .pct.hot { color: var(--warning); }
+.usage-table .pct.full { color: var(--critical); }
+.usage-table tr.dim td { color: var(--muted); }
+
+/* a code block copies with one click; the button stays out of the way until
+   the block is pointed at */
+.code-wrap { position: relative; }
+.code-copy { position: absolute; top: 12px; right: 6px; opacity: 0; transition: opacity var(--ease); }
+.code-wrap:hover .code-copy,
+.code-copy:focus-visible,
+.code-copy.done { opacity: 1; }
+@media (hover: none) {
+  .code-copy { opacity: 1; }
+}

@@ -11,7 +11,7 @@ import type { Graph, Notification, System, Usage } from "./types";
 export const live = $state({
   tree: emptyTree as Tree,
   notifications: [] as Notification[],
-  usage: { snapshots: [], hud: [] } as Usage,
+  usage: { hud: [], rows: [] } as Usage,
   system: { supported: false, cpuPercent: null, memoryPercent: null } as System,
   connected: false,
   error: "",

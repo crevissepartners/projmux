@@ -93,24 +93,47 @@ export interface Notification {
   expires_at?: string;
 }
 
-export interface UsageSnapshot {
-  model: string;
-  window: string;
-  pct: number;
-  updated_at?: string;
-  stale_reason?: string;
-}
-
 export interface UsageCell {
   model: string;
   window: string;
   pct: number;
+  used?: number;
+  limit?: number;
+  resetsAt?: string;
+  resetInSeconds?: number;
+  updatedAt?: string;
   stale: boolean;
+  fallback?: boolean;
 }
 
 export interface Usage {
-  snapshots: UsageSnapshot[];
   hud: UsageCell[];
+  rows: UsageCell[];
+  unsupported?: { model: string; label: string; reason: string }[];
+  lastSync?: string;
+  syncSource?: string;
+  error?: string;
+}
+
+/** Which status bar parts Settings turned on. */
+export interface StatusbarParts {
+  notifications: boolean;
+  usage: boolean;
+  project: boolean;
+  workingDirectory: boolean;
+  git: boolean;
+  resources: boolean;
+  clock: boolean;
+}
+
+export interface PaneGit {
+  cwd: string;
+  repo?: string;
+  branch?: string;
+  dirty?: boolean;
+  staged?: number;
+  ahead?: number;
+  behind?: number;
 }
 
 export interface System {

@@ -151,18 +151,12 @@ func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 	if path == "" {
 		return nil
 	}
-	if _, err := c.read("git", "-C", path, "rev-parse", "--is-inside-work-tree"); err != nil {
-		return nil
-	}
-	branch := c.readTrimmed("git", "-C", path, "symbolic-ref", "--quiet", "--short", "HEAD")
-	if branch == "" {
-		branch = c.readTrimmed("git", "-C", path, "rev-parse", "--short", "HEAD")
-	}
-	if branch == "" {
+	branch, porcelain, ok := c.readGitBranch(path)
+	if !ok {
 		return nil
 	}
 	segment := branch
-	if state := parseGitPorcelainStatus(c.readTrimmed("git", "-C", path, "status", "--porcelain=v1", "--branch")); state != "" {
+	if state := parseGitPorcelainStatus(porcelain); state != "" {
 		segment += " " + state
 	}
 	remoteURL := c.readTrimmed("git", "-C", path, "config", "--get", "remote.origin.url")
@@ -170,26 +164,53 @@ func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
-func parseGitPorcelainStatus(raw string) string {
-	var (
-		staged      int
-		ahead       int
-		behind      int
-		hasWorktree bool
-	)
+// readGitBranch reads the branch the git segment shows for path, or a short
+// commit on a detached head, and the porcelain status its state marks come
+// from. ok is false outside a work tree.
+func (c *statusCommand) readGitBranch(path string) (branch, porcelain string, ok bool) {
+	if _, err := c.read("git", "-C", path, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return "", "", false
+	}
+	branch = c.readTrimmed("git", "-C", path, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if branch == "" {
+		branch = c.readTrimmed("git", "-C", path, "rev-parse", "--short", "HEAD")
+	}
+	if branch == "" {
+		return "", "", false
+	}
+	return branch, c.readTrimmed("git", "-C", path, "status", "--porcelain=v1", "--branch"), true
+}
+
+// gitWorktreeState is what the git segment marks: uncommitted changes, staged
+// entries, and the distance to upstream.
+type gitWorktreeState struct {
+	Dirty  bool `json:"dirty,omitempty"`
+	Staged int  `json:"staged,omitempty"`
+	Ahead  int  `json:"ahead,omitempty"`
+	Behind int  `json:"behind,omitempty"`
+}
+
+func parseGitWorktreeState(raw string) gitWorktreeState {
+	var state gitWorktreeState
 	for line := range strings.SplitSeq(raw, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		if strings.HasPrefix(line, "## ") {
-			ahead, behind = parseGitAheadBehind(line)
+			state.Ahead, state.Behind = parseGitAheadBehind(line)
 			continue
 		}
-		hasWorktree = true
+		state.Dirty = true
 		if len(line) >= 2 && line[0] != ' ' && line[0] != '?' && line[0] != '!' {
-			staged++
+			state.Staged++
 		}
 	}
+	return state
+}
+
+func parseGitPorcelainStatus(raw string) string {
+	state := parseGitWorktreeState(raw)
+	hasWorktree, staged, ahead, behind := state.Dirty, state.Staged, state.Ahead, state.Behind
 	parts := []string{}
 	if hasWorktree {
 		parts = append(parts, gitStateToken(tmuxGitDirtyFg, "*"))

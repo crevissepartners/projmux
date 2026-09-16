@@ -161,7 +161,7 @@ All core routes are under `/api/v1`.
 | POST | `/api/v1/agents/{agent}/messages` | `agent message send` | body `{source, body, messageRef?, replyTo?, ttl?}`; returns the delivery receipt |
 | GET | `/api/v1/notifications` | `notify list --json` | |
 | POST | `/api/v1/notifications/{id}/ack` | `notification ack` | also publishes a queue refresh, which the CLI ack does not |
-| GET | `/api/v1/usage` | `agent usage --json` | cached snapshots only; never collects |
+| GET | `/api/v1/usage` | status bar usage HUD and popup | `{hud, rows, unsupported, lastSync, syncSource, error}` from the cache only; never collects. `hud` is what the bar draws under the Settings visibility, `rows` what its popup lists |
 | GET | `/api/v1/system` | status bar CPU and MEM | |
 
 Starting a turn does not fall back to steer on the server. A client that gets
@@ -199,11 +199,18 @@ Registry, so they are kept out of the core surface. They live under
 | GET | `/api/v1/web/windows/{window}/layout/events` | SSE `layout` frames, sent on change; `gone` when the window is no longer there |
 | GET | `/api/v1/web/panes/{pane}/screen` | one `capture-pane -e` of the pane, parsed into styled runs |
 | GET | `/api/v1/web/panes/{pane}/screen/events` | SSE `screen` frames, sent on change; `gone` when the pane is no longer there |
+| GET | `/api/v1/web/statusbar` | which status bar parts Settings turned on: `{notifications, usage, project, workingDirectory, git, resources, clock}`, read with the functions the TUI renders from |
+| GET | `/api/v1/web/panes/{pane}/git` | `{cwd, repo, branch, dirty, staged, ahead, behind}` for the directory the Registry records for the pane |
 | GET | `/api/v1/web/windows/{window}/resume-candidates` | `{items}`: the window's agents with no live pane, each with its first and last transcript line |
 | POST | `/api/v1/web/agents/{agent}/question` | `{toolId, answers:[{picks, other}]}`: answers the Claude agent's pending AskUserQuestion; see *The question exception* |
 | POST | `/api/v1/web/projects/{project}/windows/{window}/agents/preview` | `{argv}`: the exact command a create-agent request with the same body would run; runs nothing |
 
-A turn is `{role, text, at, kind, thinking, from, messageRef, via, tools}`.
+A turn is `{role, text, at, kind, thinking, from, messageRef, via, tools,
+task, report, images}`. A background task finishing is one `task` turn with
+`task: {id, kind, name, status, exitCode, outputFile, toolUses, durationMs,
+tokens}` and no text; a subagent's final report is a `report` turn whose
+text is the report without its delivery frame; system reminders are
+dropped.
 `from` is set only for a peer coordination message, and `via` is
 `projmux-web` for a message this client sent. Labels such as "thinking" or
 "clipped" are the client's to localize; the server sends flags and the note

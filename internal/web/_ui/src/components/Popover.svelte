@@ -5,14 +5,27 @@
   import { tick, type Snippet } from "svelte";
 
   interface Props {
-    /** The button's face. */
-    face: string;
+    /** The button's face: text, or a snippet when it is more than text. */
+    face?: string;
+    faceSnippet?: Snippet;
     title: string;
     className?: string;
     align?: "start" | "end";
+    /** Where the panel opens; the status bar opens upward. */
+    side?: "below" | "above";
+    wide?: boolean;
     children: Snippet;
   }
-  let { face, title, className = "slot-btn", align = "end", children }: Props = $props();
+  let {
+    face = "",
+    faceSnippet,
+    title,
+    className = "slot-btn",
+    align = "end",
+    side = "below",
+    wide = false,
+    children,
+  }: Props = $props();
 
   let open = $state(false);
   let button: HTMLButtonElement | undefined = $state();
@@ -23,11 +36,11 @@
     open = !open;
     if (!open || !button) return;
     const r = button.getBoundingClientRect();
-    const top = r.bottom + 4;
+    const vertical = side === "below" ? `top:${r.bottom + 4}px` : `bottom:${window.innerHeight - r.top + 4}px`;
     place =
       align === "end"
-        ? `top:${top}px;right:${Math.max(8, window.innerWidth - r.right)}px`
-        : `top:${top}px;left:${Math.max(8, r.left)}px`;
+        ? `${vertical};right:${Math.max(8, window.innerWidth - r.right)}px`
+        : `${vertical};left:${Math.max(8, r.left)}px`;
     await tick();
     panel?.focus();
   }
@@ -51,7 +64,7 @@
   }
 </script>
 
-<svelte:window onmousedown={outside} onkeydown={key} onresize={() => close(false)} />
+<svelte:window onmousedowncapture={outside} onkeydown={key} onresize={() => close(false)} />
 
 <button
   type="button"
@@ -65,10 +78,11 @@
   onclick={(e) => {
     e.stopPropagation();
     toggle();
-  }}>{face}</button
+  }}
+  >{#if faceSnippet}{@render faceSnippet()}{:else}{face}{/if}</button
 >
 {#if open}
-  <div class="popover" role="dialog" aria-label={title} tabindex="-1" style={place} bind:this={panel} onmousedown={(e) => e.stopPropagation()}>
+  <div class="popover" class:wide role="dialog" aria-label={title} tabindex="-1" style={place} bind:this={panel} onmousedown={(e) => e.stopPropagation()}>
     <div class="popover-title">{title}</div>
     {@render children()}
   </div>

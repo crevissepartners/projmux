@@ -937,9 +937,11 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 	return statusbarUsageRowsAt(snaps, time.Time{})
 }
 
-func statusbarUsageRowsAt(snaps []coreusage.Snapshot, now time.Time) []statusbarUsageRow {
+// statusbarUsagePopupSnapshots is the snapshots the usage popup lists, in
+// its order.
+func statusbarUsagePopupSnapshots(snaps []coreusage.Snapshot) []coreusage.Snapshot {
 	snaps = coreusage.SortedSnapshots(snaps)
-	rows := make([]statusbarUsageRow, 0, len(snaps))
+	out := make([]coreusage.Snapshot, 0, len(snaps))
 	for _, s := range snaps {
 		if s.Window == coreusage.WindowContext {
 			continue
@@ -950,9 +952,18 @@ func statusbarUsageRowsAt(snaps []coreusage.Snapshot, now time.Time) []statusbar
 		if s.NamedQuota != nil && !s.NamedQuota.IsActive {
 			continue
 		}
-		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != coreusage.WindowContext && s.Window != coreusage.WindowQuota {
+		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != coreusage.WindowQuota {
 			continue
 		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func statusbarUsageRowsAt(snaps []coreusage.Snapshot, now time.Time) []statusbarUsageRow {
+	snaps = statusbarUsagePopupSnapshots(snaps)
+	rows := make([]statusbarUsageRow, 0, len(snaps))
+	for _, s := range snaps {
 		hasCounts := s.Limit > 0
 		row := statusbarUsageRow{
 			model:     usagecmd.ModelDisplayLabel(s.Model),

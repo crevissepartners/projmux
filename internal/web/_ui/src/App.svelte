@@ -289,7 +289,16 @@
   {/if}
 </div>
 
-<StatusBar session={barSession} path={barPath} onNotify={() => setToggle("notify", !ui.notify)} />
+<StatusBar
+  session={barSession}
+  path={barPath}
+  paneUID={pane?.uid || ""}
+  onNotify={() => setToggle("notify", !ui.notify)}
+  onSession={() => {
+    setToggle("sidebar", true);
+    focusList(projectList);
+  }}
+/>
 
 {#if ui.layout && win?.runtimeId}
   <LayoutPreview window={win.uid} ownRuntime={pane?.runtimeId || ""} onClose={() => setToggle("layout", false)} />

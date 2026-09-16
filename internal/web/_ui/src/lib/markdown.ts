@@ -9,6 +9,8 @@
 // agent's repository is known, `#1018`, a commit hash, and a path such as
 // `internal/x.go:42`, each to GitHub at a revision the server pinned.
 
+import { copyText } from "./clipboard";
+import { t } from "./i18n.svelte";
 import type { Repository } from "./types";
 
 type Repo = Repository | null | false;
@@ -17,6 +19,24 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ""): HTML
   const node = document.createElement(tag);
   if (className) node.className = className;
   return node;
+}
+
+function copyButton(text: string): HTMLButtonElement {
+  const button = el("button", "copy-btn code-copy");
+  button.type = "button";
+  button.textContent = t("web.copy.label");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  button.addEventListener("click", async () => {
+    const ok = await copyText(text);
+    button.textContent = ok ? t("web.copy.done") : t("web.copy.failed");
+    button.classList.toggle("done", ok);
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      button.textContent = t("web.copy.label");
+      button.classList.remove("done");
+    }, 1500);
+  });
+  return button;
 }
 
 export function renderMarkdown(container: HTMLElement, text: string, repo: Repository | null = null): void {
@@ -40,7 +60,9 @@ export function renderMarkdown(container: HTMLElement, text: string, repo: Repos
       const block = el("pre", "code");
       block.textContent = body.join("\n");
       if (fence[1]) block.dataset.lang = fence[1];
-      container.append(block);
+      const wrap = el("div", "code-wrap");
+      wrap.append(block, copyButton(body.join("\n")));
+      container.append(wrap);
       continue;
     }
 
