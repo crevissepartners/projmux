@@ -38,6 +38,12 @@ type webBackend struct {
 	runCLI     func(argv []string) (string, error)
 	socketPath func(ctx context.Context) (string, error)
 	paths      func() (config.Paths, error)
+
+	// creatingWindows holds the Projects a window create is running for. A
+	// create takes seconds, and a second press in that time would otherwise
+	// make a second window once the first is done.
+	creatingMu      sync.Mutex
+	creatingWindows map[string]bool
 }
 
 var _ web.Backend = (*webBackend)(nil)

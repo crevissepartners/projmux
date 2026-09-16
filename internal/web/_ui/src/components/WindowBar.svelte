@@ -58,7 +58,6 @@
           {#if win.unbound || !win.runtimeId}
             <span class="tag warn" title={win.unboundReason || t("web.windows.unbound_title")}>{t("web.window.not_running")}</span>
           {/if}
-          {#if win.agentCount}<span class="tag agent">A{win.agentCount}</span>{/if}
           <!-- One click closes, like a Pane's ×; what the Window takes with it
                is said on the control. -->
           <button
@@ -72,10 +71,17 @@
           >
         </div>
       {:else}
-        <span class="empty">{t("web.windows.empty")}</span>
+        {#if ui.creatingWindow !== project.uid}<span class="empty">{t("web.windows.empty")}</span>{/if}
       {/each}
-      <button type="button" class="tab add" title={t("web.windows.new")} onclick={() => createWindow(project.uid)}
-        >＋</button
+      {#if ui.creatingWindow === project.uid}
+        <div class="tab creating" role="status"><span class="tag busy"></span>{t("web.windows.creating")}</div>
+      {/if}
+      <button
+        type="button"
+        class="tab add"
+        title={t("web.windows.new")}
+        disabled={!!ui.creatingWindow}
+        onclick={() => createWindow(project.uid)}>＋</button
       >
       {#if current}
         <button type="button" class="tab add" title={t("web.windows.split")} onclick={() => (ui.overlay = "split")}

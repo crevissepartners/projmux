@@ -7,6 +7,7 @@ import { go } from "./router.svelte";
 import { refresh } from "./state.svelte";
 import { fail, toast } from "./toast.svelte";
 import type { Agent, Pane, Window } from "./types";
+import { ui } from "./ui.svelte";
 
 interface CreatedWindow {
   window?: Window;
@@ -21,7 +22,12 @@ interface CreatedWindow {
  * new-window key means. The Window exists even when the agent is refused, so
  * that is reported and the page still goes there.
  */
+// A create takes seconds. Until it answers, pressing Alt-N again or the +
+// button does nothing here, and the server refuses a second create for the
+// same Project from another tab.
 export async function createWindow(project: string): Promise<void> {
+  if (ui.creatingWindow) return;
+  ui.creatingWindow = project;
   try {
     const body = await post<CreatedWindow>(paths.windows(project), {
       agent: { provider: "claude" },
@@ -34,6 +40,8 @@ export async function createWindow(project: string): Promise<void> {
     if (window) go({ project, window, pane: body.agent?.metadata.uid ?? body.pane?.metadata.uid ?? null });
   } catch (err) {
     fail(err);
+  } finally {
+    ui.creatingWindow = "";
   }
 }
 

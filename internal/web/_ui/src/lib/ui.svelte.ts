@@ -10,6 +10,8 @@ export const ui = $state({
   layout: load("layout", false),
   desktopNotify: load("desktopNotify", false),
   overlay: "" as "" | "split" | "switcher" | "help",
+  /** The Project a window is being created in, while the create runs. */
+  creatingWindow: "",
   /** A pane whose composer should take the caret once it exists. */
   focusComposer: "",
 });

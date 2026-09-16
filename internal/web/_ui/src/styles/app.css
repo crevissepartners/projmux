@@ -1756,3 +1756,5 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
   border-radius: var(--radius);
   padding: 3px 6px;
 }
+.tab.creating { color: var(--muted); gap: 6px; cursor: progress; font-style: italic; }
+.tab.add:disabled { opacity: 0.4; cursor: progress; }

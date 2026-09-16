@@ -107,6 +107,7 @@ The server adds its own codes:
 | `invalid-name` | 400 | the name fails metadata validation |
 | `not-live` | 409 | the target has no live runtime to act on |
 | `unsupported` | 400 | the provider has no such surface (for example, a turn on Claude) |
+| `create-in-progress` | 409 | a window create for the same Project is still running on this server; a repeat press is refused rather than making a second window |
 | `refused` | 409 | projmux refused, and no finer token exists yet |
 | `internal` | 500 | anything else |
 

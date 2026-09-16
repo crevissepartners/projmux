@@ -47,8 +47,6 @@
             <span class="name">{project.name}</span>
             <span class="tags">
               {#if project.sessionLive}<span class="tag live">live</span>{/if}
-              {#if project.agentCount}<span class="tag agent">A{project.agentCount}</span>{/if}
-              <span class="tag" title="Window {project.windows.length}">W{project.windows.length}</span>
             </span>
           </div>
           {#if project.root}<div class="sub" title={project.root}>{project.root}</div>{/if}

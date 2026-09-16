@@ -19,6 +19,8 @@ const (
 	CodeUnsupported     = "unsupported"
 	CodeRefused         = "refused"
 	CodeInternal        = "internal"
+	// CodeInProgress refuses a create that repeats one still running.
+	CodeInProgress = "create-in-progress"
 )
 
 // Error is the one shape every non-2xx response takes. Code is the stable

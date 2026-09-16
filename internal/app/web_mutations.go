@@ -91,6 +91,25 @@ func createdUID(stdout string) (string, error) {
 	return list.Items[len(list.Items)-1].Metadata.UID, nil
 }
 
+func (b *webBackend) beginWindowCreate(project string) bool {
+	b.creatingMu.Lock()
+	defer b.creatingMu.Unlock()
+	if b.creatingWindows[project] {
+		return false
+	}
+	if b.creatingWindows == nil {
+		b.creatingWindows = map[string]bool{}
+	}
+	b.creatingWindows[project] = true
+	return true
+}
+
+func (b *webBackend) endWindowCreate(project string) {
+	b.creatingMu.Lock()
+	defer b.creatingMu.Unlock()
+	delete(b.creatingWindows, project)
+}
+
 func (b *webBackend) CreateWindow(ctx context.Context, project string, req web.CreateWindowRequest) (any, error) {
 	s, err := b.snapshot(ctx)
 	if err != nil {
@@ -99,6 +118,10 @@ func (b *webBackend) CreateWindow(ctx context.Context, project string, req web.C
 	if _, ok := s.registry.Project(project); !ok {
 		return nil, web.NotFound("no project " + project)
 	}
+	if !b.beginWindowCreate(project) {
+		return nil, web.NewError(http.StatusConflict, web.CodeInProgress, "a window is already being created in project "+project)
+	}
+	defer b.endWindowCreate(project)
 	argv := []string{"create", "window", "--project", "uid:" + project, "-o", "json"}
 	if name := strings.TrimSpace(req.Name); name != "" {
 		argv = append(argv, "--name", name)
