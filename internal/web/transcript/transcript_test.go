@@ -385,3 +385,41 @@ func TestQuestionToolInputIsNotClippedToDisplayLimit(t *testing.T) {
 		t.Fatalf("question input clipped=%v len=%d", call.Clipped, len(call.Input))
 	}
 }
+
+// TestIdlePeerMessageIsKept pins the record shape a peer message takes when it
+// arrives while the session is idle: a meta `user` record with a peer origin.
+// Dropping every meta record hid these, and with them every message the web
+// client sent to an idle agent.
+func TestIdlePeerMessageIsKept(t *testing.T) {
+	frame := "Another Claude session sent a message:\n" +
+		`{"kind":"projmux-coordination","messageRef":"projmux-web-1","source":{"agentUID":"agent-a"},"target":{"agentUID":"agent-a"},"payload":"hello"}`
+	raw := map[string]any{
+		"type":      "user",
+		"isMeta":    true,
+		"origin":    map[string]any{"kind": "peer"},
+		"timestamp": "2026-09-16T17:39:07Z",
+		"message":   map[string]any{"role": "user", "content": frame},
+	}
+	turn, ok := parseClaudeLine(raw)
+	if !ok || turn.Text != "hello" || turn.Via != ViaWeb || turn.MessageRef != "projmux-web-1" || turn.Role != "user" {
+		t.Fatalf("idle peer message dropped or misread: ok=%v turn=%+v", ok, turn)
+	}
+
+	caveat := map[string]any{
+		"type":    "user",
+		"isMeta":  true,
+		"message": map[string]any{"role": "user", "content": "<local-command-caveat>Caveat</local-command-caveat>"},
+	}
+	if _, ok := parseClaudeLine(caveat); ok {
+		t.Fatal("a harness meta record was shown")
+	}
+	summary := map[string]any{
+		"type":             "user",
+		"isCompactSummary": true,
+		"origin":           map[string]any{"kind": "peer"},
+		"message":          map[string]any{"role": "user", "content": "summary"},
+	}
+	if _, ok := parseClaudeLine(summary); ok {
+		t.Fatal("a compaction summary was shown")
+	}
+}

@@ -21,7 +21,15 @@ func parseClaudeLine(raw map[string]any) (Turn, bool) {
 	// Harness bookkeeping is written as `user` records too. `isMeta` marks the
 	// caveat Claude Code prepends to a local command, and a compaction summary
 	// is the harness talking to itself; neither is something anyone said.
-	if raw["isMeta"] == true || raw["isCompactSummary"] == true {
+	//
+	// isMeta alone is not enough to drop a record: a peer message delivered
+	// while the session is idle is also written as a meta `user` record, with
+	// origin.kind "peer". Dropping every meta record hid exactly the messages
+	// the web client sends whenever the agent was not mid-turn.
+	if raw["isCompactSummary"] == true {
+		return Turn{}, false
+	}
+	if raw["isMeta"] == true && !fromPeer(raw) {
 		return Turn{}, false
 	}
 	text, tools, thinking := flattenContent(message["content"])
@@ -69,6 +77,12 @@ func parseClaudeAttachment(raw map[string]any) (Turn, bool) {
 		return frame.turn(at, coordinationKindQueued), true
 	}
 	return Turn{Role: "user", Text: text, At: at, Kind: "queued"}, true
+}
+
+// fromPeer reports whether a record was delivered by another session.
+func fromPeer(raw map[string]any) bool {
+	origin, _ := raw["origin"].(map[string]any)
+	return stringOf(origin["kind"]) == "peer"
 }
 
 // localCommandTurn reads the records a slash command leaves behind.
