@@ -55,7 +55,24 @@ func parseClaudeLine(raw map[string]any) (Turn, bool) {
 	if frame, ok := unwrapCoordination(text); ok {
 		return frame.turn(at, coordinationKindDirect), true
 	}
-	return Turn{Role: kind, Text: text, At: at, Kind: kind, Thinking: thinking, Tools: tools, Images: images}, true
+	turn := Turn{Role: kind, Text: text, At: at, Kind: kind, Thinking: thinking, Tools: tools, Images: images}
+	if kind == "assistant" {
+		turn.Model, turn.Effort = claudeModel(message), stringOf(raw["effort"])
+	}
+	return turn, true
+}
+
+// KindContext is a turn that records only the model a provider switched to.
+const KindContext = "context"
+
+// claudeModel reads the model an assistant record came from. Claude Code
+// writes "<synthetic>" on messages it made up itself, such as an API error.
+func claudeModel(message map[string]any) string {
+	model := stringOf(message["model"])
+	if strings.HasPrefix(model, "<") {
+		return ""
+	}
+	return model
 }
 
 // parseClaudeAttachment reads a message that arrived while the session was
@@ -145,14 +162,24 @@ func between(text, open, closing string) string {
 // parseCodexLine reads a Codex rollout jsonl, keeping only real messages and
 // tool calls.
 func parseCodexLine(raw map[string]any) (Turn, bool) {
-	if stringOf(raw["type"]) != "response_item" {
-		return Turn{}, false
-	}
 	payload, _ := raw["payload"].(map[string]any)
 	if payload == nil {
 		return Turn{}, false
 	}
 	at := stringOf(raw["timestamp"])
+	switch stringOf(raw["type"]) {
+	case "response_item":
+	case "turn_context":
+		// Each turn records the model and effort it runs with, so a change
+		// made mid-session shows up on the next turn.
+		model := stringOf(payload["model"])
+		if model == "" {
+			return Turn{}, false
+		}
+		return Turn{Role: "system", Kind: KindContext, At: at, Model: model, Effort: stringOf(payload["effort"])}, true
+	default:
+		return Turn{}, false
+	}
 	switch stringOf(payload["type"]) {
 	case "message":
 		// handled below

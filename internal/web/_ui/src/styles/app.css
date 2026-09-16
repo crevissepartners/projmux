@@ -1736,3 +1736,13 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
   background: color-mix(in oklab, var(--base) 80%, transparent);
 }
 .pasted a:hover { border-color: var(--accent); }
+.slot-model {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

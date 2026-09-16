@@ -28,6 +28,15 @@
   const activity = $derived(activityOf(pane));
   const label = $derived(paneLabel(pane));
   let stream = $state<"" | "live" | "warn">("");
+  let model = $state<{ model: string; effort: string } | null>(null);
+  // "claude-opus-5" reads as "opus-5" beside a Claude chip.
+  $effect(() => {
+    void chatKey;
+    model = null;
+  });
+  const modelText = $derived(
+    model ? `${model.model.replace(/^claude-/, "")}${model.effort ? ` · ${model.effort}` : ""}` : "",
+  );
 
   // A rebuild would drop an open composer and the log's scroll, so the chat is
   // keyed only on what changes what it shows: which agent, its phase, its pane.
@@ -71,6 +80,7 @@
     <span class="slot-kind">
       {providerText(provider)}{pane.agent && pane.agent.phase !== "Running" ? ` · ${phaseText(pane.agent.phase)}` : ""}
     </span>
+    {#if modelText}<span class="slot-model" title="{model?.model}{model?.effort ? ` · effort ${model.effort}` : ''}">{modelText}</span>{/if}
     <span class="slot-activity {activity?.tone || ''}">{activity ? t(`web.activity.${activity.kind}`) : ""}</span>
     {#if stream}
       <span class="tag stream" class:live={stream === "live"} class:warn={stream === "warn"} title={t("web.slot.live_title")}>
@@ -111,6 +121,11 @@
           <dd>{pane.agent.provider}</dd>
           <dt>phase</dt>
           <dd>{pane.agent.phase}{pane.agent.reason ? ` (${pane.agent.reason})` : ""}</dd>
+          {#if model}
+            <dt>model</dt>
+            <dd>{model.model}</dd>
+            {#if model.effort}<dt>effort</dt><dd>{model.effort}</dd>{/if}
+          {/if}
         {/if}
       </dl>
     </div>
@@ -121,7 +136,7 @@
          and its composer fill the slot, and the details open from the head. -->
     <div class="slot-body chatting">
       {#key chatKey}
-        <Chat agent={pane.agent} paneUID={pane.uid} bind:stream />
+        <Chat agent={pane.agent} paneUID={pane.uid} bind:stream bind:model />
       {/key}
     </div>
   {:else}

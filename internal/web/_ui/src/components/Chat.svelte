@@ -19,8 +19,14 @@
     agent: AgentView;
     paneUID: string;
     stream?: "" | "live" | "warn";
+    /** The model and effort the provider last recorded running with. */
+    model?: { model: string; effort: string } | null;
   }
-  let { agent, paneUID, stream = $bindable("") }: Props = $props();
+  let { agent, paneUID, stream = $bindable(""), model = $bindable(null) }: Props = $props();
+
+  function noteModel(turn: Turn) {
+    if (turn.model) model = { model: turn.model, effort: turn.effort || "" };
+  }
 
   let turns = $state<Turn[]>([]);
   let note = $state("");
@@ -79,7 +85,9 @@
     try {
       const body = await get<TranscriptView>(paths.transcript(uid));
       offset = body.transcript.offset;
-      turns = (body.transcript.turns || []).filter((turn) => !noise(turn));
+      const all = body.transcript.turns || [];
+      all.forEach(noteModel);
+      turns = all.filter((turn) => !noise(turn) && turn.kind !== "context");
       for (const turn of turns) settle(uid, turn);
       note = body.transcript.note || "";
       truncated = body.transcript.truncated;
@@ -102,6 +110,8 @@
       try {
         const raw = JSON.parse((event as MessageEvent).data) as Turn;
         settle(uid, raw);
+        noteModel(raw);
+        if (raw.kind === "context") return;
         const turn = merge(raw);
         if (turn && !noise(turn)) {
           turns.push(turn);

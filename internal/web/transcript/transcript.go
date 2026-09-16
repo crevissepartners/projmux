@@ -47,6 +47,11 @@ type Turn struct {
 	// so. Empty for anything typed at the terminal.
 	Via   string     `json:"via,omitempty"`
 	Tools []ToolCall `json:"tools,omitempty"`
+	// Model and Effort are what the provider ran this turn with, when its
+	// record says. A Codex turn_context record is a turn of kind "context"
+	// that carries only these.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 	// Task is set on a task-notification turn, Report on a subagent's report.
 	Task   *Task   `json:"task,omitempty"`
 	Report *Report `json:"report,omitempty"`
@@ -309,7 +314,7 @@ func linkTools(turns []Turn) []Turn {
 // Text.
 func hasContent(turn Turn) bool {
 	return turn.Text != "" || len(turn.Tools) > 0 || turn.Thinking || isCoordinationKind(turn.Kind) ||
-		turn.Task != nil || turn.Images > 0
+		turn.Task != nil || turn.Images > 0 || turn.Kind == KindContext
 }
 
 // filterCalls keeps only the entries that are real calls.
@@ -335,6 +340,9 @@ const hardTurnCap = 4000
 // A thinking-only assistant turn counts: it is rendered as its own row, the
 // same as it was when the marker was carried in the text.
 func speaks(turn Turn) bool {
+	if turn.Kind == KindContext {
+		return false
+	}
 	switch turn.Role {
 	case "user", "peer", "system":
 		return true

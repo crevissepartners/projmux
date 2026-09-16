@@ -176,6 +176,8 @@ export interface Turn {
   messageRef?: string;
   from?: { agentUID: string; provider?: string };
   tools?: ToolCall[];
+  model?: string;
+  effort?: string;
   task?: TaskNote;
   report?: { from?: string };
   images?: number;
