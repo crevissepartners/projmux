@@ -13,7 +13,10 @@ A closed Project has exactly two actions:
   UID and one new canonical Window/shell UID chain, after a confirmation naming
   the exact old Project UID and its Window/Pane/Agent counts. Declining returns
   to the startup rows and writes nothing. It does not archive or retain the old
-  generation.
+  generation. Its new Window's shell Pane then follows the saved launch default
+  (`tmux-ai-split-mode`), exactly as a Window created from the UI does. The
+  first open of an unregistered root, which resolves to the same fresh start,
+  behaves the same.
 
 Esc/cancel returns to Projects; it is not an action row. Picker failure falls
 back to the non-destructive `Continue project` action.
@@ -67,3 +70,9 @@ best effort and never change the topology result.
 graphs while changing the Project identity. A rejected commit retains the
 exact old Registry preimage. Repeating `Recreate Project` replaces identity again;
 each successful result has exactly one Project claiming the root.
+
+The saved launch default is applied only when the open carries the exact client
+that pressed the row, after that client has been moved onto the new Session; an
+open without one -- a detached `start project`, a scripted open -- keeps the
+plain shell Pane and says nothing. A default that cannot be applied costs one
+line on that client and keeps the shell Pane; the Project stays open either way.

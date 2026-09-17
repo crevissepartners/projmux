@@ -200,6 +200,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	if topology, ok := switcher.projectTopology.(*registryProjectTopologyMaterializer); ok {
 		topology.agents = ai
 	}
+	// A Project opened fresh through the UI follows the same saved launch
+	// default a UI Window create follows. The AI command owns that file, so the
+	// route is injected here rather than constructed inside newSwitchCommand.
+	switcher.launchDefault = ai.applyLaunchDefault
 	windowCmd := newWindowCommand(recorder)
 	recentWindowCmd := windowCmd.recent
 	attach := newAttachCommand(recorder)

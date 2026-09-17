@@ -5804,6 +5804,12 @@ mkdir -p \
   "$startup_root/bin"
 chmod 0700 "$startup_root/runtime" "$startup_root/tmux"
 startup_project="$startup_root/work/alpha"
+# The `Recreate Project` legs below open a Project fresh on an exact client, and
+# a fresh open now applies the saved launch default to the new Window's first
+# Pane. Pin it to `shell` so these legs keep counting the canonical shell the
+# open committed instead of the picker popup an unset default opens.
+mkdir -p "$startup_root/config/projmux"
+printf 'shell\n' >"$startup_root/config/projmux/tmux-ai-split-mode"
 
 # A detached pane running the container's default shell exits immediately, which
 # would destroy every materialized Pane before it could be observed.
@@ -6814,6 +6820,13 @@ mkdir -p \
   "$startup_sel_root/bin"
 chmod 0700 "$startup_sel_root/runtime" "$startup_sel_root/tmux"
 startup_sel_project="$startup_sel_root/work/epsilon"
+# This block's whole point is an unregistered root, which re-adjudicates to a
+# fresh start, and a fresh start now applies the saved launch default to the new
+# Window's first Pane on the exact client this leg passes. An unset default means
+# the picker, whose popup owns the client until it is dismissed, so pin `shell`
+# to keep the leg measuring the mode decision rather than the picker.
+mkdir -p "$startup_sel_root/config/projmux"
+printf 'shell\n' >"$startup_sel_root/config/projmux/tmux-ai-split-mode"
 
 startup_sel_shell="$startup_sel_root/shim/persistent-shell"
 cat >"$startup_sel_shell" <<'STARTUP_SELECT_SHELL_STUB'

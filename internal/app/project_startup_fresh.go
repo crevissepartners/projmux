@@ -9,6 +9,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -497,7 +498,177 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	if err := c.openProjectSession(ctx, sessionName); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "client-handoff", plan.ProjectUID, plan.NewProjectUID, err)
 	}
+	// The saved launch default runs last, on the other side of the handoff: an
+	// Agent or a picker popup belongs to the Session the operator is now looking
+	// at, and applying it earlier would open it behind a client that had not
+	// been moved yet. It cannot fail the open -- see applyFreshLaunchDefault.
+	c.applyFreshLaunchDefault(ctx, target)
 	return nil
+}
+
+// applyFreshLaunchDefault opens the saved launch default on the shell Pane of
+// the fresh Project's one Window, exactly as a UI Window create opens it on the
+// Pane its create committed.
+//
+// Nothing here can fail the open, and nothing here is rolled back. The Session,
+// its Window and its shell Pane are committed by the time this runs; a refusal
+// costs the operator one line and leaves a shell they can work in, which is why
+// this returns nothing and startProjectFresh still answers nil.
+func (c *switchCommand) applyFreshLaunchDefault(ctx context.Context, root string) {
+	if c.launchDefault == nil || c.freshOriginShellPane == nil {
+		return
+	}
+	// The launch default attaches only to a gesture a human made. The sidebar
+	// continuation carries the exact client that pressed the row through
+	// withSidebarOpenClientEnv, and it is the client that will see whatever the
+	// default does. A detached `start project`, a scripted `open project`, and
+	// any other open without that client carry no such gesture, and there a
+	// provider mode would open an Agent -- or a picker popup -- on whatever
+	// client tmux happens to consider current. So with no exact client this does
+	// nothing at all, in every mode: no Agent, no picker, no message. The client
+	// is resolved the way launchSidebarOpenContinuation resolves it, so both
+	// halves of the same re-exec agree on who pressed the row.
+	client := firstNonEmpty(
+		c.lookupEnvValue(inttmux.SwitchTargetClientEnv),
+		c.lookupEnvValue(hookTrustPopupTargetClientEnv),
+	)
+	if strings.TrimSpace(client) == "" {
+		return
+	}
+	origin, err := c.freshOriginShellPane(ctx, root)
+	if err != nil {
+		c.displayFreshLaunchDefaultLine(ctx, client, keptOriginShellLine(err.Error()))
+		return
+	}
+	result := c.launchDefault(origin, strings.TrimSpace(client))
+	if result.problem != "" {
+		c.displayFreshLaunchDefaultLine(ctx, client, result.problem)
+		return
+	}
+	// result.picker means the popup has already come and gone on this client and
+	// owns whatever it reported, so nothing is written over it. result.notice --
+	// the split start notice a committed Agent produces -- is deliberately
+	// dropped: the success line it rides on for a Window create was reported
+	// before the handoff here, so the notice could only arrive as a second,
+	// unprompted status line on a Session the operator has just been moved into.
+	// The one thing worth interrupting a fresh open for is a failure.
+}
+
+// displayFreshLaunchDefaultLine shows one bounded line on the exact client that
+// pressed the row.
+//
+// It addresses the app socket explicitly, for the reason openProjectSession
+// does: the sidebar continuation is a detached `run-shell` job with no useful
+// inherited $TMUX, so the plain `display-message` the startup notice sink uses
+// would either be skipped or land on an unrelated server. A failed display is
+// swallowed -- the Session is open and the Window is there, and a line that
+// could not be shown is not a reason to call the open a failure.
+func (c *switchCommand) displayFreshLaunchDefaultLine(ctx context.Context, client, line string) {
+	line = strings.Join(strings.Fields(line), " ")
+	client = strings.TrimSpace(client)
+	if line == "" || client == "" || c.tmuxRunner == nil {
+		return
+	}
+	target, err := tmuxSocketNameTarget(defaultAppSocket)
+	if err != nil {
+		return
+	}
+	exact := explicitTmuxRunner{runner: c.tmuxRunner, target: target}
+	_, _ = exact.Run(ctx, "tmux", "display-message", "-c", client, "-d", "10000", tmuxLiteralMessage(line))
+}
+
+// freshOriginPaneLocator turns one Registry Pane uid into the exact live tmux
+// Pane that mirrors it. Production passes the canonical metadata mirror; a unit
+// test answers it without a tmux server.
+type freshOriginPaneLocator func(ctx context.Context, paneUID string) (string, bool, error)
+
+// freshProjectOriginShellPane resolves the exact `%N` of the one shell Pane a
+// fresh open committed.
+//
+// The Registry is the authority for *which* Pane, not tmux Pane order: the
+// launch default replaces exactly one Pane, and asking the live Window which
+// Pane is first would answer with whatever tmux most recently made current. A
+// fresh Project is one Window holding one shell Pane -- the shape
+// projectFreshStartPlan.Empty() requires and verifyProjectFreshStartPruned
+// enforces -- so any other shape is reported as a failure to apply rather than
+// guessed at, because the guess would be a Pane somebody is working in.
+func freshProjectOriginShellPane(
+	ctx context.Context,
+	snapshot func() (coremetadata.Registry, error),
+	locate freshOriginPaneLocator,
+	root string,
+) (string, error) {
+	if snapshot == nil {
+		return "", errors.New("projmux could not read the Registry for the saved launch default")
+	}
+	registry, err := snapshot()
+	if err != nil {
+		return "", fmt.Errorf("projmux could not read the Registry for the saved launch default: %v", err)
+	}
+	project, ok := registry.ProjectByRoot(root)
+	if !ok {
+		return "", fmt.Errorf("projmux found no Project at %q for the saved launch default", root)
+	}
+	windows := registry.WindowsOf(project.Metadata.UID)
+	if len(windows) != 1 {
+		return "", fmt.Errorf("the fresh Project declares %d Windows, not the one a fresh open commits", len(windows))
+	}
+	window := windows[0]
+	panes := registry.PanesOf(window.Metadata.UID)
+	if len(panes) != 1 || len(registry.AgentsOf(window.Metadata.UID)) != 0 {
+		return "", fmt.Errorf("the fresh Window declares %d shell Panes and %d Agents, not the single shell Pane a fresh open commits",
+			len(panes), len(registry.AgentsOf(window.Metadata.UID)))
+	}
+	shell, ok := registry.WindowDefaultShell(window.Metadata.UID)
+	if !ok {
+		// A Window committed from its anchor carries the same Pane without a
+		// separate defaultShellPaneRef, which is the fallback the topology
+		// engine's own bootstrap selection makes. An anchor that is not this
+		// Window's own shell is not a Pane this may replace.
+		anchor, anchored := registry.WindowAnchor(window.Metadata.UID)
+		if !anchored || anchor.Spec.Role != coremetadata.PaneRoleShell ||
+			anchor.Metadata.OwnerUID() != window.Metadata.UID {
+			return "", errors.New("the fresh Window declares no Window-owned shell Pane to open the saved launch default on")
+		}
+		shell = anchor
+	}
+	if shell.Metadata.UID != panes[0].Metadata.UID {
+		return "", errors.New("the fresh Window's shell Pane is not the Pane it declares")
+	}
+	// The Registry names the Pane but does not carry its live handle: the first
+	// Window's Pane arrives with the atomic new-session result and is mirrored
+	// with its uid, while the activation generation that records a `%N` is
+	// written only for the Panes created after it. So the uid is resolved
+	// through the canonical metadata mirror, which reads the mirrored uid off
+	// every live Pane and refuses a duplicate claim instead of guessing.
+	if locate == nil {
+		return "", errors.New("projmux has no route to the live Pane mirroring the fresh shell Pane")
+	}
+	target, found, err := locate(ctx, shell.Metadata.UID)
+	if err != nil {
+		return "", fmt.Errorf("projmux could not find the live Pane mirroring the fresh shell Pane %s: %v",
+			shell.Metadata.UID, err)
+	}
+	origin := exactTmuxHandle(strings.TrimSpace(target), "%")
+	if !found || origin == "" {
+		return "", fmt.Errorf("no live Pane carries an exact %%N for the fresh shell Pane %s", shell.Metadata.UID)
+	}
+	return origin, nil
+}
+
+// liveShellPaneTarget is the production locator: the canonical metadata mirror,
+// routed over the app's own socket the way every other exact read in this flow
+// is. The sidebar continuation inherits no useful $TMUX, so the socket is named
+// rather than resolved from the environment.
+func (c *switchCommand) liveShellPaneTarget(ctx context.Context, paneUID string) (string, bool, error) {
+	if c.tmuxRunner == nil {
+		return "", false, errors.New("exact tmux runner is not configured")
+	}
+	target, err := tmuxSocketNameTarget(defaultAppSocket)
+	if err != nil {
+		return "", false, err
+	}
+	return intmetadata.NewMirror(explicitTmuxRunner{runner: c.tmuxRunner, target: target}).FindPaneTargetForUID(ctx, paneUID)
 }
 
 // verifyProjectFreshStartPruned re-reads the Registry and refuses to continue

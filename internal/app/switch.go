@@ -160,10 +160,27 @@ type switchCommand struct {
 	// activation discloses unresumed Agents through.
 	startupNotices projectStartupReporter
 	// navigation is the Registry-first row source and the resource hierarchy
-	// surface. It is the only thing here that reads the Registry, and it never
-	// writes: the picker's rows, its status overlay, and its refresh are one
-	// read-only projection.
+	// surface. It never writes: the picker's rows, its status overlay, and its
+	// refresh are one read-only projection. It is no longer the only Registry
+	// reader on this command -- freshOriginShellPane below reads the one Pane a
+	// fresh open committed -- but it remains the only one the picker uses.
 	navigation *registryNavigationCommand
+	// launchDefault applies the saved launch default to the shell Pane a fresh
+	// open committed, exactly as a UI Window create applies it to the Pane its
+	// create committed. It is injected for the same two reasons tmuxCommand
+	// injects it: a test fakes the whole application without an aiCommand, and
+	// the saved mode file stays readable in exactly one place, the aiCommand
+	// behind this func. A nil route is today's behavior -- the plain shell Pane
+	// the topology engine materialized -- which is what every fixture that
+	// exercises only the fresh replacement and the client handoff expects.
+	launchDefault launchDefaultFunc
+	// freshOriginShellPane answers the exact `%N` of the shell Pane a fresh open
+	// committed: the Registry names the Pane, the canonical metadata mirror
+	// turns its uid into a live handle. It is a func field so a unit test can
+	// answer it without a Registry or a tmux server, and so the one Registry
+	// read this flow needs stays spelled in one place; production wires
+	// freshProjectOriginShellPane.
+	freshOriginShellPane func(ctx context.Context, root string) (string, error)
 }
 
 type switchPlan struct {
@@ -236,6 +253,9 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 	}
 	cmd.validateProjectOpenRoute = func(ctx context.Context, anchor string) error {
 		return validateSidebarProjectOpenRoute(ctx, cmd.tmuxRunner, cmd.lookupEnv, newResourceStore().snapshot, anchor)
+	}
+	cmd.freshOriginShellPane = func(ctx context.Context, root string) (string, error) {
+		return freshProjectOriginShellPane(ctx, newResourceStore().snapshot, cmd.liveShellPaneTarget, root)
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)

@@ -1255,6 +1255,13 @@ if [[ -z "$control_client" ]]; then
   exit 1
 fi
 
+# The lifecycle fixture hands `switch open` an exact PROJMUX_SWITCH_TARGET_CLIENT
+# so it can assert the client handoff. Its roots are unregistered, so they take a
+# fresh start, and a fresh start on an exact client now applies the saved launch
+# default. Pin `shell` so these non-interactive opens keep exercising the
+# create/continue outcomes instead of opening the picker popup.
+printf 'shell\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
+
 run_inside_lifecycle() {
   env \
     PATH="$lifecycle_path" \

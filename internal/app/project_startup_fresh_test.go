@@ -1364,7 +1364,10 @@ func TestProjectStartupNoticeSinkTeesStderrAndDisplayMessage(t *testing.T) {
 
 // TestNewSwitchCommandWiresFreshStartAndReportSurface keeps the production wiring
 // honest. A nil prune seam would turn `new` into a silent alias of the topology
-// start, and a nil report surface would put the result back where nobody reads it.
+// start, a nil report surface would put the result back where nobody reads it,
+// and a nil origin lookup would leave the saved launch default with no Pane to
+// open on. The launch default route itself is wired by the application graph,
+// not here: it belongs to the AI command that owns the saved mode file.
 func TestNewSwitchCommandWiresFreshStartAndReportSurface(t *testing.T) {
 	t.Parallel()
 
@@ -1379,6 +1382,15 @@ func TestNewSwitchCommandWiresFreshStartAndReportSurface(t *testing.T) {
 	activation, ok := newRegistryProjectTopologyMaterializer().notices.(*projectStartupNoticeSink)
 	if !ok || activation == nil {
 		t.Fatalf("topology activation notices = %T, want the same report surface", newRegistryProjectTopologyMaterializer().notices)
+	}
+	if cmd.freshOriginShellPane == nil {
+		t.Fatal("switcher.freshOriginShellPane = nil, want the Registry origin Pane lookup")
+	}
+	if cmd.launchDefault != nil {
+		t.Fatal("switcher.launchDefault is wired by the application graph, not the constructor")
+	}
+	if New().switcher.launchDefault == nil {
+		t.Fatal("the application graph left the fresh open with no saved launch default route")
 	}
 }
 
@@ -1397,4 +1409,520 @@ func (r *projectionMissingSessionRunner) Run(_ context.Context, name string, arg
 		return nil, exec.Command("sh", "-c", "exit 1").Run()
 	}
 	return nil, nil
+}
+
+// The fresh open's launch default: a Project opened through the UI follows the
+// saved mode on the first Pane of the Window it just committed, exactly as a UI
+// Window create does. Everything below is about that one caller -- when it runs
+// at all, which Pane and which client it names, and what a failure costs.
+
+const (
+	// freshLaunchDefaultClient is the exact client that pressed the row. The
+	// sidebar continuation is re-executed with it in the environment, which is
+	// the only evidence this flow accepts that a human asked for the open.
+	freshLaunchDefaultClient = "/dev/pts/9"
+	freshLaunchDefaultOrigin = "%31"
+	freshLaunchDefaultRoot   = "/srv/fresh"
+)
+
+// freshLaunchDefaultSeam records every application of the saved launch default:
+// what it was handed, and how much of the open had already happened when it was
+// called. The second half is the ordering contract -- the client handoff is a
+// completed tmux call by then.
+type freshLaunchDefaultSeam struct {
+	runner  *recordingTmuxRunner
+	applied [][2]string
+	before  []int
+	origins []string
+	result  launchDefaultResult
+}
+
+func (s *freshLaunchDefaultSeam) apply(originPaneID, client string) launchDefaultResult {
+	s.applied = append(s.applied, [2]string{originPaneID, client})
+	s.before = append(s.before, len(s.runner.calls))
+	return s.result
+}
+
+func (s *freshLaunchDefaultSeam) resolveOrigin(_ context.Context, root string) (string, error) {
+	s.origins = append(s.origins, root)
+	if root != freshLaunchDefaultRoot {
+		return "", fmt.Errorf("the fresh open resolved its origin Pane for %q", root)
+	}
+	return freshLaunchDefaultOrigin, nil
+}
+
+// freshLaunchDefaultLines returns the bounded lines a fresh open showed on the
+// pressing client, in order.
+func freshLaunchDefaultLines(runner *recordingTmuxRunner) []string {
+	var lines []string
+	for _, call := range runner.calls {
+		for index, arg := range call.args {
+			if arg == "display-message" {
+				lines = append(lines, call.args[len(call.args)-1])
+				break
+			} else if index > 2 {
+				break
+			}
+		}
+	}
+	return lines
+}
+
+// freshLaunchDefaultCommand builds one fresh open whose Session, Window and
+// shell Pane all commit, carrying the pressing client the sidebar continuation
+// re-executes with. A blank client is the detached open that carries none.
+func freshLaunchDefaultCommand(seam *freshLaunchDefaultSeam, client string) *switchCommand {
+	runner := &recordingTmuxRunner{}
+	seam.runner = runner
+	return &switchCommand{
+		sessions:   &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true},
+		tmuxRunner: runner,
+		lookupEnv: func(name string) string {
+			if name == inttmux.SwitchTargetClientEnv && client != "" {
+				return client
+			}
+			return ""
+		},
+		projectTopology:      &fakeProjectTopologyMaterializer{materialized: true},
+		startupNotices:       &recordingProjectStartupReporter{},
+		launchDefault:        seam.apply,
+		freshOriginShellPane: seam.resolveOrigin,
+	}
+}
+
+// TestFreshOpenAppliesTheSavedLaunchDefaultToTheCommittedShellPaneAfterTheHandoff
+// is the applied-default table of a fresh open. Every row commits the same
+// Session, Window and shell Pane, hands the same exact `%N` and the same exact
+// client to the one seam, and differs only in what the application reported --
+// which decides the single line the operator is shown, or that there is none.
+func TestFreshOpenAppliesTheSavedLaunchDefaultToTheCommittedShellPaneAfterTheHandoff(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		result    launchDefaultResult
+		wantLines []string
+	}{
+		{name: "a shell default keeps the committed Pane and says nothing"},
+		{
+			name:   "a committed Agent's start notice is not repeated after the handoff",
+			result: launchDefaultResult{notice: "started in /srv/fresh"},
+		},
+		{
+			name:      "a refusal is one bounded line on the pressing client",
+			result:    launchDefaultResult{problem: keptOriginShellLine("projmux could not open the Agent: injected")},
+			wantLines: []string{"projmux could not open the Agent: injected; the Window keeps its shell Pane"},
+		},
+		{
+			name:   "a picker popup owns its own feedback",
+			result: launchDefaultResult{picker: true},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			seam := &freshLaunchDefaultSeam{result: test.result}
+			cmd := freshLaunchDefaultCommand(seam, freshLaunchDefaultClient)
+
+			if err := cmd.startProjectFresh(context.Background(), "workspace", freshLaunchDefaultRoot,
+				openedProjectBootstrap{}, ""); err != nil {
+				t.Fatalf("startProjectFresh() error = %v", err)
+			}
+			want := [][2]string{{freshLaunchDefaultOrigin, freshLaunchDefaultClient}}
+			if !reflect.DeepEqual(seam.applied, want) {
+				t.Fatalf("launch default applied with %v, want the committed shell Pane and the pressing client %v",
+					seam.applied, want)
+			}
+			if !slices.Equal(seam.origins, []string{freshLaunchDefaultRoot}) {
+				t.Fatalf("origin Pane resolved for %q, want exactly the opened root once", seam.origins)
+			}
+			if !slices.Equal(seam.before, []int{1}) {
+				t.Fatalf("tmux calls before the launch default = %v, want the completed client handoff", seam.before)
+			}
+			if got := seam.runner.calls[0].args; len(got) < 3 || got[2] != "switch-client" {
+				t.Fatalf("first tmux call = %v, want the client handoff", got)
+			}
+			if got := freshLaunchDefaultLines(seam.runner); !slices.Equal(got, test.wantLines) {
+				t.Fatalf("client lines = %v, want %v", got, test.wantLines)
+			}
+		})
+	}
+}
+
+// TestFreshOpenLaunchDefaultFailureKeepsTheOpenAndSaysOneThing is the negative
+// half. A refused application and an origin Pane that cannot be resolved are
+// both failures to apply a default, not failures to open a Project: the
+// Session, its Window and its shell Pane are committed before either can
+// happen, so the open still succeeds and the operator gets exactly one line
+// saying what did not happen on top of them.
+func TestFreshOpenLaunchDefaultFailureKeepsTheOpenAndSaysOneThing(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		// unresolvable answers the origin lookup with a failure instead of the
+		// committed `%N`, which is the shape check refusing to guess a Pane.
+		unresolvable bool
+		result       launchDefaultResult
+		wantLine     string
+		wantApplied  int
+	}{
+		{
+			name:        "the application is refused",
+			result:      launchDefaultResult{problem: keptOriginShellLine("projmux could not open the Agent: injected")},
+			wantLine:    "projmux could not open the Agent: injected; the Window keeps its shell Pane",
+			wantApplied: 1,
+		},
+		{
+			name:         "the origin Pane cannot be resolved",
+			unresolvable: true,
+			wantLine:     "the fresh open resolved its origin Pane for \"/srv/other\"; the Window keeps its shell Pane",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			seam := &freshLaunchDefaultSeam{result: test.result}
+			cmd := freshLaunchDefaultCommand(seam, freshLaunchDefaultClient)
+			root := freshLaunchDefaultRoot
+			if test.unresolvable {
+				root = "/srv/other"
+			}
+
+			if err := cmd.startProjectFresh(context.Background(), "workspace", root,
+				openedProjectBootstrap{}, ""); err != nil {
+				t.Fatalf("startProjectFresh() error = %v, want the committed open to succeed", err)
+			}
+			executor, ok := cmd.sessions.(*capturingSwitchSessionExecutor)
+			if !ok {
+				t.Fatalf("session executor = %T", cmd.sessions)
+			}
+			if executor.killSessionName != "" {
+				t.Fatalf("the failed launch default killed session %q", executor.killSessionName)
+			}
+			if len(seam.applied) != test.wantApplied {
+				t.Fatalf("launch default applications = %v, want %d", seam.applied, test.wantApplied)
+			}
+			if got := freshLaunchDefaultLines(seam.runner); !slices.Equal(got, []string{test.wantLine}) {
+				t.Fatalf("client lines = %v, want exactly %q", got, test.wantLine)
+			}
+			line := seam.runner.calls[len(seam.runner.calls)-1].args
+			if want := []string{"-L", "projmux", "display-message", "-c", freshLaunchDefaultClient, "-d", "10000"}; !slices.Equal(line[:len(want)], want) {
+				t.Fatalf("display call = %v, want the app socket and the exact pressing client %v", line, want)
+			}
+		})
+	}
+}
+
+// TestFreshOpenWithoutAnExactPressingClientAppliesNoSavedLaunchDefault is the
+// product decision, not an oversight: the launch default attaches only to a
+// gesture a human made, and without the exact client that made it there is
+// nowhere to put an Agent, a picker popup, or the line either of them would
+// report. Both provider and picker saved modes are driven through the real
+// aiCommand behind the seam, so the mode really is read from a saved file and
+// really does nothing: no canonical create, no popup, no message.
+func TestFreshOpenWithoutAnExactPressingClientAppliesNoSavedLaunchDefault(t *testing.T) {
+	for _, mode := range []string{aiModeClaude, aiModeSelective} {
+		t.Run(mode, func(t *testing.T) {
+			ai, recorder := launchDefaultAICommand(t, t.TempDir())
+			if err := ai.setMode(mode); err != nil {
+				t.Fatalf("setMode(%s) error = %v", mode, err)
+			}
+			cmdRecorder(ai).commands = nil
+			seam := &freshLaunchDefaultSeam{}
+			cmd := freshLaunchDefaultCommand(seam, "")
+			cmd.launchDefault = func(originPaneID, client string) launchDefaultResult {
+				seam.apply(originPaneID, client)
+				return ai.applyLaunchDefault(originPaneID, client)
+			}
+
+			if err := cmd.startProjectFresh(context.Background(), "workspace", freshLaunchDefaultRoot,
+				openedProjectBootstrap{}, ""); err != nil {
+				t.Fatalf("startProjectFresh() error = %v", err)
+			}
+			if len(seam.applied) != 0 {
+				t.Fatalf("launch default applied %v without a pressing client", seam.applied)
+			}
+			if len(seam.origins) != 0 {
+				t.Fatalf("the origin Pane was resolved for %q without a pressing client", seam.origins)
+			}
+			if len(recorder.intents) != 0 || len(recorder.deleted) != 0 {
+				t.Fatalf("a clientless open reached the canonical routes: intents=%+v deleted=%v",
+					recorder.intents, recorder.deleted)
+			}
+			if len(cmdRecorder(ai).commands) != 0 {
+				t.Fatalf("a clientless open ran %#v, want no popup", cmdRecorder(ai).commands)
+			}
+			if got := freshLaunchDefaultLines(seam.runner); len(got) != 0 {
+				t.Fatalf("client lines = %v, want none", got)
+			}
+		})
+	}
+}
+
+// TestContinueAndDetachedProjectOpensNeverReachTheSavedLaunchDefault is the
+// boundary this caller sits behind. Reopening an existing Project restores the
+// Windows and Panes it already declares -- replacing one of them with an Agent
+// would be destroying stored topology -- and the `start project` verb is
+// detached by construction: it never hands a client anywhere. Both are driven
+// with `claude` saved as the launch default, so the only thing keeping them out
+// is the caller's own gate.
+func TestContinueAndDetachedProjectOpensNeverReachTheSavedLaunchDefault(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		mode     string
+		detached bool
+	}{
+		{name: "continue reopens a registered Project", mode: projectStartupKindTopology},
+		{name: "detached start project", mode: projectStartupKindTopology, detached: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ai, recorder := launchDefaultAICommand(t, t.TempDir())
+			if err := ai.setMode(aiModeClaude); err != nil {
+				t.Fatalf("setMode(claude) error = %v", err)
+			}
+			seam := &freshLaunchDefaultSeam{}
+			cmd := freshLaunchDefaultCommand(seam, freshLaunchDefaultClient)
+			cmd.projectFreshStart = &startupModeFreshStarter{registered: true}
+			cmd.projectRegistrar = &fakeProjectRegistrar{uid: "proj-existing", name: "workspace", reused: true}
+			wireFakeProjectSessionPlan(cmd)
+			cmd.launchDefault = func(originPaneID, client string) launchDefaultResult {
+				t.Fatalf("a Continue open applied the saved launch default to %q on client %q", originPaneID, client)
+				return ai.applyLaunchDefault(originPaneID, client)
+			}
+			cmd.freshOriginShellPane = func(_ context.Context, root string) (string, error) {
+				t.Fatalf("a Continue open resolved a launch-default origin Pane for %q", root)
+				return "", nil
+			}
+
+			if err := cmd.authorizeAndContinueProjectOpenRequest(context.Background(), projectOpenRequest{
+				Target: freshLaunchDefaultRoot, SessionName: "workspace",
+				Mode: projectStartupCandidate{Kind: test.mode}, Detached: test.detached,
+			}); err != nil {
+				t.Fatalf("authorizeAndContinueProjectOpenRequest() error = %v", err)
+			}
+			if len(recorder.intents) != 0 {
+				t.Fatalf("a Continue open opened an Agent: %+v", recorder.intents)
+			}
+			topology, ok := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
+			if !ok {
+				t.Fatalf("topology materializer = %T", cmd.projectTopology)
+			}
+			if want := []string{"topology:" + freshLaunchDefaultRoot + ":workspace"}; !slices.Equal(topology.calls, want) {
+				t.Fatalf("topology calls = %q, want %q: the open under test must have happened", topology.calls, want)
+			}
+		})
+	}
+}
+
+// TestFreshOpenOriginShellPaneIsReadFromTheRegistry pins the origin the launch
+// default replaces. tmux Pane order is not consulted: the Registry names the
+// Window's own shell Pane and the exact `%N` it was materialized as, and every
+// shape a fresh open does not produce is a refusal rather than a guess -- the
+// guess would be a Pane somebody is working in.
+func TestFreshOpenOriginShellPaneIsReadFromTheRegistry(t *testing.T) {
+	t.Parallel()
+
+	freshRegistry := func(mutate func(*coremetadata.Registry)) coremetadata.Registry {
+		registry := coremetadata.Registry{
+			Projects: []coremetadata.Project{{
+				Metadata: coremetadata.ObjectMeta{UID: "prj-fresh", Name: "fresh"},
+				Spec:     coremetadata.ProjectSpec{Root: freshLaunchDefaultRoot, PrimaryWindowRef: "win-fresh"},
+			}},
+			Windows: []coremetadata.Window{{
+				Metadata: coremetadata.ObjectMeta{UID: "win-fresh", Name: "fresh",
+					OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-fresh"}},
+				Spec: coremetadata.WindowSpec{AnchorPaneRef: "pane-fresh", DefaultShellPaneRef: "pane-fresh"},
+			}},
+			Panes: []coremetadata.Pane{{
+				Metadata: coremetadata.ObjectMeta{UID: "pane-fresh", Name: "shell",
+					OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: "win-fresh"}},
+				Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: freshLaunchDefaultRoot},
+			}},
+		}
+		if mutate != nil {
+			mutate(&registry)
+		}
+		return registry
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*coremetadata.Registry)
+		root   string
+		// mirrored is what the live Pane mirror answers for the Registry Pane
+		// uid. A fresh Project's first Pane stores no runtime handle of its own,
+		// so this lookup is the only thing that can name it.
+		mirrored string
+		want     string
+		wantFail string
+	}{
+		{name: "the one committed shell Pane", want: freshLaunchDefaultOrigin},
+		{
+			name: "the anchor when no default shell is declared",
+			mutate: func(registry *coremetadata.Registry) {
+				registry.Windows[0].Spec.DefaultShellPaneRef = ""
+			},
+			want: freshLaunchDefaultOrigin,
+		},
+		{name: "an unregistered root", root: "/srv/unknown", wantFail: "found no Project"},
+		{
+			name: "a second Window",
+			mutate: func(registry *coremetadata.Registry) {
+				registry.Windows = append(registry.Windows, registry.Windows[0])
+			},
+			wantFail: "declares 2 Windows",
+		},
+		{
+			name:     "no Window at all",
+			mutate:   func(registry *coremetadata.Registry) { registry.Windows = nil },
+			wantFail: "declares 0 Windows",
+		},
+		{
+			name: "a second shell Pane",
+			mutate: func(registry *coremetadata.Registry) {
+				second := registry.Panes[0]
+				second.Metadata.UID = "pane-second"
+				registry.Panes = append(registry.Panes, second)
+			},
+			wantFail: "declares 2 shell Panes",
+		},
+		{
+			name: "an Agent already in the Window",
+			mutate: func(registry *coremetadata.Registry) {
+				registry.Agents = append(registry.Agents, coremetadata.Agent{
+					Metadata: coremetadata.ObjectMeta{UID: "agt-fresh", Name: "agent",
+						OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: "win-fresh"}},
+					Spec: coremetadata.AgentSpec{Provider: aiModeClaude},
+				})
+			},
+			wantFail: "1 Agents",
+		},
+		{
+			name:     "a shell Pane no live tmux Pane mirrors",
+			mirrored: "-",
+			wantFail: "no live Pane carries an exact %N",
+		},
+		{
+			name:     "a mirror answer that is not an exact %N",
+			mirrored: "shell",
+			wantFail: "no live Pane carries an exact %N",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			registry := freshRegistry(test.mutate)
+			root := freshLaunchDefaultRoot
+			if test.root != "" {
+				root = test.root
+			}
+			// "-" is the row that mirrors nothing at all, spelled so the zero
+			// value can stay the ordinary live Pane.
+			mirrored := freshLaunchDefaultOrigin
+			if test.mirrored != "" {
+				mirrored = test.mirrored
+			}
+			if mirrored == "-" {
+				mirrored = ""
+			}
+			origin, err := freshProjectOriginShellPane(context.Background(),
+				func() (coremetadata.Registry, error) { return registry, nil },
+				func(_ context.Context, paneUID string) (string, bool, error) {
+					if paneUID != "pane-fresh" {
+						return "", false, fmt.Errorf("the mirror was asked for Pane %q", paneUID)
+					}
+					return mirrored, mirrored != "", nil
+				}, root)
+			if test.wantFail != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantFail) {
+					t.Fatalf("origin Pane = %q, error = %v, want a refusal containing %q", origin, err, test.wantFail)
+				}
+				if origin != "" {
+					t.Fatalf("a refused shape still named Pane %q", origin)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("freshProjectOriginShellPane() error = %v", err)
+			}
+			if origin != test.want {
+				t.Fatalf("origin Pane = %q, want %q", origin, test.want)
+			}
+		})
+	}
+}
+
+// TestFreshOpenOriginShellPaneSurfacesAnUnreadableRegistry keeps a Registry
+// that cannot be read from being answered with a Pane. There is no fallback to
+// guess from here: a read failure means the launch default is not applied, and
+// the Window keeps the shell Pane the open committed.
+func TestFreshOpenOriginShellPaneSurfacesAnUnreadableRegistry(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		snapshot func() (coremetadata.Registry, error)
+	}{
+		{name: "no snapshot route"},
+		{
+			name: "an unreadable Registry",
+			snapshot: func() (coremetadata.Registry, error) {
+				return coremetadata.Registry{}, errors.New("injected registry read failure")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			origin, err := freshProjectOriginShellPane(context.Background(), test.snapshot,
+				func(context.Context, string) (string, bool, error) {
+					t.Fatal("an unreadable Registry still reached the live Pane mirror")
+					return "", false, nil
+				}, freshLaunchDefaultRoot)
+			if err == nil || !strings.Contains(err.Error(), "could not read the Registry") {
+				t.Fatalf("origin Pane = %q, error = %v, want an unreadable-Registry refusal", origin, err)
+			}
+		})
+	}
+}
+
+// freshPaneMirrorRunner answers one `list-panes -a` read and records exactly
+// what was routed, so the production locator's socket and command are visible
+// without a tmux server.
+type freshPaneMirrorRunner struct {
+	calls [][]string
+	rows  string
+}
+
+func (r *freshPaneMirrorRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, append([]string{name}, args...))
+	return []byte(r.rows), nil
+}
+
+// TestFreshOpenResolvesItsOriginPaneThroughTheAppSocketPaneMirror pins the
+// production half of the origin lookup. The fresh Project's first Pane is
+// mirrored with its uid but records no runtime handle of its own, so the uid is
+// resolved by reading every live Pane's mirrored uid -- on the app's own
+// socket, because the sidebar continuation inherits no useful $TMUX.
+func TestFreshOpenResolvesItsOriginPaneThroughTheAppSocketPaneMirror(t *testing.T) {
+	t.Parallel()
+
+	runner := &freshPaneMirrorRunner{rows: "pane-fresh\\037" + freshLaunchDefaultOrigin + "\n"}
+	cmd := &switchCommand{tmuxRunner: runner}
+
+	target, found, err := cmd.liveShellPaneTarget(context.Background(), "pane-fresh")
+	if err != nil {
+		t.Fatalf("liveShellPaneTarget() error = %v", err)
+	}
+	if !found || target != freshLaunchDefaultOrigin {
+		t.Fatalf("live Pane = %q found = %v, want %q", target, found, freshLaunchDefaultOrigin)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("tmux calls = %v, want the one mirror read", runner.calls)
+	}
+	call := runner.calls[0]
+	if want := []string{"tmux", "-L", "projmux", "list-panes", "-a", "-F"}; !slices.Equal(call[:len(want)], want) {
+		t.Fatalf("mirror read = %v, want %v on the app socket", call, want)
+	}
 }
