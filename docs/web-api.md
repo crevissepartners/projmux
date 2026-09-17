@@ -202,6 +202,8 @@ Registry, so they are kept out of the core surface. They live under
 | GET | `/api/v1/web/panes/{pane}/screen` | one `capture-pane -e` of the pane, parsed into styled runs |
 | GET | `/api/v1/web/panes/{pane}/screen/events` | SSE `screen` frames, sent on change; `gone` when the pane is no longer there |
 | GET | `/api/v1/web/launch` | what the launcher offers, as the terminal AI launch picker: `{providers:[{id, name, ready}], defaultMode, claudeModels, claudeEfforts}` for the enabled providers |
+| GET | `/api/v1/web/settings` | the Settings a web page consumes: `{ai:{defaultMode, modes, providers, splitCwdFrom}, statusbar:{…parts, usageProviders}, locale}` |
+| PATCH | `/api/v1/web/settings` | `{key, value}`: changes one of them through the function the terminal Settings uses. Keys: `ai.defaultMode`, `ai.provider.<id>`, `ai.splitCwdFrom`, `statusbar.<notifications\|usage\|project\|working-directory\|git\|resources\|clock>`, `statusbar.usage.<provider>[.<window>]`, `locale`. A status bar change regenerates the tmux config and reloads the app server through its own logical socket, never an inherited `TMUX`; a save that lands but does not reload answers `refused` |
 | GET | `/api/v1/web/statusbar` | which status bar parts Settings turned on: `{notifications, usage, project, workingDirectory, git, resources, clock}`, read with the functions the TUI renders from |
 | GET | `/api/v1/web/panes/{pane}/git` | `{cwd, repo, branch, dirty, staged, ahead, behind}` for the directory the Registry records for the pane |
 | GET | `/api/v1/web/windows/{window}/resume-candidates` | `{items}`: the window's agents with no live pane, each with its first and last transcript line |

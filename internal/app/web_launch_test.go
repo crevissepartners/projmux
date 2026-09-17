@@ -54,7 +54,8 @@ func TestWebCreatePaneSplitsAShellBesideTheAnchor(t *testing.T) {
 	if code != 201 || body["pane"] == nil {
 		t.Fatalf("create pane = %d %v", code, body)
 	}
-	want := "create pane --project uid:prj-alpha --window uid:win-alpha-main --pane uid:pan-alpha-log --placement right --cwd-from pane -o json"
+	// Nothing configured: the terminal launcher's default, the Project root.
+	want := "create pane --project uid:prj-alpha --window uid:win-alpha-main --pane uid:pan-alpha-log --placement right --cwd-from project -o json"
 	if len(recorder.calls) != 1 || recorder.calls[0] != want {
 		t.Fatalf("calls = %q", recorder.calls)
 	}
@@ -63,5 +64,29 @@ func TestWebCreatePaneSplitsAShellBesideTheAnchor(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(recorder.calls, "|"), "pan-missing") {
 		t.Fatal("an unknown anchor reached the CLI")
+	}
+}
+
+func TestWebSplitsFollowTheSavedStartDirectory(t *testing.T) {
+	backend, _ := webFixtureBackend(t)
+	home := t.TempDir()
+	backend.home = func() (string, error) { return home, nil }
+	recorder := &webCLIRecorder{reply: func([]string) (string, error) {
+		return `{"items":[{"metadata":{"uid":"pan-alpha-log"}}]}`, nil
+	}}
+	backend.runCLI = recorder.run
+	handler := web.New(backend, nil).Handler()
+	settings := &settingsCommand{homeDir: backend.home, lookupEnv: backend.env}
+	if err := settings.setSplitCWDFrom(splitCWDFromPane, discard{}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := webSend(t, handler, "POST", webWindowAlpha+"/panes", `{"anchorPane":"pan-alpha-log","confirm":true}`); code != 201 {
+		t.Fatalf("create pane = %d %v", code, body)
+	}
+	if code, body := webSend(t, handler, "POST", webWindowAlpha+"/panes", `{"anchorPane":"pan-alpha-log","cwdFrom":"project","confirm":true}`); code != 201 {
+		t.Fatalf("create pane = %d %v", code, body)
+	}
+	if !strings.Contains(recorder.calls[0], "--cwd-from pane") || !strings.Contains(recorder.calls[1], "--cwd-from project") {
+		t.Fatalf("calls = %q", recorder.calls)
 	}
 }

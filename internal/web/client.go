@@ -37,6 +37,10 @@ type ClientBackend interface {
 	// LaunchOptions lists what the launcher offers: enabled providers, whether
 	// each is installed, the default split mode, and Claude's model choices.
 	LaunchOptions(ctx context.Context) (any, error)
+	// Settings reads the settings a web page consumes; UpdateSetting changes
+	// one through the same function the TUI Settings uses.
+	Settings(ctx context.Context) (any, error)
+	UpdateSetting(ctx context.Context, req SettingRequest) (any, error)
 	// Statusbar reports which status bar parts Settings turned on.
 	Statusbar(ctx context.Context) (any, error)
 	// PaneGit reads the git branch and state of a pane's directory.
@@ -144,6 +148,30 @@ func (s *Server) registerClientRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, body)
 	})
 
+	clientRead("/api/v1/web/settings", func(c ClientBackend, r *http.Request) (any, error) {
+		return c.Settings(r.Context())
+	})
+	mux.HandleFunc("PATCH /api/v1/web/settings", func(w http.ResponseWriter, r *http.Request) {
+		c, ok := s.client(w, r)
+		if !ok {
+			return
+		}
+		var req SettingRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if req.Key == "" {
+			s.fail(w, r, InvalidRequest("key is required"))
+			return
+		}
+		body, err := c.UpdateSetting(r.Context(), req)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
+	})
 	mux.HandleFunc("POST "+uploadPath, s.handleUpload)
 	mux.HandleFunc("GET "+uploadPath+"/{name}", s.serveUpload)
 	mux.HandleFunc("POST /api/v1/web/agents/{agent}/question", func(w http.ResponseWriter, r *http.Request) {

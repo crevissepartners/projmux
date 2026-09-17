@@ -118,6 +118,9 @@
         title={t("web.tools.notify_title")}
         onclick={onDesktopNotify}>{t("web.tools.notify")}</button
       >
+      <button type="button" class="tbtn" title={t("web.tools.settings_title")} onclick={() => (ui.overlay = "settings")}
+        >{t("web.tools.settings")}</button
+      >
       <button type="button" class="tbtn" title={t("web.tools.help")} onclick={() => (ui.overlay = "help")}>?</button>
     </div>
   {/if}

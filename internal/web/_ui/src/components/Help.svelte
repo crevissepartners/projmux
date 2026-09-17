@@ -11,6 +11,7 @@
     ["Alt-2", t("web.help.notify")],
     ["Alt-7", t("web.help.split")],
     ["Alt-4", t("web.help.resume")],
+    ["Alt-5", t("web.help.settings")],
     ["Alt-N", t("web.help.new_window")],
     ["Alt-←/→/↑/↓", t("web.help.panes")],
     ["Alt-Shift-←/→", t("web.help.windows")],

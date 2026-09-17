@@ -52,6 +52,13 @@ type CreatePaneRequest struct {
 	Confirm    bool   `json:"confirm"`
 }
 
+// SettingRequest is the body of PATCH /web/settings: one setting and its new
+// value.
+type SettingRequest struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 // MessageRequest is the body of POST /agents/{agent}/messages.
 type MessageRequest struct {
 	// Source is the Agent the message is anchored on. A browser has no Pane,

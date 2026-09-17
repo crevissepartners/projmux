@@ -21,19 +21,23 @@ import (
 )
 
 type settingsCommand struct {
-	ai                       settingsAI
-	switcher                 settingsSwitcher
-	update                   updateRunner
-	quit                     quitRunner
-	newAI                    func() aiHookSettingsReader
-	runner                   intpickercompat.Runner
-	nativePicker             intpicker.Runner
-	homeDir                  func() (string, error)
-	lookupEnv                func(string) string
-	osStat                   func(string) (os.FileInfo, error)
-	runCommand               func(name string, args ...string) error
-	runOutput                func(name string, args ...string) ([]byte, error)
-	tmuxRunner               tmuxRunner
+	ai           settingsAI
+	switcher     settingsSwitcher
+	update       updateRunner
+	quit         quitRunner
+	newAI        func() aiHookSettingsReader
+	runner       intpickercompat.Runner
+	nativePicker intpicker.Runner
+	homeDir      func() (string, error)
+	lookupEnv    func(string) string
+	osStat       func(string) (os.FileInfo, error)
+	runCommand   func(name string, args ...string) error
+	runOutput    func(name string, args ...string) ([]byte, error)
+	tmuxRunner   tmuxRunner
+	// reloadAppServer lets a caller that runs outside tmux, the web server,
+	// reload the app server after a save. The route is then resolved from the
+	// app-owned logical socket, never from an inherited TMUX.
+	reloadAppServer          bool
 	probeKeybinding          func(probeKey, time.Duration) (probeResult, error)
 	nativeKeyCapture         func(context.Context) (string, bool, error)
 	preferNativeKeyCapture   func() bool

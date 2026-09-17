@@ -17,6 +17,7 @@
   import ProjectSidebar from "./components/ProjectSidebar.svelte";
   import LaunchPicker from "./components/LaunchPicker.svelte";
   import ResumePicker from "./components/ResumePicker.svelte";
+  import Settings from "./components/Settings.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import Switcher from "./components/Switcher.svelte";
   import Toasts from "./components/Toasts.svelte";
@@ -256,6 +257,11 @@
       ui.overlay = ui.overlay === "launch" ? "" : "launch";
       return;
     }
+    if (event.altKey && event.key === "5") {
+      event.preventDefault();
+      ui.overlay = ui.overlay === "settings" ? "" : "settings";
+      return;
+    }
     if (event.altKey && event.key === "4") {
       event.preventDefault();
       ui.overlay = ui.overlay === "resume" ? "" : "resume";
@@ -321,6 +327,8 @@
 {/if}
 {#if ui.overlay === "launch" || ui.overlay === "launch-advanced"}
   <LaunchPicker advanced={ui.overlay === "launch-advanced"} onClose={closeOverlay} />
+{:else if ui.overlay === "settings"}
+  <Settings onClose={closeOverlay} />
 {:else if ui.overlay === "resume"}
   <ResumePicker onClose={closeOverlay} />
 {:else if ui.overlay === "switcher"}

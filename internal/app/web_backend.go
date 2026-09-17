@@ -38,6 +38,10 @@ type webBackend struct {
 	runCLI     func(argv []string) (string, error)
 	socketPath func(ctx context.Context) (string, error)
 	paths      func() (config.Paths, error)
+	// home and env are what the settings a split follows are read from; nil
+	// means the real home and webSettingsEnv.
+	home func() (string, error)
+	env  func(string) string
 
 	// creatingWindows holds the Projects a window create is running for. A
 	// create takes seconds, and a second press in that time would otherwise

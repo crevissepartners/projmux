@@ -60,7 +60,6 @@ export async function launch(target: string, options: { model?: string; effort?:
     if (target === "shell") {
       const body = await post<{ pane?: Pane }>(paths.windowPanes(anchor.project, anchor.window), {
         anchorPane: anchor.pane,
-        cwdFrom: "pane",
         confirm: true,
       });
       ref = body.pane?.metadata.uid;
@@ -68,7 +67,6 @@ export async function launch(target: string, options: { model?: string; effort?:
       const body = await post<{ agent?: Agent; pane?: Pane }>(paths.windowAgents(anchor.project, anchor.window), {
         provider: target,
         anchorPane: anchor.pane,
-        cwdFrom: "pane",
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
         confirm: true,

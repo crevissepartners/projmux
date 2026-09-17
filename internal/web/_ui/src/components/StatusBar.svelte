@@ -12,6 +12,7 @@
   import Meter from "./Meter.svelte";
   import Popover from "./Popover.svelte";
   import UsagePanel from "./UsagePanel.svelte";
+  import { ui } from "../lib/ui.svelte";
 
   interface Props {
     session: string;
@@ -35,6 +36,8 @@
   let git = $state<PaneGit | null>(null);
 
   $effect(() => {
+    // A settings save reruns this; the usage rows it selects are read again.
+    if (ui.settingsVersion) get<Usage>(paths.usage).then((body) => (live.usage = body), () => {});
     let last = "";
     const load = async () => {
       try {

@@ -23,6 +23,10 @@ func webFixtureBackend(t *testing.T) (*webBackend, *[]resourcegraph.Transport) {
 	registry := resourceFixtureRegistry(t)
 	var observed []resourcegraph.Transport
 	backend := newWebBackend()
+	// Settings are read from an empty home, never the developer's own.
+	emptyHome := t.TempDir()
+	backend.home = func() (string, error) { return emptyHome, nil }
+	backend.env = func(string) string { return "" }
 	backend.loadRegistry = func() (coremetadata.Registry, error) { return registry.Clone(), nil }
 	backend.observe = func(_ context.Context, transport resourcegraph.Transport) resourcegraph.Inventory {
 		observed = append(observed, transport)

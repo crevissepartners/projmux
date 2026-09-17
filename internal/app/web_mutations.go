@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -164,7 +165,32 @@ func (b *webBackend) CreateWindow(ctx context.Context, project string, req web.C
 // createAgentArgv is the one builder of a create-agent call. The preview
 // route renders it and CreateAgent runs it, so what the operator approves is
 // what runs.
-func createAgentArgv(s webSnapshot, project, window string, req web.CreateAgentRequest) ([]string, error) {
+// webSplitCWDFrom is where a web split starts: the request's value when it
+// names one, otherwise what the terminal launcher would use, the tiered
+// `[ai] split_cwd_from` setting.
+func (b *webBackend) splitCWDFrom(s webSnapshot, project, requested string) (string, error) {
+	if requested != "" {
+		source, ok := parseSplitCWDSource(requested)
+		if !ok {
+			return "", web.InvalidRequest(fmt.Sprintf("cwdFrom %q is not pane or project", requested))
+		}
+		return string(source), nil
+	}
+	root := ""
+	if found, ok := s.registry.Project(project); ok {
+		root = found.Spec.Root
+	}
+	home, env := b.home, b.env
+	if home == nil {
+		home = os.UserHomeDir
+	}
+	if env == nil {
+		env = webSettingsEnv
+	}
+	return string(resolveUISplitCWDSource("", root, home, env).Source), nil
+}
+
+func (b *webBackend) createAgentArgv(s webSnapshot, project, window string, req web.CreateAgentRequest) ([]string, error) {
 	if _, err := s.window(project, window); err != nil {
 		return nil, err
 	}
@@ -174,12 +200,9 @@ func createAgentArgv(s webSnapshot, project, window string, req web.CreateAgentR
 	default:
 		return nil, web.NewError(http.StatusBadRequest, web.CodeInvalidRequest, fmt.Sprintf("provider %q cannot be created", req.Provider))
 	}
-	cwdFrom := req.CwdFrom
-	if cwdFrom == "" {
-		cwdFrom = "pane"
-	}
-	if cwdFrom != "pane" && cwdFrom != "project" {
-		return nil, web.NewError(http.StatusBadRequest, web.CodeInvalidRequest, fmt.Sprintf("cwdFrom %q is not pane or project", req.CwdFrom))
+	cwdFrom, err := b.splitCWDFrom(s, project, req.CwdFrom)
+	if err != nil {
+		return nil, err
 	}
 	argv := []string{"create", "agent", "--provider", provider, "--project", "uid:" + project, "--window", "uid:" + window}
 	if anchor := strings.TrimSpace(req.AnchorPane); anchor != "" {
@@ -209,7 +232,7 @@ func (b *webBackend) PreviewAgent(ctx context.Context, project, window string, r
 	if err != nil {
 		return nil, err
 	}
-	argv, err := createAgentArgv(s, project, window, req)
+	argv, err := b.createAgentArgv(s, project, window, req)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +244,7 @@ func (b *webBackend) CreateAgent(ctx context.Context, project, window string, re
 	if err != nil {
 		return nil, err
 	}
-	argv, err := createAgentArgv(s, project, window, req)
+	argv, err := b.createAgentArgv(s, project, window, req)
 	if err != nil {
 		return nil, err
 	}
@@ -262,12 +285,9 @@ func (b *webBackend) CreatePane(ctx context.Context, project, window string, req
 	if _, ok := s.registry.PaneInWindow(window, anchor); !ok {
 		return nil, web.NotFound("no pane " + anchor + " in window " + window)
 	}
-	cwdFrom := req.CwdFrom
-	if cwdFrom == "" {
-		cwdFrom = "pane"
-	}
-	if cwdFrom != "pane" && cwdFrom != "project" {
-		return nil, web.InvalidRequest(fmt.Sprintf("cwdFrom %q is not pane or project", req.CwdFrom))
+	cwdFrom, err := b.splitCWDFrom(s, project, req.CwdFrom)
+	if err != nil {
+		return nil, err
 	}
 	out, err := b.cli("create", "pane", "--project", "uid:"+project, "--window", "uid:"+window,
 		"--pane", "uid:"+anchor, "--placement", "right", "--cwd-from", cwdFrom, "-o", "json")

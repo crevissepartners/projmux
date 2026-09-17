@@ -89,6 +89,7 @@ export const paths = {
   layout: (window: string) => `/api/v1/web/windows/${seg(window)}/layout`,
   statusbar: "/api/v1/web/statusbar",
   launch: "/api/v1/web/launch",
+  settings: "/api/v1/web/settings",
   windowPanes: (project: string, window: string) => `/api/v1/projects/${seg(project)}/windows/${seg(window)}/panes`,
   usage: "/api/v1/usage",
   paneGit: (pane: string) => `/api/v1/web/panes/${seg(pane)}/git`,

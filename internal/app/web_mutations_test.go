@@ -143,7 +143,7 @@ func TestWebMutationsRunTheirOwnArgv(t *testing.T) {
 		{
 			"create agent beside a pane", "POST", webWindowAlpha + "/agents",
 			`{"provider":"Claude","anchorPane":"pan-alpha-log","payload":" hi ","confirm":true}`, agentList("agt-alpha-codex"),
-			[]string{"create agent --provider claude --project uid:prj-alpha --window uid:win-alpha-main --pane uid:pan-alpha-log --placement right --cwd-from pane -o json -- hi"},
+			[]string{"create agent --provider claude --project uid:prj-alpha --window uid:win-alpha-main --pane uid:pan-alpha-log --placement right --cwd-from project -o json -- hi"},
 		},
 		{
 			"create agent without an anchor uses the project directory", "POST", webWindowAlpha + "/agents",

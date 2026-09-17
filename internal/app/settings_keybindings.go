@@ -2622,7 +2622,7 @@ func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyS
 		return prepared, live, genErr
 	}
 	prepared = keymapApplyStage{Status: keymapApplyOK, Detail: "generated tmux config: " + configPath}
-	if c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "" {
+	if (c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "") && !c.reloadAppServer {
 		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "Settings is not running inside tmux"}
 		return prepared, live, nil
 	}
