@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -381,10 +382,18 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	targetRoute, err := c.resolveMessageTargetRoute(registry, target)
 	if err != nil {
 		if replyTo != "" {
-			return fmt.Errorf("%s: target Agent is not eligible: %w; %w", spelling, err,
+			err = fmt.Errorf("%s: target Agent is not eligible: %w; %w", spelling, err,
 				c.replyCorrelationRefusal(replyTo, "explicit-reply-target-route-stale"))
+		} else {
+			err = fmt.Errorf("%s: target Agent is not eligible: %w", spelling, err)
 		}
-		return fmt.Errorf("%s: target Agent is not eligible: %w", spelling, err)
+		// An Offline/Failed Codex target is recovered by resuming it (on the
+		// default daemon endpoint, or with a typed refusal naming its own next
+		// command); other providers keep their existing refusal text.
+		if target.Spec.Provider == aiModeCodex && slices.Contains(resumableAgentPhases, target.Status.Phase) {
+			return codexResumeRecovery(err, target)
+		}
+		return err
 	}
 	if messageRef == "" {
 		messageRef = c.newMessageRef("message")

@@ -349,7 +349,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var err error
 	if plan.provider == aiModeCodex {
 		nativeCtx, cancel := prepareNativeContext(context.Background())
-		nativeRoute, err = resolveCodexNativeResumeRoute(nativeCtx, r.create.codexNative, plan.ref)
+		nativeRoute, err = resolveCodexNativeResumeRoute(nativeCtx, r.create.codexNative, plan.ref, "uid:"+plan.agentUID)
 		cancel()
 		if err != nil {
 			return nativeResumePreparationRefusal(spelling, err)
@@ -479,7 +479,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		nativeThreadID := ""
 		if plan.provider == aiModeCodex {
 			if routeErr := validateCodexNativeResumeRoute(agent.Status.SessionRef, nativeRoute); routeErr != nil {
-				return nativeResumePreparationRefusal(spelling, routeErr)
+				return nativeResumePreparationRefusal(spelling, bindCodexResumeAgentRef(routeErr, "uid:"+plan.agentUID))
 			}
 			nativeCtx, cancel := prepareNativeContext(ctx)
 			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID)
@@ -489,6 +489,13 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 				workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
 				if err != nil {
 					return nativeLaunchError(spelling, err)
+				}
+				// A stored ref from a retired generation (or a draining /
+				// handover-pending marker) is moved onto the endpoint that just
+				// resumed the thread, inside this transaction, so the committed
+				// Agent names the default endpoint with a current lifecycle.
+				if _, err := mutator.AdoptCodexResumeEndpoint(working, plan.agentUID, nativeRoute.Endpoint); err != nil {
+					return MapMetadataError(err)
 				}
 				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
 					AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, Generation: activation.Generation,

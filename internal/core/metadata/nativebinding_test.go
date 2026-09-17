@@ -184,3 +184,34 @@ func TestCASCodexHandoverTargetKeepsAgentPaneThreadAndRejectsDuplicateOwner(t *t
 		t.Fatal("duplicate-owner refusal mutated Registry")
 	}
 }
+
+func TestAdoptCodexResumeEndpointStaysInsideTheStateDomain(t *testing.T) {
+	old := CodexEndpointRef{StateDomainID: "state-native", EndpointGenerationID: "codex-0.152.1"}
+	next := CodexEndpointRef{StateDomainID: "state-native", EndpointGenerationID: "codex-0.154.0"}
+	reg := lifecycleFixture(t)
+	agent, _ := reg.Agent(lifecycleAgentUID)
+	stored := old
+	agent.Status.SessionRef = &AgentSessionRef{Provider: "codex", Codex: &CodexSessionRef{
+		ThreadID: "thread-native", Endpoint: &stored,
+		Lifecycle: &CodexGenerationLifecycleRef{State: CodexGenerationDraining, Operation: &CodexGenerationOperationRef{ID: "upgrade-one", Endpoint: old}},
+	}}
+	mut := Mutator{Now: func() time.Time { return lifecycleClock.Add(time.Minute) }}
+
+	foreign := reg.Clone()
+	before := foreign.Clone()
+	if changed, err := mut.AdoptCodexResumeEndpoint(&foreign, lifecycleAgentUID, CodexEndpointRef{StateDomainID: "state-other", EndpointGenerationID: "codex-0.154.0"}); err == nil || changed || !reflect.DeepEqual(foreign, before) {
+		t.Fatalf("cross-domain adopt = (%t, %v)", changed, err)
+	}
+	working := reg.Clone()
+	if changed, err := mut.AdoptCodexResumeEndpoint(&working, lifecycleAgentUID, next); err != nil || !changed {
+		t.Fatalf("adopt = (%t, %v)", changed, err)
+	}
+	got, _ := working.Agent(lifecycleAgentUID)
+	codex := got.Status.SessionRef.Codex
+	if !codex.Endpoint.Same(next) || codex.Lifecycle.State != CodexGenerationCurrent || codex.Lifecycle.Operation != nil || codex.ThreadID != "thread-native" {
+		t.Fatalf("adopted ref = %+v", codex)
+	}
+	if changed, err := mut.AdoptCodexResumeEndpoint(&working, lifecycleAgentUID, next); err != nil || changed {
+		t.Fatalf("repeat adopt = (%t, %v), want no-op", changed, err)
+	}
+}

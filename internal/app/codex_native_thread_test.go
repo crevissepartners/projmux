@@ -310,9 +310,18 @@ func TestDefaultCodexControllerRefusesStoredEndpointAfterCodexHomeChanges(t *tes
 	current := stored
 	current.Endpoint.StateDomainID = domainID(second)
 	controller := defaultCodexNativeThreadController{current: func(context.Context) (codexNativeEndpointRoute, error) { return current, nil }}
-	if _, err := controller.Resolve(context.Background(), stored.Endpoint); err == nil || !strings.Contains(err.Error(), codexNativeReasonGenerationUnavailable) {
+	if _, err := controller.Resolve(context.Background(), stored.Endpoint); err == nil || !strings.Contains(err.Error(), codexNativeReasonRetiredStateDomain) ||
+		!strings.Contains(err.Error(), "projmux agent resume") {
 		t.Fatalf("changed CODEX_HOME reattached stored endpoint: %v", err)
 	}
+}
+
+// nativeTestDefaultRoute is the default daemon endpoint route of the
+// nativeTestRoute state domain.
+func nativeTestDefaultRoute(generation string) codexNativeEndpointRoute {
+	route := nativeTestRoute(generation, coremetadata.CodexGenerationCurrent)
+	route.Default, route.SocketPath = true, ""
+	return route
 }
 
 func nativeTestSessionRef(route codexNativeEndpointRoute, threadID string) *coremetadata.AgentSessionRef {
@@ -330,14 +339,24 @@ func nativeTestSessionRef(route codexNativeEndpointRoute, threadID string) *core
 	}
 }
 
-func TestCodexNativeResumeRouteUsesDurableEndpointAndRefusesLegacyOrDraining(t *testing.T) {
+func TestCodexNativeResumeRouteUsesDurableEndpointAndRefusesLegacy(t *testing.T) {
 	current := nativeTestRoute("generation-current", coremetadata.CodexGenerationCurrent)
 	controller := &fakeNativeThreadController{resolvedRoute: current}
-	if got, err := resolveCodexNativeResumeRoute(context.Background(), controller, nativeTestSessionRef(current, "thread-exact")); err != nil || !got.Endpoint.Same(current.Endpoint) {
+	if got, err := resolveCodexNativeResumeRoute(context.Background(), controller, nativeTestSessionRef(current, "thread-exact"), ""); err != nil || !got.Endpoint.Same(current.Endpoint) {
 		t.Fatalf("current route = %+v, %v", got, err)
 	}
 	if len(controller.resumes) != 0 {
 		t.Fatalf("route selection wrote provider: %+v", controller.resumes)
+	}
+	// A draining marker resumes onto the default endpoint of its state domain,
+	// never onto another private generation route.
+	draining := nativeTestSessionRef(nativeTestRoute("generation-old", coremetadata.CodexGenerationDraining), "thread-exact")
+	if _, err := resolveCodexNativeResumeRoute(context.Background(), controller, draining, ""); err == nil || !strings.Contains(err.Error(), codexNativeReasonGenerationUnavailable) {
+		t.Fatalf("draining ref switched onto a private route: %v", err)
+	}
+	defaultRoute := nativeTestDefaultRoute("codex-0.154.0")
+	if got, err := resolveCodexNativeResumeRoute(context.Background(), &fakeNativeThreadController{resolvedRoute: defaultRoute}, draining, ""); err != nil || !got.Endpoint.Same(defaultRoute.Endpoint) {
+		t.Fatalf("draining ref on the default endpoint = %+v, %v", got, err)
 	}
 	for _, test := range []struct {
 		name string
@@ -345,10 +364,9 @@ func TestCodexNativeResumeRouteUsesDurableEndpointAndRefusesLegacyOrDraining(t *
 		want string
 	}{
 		{name: "legacy", ref: &coremetadata.AgentSessionRef{Provider: aiModeCodex, Codex: &coremetadata.CodexSessionRef{ThreadID: "thread-exact"}}, want: codexNativeReasonLegacyEndpointMissing},
-		{name: "draining", ref: nativeTestSessionRef(nativeTestRoute("generation-old", coremetadata.CodexGenerationDraining), "thread-exact"), want: codexNativeReasonHandoverRequired},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := resolveCodexNativeResumeRoute(context.Background(), controller, test.ref)
+			_, err := resolveCodexNativeResumeRoute(context.Background(), controller, test.ref, "")
 			var routeErr *codexNativeRouteError
 			if !errors.As(err, &routeErr) || routeErr.Reason != test.want {
 				t.Fatalf("error=%v, want %s", err, test.want)
@@ -541,7 +559,7 @@ func TestCodexNativeCurrentChangePinsExistingAgentAndAdmitsNewCreateOnlyToNew(t 
 	// Changing admission-current is not itself route authority for an existing
 	// Agent. Its durable ref still resolves through the old exact route.
 	native.resolvedRoute = oldRoute
-	if got, err := resolveCodexNativeResumeRoute(context.Background(), native, oldAgent.Status.SessionRef); err != nil || !got.Endpoint.Same(oldRoute.Endpoint) {
+	if got, err := resolveCodexNativeResumeRoute(context.Background(), native, oldAgent.Status.SessionRef, ""); err != nil || !got.Endpoint.Same(oldRoute.Endpoint) {
 		t.Fatalf("old durable ref after current change = %+v, %v", got, err)
 	}
 	// Phase 4 publishes Draining without moving the live old-generation Agent.
@@ -955,36 +973,7 @@ func TestNativeCodexResumeReusesStoredThreadAndCreatesZeroThreads(t *testing.T) 
 	}
 }
 
-func TestDrainingOfflineCodexResumeIsGenerationWideHandoverRequiredWithZeroWrites(t *testing.T) {
-	store := newFakeResourceStore(t)
-	oldRoute := nativeTestRoute("generation-draining", coremetadata.CodexGenerationDraining)
-	ref := nativeTestSessionRef(oldRoute, resumeFixtureConversation)
-	ref.ObservedAt = resourceFixtureClock
-	setFixtureSessionRef(t, store, "agt-beta-codex", ref)
-	tmux := newFakeTmux()
-	command, legacy, _, _ := newTestAgentResumeCommand(t, store, tmux)
-	native := &fakeNativeThreadController{
-		resolvedRoute: nativeTestRoute("generation-new", coremetadata.CodexGenerationCurrent),
-		resumeBinding: codexappserver.ThreadBinding{ThreadID: resumeFixtureConversation},
-	}
-	panes := &fakeNativePaneLauncher{}
-	command.rebind.launcher = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
-	command.rebind.create.codexNative = native
-	before, paneCount := store.snapshot(), tmux.paneCount()
-
-	stdout, stderr, err := runRoute(t, command, "resume", "uid:agt-beta-codex")
-	if err == nil || stdout != "" || stderr != "" || !strings.Contains(err.Error(), codexNativeReasonHandoverRequired) {
-		t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
-	}
-	if len(native.resumes) != 0 || len(native.creates) != 0 || len(panes.plans) != 0 || len(panes.bound) != 0 ||
-		len(legacy.plans) != 0 || len(legacy.bound) != 0 || len(splitWindowCalls(tmux)) != 0 ||
-		store.writes != 0 || store.snapshot() != before || tmux.paneCount() != paneCount {
-		t.Fatalf("Draining resume crossed the generation-wide barrier: native=%+v/%+v plans=%+v bound=%+v legacy=%+v/%+v splits=%v writes=%d",
-			native.creates, native.resumes, panes.plans, panes.bound, legacy.plans, legacy.bound, splitWindowCalls(tmux), store.writes)
-	}
-}
-
-func TestOfflineCodexResumeRechecksDrainingInsideTransactionBeforeProviderWrite(t *testing.T) {
+func TestOfflineCodexResumeRechecksLifecycleInsideTransactionBeforeProviderWrite(t *testing.T) {
 	store := newFakeResourceStore(t)
 	oldRoute := nativeTestRoute("generation-race-old", coremetadata.CodexGenerationCurrent)
 	ref := nativeTestSessionRef(oldRoute, resumeFixtureConversation)
@@ -1012,21 +1001,16 @@ func TestOfflineCodexResumeRechecksDrainingInsideTransactionBeforeProviderWrite(
 	}()
 	<-started
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	agent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{
-		State: coremetadata.CodexGenerationDraining,
-		Operation: &coremetadata.CodexGenerationOperationRef{
-			ID: "drain-race-operation", Endpoint: oldRoute.Endpoint,
-		},
-	}
+	agent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationRetired}
 	afterTransition := store.snapshot()
 	close(resumePreflight)
 	got := <-result
-	if got.err == nil || got.stdout != "" || got.stderr != "" || !strings.Contains(got.err.Error(), codexNativeReasonHandoverRequired) {
+	if got.err == nil || got.stdout != "" || got.stderr != "" || !strings.Contains(got.err.Error(), codexNativeReasonGenerationUnavailable) {
 		t.Fatalf("stdout=%q stderr=%q err=%v", got.stdout, got.stderr, got.err)
 	}
 	if len(native.resumes) != 0 || len(native.creates) != 0 || len(legacy.bound) != 0 || len(panes.bound) != 0 ||
 		len(splitWindowCalls(tmux)) != 0 || store.writes != 0 || store.snapshot() != afterTransition {
-		t.Fatalf("transaction race crossed Draining barrier: native=%+v/%+v bound=%+v/%+v splits=%v writes=%d",
+		t.Fatalf("transaction race crossed the lifecycle recheck: native=%+v/%+v bound=%+v/%+v splits=%v writes=%d",
 			native.creates, native.resumes, legacy.bound, panes.bound, splitWindowCalls(tmux), store.writes)
 	}
 }
@@ -1051,37 +1035,6 @@ func TestNativeCatalogPickerResumeUsesExactThreadAndCreatesZeroThreads(t *testin
 	if len(native.creates) != 0 || len(native.resumes) != 1 || native.resumes[0].threadID != id ||
 		len(panes.plans) != 1 || panes.plans[0].threadID != id || len(panes.bound) != 1 || panes.bound[0].threadID != id {
 		t.Fatalf("creates=%+v resumes=%+v plans=%+v bound=%+v", native.creates, native.resumes, panes.plans, panes.bound)
-	}
-}
-
-func TestDrainingNativePickerRowIsHandoverRequiredBeforeOldOrNewWrite(t *testing.T) {
-	fx := canonicalFixture(t, false)
-	id := "019f0000-0000-7000-8000-000000000044"
-	oldRoute := nativeTestRoute("generation-picker-draining", coremetadata.CodexGenerationDraining)
-	native := &fakeNativeThreadController{
-		currentRoute:  nativeTestRoute("generation-picker-new", coremetadata.CodexGenerationCurrent),
-		resolvedRoute: oldRoute,
-		resumeBinding: codexappserver.ThreadBinding{ThreadID: id},
-	}
-	legacy := newFakeResumeLauncher()
-	panes := &fakeNativePaneLauncher{}
-	fx.create.codexNative = native
-	fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
-	before, paneCount := fx.store.snapshot(), fx.tmux.paneCount()
-
-	err := fx.create.createFromIntent(agentPaneIntent{
-		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
-		conversationID: id, resumeSource: aisessions.SourceCodexAppServer, anchorPaneID: fx.originID,
-		resumeEndpoint: oldRoute.Endpoint, resumeGenerationState: coremetadata.CodexGenerationDraining,
-	}, ioDiscard{}, ioDiscard{})
-	if err == nil || !strings.Contains(err.Error(), codexNativeReasonHandoverRequired) {
-		t.Fatalf("Draining picker row err=%v, want handover-required", err)
-	}
-	if len(native.creates) != 0 || len(native.resumes) != 0 || len(legacy.plans) != 0 || len(legacy.bound) != 0 ||
-		len(panes.plans) != 0 || len(panes.bound) != 0 || len(splitWindowCalls(fx.tmux)) != 0 ||
-		fx.store.transactions != 0 || fx.store.writes != 0 || fx.store.snapshot() != before || fx.tmux.paneCount() != paneCount {
-		t.Fatalf("Draining picker row wrote old/new state: native=%+v/%+v legacy=%+v/%+v plans=%+v bound=%+v tx=%d writes=%d",
-			native.creates, native.resumes, legacy.plans, legacy.bound, panes.plans, panes.bound, fx.store.transactions, fx.store.writes)
 	}
 }
 
@@ -1397,15 +1350,6 @@ func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
 	}
 }
 
-// codexInventoryLedger records every route observation a read-only route
-// inventory makes and the journal it started from, so "no journal write" is an
-// assertion rather than a claim. The controller has no lifecycle seam at all.
-type codexInventoryLedger struct {
-	observations []coremetadata.CodexEndpointRef
-	journalBytes []byte
-	journalMod   time.Time
-}
-
 func snapshotCodexJournal(t *testing.T, store *codexupgrade.Store) ([]byte, time.Time) {
 	t.Helper()
 	body, err := os.ReadFile(store.Path())
@@ -1455,76 +1399,6 @@ func codexPoolInventoryFixture(t *testing.T) (*codexupgrade.Store, codexupgrade.
 		t.Fatalf("seed pool inventory: %v", err)
 	}
 	return store, draining, current
-}
-
-func TestCatalogRoutesProjectsCurrentAndDrainingWithZeroLifecycleWrites(t *testing.T) {
-	store, draining, current := codexPoolInventoryFixture(t)
-	ledger := &codexInventoryLedger{}
-	ledger.journalBytes, ledger.journalMod = snapshotCodexJournal(t, store)
-	controller := rollingCodexNativeThreadController{
-		journal: store,
-		fallback: defaultCodexNativeThreadController{current: func(context.Context) (codexNativeEndpointRoute, error) {
-			t.Error("pool inventory fell through to the ambient default endpoint")
-			return codexNativeEndpointRoute{}, errFakeNativeUnavailable
-		}},
-		observe: func(_ context.Context, route codexupgrade.GenerationRoute) error {
-			ledger.observations = append(ledger.observations, route.Generation.Endpoint)
-			return nil
-		},
-	}
-
-	routes, err := controller.CatalogRoutes(context.Background())
-	if err != nil {
-		t.Fatalf("catalog routes: %v", err)
-	}
-	want := []codexupgrade.GenerationRoute{draining, current}
-	if len(routes) != len(want) {
-		t.Fatalf("catalog inventory = %+v want %d routes", routes, len(want))
-	}
-	for i, route := range routes {
-		if !route.Endpoint.Same(want[i].Generation.Endpoint) || route.State != want[i].Generation.State ||
-			route.SocketPath != want[i].Config.SocketPath || route.TUIExecutable != want[i].TUIPath || route.Default {
-			t.Fatalf("route %d identity drifted: got=%+v want=%+v", i, route, want[i])
-		}
-	}
-	if len(ledger.observations) != 2 ||
-		!ledger.observations[0].Same(draining.Generation.Endpoint) || !ledger.observations[1].Same(current.Generation.Endpoint) {
-		t.Fatalf("inventory observation ledger: %+v", ledger.observations)
-	}
-	body, modified := snapshotCodexJournal(t, store)
-	if !reflect.DeepEqual(body, ledger.journalBytes) || !modified.Equal(ledger.journalMod) {
-		t.Fatalf("read-only inventory rewrote the admission journal: bytes-equal=%t mtime %s -> %s",
-			reflect.DeepEqual(body, ledger.journalBytes), ledger.journalMod, modified)
-	}
-	journal, exists, err := store.Load()
-	if err != nil || !exists || journal.CurrentGenerationID != current.Generation.Endpoint.EndpointGenerationID ||
-		len(journal.Routes) != 2 || journal.Operation != nil {
-		t.Fatalf("admission-current or pool shape changed: exists=%t err=%v journal=%+v", exists, err, journal)
-	}
-}
-
-func TestUnobservableCatalogRoutesRefuseWithoutMutatingThePool(t *testing.T) {
-	store, _, _ := codexPoolInventoryFixture(t)
-	ledger := &codexInventoryLedger{}
-	ledger.journalBytes, ledger.journalMod = snapshotCodexJournal(t, store)
-	controller := rollingCodexNativeThreadController{
-		journal: store,
-		fallback: defaultCodexNativeThreadController{current: func(context.Context) (codexNativeEndpointRoute, error) {
-			t.Error("unobservable pool fell through to the ambient default endpoint")
-			return codexNativeEndpointRoute{}, errFakeNativeUnavailable
-		}},
-		observe: func(context.Context, codexupgrade.GenerationRoute) error { return errFakeNativeUnavailable },
-	}
-
-	routes, err := controller.CatalogRoutes(context.Background())
-	var routeErr *codexNativeRouteError
-	if len(routes) != 0 || !errors.As(err, &routeErr) || routeErr.Reason != codexNativeReasonGenerationUnavailable {
-		t.Fatalf("unobservable inventory = %+v, %v", routes, err)
-	}
-	body, modified := snapshotCodexJournal(t, store)
-	if !reflect.DeepEqual(body, ledger.journalBytes) || !modified.Equal(ledger.journalMod) {
-		t.Fatal("refused inventory rewrote the admission journal")
-	}
 }
 
 func TestDefaultCatalogRoutesIsOneAttachOnlyReadWithoutLifecycleCalls(t *testing.T) {

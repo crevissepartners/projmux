@@ -152,6 +152,43 @@ func (m Mutator) StageCodexEndpoint(reg *Registry, agentUID string, endpoint Cod
 	return nil
 }
 
+// AdoptCodexResumeEndpoint moves one resumed Agent's durable Codex thread onto
+// the endpoint generation that just resumed it. The move is confined to the
+// same state domain: the thread's rollout already lives there, so only the
+// endpoint generation id changes. The lifecycle becomes current and any
+// operation-qualified handover receipt of the previous endpoint is dropped,
+// because both are bound to that previous endpoint. Adopting the endpoint an
+// Agent already names with a current lifecycle is a no-op.
+func (m Mutator) AdoptCodexResumeEndpoint(reg *Registry, agentUID string, endpoint CodexEndpointRef) (bool, error) {
+	const op = "adopt Codex resume endpoint"
+	agentUID = strings.TrimSpace(agentUID)
+	if agentUID == "" || !endpoint.Valid() {
+		return false, inputErr(op, ErrInvalidRegistry, "exact Agent and endpoint generation are required")
+	}
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return false, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	ref := agent.Status.SessionRef
+	if ref == nil || ref.Provider != "codex" || ref.Codex == nil || ref.Codex.Endpoint == nil ||
+		!ref.Codex.Endpoint.Valid() || strings.TrimSpace(ref.Codex.ThreadID) == "" {
+		return false, stateErr(op, ErrInvalidRegistry, "Agent has no durable Codex thread endpoint")
+	}
+	if ref.Codex.Endpoint.StateDomainID != endpoint.StateDomainID {
+		return false, stateErr(op, ErrInvalidRegistry, "Codex endpoint belongs to another state domain")
+	}
+	if ref.Codex.Endpoint.Same(endpoint) && ref.Codex.HandoverResume == nil && ref.Codex.Lifecycle != nil &&
+		ref.Codex.Lifecycle.State == CodexGenerationCurrent && ref.Codex.Lifecycle.Operation == nil {
+		return false, nil
+	}
+	adopted := endpoint
+	ref.Codex.Endpoint = &adopted
+	ref.Codex.Lifecycle = &CodexGenerationLifecycleRef{State: CodexGenerationCurrent}
+	ref.Codex.HandoverResume = nil
+	reg.UpdatedAt = m.clock()().UTC()
+	return true, nil
+}
+
 // BindCodexActivation commits the first native binding for one exact running
 // Agent materialization. It also records the returned thread as the Agent's
 // durable Codex sessionRef. A create may fill an empty ref; a resume may only

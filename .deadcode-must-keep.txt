@@ -254,7 +254,7 @@ managedCodexActivationError.Unwrap	Retired managed private-generation activation
 managedCodexActivationFailureAction	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
 managedCodexActivationOperationRef	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
 managedCodexPathsOverlap	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
-managedCodexRuntimeLocation	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+managedCodexRuntimeLocation	Deterministic retired private-generation socket location; resume uses it to refuse retired-generation-running while a retired host may still hold the thread, so the generation-pool removal must keep it.
 nativeAppendPartialNextItemLines	Default-theme entry point of nativeAppendPartialNextItemLinesWithTheme retained as the partial multiline item seam.
 nativeInteractiveItemLines	Default-theme entry point over InteractiveRowLines retained as the multiline selection seam.
 nativeInteractiveListLines	Default-theme entry point over InteractiveListLines retained as the interactive list line seam.

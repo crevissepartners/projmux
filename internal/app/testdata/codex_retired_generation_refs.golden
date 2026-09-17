@@ -1,0 +1,54 @@
+== agent resume current other-domain
+agent resume: the stored Codex thread cannot be resumed natively right now (retired-generation-state-domain-mismatch); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-state-domain-mismatch; operator action: this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry `projmux agent resume uid:agt-beta-codex`, or start a new conversation with `projmux create agent --provider codex`
+== agent resume current retired-socket-alive
+agent resume: the stored Codex thread cannot be resumed natively right now (retired-generation-running); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-running; operator action: a retired private Codex app-server generation is still listening on <stateDir>/g/6473b8d23e09aa301b94626a3454e6dc/s and may hold this thread; stop that Codex app-server process, then retry `projmux agent resume uid:agt-beta-codex`
+== agent resume draining other-domain
+agent resume: the stored Codex thread cannot be resumed natively right now (retired-generation-state-domain-mismatch); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-state-domain-mismatch; operator action: this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry `projmux agent resume uid:agt-beta-codex`, or start a new conversation with `projmux create agent --provider codex`
+== agent resume draining retired-socket-alive
+agent resume: the stored Codex thread cannot be resumed natively right now (retired-generation-running); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-running; operator action: a retired private Codex app-server generation is still listening on <stateDir>/g/6473b8d23e09aa301b94626a3454e6dc/s and may hold this thread; stop that Codex app-server process, then retry `projmux agent resume uid:agt-beta-codex`
+== agent resume handover-pending other-domain
+agent resume: the stored Codex thread cannot be resumed natively right now (retired-generation-state-domain-mismatch); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-state-domain-mismatch; operator action: this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry `projmux agent resume uid:agt-beta-codex`, or start a new conversation with `projmux create agent --provider codex`
+== agent resume handover-pending retired-socket-alive
+agent resume: the stored Codex thread cannot be resumed natively right now (retired-generation-running); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-running; operator action: a retired private Codex app-server generation is still listening on <stateDir>/g/6473b8d23e09aa301b94626a3454e6dc/s and may hold this thread; stop that Codex app-server process, then retry `projmux agent resume uid:agt-beta-codex`
+== picker row current other-domain
+create agent: the stored Codex thread cannot be resumed natively right now (retired-generation-state-domain-mismatch); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-state-domain-mismatch; operator action: this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry the resume-picker row, or `projmux agent resume <agent>` for an existing Agent, or start a new conversation with `projmux create agent --provider codex`
+== picker row current retired-socket-alive
+create agent: the stored Codex thread cannot be resumed natively right now (retired-generation-running); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-running; operator action: a retired private Codex app-server generation is still listening on <stateDir>/g/6473b8d23e09aa301b94626a3454e6dc/s and may hold this thread; stop that Codex app-server process, then retry the resume-picker row, or `projmux agent resume <agent>` for an existing Agent
+== picker row draining other-domain
+create agent: the stored Codex thread cannot be resumed natively right now (retired-generation-state-domain-mismatch); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-state-domain-mismatch; operator action: this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry the resume-picker row, or `projmux agent resume <agent>` for an existing Agent, or start a new conversation with `projmux create agent --provider codex`
+== picker row draining retired-socket-alive
+create agent: the stored Codex thread cannot be resumed natively right now (retired-generation-running); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-running; operator action: a retired private Codex app-server generation is still listening on <stateDir>/g/6473b8d23e09aa301b94626a3454e6dc/s and may hold this thread; stop that Codex app-server process, then retry the resume-picker row, or `projmux agent resume <agent>` for an existing Agent
+== picker row handover-pending other-domain
+create agent: the stored Codex thread cannot be resumed natively right now (retired-generation-state-domain-mismatch); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-state-domain-mismatch; operator action: this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry the resume-picker row, or `projmux agent resume <agent>` for an existing Agent, or start a new conversation with `projmux create agent --provider codex`
+== picker row handover-pending retired-socket-alive
+create agent: the stored Codex thread cannot be resumed natively right now (retired-generation-running); refusing to rebind it onto a lane with no native turn control: Codex generation route: retired-generation-running; operator action: a retired private Codex app-server generation is still listening on <stateDir>/g/6473b8d23e09aa301b94626a3454e6dc/s and may hold this thread; stop that Codex app-server process, then retry the resume-picker row, or `projmux agent resume <agent>` for an existing Agent
+== agent turn start running connection gone
+exact Agent native control unavailable: the native connection epoch is unavailable (endpoint-unavailable); Open Codex; Open Codex: `projmux focus pane uid:pan-alpha-codex --project uid:prj-alpha --window uid:win-alpha-main`
+== agent turn start offline
+exact Agent native control unavailable: the selected Agent has no current Running Pane; next: `projmux agent resume uid:agt-beta-codex`
+== agent turn interrupt offline
+exact Agent native control unavailable: the selected Agent has no current Running Pane; next: `projmux agent resume uid:agt-beta-codex`
+== agent message send offline
+agent message send: target Agent is not eligible: no current Running Agent activation; next: `projmux agent resume uid:agt-beta-codex`
+== agent message send offline reply
+agent message send: target Agent is not eligible: no current Running Agent activation; replyTo=message-original: explicit-reply-target-route-stale; previousRef=; inspect original and previous reply status; do not resend; next: `projmux agent resume uid:agt-beta-codex`
+== agent message push offline
+exact Agent native control unavailable: the selected Agent has no current Running Pane; next: `projmux agent resume uid:agt-beta-codex`
+== picker badge current
+
+== picker badge draining
+
+== picker badge handover-pending
+
+== picker badge retired
+[generation-unavailable]
+== picker badge blocked
+[generation-unavailable]
+== doctor same-domain-old-generation
+  Retired Codex ref Agent uid:agt-beta-codex: endpoint=codex-0.152.1 lifecycle=current; resume switches to the default endpoint (refused as retired-generation-running while a retired private Codex app-server still listens on its socket); next: `projmux agent resume uid:agt-beta-codex`
+== doctor draining-default-generation
+  Retired Codex ref Agent uid:agt-beta-codex: endpoint=codex-0.154.0 lifecycle=draining; resume switches to the default endpoint (refused as retired-generation-running while a retired private Codex app-server still listens on its socket); next: `projmux agent resume uid:agt-beta-codex`
+== doctor handover-pending-old-generation
+  Retired Codex ref Agent uid:agt-beta-codex: endpoint=codex-0.152.1 lifecycle=handover-pending; resume switches to the default endpoint (refused as retired-generation-running while a retired private Codex app-server still listens on its socket); next: `projmux agent resume uid:agt-beta-codex`
+== doctor other-domain
+  Retired Codex ref Agent uid:agt-beta-codex: endpoint=codex-0.152.1 lifecycle=current; resume refused (retired-generation-state-domain-mismatch); next: this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry `projmux agent resume uid:agt-beta-codex`, or start a new conversation with `projmux create agent --provider codex`

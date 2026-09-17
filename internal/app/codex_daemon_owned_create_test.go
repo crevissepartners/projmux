@@ -85,26 +85,14 @@ func TestCodexNativeCreateEndpointSkewRefusesWithoutPrivateGeneration(t *testing
 		t.Run(tt.name, func(t *testing.T) {
 			stateDir := filepath.Join(t.TempDir(), "state")
 			probes := 0
-			controller := rollingCodexNativeThreadController{
-				journal: codexupgrade.NewStateStore(stateDir),
-				fallback: defaultCodexNativeThreadController{
-					probe: func(context.Context) codexappserver.Health {
-						probes++
-						return tt.health
-					},
-					open: func(context.Context, codexNativeEndpointRoute, bool) (codexNativeThreadClient, error) {
-						t.Error("refused create opened a thread client")
-						return nil, errFakeNativeUnavailable
-					},
-				},
-				observe: func(context.Context, codexupgrade.GenerationRoute) error {
-					t.Error("refused create observed a private generation route")
-					return nil
-				},
-				create: func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, string) (codexappserver.ThreadBinding, error) {
-					t.Error("refused create started a native thread")
-					return codexappserver.ThreadBinding{}, errFakeNativeUnavailable
-				},
+			controller := newCodexNativeThreadController(stateDir)
+			controller.probe = func(context.Context) codexappserver.Health {
+				probes++
+				return tt.health
+			}
+			controller.open = func(context.Context, codexNativeEndpointRoute, bool) (codexNativeThreadClient, error) {
+				t.Error("refused create opened a thread client")
+				return nil, errFakeNativeUnavailable
 			}
 
 			store := newFakeResourceStore(t)
@@ -217,8 +205,9 @@ func TestDoctorAttachableCodexEndpointHasNoDaemonGuidance(t *testing.T) {
 
 // TestIncompleteManagedActivationIsNeverResumedByCreate covers the second
 // retired entry: a journal left mid-way through a managed activation (admission
-// committed, drain unpublished) is read as it stands. Current no longer runs the
-// activation forward, so the journal bytes and mtime stay exactly as found.
+// committed, drain unpublished) is ignored: Current routes to the default
+// endpoint and never runs the activation forward, so the journal bytes and
+// mtime stay exactly as found.
 func TestIncompleteManagedActivationIsNeverResumedByCreate(t *testing.T) {
 	root := t.TempDir()
 	journal := codexupgrade.NewStateStore(filepath.Join(root, "state"))
@@ -272,17 +261,14 @@ func TestIncompleteManagedActivationIsNeverResumedByCreate(t *testing.T) {
 		t.Fatalf("seed incomplete managed activation: %v", err)
 	}
 	bytesBefore, modBefore := snapshotCodexJournal(t, journal)
-	controller := rollingCodexNativeThreadController{
-		journal: journal,
-		fallback: defaultCodexNativeThreadController{current: func(context.Context) (codexNativeEndpointRoute, error) {
-			t.Error("a present journal fell through to the ambient default endpoint")
-			return codexNativeEndpointRoute{}, errFakeNativeUnavailable
-		}},
-		observe: func(context.Context, codexupgrade.GenerationRoute) error { return nil },
-	}
+	controller := newCodexNativeThreadController(filepath.Join(root, "state"))
+	daemon := nativeTestDefaultRoute("codex-0.152.1")
+	controller.current = func(context.Context) (codexNativeEndpointRoute, error) { return daemon, nil }
 
-	if _, err := controller.Current(context.Background()); err != nil {
-		t.Fatalf("current on an incomplete activation journal: %v", err)
+	// The journal names a ready private current route; the default endpoint is
+	// the only route create uses, and the activation is never run forward.
+	if route, err := controller.Current(context.Background()); err != nil || !route.Default || !route.Endpoint.Same(daemon.Endpoint) {
+		t.Fatalf("current on an incomplete activation journal: %+v, %v", route, err)
 	}
 	bytesAfter, modAfter := snapshotCodexJournal(t, journal)
 	if !reflect.DeepEqual(bytesBefore, bytesAfter) || !modBefore.Equal(modAfter) {

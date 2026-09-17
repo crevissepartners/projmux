@@ -240,16 +240,6 @@ func newTestAgentResumeCommand(t *testing.T, store *fakeResourceStore, tmux *fak
 	}, launcher, ai, usage
 }
 
-type fakeDrainingHandoverRequester struct {
-	operationRef string
-	endpoints    []coremetadata.CodexEndpointRef
-}
-
-func (requester *fakeDrainingHandoverRequester) RequestHandover(_ context.Context, endpoint coremetadata.CodexEndpointRef) (string, bool, error) {
-	requester.endpoints = append(requester.endpoints, endpoint)
-	return requester.operationRef, len(requester.endpoints) == 1, nil
-}
-
 func markResumeFixtureHandoverState(t *testing.T, store *fakeResourceStore, agentUID, operationRef string, state coremetadata.CodexGenerationState) coremetadata.CodexEndpointRef {
 	t.Helper()
 	agent, ok := store.registry.Agent(agentUID)
@@ -267,45 +257,29 @@ func markResumeFixtureHandoverState(t *testing.T, store *fakeResourceStore, agen
 	return endpoint
 }
 
-func TestAgentResumeDrainingGenerationFailsClosedWhenHandoverRequesterIsUnconfigured(t *testing.T) {
+// TestAgentResumeDrainingGenerationResumesWithoutHandoverRequest replaces the
+// retired handover-request gate: a draining or handover-pending marker takes
+// the normal rebind path, and the committed Agent carries a current lifecycle.
+func TestAgentResumeDrainingGenerationResumesWithoutHandoverRequest(t *testing.T) {
 	for _, state := range []coremetadata.CodexGenerationState{coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending} {
 		t.Run(string(state), func(t *testing.T) {
 			store := newFakeResourceStore(t)
 			setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
 			tmux := newFakeTmux()
 			command, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
-			enablePinnedNativeResumeFixture(t, command, store, "agt-beta-codex", launcher)
-			markResumeFixtureHandoverState(t, store, "agt-beta-codex", "upgrade-one", state)
-			before := store.snapshot()
-			_, _, err := runRoute(t, command, "resume", "uid:agt-beta-codex")
-			if err == nil || !strings.Contains(err.Error(), "handover-required operation=upgrade-one") || !strings.Contains(err.Error(), "not configured") {
-				t.Fatalf("%s resume error = %v", state, err)
+			native, _ := enablePinnedNativeResumeFixture(t, command, store, "agt-beta-codex", launcher)
+			endpoint := markResumeFixtureHandoverState(t, store, "agt-beta-codex", "upgrade-one", state)
+			stdout, _, err := runRoute(t, command, "resume", "uid:agt-beta-codex")
+			if err != nil || stdout != "agent/codex resumed\n" {
+				t.Fatalf("%s resume stdout=%q err=%v", state, stdout, err)
 			}
-			if store.snapshot() != before || store.transactions != 0 || store.writes != 0 || len(tmux.calls) != 0 || len(launcher.plans) != 0 {
-				t.Fatalf("fail-closed %s resume mutated state: transactions=%d writes=%d tmux=%v provider=%v", state, store.transactions, store.writes, tmux.calls, launcher.plans)
+			after, _ := store.registry.Agent("agt-beta-codex")
+			ref := after.Status.SessionRef.Codex
+			if len(native.resumes) != 1 || !ref.Endpoint.Same(endpoint) || ref.Lifecycle == nil ||
+				ref.Lifecycle.State != coremetadata.CodexGenerationCurrent || ref.Lifecycle.Operation != nil {
+				t.Fatalf("%s resume effects resumes=%+v ref=%+v", state, native.resumes, ref)
 			}
 		})
-	}
-}
-
-func TestAgentResumeDrainingGenerationReusesOneGenerationWideOperationRef(t *testing.T) {
-	store := newFakeResourceStore(t)
-	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
-	tmux := newFakeTmux()
-	command, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
-	enablePinnedNativeResumeFixture(t, command, store, "agt-beta-codex", launcher)
-	endpoint := markResumeFixtureHandoverState(t, store, "agt-beta-codex", "upgrade-one", coremetadata.CodexGenerationDraining)
-	requester := &fakeDrainingHandoverRequester{operationRef: "upgrade-one"}
-	command.handover = requester
-	before := store.snapshot()
-	for i := range 2 {
-		_, _, err := runRoute(t, command, "resume", "uid:agt-beta-codex")
-		if err == nil || !strings.Contains(err.Error(), "handover-required operation=upgrade-one") {
-			t.Fatalf("resume %d error = %v", i, err)
-		}
-	}
-	if len(requester.endpoints) != 2 || requester.endpoints[0] != endpoint || requester.endpoints[1] != endpoint || store.snapshot() != before || store.transactions != 0 || len(tmux.calls) != 0 || len(launcher.plans) != 0 {
-		t.Fatalf("handover reuse effects endpoints=%+v transactions=%d tmux=%v provider=%v", requester.endpoints, store.transactions, tmux.calls, launcher.plans)
 	}
 }
 

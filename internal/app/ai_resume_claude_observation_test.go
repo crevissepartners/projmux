@@ -9,7 +9,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 // Capture before the package TestMain replaces XDG_CONFIG_HOME for ordinary
@@ -43,15 +42,15 @@ func TestClaudeResumeRealStoreObservation(t *testing.T) {
 			files++
 		}
 	}
-	// Mirror App's production discovery dependencies, including the real pool
-	// journal, native catalog opener, routes, enabled providers and settings.
+	// Mirror App's production discovery dependencies, including the native
+	// catalog opener, routes, enabled providers and settings.
 	// CatalogRoutes never calls the launch activator, so the observation omits
 	// that write-capable dependency and invokes population only.
 	productionCommand := func() *aiCommand {
 		cmd := newAICommand()
 		cmd.codexNative = defaultCodexNativeThreadController{}
 		if paths, err := config.DefaultPathsFromEnv(); err == nil {
-			cmd.codexNative = rollingCodexNativeThreadController{journal: codexupgrade.NewStateStore(paths.StateDir)}
+			cmd.codexNative = newCodexNativeThreadController(paths.StateDir)
 		}
 		return cmd
 	}

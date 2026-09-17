@@ -85,11 +85,6 @@ type agentCommand struct {
 	focus             rawArgvCommand
 	codexUpgrade      rawArgvCommand
 	codexHandover     rawArgvCommand
-	handover          codexDrainingHandoverRequester
-}
-
-type codexDrainingHandoverRequester interface {
-	RequestHandover(context.Context, coremetadata.CodexEndpointRef) (string, bool, error)
 }
 
 func newAgentCommand() *agentCommand {
@@ -247,26 +242,6 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if err := requireClaudeDialogueMode(agent.Spec.Provider, *dialogueReplyOnly, nil); err != nil {
 		return err
 	}
-	if operationRef, endpoint, draining := drainingCodexResumeRequest(agent); draining {
-		// A Draining/HandoverPending generation cannot take the normal rebind
-		// path. That would silently resume on the old endpoint and bypass the
-		// generation-wide Phase 5 handover gate. An unconfigured requester is
-		// therefore a fail-closed refusal with zero provider/Registry/tmux
-		// effects, not permission to reattach.
-		if c.handover == nil {
-			return fmt.Errorf("%s: %s operation=%s: handover requester is not configured", spelling, codexNativeReasonHandoverRequired, operationRef)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), codexNativeThreadTimeout)
-		defer cancel()
-		requested, _, requestErr := c.handover.RequestHandover(ctx, endpoint)
-		if requestErr != nil {
-			return requestErr
-		}
-		if requested == "" {
-			requested = operationRef
-		}
-		return fmt.Errorf("%s: %s operation=%s", spelling, codexNativeReasonHandoverRequired, requested)
-	}
 	plan, err := planAgentResume(spelling, registry, agent)
 	if err != nil {
 		return err
@@ -285,20 +260,6 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	}
 	plan.dialogueReplyOnly = *dialogueReplyOnly
 	return c.rebind.rebind(spelling, plan, stdout, stderr)
-}
-
-func drainingCodexResumeRequest(agent *coremetadata.Agent) (string, coremetadata.CodexEndpointRef, bool) {
-	if agent == nil || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
-		agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Valid() ||
-		agent.Status.SessionRef.Codex.Lifecycle == nil {
-		return "", coremetadata.CodexEndpointRef{}, false
-	}
-	endpoint := *agent.Status.SessionRef.Codex.Endpoint
-	lifecycle := agent.Status.SessionRef.Codex.Lifecycle
-	if !lifecycle.ValidFor(&endpoint) || (lifecycle.State != coremetadata.CodexGenerationDraining && lifecycle.State != coremetadata.CodexGenerationHandoverPending) {
-		return "", coremetadata.CodexEndpointRef{}, false
-	}
-	return lifecycle.Operation.ID, endpoint, true
 }
 
 // requireResumablePhase enforces the Agent lifecycle gate of resume.

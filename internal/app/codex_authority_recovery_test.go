@@ -107,8 +107,10 @@ func TestRecoveredDefaultBrokerRebindsExactAuthorityAndControlConsumers(t *testi
 		t.Fatal(err)
 	}
 	current.Endpoint = newRef
-	if _, err := controller.Resolve(context.Background(), oldRef); err == nil {
-		t.Fatal("stored stale endpoint was blindly resolved to current")
+	// A stored resume of the older generation in the same state domain
+	// switches to the current default endpoint; it is never kept on oldRef.
+	if resolved, err := controller.Resolve(context.Background(), oldRef); err != nil || !resolved.Endpoint.Same(newRef) || !resolved.Default {
+		t.Fatalf("stored older endpoint resolved to %+v, %v; want the current default endpoint", resolved, err)
 	}
 	_ = first.Close()
 	next := openBrokerEpoch(t, session)
@@ -322,14 +324,17 @@ func TestRecoveredBrokerCloseCancelsPendingRouteAndEnsure(t *testing.T) {
 	}
 }
 
-func TestRecoveredDefaultBrokerRefusesNewRollingJournalBeforeSameEndpointReopen(t *testing.T) {
+// TestRecoveredDefaultBrokerReopensSameEndpointDespiteRollingJournal is the
+// broker half of the journal retirement: a rolling-upgrade journal appearing
+// under the broker state domain no longer gates default recovery, and the
+// reopen neither writes nor locks it.
+func TestRecoveredDefaultBrokerReopensSameEndpointDespiteRollingJournal(t *testing.T) {
 	endpoint := newBrokerTestEndpoint()
 	discovery, _ := startBrokerRuntimeForTest(t, endpoint)
 	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("journal-reopen"), "", nil, discovery, nil)
 	defer session.Close()
 	route := codexNativeEndpointRoute{Endpoint: coremetadata.CodexEndpointRef{StateDomainID: "journal-domain", EndpointGenerationID: "codex-0.151.0"}, State: coremetadata.CodexGenerationCurrent, Default: true, TUIExecutable: "/fixture/codex"}
 	session.endpoint = route.Endpoint
-	session.recoveryGuard = func() error { return refuseDefaultRecoveryWithJournal(discovery.Domain()) }
 	probes := 0
 	session.recoverRoute = func(context.Context) (codexNativeEndpointRoute, error) { probes++; return route, nil }
 	first := openBrokerEpoch(t, session)
@@ -344,20 +349,19 @@ func TestRecoveredDefaultBrokerRefusesNewRollingJournalBeforeSameEndpointReopen(
 	if err := os.WriteFile(journal, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before := endpoint.requestCount("bootstrap")
-	_, err := session.Open(context.Background())
-	var refusal *codexNativeRouteError
-	if !errors.As(err, &refusal) || refusal.Reason != codexNativeReasonGenerationUnavailable {
-		t.Fatalf("journal reopen refusal=%v", err)
+	second, err := session.Open(context.Background())
+	if err != nil {
+		t.Fatalf("journal gated the default reopen: %v", err)
 	}
-	if probes != 1 || endpoint.requestCount("bootstrap") != before || session.endpoint != route.Endpoint {
-		t.Fatal("new journal was bypassed or rerouted")
+	defer second.Close()
+	if probes != 2 || session.endpoint != route.Endpoint {
+		t.Fatalf("default reopen probes=%d endpoint=%+v", probes, session.endpoint)
 	}
 	after, err := os.ReadFile(journal)
 	if err != nil || string(after) != string(original) {
 		t.Fatal("default recovery wrote the journal")
 	}
 	if _, err := os.Lstat(journal + ".flock"); !os.IsNotExist(err) {
-		t.Fatal("read-only guard acquired journal mutation artifacts")
+		t.Fatal("default recovery acquired journal mutation artifacts")
 	}
 }

@@ -682,8 +682,10 @@ func TestNativeResumePickerRowsPreserveExactGenerationThreadAndSource(t *testing
 			selection.state != route.State {
 			t.Fatalf("picker identity lost an axis: entry=%#v selection=%#v wantRoute=%+v", entry, selection, route)
 		}
-		if route.State == coremetadata.CodexGenerationDraining && !strings.Contains(stripANSI(entry.Label), "[handover-required]") {
-			t.Fatalf("draining row does not visibly refuse: %q", stripANSI(entry.Label))
+		// A draining row resumes on the default endpoint of its state domain
+		// (or refuses with a typed reason when selected); it carries no badge.
+		if route.State == coremetadata.CodexGenerationDraining && strings.Contains(stripANSI(entry.Label), "[generation-unavailable]") {
+			t.Fatalf("draining row rendered unavailable: %q", stripANSI(entry.Label))
 		}
 		if route.State == coremetadata.CodexGenerationCurrent && strings.Contains(stripANSI(entry.Label), "required]") {
 			t.Fatalf("current row rendered blocked: %q", stripANSI(entry.Label))
@@ -760,12 +762,14 @@ func TestNativeResumePickerDuplicateVisibilityUsesKnownOwnerOrRefusesAmbiguous(t
 				!selected.endpoint.Same(codexSummaryEndpoint(found[0])) {
 				t.Fatalf("collision picker row lost exact route: selection=%#v summary=%#v", selected, found[0])
 			}
-			wantVisible := "[generation-unavailable]"
+			// A known-owner draining row resumes through the default-endpoint
+			// switch and carries no badge; an ambiguous row stays unavailable.
 			if test.knownOwner {
-				wantVisible = "[handover-required]"
-			}
-			if !strings.Contains(selectedLabel, wantVisible) {
-				t.Fatalf("collision row state is hidden: label=%q want=%q", selectedLabel, wantVisible)
+				if strings.Contains(selectedLabel, "[generation-unavailable]") || strings.Contains(selectedLabel, "required]") {
+					t.Fatalf("known-owner draining row rendered blocked: label=%q", selectedLabel)
+				}
+			} else if !strings.Contains(selectedLabel, "[generation-unavailable]") {
+				t.Fatalf("collision row state is hidden: label=%q want=%q", selectedLabel, "[generation-unavailable]")
 			}
 			key := aiModeCodex + "\x00" + threadID
 			detail, hasDetail := controller.detailRefs[key]

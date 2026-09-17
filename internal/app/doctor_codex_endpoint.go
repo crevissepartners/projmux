@@ -26,7 +26,27 @@ type doctorCodexEndpointMismatch struct {
 	ObservedOn          string                          `json:"observed_on,omitempty"`
 	Observations        int                             `json:"observations,omitempty"`
 	Causality           string                          `json:"causality,omitempty"`
+	RetiredRefs         []doctorCodexRetiredRef         `json:"retired_refs,omitempty"`
 }
+
+// doctorCodexRetiredRef is one resumable Codex Agent whose stored endpoint is
+// not the default daemon endpoint, or still carries a draining /
+// handover-pending marker of the retired private generation pool. It states
+// what `projmux agent resume` will do and the next command. It is judged from
+// the Registry and the default endpoint only, never from the rolling journal.
+type doctorCodexRetiredRef struct {
+	AgentUID             string `json:"agent_uid"`
+	EndpointGenerationID string `json:"endpoint_generation_id"`
+	GenerationState      string `json:"generation_state"`
+	Resume               string `json:"resume"`
+	Reason               string `json:"reason,omitempty"`
+	Next                 string `json:"next"`
+}
+
+const (
+	doctorCodexRetiredResumeSwitches = "switches-to-default-endpoint"
+	doctorCodexRetiredResumeRefused  = "refused"
+)
 
 type doctorCodexEndpointAgent struct {
 	AgentUID             string `json:"agent_uid"`
@@ -90,7 +110,8 @@ func diagnoseCodexEndpointMismatch(registry coremetadata.Registry, registryErr e
 			out.unobserved(pane.Status.Activation.AgentUID, "activation-agent-unresolved")
 		}
 	}
-	if len(out.Mismatches) == 0 && len(out.UnobservedAgents) == 0 {
+	out.RetiredRefs = diagnoseCodexRetiredRefs(registry, domain, domainErr, health)
+	if len(out.Mismatches) == 0 && len(out.UnobservedAgents) == 0 && len(out.RetiredRefs) == 0 {
 		return nil // zero mismatches and no enumeration gap: no diagnostic row
 	}
 	if len(out.UnobservedAgents) > 0 {
@@ -103,6 +124,41 @@ func diagnoseCodexEndpointMismatch(registry coremetadata.Registry, registryErr e
 	slices.SortFunc(out.UnobservedAgents, func(a, b doctorCodexEndpointUnobserved) int {
 		return strings.Compare(a.AgentUID+":"+a.Reason, b.AgentUID+":"+b.Reason)
 	})
+	return out
+}
+
+func diagnoseCodexRetiredRefs(registry coremetadata.Registry, domain string, domainErr error, health *codexappserver.Health) []doctorCodexRetiredRef {
+	if domainErr != nil || domain == "" {
+		return nil
+	}
+	runningGenerationID := ""
+	if health != nil && health.EndpointReadiness == codexappserver.EndpointReady && plainCodexEndpointVersion(health.RunningVersion) {
+		runningGenerationID = "codex-" + health.RunningVersion
+	}
+	var out []doctorCodexRetiredRef
+	for _, agent := range registry.Agents {
+		ref := agent.Status.SessionRef
+		if agent.Spec.Provider != aiModeCodex || !slices.Contains(resumableAgentPhases, agent.Status.Phase) ||
+			ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() ||
+			ref.Codex.Lifecycle == nil || !ref.Codex.Lifecycle.ValidFor(ref.Codex.Endpoint) {
+			continue
+		}
+		endpoint, state := *ref.Codex.Endpoint, ref.Codex.Lifecycle.State
+		row := doctorCodexRetiredRef{AgentUID: agent.Metadata.UID, EndpointGenerationID: endpoint.EndpointGenerationID, GenerationState: string(state)}
+		resume := "uid:" + agent.Metadata.UID
+		switch {
+		case endpoint.StateDomainID != domain:
+			refusal := codexRetiredGenerationRefusal(codexNativeReasonRetiredStateDomain, "", resume)
+			row.Resume, row.Reason, row.Next = doctorCodexRetiredResumeRefused, refusal.Reason, refusal.OperatorAction
+		case state == coremetadata.CodexGenerationDraining || state == coremetadata.CodexGenerationHandoverPending ||
+			(runningGenerationID != "" && endpoint.EndpointGenerationID != runningGenerationID):
+			row.Resume, row.Next = doctorCodexRetiredResumeSwitches, "`projmux agent resume "+resume+"`"
+		default:
+			continue
+		}
+		out = append(out, row)
+	}
+	slices.SortFunc(out, func(a, b doctorCodexRetiredRef) int { return strings.Compare(a.AgentUID, b.AgentUID) })
 	return out
 }
 
@@ -170,6 +226,16 @@ func writeDoctorCodexEndpointMismatchText(buf *bytes.Buffer, report *doctorCodex
 	for _, agent := range report.UnobservedAgents {
 		fmt.Fprintf(buf, "  Unobserved Agent uid:%s: %s; mismatch enumeration may be incomplete\n", agent.AgentUID, agent.Reason)
 	}
+	for _, ref := range report.RetiredRefs {
+		if ref.Resume == doctorCodexRetiredResumeRefused {
+			fmt.Fprintf(buf, "  Retired Codex ref Agent uid:%s: endpoint=%s lifecycle=%s; resume refused (%s); next: %s\n",
+				ref.AgentUID, ref.EndpointGenerationID, ref.GenerationState, ref.Reason, ref.Next)
+			continue
+		}
+		fmt.Fprintf(buf, "  Retired Codex ref Agent uid:%s: endpoint=%s lifecycle=%s; resume switches to the default endpoint "+
+			"(refused as %s while a retired private Codex app-server still listens on its socket); next: %s\n",
+			ref.AgentUID, ref.EndpointGenerationID, ref.GenerationState, codexNativeReasonRetiredRunning, ref.Next)
+	}
 }
 
 // Scope the support allowlist to this projection. Agent and generation IDs
@@ -188,6 +254,16 @@ func safeDoctorCodexEndpointMismatchString(parent, key, value string) bool {
 			return value == "undetermined"
 		case "running_version":
 			return plainCodexEndpointVersion(value)
+		}
+	}
+	if parent == "retired_refs" {
+		switch key {
+		case "resume":
+			return value == doctorCodexRetiredResumeSwitches || value == doctorCodexRetiredResumeRefused
+		case "reason":
+			return value == codexNativeReasonRetiredStateDomain
+		case "generation_state":
+			return validAIResumeGenerationState(coremetadata.CodexGenerationState(value))
 		}
 	}
 	if (parent == "codex_endpoint_mismatch" || parent == "unobserved_agents") && key == "reason" {

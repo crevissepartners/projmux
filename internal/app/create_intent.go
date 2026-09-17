@@ -606,19 +606,23 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		if !nativeLaunchCapable || c.codexNative == nil || !flags.resumeEndpoint.Valid() {
 			return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
 		}
-		if flags.resumeGenerationState == coremetadata.CodexGenerationDraining ||
-			flags.resumeGenerationState == coremetadata.CodexGenerationHandoverPending {
-			return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonHandoverRequired})
-		}
-		if flags.resumeGenerationState != coremetadata.CodexGenerationCurrent {
+		// Draining and handover-pending rows are leftovers of the retired
+		// private generation pool; they resolve like current rows, switching
+		// onto the default endpoint of the same Codex state domain or refusing.
+		switch flags.resumeGenerationState {
+		case coremetadata.CodexGenerationCurrent, coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
+		default:
 			return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
 		}
 		nativeCtx, cancel := prepareNativeContext(context.Background())
 		var routeErr error
 		nativeRoute, routeErr = c.codexNative.Resolve(nativeCtx, flags.resumeEndpoint)
 		cancel()
-		if routeErr != nil || !nativeRoute.valid() || !nativeRoute.Endpoint.Same(flags.resumeEndpoint) ||
-			nativeRoute.State != coremetadata.CodexGenerationCurrent {
+		if routeErr == nil && nativeRoute.valid() && !nativeRoute.Endpoint.Same(flags.resumeEndpoint) &&
+			(!nativeRoute.Default || nativeRoute.Endpoint.StateDomainID != flags.resumeEndpoint.StateDomainID) {
+			routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+		}
+		if routeErr != nil || !nativeRoute.valid() || nativeRoute.State != coremetadata.CodexGenerationCurrent {
 			if routeErr == nil {
 				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 			}
@@ -682,7 +686,9 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" {
 			observation := pickerResumeSessionObservation(provider, conversation)
 			if nativeCatalogResume {
-				endpoint := flags.resumeEndpoint
+				// The resolved route, not the row's endpoint: a switched row
+				// binds the new Agent to the default endpoint.
+				endpoint := nativeRoute.Endpoint
 				observation.Endpoint = &endpoint
 			}
 			if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, observation); err != nil {

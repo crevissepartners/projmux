@@ -603,3 +603,10 @@ func (effects *codexHandoverEffects) runHandoverMutation(
 		},
 	}})
 }
+
+// rollingNativeRoute projects a journal route for the handover effects only.
+// It is kept with the handover CLI until that surface is deleted; no native
+// create/resume route reads the journal.
+func rollingNativeRoute(route codexupgrade.GenerationRoute) codexNativeEndpointRoute {
+	return codexNativeEndpointRoute{Endpoint: route.Generation.Endpoint, State: route.Generation.State, SocketPath: route.Config.SocketPath, TUIExecutable: route.TUIPath}
+}

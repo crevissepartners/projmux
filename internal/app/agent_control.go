@@ -741,7 +741,17 @@ func addOpenCodexBindingRecovery(err error, binding exactAgentControlBinding) er
 	return fmt.Errorf("%w; %s: `projmux focus pane uid:%s --project uid:%s --window uid:%s`", err, agentActionOpenCodex, binding.Identity.PaneUID, binding.ProjectUID, binding.WindowUID)
 }
 
+// codexResumeRecovery is the next command for a Codex Agent with no live
+// Pane: resume re-binds its durable thread on the default daemon endpoint (or
+// refuses with a typed reason and its own next command).
+func codexResumeRecovery(err error, agent coremetadata.Agent) error {
+	return fmt.Errorf("%w; next: `projmux agent resume uid:%s`", err, agent.Metadata.UID)
+}
+
 func addOpenCodexRecovery(err error, registry coremetadata.Registry, agent coremetadata.Agent) error {
+	if slices.Contains(resumableAgentPhases, agent.Status.Phase) {
+		return codexResumeRecovery(err, agent)
+	}
 	pane, ok := registry.Pane(agent.Status.PaneRef)
 	if !ok {
 		return err

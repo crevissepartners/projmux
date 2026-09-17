@@ -284,7 +284,9 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 			Effects: &codexHandoverEffects{registry: registry, mutator: intmetadata.DefaultMutator(),
 				runner: createCmd.runtime.runner, materialize: createCmd.runtime, launcher: ai},
 		}
-		createCmd.codexNative = rollingCodexNativeThreadController{journal: journal}
+		// The rolling-upgrade journal feeds only the retained upgrade/handover
+		// commands; native routes always use the default daemon endpoint.
+		createCmd.codexNative = newCodexNativeThreadController(paths.StateDir)
 	}
 	ai.codexNative = createCmd.codexNative
 	// The Projmux split UI produces canonical create intents and nothing else.
@@ -307,7 +309,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	agentCmd.focus = focusCmd
 	if rollingCoordinator != nil {
 		agentCmd.codexUpgrade = &codexUpgradeCommand{coordinator: rollingCoordinator, qualification: qualificationStore}
-		agentCmd.handover = rollingCoordinator
 	}
 	if handoverCoordinator != nil {
 		agentCmd.codexHandover = &codexHandoverCommand{coordinator: handoverCoordinator}

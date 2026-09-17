@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -30,12 +30,29 @@ type codexNativeThreadController interface {
 	CanFallback(error) bool
 }
 
+// defaultCodexNativeThreadController is the only native route owner: every
+// create, catalog, resolve, and durable guard goes to the shared `codex
+// app-server daemon` endpoint. The owner-private rolling-upgrade journal
+// (`<stateDir>/codex-generations/rolling-upgrade.json`) is never read here, so
+// its presence cannot decide a route.
+//
+// stateDir is used only to locate the deterministic socket of a retired
+// private generation (managedCodexRuntimeLocation) so a resume can refuse
+// while that host may still hold the thread. Empty skips that check.
 type defaultCodexNativeThreadController struct {
-	current      func(context.Context) (codexNativeEndpointRoute, error)
-	probe        func(context.Context) codexappserver.Health
-	open         func(context.Context, codexNativeEndpointRoute, bool) (codexNativeThreadClient, error)
-	awaitDurable func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) error
-	guard        func(context.Context, codexNativeEndpointRoute) error
+	stateDir      string
+	retiredListen func(context.Context, string) bool
+	current       func(context.Context) (codexNativeEndpointRoute, error)
+	probe         func(context.Context) codexappserver.Health
+	open          func(context.Context, codexNativeEndpointRoute, bool) (codexNativeThreadClient, error)
+	awaitDurable  func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) error
+	guard         func(context.Context, codexNativeEndpointRoute) error
+}
+
+// newCodexNativeThreadController is the production native route owner that
+// App wires for create, resume, and the resume catalog.
+func newCodexNativeThreadController(stateDir string) defaultCodexNativeThreadController {
+	return defaultCodexNativeThreadController{stateDir: stateDir}
 }
 
 type codexNativeThreadClient interface {
@@ -43,134 +60,6 @@ type codexNativeThreadClient interface {
 	StartTurn(context.Context, string, string, string) (string, error)
 	BootstrapThread(context.Context, string, string, []string) (codexappserver.ThreadSnapshot, error)
 	Close() error
-}
-
-// rollingCodexNativeThreadController overlays the owner-private Phase 4
-// admission journal on the attach-only default endpoint. An absent journal
-// preserves the Phase 3 default behavior; a present journal is exact and never
-// falls through to or adopts the ambient endpoint.
-//
-// It never launches, resumes, or completes a private app-server generation.
-// The official `codex app-server daemon` owns the app-server lifecycle, so a
-// default endpoint that cannot be attached -- a version skew included -- ends
-// in the default controller's typed refusal and its daemon guidance.
-type rollingCodexNativeThreadController struct {
-	journal  *codexupgrade.Store
-	fallback defaultCodexNativeThreadController
-	observe  func(context.Context, codexupgrade.GenerationRoute) error
-	create   func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, string) (codexappserver.ThreadBinding, error)
-}
-
-func (controller rollingCodexNativeThreadController) Current(ctx context.Context) (codexNativeEndpointRoute, error) {
-	journal, exists, err := controller.load()
-	if err != nil {
-		return codexNativeEndpointRoute{}, err
-	}
-	if !exists {
-		return controller.fallback.Current(ctx)
-	}
-	route, ok := journal.CurrentRoute()
-	if !ok || controller.observeRoute(ctx, route) != nil {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	return rollingNativeRoute(route), nil
-}
-
-func (controller rollingCodexNativeThreadController) CatalogRoutes(ctx context.Context) ([]codexNativeEndpointRoute, error) {
-	journal, exists, err := controller.load()
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return controller.fallback.CatalogRoutes(ctx)
-	}
-	routes := make([]codexNativeEndpointRoute, 0, len(journal.Routes))
-	for _, route := range journal.Routes {
-		if !route.Ready || route.Proof == nil {
-			continue
-		}
-		if err := controller.observeRoute(ctx, route); err != nil {
-			continue
-		}
-		routes = append(routes, rollingNativeRoute(route))
-	}
-	if len(routes) == 0 {
-		return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	return routes, nil
-}
-
-func (controller rollingCodexNativeThreadController) Resolve(ctx context.Context, endpoint coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error) {
-	if !endpoint.Valid() {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
-	}
-	journal, exists, err := controller.load()
-	if err != nil {
-		return codexNativeEndpointRoute{}, err
-	}
-	if !exists {
-		return controller.fallback.Resolve(ctx, endpoint)
-	}
-	route, ok := journal.Route(endpoint)
-	if !ok || !route.Ready || route.Proof == nil || controller.observeRoute(ctx, route) != nil {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	return rollingNativeRoute(route), nil
-}
-
-func (controller rollingCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, requestKey string) (codexappserver.ThreadBinding, error) {
-	if controller.create != nil {
-		return controller.create(ctx, route, workspace, prompt, requestKey)
-	}
-	fallback := controller.fallback
-	if _, exists, err := controller.load(); err != nil {
-		return codexappserver.ThreadBinding{}, err
-	} else if !exists {
-		return fallback.Create(ctx, route, workspace, prompt, requestKey)
-	}
-	fallback.guard = func(guardCtx context.Context, expected codexNativeEndpointRoute) error {
-		journal, exists, err := controller.load()
-		if err != nil || !exists {
-			return codexappserver.ErrEndpointChanged
-		}
-		observed, ok := journal.Route(expected.Endpoint)
-		if !ok || !observed.Ready || observed.Proof == nil || observed.Config.SocketPath != expected.SocketPath ||
-			observed.TUIPath != expected.TUIExecutable || controller.observeRoute(guardCtx, observed) != nil {
-			return codexappserver.ErrEndpointChanged
-		}
-		return nil
-	}
-	return fallback.Create(ctx, route, workspace, prompt, requestKey)
-}
-
-func (controller rollingCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
-	return controller.fallback.Resume(ctx, route, workspace, threadID)
-}
-
-func (controller rollingCodexNativeThreadController) CanFallback(err error) bool {
-	return controller.fallback.CanFallback(err)
-}
-
-func (controller rollingCodexNativeThreadController) load() (codexupgrade.Journal, bool, error) {
-	if controller.journal == nil {
-		return codexupgrade.Journal{}, false, nil
-	}
-	journal, exists, err := controller.journal.Load()
-	if err != nil {
-		return codexupgrade.Journal{}, false, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	return journal, exists, nil
-}
-
-func (controller rollingCodexNativeThreadController) observeRoute(ctx context.Context, route codexupgrade.GenerationRoute) error {
-	if controller.observe != nil {
-		return controller.observe(ctx, route)
-	}
-	return codexupgrade.ObserveRoute(ctx, route)
-}
-
-func rollingNativeRoute(route codexupgrade.GenerationRoute) codexNativeEndpointRoute {
-	return codexNativeEndpointRoute{Endpoint: route.Generation.Endpoint, State: route.Generation.State, SocketPath: route.Config.SocketPath, TUIExecutable: route.TUIPath}
 }
 
 // codexNativeEndpointRoute is process-local routing material for one durable
@@ -200,6 +89,7 @@ func (route codexNativeEndpointRoute) brokerRoute() codexBrokerEndpointRoute {
 type codexNativeRouteError struct {
 	Reason         string
 	OperatorAction string
+	SocketPath     string
 	err            error
 }
 
@@ -252,8 +142,46 @@ func codexDaemonOperatorAction(health codexappserver.Health) string {
 const (
 	codexNativeReasonGenerationUnavailable = "generation-unavailable"
 	codexNativeReasonLegacyEndpointMissing = "legacy-generation-unavailable"
-	codexNativeReasonHandoverRequired      = "handover-required"
+	// codexNativeReasonRetiredStateDomain refuses a stored endpoint whose
+	// thread lives under another CODEX_HOME than the default daemon serves.
+	codexNativeReasonRetiredStateDomain = "retired-generation-state-domain-mismatch"
+	// codexNativeReasonRetiredRunning refuses a switch while the retired
+	// private generation's deterministic socket still accepts connections.
+	codexNativeReasonRetiredRunning = "retired-generation-running"
 )
+
+// codexNativeResumeAgentPlaceholder stands for the Agent reference in retired
+// generation guidance until a caller that knows the Agent binds it.
+const codexNativeResumeAgentPlaceholder = "<agent>"
+
+const codexRetiredGenerationProbeTimeout = 250 * time.Millisecond
+
+func codexRetiredGenerationRefusal(reason, socketPath, agentRef string) *codexNativeRouteError {
+	resume := "`projmux agent resume " + agentRef + "`"
+	if strings.TrimSpace(agentRef) == "" {
+		// No Agent exists yet (a resume-picker row): name both retries.
+		resume = "the resume-picker row, or `projmux agent resume " + codexNativeResumeAgentPlaceholder + "` for an existing Agent"
+	}
+	switch reason {
+	case codexNativeReasonRetiredRunning:
+		return &codexNativeRouteError{Reason: reason, SocketPath: socketPath, OperatorAction: fmt.Sprintf(
+			"a retired private Codex app-server generation is still listening on %s and may hold this thread; stop that Codex app-server process, then retry %s", socketPath, resume)}
+	default:
+		return &codexNativeRouteError{Reason: codexNativeReasonRetiredStateDomain, OperatorAction: "this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; " +
+			"set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry " + resume +
+			", or start a new conversation with `projmux create agent --provider codex`"}
+	}
+}
+
+// bindCodexResumeAgentRef names the exact Agent in retired generation
+// guidance. Other errors pass through unchanged.
+func bindCodexResumeAgentRef(err error, agentRef string) error {
+	var routeErr *codexNativeRouteError
+	if !errors.As(err, &routeErr) || (routeErr.Reason != codexNativeReasonRetiredStateDomain && routeErr.Reason != codexNativeReasonRetiredRunning) {
+		return err
+	}
+	return codexRetiredGenerationRefusal(routeErr.Reason, routeErr.SocketPath, agentRef)
+}
 
 func (controller defaultCodexNativeThreadController) Current(ctx context.Context) (codexNativeEndpointRoute, error) {
 	if controller.current != nil {
@@ -350,10 +278,60 @@ func (controller defaultCodexNativeThreadController) Resolve(ctx context.Context
 		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
 	}
 	route, err := controller.Current(ctx)
-	if err != nil || !route.Endpoint.Same(endpoint) {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	if err != nil {
+		return codexNativeEndpointRoute{}, err
+	}
+	// Retired private generations ran with CODEX_HOME set to the same
+	// canonical root the default daemon uses (codex_managed_generation.go
+	// defaultCodexStateDomain; the generation host exported
+	// CODEX_HOME=StateDomainPath) and minted the same StateDomainID. The same
+	// StateDomainID therefore means the rollout is already in the daemon's
+	// CODEX_HOME, and resuming on the default endpoint is safe even when the
+	// generation id differs (a private generation, or a plain daemon upgrade).
+	if route.Endpoint.StateDomainID != endpoint.StateDomainID {
+		return codexNativeEndpointRoute{}, codexRetiredGenerationRefusal(codexNativeReasonRetiredStateDomain, "", "")
+	}
+	if socketPath, running := controller.retiredGenerationRunning(ctx, endpoint); running {
+		return codexNativeEndpointRoute{}, codexRetiredGenerationRefusal(codexNativeReasonRetiredRunning, socketPath, "")
 	}
 	return route, nil
+}
+
+// retiredGenerationRunning dials, without speaking any protocol, the
+// deterministic socket a private generation of endpoint would have used. A
+// retired host was started in its own session and may outlive projmux, still
+// holding the thread. It never reads the rolling-upgrade journal.
+func (controller defaultCodexNativeThreadController) retiredGenerationRunning(ctx context.Context, endpoint coremetadata.CodexEndpointRef) (string, bool) {
+	if strings.TrimSpace(controller.stateDir) == "" {
+		return "", false
+	}
+	version, ok := strings.CutPrefix(endpoint.EndpointGenerationID, "codex-")
+	if !ok || !codexappserver.IsSafeDiagnosticVersion(version) {
+		return "", false
+	}
+	_, socketPath, err := managedCodexRuntimeLocation(controller.stateDir, endpoint.StateDomainID, version)
+	if err != nil {
+		return "", false
+	}
+	listen := controller.retiredListen
+	if listen == nil {
+		listen = dialCodexRetiredGenerationSocket
+	}
+	return socketPath, listen(ctx, socketPath)
+}
+
+func dialCodexRetiredGenerationSocket(ctx context.Context, socketPath string) bool {
+	if _, err := os.Lstat(socketPath); err != nil {
+		return false
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, codexRetiredGenerationProbeTimeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", socketPath)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func (controller defaultCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, requestKey string) (codexappserver.ThreadBinding, error) {
@@ -450,7 +428,7 @@ type codexNativeAgentLauncher interface {
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 
-func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeThreadController, ref *coremetadata.AgentSessionRef) (codexNativeEndpointRoute, error) {
+func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeThreadController, ref *coremetadata.AgentSessionRef, agentRef string) (codexNativeEndpointRoute, error) {
 	if ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
 		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
 	}
@@ -463,31 +441,44 @@ func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeTh
 	}
 	route, err := controller.Resolve(ctx, endpoint)
 	if err != nil {
-		return codexNativeEndpointRoute{}, err
+		return codexNativeEndpointRoute{}, bindCodexResumeAgentRef(err, agentRef)
 	}
-	if !route.valid() || !route.Endpoint.Same(endpoint) {
+	if !route.valid() {
 		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
 	if err := validateCodexNativeResumeRoute(ref, route); err != nil {
-		return codexNativeEndpointRoute{}, err
+		return codexNativeEndpointRoute{}, bindCodexResumeAgentRef(err, agentRef)
 	}
 	return route, nil
 }
 
+// validateCodexNativeResumeRoute admits a stored Codex thread onto route when
+// the route is its exact endpoint, or the current default daemon endpoint of
+// the same Codex state domain (a switch; see Resolve). Draining and
+// handover-pending markers are leftovers of the retired private generation
+// pool and resume like current: the switch rebinds them on the default
+// endpoint and records a current lifecycle.
 func validateCodexNativeResumeRoute(ref *coremetadata.AgentSessionRef, route codexNativeEndpointRoute) error {
 	if ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
 		return &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
 	}
 	endpoint := *ref.Codex.Endpoint
 	lifecycle := ref.Codex.Lifecycle
-	if lifecycle == nil || !lifecycle.ValidFor(&endpoint) || !route.Endpoint.Same(endpoint) {
+	if lifecycle == nil || !lifecycle.ValidFor(&endpoint) || !route.Endpoint.Valid() {
 		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
-	if lifecycle.State == coremetadata.CodexGenerationDraining || lifecycle.State == coremetadata.CodexGenerationHandoverPending ||
-		route.State == codexgeneration.StateDraining || route.State == codexgeneration.StateHandoverPending {
-		return &codexNativeRouteError{Reason: codexNativeReasonHandoverRequired}
+	if route.Endpoint.StateDomainID != endpoint.StateDomainID {
+		return codexRetiredGenerationRefusal(codexNativeReasonRetiredStateDomain, "", "")
 	}
-	if lifecycle.State != coremetadata.CodexGenerationCurrent || route.State != codexgeneration.StateCurrent {
+	if !route.Endpoint.Same(endpoint) && !route.Default {
+		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	switch lifecycle.State {
+	case coremetadata.CodexGenerationCurrent, coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
+	default:
+		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	if route.State != codexgeneration.StateCurrent {
 		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
 	return nil

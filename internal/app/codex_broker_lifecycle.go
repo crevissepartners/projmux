@@ -11,7 +11,6 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 const (
@@ -90,7 +89,7 @@ type codexBrokerObserverSession struct {
 // durable endpoint generation selected before provider creation. The broker
 // runtime is keyed by that exact endpoint and its launcher receives only the
 // corresponding attach transport. Default socket recovery can refresh a live
-// activation only when no rolling journal owns admission.
+// activation; the owner-private rolling-upgrade journal never gates it.
 func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd string, roots []string, route codexNativeEndpointRoute) (*codexBrokerObserverSession, error) {
 	if !identity.valid() || !route.valid() {
 		return nil, errors.New("codex generation broker binding requires exact Agent, Pane, endpoint, runtime, generation, and thread identity")
@@ -124,7 +123,6 @@ func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd 
 	session := newCodexBrokerObserverSessionOn(identity, cwd, roots, discovery, launch)
 	session.endpoint = route.Endpoint
 	if route.Default {
-		session.recoveryGuard = func() error { return refuseDefaultRecoveryWithJournal(domain) }
 		session.recoverRoute = (defaultCodexNativeThreadController{}).Current
 		session.routeRuntime = func(next codexNativeEndpointRoute) (codexbroker.Discovery, codexbroker.Launcher, error) {
 			key, err := next.brokerRoute().endpointKey()
@@ -779,8 +777,8 @@ func (s *codexBrokerObserverSession) resync(epoch *codexBrokerLifecycleEpoch) {
 }
 
 // refreshRoute is used only by an already-bound default-route activation.
-// Stored resume resolution remains exact. Private generation routes never
-// acquire this capability and admission/rolling journals cannot be bypassed.
+// Private generation routes never acquire this capability, and the
+// owner-private rolling-upgrade journal is not consulted.
 func (s *codexBrokerObserverSession) refreshRoute(ctx context.Context) error {
 	if s.recoveryGuard != nil {
 		if err := s.recoveryGuard(); err != nil {
@@ -888,15 +886,4 @@ func (s *codexBrokerObserverSession) beginOpen(ctx context.Context) (context.Con
 		<-gate
 	}
 	return openCtx, release, nil
-}
-
-// A rolling journal owns admission even if it still names the same endpoint.
-// Default recovery reads its presence on every Open and never creates or
-// interprets a journal operation. Unknown/unreadable state also refuses.
-func refuseDefaultRecoveryWithJournal(stateDomain string) error {
-	path := codexupgrade.PathFor(stateDomain)
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, OperatorAction: "use the existing Codex generation handover operation"}
 }

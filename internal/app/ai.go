@@ -1521,10 +1521,11 @@ func aiResumeGenerationStatus(session aisessions.SessionMeta) string {
 		return ""
 	}
 	switch coremetadata.CodexGenerationState(strings.TrimSpace(session.GenerationState)) {
-	case coremetadata.CodexGenerationCurrent:
+	case coremetadata.CodexGenerationCurrent, coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
+		// Draining and handover-pending rows resume on the default daemon
+		// endpoint of the same Codex state domain, or refuse with a typed
+		// reason and next command when selected; neither needs a row badge.
 		return ""
-	case coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
-		return "[handover-required]"
 	default:
 		return "[generation-unavailable]"
 	}
