@@ -59,8 +59,8 @@
           {#if win.unbound || !win.runtimeId}
             <span class="tag warn" title={win.unboundReason || t("web.windows.unbound_title")}>{t("web.window.not_running")}</span>
           {/if}
-          <!-- One click closes, like a Pane's ×; what the Window takes with it
-               is said on the control. -->
+          <!-- One click closes, like a Pane's ×, unless the Window holds a
+               Running Agent; then one confirmation names it first. -->
           <button
             type="button"
             class="tab-close"

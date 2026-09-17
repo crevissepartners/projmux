@@ -45,9 +45,25 @@ export async function createWindow(project: string): Promise<void> {
   }
 }
 
-export async function closeWindow(project: string, window: string): Promise<boolean> {
+interface DeletePlan {
+  runningAgents?: { uid: string; name: string }[];
+}
+
+/**
+ * Closing asks the server for the plan first. When the plan would stop a
+ * Running Agent, one confirmation names those Agents and only an accept
+ * deletes; otherwise the delete follows at once, still one click. A cancel is
+ * not a failure: nothing is deleted and nothing is reported.
+ */
+async function closeConfirmed(path: string, question: string): Promise<boolean> {
   try {
-    await del(paths.window(project, window), { confirm: true });
+    const plan = await del<DeletePlan>(`${path}?dryRun=true`);
+    const running = plan.runningAgents ?? [];
+    if (running.length > 0) {
+      const names = running.map((agent) => agent.name || agent.uid).join(", ");
+      if (!window.confirm(t(question, { agents: names }))) return false;
+    }
+    await del(path, { confirm: true });
     await refresh();
     return true;
   } catch (err) {
@@ -56,16 +72,11 @@ export async function closeWindow(project: string, window: string): Promise<bool
   }
 }
 
-export async function closePane(project: string, window: string, pane: string): Promise<boolean> {
-  try {
-    await del(paths.pane(project, window, pane), { confirm: true });
-    await refresh();
-    return true;
-  } catch (err) {
-    fail(err);
-    return false;
-  }
-}
+export const closeWindow = (project: string, window: string): Promise<boolean> =>
+  closeConfirmed(paths.window(project, window), "web.windows.close_running");
+
+export const closePane = (project: string, window: string, pane: string): Promise<boolean> =>
+  closeConfirmed(paths.pane(project, window, pane), "web.slot.close_running");
 
 async function renamed(path: string, name: string): Promise<void> {
   try {

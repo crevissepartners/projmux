@@ -155,6 +155,10 @@ func TestWebMutationsRunTheirOwnArgv(t *testing.T) {
 			[]string{"delete pane uid:pan-alpha-codex --project uid:prj-alpha --window uid:win-alpha-main --yes --socket projmux"},
 		},
 		{
+			"delete pane dry run needs no confirm", "DELETE", webWindowAlpha + "/panes/pan-alpha-codex?dryRun=true", ``, "",
+			[]string{"delete pane uid:pan-alpha-codex --project uid:prj-alpha --window uid:win-alpha-main --dry-run --socket projmux"},
+		},
+		{
 			"delete window", "DELETE", webWindowAlpha, `{"confirm":true}`, "",
 			[]string{"delete window uid:win-alpha-main --project uid:prj-alpha --socket projmux --yes"},
 		},
@@ -212,6 +216,74 @@ func TestWebMutationsRunTheirOwnArgv(t *testing.T) {
 				t.Fatalf("calls = %q\nwant   %q", recorder.calls, tc.want)
 			}
 		})
+	}
+}
+
+// A dry run names the Running Agents the delete would stop, so the client can
+// ask before it closes one, and deletes nothing.
+func TestWebDeleteDryRunNamesTheRunningAgents(t *testing.T) {
+	codex := []any{map[string]any{"uid": "agt-alpha-codex", "name": "codex"}}
+	cases := []struct {
+		name, path string
+		offline    bool
+		want       []any
+	}{
+		{"the agent's pane", webWindowAlpha + "/panes/pan-alpha-codex", false, codex},
+		{"a window holding the agent", webWindowAlpha, false, codex},
+		{"a pane without an agent", webWindowAlpha + "/panes/pan-alpha-log", false, []any{}},
+		{"a window without an agent", "/api/v1/projects/prj-alpha/windows/win-alpha-review", false, []any{}},
+		{"a window whose agent is offline", "/api/v1/projects/prj-beta/windows/win-beta-main", false, []any{}},
+		{"the pane of an agent that is not running", webWindowAlpha + "/panes/pan-alpha-codex", true, []any{}},
+		{"a window whose agent is not running", webWindowAlpha, true, []any{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend, _ := webFixtureBackend(t)
+			if tc.offline {
+				registry, err := backend.loadRegistry()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range registry.Agents {
+					registry.Agents[i].Status.Phase = coremetadata.PhaseOffline
+				}
+				backend.loadRegistry = func() (coremetadata.Registry, error) { return registry.Clone(), nil }
+			}
+			recorder := &webCLIRecorder{reply: func([]string) (string, error) { return "plan text\n", nil }}
+			backend.runCLI = recorder.run
+			code, body := webSend(t, web.New(backend, nil).Handler(), "DELETE", tc.path+"?dryRun=true", ``)
+			if code != http.StatusOK {
+				t.Fatalf("dry run = %d %v", code, body)
+			}
+			if body["dryRun"] != true || body["plan"] != "plan text" {
+				t.Errorf("dry run body = %v, want dryRun and the plan", body)
+			}
+			if got := fmt.Sprint(body["runningAgents"]); got != fmt.Sprint(tc.want) || body["runningAgents"] == nil {
+				t.Errorf("runningAgents = %v, want %v", body["runningAgents"], tc.want)
+			}
+			if len(recorder.calls) != 1 || !strings.Contains(recorder.calls[0], " --dry-run") || strings.Contains(recorder.calls[0], "--yes") {
+				t.Fatalf("calls = %q, want one dry run and no --yes", recorder.calls)
+			}
+		})
+	}
+
+	// Without dryRun a pane delete still needs confirm, and its result carries
+	// no Agent list.
+	handler, recorder := webMutationHarness(t)
+	for _, path := range []string{webWindowAlpha + "/panes/pan-alpha-codex", webWindowAlpha + "/panes/pan-alpha-codex?dryRun=false"} {
+		if code, reply := webSend(t, handler, "DELETE", path, `{}`); code != http.StatusBadRequest || errorCode(reply) != web.CodeConfirmRequired {
+			t.Errorf("DELETE %s = %d %v, want confirm-required", path, code, reply)
+		}
+	}
+	if len(recorder.calls) != 0 {
+		t.Fatalf("an unconfirmed pane delete ran: %v", recorder.calls)
+	}
+	code, body := webSend(t, handler, "DELETE", webWindowAlpha+"/panes/pan-alpha-codex", `{"confirm":true}`)
+	if code != http.StatusOK {
+		t.Fatalf("confirmed pane delete = %d %v", code, body)
+	}
+	if _, ok := body["runningAgents"]; ok {
+		t.Errorf("a real delete carries runningAgents: %v", body)
 	}
 }
 

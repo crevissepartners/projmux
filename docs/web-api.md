@@ -179,11 +179,11 @@ All core routes are under `/api/v1`.
 | POST | `/api/v1/projects/{project}/windows` | `create window` | body `{name?, agent?: {provider, payload?}, focus?, confirm}`; `agent` also starts that provider in the new Window |
 | GET | `/api/v1/projects/{project}/windows/{window}` | `get window` | |
 | PATCH | `/api/v1/projects/{project}/windows/{window}` | `rename window` | body `{name}` |
-| DELETE | `/api/v1/projects/{project}/windows/{window}` | `delete window --yes` | body `{confirm}`; `?dryRun=true` returns the cascade plan and deletes nothing |
+| DELETE | `/api/v1/projects/{project}/windows/{window}` | `delete window --yes` | body `{confirm}`; `?dryRun=true` (`delete window --dry-run`) needs no confirm, deletes nothing, and returns the plan and `runningAgents` (see *Delete dry runs*) |
 | GET | `/api/v1/projects/{project}/windows/{window}/panes` | `get panes` | `PaneList` |
 | GET | `/api/v1/projects/{project}/windows/{window}/panes/{pane}` | `get pane` | |
 | PATCH | `/api/v1/projects/{project}/windows/{window}/panes/{pane}` | `rename pane` | body `{name}` |
-| DELETE | `/api/v1/projects/{project}/windows/{window}/panes/{pane}` | `delete pane --yes` | body `{confirm}` |
+| DELETE | `/api/v1/projects/{project}/windows/{window}/panes/{pane}` | `delete pane --yes` | body `{confirm}`; `?dryRun=true` (`delete pane --dry-run`) as for a window |
 | POST | `/api/v1/projects/{project}/windows/{window}/panes/{pane}/focus` | `internal focus` | moves the operator's attached client |
 | GET | `/api/v1/projects/{project}/windows/{window}/agents` | `get agents` | includes Offline agents the Window owns, which are the resume candidates |
 | POST | `/api/v1/projects/{project}/windows/{window}/panes` | `create pane` | body `{anchorPane, cwdFrom?, confirm}`: a plain shell split to the right of `anchorPane` |
@@ -200,6 +200,28 @@ All core routes are under `/api/v1`.
 | POST | `/api/v1/notifications/{id}/ack` | `notification ack` | also publishes a queue refresh, which the CLI ack does not |
 | GET | `/api/v1/usage` | status bar usage HUD and popup | `{hud, rows, unsupported, lastSync, syncSource, error}` from the cache only; never collects. `hud` is what the bar draws under the Settings visibility, `rows` what its popup lists |
 | GET | `/api/v1/system` | status bar CPU and MEM | |
+
+### Delete dry runs
+
+A delete with `?dryRun=true` answers:
+
+```json
+{ "uid": "win-…", "dryRun": true, "plan": "<the CLI dry-run text>",
+  "runningAgents": [ { "uid": "agent-…", "name": "codex" } ] }
+```
+
+`runningAgents` is never absent and is `[]` when nothing runs. It lists the
+Agents whose stored phase is `Running` (the phase the graph carries) and that
+the delete would stop: for a Pane, the Agent whose `status.paneRef` is that
+Pane or that owns it; for a Window, every Agent the Window owns. It comes from
+the same Registry read the delete is checked against. A delete without
+`dryRun` returns `{uid, plan}` as before.
+
+The client closes a Pane or a Window this way: it asks for the dry run first.
+When `runningAgents` is empty it sends the confirmed delete at once, so closing
+stays one click. Otherwise it shows one confirmation naming those Agents and
+deletes only when the operator accepts; a cancel deletes nothing and reports
+nothing.
 
 Starting a turn does not fall back to steer on the server. A client that gets
 `turn-in-progress` decides whether to steer, so one request never becomes two

@@ -36,7 +36,7 @@ type Backend interface {
 	RenameWindow(ctx context.Context, project, window, name string) (any, error)
 	DeleteWindow(ctx context.Context, project, window string, dryRun bool) (any, error)
 	RenamePane(ctx context.Context, project, window, pane, name string) (any, error)
-	DeletePane(ctx context.Context, project, window, pane string) (any, error)
+	DeletePane(ctx context.Context, project, window, pane string, dryRun bool) (any, error)
 	FocusPane(ctx context.Context, project, window, pane string) (any, error)
 	CreateAgent(ctx context.Context, project, window string, req CreateAgentRequest) (any, error)
 	CreatePane(ctx context.Context, project, window string, req CreatePaneRequest) (any, error)
@@ -179,14 +179,15 @@ func (s *Server) Handler() http.Handler {
 		return s.backend.RenamePane(r.Context(), project(r), window(r), pane(r), name)
 	})
 	write("DELETE /api/v1/projects/{project}/windows/{window}/panes/{pane}", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		dryRun := r.URL.Query().Get("dryRun") == "true"
 		var req confirmRequest
 		if err := decodeBody(w, r, &req); err != nil {
 			return nil, err
 		}
-		if !req.Confirm {
+		if !dryRun && !req.Confirm {
 			return nil, confirmRequired("deleting a pane")
 		}
-		return s.backend.DeletePane(r.Context(), project(r), window(r), pane(r))
+		return s.backend.DeletePane(r.Context(), project(r), window(r), pane(r), dryRun)
 	})
 	write("POST /api/v1/projects/{project}/windows/{window}/panes/{pane}/focus", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		if err := decodeBody(w, r, &struct{}{}); err != nil {

@@ -383,10 +383,16 @@ func (b *webBackend) DeleteWindow(ctx context.Context, project, window string, d
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"uid": window, "dryRun": dryRun, "plan": strings.TrimSpace(out)}, nil
+	result := map[string]any{"uid": window, "dryRun": dryRun, "plan": strings.TrimSpace(out)}
+	if dryRun {
+		result["runningAgents"] = s.runningAgents(func(agent coremetadata.Agent) bool {
+			return agent.Metadata.OwnerUID() == window
+		})
+	}
+	return result, nil
 }
 
-func (b *webBackend) DeletePane(ctx context.Context, project, window, pane string) (any, error) {
+func (b *webBackend) DeletePane(ctx context.Context, project, window, pane string, dryRun bool) (any, error) {
 	s, err := b.snapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -394,14 +400,54 @@ func (b *webBackend) DeletePane(ctx context.Context, project, window, pane strin
 	if _, err := s.window(project, window); err != nil {
 		return nil, err
 	}
-	if _, ok := s.registry.PaneInWindow(window, pane); !ok {
+	found, ok := s.registry.PaneInWindow(window, pane)
+	if !ok {
 		return nil, web.NotFound("no pane " + pane + " in window " + window)
 	}
-	out, err := b.cli("delete", "pane", "uid:"+pane, "--project", "uid:"+project, "--window", "uid:"+window, "--yes", "--socket", defaultAppSocket)
+	argv := []string{"delete", "pane", "uid:" + pane, "--project", "uid:" + project, "--window", "uid:" + window}
+	if dryRun {
+		argv = append(argv, "--dry-run")
+	} else {
+		argv = append(argv, "--yes")
+	}
+	argv = append(argv, "--socket", defaultAppSocket)
+	out, err := b.cli(argv...)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"uid": pane, "plan": strings.TrimSpace(out)}, nil
+	if !dryRun {
+		return map[string]any{"uid": pane, "plan": strings.TrimSpace(out)}, nil
+	}
+	paneOwner := ""
+	if owner := found.Metadata.OwnerRef; owner != nil && owner.Kind == coremetadata.KindAgent {
+		paneOwner = owner.UID
+	}
+	return map[string]any{"uid": pane, "dryRun": true, "plan": strings.TrimSpace(out),
+		"runningAgents": s.runningAgents(func(agent coremetadata.Agent) bool {
+			return agent.Status.PaneRef == pane || agent.Metadata.UID == paneOwner
+		}),
+	}, nil
+}
+
+// webRunningAgent names an Agent a delete would stop.
+type webRunningAgent struct {
+	UID  string `json:"uid"`
+	Name string `json:"name"`
+}
+
+// runningAgents lists the Running Agents a delete would take with it, from the
+// same Registry read the delete was checked against, so a client can ask
+// before it stops work in progress. Running is the stored phase, the same one
+// the graph carries and the client reads. The list is never nil, so it
+// encodes as [] when nothing is running.
+func (s webSnapshot) runningAgents(affected func(coremetadata.Agent) bool) []webRunningAgent {
+	out := []webRunningAgent{}
+	for _, agent := range s.registry.Agents {
+		if agent.Status.Phase == coremetadata.PhaseRunning && affected(agent) {
+			out = append(out, webRunningAgent{UID: agent.Metadata.UID, Name: agent.Metadata.Name})
+		}
+	}
+	return out
 }
 
 func (b *webBackend) ResumeAgent(ctx context.Context, agent string) (any, error) {
