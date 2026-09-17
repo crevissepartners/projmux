@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// claudeModelAliases are the aliases `claude --help` names for --model; a
+// full model name is accepted too, but these are what a launcher offers.
+var claudeModelAliases = []string{"opus", "sonnet", "fable"}
+
 // claudeEffortLevels is the set `claude --help` lists for --effort.
 var claudeEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
 

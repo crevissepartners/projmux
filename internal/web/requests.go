@@ -44,6 +44,14 @@ type CreateAgentRequest struct {
 	Confirm bool   `json:"confirm"`
 }
 
+// CreatePaneRequest is the body of POST /projects/{p}/windows/{w}/panes: a
+// plain shell split beside AnchorPane.
+type CreatePaneRequest struct {
+	AnchorPane string `json:"anchorPane"`
+	CwdFrom    string `json:"cwdFrom,omitempty"`
+	Confirm    bool   `json:"confirm"`
+}
+
 // MessageRequest is the body of POST /agents/{agent}/messages.
 type MessageRequest struct {
 	// Source is the Agent the message is anchored on. A browser has no Pane,

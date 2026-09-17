@@ -39,6 +39,7 @@ type Backend interface {
 	DeletePane(ctx context.Context, project, window, pane string) (any, error)
 	FocusPane(ctx context.Context, project, window, pane string) (any, error)
 	CreateAgent(ctx context.Context, project, window string, req CreateAgentRequest) (any, error)
+	CreatePane(ctx context.Context, project, window string, req CreatePaneRequest) (any, error)
 	RenameAgent(ctx context.Context, agent, name string) (any, error)
 	ResumeAgent(ctx context.Context, agent string) (any, error)
 	Capabilities(ctx context.Context, agent string) (any, error)
@@ -202,6 +203,16 @@ func (s *Server) Handler() http.Handler {
 			return nil, confirmRequired("creating an agent")
 		}
 		return s.backend.CreateAgent(r.Context(), project(r), window(r), req)
+	})
+	write("POST /api/v1/projects/{project}/windows/{window}/panes", http.StatusCreated, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		var req CreatePaneRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		if !req.Confirm {
+			return nil, confirmRequired("creating a pane")
+		}
+		return s.backend.CreatePane(r.Context(), project(r), window(r), req)
 	})
 	write("PATCH /api/v1/agents/{agent}", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		name, err := decodeName(w, r)

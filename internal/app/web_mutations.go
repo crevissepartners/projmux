@@ -245,6 +245,47 @@ func (b *webBackend) CreateAgent(ctx context.Context, project, window string, re
 	return result, nil
 }
 
+// CreatePane splits a plain shell to the right of anchorPane, the web's
+// counterpart of the launcher's shell row.
+func (b *webBackend) CreatePane(ctx context.Context, project, window string, req web.CreatePaneRequest) (any, error) {
+	s, err := b.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.window(project, window); err != nil {
+		return nil, err
+	}
+	anchor := strings.TrimSpace(req.AnchorPane)
+	if anchor == "" {
+		return nil, web.InvalidRequest("anchorPane is required")
+	}
+	if _, ok := s.registry.PaneInWindow(window, anchor); !ok {
+		return nil, web.NotFound("no pane " + anchor + " in window " + window)
+	}
+	cwdFrom := req.CwdFrom
+	if cwdFrom == "" {
+		cwdFrom = "pane"
+	}
+	if cwdFrom != "pane" && cwdFrom != "project" {
+		return nil, web.InvalidRequest(fmt.Sprintf("cwdFrom %q is not pane or project", req.CwdFrom))
+	}
+	out, err := b.cli("create", "pane", "--project", "uid:"+project, "--window", "uid:"+window,
+		"--pane", "uid:"+anchor, "--placement", "right", "--cwd-from", cwdFrom, "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	pane, err := createdUID(out)
+	if err != nil {
+		return nil, err
+	}
+	after, err := b.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	item, _ := after.item(coremetadata.KindPane, pane)
+	return map[string]any{"pane": item}, nil
+}
+
 func (b *webBackend) RenameWindow(ctx context.Context, project, window, name string) (any, error) {
 	s, err := b.snapshot(ctx)
 	if err != nil {

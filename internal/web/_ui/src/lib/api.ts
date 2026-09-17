@@ -88,6 +88,8 @@ export const paths = {
   question: (agent: string) => `/api/v1/web/agents/${seg(agent)}/question`,
   layout: (window: string) => `/api/v1/web/windows/${seg(window)}/layout`,
   statusbar: "/api/v1/web/statusbar",
+  launch: "/api/v1/web/launch",
+  windowPanes: (project: string, window: string) => `/api/v1/projects/${seg(project)}/windows/${seg(window)}/panes`,
   usage: "/api/v1/usage",
   paneGit: (pane: string) => `/api/v1/web/panes/${seg(pane)}/git`,
   resumeCandidates: (window: string) => `/api/v1/web/windows/${seg(window)}/resume-candidates`,

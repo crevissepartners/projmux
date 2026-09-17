@@ -4,9 +4,9 @@
   import { closePane, renamePane } from "../lib/commands";
   import { phaseText, providerText } from "../lib/errors";
   import { t } from "../lib/i18n.svelte";
-  import { closeOnScreen, focusOnScreen, shortPath } from "../lib/router.svelte";
+  import { go, route, shortPath } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
-  import { locateSlot, paneLabel, slotRef, type PaneView, type ProjectView, type WindowView } from "../lib/tree";
+  import { paneLabel, slotRef, type PaneView, type ProjectView, type WindowView } from "../lib/tree";
   import Chat from "./Chat.svelte";
   import CopyButton from "./CopyButton.svelte";
   import InlineName from "./InlineName.svelte";
@@ -44,13 +44,9 @@
   const chatKey = $derived(`${pane.agent?.uid}:${pane.agent?.phase}:${pane.runtimeId}`);
 
   function focus() {
-    focusOnScreen({ project: project.uid, window: win.uid, pane: slotRef(pane) });
+    if (route.sel.pane !== slotRef(pane)) go({ project: project.uid, window: win.uid, pane: slotRef(pane) });
   }
 
-  function locate(ref: string) {
-    const found = locateSlot(live.tree, ref);
-    return found ? { project: found.project.uid, window: found.win.uid, pane: slotRef(found.pane) } : null;
-  }
 </script>
 
 <!-- The whole slot takes focus: clicking or tabbing into it makes it the
@@ -102,7 +98,9 @@
       onmousedown={(e) => e.stopPropagation()}
       onclick={async (e) => {
         e.stopPropagation();
-        if (await closePane(project.uid, win.uid, pane.uid)) closeOnScreen(slotRef(pane), locate);
+        if ((await closePane(project.uid, win.uid, pane.uid)) && route.sel.pane === slotRef(pane)) {
+          go({ project: project.uid, window: win.uid });
+        }
       }}>×</button
     >
   </div>

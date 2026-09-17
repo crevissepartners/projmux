@@ -15,7 +15,8 @@
   import Overview from "./components/Overview.svelte";
   import PaneSplit from "./components/PaneSplit.svelte";
   import ProjectSidebar from "./components/ProjectSidebar.svelte";
-  import SplitPicker from "./components/SplitPicker.svelte";
+  import LaunchPicker from "./components/LaunchPicker.svelte";
+  import ResumePicker from "./components/ResumePicker.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import Switcher from "./components/Switcher.svelte";
   import Toasts from "./components/Toasts.svelte";
@@ -32,15 +33,10 @@
   // An address written before agents were addressed by their own uid names a
   // pane an agent holds; it is rewritten to the agent's address in place.
   $effect(() => {
+    if (route.legacy) canonicalize(route.sel);
     if (!project || !win || !pane) return;
-    const extras = route.extras.map((ref) => {
-      const found = locateSlot(live.tree, ref);
-      return found ? slotRef(found.pane) : ref;
-    });
     const canonical = slotRef(pane);
-    if (canonical !== route.sel.pane || extras.join() !== route.extras.join() || route.legacy) {
-      canonicalize({ project: project.uid, window: win.uid, pane: canonical }, extras);
-    }
+    if (canonical !== route.sel.pane) canonicalize({ project: project.uid, window: win.uid, pane: canonical });
   });
 
   // A short `/a/{agent}` link becomes the agent's full address once the graph
@@ -53,7 +49,6 @@
       found
         ? { project: found.project.uid, window: found.win.uid, pane: slotRef(found.pane) }
         : { project: null, window: null, pane: null },
-      [],
     );
   });
 
@@ -254,9 +249,16 @@
       ui.overlay = ui.overlay === "switcher" ? "" : "switcher";
       return;
     }
+    // Alt-7 opens the launcher and Alt-4 the resume picker, as in the
+    // terminal; pressed again, each closes.
     if (event.altKey && event.key === "7") {
       event.preventDefault();
-      ui.overlay = ui.overlay === "split" ? "" : "split";
+      ui.overlay = ui.overlay === "launch" ? "" : "launch";
+      return;
+    }
+    if (event.altKey && event.key === "4") {
+      event.preventDefault();
+      ui.overlay = ui.overlay === "resume" ? "" : "resume";
       return;
     }
     if (event.key === "Escape" && ui.overlay) {
@@ -317,8 +319,10 @@
 {#if ui.layout && win?.runtimeId}
   <LayoutPreview window={win.uid} ownRuntime={pane?.runtimeId || ""} onClose={() => setToggle("layout", false)} />
 {/if}
-{#if ui.overlay === "split"}
-  <SplitPicker onClose={closeOverlay} />
+{#if ui.overlay === "launch" || ui.overlay === "launch-advanced"}
+  <LaunchPicker advanced={ui.overlay === "launch-advanced"} onClose={closeOverlay} />
+{:else if ui.overlay === "resume"}
+  <ResumePicker onClose={closeOverlay} />
 {:else if ui.overlay === "switcher"}
   <Switcher onClose={closeOverlay} />
 {:else if ui.overlay === "help"}

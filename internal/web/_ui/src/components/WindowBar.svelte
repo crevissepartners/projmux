@@ -1,6 +1,7 @@
 <script lang="ts">
   import { activityOf, needsYou } from "../lib/activity";
   import { closeWindow, createWindow, renameWindow } from "../lib/commands";
+  import { launchDefault } from "../lib/launch.svelte";
   import { t } from "../lib/i18n.svelte";
   import { go } from "../lib/router.svelte";
   import { slotRef, type ProjectView, type WindowView } from "../lib/tree";
@@ -84,7 +85,7 @@
         onclick={() => createWindow(project.uid)}>＋</button
       >
       {#if current}
-        <button type="button" class="tab add" title={t("web.windows.split")} onclick={() => (ui.overlay = "split")}
+        <button type="button" class="tab add" title={t("web.windows.split")} onclick={() => launchDefault()}
           >⊞</button
         >
       {/if}

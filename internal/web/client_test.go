@@ -64,6 +64,7 @@ func (c *clientStub) Layout(context.Context, string, bool) (any, error) {
 }
 func (c *clientStub) Screen(context.Context, string) (any, error)           { return nil, nil }
 func (c *clientStub) ResumeCandidates(context.Context, string) (any, error) { return nil, nil }
+func (c *clientStub) LaunchOptions(context.Context) (any, error)            { return nil, nil }
 func (c *clientStub) Statusbar(context.Context) (any, error)                { return nil, nil }
 func (c *clientStub) PaneGit(context.Context, string) (any, error)          { return nil, nil }
 func (c *clientStub) PreviewAgent(context.Context, string, string, CreateAgentRequest) (any, error) {

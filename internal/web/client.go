@@ -34,6 +34,9 @@ type ClientBackend interface {
 	ResumeCandidates(ctx context.Context, window string) (any, error)
 	// PreviewAgent renders the exact command a create-agent request would run.
 	PreviewAgent(ctx context.Context, project, window string, req CreateAgentRequest) (any, error)
+	// LaunchOptions lists what the launcher offers: enabled providers, whether
+	// each is installed, the default split mode, and Claude's model choices.
+	LaunchOptions(ctx context.Context) (any, error)
 	// Statusbar reports which status bar parts Settings turned on.
 	Statusbar(ctx context.Context) (any, error)
 	// PaneGit reads the git branch and state of a pane's directory.
@@ -110,6 +113,9 @@ func (s *Server) registerClientRoutes(mux *http.ServeMux) {
 	})
 	clientRead("/api/v1/web/panes/{pane}/screen", func(c ClientBackend, r *http.Request) (any, error) {
 		return c.Screen(r.Context(), r.PathValue("pane"))
+	})
+	clientRead("/api/v1/web/launch", func(c ClientBackend, r *http.Request) (any, error) {
+		return c.LaunchOptions(r.Context())
 	})
 	clientRead("/api/v1/web/statusbar", func(c ClientBackend, r *http.Request) (any, error) {
 		return c.Statusbar(r.Context())

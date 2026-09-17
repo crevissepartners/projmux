@@ -151,6 +151,7 @@ All core routes are under `/api/v1`.
 | DELETE | `/api/v1/projects/{project}/windows/{window}/panes/{pane}` | `delete pane --yes` | body `{confirm}` |
 | POST | `/api/v1/projects/{project}/windows/{window}/panes/{pane}/focus` | `internal focus` | moves the operator's attached client |
 | GET | `/api/v1/projects/{project}/windows/{window}/agents` | `get agents` | includes Offline agents the Window owns, which are the resume candidates |
+| POST | `/api/v1/projects/{project}/windows/{window}/panes` | `create pane` | body `{anchorPane, cwdFrom?, confirm}`: a plain shell split to the right of `anchorPane` |
 | POST | `/api/v1/projects/{project}/windows/{window}/agents` | `create agent` | body `{provider, anchorPane?, cwdFrom?, payload?, confirm}`; `anchorPane` must be a pane uid in this Window |
 | GET | `/api/v1/agents/{agent}` | `get agent` | agent uids are global, so this route is flat |
 | PATCH | `/api/v1/agents/{agent}` | `rename agent` | body `{name}` |
@@ -200,6 +201,7 @@ Registry, so they are kept out of the core surface. They live under
 | GET | `/api/v1/web/windows/{window}/layout/events` | SSE `layout` frames, sent on change; `gone` when the window is no longer there |
 | GET | `/api/v1/web/panes/{pane}/screen` | one `capture-pane -e` of the pane, parsed into styled runs |
 | GET | `/api/v1/web/panes/{pane}/screen/events` | SSE `screen` frames, sent on change; `gone` when the pane is no longer there |
+| GET | `/api/v1/web/launch` | what the launcher offers, as the terminal AI launch picker: `{providers:[{id, name, ready}], defaultMode, claudeModels, claudeEfforts}` for the enabled providers |
 | GET | `/api/v1/web/statusbar` | which status bar parts Settings turned on: `{notifications, usage, project, workingDirectory, git, resources, clock}`, read with the functions the TUI renders from |
 | GET | `/api/v1/web/panes/{pane}/git` | `{cwd, repo, branch, dirty, staged, ahead, behind}` for the directory the Registry records for the pane |
 | GET | `/api/v1/web/windows/{window}/resume-candidates` | `{items}`: the window's agents with no live pane, each with its first and last transcript line |
@@ -266,11 +268,11 @@ Every path below serves the client; anything else outside `/api/` and
 | `/project/{project}/window/{window}/pane/{pane}` | the Window, focused on a shell's slot |
 | `/a/{agent}` | a short link; the client replaces it with the agent's full address |
 
-`?with=a:{agent},p:{pane}` names the slots opened beside the focused one, each
-with its kind. An agent is addressed by its Agent uid because `agent resume`
-reuses the Agent but may allocate a new Pane. Names never go in an address; a
-bare uid in `with`, or a `/pane/` address for a pane an agent holds, is
-rewritten in place.
+The screen is always one real tmux window, as in the terminal; focusing a
+slot in another window switches to that window. An agent is addressed by its
+Agent uid because `agent resume` reuses the Agent but may allocate a new Pane.
+Names never go in an address. A `/pane/` address for a pane an agent holds,
+and any query an older client added (such as `?with=`), is rewritten in place.
 
 ## Open
 
