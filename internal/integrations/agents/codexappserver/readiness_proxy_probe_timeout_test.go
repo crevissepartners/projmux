@@ -71,7 +71,7 @@ func TestReadinessProxyProbeToleratesLoadWithinItsOwnBound(t *testing.T) {
 			name: "slower than the default probe budget", delay: DefaultProbeTimeout + 500*time.Millisecond,
 			availability: AvailabilityAvailable, readiness: EndpointReady, agreement: "consistent",
 			action: NativeActionReady, lifecycle: LifecycleAlreadyRunning,
-			minElapsed: DefaultProbeTimeout + 500*time.Millisecond, maxElapsed: readinessProxyProbeTimeout,
+			minElapsed: DefaultProbeTimeout + 500*time.Millisecond, maxElapsed: readinessProbeBudget(DefaultProbeTimeout),
 		},
 		{
 			name: "past the readiness proxy bound", delay: time.Minute,
