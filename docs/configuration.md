@@ -718,8 +718,8 @@ installed; that install stays put until its stable line ships.
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
 | `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from the `projmux internal status usage` renderer to stderr. |
 | `PROJMUX_USAGE_LIMITS_PATH` | Deprecated. Read but ignored; limits now come from upstream APIs and local Codex rollout state. |
-| `PROJMUX_SESSIONSTATE_AUTOSAVE` | Session snapshot autosave override for the global fallback. Values such as `off`, `false`, or `0` disable autosave for projects that inherit the global setting; explicit project auto-save `on`/`off` still takes precedence. |
-| `PROJMUX_SESSIONSTATE_DEBUG` | When non-empty, quiet autosave surfaces suppressed session-state errors to stderr. |
+| `PROJMUX_SESSIONSTATE_AUTOSAVE` | Ignored by the runtime. projmux no longer autosaves snapshots; the Settings Snapshots page may still display the value, but it has no effect. |
+| `PROJMUX_SESSIONSTATE_DEBUG` | Ignored. It only gated stderr for the removed quiet autosave. |
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
 | `PROJMUX_RELEASE_CHANNEL` | Release channel the update judgment is made against, orthogonal to `PROJMUX_INSTALLER`. Only an exact `rc` opts in; unset, empty, and unrecognised values all mean the default `stable` channel, which never sees a prerelease. An rc install is answered with whichever of the stable and rc lines is newer, so it returns to stable as soon as that line ships. Read only until `[update] release_channel` exists; see [Release channel](#release-channel). |
@@ -966,14 +966,15 @@ failure handling.
 
 ## Session State
 
-`projmux shell` autosaves session snapshots from the app tmux status tick. The
-autosave command is quiet and debounced per session, and stores snapshots under
-`${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`.
-
-Global auto-save defaults to `off` on a fresh install. Project auto-save is an
-override with `inherit`, `on`, and `off`; `inherit` follows the global value,
-while `on` and `off` take precedence. Auto-save only updates the latest
-snapshot. Named snapshots are manual and are never updated by auto-save.
+Snapshots are written only by the explicit snapshot commands and stored under
+`${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`. The app tmux status
+tick no longer autosaves: generated status lines carry no autosave job, and the
+hidden `internal tmux autosave-session-state` route that older generated
+configs still call is a silent no-op that writes nothing, reads no snapshot,
+and records no diagnostics. The global `sessionstate-autosave` and
+`sessionstate-autosave-interval` files, the per-Project
+`sessionstate-projects/<session>/autosave` file, and
+`PROJMUX_SESSIONSTATE_AUTOSAVE` are ignored by the runtime without a warning.
 
 With no saved preference, Project open from the Alt-1 sidebar shows a native
 `Start project` step with exactly `Continue project` and `Recreate Project`.
@@ -982,6 +983,9 @@ Settings > Projects > Project Sidebar > Closed Project startup reports this as
 choice and reports `Continue project / Recreate Project - on - saved`. A saved `off`
 reports `Continue project - off - saved` and skips the picker: a registered root
 continues, while an unregistered root follows the existing Fresh adjudication.
+An explicit `Continue project` on a root that is not a registered Project
+refuses with zero writes and points to `Recreate Project`; it never reads
+snapshot files.
 Resolving or cancelling the missing-file default never creates the preference
 file or changes saved bytes or mtime. `Recreate Project` confirms first, then atomically replaces the old Project graph
 with a new Project UID and a new canonical Window/shell UID pair. Exactly one
@@ -1005,7 +1009,8 @@ operation that requires both the source session and the exact target Project;
 it is not a Project-startup choice.
 
 Settings > Session State is global settings only: global auto-save, auto-save
-interval, and storage/retention policy. Settings > Project > Session State
+interval, and storage/retention policy. The auto-save rows below are still
+shown and saved, but the runtime ignores them. Settings > Project > Session State
 is override/effective-focused: project identity, project auto-save
 `inherit`/`on`/`off`, effective auto-save value/source, and snapshot save
 actions. Snapshot inspection lives under `Projects > Sessions > State`, whose
@@ -1018,7 +1023,7 @@ The saved global toggles live under
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`. Project
 auto-save overrides live under
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-projects/<session>/autosave`.
-The environment variables above override the global files.
+These auto-save files are no longer read by the runtime.
 `sidebar-startup-picker` accepts the existing `on` and `off` bytes; absence is a
 read-only effective `on - default`, not a migration or an implicit write.
 
@@ -1035,8 +1040,7 @@ projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref
 `status` prints the source label (`autosave`, `layout(<name>)`, or `fresh`), the
 effective auto-save state, and a compact snapshot preview for the
 target session. Older snapshots without a source field display as `autosave`.
-`save` captures the current tmux session immediately and intentionally bypasses
-the autosave debounce and disabled-autosave gate; it still requires a current
+`save` captures the current tmux session immediately; it requires a current
 tmux session. `delete` removes the target snapshot without an interactive
 confirmation. Restore treats the snapshot as desired-state input for one exact
 closed Project, never as a global Registry replacement or tmux replay.
@@ -1045,14 +1049,8 @@ that target subtree atomically, runs the ordinary materializer, and performs an
 explicit client handoff last when `--client` is present. Restore never modifies
 or deletes the source snapshot.
 
-Interactive `projmux quit` also offers `Save Project snapshots and quit`. It
-recaptures the latest snapshot for every live Registry-bound Project on the
-exact app server, regardless of the global or Project auto-save toggle, and
-stops the server only after all captures succeed. A partial failure keeps the
-server running and keeps each successful atomic snapshot for inspection or
-retry. Control/Home, ephemeral, unmanaged, conflicted, and sibling-server
-sessions are never promoted into Project snapshots. `Quit without saving`,
-`quit --yes`, and `quit --force` perform no snapshot inventory or store I/O.
+Interactive `projmux quit` offers only `Quit projmux` and `Cancel`. Neither it
+nor `quit --yes` / `quit --force` captures, reads, or writes snapshots.
 
 ## Decoration Mode
 

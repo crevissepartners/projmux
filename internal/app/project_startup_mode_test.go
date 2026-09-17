@@ -11,7 +11,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -439,12 +438,12 @@ func TestSidebarOpenSurfacesRegistrationReadFailure(t *testing.T) {
 	}
 }
 
-// TestSidebarOpenContinueOnUnregisteredRootKeepsTheSnapshotRefusal pins the
+// TestSidebarOpenContinueOnUnregisteredRootKeepsTheRecreateRefusal pins the
 // message the promotion exists to avoid. Reaching continue on an unregistered
 // root is still possible -- an explicit picker choice does exactly that -- and
-// when it happens the operator must still be told which session had no usable
-// snapshot and what to choose instead.
-func TestSidebarOpenContinueOnUnregisteredRootKeepsTheSnapshotRefusal(t *testing.T) {
+// when it happens the operator must still be told the root is not a registered
+// Project and what to choose instead. Snapshot files play no part in it.
+func TestSidebarOpenContinueOnUnregisteredRootKeepsTheRecreateRefusal(t *testing.T) {
 	t.Parallel()
 
 	for _, pickerState := range []startupModePickerState{startupModePickerNoFile, startupModePickerOn} {
@@ -463,9 +462,6 @@ func TestSidebarOpenContinueOnUnregisteredRootKeepsTheSnapshotRefusal(t *testing
 				executable: func() (string, error) { return "/tmp/projmux", nil },
 				projectFreshStart: &registryProjectFreshStarter{
 					resources: newFakeResourceStore(t).store(),
-					loadSnapshot: func(string) (sessionstate.Snapshot, error) {
-						return sessionstate.Snapshot{}, errors.New("no snapshot file")
-					},
 				},
 			}
 			wireFakeProjectSessionPlan(cmd)
@@ -473,9 +469,12 @@ func TestSidebarOpenContinueOnUnregisteredRootKeepsTheSnapshotRefusal(t *testing
 			err := cmd.runSidebarOpen([]string{
 				"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
 			}, &bytes.Buffer{})
-			want := `continue project unavailable: no usable snapshot for "workspace"; choose Recreate Project`
+			want := "continue project unavailable: " + target + " is not a registered Project; choose Recreate Project"
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("runSidebarOpen() error = %v, want a message containing %q", err, want)
+			}
+			if strings.Contains(strings.ToLower(strings.ReplaceAll(err.Error(), target, "<root>")), "snapshot") {
+				t.Fatalf("runSidebarOpen() error = %v, want no snapshot wording", err)
 			}
 		})
 	}

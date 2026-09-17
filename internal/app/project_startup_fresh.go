@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -144,11 +141,10 @@ type projectFreshStartCommit struct {
 // store lock and committed atomically; snapshot storage is never consulted or
 // changed by this seam.
 type registryProjectFreshStarter struct {
-	resources    *resourceStore
-	runner       tmuxRunner
-	target       tmuxTransport
-	shell        string
-	loadSnapshot func(string) (sessionstate.Snapshot, error)
+	resources *resourceStore
+	runner    tmuxRunner
+	target    tmuxTransport
+	shell     string
 }
 
 func newRegistryProjectFreshStarter() *registryProjectFreshStarter {
@@ -159,13 +155,6 @@ func newRegistryProjectFreshStarter() *registryProjectFreshStarter {
 	return &registryProjectFreshStarter{
 		resources: newResourceStore(), runner: inttmux.ExecRunner{}, target: target,
 		shell: configuredShell(os.Getenv),
-		loadSnapshot: func(session string) (sessionstate.Snapshot, error) {
-			store, err := sessionstate.NewDefaultStoreFromEnv()
-			if err != nil {
-				return sessionstate.Snapshot{}, err
-			}
-			return store.LoadReadOnly(session)
-		},
 	}
 }
 
@@ -183,10 +172,11 @@ func (s *registryProjectFreshStarter) ProjectRegistered(root string) (bool, erro
 
 // ContinueProject preserves an existing Project identity. Retained topology is
 // reused exactly; a zero-Window Project receives one new canonical Window and
-// shell atomically before runtime materialization. A deleted Project can only be
-// recreated from its exact usable snapshot, projected under freshly minted
-// resource identities in one commit.
-func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, sessionName string) (openedProjectBootstrap, error) {
+// shell atomically before runtime materialization. A root that is not a
+// registered Project has no identity to continue: the call refuses with zero
+// Registry writes and points to Recreate Project. Snapshot files are never read
+// here.
+func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, _ string) (openedProjectBootstrap, error) {
 	if s == nil || s.resources == nil {
 		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "registry-read", "", "",
 			errors.New("continue project: resource registry store is not configured"))
@@ -249,85 +239,12 @@ func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, s
 		}
 		return openedProjectBootstrap{project: project.Clone()}, nil
 	}
-	if decision.State != coremetadata.ProjectLifecycleDeleted || decision.Available || decision.Reason != "no-usable-snapshot" {
+	if decision.State != coremetadata.ProjectLifecycleDeleted || decision.Available || uid != "" {
 		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", "", "",
-			fmt.Errorf("deleted Continue did not fail closed before snapshot evidence: %+v", decision))
+			fmt.Errorf("unregistered Continue did not fail closed: %+v", decision))
 	}
-	if s.loadSnapshot == nil {
-		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
-			errors.New("continue project unavailable: no read-only snapshot source is configured; choose Recreate Project"))
-	}
-	snap, err := s.loadSnapshot(sessionName)
-	if err != nil {
-		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
-			fmt.Errorf("continue project unavailable: no usable snapshot for %q; choose Recreate Project: %w", sessionName, err))
-	}
-	if candidates.MatchKey(snap.DefaultCWD) != candidates.MatchKey(root) {
-		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
-			fmt.Errorf("continue project unavailable: snapshot root %q does not match %q; choose Recreate Project", snap.DefaultCWD, root))
-	}
-	decision, uid = projectLifecycleDecisionFor(registry, root, coremetadata.ProjectLifecycleContinue,
-		coremetadata.ProjectLifecyclePreconditions{UsableSnapshot: true})
-	if uid != "" {
-		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", uid, uid,
-			errors.New("deleted Continue unexpectedly resolved a registered Project UID"))
-	}
-	if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationContinue,
-		coremetadata.ProjectUIDCreated, coremetadata.ProjectDescendantUIDsCreated,
-		coremetadata.ProjectStartupWriteCreateProject, coremetadata.ProjectStartupWriteRestoreSnapshotGraph); err != nil {
-		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", "", "", err)
-	}
-	stripSnapshotResourceMetadata(&snap)
-	var opened coremetadata.Project
-	_, err = s.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		current, currentUID := projectLifecycleDecisionFor(*working, root, coremetadata.ProjectLifecycleContinue,
-			coremetadata.ProjectLifecyclePreconditions{UsableSnapshot: true})
-		if currentUID != "" {
-			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-commit", currentUID, currentUID,
-				errors.New("continue project: the root was registered after snapshot preflight; retry"))
-		}
-		if err := requireProjectLifecyclePlan(current, coremetadata.ProjectLifecycleOperationContinue,
-			coremetadata.ProjectUIDCreated, coremetadata.ProjectDescendantUIDsCreated,
-			coremetadata.ProjectStartupWriteCreateProject, coremetadata.ProjectStartupWriteRestoreSnapshotGraph); err != nil {
-			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-commit", "", "", err)
-		}
-		registered, err := mutator.RegisterProject(working, coremetadata.RegisterProjectOptions{
-			Root: root, SessionName: sessionName, DefaultShell: s.shell,
-		})
-		if err != nil {
-			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-commit", "", "", err)
-		}
-		opened = registered.Project.Clone()
-		newUID := mutator.NewUID
-		if newUID == nil {
-			newUID = coremetadata.NewUID
-		}
-		projection, err := coremetadata.PlanSnapshotProjection(*working, registered.Project.Metadata.UID, snap, time.Now().UTC(), newUID)
-		if err != nil {
-			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-projection", "", registered.Project.Metadata.UID, err)
-		}
-		*working = projection.Desired
-		stored, _ := working.Project(registered.Project.Metadata.UID)
-		opened = stored.Clone()
-		return nil
-	})
-	if err != nil {
-		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "registry-commit", "", opened.Metadata.UID, MapMetadataError(err))
-	}
-	return openedProjectBootstrap{project: opened, bootstrapped: true, materializeTopology: true}, nil
-}
-
-func stripSnapshotResourceMetadata(snap *sessionstate.Snapshot) {
-	if snap == nil {
-		return
-	}
-	snap.Metadata = nil
-	for wi := range snap.Windows {
-		snap.Windows[wi].Metadata = nil
-		for pi := range snap.Windows[wi].Panes {
-			snap.Windows[wi].Panes[pi].Metadata = nil
-		}
-	}
+	return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", "", "",
+		fmt.Errorf("continue project unavailable: %s is not a registered Project; choose Recreate Project", root))
 }
 
 // PlanProjectFreshStart resolves the exact prune for one Project root.

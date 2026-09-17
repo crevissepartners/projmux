@@ -13,7 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
-func TestQuitCommandPickerShowsSaveQuitWithoutSavingAndCancel(t *testing.T) {
+func TestQuitCommandPickerShowsQuitAndCancel(t *testing.T) {
 	t.Parallel()
 
 	var got intpickercompat.Options
@@ -34,12 +34,12 @@ func TestQuitCommandPickerShowsSaveQuitWithoutSavingAndCancel(t *testing.T) {
 	if got.DisableSearch != true {
 		t.Fatalf("quit picker DisableSearch = false, want true")
 	}
-	for _, want := range []string{"Save Project snapshots and quit", "Quit without saving", "Cancel"} {
+	for _, want := range []string{"Quit projmux", "terminate the app tmux runtime", "Cancel"} {
 		if !hasEntryLabelContaining(got.Entries, want) {
 			t.Fatalf("quit picker entries = %#v, want label containing %q", got.Entries, want)
 		}
 	}
-	if got, want := entryValues(got.Entries), []string{quitActionSaveAndQuit, quitActionQuit, quitActionCancel}; !reflect.DeepEqual(got, want) {
+	if got, want := entryValues(got.Entries), []string{quitActionQuit, quitActionCancel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("quit picker entry values = %#v, want %#v", got, want)
 	}
 }
@@ -52,11 +52,11 @@ func TestQuitCommandDestructiveRowKeepsDangerColorWhenSelected(t *testing.T) {
 		t.Fatal("quit picker has no entries")
 	}
 	quitLabel := options.Entries[0].Label
-	if !strings.Contains(quitLabel, settingsColorRemove+"Save Project snapshots and quit") {
+	if !strings.Contains(quitLabel, settingsColorRemove+"Quit projmux") {
 		t.Fatalf("quit label = %q, want danger-colored action name", quitLabel)
 	}
 	selected := projmuxpicker.SelectedLine(projmuxpicker.Pointer, quitLabel)
-	if !strings.Contains(selected, settingsColorRemove+"Save Project snapshots and quit") {
+	if !strings.Contains(selected, settingsColorRemove+"Quit projmux") {
 		t.Fatalf("selected quit label = %q, destructive action lost danger color", selected)
 	}
 	if !strings.Contains(selected, settingsColorReset+projmuxpicker.CurrentStart) {
@@ -71,15 +71,15 @@ func TestQuitCommandPickerActionsHaveEnglishKoreanMeaningParity(t *testing.T) {
 		locale i18n.Locale
 		want   []string
 	}{
-		{locale: i18n.FallbackLocale, want: []string{"Save Project snapshots and quit", "capture every live managed Project before shutdown", "Quit without saving", "terminate without capturing Project snapshots", "Cancel", "keep projmux running"}},
-		{locale: i18n.Locale("ko-KR"), want: []string{"Project 스냅샷 저장 후 종료", "모든 live managed Project를 캡처한 뒤 종료", "저장하지 않고 종료", "Project 스냅샷을 캡처하지 않고 종료", "취소", "Projmux를 계속 실행"}},
+		{locale: i18n.FallbackLocale, want: []string{"Quit projmux", "terminate the app tmux runtime", "Cancel", "keep projmux running"}},
+		{locale: i18n.Locale("ko-KR"), want: []string{"Projmux 종료", "앱 tmux 런타임을 종료", "취소", "Projmux를 계속 실행"}},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.locale), func(t *testing.T) {
 			options := quitActionOptions(tc.locale)
 			options.Locale = tc.locale
 			options = localizePickerOptions(nil, nil, options)
-			if got, want := entryValues(options.Entries), []string{quitActionSaveAndQuit, quitActionQuit, quitActionCancel}; !reflect.DeepEqual(got, want) {
+			if got, want := entryValues(options.Entries), []string{quitActionQuit, quitActionCancel}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("entry values = %#v, want locale-invariant %#v", got, want)
 			}
 			var joined strings.Builder

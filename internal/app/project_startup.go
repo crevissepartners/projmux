@@ -126,7 +126,7 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 // `--mode` token, and the continuation itself after the re-exec. Keeping one
 // decision point is the contract -- when the sidebar fixed the mode on its own
 // it always sent `continue`, so an unregistered root on a fresh install reached
-// ContinueProject and failed with "no usable snapshot".
+// ContinueProject and was refused.
 //
 // The sentinel roots and the operator's own home are excluded because they are
 // not Registry Projects at all; promoting them to `fresh` would prune nothing

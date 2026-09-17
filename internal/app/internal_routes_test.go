@@ -173,7 +173,6 @@ func TestGeneratedConfigReachesEveryRelocatedPlumbingRouteThroughTheInternalName
 		"' internal statusbar usage-refresh",
 		"' internal tmux popup-toggle --client ",
 		"' internal tmux rebalance-panes",
-		"' internal tmux autosave-session-state --quiet",
 		"' internal popup-wait-key",
 		"' internal tmux hook-trust-prompt --request ",
 		"' 'internal' 'session-popup' 'preview'",

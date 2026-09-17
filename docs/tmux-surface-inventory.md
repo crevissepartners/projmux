@@ -104,7 +104,7 @@ integration or e2e coverage when live tmux behavior changes.
 | Session lifecycle | `has-session`, `new-session`, `attach-session`, `switch-client`, `kill-session` | attach, switch, sessions |
 | Split/window creation | `split-window`, `new-window` | AI split, shell, session restore |
 | Metadata | `set-option -p`, `show-options`, `display-message` | AI state, labels, app ownership |
-| Hooks | `set-hook`, `show-hooks`, `run-shell -b` | notify, attention, autosave, recent windows |
+| Hooks | `set-hook`, `show-hooks`, `run-shell -b` | notify, attention, recent windows |
 | Interactive UI | `display-popup`, `capture-pane`, `resize-pane` | popup surfaces, title watch, layout |
 | State replay | `rename-window`, `select-layout`, `select-pane`, `send-keys` | session state |
 | Config | `source-file`, global/session options | install, apply, shell |

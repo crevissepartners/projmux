@@ -240,7 +240,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	settingsCmd := newSettingsCommand(ai, switcher, update, quit)
 	settingsCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	tmuxCmd := newTmuxCommand(recorder)
-	tmuxCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	tmuxCmd.ai = ai
 	// The public config domain. Each route is a parity alias over the AI or
 	// tmux handler that already owns the behavior, so the public spelling is a

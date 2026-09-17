@@ -6838,8 +6838,8 @@ cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 # hidden `switch sidebar-open` command, can still send across the boundary.
 #
 # That arriving token used to be trusted verbatim, so the open reached
-# ContinueProject and failed with `continue project unavailable: no usable
-# snapshot`. Forwarded here against an unregistered root in an empty Registry
+# ContinueProject and was refused (today's refusal reads `... is not a
+# registered Project; choose Recreate Project`). Forwarded here against an unregistered root in an empty Registry
 # with an explicit saved `off`, the continuation must re-decide it as `fresh`,
 # mint the Project, and move the client into its session. This pins the saved-off
 # compatibility path now that the missing-file default shows both actions.
@@ -7007,7 +7007,7 @@ if [[ "$(tr -d '[:space:]' <"$startup_sel_root/open-selected.rc")" != "0" ]]; th
   cat "$startup_sel_root/open-selected.err" >&2 || true
   exit 1
 fi
-if grep -Fq 'no usable snapshot' "$startup_sel_root/open-selected.err"; then
+if grep -Fq 'is not a registered Project' "$startup_sel_root/open-selected.err"; then
   echo "the forwarded continue token was acted on verbatim instead of being re-decided as fresh" >&2
   cat "$startup_sel_root/open-selected.err" >&2 || true
   exit 1

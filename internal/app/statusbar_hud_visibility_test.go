@@ -19,8 +19,7 @@ func TestStatusbarHUDRowFourVisibilityCombinations(t *testing.T) {
 	t.Parallel()
 
 	bin := "'/tmp/projmux'"
-	autosave := "#(" + bin + " internal tmux autosave-session-state --quiet)"
-	both := statusbarAuxLineFormat(bin, false)
+	both := statusbarAuxLineFormat(bin)
 	notifyOnly := "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width #{client_width})#[norange]"
 	usageOnly := "#[align=right range=user|usage]#(" + bin + " internal status usage --max-width #{client_width})#[norange]"
 
@@ -40,7 +39,7 @@ func TestStatusbarHUDRowFourVisibilityCombinations(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotAux := statusbarAuxLineFormatWithVisibility(bin, false, tc.visibility)
+			gotAux := statusbarAuxLineFormatWithVisibility(bin, tc.visibility)
 			if gotAux != tc.wantAux {
 				t.Fatalf("aux row = %q, want exact %q", gotAux, tc.wantAux)
 			}
@@ -60,17 +59,26 @@ func TestStatusbarHUDRowFourVisibilityCombinations(t *testing.T) {
 				t.Fatalf("usage-off row retains right alignment: %q", gotAux)
 			}
 
-			rows := statusbarRowFormatLines(bin, true, tc.visibility)
-			joined := strings.Join(rows, "\n")
+			rows := statusbarRowFormatLines(bin, tc.visibility)
+			want := []string{
+				"set -g status-format[0] " + tmuxConfigQuote(tc.wantAux),
+				"set -g status-format[1] " + tmuxConfigQuote(statusbarWindowLineFormat()),
+				"set -gu status-format[2]",
+			}
 			if tc.wantStatus == 1 {
-				if !strings.Contains(rows[0], statusbarWindowLineFormat()+autosave) {
-					t.Fatalf("all-off row 0 must retain Window row plus autosave: %#v", rows)
+				// The all-off layout collapses to the bare Window row. No
+				// background job rides along on the surviving row.
+				want = []string{
+					"set -g status-format[0] " + tmuxConfigQuote(statusbarWindowLineFormat()),
+					"set -gu status-format[1]",
+					"set -gu status-format[2]",
 				}
-				if !strings.Contains(joined, "set -gu status-format[1]") || strings.Contains(joined, "range=user|notify") || strings.Contains(joined, "range=user|usage") {
-					t.Fatalf("all-off rows retain HUD residue: %#v", rows)
-				}
-			} else if !strings.Contains(rows[0], tc.wantAux+autosave) {
-				t.Fatalf("visible HUD row must carry exact aux output plus autosave: %#v", rows)
+			}
+			if strings.Join(rows, "\n") != strings.Join(want, "\n") {
+				t.Fatalf("rows = %#v, want exact %#v", rows, want)
+			}
+			if strings.Contains(strings.Join(rows, "\n"), "autosave-session-state") {
+				t.Fatalf("rows render the retired autosave job: %#v", rows)
 			}
 		})
 	}

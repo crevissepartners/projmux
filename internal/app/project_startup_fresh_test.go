@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -275,156 +274,53 @@ func TestProjectStartupNewRowValuePaths(t *testing.T) {
 	}
 }
 
-func TestContinueDeletedProjectRestoresSnapshotUnderNewIdentityWithoutWritingSnapshot(t *testing.T) {
-	t.Parallel()
-	store := newFakeResourceStore(t)
-	root := "/srv/continued"
-	store.dirs[root] = true
-	snapshot := sessionstate.Snapshot{
-		Version: sessionstate.Version, Session: "continued", Source: sessionstate.SourceAutosave,
-		DefaultCWD: root, SavedAt: time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC),
-		Metadata: &sessionstate.ResourceMetadata{UID: "proj-deleted"},
-		Windows: []sessionstate.Window{{Index: 0, Name: "main", ActivePaneIndex: 0,
-			Metadata: &sessionstate.ResourceMetadata{UID: "win-deleted", OwnerKind: string(coremetadata.KindProject), OwnerUID: "proj-deleted"},
-			Panes: []sessionstate.Pane{{Index: 0, CWD: root,
-				Metadata: &sessionstate.ResourceMetadata{UID: "pane-deleted", OwnerKind: string(coremetadata.KindWindow), OwnerUID: "win-deleted"},
-				Recipe:   sessionstate.ShellRecipe()}},
-		}},
-	}
-	beforeSnapshot := snapshot
-	starter := &registryProjectFreshStarter{
-		resources: store.store(), shell: "/bin/zsh",
-		loadSnapshot: func(session string) (sessionstate.Snapshot, error) {
-			if session != "continued" {
-				t.Fatalf("snapshot session = %q", session)
-			}
-			return snapshot, nil
-		},
-	}
-	opened, err := starter.ContinueProject(context.Background(), root, "continued")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !opened.bootstrapped || opened.project.Metadata.UID == "" || opened.project.Metadata.UID == "proj-deleted" || store.writes != 1 {
-		t.Fatalf("Continue opened=%+v writes=%d", opened, store.writes)
-	}
-	windows := store.registry.WindowsOf(opened.project.Metadata.UID)
-	if len(windows) != 1 || windows[0].Metadata.UID == "win-deleted" {
-		t.Fatalf("restored Windows = %+v", windows)
-	}
-	panes := store.registry.PanesOf(windows[0].Metadata.UID)
-	if len(panes) != 1 || panes[0].Metadata.UID == "pane-deleted" || panes[0].Spec.CWD != root {
-		t.Fatalf("restored Panes = %+v", panes)
-	}
-	if !reflect.DeepEqual(snapshot, beforeSnapshot) {
-		t.Fatalf("Continue mutated snapshot input: before=%+v after=%+v", beforeSnapshot, snapshot)
-	}
-	writes := store.writes
-	if repeat, err := starter.ContinueProject(context.Background(), root, "continued"); err != nil || repeat.bootstrapped || store.writes != writes {
-		t.Fatalf("repeat Continue=%+v err=%v writes=%d", repeat, err, store.writes)
-	}
-}
-
-func TestContinueDeletedProjectUnavailableSnapshotIsZeroWriteAndNeverFreshFallback(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		name string
-		load func(string) (sessionstate.Snapshot, error)
-	}{
-		{name: "missing", load: func(string) (sessionstate.Snapshot, error) {
-			return sessionstate.Snapshot{}, fmt.Errorf("%w", sessionstate.ErrNotFound)
-		}},
-		{name: "different root", load: func(string) (sessionstate.Snapshot, error) {
-			return sessionstate.Snapshot{Version: sessionstate.Version, Session: "continued", DefaultCWD: "/srv/foreign",
-				SavedAt: time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC),
-				Windows: []sessionstate.Window{{Index: 0, Name: "main", Panes: []sessionstate.Pane{{Index: 0, CWD: "/srv/foreign", Recipe: sessionstate.ShellRecipe()}}}}}, nil
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			store := newFakeResourceStore(t)
-			store.dirs["/srv/continued"] = true
-			starter := &registryProjectFreshStarter{resources: store.store(), loadSnapshot: test.load}
-			before := store.snapshot()
-			_, err := starter.ContinueProject(context.Background(), "/srv/continued", "continued")
-			if err == nil || !strings.Contains(err.Error(), "choose Recreate Project") {
-				t.Fatalf("Continue error = %v", err)
-			}
-			for _, want := range []string{"action=continue", "stage=snapshot-preflight", "old_uid=-", "new_uid=-"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("Continue unavailable error=%q, want %q", err, want)
-				}
-			}
-			if store.transactions != 0 || store.writes != 0 || store.snapshot() != before {
-				t.Fatalf("unavailable Continue changed Registry: transactions=%d writes=%d", store.transactions, store.writes)
-			}
-		})
-	}
-}
-
-func TestContinueDeletedProjectCommitFailureReportsAllocatedUIDAndRetainsPreimage(t *testing.T) {
+// TestContinueUnregisteredRootIsZeroWriteRecreateRefusalWithoutHandoff pins the
+// unregistered-root Continue cell at the seam: a typed state-table refusal that
+// names Recreate Project, no Registry transaction, and no topology
+// materialization or runtime open afterwards.
+func TestContinueUnregisteredRootIsZeroWriteRecreateRefusalWithoutHandoff(t *testing.T) {
 	t.Parallel()
 	store := newFakeResourceStore(t)
 	root := "/srv/continued"
 	store.dirs[root] = true
 	before := store.snapshot()
-	resources := store.store()
-	resources.updateConvergent = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
-		working := store.registry.Clone()
-		if err := fn(&working); err != nil {
-			return coremetadata.Registry{}, false, err
-		}
-		return coremetadata.Registry{}, false, errors.New("injected Continue commit failure")
-	}
-	starter := &registryProjectFreshStarter{
-		resources: resources, shell: "/bin/zsh",
-		loadSnapshot: func(string) (sessionstate.Snapshot, error) {
-			return sessionstate.Snapshot{
-				Version: sessionstate.Version, Session: "continued", DefaultCWD: root,
-				SavedAt: time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC),
-				Windows: []sessionstate.Window{{Index: 0, Name: "main", Panes: []sessionstate.Pane{{Index: 0, CWD: root, Recipe: sessionstate.ShellRecipe()}}}},
-			}, nil
-		},
-	}
-	_, err := starter.ContinueProject(context.Background(), root, "continued")
-	if err == nil || !strings.Contains(err.Error(), "injected Continue commit failure") {
-		t.Fatalf("Continue commit failure=%v", err)
-	}
-	if len(store.newUIDs) == 0 {
-		t.Fatal("Continue commit failure did not expose an allocated Project UID")
-	}
-	newUID := store.newUIDs[0]
-	for _, want := range []string{"action=continue", "stage=registry-commit", "old_uid=-", "new_uid=" + newUID} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("Continue commit failure=%q, want %q", err, want)
-		}
-	}
-	if store.writes != 0 || store.snapshot() != before {
-		t.Fatalf("Continue commit failure changed Registry preimage: writes=%d", store.writes)
-	}
-}
+	starter := &registryProjectFreshStarter{resources: store.store(), shell: "/bin/zsh"}
 
-func TestContinueDeletedProjectMaterializesRestoredTopologyBeforeHandoff(t *testing.T) {
-	t.Parallel()
-	store := newFakeResourceStore(t)
-	root := "/srv/restored"
-	store.dirs[root] = true
-	starter := &registryProjectFreshStarter{resources: store.store(), shell: "/bin/zsh", loadSnapshot: func(string) (sessionstate.Snapshot, error) {
-		return sessionstate.Snapshot{Version: sessionstate.Version, Session: "restored", DefaultCWD: root,
-			SavedAt: time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC),
-			Windows: []sessionstate.Window{{Index: 0, Name: "main", Panes: []sessionstate.Pane{{Index: 0, CWD: root, Recipe: sessionstate.ShellRecipe()}}}}}, nil
-	}}
+	_, err := starter.ContinueProject(context.Background(), root, "continued")
+	want := "continue project unavailable: " + root + " is not a registered Project; choose Recreate Project"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Continue error = %v, want %q", err, want)
+	}
+	var staged projectLifecycleStageError
+	if !errors.As(err, &staged) || staged.action != coremetadata.ProjectLifecycleContinue || staged.stage != "state-table" {
+		t.Fatalf("Continue error = %#v, want typed state-table Continue refusal", err)
+	}
+	for _, want := range []string{"action=continue", "stage=state-table", "old_uid=-", "new_uid=-"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Continue error = %q, want %q", err, want)
+		}
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "snapshot") {
+		t.Fatalf("Continue error = %q, want no snapshot wording", err)
+	}
+	if store.transactions != 0 || store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("unregistered Continue changed Registry: transactions=%d writes=%d", store.transactions, store.writes)
+	}
+
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
 	topology := &fakeProjectTopologyMaterializer{materialized: true}
 	cmd := &switchCommand{
 		sessions: executor, projectFreshStart: starter, projectTopology: topology,
 		homeDir: func() (string, error) { return "/home/test", nil }, lookupEnv: func(string) string { return "" },
 	}
-	if err := cmd.authorizeAndContinueProjectOpen(context.Background(), root, "restored", projectStartupCandidate{Kind: projectStartupKindTopology}); err != nil {
-		t.Fatal(err)
+	if err := cmd.authorizeAndContinueProjectOpen(context.Background(), root, "continued", projectStartupCandidate{Kind: projectStartupKindTopology}); err == nil {
+		t.Fatal("authorizeAndContinueProjectOpen() succeeded for an unregistered root")
 	}
-	if !equalStrings(topology.calls, []string{"topology:" + root + ":restored"}) ||
-		!equalStrings(executor.calls, []string{"authorize:" + root, "open:restored"}) {
-		t.Fatalf("Continue order topology=%v runtime=%v", topology.calls, executor.calls)
+	if len(topology.calls) != 0 || slices.Contains(executor.calls, "open:continued") {
+		t.Fatalf("refused Continue reached handoff: topology=%v runtime=%v", topology.calls, executor.calls)
+	}
+	if store.transactions != 0 || store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("refused Continue handoff changed Registry: transactions=%d writes=%d", store.transactions, store.writes)
 	}
 }
 

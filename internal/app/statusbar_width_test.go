@@ -432,8 +432,8 @@ func auxLineBudgets(t *testing.T, line string) map[string]string {
 func TestStatusbarAuxLineBudgetsDeriveFromTheClient(t *testing.T) {
 	t.Parallel()
 
-	for _, autosave := range []bool{false, true} {
-		budgets := auxLineBudgets(t, statusbarAuxLineFormat("'/usr/bin/projmux'", autosave))
+	{
+		budgets := auxLineBudgets(t, statusbarAuxLineFormat("'/usr/bin/projmux'"))
 		if want := statusbarNotifyBudgetFormat(); budgets["notify"] != want {
 			t.Fatalf("notify budget = %q, want %q", budgets["notify"], want)
 		}

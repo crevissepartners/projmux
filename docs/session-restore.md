@@ -75,6 +75,20 @@ A closed Project has exactly two actions:
 Esc/cancel returns to Projects; it is not an action row. Picker failure falls
 back to the non-destructive `Continue project` action.
 
+`Continue project` needs a registered Project. On a root that is not a
+registered Project it refuses with zero Registry writes and points to
+`Recreate Project` (`continue project unavailable: <root> is not a registered
+Project; choose Recreate Project`). It never reads snapshot files, even when a
+snapshot for the same session and root exists, and it never falls back to
+Fresh on its own.
+
+projmux does not save Project state on its own. There is no status-tick
+autosave, and `projmux quit` offers only `Quit projmux` and `Cancel`; neither
+writes a snapshot. The hidden `internal tmux autosave-session-state` route is
+kept only so status lines rendered by older installs keep working, and it does
+nothing. Explicit named snapshots (`create`, `get`, `restore`, `delete`, and
+`prune snapshot`) still work.
+
 Continue resumes an Agent's exact recorded conversation after interrupted,
 killed, abnormal, unknown, or unrecorded termination. Intentional and normal
 termination remain excluded. A recorded receipt must agree on the Agent and
@@ -110,7 +124,7 @@ errors. Dry-run writes no execution event; failed or rolled-back execution
 records an error with zero committed counts. Journal and display failures are
 best effort and never change the topology result.
 
-`Recreate Project` never deletes or overwrites autosave or named snapshot files. It
+`Recreate Project` never deletes or overwrites existing snapshot files. It
 preserves the root, Git/worktrees, trust decision, and all unrelated Registry
 graphs while changing the Project identity. A rejected commit retains the
 exact old Registry preimage. Repeating `Recreate Project` replaces identity again;

@@ -2036,7 +2036,7 @@ var routes = []Route{
 					{Effects: unchangedEffects(CardinalityUnchanged), Name: "install", Invocation: InvocationExplicit, Summary: "Install the generated tmux config", Canonical: []string{"internal tmux"}},
 					{Effects: unchangedEffects(CardinalityUnchanged), Name: "install-app", Invocation: InvocationExplicit, Summary: "Install the generated app tmux config", Canonical: []string{"internal tmux"}},
 					{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationExplicit, Summary: "Apply the generated tmux config to a live server", Canonical: []string{"config apply"}},
-					{Effects: unchangedEffects(CardinalityUnchanged), Name: "autosave-session-state", Invocation: InvocationExplicit, Summary: "Run the debounced snapshot autosave hook", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "autosave-session-state", Invocation: InvocationExplicit, Summary: "Retained no-op for status lines rendered by older installs", Canonical: []string{"internal tmux"}},
 				},
 			},
 			{

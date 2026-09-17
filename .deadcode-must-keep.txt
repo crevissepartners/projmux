@@ -28,7 +28,6 @@ CompleteBundleArtifactPaths	Phase 2 closed private-host artifact paths are retai
 Create	Phase 0 immutable Codex release-bundle lease creator is retained for the later private generation host.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
-DecideProjectOpen	Compatibility projection of the live DecideProjectLifecycle table retained as the totality proof for the project-open state table.
 DecideSuccessorResume	Phase 0 pure same-thread old-stop decision is retained for the journaled handover phase.
 DecideTeardownEvent	The pure teardown decision API is called by the product path and retained for lifecycle authority proofs.
 DeclaredGenerationPair	The declared version pair of the generation-pool qualification is retained as the only entry point that turns operator-declared versions into a receipt version pair; no main package reaches it.

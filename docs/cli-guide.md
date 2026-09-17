@@ -772,9 +772,9 @@ the registered-Continue/unregistered-Fresh automatic decision. `Continue
 project` materializes current Registry desired state with the same Project UID.
 A retained graph keeps descendant UIDs; a
 zero-Window Project atomically receives a new canonical Window/shell UID chain.
-A deleted Project may use only the exact usable snapshot compatibility path;
-an unavailable Continue is an explicit zero-write refusal with no Fresh
-fallback. `Recreate Project` is the one startup row that replaces identity, and it asks
+A root that is not a registered Project cannot be continued: Continue is an
+explicit zero-write refusal that points to `Recreate Project`, with no Fresh
+fallback and no snapshot read. `Recreate Project` is the one startup row that replaces identity, and it asks
 before it does. Choosing it opens a confirmation naming the exact old Project
 UID and its Window/Pane/Agent counts; declining returns to the startup rows
 with zero Registry writes, and an unreadable confirmation declines rather than
@@ -1012,7 +1012,7 @@ hook payload, or a `make install` log.
 
 | Route | Purpose |
 | --- | --- |
-| `internal tmux` | Generated config render/install/apply, popup entry helpers, pane rebalance/rename, snapshot autosave. |
+| `internal tmux` | Generated config render/install/apply, popup entry helpers, pane rebalance/rename, and the retained no-op `autosave-session-state`. |
 | `internal status` | Status bar segment renderers (`git`, `project`, `usage`, `notify`, `resources`). |
 | `internal statusbar` | Status bar click and shortcut dispatch (`click`, `usage-refresh`). |
 | `internal preview` | Persisted preview cursor (`cycle-pane`, `cycle-window`, `select`). |
@@ -2261,23 +2261,12 @@ human configuration work should prefer `config render` and `config apply`.
   declined confirmation returns to the startup rows and writes nothing.
   Repeating it allocates another new identity. Neither action modifies snapshot
   bytes, the project directory, git/worktrees, unrelated roots, or trust state.
-- `quit` — open an action picker with `Save Project snapshots and quit`, `Quit
-  without saving`, and `Cancel`. The safe first action takes one complete,
-  exact-socket Registry/resource-graph observation, freezes every live managed
-  Project session in Project UID/session order, and captures each latest
-  snapshot even when auto-save is off. Home/control, ephemeral, unattributed,
-  recoverable, foreign, and offline sessions are excluded and reported as
-  bounded class counts. Every target is attempted. A failed capture leaves the
-  successful per-session atomic files in place, reports the exact failed
-  session, and does not stop the app; retry captures every target again. Only an
-  all-success ledger reaches the existing physical-socket, app-marker, and
-  logical-route guarded shutdown. Named snapshots and Registry bytes are never
-  written, and the batch is not a multi-file transaction or topology freeze.
-  `Quit without saving` preserves the earlier guarded shutdown behavior:
-  missing servers and runtimes without the app marker are no-ops. Existing
-  non-interactive `--yes` and `--force` callers retain that same snapshot-free
-  behavior and exact shutdown route; the default command always uses the
-  action picker.
+- `quit` — open an action picker with `Quit projmux` and `Cancel`. `Quit
+  projmux` runs the physical-socket, app-marker, and logical-route guarded
+  shutdown; missing servers and runtimes without the app marker are no-ops.
+  Quit never captures, reads, or writes snapshots. Non-interactive `--yes` and
+  `--force` callers use the same shutdown route without the picker; the
+  default command always uses the action picker.
 - `attach project <ref>` — enter a Project runtime from outside tmux.
   Automatic live-runtime attachment is `runtime attach`.
 - `settings` — interactive configuration UI for the project picker, AI

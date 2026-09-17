@@ -809,53 +809,6 @@ func exactAgentCascadeFixture(t *testing.T) (Registry, TeardownEvent, string, st
 	return registry, event, pane.Metadata.UID, agent.Metadata.UID
 }
 
-func TestProjectOpenStateTableHasNoBlankCells(t *testing.T) {
-	t.Parallel()
-
-	states := []ProjectReopenState{
-		ProjectReopenLive, ProjectReopenClosed, ProjectReopenDeletedWithSnapshot,
-		ProjectReopenDeletedWithoutSnapshot,
-	}
-	actions := []ProjectOpenAction{ProjectOpenContinue, ProjectOpenFresh}
-	for _, state := range states {
-		for _, action := range actions {
-			plan := DecideProjectOpen(state, action)
-			if plan.Source == "" || plan.Reason == "" || len(plan.AtomicWriteSet) == 0 {
-				t.Fatalf("state=%q action=%q has blank cell: %+v", state, action, plan)
-			}
-			for _, write := range plan.AtomicWriteSet {
-				if write == "" {
-					t.Fatalf("state=%q action=%q has blank write: %+v", state, action, plan)
-				}
-			}
-			if plan.ExternalAssets != projectPreservedAssets() || plan.AdditionalConfirm {
-				t.Fatalf("state=%q action=%q crossed asset/confirmation boundary: %+v", state, action, plan)
-			}
-		}
-	}
-
-	without := DecideProjectOpen(ProjectReopenDeletedWithoutSnapshot, ProjectOpenContinue)
-	if without.Available || without.Source != ProjectOpenSourceNone || without.NewProjectUID ||
-		!slices.Equal(without.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteNone}) {
-		t.Fatalf("deleted without snapshot silently fell back: %+v", without)
-	}
-	with := DecideProjectOpen(ProjectReopenDeletedWithSnapshot, ProjectOpenContinue)
-	if !with.Available || with.Source != ProjectOpenSourceSnapshot || !with.NewProjectUID {
-		t.Fatalf("deleted with snapshot continue = %+v", with)
-	}
-	for _, state := range states {
-		fresh := DecideProjectOpen(state, ProjectOpenFresh)
-		if !fresh.Available || fresh.Source != ProjectOpenSourceRoot || !fresh.NewProjectUID ||
-			slices.Contains(fresh.AtomicWriteSet, ProjectStartupWriteRestoreSnapshotGraph) {
-			t.Fatalf("fresh state %q reads snapshot or lacks new identity: %+v", state, fresh)
-		}
-	}
-	invalid := DecideProjectOpen("invalid", "invalid")
-	if invalid.Reason != ProjectOpenReasonInvalid || len(invalid.AtomicWriteSet) == 0 {
-		t.Fatalf("invalid table cell = %+v", invalid)
-	}
-}
-
 func TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells(t *testing.T) {
 	t.Parallel()
 
@@ -919,15 +872,15 @@ func TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells(t *testing.T) {
 			t.Fatalf("state=%q Fresh identity = %+v", state, fresh)
 		}
 	}
-	deletedContinueUnavailable := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
-	if deletedContinueUnavailable.Available || deletedContinueUnavailable.Reason != "no-usable-snapshot" ||
-		!slices.Equal(deletedContinueUnavailable.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteNone}) {
-		t.Fatalf("deleted Continue without snapshot evidence = %+v", deletedContinueUnavailable)
-	}
-	deletedContinue := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{UsableSnapshot: true})
-	if !deletedContinue.Available || deletedContinue.ProjectUID != ProjectUIDCreated || deletedContinue.DescendantUIDs != ProjectDescendantUIDsCreated ||
-		!slices.Equal(deletedContinue.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteCreateProject, ProjectStartupWriteRestoreSnapshotGraph}) {
-		t.Fatalf("deleted Continue with usable snapshot = %+v", deletedContinue)
+	// A root that is not a registered Project has nothing to continue. The cell
+	// is unconditionally unavailable, and its reason names registration rather
+	// than snapshot evidence because snapshot files are not startup evidence.
+	deletedContinue := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
+	if deletedContinue.Available || deletedContinue.Reason != "project-is-not-registered" ||
+		strings.Contains(deletedContinue.Reason, "snapshot") ||
+		deletedContinue.ProjectUID != ProjectUIDAbsent || deletedContinue.DescendantUIDs != ProjectDescendantUIDsAbsent ||
+		!slices.Equal(deletedContinue.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteNone}) {
+		t.Fatalf("unregistered Continue = %+v", deletedContinue)
 	}
 }
 

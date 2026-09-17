@@ -3505,7 +3505,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../integrations/tmux/client.go:setProjectPathAnchor:set-option":                  "attach.ephemeral-create",
 		"../integrations/tmux/client.go:markStartupPane:set-option":                       "startup.presentation",
 		"../integrations/tmux/client.go:KillSession:kill-session":                         "attach.ephemeral-prune",
-		"tmux.go:runAutosaveSessionState:set-option":                                      "sessionstate.autosave-marker",
 		"tmux.go:runRebalancePanes:select-layout":                                         "pane.rebalance",
 		"tmux.go:runRenamePane:set-option":                                                "internal.rename-pane-label",
 		"../integrations/tmux/client.go:createDetachedSession:helper:NewEphemeralSession": "attach.ephemeral-create",

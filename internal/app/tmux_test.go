@@ -11,11 +11,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -1600,7 +1598,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	for _, banned := range []string{
 		"set -g status 3",
 		"set -g status-format[2] \"",
-		"tmux autosave-session-state --quiet",
+		"autosave-session-state",
 		"bind-key R command-prompt",
 		"'/tmp/proj mux/bin/projmux' window recent",
 		"bind-key -n M-3 run-shell \"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} session-popup\"",
@@ -2532,7 +2530,6 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g status-format[0]",
 		"set -g status-format[1]",
 		"#[align=left range=user|notify]#('/tmp/projmux' internal status notify --max-width #{?#{e|<:#{client_width},40},#{e|/:#{client_width},2},#{?#{e|<:#{client_width},160},20,#{?#{e|<:#{client_width},220},#{e|-:#{client_width},140},80}}})#[norange]#[align=right range=user|usage]#('/tmp/projmux' internal status usage --max-width #{e|-:#{client_width},#{?#{e|<:#{client_width},40},#{e|/:#{client_width},2},#{?#{e|<:#{client_width},160},20,#{?#{e|<:#{client_width},220},#{e|-:#{client_width},140},80}}}})#[norange]",
-		"#('/tmp/projmux' internal tmux autosave-session-state --quiet)",
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
@@ -2564,6 +2561,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set-hook -g session-window-changed",
 		"range=user|sessionstate",
 		"statusbar click sessionstate",
+		"autosave-session-state",
 		"$env:PROJMUX_PICKER_BACKEND",
 		"$env:PROJMUX_NATIVE_LINE_MODE",
 	} {
@@ -2741,257 +2739,6 @@ func TestTmuxAppShellTitlePolicyDisablesProgramWindowRename(t *testing.T) {
 		if !strings.Contains(configText, want) {
 			t.Fatalf("app config = %q, want shell title policy line %q", configText, want)
 		}
-	}
-}
-
-type tmuxAutosaveSessionStateFixture struct {
-	runner   *recordingTmuxRunner
-	command  *tmuxCommand
-	home     string
-	storeDir string
-}
-
-func newTmuxAutosaveSessionStateFixture(t *testing.T, runner *recordingTmuxRunner) *tmuxAutosaveSessionStateFixture {
-	t.Helper()
-
-	home := t.TempDir()
-	storeDir := t.TempDir()
-	command := &tmuxCommand{
-		runner:  runner,
-		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == sessionStateAutosaveEnv {
-				return "on"
-			}
-			return ""
-		},
-		sessionStore: func() (sessionstate.Store, error) {
-			return sessionstate.NewStore(storeDir), nil
-		},
-	}
-	return &tmuxAutosaveSessionStateFixture{
-		runner:   runner,
-		command:  command,
-		home:     home,
-		storeDir: storeDir,
-	}
-}
-
-func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing.T) {
-	t.Parallel()
-
-	runner := autosaveCaptureRunner("workspace", "/tmp")
-	fixture := newTmuxAutosaveSessionStateFixture(t, runner)
-	dir, cmd := fixture.storeDir, fixture.command
-
-	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	loaded, err := sessionstate.NewStore(dir).Load("workspace")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if loaded.Session != "workspace" || loaded.DefaultCWD != "/tmp" || len(loaded.Windows) != 1 {
-		t.Fatalf("snapshot = %#v, want current workspace session snapshot", loaded)
-	}
-	wantGate := recordedTmuxCall{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_sessionstate_autosave_at", "1778555045"}}
-	if got := runner.calls[len(runner.calls)-1]; !reflect.DeepEqual(got, wantGate) {
-		t.Fatalf("last tmux call = %#v, want %#v", got, wantGate)
-	}
-}
-
-func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
-	t.Parallel()
-
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                         "workspace\n",
-			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}, "\x00"):      "\n",
-			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}, "\x00"): "1778555030\n",
-		},
-	}
-	cmd := newTmuxAutosaveSessionStateFixture(t, runner).command
-
-	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if len(runner.calls) != 3 {
-		t.Fatalf("tmux calls = %#v, want session resolution, source marker, and debounce gate read only", runner.calls)
-	}
-}
-
-func TestTmuxAutosaveSessionStateUsesConfiguredInterval(t *testing.T) {
-	t.Parallel()
-
-	configHome := t.TempDir()
-	paths := config.DefaultPaths(configHome, t.TempDir())
-	if err := config.SaveSessionStateDurationFile(paths.SessionStateAutosaveIntervalFile(), 10*time.Second); err != nil {
-		t.Fatalf("SaveSessionStateDurationFile() error = %v", err)
-	}
-	runner := autosaveCaptureRunner("workspace", "/tmp")
-	runner.outputs[strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}, "\x00")] = "1778555030\n"
-	fixture := newTmuxAutosaveSessionStateFixture(t, runner)
-	dir, cmd := fixture.storeDir, fixture.command
-	cmd.lookupEnv = func(name string) string {
-		switch name {
-		case "XDG_CONFIG_HOME":
-			return configHome
-		case sessionStateAutosaveEnv:
-			return "on"
-		default:
-			return ""
-		}
-	}
-
-	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if _, err := sessionstate.NewStore(dir).Load("workspace"); err != nil {
-		t.Fatalf("Load() error = %v, want autosave after configured interval", err)
-	}
-	wantGate := recordedTmuxCall{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_sessionstate_autosave_at", "1778555045"}}
-	if got := runner.calls[len(runner.calls)-1]; !reflect.DeepEqual(got, wantGate) {
-		t.Fatalf("last tmux call = %#v, want %#v", got, wantGate)
-	}
-}
-
-func TestTmuxAutosaveSessionStateSkipsFreshSource(t *testing.T) {
-	t.Parallel()
-
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                    "workspace\n",
-			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}, "\x00"): "fresh\n",
-		},
-	}
-	cmd := newTmuxAutosaveSessionStateFixture(t, runner).command
-
-	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"display-message", "-p", "#{session_name}"}},
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}},
-	}
-	if !reflect.DeepEqual(runner.calls, want) {
-		t.Fatalf("tmux calls = %#v, want fresh source gate only", runner.calls)
-	}
-}
-
-func TestTmuxAutosaveSessionStateSkipsWhenDisabled(t *testing.T) {
-	t.Parallel()
-
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"): "workspace\n",
-		},
-	}
-	cmd := newTmuxAutosaveSessionStateFixture(t, runner).command
-	cmd.lookupEnv = func(name string) string {
-		if name == sessionStateAutosaveEnv {
-			return "off"
-		}
-		return ""
-	}
-
-	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	want := []recordedTmuxCall{{name: "tmux", args: []string{"display-message", "-p", "#{session_name}"}}}
-	if !reflect.DeepEqual(runner.calls, want) {
-		t.Fatalf("tmux calls = %#v, want session resolution only when autosave disabled", runner.calls)
-	}
-}
-
-func TestTmuxAutosaveSessionStateProjectOverridePrecedence(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name        string
-		global      config.SessionStateToggle
-		env         string
-		project     config.SessionStateProjectToggle
-		wantSaved   bool
-		wantTmuxMin int
-	}{
-		{name: "project off global on", global: config.SessionStateToggleOn, project: config.SessionStateProjectOff, wantSaved: false, wantTmuxMin: 1},
-		{name: "project on global off", global: config.SessionStateToggleOff, project: config.SessionStateProjectOn, wantSaved: true, wantTmuxMin: 5},
-		{name: "project inherit global off", global: config.SessionStateToggleOff, project: config.SessionStateProjectInherit, wantSaved: false, wantTmuxMin: 1},
-		{name: "project on env off", global: config.SessionStateToggleOn, env: "off", project: config.SessionStateProjectOn, wantSaved: true, wantTmuxMin: 5},
-		{name: "project off env on", global: config.SessionStateToggleOff, env: "on", project: config.SessionStateProjectOff, wantSaved: false, wantTmuxMin: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			runner := autosaveCaptureRunner("workspace", "/repo")
-			fixture := newTmuxAutosaveSessionStateFixture(t, runner)
-			home, dir, cmd := fixture.home, fixture.storeDir, fixture.command
-			saveGlobalAutosaveForTest(t, home, tc.global)
-			saveProjectAutosaveForTest(t, home, "workspace", tc.project)
-			cmd.lookupEnv = func(name string) string {
-				switch name {
-				case "XDG_CONFIG_HOME":
-					return filepath.Join(home, "config")
-				case sessionStateAutosaveEnv:
-					return tc.env
-				default:
-					return ""
-				}
-			}
-
-			if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-				t.Fatalf("Run() error = %v", err)
-			}
-			_, err := sessionstate.NewStore(dir).Load("workspace")
-			if tc.wantSaved && err != nil {
-				t.Fatalf("Load() error = %v, want saved snapshot", err)
-			}
-			if !tc.wantSaved && err == nil {
-				t.Fatalf("Load() succeeded, want no autosaved snapshot")
-			}
-			if len(runner.calls) < tc.wantTmuxMin {
-				t.Fatalf("tmux calls = %#v, want at least %d calls", runner.calls, tc.wantTmuxMin)
-			}
-		})
-	}
-}
-
-func TestTmuxAutosaveSessionStateNoProjectSettingUsesGlobalFallback(t *testing.T) {
-	t.Parallel()
-
-	runner := autosaveCaptureRunner("workspace", "/repo")
-	fixture := newTmuxAutosaveSessionStateFixture(t, runner)
-	home, dir, cmd := fixture.home, fixture.storeDir, fixture.command
-	saveGlobalAutosaveForTest(t, home, config.SessionStateToggleOn)
-	cmd.lookupEnv = func(name string) string {
-		if name == "XDG_CONFIG_HOME" {
-			return filepath.Join(home, "config")
-		}
-		return ""
-	}
-
-	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if _, err := sessionstate.NewStore(dir).Load("workspace"); err != nil {
-		t.Fatalf("Load() error = %v, want global fallback autosave", err)
-	}
-}
-
-func TestTmuxAutosaveSessionStateQuietSwallowsRuntimeErrors(t *testing.T) {
-	t.Parallel()
-
-	runner := &recordingTmuxRunner{err: errors.New("tmux unavailable")}
-	cmd := newTmuxAutosaveSessionStateFixture(t, runner).command
-	cmd.lookupEnv = func(string) string { return "" }
-
-	var stderr bytes.Buffer
-	if err := cmd.Run([]string{"autosave-session-state", "--quiet"}, &bytes.Buffer{}, &stderr); err != nil {
-		t.Fatalf("Run() error = %v, want quiet nil", err)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q, want quiet", stderr.String())
 	}
 }
 

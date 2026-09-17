@@ -104,11 +104,6 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "audits Project session projections and roots; the control-root invariants it needs live in Registry.Validate",
 	},
 	{
-		File: "internal/app/quit_snapshots.go", Func: "planQuitSnapshotBatch",
-		Source: "Graph", Verdict: rootKindBoth,
-		Why: "selects only live Project roots for snapshot capture and accounts for ControlSession roots as an excluded class",
-	},
-	{
 		File: "internal/app/pin_authority.go", Func: "projectRefsOf",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "a pin is uid-or-path and both spellings need a root; pins.KindProject is the only managed pin kind",
@@ -430,7 +425,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 		counts[site.Verdict]++
 	}
 	for verdict, want := range map[rootKindVerdict]int{
-		rootKindBoth:        22,
+		rootKindBoth:        21,
 		rootKindPaired:      2,
 		rootKindProjectOnly: 21,
 		rootKindGap:         0,
@@ -439,7 +434,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 45; got != want {
+	if got, want := len(rootKindProjectionSites), 44; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

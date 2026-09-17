@@ -393,29 +393,26 @@ func settingsTestCallName(expr ast.Expr) string {
 	}
 }
 
-func TestSettingsSaveAndQuitCopyBaselineIsPreserved(t *testing.T) {
+func TestSettingsQuitCopyBaselineIsPreserved(t *testing.T) {
 	t.Parallel()
 
 	want := map[string]i18n.Key{
-		"Save Project snapshots and quit":                    "quit.action.save_and_quit",
-		"capture every live managed Project before shutdown": "quit.action.save_and_quit_help",
-		"Quit without saving":                                "quit.action.quit_without_saving",
-		"terminate without capturing Project snapshots":      "quit.action.quit_without_saving_help",
-		"Quit projmux":         "quit.title",
-		"Quit > ":              "quit.prompt",
-		"keep projmux running": "quit.action.cancel_help",
+		"terminate the app tmux runtime": "quit.action.quit_help",
+		"Quit projmux":                   "quit.title",
+		"Quit > ":                        "quit.prompt",
+		"keep projmux running":           "quit.action.cancel_help",
 	}
 	keys := make([]i18n.Key, 0, len(want))
 	for literal, key := range want {
 		if got := uiTextKeys[literal]; got != key {
-			t.Fatalf("Save and Quit copy %q key = %q, want %q", literal, got, key)
+			t.Fatalf("Quit copy %q key = %q, want %q", literal, got, key)
 		}
 		keys = append(keys, key)
 	}
 	catalog := i18n.DefaultCatalog()
 	for _, locale := range []i18n.Locale{i18n.FallbackLocale, i18n.Locale("ko-KR")} {
 		if missing := catalog.MissingLocaleKeys(locale, keys); len(missing) != 0 {
-			t.Fatalf("Save and Quit keys missing for %s: %#v", locale, missing)
+			t.Fatalf("Quit keys missing for %s: %#v", locale, missing)
 		}
 	}
 }

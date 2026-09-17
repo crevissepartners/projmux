@@ -897,7 +897,8 @@ fi
 # Row-0 HUD visibility is global presentation only. Drive all four persisted
 # combinations through the production exact-socket apply path and inspect the
 # live server after each source. One-off rows must own the whole client budget;
-# all-off must collapse to one structural row while retaining quiet autosave.
+# all-off must collapse to one structural row with no background job; no row
+# carries the retired autosave route.
 notifications_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-notifications-hud"
 usage_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-hud"
 assert_live_hud_row() {
@@ -924,8 +925,11 @@ assert_live_hud_row() {
     echo "live row 0 retained usage range while hidden: $row0" >&2
     exit 1
   fi
+  if [[ "$row0" == *"autosave-session-state"* ]]; then
+    echo "live row 0 renders the retired autosave route: $row0" >&2
+    exit 1
+  fi
   if [[ "$want_notify" == "off" && "$want_usage" == "off" ]]; then
-    [[ "$row0" == *"autosave-session-state --quiet"* ]] || { echo "all-off live row lost autosave: $row0" >&2; exit 1; }
     if [[ -n "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv 'status-format[1]')" ]]; then
       echo "all-off live status retained row 1 residue" >&2
       exit 1
@@ -1270,10 +1274,11 @@ mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'off\n' >"$XDG_CONFIG_HOME/projmux/sidebar-startup-picker"
 
 # Session State diagnostics uses the same run-unique socket and isolated XDG
-# root. Register and materialize one exact Project, capture a real snapshot,
-# prove successful autosave stays silent, inject one quiet autosave failure,
-# mutate its desired topology, project the saved snapshot back into the closed
-# Project, then delete it canonically.
+# root. Register and materialize one exact Project, capture a real snapshot
+# with the explicit CLI, prove the retained autosave route is a silent no-op
+# that neither writes a snapshot nor records an outcome (even with autosave
+# forced on and a failing tmux on PATH), mutate its desired topology, project
+# the saved snapshot back into the closed Project, then delete it canonically.
 session_state_root="$PROJMUX_SMOKE_WORKDIR/raw-session-state-project-$$"
 mkdir -p "$session_state_root"
 session_state_project_uid="$(env -u TMUX -u TMUX_PANE PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
@@ -1342,17 +1347,14 @@ env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
   "$bin" create snapshot >"$PROJMUX_SMOKE_WORKDIR/session-state-save.out"
 
 session_state_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
+session_state_snapshot="$XDG_STATE_HOME/projmux/sessions/$session_state_name.json"
+cp "$session_state_snapshot" "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before"
+session_state_sessions_before="$(ls -lA --time-style=full-iso "$XDG_STATE_HOME/projmux/sessions")"
 session_state_before_autosave="$(wc -l <"$session_state_log")"
 env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
   PROJMUX_SESSIONSTATE_AUTOSAVE=on TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
-  "$bin" internal tmux autosave-session-state --force >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave.out"
-session_state_after_autosave="$(wc -l <"$session_state_log")"
-if [[ "$session_state_before_autosave" != "$session_state_after_autosave" ]]; then
-  echo "successful autosave appended an operational event" >&2
-  exit 1
-fi
-session_state_snapshot="$XDG_STATE_HOME/projmux/sessions/$session_state_name.json"
-cp "$session_state_snapshot" "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before"
+  "$bin" internal tmux autosave-session-state --force \
+  >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave.out" 2>"$PROJMUX_SMOKE_WORKDIR/session-state-autosave.err"
 
 session_state_fail_mux="$PROJMUX_SMOKE_WORKDIR/session-state-fail-mux"
 mkdir -p "$session_state_fail_mux"
@@ -1364,7 +1366,25 @@ SESSION_STATE_FAIL_TMUX
 chmod 0755 "$session_state_fail_mux/tmux"
 env PATH="$session_state_fail_mux:$PATH" \
   PROJMUX_SESSIONSTATE_AUTOSAVE=on TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
-  "$bin" internal tmux autosave-session-state --quiet >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave-fail.out"
+  "$bin" internal tmux autosave-session-state --quiet \
+  >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/session-state-autosave-fail.err"
+for session_state_autosave_output in session-state-autosave.out session-state-autosave.err \
+  session-state-autosave-fail.out session-state-autosave-fail.err; do
+  if [[ -s "$PROJMUX_SMOKE_WORKDIR/$session_state_autosave_output" ]]; then
+    echo "retained autosave route produced output in $session_state_autosave_output" >&2
+    cat "$PROJMUX_SMOKE_WORKDIR/$session_state_autosave_output" >&2
+    exit 1
+  fi
+done
+if [[ "$session_state_before_autosave" != "$(wc -l <"$session_state_log")" ]]; then
+  echo "retained autosave route appended an operational event" >&2
+  exit 1
+fi
+if [[ "$session_state_sessions_before" != "$(ls -lA --time-style=full-iso "$XDG_STATE_HOME/projmux/sessions")" ]]; then
+  echo "retained autosave route changed the snapshot directory" >&2
+  exit 1
+fi
+cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
 
 env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
   TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
@@ -1522,8 +1542,8 @@ if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.sa
   echo "manual save did not emit exactly one closed session-state outcome" >&2
   exit 1
 fi
-if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.autosave".*"code":"session-state.autosave.failed"' "$session_state_log")" != "1" ]]; then
-  echo "quiet autosave failure did not emit exactly one closed error" >&2
+if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.autosave"' "$session_state_log")" != "0" ]]; then
+  echo "retained autosave route emitted a session-state outcome" >&2
   exit 1
 fi
 if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.restore".*"source":"manual"' "$session_state_log")" != "1" ]]; then

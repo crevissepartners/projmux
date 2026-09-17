@@ -793,35 +793,6 @@ func projectAgentCount(registry Registry, projectUID string) int {
 	return count
 }
 
-// ProjectReopenState is the closed startup state table.
-type ProjectReopenState string
-
-const (
-	ProjectReopenLive                   ProjectReopenState = "live"
-	ProjectReopenClosed                 ProjectReopenState = "closed"
-	ProjectReopenDeletedWithSnapshot    ProjectReopenState = "deleted-with-snapshot"
-	ProjectReopenDeletedWithoutSnapshot ProjectReopenState = "deleted-without-snapshot"
-)
-
-// ProjectOpenAction is the user's one-step startup choice.
-type ProjectOpenAction string
-
-const (
-	ProjectOpenContinue ProjectOpenAction = "continue"
-	ProjectOpenFresh    ProjectOpenAction = "open-fresh"
-)
-
-// ProjectOpenSource is the authority from which topology is opened.
-type ProjectOpenSource string
-
-const (
-	ProjectOpenSourceLiveRuntime      ProjectOpenSource = "live-runtime"
-	ProjectOpenSourceRegistryTopology ProjectOpenSource = "registry-topology"
-	ProjectOpenSourceSnapshot         ProjectOpenSource = "snapshot"
-	ProjectOpenSourceRoot             ProjectOpenSource = "filesystem-root"
-	ProjectOpenSourceNone             ProjectOpenSource = "none"
-)
-
 // ProjectStartupWrite is one member of an atomic startup write set.
 type ProjectStartupWrite string
 
@@ -833,7 +804,6 @@ const (
 	ProjectStartupWriteCreateProject         ProjectStartupWrite = "create-project-with-new-uid"
 	ProjectStartupWriteCreateCanonicalWindow ProjectStartupWrite = "create-canonical-window"
 	ProjectStartupWriteCreateCanonicalShell  ProjectStartupWrite = "create-canonical-shell"
-	ProjectStartupWriteRestoreSnapshotGraph  ProjectStartupWrite = "restore-snapshot-topology"
 )
 
 // ProjectLifecycleState is the desired Project shape at the lifecycle/startup
@@ -908,19 +878,17 @@ type ProjectLifecyclePlan struct {
 	Reason         string
 }
 
-// ProjectLifecyclePreconditions carries external evidence required by one
-// cell without widening the closed three-state table. A usable snapshot is
-// relevant only to deleted+Continue; runtime absence is deliberately not a
-// precondition because it never grants Project identity authority.
-type ProjectLifecyclePreconditions struct {
-	UsableSnapshot bool
-}
+// ProjectLifecyclePreconditions is the external-evidence slot of the closed
+// three-state table. No cell currently needs outside evidence: runtime absence
+// never grants Project identity authority, and snapshot files are not startup
+// evidence, so deleted+Continue is unconditionally unavailable.
+type ProjectLifecyclePreconditions struct{}
 
 // DecideProjectLifecycle returns the single lifecycle/startup state table.
 // Ordinary clean Window close is intentionally not an action in this table: it
 // is owned by the causal Window-close plan and never appears in these write
 // sets.
-func DecideProjectLifecycle(state ProjectLifecycleState, action ProjectLifecycleAction, preconditions ProjectLifecyclePreconditions) ProjectLifecyclePlan {
+func DecideProjectLifecycle(state ProjectLifecycleState, action ProjectLifecycleAction, _ ProjectLifecyclePreconditions) ProjectLifecyclePlan {
 	plan := ProjectLifecyclePlan{
 		State: state, Action: action, Available: true,
 		Operation:      lifecycleOperationForAction(action),
@@ -964,18 +932,11 @@ func DecideProjectLifecycle(state ProjectLifecycleState, action ProjectLifecycle
 		}
 	case ProjectLifecycleDeleted:
 		switch action {
-		case ProjectLifecycleContinue:
-			if !preconditions.UsableSnapshot {
-				return unavailableProjectLifecyclePlan(state, action, "no-usable-snapshot")
-			}
-			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDCreated, ProjectDescendantUIDsCreated
-			plan.AtomicWriteSet = []ProjectStartupWrite{ProjectStartupWriteCreateProject, ProjectStartupWriteRestoreSnapshotGraph}
-			plan.Reason = "restore-usable-snapshot-under-new-identity"
 		case ProjectLifecycleFresh:
 			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDCreated, ProjectDescendantUIDsCreated
 			plan.AtomicWriteSet = []ProjectStartupWrite{ProjectStartupWriteCreateProject, ProjectStartupWriteCreateCanonicalWindow, ProjectStartupWriteCreateCanonicalShell}
 			plan.Reason = "create-fresh-project"
-		case ProjectLifecycleStop, ProjectLifecycleDeleteProject:
+		case ProjectLifecycleStop, ProjectLifecycleContinue, ProjectLifecycleDeleteProject:
 			return unavailableProjectLifecyclePlan(state, action, "project-is-not-registered")
 		default:
 			return unavailableProjectLifecyclePlan(state, action, "invalid-action")
@@ -1104,87 +1065,9 @@ func PlanProjectFreshReplacement(registry Registry, projectUID string, opts Regi
 	return plan, nil
 }
 
-// ProjectOpenReason makes unavailable and invalid cells non-ambiguous.
-type ProjectOpenReason string
-
-const (
-	ProjectOpenReasonAttachLive        ProjectOpenReason = "attach-live-project"
-	ProjectOpenReasonMaterializeClosed ProjectOpenReason = "materialize-closed-project"
-	ProjectOpenReasonRestoreSnapshot   ProjectOpenReason = "restore-usable-snapshot"
-	ProjectOpenReasonNoSnapshot        ProjectOpenReason = "no-usable-snapshot"
-	ProjectOpenReasonFreshReplace      ProjectOpenReason = "replace-existing-project"
-	ProjectOpenReasonFreshCreate       ProjectOpenReason = "create-fresh-project"
-	ProjectOpenReasonInvalid           ProjectOpenReason = "invalid-state-or-action"
-)
-
-// ProjectOpenPlan is one total startup state-table cell.
-type ProjectOpenPlan struct {
-	Available         bool
-	Source            ProjectOpenSource
-	AtomicWriteSet    []ProjectStartupWrite
-	Reason            ProjectOpenReason
-	NewProjectUID     bool
-	AdditionalConfirm bool
-	ExternalAssets    ExternalAssetOutcome
-}
-
 func projectPreservedAssets() ExternalAssetOutcome {
 	return ExternalAssetOutcome{RootDirectory: AssetPreserve, GitMetadata: AssetPreserve,
 		Worktrees: AssetPreserve, SnapshotBytes: AssetPreserve}
-}
-
-// DecideProjectOpen is the compatibility projection used by the older
-// live/closed/deleted-with-snapshot UI classifier. It adds runtime/source labels
-// only; Fresh and Continue identity outcomes and write sets always come from
-// DecideProjectLifecycle. Unavailable Continue never silently falls back to
-// Fresh.
-func DecideProjectOpen(state ProjectReopenState, action ProjectOpenAction) ProjectOpenPlan {
-	assets := projectPreservedAssets()
-	invalid := ProjectOpenPlan{Available: false, Source: ProjectOpenSourceNone,
-		AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteNone},
-		Reason:         ProjectOpenReasonInvalid, ExternalAssets: assets}
-	if action == ProjectOpenFresh {
-		lifecycleState := ProjectLifecycleDeleted
-		if state == ProjectReopenLive || state == ProjectReopenClosed {
-			lifecycleState = ProjectLifecycleRetainedWindows
-		} else if state != ProjectReopenDeletedWithSnapshot && state != ProjectReopenDeletedWithoutSnapshot {
-			return invalid
-		}
-		cell := DecideProjectLifecycle(lifecycleState, ProjectLifecycleFresh, ProjectLifecyclePreconditions{})
-		reason := ProjectOpenReasonFreshCreate
-		if lifecycleState != ProjectLifecycleDeleted {
-			reason = ProjectOpenReasonFreshReplace
-		}
-		return ProjectOpenPlan{Available: cell.Available, Source: ProjectOpenSourceRoot,
-			AtomicWriteSet: slices.Clone(cell.AtomicWriteSet), Reason: reason,
-			NewProjectUID: cell.ProjectUID == ProjectUIDReplaced || cell.ProjectUID == ProjectUIDCreated, ExternalAssets: cell.ExternalAssets}
-	}
-	if action != ProjectOpenContinue {
-		return invalid
-	}
-	switch state {
-	case ProjectReopenLive:
-		return ProjectOpenPlan{Available: true, Source: ProjectOpenSourceLiveRuntime,
-			AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteNone},
-			Reason:         ProjectOpenReasonAttachLive, ExternalAssets: assets}
-	case ProjectReopenClosed:
-		cell := DecideProjectLifecycle(ProjectLifecycleRetainedWindows, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
-		return ProjectOpenPlan{Available: cell.Available, Source: ProjectOpenSourceRegistryTopology,
-			AtomicWriteSet: slices.Clone(cell.AtomicWriteSet),
-			Reason:         ProjectOpenReasonMaterializeClosed, ExternalAssets: cell.ExternalAssets}
-	case ProjectReopenDeletedWithSnapshot:
-		cell := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{UsableSnapshot: true})
-		return ProjectOpenPlan{Available: cell.Available, Source: ProjectOpenSourceSnapshot,
-			AtomicWriteSet: slices.Clone(cell.AtomicWriteSet), Reason: ProjectOpenReasonRestoreSnapshot,
-			NewProjectUID: cell.ProjectUID == ProjectUIDCreated, ExternalAssets: cell.ExternalAssets}
-	case ProjectReopenDeletedWithoutSnapshot:
-		cell := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
-		return ProjectOpenPlan{Available: cell.Available, Source: ProjectOpenSourceNone,
-			AtomicWriteSet: slices.Clone(cell.AtomicWriteSet), Reason: ProjectOpenReasonNoSnapshot,
-			NewProjectUID: false, ExternalAssets: cell.ExternalAssets}
-	default:
-		return invalid
-	}
 }
 
 // EqualTeardownPlans exists for property tests and controller callers that need

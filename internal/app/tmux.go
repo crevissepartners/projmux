@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
@@ -23,7 +22,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -75,22 +73,18 @@ type windowRenameIntentFunc func(windowRenameIntent, io.Writer, io.Writer) error
 type paneRenameIntentFunc func(paneRenameIntent, io.Writer, io.Writer) error
 
 type tmuxCommand struct {
-	diagnostics             *diagnostics.LifecycleRecorder
-	sessionStateDiagnostics *diagnostics.SessionStateRecorder
-	popup                   tmuxPopupClient
-	executable              func() (string, error)
-	rawExecutable           func() (string, error)
-	runner                  tmuxRunner
-	lookupEnv               func(string) string
-	homeDir                 func() (string, error)
-	writeFile               func(string, []byte, os.FileMode) error
-	readFile                func(string) ([]byte, error)
-	statFile                func(string) (os.FileInfo, error)
-	now                     func() time.Time
-	sessionStore            func() (sessionstate.Store, error)
-	popupOptions            func(sessionName string, ctx tmuxPopupContext) inttmux.PopupOptions
-	switchPopup             func(ctx tmuxPopupContext) inttmux.PopupOptions
-	sessionsPopup           func(ctx tmuxPopupContext) inttmux.PopupOptions
+	diagnostics   *diagnostics.LifecycleRecorder
+	popup         tmuxPopupClient
+	executable    func() (string, error)
+	rawExecutable func() (string, error)
+	runner        tmuxRunner
+	lookupEnv     func(string) string
+	homeDir       func() (string, error)
+	writeFile     func(string, []byte, os.FileMode) error
+	readFile      func(string) ([]byte, error)
+	popupOptions  func(sessionName string, ctx tmuxPopupContext) inttmux.PopupOptions
+	switchPopup   func(ctx tmuxPopupContext) inttmux.PopupOptions
+	sessionsPopup func(ctx tmuxPopupContext) inttmux.PopupOptions
 	// resources is the resource registry seam of the lifecycle triggers. It is
 	// the only tmux helper route family that touches the registry, and it is a
 	// field so a test can point convergence at a temporary store.
@@ -137,8 +131,6 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 		homeDir:       os.UserHomeDir,
 		writeFile:     os.WriteFile,
 		readFile:      os.ReadFile,
-		now:           time.Now,
-		sessionStore:  sessionstate.NewDefaultStoreFromEnv,
 		resources:     newResourceStore(),
 		popupOptions:  defaultPopupPreviewOptions,
 		switchPopup:   defaultPopupSwitchOptions,
@@ -228,175 +220,24 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-const (
-	sessionStateAutosaveOption          = "@projmux_sessionstate_autosave_at"
-	defaultSessionStateAutosaveInterval = 60 * time.Second
-)
-
+// runAutosaveSessionState is the retained no-op behind the hidden
+// `internal tmux autosave-session-state` route. projmux no longer saves Project
+// state from a status tick, but tmux configs rendered by older installs still
+// call this route from status-format until the next config apply. It accepts
+// and ignores the historical flags, and performs no tmux call, no snapshot
+// store access, no diagnostics record, and no filesystem write.
 func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("tmux autosave-session-state", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	quiet := fs.Bool("quiet", false, "suppress autosave errors")
-	force := fs.Bool("force", false, "bypass the autosave debounce gate")
+	_ = fs.Bool("quiet", false, "ignored; the route is a retained no-op")
+	_ = fs.Bool("force", false, "ignored; the route is a retained no-op")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("tmux autosave-session-state does not accept positional arguments")
 	}
-	started := c.nowTime()
-	if c.runner == nil {
-		return c.finishAutosaveSessionState(errors.New("configure tmux runner: tmux runner is not configured"), *quiet, stderr, started)
-	}
-	if c.sessionStore == nil {
-		return c.finishAutosaveSessionState(errors.New("configure sessionstate store: sessionstate store is not configured"), *quiet, stderr, started)
-	}
-	ctx := context.Background()
-	now := c.nowTime()
-	sessionName, err := c.currentTmuxSessionName(ctx)
-	if err != nil {
-		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
-	}
-	autosave, err := c.sessionStateAutosaveEnabledForSession(ctx, sessionName)
-	if err != nil {
-		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
-	}
-	if !autosave {
-		return nil
-	}
-	client := inttmux.NewClient(c.runner)
-	source, err := client.SessionStateSourceResult(ctx, sessionName)
-	if err != nil {
-		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
-	}
-	if sessionstate.SourceLabel(source) == sessionstate.SourceFresh {
-		return nil
-	}
-	if !*force {
-		intervalState, err := (&settingsCommand{homeDir: c.homeDir, lookupEnv: c.lookupEnv}).currentSessionStateAutosaveIntervalResult()
-		if err != nil {
-			return c.finishAutosaveSessionState(err, *quiet, stderr, started)
-		}
-		interval := intervalState.Duration
-		ok, err := c.sessionStateAutosaveDue(ctx, sessionName, now, interval)
-		if err != nil || !ok {
-			return c.finishAutosaveSessionState(err, *quiet, stderr, started)
-		}
-	}
-
-	store, err := c.sessionStore()
-	if err != nil {
-		return c.finishAutosaveSessionState(fmt.Errorf("resolve sessionstate store: %w", err), *quiet, stderr, started)
-	}
-	var transform func(sessionstate.Snapshot) (sessionstate.Snapshot, error)
-	if c.resources != nil && c.resources.snapshot != nil {
-		registry, loadErr := c.resources.snapshot()
-		if loadErr != nil {
-			return c.finishAutosaveSessionState(MapMetadataError(loadErr), *quiet, stderr, started)
-		}
-		if project, found, resolveErr := snapshotProjectForSession(registry, sessionName); resolveErr != nil {
-			return c.finishAutosaveSessionState(resolveErr, *quiet, stderr, started)
-		} else if found {
-			transform = snapshotMetadataTransform(registry, project.Metadata.UID)
-		}
-	}
-	if _, err := client.SaveSessionSnapshotWithTransform(ctx, store, sessionName, now, transform); err != nil {
-		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
-	}
-	_, err = c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", sessionStateAutosaveOption, strconv.FormatInt(now.Unix(), 10))
-	return c.finishAutosaveSessionState(err, *quiet, stderr, started)
-}
-
-func (c *tmuxCommand) sessionStateAutosaveEnabledForSession(ctx context.Context, sessionName string) (bool, error) {
-	mode, found, err := c.projectSessionStateAutosaveModeForSession(ctx, sessionName)
-	if err != nil {
-		return false, err
-	}
-	if found {
-		switch mode {
-		case config.SessionStateProjectOn:
-			return true, nil
-		case config.SessionStateProjectOff:
-			return false, nil
-		}
-	}
-	return sessionStateAutosaveEnabledResult(c.homeDir, c.lookupEnv)
-}
-
-func (c *tmuxCommand) projectSessionStateAutosaveModeForSession(ctx context.Context, sessionName string) (config.SessionStateProjectToggle, bool, error) {
-	_ = ctx
-	sessionName = strings.TrimSpace(sessionName)
-	if sessionName == "" {
-		return config.SessionStateProjectInherit, false, nil
-	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return config.SessionStateProjectInherit, false, err
-	}
-	path := paths.ProjectSessionStateAutosaveFile(sessionName)
-	statFile := c.statFile
-	if statFile == nil {
-		statFile = os.Stat
-	}
-	if _, err := statFile(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return config.SessionStateProjectInherit, false, nil
-		}
-		return config.SessionStateProjectInherit, false, fmt.Errorf("stat project sessionstate autosave config: %w", err)
-	}
-	mode, err := config.LoadSessionStateProjectToggleFile(path)
-	if err != nil {
-		return config.SessionStateProjectInherit, false, err
-	}
-	return mode, true, nil
-}
-
-func (c *tmuxCommand) finishAutosaveSessionState(err error, quiet bool, stderr io.Writer, started time.Time) error {
-	c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateAutosave, diagnostics.SessionStateSourceAutosave, started, diagnostics.SessionStateCounts{}, err)
-	if err == nil {
-		return nil
-	}
-	if quiet {
-		if envValue(c.lookupEnv, "PROJMUX_SESSIONSTATE_DEBUG") != "" && stderr != nil {
-			_, _ = fmt.Fprintf(stderr, "projmux sessionstate autosave: %v\n", err)
-		}
-		return nil
-	}
-	return err
-}
-
-func (c *tmuxCommand) sessionStateAutosaveDue(ctx context.Context, sessionName string, now time.Time, interval time.Duration) (bool, error) {
-	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "#{"+sessionStateAutosaveOption+"}")
-	if err != nil {
-		return false, fmt.Errorf("read sessionstate autosave gate: %w", err)
-	}
-	last := parsePositiveInt(strings.TrimSpace(string(output)))
-	if last <= 0 {
-		return true, nil
-	}
-	if interval <= 0 {
-		interval = defaultSessionStateAutosaveInterval
-	}
-	return now.Sub(time.Unix(int64(last), 0)) >= interval, nil
-}
-
-func (c *tmuxCommand) currentTmuxSessionName(ctx context.Context) (string, error) {
-	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "#{session_name}")
-	if err != nil {
-		return "", fmt.Errorf("resolve current tmux session: %w", err)
-	}
-	sessionName := strings.TrimSpace(string(output))
-	if sessionName == "" {
-		return "", errors.New("current tmux session is unavailable")
-	}
-	return sessionName, nil
-}
-
-func (c *tmuxCommand) nowTime() time.Time {
-	if c.now == nil {
-		return time.Now()
-	}
-	return c.now()
+	return nil
 }
 
 func (c *tmuxCommand) runRebalancePanes(args []string, stderr io.Writer) error {
@@ -2549,29 +2390,21 @@ func statusbarUsageBudgetFormat() string {
 // erase the usage segment entirely. Notify's floor therefore wins below 140, and
 // usage gets `client_width - 20`. That is never less than PR #624's even split
 // gave, and strictly more above 40 columns.
-func statusbarAuxLineFormat(bin string, autosave bool) string {
-	line := "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width " + statusbarNotifyBudgetFormat() + ")#[norange]" +
+func statusbarAuxLineFormat(bin string) string {
+	return "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width " + statusbarNotifyBudgetFormat() + ")#[norange]" +
 		"#[align=right range=user|usage]#(" + bin + " internal status usage --max-width " + statusbarUsageBudgetFormat() + ")#[norange]"
-	if autosave {
-		line += "#(" + bin + " internal tmux autosave-session-state --quiet)"
-	}
-	return line
 }
 
-func statusbarAuxLineFormatWithVisibility(bin string, autosave bool, visibility statusbarHUDVisibilitySet) string {
-	var line string
+func statusbarAuxLineFormatWithVisibility(bin string, visibility statusbarHUDVisibilitySet) string {
 	switch {
 	case visibility.visible(statusbarHUDNotifications) && visibility.visible(statusbarHUDAgentUsage):
-		return statusbarAuxLineFormat(bin, autosave)
+		return statusbarAuxLineFormat(bin)
 	case visibility.visible(statusbarHUDNotifications):
-		line = "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width " + statusbarClientWidthFormat + ")#[norange]"
+		return "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width " + statusbarClientWidthFormat + ")#[norange]"
 	case visibility.visible(statusbarHUDAgentUsage):
-		line = "#[align=right range=user|usage]#(" + bin + " internal status usage --max-width " + statusbarClientWidthFormat + ")#[norange]"
+		return "#[align=right range=user|usage]#(" + bin + " internal status usage --max-width " + statusbarClientWidthFormat + ")#[norange]"
 	}
-	if autosave {
-		line += "#(" + bin + " internal tmux autosave-session-state --quiet)"
-	}
-	return line
+	return ""
 }
 
 func statusbarRowCount(visibility statusbarHUDVisibilitySet) int {
@@ -2589,25 +2422,23 @@ func statusbarRowCountOption(visibility statusbarHUDVisibilitySet) string {
 	return strconv.Itoa(statusbarRowCount(visibility))
 }
 
-// statusbarRowFormatLines keeps the app's autosave side effect alive when both
-// HUDs are hidden. In that all-off case the structural Window row moves to
-// status-format[0], the quiet autosave job is appended to that surviving row,
-// and stale higher rows are explicitly unset so tmux cannot retain a blank HUD
-// line from an older generated config.
-func statusbarRowFormatLines(bin string, autosave bool, visibility statusbarHUDVisibilitySet) []string {
+// statusbarRowFormatLines renders the status-format rows for the HUD
+// visibility. When either HUD is visible the HUD row is status-format[0] and the
+// structural Window row is status-format[1]. When both HUDs are hidden the
+// layout collapses to one row: the Window row moves to status-format[0], and
+// stale higher rows are explicitly unset so tmux cannot retain a blank HUD line
+// from an older generated config. No row carries a background job besides the
+// visible HUD segments.
+func statusbarRowFormatLines(bin string, visibility statusbarHUDVisibilitySet) []string {
 	if visibility.anyVisible() {
 		return []string{
-			"set -g status-format[0] " + tmuxConfigQuote(statusbarAuxLineFormatWithVisibility(bin, autosave, visibility)),
+			"set -g status-format[0] " + tmuxConfigQuote(statusbarAuxLineFormatWithVisibility(bin, visibility)),
 			"set -g status-format[1] " + tmuxConfigQuote(statusbarWindowLineFormat()),
 			"set -gu status-format[2]",
 		}
 	}
-	row := statusbarWindowLineFormat()
-	if autosave {
-		row += "#(" + bin + " internal tmux autosave-session-state --quiet)"
-	}
 	return []string{
-		"set -g status-format[0] " + tmuxConfigQuote(row),
+		"set -g status-format[0] " + tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[1]",
 		"set -gu status-format[2]",
 	}
@@ -2784,7 +2615,7 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		"set -g status-left "+tmuxConfigQuote(statusbarRowOneProjectFormat(bin, roles, rowOneVisibility)),
 		"set -g status-right "+tmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon+" projmux")),
 	)
-	lines = append(lines, statusbarRowFormatLines(bin, false, hudVisibility)...)
+	lines = append(lines, statusbarRowFormatLines(bin, hudVisibility)...)
 	// Always record generated sequence state. If keymap.toml was removed
 	// entirely, the empty current trie must still overwrite the roots/tables
 	// recorded by the last successful source.
@@ -3011,7 +2842,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 		"set -g status-left "+tmuxConfigQuote(statusbarRowOneProjectFormat(bin, roles, rowOneVisibility)),
 		"set -g status-right "+tmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon)),
 	)
-	lines = append(lines, statusbarRowFormatLines(bin, true, hudVisibility)...)
+	lines = append(lines, statusbarRowFormatLines(bin, hudVisibility)...)
 	return withTmuxConfigDigest(strings.Join(lines, "\n") + "\n")
 }
 

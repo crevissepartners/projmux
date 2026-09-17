@@ -1200,33 +1200,14 @@ func (c *settingsCommand) projectSessionStateIdentity(ctx settingsProjectContext
 	return projectSessionStateIdentity{Project: ctx, Session: sessionName}
 }
 
-func sessionStateAutosaveEnabledResult(homeDir func() (string, error), lookupEnv func(string) string) (bool, error) {
-	return sessionStateToggleEnabledDefaultResult(homeDir, lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string {
-		return paths.SessionStateAutosaveFile()
-	})
-}
-
 func sidebarStartupPickerEnabled(homeDir func() (string, error), lookupEnv func(string) string) bool {
 	return sidebarStartupPickerState(homeDir, lookupEnv).Mode.Enabled()
 }
 
-func sessionStateToggleEnabledDefaultResult(homeDir func() (string, error), lookupEnv func(string) string, envName string, fallback config.SessionStateToggle, file func(config.Paths) string) (bool, error) {
-	if lookupEnv == nil {
-		lookupEnv = os.Getenv
-	}
-	if raw := strings.TrimSpace(lookupEnv(envName)); raw != "" {
-		return config.NormalizeSessionStateToggle(raw).Enabled(), nil
-	}
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return fallback.Enabled(), err
-	}
-	mode, err := config.LoadSessionStateToggleFileDefault(file(paths), fallback)
-	if err != nil {
-		return fallback.Enabled(), err
-	}
-	return mode.Enabled(), nil
-}
+// defaultSessionStateAutosaveInterval is the interval the Settings Snapshots
+// page shows when no saved interval exists. The runtime no longer autosaves, so
+// the value is display-only.
+const defaultSessionStateAutosaveInterval = 60 * time.Second
 
 const (
 	settingsSessionStateAutosaveDetail             = settingsActionPrefixSessionState + "view-autosave"

@@ -47,35 +47,35 @@ func appLightThemeConfig() theme.ThemeConfig {
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
 		"standalone": "ef41840d1a366df2162db5651ed8673932698633e0991c1f75e1065532dcbd61",
-		"app":        "c794ec4ab1d12cb2e24dec48a21387fffdd2ead8eae832ed378848dcafc89e67",
+		"app":        "95af88faa28f713fa98e7fb856881a02702a50c920272c57699f1d2885c90acb",
 	},
 	"projmux": {
 		"standalone": "bc9602d9462db9e00969da9b8f330b8d72973e482e7da112993d5316678c2f86",
-		"app":        "3955f99d895cffacce380914d42ef6f0571acc8e8ef5417b0be0b7bcda7dda13",
+		"app":        "e837a3cb855f8e6cc8385c69aaa531d009a8cde96a01e751ed69be937787711c",
 	},
 	"blue-hour": {
 		"standalone": "93659cfcb9fd60b346402d3e971b32fdef5af48d4f3280256906b7dbd2b9e76d",
-		"app":        "090331a20f734eb2725448ac74ed2ddbcb8ac625d15eedee26a5b61573be4ff1",
+		"app":        "ee5717ece9b3934732a0f81bf3e00ede97ba5ed22323ff7ff1f857c81eaa0d52",
 	},
 	"carbon-violet": {
 		"standalone": "cbf1d51aa6c4623a180ef4135550569205e135a2c63dfd501242b8c8e9aca2e5",
-		"app":        "c05aa9a79b5aa0e6a5e7dfa9a7a710ebb59aa254bdfdb476ec4290045f4a32fe",
+		"app":        "a72520fc91e46f8e74b2fef1347b3c74eea92bf3fc0ea44d81e0a9ab87f2e0fc",
 	},
 	"ember": {
 		"standalone": "4301ccb673b86fe2df0b623cf20f4855afa2e69fed123813a543b1f698d9f7fe",
-		"app":        "aaa22e6e8819469327e7ee1042131d9d77e206ff367d1f611616e1e78a586c51",
+		"app":        "5862316c7fb3e2b3250cf38ffd09d6e9f4934e8160dfc0f25c6b68bf745d70d6",
 	},
 	"forest": {
 		"standalone": "6e8e4b4463176ba41b45484b3354c71693147a05c3e187a9fd2f9fdb910591d1",
-		"app":        "1b4d9eca039c47f1d40ee9dc5289a52d1c956e16ea85e2709530ed1ae691b951",
+		"app":        "29a3a30ebd01cd42d30644225fce51f43d0fce07b0dd3fd405a2f785e0517ead",
 	},
 	"rose": {
 		"standalone": "34231beb2b536cd4348bd935097d2fa4ac2707b263ab14d823a592daef5c36d4",
-		"app":        "4f4277ec6b758d8f022de1246990951d78afaf265ab13479a6cea1175e2a77e1",
+		"app":        "0ea179e8120924034e90de66dd49e8e19283152903632a8c66311898241bb38f",
 	},
 	"high-contrast": {
 		"standalone": "8112d73615d762215fc2da24fb186ec4a3792c81362270e2da4b8b47c9469b52",
-		"app":        "635ec583e05cebe290d4e772a4ea38b6bb3d78d8a296df5f4839712f40b1c507",
+		"app":        "92e897c6fdd991f1ddcd1f4502cd6682b35911e98d85d4c87916258992e77c26",
 	},
 }
 
@@ -93,7 +93,10 @@ var brightPhase2ConfigGoldens = map[string]map[string]string{
 // digest stayed byte-identical. Every digest was rebaselined once more when the
 // MouseDown3Pane Kill item gained the identity-mirror guard with tmux's stock
 // kill-pane branch (both configs) and the app config began replacing tmux's
-// stock Window and Pane menus. Theme rendering itself is unchanged, which is
+// stock Window and Pane menus. The app digests were rebaselined again when the
+// status-format[0] row stopped carrying the retired autosave job (that row and
+// the embedded config digest are the only changed lines); every standalone
+// digest stayed byte-identical. Theme rendering itself is unchanged, which is
 // what this test still pins.
 func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 	t.Parallel()

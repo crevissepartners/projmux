@@ -74,9 +74,11 @@ identifiers are never projected.
 Direct and popup save, Settings latest/named save, direct and Settings delete,
 deduplicated prune delete, and actual latest/named project-startup replay own
 these outcomes. Preview, dry-run, and nested store/replay calls do not.
-Autosave success and disabled, not-due, or fresh no-ops always write zero
-records; a real autosave failure writes exactly one error even when `--quiet`
-preserves its historical successful exit. Session State logical ownership
+projmux no longer emits `session-state.autosave` records: the retained
+`internal tmux autosave-session-state` route is a no-op that writes nothing.
+The `session-state.autosave` operation, its `.failed` code, and the `autosave`
+source stay in the closed vocabulary so records written by older versions still
+validate and parse. Session State logical ownership
 suppresses a generic top-level outcome even when journal append fails. An
 actual restore may also produce its runtime lifecycle pair with the same run
 ID; the lifecycle pair and Session State terminal outcome describe different

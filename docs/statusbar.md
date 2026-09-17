@@ -37,9 +37,8 @@ row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
   sole range receives the full `#{client_width}` budget and the absent range and
   alignment are not emitted. When both are hidden, tmux collapses to one line
   with `status on`,
-  moves the native Window row to `status-format[0]`, unsets stale higher rows,
-  and keeps the app's quiet Session State autosave job on that surviving row;
-  there is no empty HUD row. These toggles hide presentation only and do not
+  moves the native Window row to `status-format[0]`, and unsets stale higher
+  rows; there is no empty HUD row. No row carries an autosave job. These toggles hide presentation only and do not
   mutate the Notification queue or usage collection/cache/API state.
   Provider/window visibility also changes only the ambient status projection;
   the cached popup and explicit `agent usage` table/JSON stay lossless. If every
