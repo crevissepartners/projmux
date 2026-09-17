@@ -58,6 +58,19 @@ func codexDaemonGuidanceCases() []codexDaemonGuidanceCase {
 			guidance: "`codex app-server daemon bootstrap`",
 		},
 		{name: "daemon-not-running", health: dead, guidance: "`codex app-server daemon start`"},
+		{
+			// The shape every installed probe currently reports: the daemon's
+			// version evidence cannot be matched to the attached endpoint.
+			name: "ownership-unknown-skew",
+			health: func() codexappserver.Health {
+				health := skew(codexappserver.ManagerUnknown, codexappserver.NativeActionRefusalOwnershipUnknown,
+					codexappserver.OperatorRecoveryInspectProcessOwnership)
+				health.ManagerEvidence = &codexappserver.ManagerEvidence{Status: "running", Backend: "pid", Result: "observed", Agreement: "insufficient", Version: "0.153.4"}
+				health.RunningVersion = ""
+				return health
+			}(),
+			guidance: "`codex app-server daemon restart`",
+		},
 	}
 }
 

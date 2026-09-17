@@ -218,12 +218,20 @@ func (e *codexNativeRouteError) Unwrap() error { return e.err }
 // unreachable, or speaks another protocol.
 const codexDaemonStartGuidance = "Start the shared Codex app server with `codex app-server daemon start`, or run `codex app-server daemon restart` after upgrading Codex, then retry."
 
+// codexDaemonOwnerAgreedGuidance follows the ownership-inspection recovery. It
+// names the daemon step only as the operator's own choice once the owner is
+// known, and never the unmanaged bootstrap prescription.
+const codexDaemonOwnerAgreedGuidance = "Once the owner agrees, `codex app-server daemon restart` replaces an app server the official daemon manages."
+
 // codexDaemonGuidance names the `codex app-server daemon` step that makes the
 // default endpoint attachable, or nothing for a ready endpoint whose readiness
 // decision needs no recovery. It is guidance only: Projmux never runs it from a
 // create, and it never launches a private app-server in its place.
 func codexDaemonGuidance(health codexappserver.Health) string {
 	if guidance := health.OperatorRecovery.Guidance(); guidance != "" {
+		if health.OperatorRecovery == codexappserver.OperatorRecoveryInspectProcessOwnership {
+			return guidance + " " + codexDaemonOwnerAgreedGuidance
+		}
 		return guidance
 	}
 	if health.EndpointReadiness != codexappserver.EndpointReady {
@@ -612,7 +620,7 @@ func nativeCreatePreparationRefusalForCapability(spelling string, err error, cap
 	return errors.New(spelling + ": native Codex thread preparation is unavailable (" + nativeThreadReason(err) +
 		") and no provider conversation was mutated; refusing to create a managed Agent with no native thread binding. " +
 		"Re-run with " + interactiveOnlyFlag + " for a plain interactive Codex Agent with no native turn control, " +
-		"or make the shared Codex app server attachable with `codex app-server daemon` (the native error names the exact step). Install capability " + string(guidance.Capability) + ": " +
+		"or make the shared Codex app server attachable through `codex app-server daemon` as the operator action below describes. Install capability " + string(guidance.Capability) + ": " +
 		guidance.Text() + ". Native error: " + err.Error())
 }
 
