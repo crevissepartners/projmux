@@ -77,13 +77,6 @@ func testReportCommand(t *testing.T) (*diagnosticsCommand, string, string) {
 			DryRunCommand: reportThread,
 		}}
 	}
-	doctor.resumeDiagnostics = func() []doctorSessionStateResumeDiagnostic {
-		return []doctorSessionStateResumeDiagnostic{{
-			Session: reportSession, WindowIndex: 17017, PaneIndex: 19019, Agent: "codex", Status: "stale",
-			Confidence: "high", ResumeSource: reportRouting, Reason: reportPrompt,
-			SnapshotPath: filepath.Join(home, reportWindow, reportPane),
-		}}
-	}
 	doctor.appServerHealth = func(codexappserver.TriggerKind, bool) codexappserver.Health {
 		health := codexappserver.Decide(
 			codexappserver.AvailabilityUnavailable,
@@ -247,22 +240,8 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 			t.Fatalf("doctor codex_app_server.%s = %#v, want %q", field, appServer[field], want)
 		}
 	}
-	resume, ok := doctor["session_state_resume"].([]any)
-	if !ok || len(resume) != 1 {
-		t.Fatalf("doctor session_state_resume = %#v", doctor["session_state_resume"])
-	}
-	resumeRow, ok := resume[0].(map[string]any)
-	if !ok {
-		t.Fatalf("doctor resume row = %#v", resume[0])
-	}
-	for _, field := range []string{"window_index", "pane_index"} {
-		value, ok := resumeRow[field].(string)
-		if !ok || !strings.HasPrefix(value, "sha256:") {
-			t.Fatalf("doctor redacted routing field %s = %#v, want hash string", field, resumeRow[field])
-		}
-	}
-	if bytes.Contains(entries["doctor.json"], []byte(`"window_index": 17017`)) || bytes.Contains(entries["doctor.json"], []byte(`"pane_index": 19019`)) {
-		t.Fatalf("doctor numeric routing ID survived redaction:\n%s", entries["doctor.json"])
+	if _, present := doctor["session_state_resume"]; present {
+		t.Fatalf("doctor still reports the removed session_state_resume section: %#v", doctor["session_state_resume"])
 	}
 	configCount := -1
 	for _, entry := range manifest.Entries {
@@ -273,7 +252,7 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 	if configCount != 2 {
 		t.Fatalf("manifest config structural numeric count = %d, want 2: %#v", configCount, manifest.Entries)
 	}
-	for _, safe := range []string{`"name": "tmux"`, `"name": "git"`, `"status": "ok"`, `"provider_id": "codex"`, `"agent": "codex"`, `"confidence": "high"`, `"severity": "warning"`, `"code": "runtime.socket.unreachable"`, `"remediation": "start-projmux-runtime"`} {
+	for _, safe := range []string{`"name": "tmux"`, `"name": "git"`, `"status": "ok"`, `"provider_id": "codex"`, `"severity": "warning"`, `"code": "runtime.socket.unreachable"`, `"remediation": "start-projmux-runtime"`} {
 		if !bytes.Contains(entries["doctor.json"], []byte(safe)) {
 			t.Fatalf("doctor report lost safe diagnostic value %q:\n%s", safe, entries["doctor.json"])
 		}

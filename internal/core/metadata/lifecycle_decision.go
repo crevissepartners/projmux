@@ -99,7 +99,6 @@ type ExternalAssetOutcome struct {
 	RootDirectory AssetDisposition
 	GitMetadata   AssetDisposition
 	Worktrees     AssetDisposition
-	SnapshotBytes AssetDisposition
 }
 
 // TeardownReason is a closed diagnostic vocabulary for the decision table.
@@ -172,21 +171,18 @@ func rootDefaults(kind Kind) (RootTeardownAction, ExternalAssetOutcome, ReopenId
 			RootDirectory: AssetPreserve,
 			GitMetadata:   AssetPreserve,
 			Worktrees:     AssetPreserve,
-			SnapshotBytes: AssetPreserve,
 		}, ReopenIdentitySameProjectUID, true
 	case KindControlSession:
 		return RootTeardownRetainControlSession, ExternalAssetOutcome{
 			RootDirectory: AssetNotApplicable,
 			GitMetadata:   AssetNotApplicable,
 			Worktrees:     AssetNotApplicable,
-			SnapshotBytes: AssetNotApplicable,
 		}, ReopenIdentityNotApplicable, true
 	default:
 		return RootTeardownRetainProject, ExternalAssetOutcome{
 			RootDirectory: AssetNotApplicable,
 			GitMetadata:   AssetNotApplicable,
 			Worktrees:     AssetNotApplicable,
-			SnapshotBytes: AssetNotApplicable,
 		}, ReopenIdentityNotApplicable, false
 	}
 }
@@ -349,7 +345,7 @@ func genericTeardownRefusal(reason TeardownReason) TeardownDecision {
 		Action: TeardownRefuse, RootAction: RootTeardownRetainProject, Reason: reason,
 		ExternalAssets: ExternalAssetOutcome{
 			RootDirectory: AssetNotApplicable, GitMetadata: AssetNotApplicable,
-			Worktrees: AssetNotApplicable, SnapshotBytes: AssetNotApplicable,
+			Worktrees: AssetNotApplicable,
 		}, ReopenIdentity: ReopenIdentityNotApplicable,
 	}
 }
@@ -750,7 +746,7 @@ func PlanWindowRootCascadeDelete(registry Registry, paneEvent, unlinkEvent Teard
 }
 
 // PlanProjectCascadeDelete removes one Project graph on a clone and returns the
-// schema-valid desired Registry without touching filesystem or snapshot data.
+// schema-valid desired Registry without touching filesystem data.
 func PlanProjectCascadeDelete(registry Registry, projectUID string, now time.Time) (ProjectCascadeDeletePlan, error) {
 	const op = "plan project cascade delete"
 	if now.IsZero() {
@@ -779,7 +775,7 @@ func PlanProjectCascadeDelete(registry Registry, projectUID string, now time.Tim
 		DeletedReservations: len(registry.NameReservations) - len(desired.NameReservations),
 		ExternalAssets: ExternalAssetOutcome{
 			RootDirectory: AssetPreserve, GitMetadata: AssetPreserve,
-			Worktrees: AssetPreserve, SnapshotBytes: AssetPreserve,
+			Worktrees: AssetPreserve,
 		},
 		ReopenIdentity: ReopenIdentityNewProjectUID,
 	}, nil
@@ -880,8 +876,8 @@ type ProjectLifecyclePlan struct {
 
 // ProjectLifecyclePreconditions is the external-evidence slot of the closed
 // three-state table. No cell currently needs outside evidence: runtime absence
-// never grants Project identity authority, and snapshot files are not startup
-// evidence, so deleted+Continue is unconditionally unavailable.
+// never grants Project identity authority, so deleted+Continue is
+// unconditionally unavailable.
 type ProjectLifecyclePreconditions struct{}
 
 // DecideProjectLifecycle returns the single lifecycle/startup state table.
@@ -995,7 +991,7 @@ type ProjectFreshReplacementPlan struct {
 
 // PlanProjectFreshReplacement removes one exact Project graph from a clone and
 // registers a new canonical Project/Window/shell graph for the same root. It
-// never mutates registry, filesystem, Git/worktree state, or snapshots.
+// never mutates registry, filesystem, or Git/worktree state.
 func PlanProjectFreshReplacement(registry Registry, projectUID string, opts RegisterProjectOptions, mutator Mutator) (ProjectFreshReplacementPlan, error) {
 	project, ok := registry.Project(strings.TrimSpace(projectUID))
 	if !ok {
@@ -1067,7 +1063,7 @@ func PlanProjectFreshReplacement(registry Registry, projectUID string, opts Regi
 
 func projectPreservedAssets() ExternalAssetOutcome {
 	return ExternalAssetOutcome{RootDirectory: AssetPreserve, GitMetadata: AssetPreserve,
-		Worktrees: AssetPreserve, SnapshotBytes: AssetPreserve}
+		Worktrees: AssetPreserve}
 }
 
 // EqualTeardownPlans exists for property tests and controller callers that need

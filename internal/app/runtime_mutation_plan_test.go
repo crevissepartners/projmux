@@ -211,7 +211,7 @@ func TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed(t *test
 		"pane-menu.split-right", "pane-menu.split-down", "pane-menu.kill", "pane-menu.resume", "pane-menu.swap-up",
 		"pane-menu.swap-down", "pane-menu.mark", "pane-menu.zoom", "pane-menu.mouse-forward", "shell.foreground-attach",
 		"pane-menu.swap-marked", "window-menu.kill", "window-menu.rename", "window-menu.create", "window-menu.swap-left", "window-menu.swap-right", "window-menu.swap-marked", "window-menu.mark",
-		"app.quit", "attach.ensure-home", "attach.ephemeral-prune", "attach.ephemeral-create", "standalone.prune", "manual.tagged-kill", "switch.manual-kill", "sidebar.unmanaged-candidate-stop", "replay.retired-snapshot",
+		"app.quit", "attach.ensure-home", "attach.ephemeral-prune", "attach.ephemeral-create", "standalone.prune", "manual.tagged-kill", "switch.manual-kill", "sidebar.unmanaged-candidate-stop",
 		"config.apply-source", "pane.rebalance", "trigger.after-new-window", "trigger.after-split-window",
 		"trigger.after-kill-pane", "trigger.after-kill-pane.rebalance", "trigger.pane-exited", "trigger.pane-exited.rebalance", "trigger.pane-died", "trigger.pane-died.rebalance", "trigger.window-unlinked",
 		"trigger.attention-focus", "trigger.recent-window-record", "trigger.client-attached-welcome", "config.generated-statusbar", "config.generated-key-sequences",
@@ -3423,7 +3423,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"runtime_mutation_surface.go": "the closed inventory declaration",
 	}
 	var files []string
-	for _, scanRoot := range []string{root, filepath.Join(root, "..", "core", "controller"), filepath.Join(root, "..", "integrations", "mux"), filepath.Join(root, "..", "integrations", "metadata"), filepath.Join(root, "..", "integrations", "sessionstate"), filepath.Join(root, "..", "integrations", "tmux")} {
+	for _, scanRoot := range []string{root, filepath.Join(root, "..", "core", "controller"), filepath.Join(root, "..", "integrations", "mux"), filepath.Join(root, "..", "integrations", "metadata"), filepath.Join(root, "..", "integrations", "tmux")} {
 		if err := filepath.WalkDir(scanRoot, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -3498,8 +3498,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 	// These are semantic exemptions, keyed to one exact source function and
 	// verb. They are intentionally not a broad verb allowlist.
 	exemptRawSites := map[string]string{
-		"../integrations/sessionstate/replay.go:replay:rename-window":                     "replay.retired-snapshot",
-		"../integrations/sessionstate/replay.go:replay:select-layout":                     "replay.retired-snapshot",
 		"../integrations/tmux/client.go:CreateEphemeralSession:set-option":                "attach.ephemeral-create",
 		"../integrations/tmux/client.go:applyProjectSessionEnv:set-environment":           "attach.ephemeral-create",
 		"../integrations/tmux/client.go:setProjectPathAnchor:set-option":                  "attach.ephemeral-create",
@@ -3520,8 +3518,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../integrations/mux/lifecycle.go:Runner.SetHook:variable-argv":                   "ai.integrate-tmux-bell",
 		"../integrations/mux/lifecycle.go:Runner.SetOption:variable-argv":                 "ai.integrate-tmux-bell",
 		"../integrations/mux/lifecycle.go:Runner.NewEphemeralSession:variable-argv":       "attach.ephemeral-create",
-		"../integrations/sessionstate/replay.go:replay:variable-argv":                     "replay.retired-snapshot",
-		"../integrations/sessionstate/replay.go:replayPaneIdentityMetadata:variable-argv": "replay.retired-snapshot",
 		"../integrations/tmux/client.go:OpenSession:variable-argv":                        "sidebar.origin-restore",
 		"../integrations/tmux/client.go:OpenSessionTarget:variable-argv":                  "sidebar.origin-restore",
 		"../integrations/tmux/client.go:DisplayPopupWithOptions:variable-argv":            "popup.display",
@@ -3534,8 +3530,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../integrations/mux/runner.go:SetPaneOption:variable-argv":                       "agent.presentation",
 		"../integrations/mux/runner.go:UnsetPaneOption:variable-argv":                     "agent.presentation",
 		"../integrations/mux/runner.go:Read:variable-argv":                                "runtime.observation",
-		"../integrations/tmux/sessionstate.go:MarkSessionStateSource:set-option":          "sessionstate.replay-metadata",
-		"../integrations/tmux/sessionstate.go:setSessionStateAIResumeMetadata:set-option": "sessionstate.replay-metadata",
 		"agent_interaction.go:WriteTopic:set-option":                                      "agent.presentation",
 		"agent_interaction.go:WriteInteraction:set-option":                                "agent.presentation",
 		"ai_ingest_codex.go:applyCodexHookSemanticDelivery:variable-argv":                 "agent.presentation",

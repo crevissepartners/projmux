@@ -32,12 +32,12 @@ unknown-command contract.
 | `notify push`, `notify list`, `notify ack`, `notify reconcile` | `create notification`, `get notifications`, `notification ack`, `notification reconcile` |
 | direct `pin list|add|remove|toggle|clear` | `pin project ...` |
 | `prune ephemeral` | `runtime prune` |
-| `prune session-state ...` | `prune snapshot ...` or `delete snapshot ...` |
-| `session-state status|save|delete|restore|preview|popup` | `get snapshots`, `create snapshot`, `delete snapshot`, `restore snapshot` |
+| `prune session-state ...` | None. Project snapshots were removed; `registry.json` is the only saved Project state |
+| `session-state status|save|delete|restore|preview|popup` | None. The interim `create|get|delete|restore|prune snapshot` replacements were removed with Project snapshots; Continue project and Recreate Project start closed Projects from the Registry |
 | direct `tag list|toggle|clear`, `tag project ...` | `runtime tag ...` |
 
 The surviving mixed-root commands are exactly `attach project`, `focus
-project|window|pane`, `pin project`, and `prune agent|project|snapshot`. The Shortcut
+project|window|pane`, `pin project`, and `prune agent|project`. The Shortcut
 routes `doctor`, `quit`, `resources`, `settings`, `shell`, `switch`, and
 `welcome` remain. Singular/plural resource-kind aliases remain.
 

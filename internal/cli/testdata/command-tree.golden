@@ -22,7 +22,6 @@ rebind hidden=false disableFlagParsing=true args=true children=0
 reconcile hidden=false disableFlagParsing=true args=true children=0
 rename hidden=false disableFlagParsing=true args=true children=0
 resources hidden=false disableFlagParsing=true args=true children=0
-restore hidden=false disableFlagParsing=true args=true children=0
 runtime hidden=false disableFlagParsing=true args=true children=0
 settings hidden=false disableFlagParsing=true args=true children=0
 setup hidden=false disableFlagParsing=true args=true children=0

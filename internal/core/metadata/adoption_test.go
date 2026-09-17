@@ -16,7 +16,7 @@ func TestPaneAdoptionRefusesDeletedTransportTombstone(t *testing.T) {
 //   - Project alpha owns Windows win-a1 then win-a2, in that creation order.
 //   - win-a1 owns a shell Pane, then an Agent whose managed Pane comes after it
 //     in registry insertion order. That mix is what separates "insertion order"
-//     from the snapshot projection's shell-then-managed grouping.
+//     from a shell-then-managed grouping.
 //   - Project beta owns win-b1. It exists only to be refused: nothing of
 //     Project alpha may ever pair with it, and vice versa.
 func adoptionFixture() *Registry {
@@ -314,9 +314,8 @@ func TestClaimKeepsAFreshlyCreatedObjectOutOfTheCandidateSet(t *testing.T) {
 }
 
 // TestPaneCandidateOrderIsRegistryInsertionOrder guards the one ordering
-// decision the Pane rule depends on. snapshotPanesOf groups shell Panes ahead
-// of managed ones; borrowing that grouping here would shear the alignment for
-// every Window that mixes the two.
+// decision the Pane rule depends on. Grouping shell Panes ahead of managed ones
+// would shear the alignment for every Window that mixes the two.
 func TestPaneCandidateOrderIsRegistryInsertionOrder(t *testing.T) {
 	t.Parallel()
 

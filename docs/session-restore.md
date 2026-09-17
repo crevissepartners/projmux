@@ -1,64 +1,7 @@
-# Session Restore
+# Project Startup
 
-Session snapshots are explicit desired-state inputs for one Project. They are
-not tmux replay scripts and they are not Registry backups. Snapshot save keeps
-the existing v1 schema and storage behavior. In snapshot save's runtime id
-duplicate check, a Window or Pane recorded as `MissingRuntime`/`RuntimeUnbound`
-does not claim its retained runtime id, so a tmux id reused after a server
-restart does not refuse the save; two live Windows or two live Panes sharing an
-id are still refused.
-
-```sh
-projmux get snapshots [--session <snapshot-session>]
-projmux create snapshot
-projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref>] --dry-run
-projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref>] --yes [--client /dev/pts/N]
-projmux delete snapshot --session <snapshot-session>
-```
-
-Restore requires an exact snapshot and an exact, closed target Project. The
-dry-run validates both inputs and prints replacement, deletion, preserved-UID,
-and lost-conversation-pointer counts with zero Registry, tmux, and snapshot writes.
-Snapshot Project/Window/Pane metadata is checked against the exact target owner
-chain. A UID held by another root, a cross-kind UID reuse, a Project mismatch,
-or conflicting owner metadata refuses before commit. The ordinary Project-open
-trust authorization must also approve the exact target root before the Registry
-transaction begins.
-
-After `--yes`, one atomic Registry transaction replaces only the target
-Project's descendant Window/Pane/Agent graph and its descendant name
-reservations. The Project UID, root, trust metadata, unrelated Projects,
-ControlSessions, and source snapshot bytes are preserved. Metadata-bearing
-snapshots reuse their exact target-subtree UIDs and preserve a surviving
-final-v2 Agent or shell anchor plus a surviving direct default shell.
-Metadata-free legacy snapshots reuse target descendants positionally, select
-the first valid Window-local Pane as the role-agnostic anchor, select the first
-direct shell as the optional default, and mint identities only for missing
-items. An Agent-only Window is valid with an empty default. Repeating the same
-projection is a Registry zero-diff.
-
-Resource metadata records the Registry schema that produced it. A v3 snapshot
-is projected through the same root-wide same-kind duplicate-group and
-destination-closure rule as Registry migration: affected resources receive
-their exact UID names, unique names outside the closure are preserved, and no
-numeric suffix is minted. A current-v4 snapshot containing a root-wide
-same-kind collision is rejected as damaged before trust authorization,
-Registry/tmux/provider mutation, or any snapshot write.
-
-The committed Registry is then converged by the ordinary Project materializer.
-For a restored offline Agent-anchor Window, snapshot materialization visibly plans a
-lazy default shell, creates the Window from that shell, and stages the Agent on
-its retained anchor Pane UID. A successful repeat writes neither Registry nor
-topology. Snapshot Agent recipes use the canonical provider launch/resume path,
-including their existing fresh-conversation fallback. Stored startup
-commands are not directly executed by snapshot restore. A runtime item refusal
-does not roll the Registry back: desired state and the source snapshot remain
-available for another `Continue project`, and the refusal is reported as an
-item notice. If an explicit client is supplied, the final observable step is
-`switch-client -c` to the Project's declared session even when the background
-continuation has no inherited `TMUX` variable.
-
-## Project startup
+A closed Project starts from its Registry desired state. projmux keeps no other
+saved Project state: the Registry (`registry.json`) is the only input.
 
 A closed Project has exactly two actions:
 
@@ -78,16 +21,12 @@ back to the non-destructive `Continue project` action.
 `Continue project` needs a registered Project. On a root that is not a
 registered Project it refuses with zero Registry writes and points to
 `Recreate Project` (`continue project unavailable: <root> is not a registered
-Project; choose Recreate Project`). It never reads snapshot files, even when a
-snapshot for the same session and root exists, and it never falls back to
-Fresh on its own.
+Project; choose Recreate Project`). It never falls back to Fresh on its own.
 
-projmux does not save Project state on its own. There is no status-tick
-autosave, and `projmux quit` offers only `Quit projmux` and `Cancel`; neither
-writes a snapshot. The hidden `internal tmux autosave-session-state` route is
-kept only so status lines rendered by older installs keep working, and it does
-nothing. Explicit named snapshots (`create`, `get`, `restore`, `delete`, and
-`prune snapshot`) still work.
+projmux does not save Project state on its own at quit or on a timer.
+`projmux quit` offers only `Quit projmux` and `Cancel`. The hidden `internal tmux autosave-session-state`
+route is kept only so status lines rendered by older installs keep working, and
+it does nothing.
 
 Continue resumes an Agent's exact recorded conversation after interrupted,
 killed, abnormal, unknown, or unrecorded termination. Intentional and normal
@@ -101,8 +40,8 @@ A missing, blank, malformed, or mismatched conversation ref, a disabled provider
 a missing workspace, or a resume preparation failure skips the Agent with a
 reason. Continue never substitutes a new conversation. Shells and other
 recoverable Agents still converge; an unrecoverable Agent that is itself a
-Window's required anchor keeps the existing Window refusal. Explicit snapshot
-restore and `agent resume` retain their separate authority.
+Window's required anchor keeps the existing Window refusal. `agent resume`
+retains its separate authority.
 
 After Continue commits, its startup summary shows the resumed and skipped Agent
 totals and `projmux diagnostics log --component topology`. The same counts are
@@ -124,21 +63,7 @@ errors. Dry-run writes no execution event; failed or rolled-back execution
 records an error with zero committed counts. Journal and display failures are
 best effort and never change the topology result.
 
-`Recreate Project` never deletes or overwrites existing snapshot files. It
-preserves the root, Git/worktrees, trust decision, and all unrelated Registry
+`Recreate Project` preserves the root, Git/worktrees, trust decision, and all unrelated Registry
 graphs while changing the Project identity. A rejected commit retains the
 exact old Registry preimage. Repeating `Recreate Project` replaces identity again;
 each successful result has exactly one Project claiming the root.
-
-## Snapshot contents and diagnostics
-
-Snapshots keep window names, pane cwd/label/title, shell/startup/agent recipes,
-AI topic ownership, and provider resume metadata when available. Resume health
-in preview is `available`, `stale`, or `unavailable`; confidence derives from
-the stored source. Snapshot inspection never reads provider transcript or
-conversation database content.
-
-An approved projection restore records one safe Session State outcome with
-aggregate Window/Pane/recipe counts and source `manual`. Paths, commands,
-snapshot content, and provider conversation identifiers are never included.
-Dry-run remains read-only and records no mutation outcome.

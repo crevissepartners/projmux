@@ -1,9 +1,27 @@
 package sessions
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 )
+
+// ErrInvalidSessionName reports a session name that cannot name a tmux
+// session safely.
+var ErrInvalidSessionName = errors.New("invalid session name")
+
+// ValidateSessionName rejects empty, relative-traversal, absolute, and
+// separator-bearing session names.
+func ValidateSessionName(session string) error {
+	if strings.TrimSpace(session) == "" {
+		return ErrInvalidSessionName
+	}
+	if session == "." || session == ".." || filepath.IsAbs(session) || strings.ContainsAny(session, `/\`) {
+		return fmt.Errorf("%w: %q", ErrInvalidSessionName, session)
+	}
+	return nil
+}
 
 // Namer resolves directory paths to stable tmux session names.
 type Namer struct {

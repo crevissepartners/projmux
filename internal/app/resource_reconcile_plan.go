@@ -251,7 +251,6 @@ type resourceReconcilePlanner struct {
 	// plan consumes. It is read-only at plan time: it builds argv and applies
 	// the Settings gate, and creates nothing.
 	agents               topologyAgentLauncher
-	agentReplayAuthority topologyAgentReplayAuthority
 	approvedOrphanImport bool
 	// symbolicAllocations makes a preview use stable typed slots without
 	// invoking the opaque UID allocator. Execute leaves it false and binds the
@@ -282,7 +281,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		}
 		projectSessions = nil
 	}
-	topology, err := planRegistryTopology(ctx, p.reader, before, p.materializeProject, reconciler, projectSessions, p.exactTarget, p.agents, p.agentReplayAuthority)
+	topology, err := planRegistryTopology(ctx, p.reader, before, p.materializeProject, reconciler, projectSessions, p.exactTarget, p.agents)
 	if err != nil {
 		return resourceReconcilePlan{}, err
 	}

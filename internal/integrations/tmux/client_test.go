@@ -10,13 +10,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/resources"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
 
 type lifecycleEventWriter struct {
@@ -163,43 +161,6 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 			}
 			if strings.Contains(fmt.Sprint(writer.events), "private-name") || strings.Contains(fmt.Sprint(writer.events), "/private/path") || strings.Contains(fmt.Sprint(writer.events), "private runner detail") {
 				t.Fatalf("private routing/content leaked: %#v", writer.events)
-			}
-		})
-	}
-}
-
-func TestRestoreSnapshotLifecycleProductionBoundary(t *testing.T) {
-	t.Setenv("TMUX", "")
-	snapshot := sessionstate.Snapshot{
-		Version: sessionstate.Version, Session: "private-session", DefaultCWD: "/private/cwd", SavedAt: time.Unix(1, 0),
-	}
-	tests := []struct {
-		name     string
-		steps    []scriptedStep
-		open     bool
-		wantErr  bool
-		wantCode diagnostics.Code
-	}{
-		{name: "replay success", steps: []scriptedStep{{err: exitError(t, 1)}, {}, {}}},
-		{name: "replay create failure", steps: []scriptedStep{{err: exitError(t, 1)}, {err: errors.New("private replay create")}}, wantErr: true, wantCode: diagnostics.CodeSessionCreateFailed},
-		{name: "replay success then open attach failure", steps: []scriptedStep{{err: exitError(t, 1)}, {}, {}, {err: errors.New("private attach")}}, open: true, wantErr: true, wantCode: diagnostics.CodeSessionAttachFailed},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			writer := &lifecycleEventWriter{}
-			recorder := diagnostics.NewLifecycleRecorder(writer, "snapshot-run", "0.10.0", "tmux")
-			finish := recorder.BeginCommand()
-			client := NewClient(&scriptedRunner{steps: tt.steps}, WithLifecycleDiagnostics(recorder))
-			err := client.RestoreSessionSnapshot(context.Background(), snapshot, "/private/cwd", sessionstate.SourceAutosave)
-			if err == nil && tt.open {
-				err = client.OpenSession(context.Background(), snapshot.Session)
-			}
-			finish(err)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("error = %v, wantErr=%v", err, tt.wantErr)
-			}
-			if len(writer.events) != 2 || writer.events[0].Operation != string(diagnostics.OperationSessionCreate) || writer.events[1].Operation != string(diagnostics.OperationSessionCreate) || writer.events[1].Code != string(tt.wantCode) {
-				t.Fatalf("events = %#v, want one snapshot create pair code=%s", writer.events, tt.wantCode)
 			}
 		})
 	}

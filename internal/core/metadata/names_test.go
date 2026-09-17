@@ -29,7 +29,7 @@ func TestAutomaticNumericSuffixProducerInventoryIsEmpty(t *testing.T) {
 
 	files := []string{
 		"names.go", "mutator.go", "agent.go", "agentlinkage.go",
-		"controlsession.go", "legacy.go", "snapshot_projection.go",
+		"controlsession.go", "legacy.go",
 	}
 	banned := []string{
 		"allocateName(", "nextAvailableName(", "WindowNameBase(",

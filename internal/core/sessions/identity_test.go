@@ -1,6 +1,9 @@
 package sessions
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestSessionNameParity(t *testing.T) {
 	t.Parallel()
@@ -65,5 +68,20 @@ func TestSanitizeParity(t *testing.T) {
 
 	if got != want {
 		t.Fatalf("Sanitize() = %q, want %q", got, want)
+	}
+}
+
+func TestValidateSessionName(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"repos-projmux", "home", "a.b", "repos-projmux--prj-01"} {
+		if err := ValidateSessionName(name); err != nil {
+			t.Fatalf("ValidateSessionName(%q) error = %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "   ", ".", "..", "/abs", "a/b", `a\b`} {
+		if err := ValidateSessionName(name); !errors.Is(err, ErrInvalidSessionName) {
+			t.Fatalf("ValidateSessionName(%q) error = %v, want ErrInvalidSessionName", name, err)
+		}
 	}
 }

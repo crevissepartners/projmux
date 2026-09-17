@@ -41,7 +41,7 @@ Project lifecycle operator diagnostics also keep plans mutually exclusive:
 classes. Startup and unregister failures print the closed action, failing
 stage, old Project UID, and new Project UID (or `-` when absent). These opaque
 UIDs and stage labels are bounded control data; root paths, pane content,
-history, prompts, transcripts, and snapshot contents are never identity or
+history, prompts, and transcripts are never identity or
 intent authority.
 
 Automatic Window teardown decisions use `component=topology` and
@@ -58,31 +58,16 @@ optional opaque `window_uid` (`win-…`) and `pane_uid` (`pane-…`) Registry UI
 tmux `%N`/`@N`/`$N` handles, socket paths, session names, cwd, argv, and free
 text are never recorded, and every other event family rejects these fields.
 
-Session State mutations use one outcome-only `session-state.outcome` record
-per selected attempt. The closed operations are `session-state.save`,
-`session-state.autosave`, `session-state.restore`, and `session-state.delete`;
-an error uses only the matching `.failed` code, `kind=runtime`, and an empty
-message. Optional sources are limited to `manual`, `settings-latest`,
-`settings-named`, `autosave`, `startup-latest`, `startup-named`, and `prune`.
-Successful save and actual startup restore outcomes contain only exact
-non-negative `window_count`, `pane_count`, `shell_recipe_count`,
-`agent_recipe_count`, and `startup_recipe_count` aggregates. Successful delete
-contains only `item_count`; errors contain no counts. Snapshot paths/content,
-project paths, pane cwd/commands, snapshot names, and agent or conversation
-identifiers are never projected.
-
-Direct and popup save, Settings latest/named save, direct and Settings delete,
-deduplicated prune delete, and actual latest/named project-startup replay own
-these outcomes. Preview, dry-run, and nested store/replay calls do not.
-projmux no longer emits `session-state.autosave` records: the retained
-`internal tmux autosave-session-state` route is a no-op that writes nothing.
-The `session-state.autosave` operation, its `.failed` code, and the `autosave`
-source stay in the closed vocabulary so records written by older versions still
-validate and parse. Session State logical ownership
-suppresses a generic top-level outcome even when journal append fails. An
-actual restore may also produce its runtime lifecycle pair with the same run
-ID; the lifecycle pair and Session State terminal outcome describe different
-contracts and are not duplicates.
+projmux no longer emits `session-state.outcome` records. Project snapshots
+were removed, and the retained `internal tmux autosave-session-state` route is
+a no-op that writes nothing. Records written by older versions keep their
+closed vocabulary: the `session-state.outcome` event, the
+`session-state.save`, `session-state.autosave`, `session-state.restore`, and
+`session-state.delete` operations with their `.failed` codes, the sources
+`manual`, `settings-latest`, `settings-named`, `autosave`, `startup-latest`,
+`startup-named`, and `prune`, and the aggregate `window_count`, `pane_count`,
+`shell_recipe_count`, `agent_recipe_count`, `startup_recipe_count`, and
+`item_count` fields still validate and parse when the journal is read.
 
 Notify and focus transitions use the same process `run_id` and add only closed
 `transition`, `disposition`, `provider`, `category`, and `route` enums. Notify
@@ -291,22 +276,20 @@ before the next append, and the reader skips malformed or truncated records.
 Classification is intentionally conservative for mutation-capable interactive
 commands: opening session/project/settings/popup flows is treated as changing
 even when a user cancels. Explicit read variants (`internal status`, `list`,
-`get`, read-only restore preview, config rendering, plain welcome, and the diagnostics viewer) remain
+`get`, config rendering, plain welcome, and the diagnostics viewer) remain
 read-only. The successful automatic hook/poll paths `internal agent-hook ingest`, `attention
 arm`, `attention clear`, `attention window`, `internal tmux autosave-session-state`, and
 `window record` are also read-only so high-frequency operation does not append
 to the journal; an error from any of them still records exactly one safe error
 outcome. Explicit user mutations such as `attention toggle` retain their
 state-changing success record. Direct top-level help and explicit preview-only intents (`update
-apply --dry-run`, AI integration dry-runs, and snapshot projection restore with
-`--dry-run`) are also read-only. Approved snapshot projection restore is a
-state-changing operation. Doctor is a stricter
+apply --dry-run` and AI integration dry-runs) are also read-only. Doctor is a stricter
 boundary: successes and errors never append to this journal, so diagnostics do
 not make its filesystem contract self-defeating. Support report success and
 errors likewise never append; its strict reader shares the viewer's tolerant
 decoder but never creates/locks/chmods/repairs/truncates the source journal.
 Multi-mode commands such as AI status/topic,
-terminal apply, snapshot delete, update check, and welcome popup inspect only
+terminal apply, update check, and welcome popup inspect only
 allowlisted mode/flag names; boolean `=false` values retain mutation-capable
 classification, and no flag values are ever recorded. Help-looking tokens
 after the direct command position stay conservatively mutation-capable because

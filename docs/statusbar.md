@@ -38,7 +38,7 @@ row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
   alignment are not emitted. When both are hidden, tmux collapses to one line
   with `status on`,
   moves the native Window row to `status-format[0]`, and unsets stale higher
-  rows; there is no empty HUD row. No row carries an autosave job. These toggles hide presentation only and do not
+  rows; there is no empty HUD row. These toggles hide presentation only and do not
   mutate the Notification queue or usage collection/cache/API state.
   Provider/window visibility also changes only the ambient status projection;
   the cached popup and explicit `agent usage` table/JSON stay lossless. If every
@@ -359,9 +359,7 @@ typed named/model `limits[]` rows in this popup: model-scoped rows display the
 exact upstream group plus model display identity with a bounded terminal-safe
 label, reset, and per-row age. The compact status line excludes every Claude
 named/model row and continues to use only the aggregate official windows.
-Session State inspection lives under `Projects > Sessions > State`; global
-Settings > Session State is settings-only and the statusbar no longer exposes a
-duplicate State button.
+The statusbar has no State button.
 
 The path popup uses the native picker frame chrome, a one-line title,
 the full wrapped current path, cheap project/git metadata when available, and

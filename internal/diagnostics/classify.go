@@ -28,11 +28,10 @@ var commandRules = map[string]commandRule{
 	"pin":            {subcommands: stringSet("list", "add", "remove", "toggle", "clear"), changing: stringSet("add", "remove", "toggle", "clear")},
 	"popup-wait-key": {},
 	"preview":        {subcommands: stringSet("cycle-pane", "cycle-window", "select"), changing: stringSet("cycle-pane", "cycle-window", "select")},
-	"prune":          {subcommands: stringSet("ephemeral", "session-state"), changing: stringSet("ephemeral")},
+	"prune":          {subcommands: stringSet("ephemeral"), changing: stringSet("ephemeral"), recordedSubcommands: stringSet("session-state")},
 	"quit":           {alwaysChanging: true},
 	"resources":      {},
 	"sessions":       {alwaysChanging: true},
-	"session-state":  {subcommands: stringSet("status", "save", "delete", "restore", "preview", "popup"), changing: stringSet("save", "delete", "restore", "popup")},
 	"session-popup":  {subcommands: stringSet("preview", "open", "cycle-pane", "cycle-window"), changing: stringSet("open", "cycle-pane", "cycle-window")},
 	"settings":       {alwaysChanging: true},
 	"setup":          {subcommands: stringSet("terminal")},
@@ -50,10 +49,21 @@ var commandRules = map[string]commandRule{
 	"window":         {subcommands: stringSet("record", "recent"), changing: stringSet("recent")},
 }
 
+// recordedOnlyCommandRules keeps the classes that retired routes wrote into
+// existing logs. They are accepted when an old record is read back, and never
+// produced for live argv: the Project snapshot routes that owned them were
+// removed, so the same argv is now an unknown command.
+var recordedOnlyCommandRules = map[string]commandRule{
+	"session-state": {subcommands: stringSet("status", "save", "delete", "restore", "preview", "popup")},
+}
+
 type commandRule struct {
 	alwaysChanging bool
 	subcommands    map[string]struct{}
 	changing       map[string]struct{}
+	// recordedSubcommands are retired subcommands accepted only when an old
+	// record is read back.
+	recordedSubcommands map[string]struct{}
 }
 
 // internalNamespaceToken is the hidden CLI namespace that owns machine-invoked
@@ -93,6 +103,17 @@ func stripInternalNamespace(args []string) []string {
 // Classify discards every non-allowlisted argv value. It may inspect known
 // flags to decide whether a command mutates state, but it never returns them.
 func Classify(args []string) CommandClass {
+	return classify(args, false)
+}
+
+// classifyRecorded is Classify for a command class read back from an existing
+// log. It also accepts the classes of retired routes, so historical records
+// stay readable after the route is gone.
+func classifyRecorded(args []string) CommandClass {
+	return classify(args, true)
+}
+
+func classify(args []string, recorded bool) CommandClass {
 	if len(args) == 0 {
 		return CommandClass{}
 	}
@@ -109,6 +130,9 @@ func Classify(args []string) CommandClass {
 		command = "version"
 	}
 	rule, ok := commandRules[command]
+	if !ok && recorded {
+		rule, ok = recordedOnlyCommandRules[command]
+	}
 	if !ok {
 		return CommandClass{}
 	}
@@ -119,6 +143,8 @@ func Classify(args []string) CommandClass {
 			out.Subcommand = candidate
 			_, out.StateChanging = rule.changing[candidate]
 			out.StateChanging = out.StateChanging || rule.alwaysChanging
+		} else if _, ok := rule.recordedSubcommands[candidate]; ok && recorded {
+			out.Subcommand = candidate
 		}
 	}
 	// A direct help intent is never a mutation.
@@ -128,9 +154,6 @@ func Classify(args []string) CommandClass {
 	}
 	if command == "setup" && out.Subcommand == "terminal" {
 		out.StateChanging = boolFlagEnabled(args[2:], "apply")
-	}
-	if command == "prune" && out.Subcommand == "session-state" && len(args) > 2 {
-		out.StateChanging = args[2] == "delete"
 	}
 	// Generated lifecycle hooks invoke this hidden convergence route
 	// automatically. Successful automatic work is zero-volume in the top-level
@@ -148,9 +171,6 @@ func Classify(args []string) CommandClass {
 	}
 	if command == "ai" && out.Subcommand == "integrate" && len(args) > 2 && isAIIntegrationProvider(args[2]) {
 		out.StateChanging = !boolFlagEnabled(args[3:], "dry-run")
-	}
-	if command == "session-state" && out.Subcommand == "restore" {
-		out.StateChanging = !boolFlagEnabled(args[2:], "dry-run")
 	}
 	if command == "update" && out.Subcommand == "check" {
 		out.StateChanging = true // refreshes the local update cache
@@ -197,23 +217,8 @@ func normalizeCanonicalCompatibility(args []string) []string {
 			return append([]string{"notify", args[1]}, args[2:]...)
 		}
 	case "create":
-		switch args[1] {
-		case "notification":
+		if args[1] == "notification" {
 			return append([]string{"notify", "push"}, args[2:]...)
-		case "snapshot":
-			return append([]string{"session-state", "save"}, args[2:]...)
-		}
-	case "delete":
-		if args[1] == "snapshot" {
-			return append([]string{"session-state", "delete"}, args[2:]...)
-		}
-	case "restore":
-		if args[1] == "snapshot" {
-			return append([]string{"session-state", "restore"}, args[2:]...)
-		}
-	case "prune":
-		if args[1] == "snapshot" {
-			return append([]string{"prune", "session-state"}, args[2:]...)
 		}
 	}
 	return args

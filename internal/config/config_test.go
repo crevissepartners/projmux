@@ -108,18 +108,12 @@ func TestPathsStatusbarDecorationFile(t *testing.T) {
 	}
 }
 
-func TestPathsSessionStateFiles(t *testing.T) {
+func TestPathsSidebarStartupPickerFile(t *testing.T) {
 	t.Parallel()
 
 	paths := Paths{ConfigDir: "/tmp/config/projmux", StateDir: "/tmp/state/projmux"}
-	if got, want := paths.SessionStateAutosaveFile(), filepath.Join(paths.ConfigDir, SessionStateAutosaveFileName); got != want {
-		t.Fatalf("SessionStateAutosaveFile() = %q, want %q", got, want)
-	}
-	if got, want := paths.SessionStateAutosaveIntervalFile(), filepath.Join(paths.ConfigDir, SessionStateAutosaveIntervalFileName); got != want {
-		t.Fatalf("SessionStateAutosaveIntervalFile() = %q, want %q", got, want)
-	}
-	if got, want := paths.SessionStateDir(), filepath.Join(paths.StateDir, "sessions"); got != want {
-		t.Fatalf("SessionStateDir() = %q, want %q", got, want)
+	if got, want := paths.SidebarStartupPickerFile(), filepath.Join(paths.ConfigDir, "sidebar-startup-picker"); got != want {
+		t.Fatalf("SidebarStartupPickerFile() = %q, want %q", got, want)
 	}
 }
 
@@ -464,53 +458,53 @@ func assertAIEnabledAgents(t *testing.T, got, want []AIAgentProvider) {
 	}
 }
 
-func TestSessionStateToggleRoundtrip(t *testing.T) {
+func TestSidebarStartupPickerRoundtrip(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "config", SessionStateAutosaveFileName)
-	if got, err := LoadSessionStateToggleFile(path); err != nil || got != SessionStateToggleOn {
-		t.Fatalf("LoadSessionStateToggleFile(missing) = %q, %v; want %q, nil", got, err, SessionStateToggleOn)
+	path := filepath.Join(t.TempDir(), "config", SidebarStartupPickerFileName)
+	if got, err := LoadSidebarStartupPickerFile(path); err != nil || got != SidebarStartupPickerOn {
+		t.Fatalf("LoadSidebarStartupPickerFile(missing) = %q, %v; want %q, nil", got, err, SidebarStartupPickerOn)
 	}
 
-	if err := SaveSessionStateToggleFile(path, SessionStateToggleOff); err != nil {
-		t.Fatalf("SaveSessionStateToggleFile() error = %v", err)
+	if err := SaveSidebarStartupPickerFile(path, SidebarStartupPickerOff); err != nil {
+		t.Fatalf("SaveSidebarStartupPickerFile() error = %v", err)
 	}
-	got, err := LoadSessionStateToggleFile(path)
+	got, err := LoadSidebarStartupPickerFile(path)
 	if err != nil {
-		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
+		t.Fatalf("LoadSidebarStartupPickerFile() error = %v", err)
 	}
-	if got != SessionStateToggleOff {
-		t.Fatalf("LoadSessionStateToggleFile() = %q, want %q", got, SessionStateToggleOff)
+	if got != SidebarStartupPickerOff {
+		t.Fatalf("LoadSidebarStartupPickerFile() = %q, want %q", got, SidebarStartupPickerOff)
 	}
 }
 
-func TestSessionStateToggleDropsBooleanAliases(t *testing.T) {
+func TestSidebarStartupPickerDropsBooleanAliases(t *testing.T) {
 	t.Parallel()
 
-	// "false" was a legacy boolean-ish alias; it is now dropped and absorbs
-	// into the default (On).
-	path := filepath.Join(t.TempDir(), SessionStateAutosaveFileName)
+	// "false" was a legacy boolean-ish alias; it is dropped and absorbs into
+	// the default (On).
+	path := filepath.Join(t.TempDir(), SidebarStartupPickerFileName)
 	if err := os.WriteFile(path, []byte("false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := LoadSessionStateToggleFile(path)
+	got, err := LoadSidebarStartupPickerFile(path)
 	if err != nil {
-		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
+		t.Fatalf("LoadSidebarStartupPickerFile() error = %v", err)
 	}
-	if got != SessionStateToggleOn {
-		t.Fatalf("LoadSessionStateToggleFile(false) = %q, want %q", got, SessionStateToggleOn)
+	if got != SidebarStartupPickerOn {
+		t.Fatalf("LoadSidebarStartupPickerFile(false) = %q, want %q", got, SidebarStartupPickerOn)
 	}
 
 	// The canonical "off" value still resolves to Off.
 	if err := os.WriteFile(path, []byte("off\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err = LoadSessionStateToggleFile(path)
+	got, err = LoadSidebarStartupPickerFile(path)
 	if err != nil {
-		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
+		t.Fatalf("LoadSidebarStartupPickerFile() error = %v", err)
 	}
-	if got != SessionStateToggleOff {
-		t.Fatalf("LoadSessionStateToggleFile(off) = %q, want %q", got, SessionStateToggleOff)
+	if got != SidebarStartupPickerOff {
+		t.Fatalf("LoadSidebarStartupPickerFile(off) = %q, want %q", got, SidebarStartupPickerOff)
 	}
 }
 

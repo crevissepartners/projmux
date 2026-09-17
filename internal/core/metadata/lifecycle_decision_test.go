@@ -27,8 +27,7 @@ func assertDecisionFilled(t *testing.T, decision TeardownDecision) {
 	t.Helper()
 	if decision.Action == "" || decision.RootAction == "" || decision.Reason == "" ||
 		decision.ReopenIdentity == "" || decision.ExternalAssets.RootDirectory == "" ||
-		decision.ExternalAssets.GitMetadata == "" || decision.ExternalAssets.Worktrees == "" ||
-		decision.ExternalAssets.SnapshotBytes == "" {
+		decision.ExternalAssets.GitMetadata == "" || decision.ExternalAssets.Worktrees == "" {
 		t.Fatalf("decision has an empty cell: %+v", decision)
 	}
 }
@@ -370,7 +369,7 @@ func TestProjectCascadeDeletePlanPreservesExternalAssetsAndReopensWithNewUID(t *
 	}
 	external := map[string][]byte{
 		"root": []byte("root-bytes"), "git": []byte("git-bytes"),
-		"worktrees": []byte("worktree-bytes"), "snapshot": []byte("snapshot-bytes"),
+		"worktrees": []byte("worktree-bytes"),
 	}
 	externalBefore := map[string][]byte{}
 	for key, value := range external {
@@ -425,9 +424,6 @@ func TestProjectCascadeDeletePlanPreservesExternalAssetsAndReopensWithNewUID(t *
 	}
 	if result.Project.Metadata.UID == alpha.Project.Metadata.UID || result.Reused {
 		t.Fatalf("reopen reused deleted identity: %+v", result)
-	}
-	if !reflect.DeepEqual(external["snapshot"], externalBefore["snapshot"]) {
-		t.Fatal("reopen changed snapshot bytes")
 	}
 }
 
@@ -873,11 +869,9 @@ func TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells(t *testing.T) {
 		}
 	}
 	// A root that is not a registered Project has nothing to continue. The cell
-	// is unconditionally unavailable, and its reason names registration rather
-	// than snapshot evidence because snapshot files are not startup evidence.
+	// is unconditionally unavailable, and its reason names registration.
 	deletedContinue := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
 	if deletedContinue.Available || deletedContinue.Reason != "project-is-not-registered" ||
-		strings.Contains(deletedContinue.Reason, "snapshot") ||
 		deletedContinue.ProjectUID != ProjectUIDAbsent || deletedContinue.DescendantUIDs != ProjectDescendantUIDsAbsent ||
 		!slices.Equal(deletedContinue.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteNone}) {
 		t.Fatalf("unregistered Continue = %+v", deletedContinue)

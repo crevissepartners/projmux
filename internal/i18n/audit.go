@@ -102,14 +102,13 @@ func RuntimeKoreanStringAuditOptions() StringAuditOptions {
 // which lives in the app package and owns that registry.
 func PickerChromeStringAuditOptions() StringAuditOptions {
 	scoped := map[string]bool{
-		"internal/app/notify.go":                true,
-		"internal/app/switch.go":                true,
-		"internal/app/sessions.go":              true,
-		"internal/app/session_state.go":         true,
-		"internal/app/sessionstate_settings.go": true,
-		"internal/app/trust.go":                 true,
-		"internal/app/ai.go":                    true,
-		"internal/app/hookmaker.go":             true,
+		"internal/app/notify.go":                          true,
+		"internal/app/switch.go":                          true,
+		"internal/app/sessions.go":                        true,
+		"internal/app/sidebar_startup_picker_settings.go": true,
+		"internal/app/trust.go":                           true,
+		"internal/app/ai.go":                              true,
+		"internal/app/hookmaker.go":                       true,
 		// The Runtime diagnostics escape hatch is scoped from the start: it is a
 		// new picker surface, and the cheapest moment to keep its chrome inside
 		// the catalog is before any of it ships untranslated.

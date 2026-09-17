@@ -346,18 +346,6 @@ func pruneAgentEffects() *AllowedEffects {
 	)
 }
 
-func restoreSnapshotEffects() *AllowedEffects {
-	return allowedEffects(
-		[]IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityReused, IdentityRemoved, IdentityReplaced},
-		[]AddressEffect{AddressUnchanged, AddressAllocated, AddressReleased},
-		[]TopologyEffect{TopologyUnchanged, TopologyEstablished, TopologyRemoved, TopologyReplaced},
-		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateRemoved, DesiredStateReplaced},
-		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized},
-		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient, FocusAttachedCaller},
-		[]CardinalityEffect{CardinalityUnchanged, CardinalityOneOrMore},
-	)
-}
-
 func shellEffects() *AllowedEffects {
 	return allowedEffects(
 		[]IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityReused},
@@ -1051,9 +1039,8 @@ var routes = []Route{
 			"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create claude|antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]",
-			"projmux create snapshot",
 		},
-		Canonical: []string{"create project", "create window", "create pane", "create agent", "create notification", "create snapshot", "create codex", "create claude", "create antigravity"},
+		Canonical: []string{"create project", "create window", "create pane", "create agent", "create notification", "create codex", "create claude", "create antigravity"},
 		Children: []Route{
 			{
 				// The explicit Project bootstrap. It is the only route that adds a
@@ -1135,14 +1122,6 @@ var routes = []Route{
 				Canonical:  []string{"create notification"},
 			},
 			{
-				Effects:    unchangedEffects(CardinalityUnchanged),
-				Name:       "snapshot",
-				Invocation: InvocationNatural,
-				Summary:    "Create a session snapshot",
-				Usage:      []string{"projmux create snapshot"},
-				Canonical:  []string{"create snapshot"},
-			},
-			{
 				Effects:    createResourceEffects(CardinalityOneOrMore),
 				Name:       "codex",
 				Invocation: InvocationNatural,
@@ -1181,8 +1160,8 @@ var routes = []Route{
 		},
 	},
 	{
-		// The registry-backed kinds own the cascade planner; `notification` and
-		// `snapshot` forward raw argv to the handlers that already own them.
+		// The registry-backed kinds own the cascade planner; `notification`
+		// forwards raw argv to the handler that already owns it.
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "delete",
 		Invocation:     InvocationRefusal,
@@ -1211,7 +1190,7 @@ var routes = []Route{
 			"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 		},
-		Canonical: []string{"unregister project", "delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
+		Canonical: []string{"unregister project", "delete window", "delete pane", "delete agent", "delete notification"},
 		Children: []Route{
 			{
 				// The deprecated spelling of `unregister project`.
@@ -1225,7 +1204,7 @@ var routes = []Route{
 				Effects:    deleteProjectEffects(),
 				Name:       "project",
 				Invocation: InvocationNatural,
-				Summary:    "Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
+				Summary:    "Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, and runtime",
 				Aliases:    []string{"projects"},
 				Usage:      []string{"projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},
 				Canonical:  []string{"unregister project"},
@@ -1261,7 +1240,6 @@ var routes = []Route{
 				Canonical:        []string{"delete agent"},
 			},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "notification", Invocation: InvocationExplicit, Summary: "Delete pending notification rows", Aliases: []string{"notifications"}, Canonical: []string{"delete notification"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "snapshot", Invocation: InvocationExplicit, Summary: "Delete saved session snapshots", Aliases: []string{"snapshots"}, Canonical: []string{"delete snapshot"}},
 		},
 	},
 	{
@@ -1365,8 +1343,8 @@ var routes = []Route{
 	{
 		// The plural kinds are 0..N reads over the resource registry; the
 		// singular `pane` is the exact-one read that also owns the `cwd` field
-		// projection. `notifications` and `snapshots` forward raw argv to the
-		// handlers that already own them.
+		// projection. `notifications` forwards raw argv to the handler that
+		// already owns it.
 		//
 		// Every plural kind here accepts its singular as an alias except
 		// `panes`. `pane` is already taken by the exact-one read below, and that
@@ -1392,7 +1370,7 @@ var routes = []Route{
 		},
 		Canonical: []string{"get projects", "get windows", "get panes", "get agents",
 			"get runtime sessions", "get runtime windows", "get runtime panes",
-			"get notifications", "get snapshots", "get pane"},
+			"get notifications", "get pane"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "projects", Invocation: InvocationFanOut, Summary: "List Project resources as NAME STATUS ACTIONS AGE; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context", CanonicalSummary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: listProjectionCatalog, AcceptedOutputs: acceptedListOutputModes},
 			{
@@ -1466,7 +1444,6 @@ var routes = []Route{
 				},
 			},
 			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "notifications", Invocation: InvocationFanOut, Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}, AcceptedOutputs: sharedOutputModes},
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "snapshots", Invocation: InvocationFanOut, Summary: "List saved session snapshots", Aliases: []string{"snapshot"}, Canonical: []string{"get snapshots"}, AcceptedOutputs: sharedOutputModes},
 			{
 				Effects:          unchangedEffects(CardinalityExactOne),
 				Name:             "pane",
@@ -1569,14 +1546,13 @@ var routes = []Route{
 		Name:           "prune",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 16,
-		Summary:        "Prune stale Projects, Agents, and snapshots",
+		Summary:        "Prune stale Projects and Agents",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
-			"projmux prune snapshot [--older-than <duration>]",
 			"projmux prune project --missing --older-than <duration> [--yes]",
 			"projmux prune agent --older-than <duration> [--no-session-ref] [--no-pane] [--exclude <agent-ref>]... [--yes]",
 		},
-		Canonical: []string{"prune agent", "prune project", "prune snapshot"},
+		Canonical: []string{"prune agent", "prune project"},
 		Children: []Route{
 			{
 				Effects:          pruneAgentEffects(),
@@ -1595,15 +1571,6 @@ var routes = []Route{
 				CanonicalSummary: "Prune Projects whose spec.root has been missing for a bounded age",
 				Usage:            []string{"projmux prune project --missing --older-than <duration> [--yes]"},
 				Canonical:        []string{"prune project"},
-			},
-			{
-				Effects:          unchangedEffects(CardinalityUnchanged),
-				Name:             "snapshot",
-				Invocation:       InvocationFanOut,
-				Summary:          "Inspect or delete preserved session snapshots (canonical spelling)",
-				CanonicalSummary: "Prune preserved session snapshots",
-				Usage:            []string{"projmux prune snapshot [--older-than <duration>]", "projmux prune snapshot delete <session>..."},
-				Canonical:        []string{"prune snapshot", "delete snapshot"},
 			},
 		},
 	},
@@ -1696,26 +1663,6 @@ var routes = []Route{
 		Summary:     "Inspect live Project, Window, and Pane CPU/RSS attribution",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux resources"},
-	},
-	{
-		Effects:        unchangedEffects(CardinalityUnchanged),
-		Name:           "restore",
-		Invocation:     InvocationRefusal,
-		CanonicalOrder: 14,
-		Summary:        "Project a saved snapshot into one exact closed Project desired state",
-		Disposition:    DispositionCanonical,
-		Usage:          []string{"projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]"},
-		Canonical:      []string{"restore snapshot"},
-		Children: []Route{
-			{
-				Effects:    restoreSnapshotEffects(),
-				Name:       "snapshot",
-				Invocation: InvocationExplicit,
-				Summary:    "Project a saved snapshot into one exact closed Project desired state",
-				Usage:      []string{"projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]"},
-				Canonical:  []string{"restore snapshot"},
-			},
-		},
 	},
 	{
 		// The runtime domain owns the live and ephemeral tmux inventory, which
@@ -1876,7 +1823,7 @@ var routes = []Route{
 				Effects:          unregisterProjectEffects(),
 				Name:             "project",
 				Invocation:       InvocationNatural,
-				Summary:          "Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
+				Summary:          "Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, and runtime",
 				CanonicalSummary: "Unregister a Project and its Registry graph while preserving runtime and external assets",
 				Aliases:          []string{"projects"},
 				Usage:            []string{"projmux unregister project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},

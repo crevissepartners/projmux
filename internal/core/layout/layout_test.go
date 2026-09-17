@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
 
 func TestStoreListDiscoversValidPresetsAndWarnsMalformed(t *testing.T) {
@@ -80,7 +78,7 @@ command = "nvim ."
 	if preset.Mode != ModeInheritAutosave {
 		t.Fatalf("Mode = %q, want default inherit", preset.Mode)
 	}
-	if got := preset.Windows[0].Panes[0].Recipe; got.Kind != sessionstate.RecipeKindStartup || got.Command != "nvim ." {
+	if got := preset.Windows[0].Panes[0].Recipe; got.Kind != RecipeKindStartup || got.Command != "nvim ." {
 		t.Fatalf("Recipe = %#v, want startup command", got)
 	}
 }

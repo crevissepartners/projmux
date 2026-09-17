@@ -72,8 +72,8 @@ projmux create claude --project mobile-client -- "마이그레이션 계획 초�
 
 - [Resource Inspector](docs/resource-attribution.md) — 프로젝트·창·pane별 CPU와
   RSS를 실시간으로 봅니다.
-- [Session State](docs/session-restore.md) — 창 배치와 작업 디렉터리를 스냅샷으로
-  남깁니다.
+- [Project Startup](docs/session-restore.md) — 닫힌 프로젝트를 Registry에 저장된
+  창 구성으로 이어 열거나 새로 만듭니다.
 - 검색 루트, 키 설정, 업데이트는 설정에서 바꿉니다.
 
 ## 요구 사항

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -22,7 +21,6 @@ import (
 )
 
 type settingsCommand struct {
-	sessionStateDiagnostics  *diagnostics.SessionStateRecorder
 	ai                       settingsAI
 	switcher                 settingsSwitcher
 	update                   updateRunner
@@ -222,9 +220,6 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	if section == settingsSectionProjectTrust {
 		return c.runProjectTrustSection(stdout, stderr)
 	}
-	if section == settingsSectionProjectSessionState {
-		return c.runProjectSessionStateSection(stdout, stderr)
-	}
 	if section == settingsSectionAI {
 		return c.runAISection(stdout, stderr)
 	}
@@ -233,9 +228,6 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	}
 	if section == settingsSectionKeybindings {
 		return c.runKeybindingsSection(stdout, stderr)
-	}
-	if section == settingsSectionSessionState {
-		return c.runSessionStateSection(stdout, stderr)
 	}
 	if section == settingsSectionStatusbar {
 		return c.runAppearanceSection(stdout, stderr)
@@ -316,7 +308,7 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 //
 // Nothing here re-checks that the value is a navigation row, because nothing
 // here could: settingsEntryMetaForValue classifies genuine View openers such as
-// `theme:tokens`, `sessionstate:view-autosave` and `keymap:<action>` as Action,
+// `theme:tokens`, `sidebar-startup:view` and `keymap:<action>` as Action,
 // since they share a prefix with mutations. The proof is upstream instead —
 // settingsRootResultLandings only ever appends a chain step for a catalog node
 // whose Kind is View — so an Action, Confirm, Edit or Toggle value can never
@@ -753,8 +745,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		return c.switcher.executeProjdirSettingsAction(action, stdout, stderr)
 	case strings.HasPrefix(value, settingsActionPrefixRuntimeDiagnostics):
 		return c.setRuntimeDiagnosticsVisibility(strings.TrimPrefix(value, settingsActionPrefixRuntimeDiagnostics))
-	case strings.HasPrefix(value, settingsActionPrefixSessionState):
-		return c.executeSessionStateAction(strings.TrimPrefix(value, settingsActionPrefixSessionState), stdout, stderr)
+	case strings.HasPrefix(value, settingsActionPrefixSidebarStartup):
+		return c.executeSidebarStartupAction(strings.TrimPrefix(value, settingsActionPrefixSidebarStartup))
 	case strings.HasPrefix(value, settingsActionPrefixStatusbar):
 		return c.setStatusbarDecoration(strings.TrimPrefix(value, settingsActionPrefixStatusbar))
 	case strings.HasPrefix(value, settingsActionPrefixSwitch):
@@ -838,7 +830,9 @@ func (c *settingsCommand) executeWithFeedback(value string, stdout, stderr io.Wr
 // this list closed: navigation/viewer values (Welcome, Quit, diagnostics and
 // key capture/probe flows) must not be projected as generic mutation feedback.
 func settingsMutationLabel(value string) (string, bool) {
-	if value == settingsActionPrefixSessionState+"project-preview" {
+	// The Closed Project startup chooser shares the `sidebar-startup:` prefix
+	// with its two mutations but only opens a View.
+	if value == settingsSidebarStartupPickerDetail {
 		return "", false
 	}
 	// The release channel toggle shares the `update:` prefix with check and
@@ -858,7 +852,7 @@ func settingsMutationLabel(value string) (string, bool) {
 		{settingsActionPrefixLiveResources, "Resources"},
 		{settingsActionPrefixHUDVisibility, "Status Bar visibility"},
 		{settingsActionPrefixProjdir, "Primary discovery root"},
-		{settingsActionPrefixSessionState, "Snapshots"},
+		{settingsActionPrefixSidebarStartup, "Closed Project startup"},
 		{settingsActionPrefixStatusbar, "Status Bar"},
 		{settingsActionPrefixSwitch, "Pinned Project"},
 		{settingsActionPrefixUpdate, "Update"},

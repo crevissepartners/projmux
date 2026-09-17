@@ -32,7 +32,6 @@ type Metadata struct {
 	CreateShortcut  bool
 	Integrate       SupportMetadata
 	HookDiagnostics SupportMetadata
-	SessionState    SupportMetadata
 
 	SettingsOrder int
 	PickerOrder   int
@@ -66,7 +65,6 @@ var registry = []Metadata{
 			ID:        "claude-hooks",
 			Name:      "Claude Code hooks",
 		},
-		SessionState:  SupportMetadata{Supported: true},
 		SettingsOrder: 10,
 		PickerOrder:   20,
 	},
@@ -90,7 +88,6 @@ var registry = []Metadata{
 			ID:        "codex-hooks",
 			Name:      "Codex hooks",
 		},
-		SessionState:  SupportMetadata{Supported: true},
 		SettingsOrder: 20,
 		PickerOrder:   10,
 	},
@@ -112,7 +109,6 @@ var registry = []Metadata{
 			ID:        "antigravity-hooks",
 			Name:      "Antigravity hooks",
 		},
-		SessionState:  SupportMetadata{Supported: true},
 		SettingsOrder: 30,
 		PickerOrder:   30,
 	},
@@ -186,11 +182,6 @@ func HookDiagnosticSupported() []Metadata {
 		return out[i].SettingsOrder < out[j].SettingsOrder
 	})
 	return out
-}
-
-func SessionStateSupported(id string) bool {
-	provider, ok := Lookup(id)
-	return ok && provider.SessionState.Supported
 }
 
 func filter(keep func(Metadata) bool) []Metadata {

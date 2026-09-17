@@ -21,7 +21,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -1292,8 +1291,8 @@ func TestUsageOmitsLayoutPrimaryCommand(t *testing.T) {
 	if strings.Contains(usage.String(), "\n  layout") {
 		t.Fatalf("usage = %q, want no primary layout command", usage.String())
 	}
-	if !strings.Contains(usage.String(), "  restore") {
-		t.Fatalf("usage = %q, want canonical snapshot restore surface", usage.String())
+	if strings.Contains(usage.String(), "\n  restore") {
+		t.Fatalf("usage = %q, want no removed snapshot restore command", usage.String())
 	}
 }
 
@@ -1601,7 +1600,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if err := os.WriteFile(paths.PinFile(), []byte(fixture.path("pins/app")+"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := config.SaveSessionStateToggleFile(paths.SidebarStartupPickerFile(), config.SessionStateToggleOff); err != nil {
+	if err := config.SaveSidebarStartupPickerFile(paths.SidebarStartupPickerFile(), config.SidebarStartupPickerOff); err != nil {
 		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
 	}
 	t.Chdir(fixture.path("managed/work-a/nested"))
@@ -3645,29 +3644,6 @@ func expectedSidebarEntry(name, displayPath, value, modeLabel string, pinned boo
 	}
 }
 
-func saveSwitchProjectStartupSnapshot(t *testing.T, store sessionstate.Store, sessionName string) {
-	t.Helper()
-	if err := store.Save(sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    sessionName,
-		Source:     sessionstate.SourceAutosave,
-		DefaultCWD: "/tmp/workspace",
-		SavedAt:    time.Date(2026, time.May, 13, 12, 0, 0, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index:           0,
-			Name:            "shell",
-			ActivePaneIndex: 0,
-			Panes: []sessionstate.Pane{{
-				Index:  0,
-				CWD:    "/tmp/workspace",
-				Recipe: sessionstate.ShellRecipe(),
-			}},
-		}},
-	}); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-}
-
 func requireSwitchEntryLabel(t *testing.T, entries []intpickercompat.Entry, want string) {
 	t.Helper()
 	for _, entry := range entries {
@@ -3806,7 +3782,7 @@ func enableSidebarStartupPickerForTest(t *testing.T, home string) {
 	if err != nil {
 		t.Fatalf("Paths() error = %v", err)
 	}
-	if err := config.SaveSessionStateToggleFile(paths.SidebarStartupPickerFile(), config.SessionStateToggleOn); err != nil {
+	if err := config.SaveSidebarStartupPickerFile(paths.SidebarStartupPickerFile(), config.SidebarStartupPickerOn); err != nil {
 		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
 	}
 }
@@ -3818,7 +3794,7 @@ func disableSidebarStartupPickerForTest(t *testing.T, home string) {
 	if err != nil {
 		t.Fatalf("Paths() error = %v", err)
 	}
-	if err := config.SaveSessionStateToggleFile(paths.SidebarStartupPickerFile(), config.SessionStateToggleOff); err != nil {
+	if err := config.SaveSidebarStartupPickerFile(paths.SidebarStartupPickerFile(), config.SidebarStartupPickerOff); err != nil {
 		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
 	}
 }

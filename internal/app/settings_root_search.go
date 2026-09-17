@@ -46,7 +46,6 @@ var settingsRootResultExcludedSubtrees = []string{
 	settingsNavProjectsExtraRoots + ".item",
 	settingsNavProjectsPins + ".item",
 	settingsNavProjectsCandidates + ".item",
-	settingsNavProjectSnapshots + ".saved.item",
 }
 
 // settingsRootResultInstance is one runtime member of a code-enumerated
@@ -479,7 +478,7 @@ func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootRe
 	switch node.ID {
 	// Projects -------------------------------------------------------------
 	case settingsNavProjectsSidebar + ".closed-startup":
-		return settingsSessionStateSidebarStartupPickerDetail, true
+		return settingsSidebarStartupPickerDetail, true
 	case settingsNavProjectsSidebar + ".runtime-diagnostics":
 		return settingsRuntimeDiagnosticsVisibilityDetail, true
 	case settingsNavProjectsPins + ".pin-current":
@@ -583,14 +582,6 @@ func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootRe
 	case settingsNavStatusBar + ".settings-launcher":
 		return settingsRootResultVisibilityPrefix(string(statusbarRowOneSettingsLauncher)), true
 
-	// Snapshots ------------------------------------------------------------
-	case settingsNavSnapshots + ".autosave":
-		return settingsSessionStateAutosaveDetail, true
-	case settingsNavSnapshots + ".autosave.enabled":
-		return settingsRootResultTogglePrefix(settingsActionPrefixSessionState + "autosave:"), true
-	case settingsNavSnapshots + ".autosave.interval":
-		return settingsSessionStateAutosaveIntervalSet, true
-
 	// Project scope --------------------------------------------------------
 	case settingsNavProjectTrust + ".revoke":
 		return settingsTrustUntrust, true
@@ -600,16 +591,6 @@ func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootRe
 		return settingsActionPrefixHookRemove + hookScopeProject + ":" + key, true
 	case settingsNavProjectHooks + ".send-noti.remove":
 		return settingsActionPrefixHookRemove + hookScopeProject + ":" + string(hooks.EventSendNoti), true
-	case settingsNavProjectSnapshots + ".autosave":
-		return settingsProjectSessionStateAutosaveDetail, true
-	case settingsNavProjectSnapshots + ".autosave.choice":
-		return settingsRootResultTogglePrefix(settingsActionPrefixSessionState + "project-autosave:"), true
-	case settingsNavProjectSnapshots + ".saved":
-		return settingsProjectSessionStateActionsDetail, true
-	case settingsNavProjectSnapshots + ".saved.save-latest":
-		return settingsProjectSessionStateSaveLatest, true
-	case settingsNavProjectSnapshots + ".saved.save-named":
-		return settingsProjectSessionStateSaveNamed, true
 	}
 
 	// Keybindings ----------------------------------------------------------

@@ -72,7 +72,8 @@ Templates and naming conventions are in
 
 - Live per-project, per-window, and per-pane CPU/RSS in the
   [Resource Inspector](docs/resource-attribution.md).
-- Layout and cwd snapshots in [Session State](docs/session-restore.md).
+- Registry-based Continue project and Recreate Project in
+  [Project Startup](docs/session-restore.md).
 - Search roots, keybindings, and updates in Settings.
 
 ## Requirements

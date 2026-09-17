@@ -304,10 +304,9 @@ func (b *BindingMatcher) match(
 // Insertion order is the ordinal adoption aligns against, and it is exactly the
 // order the legacy import created them in: one Pane per observed tmux pane, in
 // pane order, whether that pane became a shell Pane owned by the Window or a
-// managed Pane owned by a freshly minted Agent. Registry.snapshotPanesOf groups
-// shell Panes ahead of managed ones for the snapshot projection's own reasons;
-// borrowing that grouping here would silently shear the alignment for every
-// Window that mixes the two.
+// managed Pane owned by a freshly minted Agent. Grouping shell Panes ahead of
+// managed ones would silently shear the alignment for every Window that mixes
+// the two.
 func (r *Registry) paneUIDsInWindowOrder(windowUID string) []string {
 	owners := map[string]bool{windowUID: true}
 	for _, agent := range r.Agents {

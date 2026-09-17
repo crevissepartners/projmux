@@ -47,21 +47,21 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 35 {
-		t.Fatalf("public route count = %d, want 35", public)
+	if public != 34 {
+		t.Fatalf("public route count = %d, want 34", public)
 	}
 	if hidden != 1 {
 		t.Fatalf("hidden route count = %d, want 1", hidden)
 	}
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical: 28,
+		DispositionCanonical: 27,
 		DispositionShortcut:  7,
 	}
 	if !reflect.DeepEqual(publicTally, wantPublicTally) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)
 	}
 	wantTally := map[Disposition]int{
-		DispositionCanonical: 28,
+		DispositionCanonical: 27,
 		DispositionShortcut:  7,
 		DispositionInternal:  1,
 	}
@@ -494,7 +494,7 @@ func TestOnlyCanonicalChildrenSurviveOnMixedLegacyRoots(t *testing.T) {
 		want   []string
 	}{
 		{parent: "pin", want: []string{"project"}},
-		{parent: "prune", want: []string{"agent", "project", "snapshot"}},
+		{parent: "prune", want: []string{"agent", "project"}},
 		{parent: "attach", want: []string{"project"}},
 		{parent: "focus", want: []string{"project", "window", "pane"}},
 	} {

@@ -2,93 +2,88 @@ package diagnostics
 
 import (
 	"encoding/json"
-	"errors"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
-	"time"
 )
 
-type sessionStateEventWriter struct {
-	events []Event
-	err    error
-}
-
-func (w *sessionStateEventWriter) Append(event Event) error {
-	w.events = append(w.events, event)
-	return w.err
-}
-
-func TestSessionStateRecorderClosedOutcomeTable(t *testing.T) {
-	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	tests := []struct {
-		name      string
-		operation Operation
-		source    SessionStateSource
-		err       error
-		counts    SessionStateCounts
-		wantCode  Code
-	}{
-		{"save success", OperationSessionStateSave, SessionStateSourceManual, nil, SessionStateCounts{1, 3, 1, 1, 1, 0}, ""},
-		{"save error", OperationSessionStateSave, SessionStateSourceSettingsLatest, errors.New("/private/project raw"), SessionStateCounts{}, CodeSessionStateSaveFailed},
-		{"autosave error", OperationSessionStateAutosave, SessionStateSourceAutosave, errors.New("raw command"), SessionStateCounts{}, CodeSessionStateAutosaveFailed},
-		{"restore success", OperationSessionStateRestore, SessionStateSourceStartupNamed, nil, SessionStateCounts{2, 4, 2, 1, 1, 0}, ""},
-		{"restore error", OperationSessionStateRestore, SessionStateSourceStartupLatest, errors.New("raw session id"), SessionStateCounts{}, CodeSessionStateRestoreFailed},
-		{"delete success", OperationSessionStateDelete, SessionStateSourcePrune, nil, SessionStateCounts{ItemCount: 2}, ""},
-		{"delete error", OperationSessionStateDelete, SessionStateSourceSettingsLatest, errors.New("raw path"), SessionStateCounts{}, CodeSessionStateDeleteFailed},
+func TestHistoricalSessionStateOutcomeRecordsStayReadable(t *testing.T) {
+	zero, one, two := 0, 1, 2
+	base := Event{At: "2026-08-14T00:00:00Z", Level: "info", Component: "session-state", Event: "session-state.outcome", Result: "success", DurationMS: 3, RunID: "run", Version: "0.15.3", MuxBackend: "tmux"}
+	records := map[string]func(*Event){
+		"save success": func(e *Event) {
+			e.Operation, e.Source = string(OperationSessionStateSave), string(SessionStateSourceManual)
+			e.WindowCount, e.PaneCount, e.ShellRecipeCount, e.AgentRecipeCount, e.StartupRecipeCount = &one, &two, &one, &one, &zero
+		},
+		"restore success": func(e *Event) {
+			e.Operation, e.Source = string(OperationSessionStateRestore), string(SessionStateSourceStartupNamed)
+			e.WindowCount, e.PaneCount, e.ShellRecipeCount, e.AgentRecipeCount, e.StartupRecipeCount = &one, &one, &one, &zero, &zero
+		},
+		"delete success": func(e *Event) {
+			e.Operation, e.Source, e.ItemCount = string(OperationSessionStateDelete), string(SessionStateSourcePrune), &two
+		},
+		"autosave error": func(e *Event) {
+			e.Operation, e.Source = string(OperationSessionStateAutosave), string(SessionStateSourceAutosave)
+			e.Level, e.Result, e.Kind, e.Code = "error", "error", "runtime", string(CodeSessionStateAutosaveFailed)
+		},
+		"settings save error": func(e *Event) {
+			e.Operation, e.Source = string(OperationSessionStateSave), string(SessionStateSourceSettingsLatest)
+			e.Level, e.Result, e.Kind, e.Code = "error", "error", "runtime", string(CodeSessionStateSaveFailed)
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			writer := &sessionStateEventWriter{}
-			lifecycle := NewLifecycleRecorder(writer, "same-run", "0.10.0", "tmux")
-			recorder := lifecycle.SessionState()
-			recorder.now = func() time.Time { return now }
-			recorder.Record(tt.operation, tt.source, now.Add(-7*time.Millisecond), tt.counts, tt.err)
-			if len(writer.events) != 1 {
-				t.Fatalf("events = %#v, want one", writer.events)
+	for name, edit := range records {
+		t.Run(name, func(t *testing.T) {
+			event := base
+			edit(&event)
+			if _, err := sanitizeEvent(event, ""); err != nil {
+				t.Fatalf("historical record rejected: %v (%+v)", err, event)
 			}
-			event := writer.events[0]
-			if event.Event != "session-state.outcome" || event.Component != "session-state" || event.Operation != string(tt.operation) || event.Source != string(tt.source) || event.RunID != "same-run" || event.DurationMS != 7 {
-				t.Fatalf("event = %#v", event)
+			raw, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if tt.err == nil {
-				if event.Level != "info" || event.Result != "success" || event.Kind != "" || event.Code != "" {
-					t.Fatalf("success shape = %#v", event)
-				}
-			} else if event.Level != "error" || event.Result != "error" || event.Kind != "runtime" || event.Code != string(tt.wantCode) || event.Message != "" || event.hasCounts() {
-				t.Fatalf("error shape = %#v", event)
+			path := filepath.Join(t.TempDir(), "logs", LogFileName)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
 			}
-			if _, err := sanitizeEvent(event, "/home/private"); err != nil {
-				t.Fatalf("sanitizeEvent() error = %v", err)
+			if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+				t.Fatal(err)
 			}
-			raw, _ := json.Marshal(event)
-			for _, forbidden := range []string{"/private/project", "raw command", "raw session id", "raw path"} {
-				if strings.Contains(string(raw), forbidden) {
-					t.Fatalf("raw event leaked %q: %s", forbidden, raw)
-				}
+			events, err := NewStore(path).Read()
+			if err != nil {
+				t.Fatalf("Read() error = %v", err)
+			}
+			if len(events) != 1 || events[0].Event != "session-state.outcome" || events[0].Operation != event.Operation {
+				t.Fatalf("Read() = %+v, want the historical session-state.outcome record", events)
 			}
 		})
 	}
 }
 
-func TestSessionStateRecorderAutosaveSuccessAndNoOpVolumeIsZero(t *testing.T) {
-	writer := &sessionStateEventWriter{}
-	recorder := NewLifecycleRecorder(writer, "run", "0.10.0", "tmux").SessionState()
-	for range 100 {
-		recorder.Record(OperationSessionStateAutosave, SessionStateSourceAutosave, time.Now(), SessionStateCounts{WindowCount: 99}, nil)
+func TestHistoricalSessionStateCommandOutcomesStayReadableButLiveArgvIsUnclassified(t *testing.T) {
+	base := Event{At: "2026-08-14T00:00:00Z", Level: "info", Component: "cli", Event: "command.outcome", Result: "success", RunID: "run", Version: "0.15.3", MuxBackend: "tmux"}
+	for _, class := range [][2]string{{"session-state", "save"}, {"session-state", "restore"}, {"session-state", "delete"}, {"prune", "session-state"}} {
+		event := base
+		event.Command, event.Subcommand = class[0], class[1]
+		if _, err := sanitizeEvent(event, ""); err != nil {
+			t.Fatalf("historical command.outcome %v rejected: %v", class, err)
+		}
 	}
-	if len(writer.events) != 0 {
-		t.Fatalf("autosave success events = %d, want zero", len(writer.events))
+	for _, args := range [][]string{
+		{"session-state", "save"},
+		{"create", "snapshot"},
+		{"get", "snapshots"},
+		{"delete", "snapshot"},
+		{"restore", "snapshot"},
+	} {
+		if got := Classify(args); got.Command != "" || got.Subcommand != "" || got.StateChanging {
+			t.Fatalf("Classify(%q) = %+v, want the removed route unclassified", args, got)
+		}
 	}
-}
-
-func TestSessionStateRecorderAppendFailureStillOwnsEachAttempt(t *testing.T) {
-	writer := &sessionStateEventWriter{err: errors.New("append failed")}
-	lifecycle := NewLifecycleRecorder(writer, "run", "0.10.0", "tmux")
-	recorder := lifecycle.SessionState()
-	recorder.Record(OperationSessionStateDelete, SessionStateSourceManual, time.Now(), SessionStateCounts{ItemCount: 1}, nil)
-	recorder.Record(OperationSessionStateSave, SessionStateSourceManual, time.Now(), SessionStateCounts{}, errors.New("mutation failed"))
-	if !lifecycle.RecordedOutcome() || lifecycle.outcomes.Load() != 2 {
-		t.Fatalf("logical outcomes = %d, want two owned attempts", lifecycle.outcomes.Load())
+	for _, args := range [][]string{{"prune", "snapshot", "--apply"}, {"prune", "session-state", "delete"}} {
+		if got := Classify(args); got.Subcommand != "" || got.StateChanging {
+			t.Fatalf("Classify(%q) = %+v, want no retired subcommand or mutation", args, got)
+		}
 	}
 }
 

@@ -52,23 +52,20 @@ func TestProviderRegistryMetadataForCurrentAgents(t *testing.T) {
 		if !provider.HookDiagnostics.Supported || provider.HookDiagnostics.ID == "" || provider.HookDiagnostics.Name == "" {
 			t.Fatalf("provider %#v missing hook diagnostic metadata", provider)
 		}
-		if !provider.SessionState.Supported {
-			t.Fatalf("provider %#v missing session-state support", provider)
-		}
 	}
 
 	antigravity, ok := Lookup(string(Antigravity))
 	if !ok {
 		t.Fatalf("Lookup(antigravity) missing")
 	}
-	// Antigravity participates in managed hook integration, hook diagnostics,
-	// and session-state surfaces. It has no usage source: the statusLine
-	// bridge that fed one was removed.
+	// Antigravity participates in managed hook integration and hook
+	// diagnostics surfaces. It has no usage source: the statusLine bridge that
+	// fed one was removed.
 	if antigravity.UsageSupported || antigravity.UsageModel != "" {
 		t.Fatalf("Antigravity metadata = %#v, want no usage support", antigravity)
 	}
-	if !antigravity.Integrate.Supported || antigravity.Integrate.Command != "projmux agent integrate antigravity" || !antigravity.SessionState.Supported {
-		t.Fatalf("Antigravity metadata = %#v, want managed integration and session-state support", antigravity)
+	if !antigravity.Integrate.Supported || antigravity.Integrate.Command != "projmux agent integrate antigravity" {
+		t.Fatalf("Antigravity metadata = %#v, want managed integration support", antigravity)
 	}
 	if !antigravity.HookDiagnostics.Supported || antigravity.HookDiagnostics.ID != "antigravity-hooks" || antigravity.HookDiagnostics.Name != "Antigravity hooks" || antigravity.HookProvider != "antigravity" {
 		t.Fatalf("Antigravity hook metadata = %#v, want managed hook diagnostics support", antigravity)

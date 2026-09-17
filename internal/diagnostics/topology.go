@@ -145,3 +145,5 @@ func validateTopologyEvent(event Event) error {
 	}
 	return nil
 }
+
+func intPointer(value int) *int { return &value }

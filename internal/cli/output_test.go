@@ -40,7 +40,7 @@ func TestCWDFieldProjectionIsAcceptedOnlyByThePaneCurrentRead(t *testing.T) {
 		"create window", "create pane", "create agent", "create codex",
 		"rename project", "rename window", "rename pane", "rename agent",
 		"rebind project", "delete window", "delete pane", "delete agent",
-		"focus pane", "attach project", "restore snapshot", "prune project", "prune agent",
+		"focus pane", "attach project", "prune project", "prune agent",
 	} {
 		if _, _, err := ResolveOutputToken(spelling, string(FieldProjectionCWD)); err == nil {
 			t.Errorf("mutation route %q resolved -o cwd", spelling)
@@ -126,7 +126,7 @@ func TestGetRouteOwnsTheReadKindFamily(t *testing.T) {
 		}
 		children = append(children, child.Name)
 	}
-	want := []string{"projects", "windows", "panes", "agents", "notifications", "snapshots", "pane"}
+	want := []string{"projects", "windows", "panes", "agents", "notifications", "pane"}
 	if !reflect.DeepEqual(children, want) {
 		t.Fatalf("get kind children = %v, want %v", children, want)
 	}

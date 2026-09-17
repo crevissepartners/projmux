@@ -270,23 +270,6 @@ func TestTopologyRecoveryWriterDisplayFailureAndNoClient(t *testing.T) {
 	}
 }
 
-func TestTopologyRecoverySnapshotRetainsSeparateAuthority(t *testing.T) {
-	activation, store, _, root, _ := newProjectStartupTopologyFixture(t)
-	recorder, _, journal := topologyJournalFixture(t)
-	activation.diagnostics = recorder
-	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "fresh-recipe", provider: "codex", cwd: root})
-	markTopologyAgentInterrupted(t, store, agent.Metadata.UID, "")
-	if ok, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta", AgentReplayAuthority: topologyAgentReplaySnapshot}); err != nil || !ok {
-		t.Fatalf("snapshot=%t %v", ok, err)
-	}
-	if len(activation.agents.(*fakeTopologyAgentLauncher).launches) != 1 {
-		t.Fatal("snapshot lost fresh fallback")
-	}
-	if result, err := journal.ReadOnly(); err != nil || len(result.Events) != 0 {
-		t.Fatalf("snapshot wrote topology diagnostics: %+v %v", result, err)
-	}
-}
-
 func TestTopologyRecoveryReportArchiveIncludesSuccess(t *testing.T) {
 	command, _, _ := testReportCommand(t)
 	path, err := diagnostics.DefaultPath(command.lookupEnv, command.homeDir)
@@ -371,7 +354,7 @@ func TestTopologyRecoveryTypedReasonDecisionSites(t *testing.T) {
 			project, _ := store.registry.Project("prj-beta")
 			window, _ := store.registry.Window("win-beta-main")
 			plan := &registryTopologyPlan{}
-			work := planTopologyWindowAgents(plan, store.registry, *project, *window, 1, nil, launcher, "", topologyAgentReplayInterrupted)
+			work := planTopologyWindowAgents(plan, store.registry, *project, *window, 1, nil, launcher, "")
 			if len(work) != 0 || len(plan.agentSkips) != 1 || plan.agentSkips[test.code] != 1 || len(plan.notices) != 1 {
 				t.Fatalf("work=%v reasons=%v notices=%v", work, plan.agentSkips, plan.notices)
 			}
@@ -497,35 +480,23 @@ func TestTopologyRecoveryCanonicalContinueReportsAfterCommit(t *testing.T) {
 	}
 }
 
-func TestTopologyRecoverySwitchDoesNotDuplicateMaterializerOrSnapshot(t *testing.T) {
-	for _, snapshot := range []bool{false, true} {
-		activation, _, _, root, _ := newProjectStartupTopologyFixture(t)
-		recorder, cli, _ := topologyJournalFixture(t)
-		activation.diagnostics = recorder
-		reporter := &recordingProjectStartupReporter{}
-		command := &switchCommand{diagnostics: recorder, projectTopology: activation, startupNotices: reporter,
-			projectSessionPlan: func(context.Context, projectSessionRequest) error {
-				t.Fatal("materialized topology reached fallback")
-				return nil
-			},
-		}
-		request := projectTopologyMaterializeRequest{Root: root, SessionName: "beta"}
-		if snapshot {
-			request.AgentReplayAuthority = topologyAgentReplaySnapshot
-		}
-		if err := command.materializeProjectTopology(context.Background(), request, openedProjectBootstrap{}); err != nil {
-			t.Fatal(err)
-		}
-		events := readTopologyEvents(t, cli)
-		if snapshot {
-			if len(events) != 0 {
-				t.Fatalf("snapshot wrote topology events: %+v", events)
-			}
-		} else {
-			assertTopologyEvents(t, events, "success", 0, 0)
-		}
-		if len(reporter.messages) != 0 {
-			t.Fatalf("materializer duplicated fallback summary: %v", reporter.messages)
-		}
+func TestTopologyRecoverySwitchDoesNotDuplicateMaterializer(t *testing.T) {
+	activation, _, _, root, _ := newProjectStartupTopologyFixture(t)
+	recorder, cli, _ := topologyJournalFixture(t)
+	activation.diagnostics = recorder
+	reporter := &recordingProjectStartupReporter{}
+	command := &switchCommand{diagnostics: recorder, projectTopology: activation, startupNotices: reporter,
+		projectSessionPlan: func(context.Context, projectSessionRequest) error {
+			t.Fatal("materialized topology reached fallback")
+			return nil
+		},
+	}
+	request := projectTopologyMaterializeRequest{Root: root, SessionName: "beta"}
+	if err := command.materializeProjectTopology(context.Background(), request, openedProjectBootstrap{}); err != nil {
+		t.Fatal(err)
+	}
+	assertTopologyEvents(t, readTopologyEvents(t, cli), "success", 0, 0)
+	if len(reporter.messages) != 0 {
+		t.Fatalf("materializer duplicated fallback summary: %v", reporter.messages)
 	}
 }

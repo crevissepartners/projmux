@@ -73,7 +73,7 @@ routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
 `teammate_name`. Antigravity hook rows carry `agent=antigravity`,
 `conversation_id`, `termination_reason`, `fully_idle`,
 `tool_confirmation_pending`, `agent_state`, and `context_window` when present.
-The same `conversation_id` can seed session-state restore via
+The same `conversation_id` can seed an Agent resume via
 `agy --conversation <uuid>` when it is UUID-shaped. Antigravity
 account quota remains outside notify attention semantics: `context_window` is a
 separate conversation-local gauge and is never treated as quota data.

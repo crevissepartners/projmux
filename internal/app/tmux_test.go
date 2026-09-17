@@ -3288,61 +3288,6 @@ func TestTmuxCommandReportsConfigurationAndRuntimeErrors(t *testing.T) {
 	}
 }
 
-func saveGlobalAutosaveForTest(t *testing.T, home string, mode config.SessionStateToggle) {
-	t.Helper()
-
-	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := config.SaveSessionStateToggleFile(paths.SessionStateAutosaveFile(), mode); err != nil {
-		t.Fatalf("SaveSessionStateToggleFile(autosave) error = %v", err)
-	}
-}
-
-func saveProjectAutosaveForTest(t *testing.T, home, sessionName string, mode config.SessionStateProjectToggle) {
-	t.Helper()
-
-	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := config.SaveSessionStateProjectToggleFile(paths.ProjectSessionStateAutosaveFile(sessionName), mode); err != nil {
-		t.Fatalf("SaveSessionStateProjectToggleFile() error = %v", err)
-	}
-}
-
-func autosaveCaptureRunner(sessionName, cwd string) *recordingTmuxRunner {
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}"}, "\x1f")
-	paneFormat := strings.Join([]string{
-		"#{window_index}",
-		"#{pane_index}",
-		"#{pane_title}",
-		"#{@projmux_pane_label}",
-		"#{?pane_active,1,0}",
-		"#{pane_current_path}",
-		"#{@projmux_recipe_kind}",
-		"#{@projmux_startup_command}",
-		"#{@projmux_ai_managed}",
-		"#{@projmux_ai_agent}",
-		"#{@projmux_ai_topic}",
-		"#{@projmux_ai_topic_manual}",
-		"#{@projmux_ai_resume_id}",
-		"#{@projmux_ai_resume_source}",
-		"#{@projmux_ai_resume_updated_at}",
-		"#{pane_id}",
-		"#{@projmux_pane_uid}",
-	}, "\x1f")
-	return &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                    sessionName + "\n",
-			strings.Join([]string{"tmux", "display-message", "-p", "-t", sessionName, "#{@projmux_sessionstate_source}"}, "\x00"): "\n",
-			strings.Join([]string{"tmux", "list-windows", "-t", sessionName, "-F", windowFormat}, "\x00"):                         "0\x1fshell\x1flayout\n",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", sessionName, "-F", paneFormat}, "\x00"):                       "0\x1f0\x1fshell\x1f1\x1f" + cwd + "\x1f\x1f\x1f\x1f\x1f\x1f\n",
-		},
-	}
-}
-
 type stubTmuxPopupClient struct {
 	currentPanePath string
 	currentPaneErr  error

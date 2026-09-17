@@ -83,6 +83,45 @@ projmux no longer installs, reads, or judges the Antigravity `statusLine` in
   `snapshots.json` are ignored, not deleted. Doctor JSON no longer has
   `statusline_config_path`, and the diagnostic is named `Antigravity hooks`.
 
+### Project snapshots removed
+
+`registry.json` is now the only saved Project state. projmux no longer saves or
+restores Project snapshots anywhere else, so these surfaces are gone:
+
+- the `create snapshot`, `get snapshots`, `delete snapshot`,
+  `restore snapshot`, and `prune snapshot` commands. `create`, `get`,
+  `delete`, and `prune` now refuse the `snapshot` kind with a usage error. The
+  `restore` command group had no other child and is removed with them, so
+  `restore snapshot` fails as an unknown command. `prune` now prunes only stale
+  Projects and Agents;
+- the hidden `session-state` route;
+- the Global and Project **Snapshots** pages in Settings: the auto-save toggle
+  and interval, the per-Project auto-save override, and the save latest, save
+  named, preview, and delete actions;
+- the snapshot view in the session popup and its `SessionPopup:OpenState`
+  keybinding;
+- the session-state section of `projmux doctor`, including
+  `doctor --section session-state` and the `session_state_resume` and
+  `session_state_prune` JSON fields.
+
+projmux no longer emits `session-state.outcome` diagnostics records. Records
+with that event in existing logs are still read and accepted.
+
+The existing `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions` directory
+is no longer read or written. projmux leaves it in place. The
+`sessionstate-autosave` and `sessionstate-autosave-interval` files and the
+`sessionstate-projects/` directory under the config directory are ignored, as
+is `PROJMUX_SESSIONSTATE_AUTOSAVE`. Tmux configs rendered by older installs may
+still call `projmux internal tmux autosave-session-state`; that route stays and
+exits 0 without writing anything.
+
+Closed Projects start from the Registry: **Continue project** materializes the
+Project's stored Windows and Panes, and **Recreate Project** replaces them with
+a fresh graph. Settings > Projects > Project Sidebar > Closed Project startup
+and its `sidebar-startup-picker` file are unchanged. Settings no longer saves a
+named layout from a live session into `<project>/.projmux/layouts`, and no
+current surface opens those files.
+
 ### Claude dialogue endpoint revalidation
 
 The heterogeneous dialogue release moves the public message envelope and
@@ -155,8 +194,7 @@ That is evidence of incompatibility, not permission to proceed. Operators must
 refuse a binary-only downgrade before installation and must not permit the old
 binary to write final-v2 bytes. To roll back during the prerelease window, stop
 the final writer, restore the exact pre-normalization Registry backup, and
-restore the matching intermediate binary as a pair. Snapshots are not migration
-or rollback inputs and are never rewritten by this normalization.
+restore the matching intermediate binary as a pair.
 
 Rollback rehearsal is byte-oriented: record the backup path, mode, SHA-256,
 and matching pre-release binary revision; stop every final-v2 writer; atomically
@@ -377,7 +415,7 @@ commands and exit 1. Use `internal ...` for generated plumbing and `config
 render|apply` for public configuration work.
 
 The mixed roots retain only `attach project`, `focus project|window|pane`, `pin
-project`, and `prune project|snapshot`. Shortcuts and singular/plural resource
+project`, and `prune agent|project`. Shortcuts and singular/plural resource
 kind aliases are unchanged. The ledger contains the complete removed
 argv/replacement/error matrix.
 

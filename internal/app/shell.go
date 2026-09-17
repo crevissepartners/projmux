@@ -19,7 +19,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
@@ -42,7 +41,6 @@ type shellCommand struct {
 	runCommand   func(ctx context.Context, env []string, name string, args ...string) error
 	startCommand func(ctx context.Context, env []string, name string, args ...string) error
 	tmuxRunner   tmuxRunner
-	sessionStore func() (sessionstate.Store, error)
 	update       *updateCommand
 	nativePicker intpicker.Runner
 	getwd        func() (string, error)
@@ -909,9 +907,8 @@ func (c *shellCommand) appSessionExists(ctx context.Context, socketName, configP
 }
 
 // tmuxSessionAbsent recognizes the stderr signatures tmux uses when the session
-// or the server it was asked about is not there. It is the classification
-// tmuxSessionExists has always applied, factored out so the two callers cannot
-// disagree about what "absent" looks like.
+// or the server it was asked about is not there, factored out so every caller
+// agrees about what "absent" looks like.
 func tmuxSessionAbsent(err error) bool {
 	if err == nil {
 		return false
@@ -1012,20 +1009,6 @@ func (c *shellCommand) resolveShellProjectContext(home string) (string, error) {
 		return root, nil
 	}
 	return "", nil
-}
-
-func tmuxSessionExists(ctx context.Context, runner tmuxRunner, sessionName string) (bool, error) {
-	if runner == nil {
-		return false, errors.New("tmux runner is not configured")
-	}
-	_, err := runner.Run(ctx, "tmux", "has-session", "-t", sessionName)
-	if err == nil {
-		return true, nil
-	}
-	if tmuxSessionAbsent(err) {
-		return false, nil
-	}
-	return false, err
 }
 
 type shellTmuxExecRunner struct {

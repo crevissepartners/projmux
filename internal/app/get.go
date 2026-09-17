@@ -37,9 +37,9 @@ var getKinds = cli.ChildSpellings("get")
 // query, and writes to stdout only after a successful resolution. A selector or
 // cardinality failure therefore leaves zero bytes on stdout and zero mutations.
 //
-// `notifications` and `snapshots` are parity aliases: they forward raw argv to
-// the notify queue and session snapshot handlers so stdout, stderr, and the exit
-// code stay identical to the current public spellings.
+// `notifications` is a parity alias: it forwards raw argv to the notify queue
+// handler so stdout, stderr, and the exit code stay identical to the current
+// public spelling.
 type getCommand struct {
 	loadRegistry func() (coremetadata.Registry, error)
 	// runtime is the live-tmux observation Window and Pane status is derived
@@ -48,7 +48,6 @@ type getCommand struct {
 	reads       resourceReadLookup
 	currentPath currentPathResolver
 	notify      rawArgvCommand
-	snapshots   rawArgvCommand
 	// runtimeDiag is the Runtime diagnostics escape hatch's read seam. It is a
 	// separate field from `runtime` above, which observes mirrored uids to
 	// derive Registry row status; this one resolves the whole server, including
@@ -149,8 +148,6 @@ func (c *getCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runRuntime(args[1:], stdout, stderr)
 	case "notifications":
 		return forwardRawArgv(c.notify, "get notifications", "notify", []string{"list"}, args[1:], stdout, stderr)
-	case "snapshots":
-		return forwardRawArgv(c.snapshots, "get snapshots", "session-state", []string{"status"}, args[1:], stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("get %s is not available; this release implements: %s",
 			args[0], strings.Join(getKinds, ", ")))

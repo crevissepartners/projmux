@@ -66,7 +66,6 @@ func kindSpellingCases(t *testing.T) []kindSpellingCase {
 		forwarded := &recordedRawArgv{stdout: "forwarded\n"}
 		cmd := newTestListGetCommand(t, newFakeResourceStore(t))
 		cmd.notify = forwarded
-		cmd.snapshots = forwarded
 		stdout, stderr, err := runRoute(t, cmd, args...)
 		if len(forwarded.calls) != 1 {
 			t.Fatalf("%v forwarded %d times, want 1", args, len(forwarded.calls))
@@ -91,7 +90,6 @@ func kindSpellingCases(t *testing.T) []kindSpellingCase {
 		forwarded := &recordedRawArgv{stdout: "forwarded\n"}
 		cmd := newTestDeleteCommand(newFakeResourceStore(t), false, false, nil)
 		cmd.notify = forwarded
-		cmd.snapshots = forwarded
 		stdout, stderr, err := runRoute(t, cmd, args...)
 		if len(forwarded.calls) != 1 {
 			t.Fatalf("%v forwarded %d times, want 1", args, len(forwarded.calls))
@@ -109,7 +107,6 @@ func kindSpellingCases(t *testing.T) []kindSpellingCase {
 		{verb: "get", canonical: "windows", alias: "window", tail: []string{"--project", "alpha", "-o", "ref"}, run: runGetRoute},
 		{verb: "get", canonical: "agents", alias: "agent", tail: []string{"-o", "json"}, run: runGetRoute},
 		{verb: "get", canonical: "notifications", alias: "notification", tail: []string{"--json"}, run: runForwardedGetRoute},
-		{verb: "get", canonical: "snapshots", alias: "snapshot", tail: nil, run: runForwardedGetRoute},
 
 		{verb: "describe", canonical: "project", alias: "projects", tail: []string{"alpha"}, run: runDescribeRoute},
 		{verb: "describe", canonical: "window", alias: "windows", tail: []string{"review", "--project", "alpha"}, run: runDescribeRoute},
@@ -121,7 +118,6 @@ func kindSpellingCases(t *testing.T) []kindSpellingCase {
 		{verb: "delete", canonical: "pane", alias: "panes", tail: []string{"log", "--project", "alpha", "--dry-run"}, run: runDeleteRoute},
 		{verb: "delete", canonical: "agent", alias: "agents", tail: []string{"codex", "--project", "alpha", "--dry-run"}, run: runDeleteRoute},
 		{verb: "delete", canonical: "notification", alias: "notifications", tail: []string{"7"}, run: runForwardedDeleteRoute},
-		{verb: "delete", canonical: "snapshot", alias: "snapshots", tail: []string{"alpha"}, run: runForwardedDeleteRoute},
 
 		{verb: "rename", canonical: "project", alias: "projects", tail: []string{"alpha", "--name", "renamed"}, run: runRenameRoute},
 		{verb: "rename", canonical: "window", alias: "windows", tail: []string{"review", "--project", "alpha", "--name", "renamed"}, run: runRenameRoute},
@@ -231,7 +227,7 @@ func TestUnknownKindRefusalsListBothForms(t *testing.T) {
 				return runRoute(t, newTestListGetCommand(t, newFakeResourceStore(t)), "zzz")
 			},
 			want: []string{"projects|project", "windows|window", "panes", "agents|agent",
-				"notifications|notification", "snapshots|snapshot", "pane"},
+				"notifications|notification", "pane"},
 		},
 		{
 			verb: "describe",
@@ -246,7 +242,7 @@ func TestUnknownKindRefusalsListBothForms(t *testing.T) {
 				return runRoute(t, newTestDeleteCommand(newFakeResourceStore(t), false, false, nil), "zzz")
 			},
 			want: []string{"window|windows", "pane|panes", "agent|agents",
-				"notification|notifications", "snapshot|snapshots"},
+				"notification|notifications"},
 		},
 		{
 			verb: "rename",

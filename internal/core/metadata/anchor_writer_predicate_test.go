@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
 
 // TestWindowAnchorEligibilityPredicateBranches pins every clause of the one
@@ -271,54 +269,9 @@ func TestAnchorWritersCloseOnNewDefaultShellWhenNoPaneIsEligible(t *testing.T) {
 }
 
 // Acceptance 4: rebind moves an anchor on the previous binding Pane onto the
-// new managed Pane, including the snapshot-projection Offline binding shape.
+// new managed Pane.
 func TestAttachAgentPaneMovesAnchorFromPreviousBindingToNewManagedPane(t *testing.T) {
 	t.Parallel()
-	t.Run("snapshot projection Offline binding", func(t *testing.T) {
-		t.Parallel()
-		reg, targetUID, _, _ := projectionFixture(t)
-		project, _ := reg.Project(targetUID)
-		window, _ := reg.Window(project.Spec.PrimaryWindowRef)
-		agents := reg.AgentsOf(window.Metadata.UID)
-		if len(agents) != 1 {
-			t.Fatalf("fixture Agents=%d, want 1", len(agents))
-		}
-		window.Spec.AnchorPaneRef = agents[0].Status.PaneRef
-		snap := buildCurrentSnapshot(&reg, targetUID, "one")
-		for wi := range snap.Windows {
-			for pi := range snap.Windows[wi].Panes {
-				if meta := snap.Windows[wi].Panes[pi].Metadata; meta != nil && meta.OwnerKind == string(KindAgent) {
-					snap.Windows[wi].Panes[pi].Recipe = sessionstate.AgentRecipe("codex", "projection-thread", "projection")
-				}
-			}
-		}
-		projected, err := PlanSnapshotProjection(reg, targetUID, snap, fixedNow.Add(time.Minute), sequentialUIDs())
-		if err != nil {
-			t.Fatal(err)
-		}
-		desired := projected.Desired
-		desiredWindow, ok := desired.Window(window.Metadata.UID)
-		if !ok {
-			t.Fatalf("projected Window %q missing", window.Metadata.UID)
-		}
-		desiredAgents := desired.AgentsOf(desiredWindow.Metadata.UID)
-		if len(desiredAgents) != 1 || desiredAgents[0].Status.Phase != PhaseOffline ||
-			desiredAgents[0].Status.PaneRef == "" || desiredAgents[0].Status.PaneRef != desiredWindow.Spec.AnchorPaneRef {
-			t.Fatalf("projection shape = agents:%+v anchor:%q, want an Offline Agent bound to the anchor", desiredAgents, desiredWindow.Spec.AnchorPaneRef)
-		}
-		if err := desired.Validate(); err != nil {
-			t.Fatalf("projected fixture: %v", err)
-		}
-		agentUID, previous := desiredAgents[0].Metadata.UID, desiredAgents[0].Status.PaneRef
-
-		m := testMutator(dirSet{"/src/one": true})
-		m.NewUID = func(kind Kind) (string, error) { return strings.ToLower(string(kind)) + "-rebind", nil }
-		pane, err := m.AttachAgentPane(&desired, agentUID, BootstrapPane{CWD: "/src/one"}, "continue")
-		if err != nil {
-			t.Fatalf("attach: %v", err)
-		}
-		assertAnchorFollowedRebind(t, desired, desiredWindow.Metadata.UID, agentUID, previous, pane.Metadata.UID)
-	})
 	t.Run("Running re-attach", func(t *testing.T) {
 		t.Parallel()
 		m, reg, windowUID, _ := anchorWriterFixture(t)
@@ -443,8 +396,8 @@ func TestAnchorWritersPreserveValidationOverRandomWindowConfigurations(t *testin
 // randomValidAnchorRegistry builds a valid Registry through the shipped
 // Mutator, then places each Window anchor on a random eligible Pane and shuffles
 // Registry Pane order. Agents cover Pending, Running, Running with a superseded
-// retained Pane, released Offline/Failed with a retained Pane, and the
-// snapshot-projection Offline/Failed shape that still binds its Pane.
+// retained Pane, released Offline/Failed with a retained Pane, and an
+// Offline/Failed shape that still binds its Pane.
 func randomValidAnchorRegistry(t *testing.T, random *rand.Rand, iteration int) (Mutator, Registry) {
 	t.Helper()
 	const root = "/src/pbt"
@@ -508,7 +461,7 @@ func randomValidAnchorRegistry(t *testing.T, random *rand.Rand, iteration int) (
 			case 3: // Released Offline/Failed with a retained Pane.
 				attach()
 				transition([]AgentPhase{PhaseOffline, PhaseFailed}[random.Intn(2)])
-			case 4: // Snapshot-projection shape: non-Running and still bound.
+			case 4: // Non-Running and still bound.
 				attach()
 				stored, _ := reg.Agent(uid)
 				stored.Status.Phase = []AgentPhase{PhaseOffline, PhaseFailed}[random.Intn(2)]

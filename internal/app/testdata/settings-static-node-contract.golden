@@ -45,7 +45,6 @@ global.appearance.status-bar.working-directory|parent=global.appearance.status-b
 global.appearance.status-bar.git|parent=global.appearance.status-bar|value=statusbar-decoration:git|axis=1|nav=View|entry=navigation|owner=appearance|label=Git|key=settings.node.git
 global.appearance.locale|parent=global.appearance|value=appearance:language|axis=1|nav=Choice|entry=navigation|owner=appearance|label=Language / Locale|key=settings.text.language_locale
 global.appearance.badge|parent=global.appearance|value=ai-badge-style:|axis=1|nav=Choice|entry=navigation|owner=appearance|label=Agent attention badge style|key=settings.text.agent_attention_badge_style
-global.snapshots|parent=global|value=section:sessionstate|axis=1|nav=View|entry=navigation|owner=root|label=Snapshots|key=settings.text.snapshots
 global.keybindings|parent=global|value=section:keybindings|axis=1|nav=View|entry=navigation|owner=root|label=Keybindings|key=settings.text.keybindings
 global.keybindings.launch-and-popups|parent=global.keybindings|value=keymap-category:launch-and-popups|axis=1|nav=View|entry=navigation|owner=keybindings|label=Launch & popups|key=settings.text.keybinding_category_launch
 global.keybindings.agent-and-pane-launch|parent=global.keybindings|value=keymap-category:agent-and-pane-launch|axis=1|nav=View|entry=navigation|owner=keybindings|label=Agent & Pane launch|key=settings.text.keybinding_category_agent_pane
@@ -65,4 +64,3 @@ project.automation.trust|parent=project.automation|value=section:project-trust|a
 project.automation.project-hooks|parent=project.automation|value=section:hooks-project|axis=2|nav=View|entry=navigation|owner=project-automation|label=Project hooks|key=settings.text.project_hooks_lower
 project.automation.project-hooks.lifecycle|parent=project.automation.project-hooks|value=project-automation:lifecycle|axis=2|nav=View|entry=navigation|owner=project-automation|label=Session lifecycle|key=settings.text.session_lifecycle
 project.automation.project-hooks.send-noti|parent=project.automation.project-hooks|value=project-automation:send-noti|axis=2|nav=View|entry=navigation|owner=project-automation|label=After notification queued|key=settings.text.after_notification_queued
-project.snapshots|parent=project|value=section:project-sessionstate|axis=2|nav=View|entry=navigation|owner=root|label=Snapshots|key=settings.text.snapshots

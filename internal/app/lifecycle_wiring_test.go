@@ -48,13 +48,13 @@ func TestLifecycleMutationSurfaceInventoryUsesSharedRecorder(t *testing.T) {
 		"runtime attach", "runtime stop", "runtime sessions open/kill",
 		"switch create/restore/open/kill", "internal tmux apply", "internal session-popup open",
 		"window recent", "runtime prune", "internal focus switch-client", "shell open-app",
-		"snapshot replay create", "popup-toggle cancel restore",
+		"popup-toggle cancel restore",
 	}
 	if !reflect.DeepEqual(lifecycleMutationSurfaceInventory, wantInventory) {
 		t.Fatalf("production inventory = %#v, want %#v", lifecycleMutationSurfaceInventory, wantInventory)
 	}
 	// Constructor assertions are paired with action-level tests in this file,
-	// tmux/client_test.go (baseline + replay), and tmux_test.go (apply + popup
+	// tmux/client_test.go (baseline), and tmux_test.go (apply + popup
 	// restore), so fields alone cannot satisfy the maintained contract.
 	surfaces := map[string]*diagnostics.LifecycleRecorder{
 		"runtime attach":     application.attach.diagnostics,

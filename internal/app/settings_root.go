@@ -157,15 +157,6 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 		if !ok || meta.Axis&axis == 0 {
 			continue
 		}
-		// Snapshots carries live autosave state in its description, so it
-		// keeps its own label builder; every other root is a static summary.
-		if node.ID == settingsNavSnapshots {
-			entries = append(entries, settingsRootEntryWithSearchKey(intpickercompat.Entry{
-				Label: c.sessionStateSettingsRootLabelLocale(locale),
-				Value: node.Value,
-			}))
-			continue
-		}
 		entries = append(entries, settingsRootEntryWithSearchKey(intpickercompat.Entry{
 			Label: settingsNodeRootLabelLocale(locale, node.ID, settingsGlyphOpen, settingsRootDescriptions[node.ID]),
 			Value: node.Value,
@@ -228,29 +219,4 @@ func settingsResolvedRootLabelWithColorLocale(locale i18n.Locale, glyph, color, 
 
 func settingsNodeRootLabelLocale(locale i18n.Locale, id, glyph, description string) string {
 	return settingsResolvedRootLabelWithColorLocale(locale, glyph, settingsRootColorOpen, settingsNavLabelLocale(locale, id), description)
-}
-
-func (c *settingsCommand) sessionStateSettingsRootLabelLocale(locale i18n.Locale) string {
-	autosave := c.currentSessionStateAutosave()
-	interval := c.currentSessionStateAutosaveInterval()
-	var mode string
-	if autosave.Mode.Enabled() {
-		mode = localizeText(locale, "settings.text.state_on", "on")
-	} else {
-		mode = localizeText(locale, "settings.text.state_off", "off")
-	}
-	desc := strings.NewReplacer(
-		"{mode}", mode,
-		"{interval}", formatSessionStateAutosaveInterval(interval.Duration),
-	).Replace(localizeText(locale, "settings.text.session_state_summary", "autosave {mode}, interval {interval}"))
-	return settingsNodeRootLabelLocale(locale, settingsNavSnapshots, settingsGlyphOpen, desc)
-}
-
-func (c *settingsCommand) projectSessionStateSettingsRootLabel(ctx settingsProjectContext) string {
-	identity := c.projectSessionStateIdentity(ctx)
-	desc := "disabled - no project context"
-	if identity.Err == nil {
-		desc = identity.Session
-	}
-	return settingsNodeRootLabelLocale(c.locale(), settingsNavProjectSnapshots, settingsGlyphOpen, desc)
 }

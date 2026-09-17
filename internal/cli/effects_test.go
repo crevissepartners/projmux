@@ -113,12 +113,6 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"runtime-diagnostics-focus", "runtime diagnostics", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"runtime-diagnostics-attach-live", "runtime diagnostics", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"runtime-diagnostics-attach-after-race", "runtime diagnostics", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusAttachedCaller, CardinalityExactOne, nil},
-		{"restore-snapshot-dry-run", "restore snapshot", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusUnchanged, CardinalityUnchanged, nil},
-		{"restore-snapshot-preserve", "restore snapshot", IdentityReused, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityOneOrMore, nil},
-		{"restore-snapshot-create", "restore snapshot", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusAttachedCaller, CardinalityOneOrMore, nil},
-		{"restore-snapshot-remove", "restore snapshot", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityOneOrMore, nil},
-		{"restore-snapshot-replace", "restore snapshot", IdentityReplaced, AddressUnchanged, TopologyReplaced, DesiredStateReplaced, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityOneOrMore, nil},
-		{"restore-snapshot-post-commit-materialize-failure", "restore snapshot", IdentityReplaced, AddressUnchanged, TopologyReplaced, DesiredStateReplaced, RuntimeUnchanged, FocusUnchanged, CardinalityOneOrMore, nil},
 	}
 }
 
@@ -394,7 +388,7 @@ func TestCorrectedHandlerEffectsAreFixtureCovered(t *testing.T) {
 	for _, route := range []string{
 		"create window", "create pane", "create agent", "create codex", "create claude", "create antigravity",
 		"start project", "open project", "stop project", "unregister project", "delete project",
-		"agent resume", "shell", "reconcile resources", "reconcile registry", "restore snapshot",
+		"agent resume", "shell", "reconcile resources", "reconcile registry",
 		"switch", "runtime sessions", "runtime diagnostics", "window recent", "internal statusbar click", "internal session-popup open",
 		"internal agent-pane launch-default", "internal agent-pane picker", "internal focus",
 	} {
@@ -459,7 +453,6 @@ func TestCorrectedHandlerEffectsKeepSourceAndTestAnchors(t *testing.T) {
 		{"switch", "project_startup_fresh.go", "func (c *switchCommand) startProjectFresh", "project_startup_fresh_test.go", "TestProjectFreshStartPruneScope"},
 		{"runtime sessions", "sessions.go", "func (c *sessionsCommand) Run", "sessions_test.go", "TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession"},
 		{"runtime sessions", "sessions.go", "func (c *sessionsCommand) Run", "sessions_test.go", "TestSessionsCommandAllowsEmptySelection"},
-		{"runtime sessions", "sessions.go", "func (c *sessionsCommand) runSessionStateOverview", "sessions_test.go", "TestSessionsStateOverviewShowsReadModelWithoutImmediateMutation"},
 		{"runtime sessions", "sessions.go", "func (c *sessionsCommand) killFocusedSession", "sessions_test.go", "TestSessionsCommandCtrlXSwitchesToFallbackBeforeKillingAttachedSession"},
 		{"reconcile resources", "resource_reconcile.go", "func (c *resourceReconcileCommand) Run", "registry_topology_materialize_test.go", "TestRegistryTopologyMaterializationDryRunExecuteAndRepeatNoop"},
 		{"reconcile registry", "registry_recovery.go", "func (c *registryRecoveryCommand) Run", "registry_recovery_test.go", "TestReconcileRegistryRestoresOnlyAnExplicitSourceAndRepeatsAsANoOp"},
@@ -470,7 +463,6 @@ func TestCorrectedHandlerEffectsKeepSourceAndTestAnchors(t *testing.T) {
 		{"window recent", "recent_window.go", "func (c *recentWindowCommand) openRecentWindow", "recent_window_test.go", "TestRecentWindowRunSwitchesCrossSessionWindowWithoutPaneRestore"},
 		{"internal session-popup open", "session_popup.go", "func (c *sessionPopupCommand) runOpen", "session_popup_test.go", "TestAppRunSessionPopupOpen"},
 		{"runtime diagnostics", "runtime_diagnostics_picker.go", "func (c *runtimeDiagnosticsCommand) runActions", "runtime_diagnostics_picker_test.go", "TestRuntimePickerFocusHandsTheExactCoordinateToTheExistingRoute"},
-		{"restore snapshot", "session_state.go", "func (c *sessionStateCommand) commitSnapshotProjection", "session_state_projection_test.go", "TestRestoreSnapshotRecordsCountsAndFinalExplicitClientHandoff"},
 	}
 	byRoute := effectRowsByRoute(t)
 	for _, anchor := range anchors {

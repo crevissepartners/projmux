@@ -16,13 +16,12 @@ Commands:
   notification  Manage pending notification workflow state
   open      Open a Project runtime and move the current client to it
   pin       Manage pinned project directories
-  prune     Prune stale Projects, Agents, and snapshots
+  prune     Prune stale Projects and Agents
   quit      Quit the app-owned projmux tmux runtime
   reconcile Preview or repair Registry and exact tmux resource drift
   rebind    Rebind a Project to a new absolute root without moving files
   rename    Rename a Projmux resource metadata.name
   resources Inspect live Project, Window, and Pane CPU/RSS attribution
-  restore   Project a saved snapshot into one exact closed Project desired state
   runtime   Manage the live and ephemeral tmux runtime inventory
   settings  Configure projmux
   setup     Probe terminal keys or remediate them with setup terminal

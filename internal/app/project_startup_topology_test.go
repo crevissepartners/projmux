@@ -637,26 +637,6 @@ func TestClosedProjectStartupContinuesUnplannedStops(t *testing.T) {
 	}
 }
 
-func TestExplicitSnapshotRestoreRetainsAgentReplayAuthority(t *testing.T) {
-	activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
-	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
-		name: "snapshot-agent", provider: "codex", cwd: root, ref: codexConversationRef("thread-snapshot"),
-	})
-
-	materialized, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{
-		Root: root, SessionName: "beta", AgentReplayAuthority: topologyAgentReplaySnapshot,
-	})
-	if err != nil || !materialized {
-		t.Fatalf("snapshot materialization = %t, %v", materialized, err)
-	}
-	after, _ := store.registry.Agent(agent.Metadata.UID)
-	if after.Status.Phase != coremetadata.PhaseRunning || after.Status.PaneRef == "" ||
-		!after.Status.SessionRef.SameConversation(codexConversationRef("thread-snapshot")) ||
-		!server.argvContains("thread-snapshot") {
-		t.Fatalf("explicit snapshot Agent replay changed: status=%+v calls=%#v", after.Status, server.calls)
-	}
-}
-
 // TestApplicationGraphWiresTopologyAgentReplay keeps the production wiring
 // honest on both surfaces. A nil launcher would silently restore the shell-only
 // restore while the picker copy kept promising Agents.

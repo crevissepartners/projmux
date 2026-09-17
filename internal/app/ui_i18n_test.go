@@ -113,11 +113,6 @@ func TestPhase15StartupFreshAndProjectionStringsHaveKoreanCatalogEntries(t *test
 		"closed Project startup: show Continue project and Recreate Project",
 		"closed Project startup: Continue project",
 		"show Continue project and Recreate Project for a closed Project",
-		"Project %s snapshot projection: replace Window %d / Pane %d / Agent %d; delete Window %d / Pane %d / Agent %d; preserve uid %d; lose conversation pointer %d; trust Project open gate pending; snapshot startup command execution 0; Registry writes 0 / tmux writes 0 / snapshot writes 0\n",
-		"projmux: snapshot desired state was committed; runtime item was refused: ordinary Project materializer is not configured",
-		"restored snapshot into Project %s: Window %d / Pane %d / Agent %d, preserved uid %d\n",
-		"projmux: snapshot desired state was committed; runtime item was refused: %s",
-		"restore snapshot committed desired Registry; runtime materialization needs another Continue project",
 	}
 	for _, fallback := range fallbacks {
 		if got := localizeUIText(ko, fallback); got == fallback {

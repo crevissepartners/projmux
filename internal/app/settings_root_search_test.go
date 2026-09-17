@@ -184,7 +184,7 @@ func TestSettingsRootResultsAreScopedToTheirTab(t *testing.T) {
 }
 
 // TestSettingsRootResultsExcludeUserDataCollectionItems pins the exact
-// exclusion: the four item templates and their subtrees are user data, while
+// exclusion: the three item templates and their subtrees are user data, while
 // their parent Views and collection-level controls stay searchable.
 func TestSettingsRootResultsExcludeUserDataCollectionItems(t *testing.T) {
 	t.Parallel()
@@ -206,7 +206,7 @@ func TestSettingsRootResultsExcludeUserDataCollectionItems(t *testing.T) {
 			}
 		}
 	}
-	// The four parents and every collection-level control stay.
+	// The three parents and every collection-level control stay.
 	for _, kept := range []string{
 		settingsNavProjectsExtraRoots,
 		settingsNavProjectsExtraRoots + ".add-current",
@@ -215,9 +215,6 @@ func TestSettingsRootResultsExcludeUserDataCollectionItems(t *testing.T) {
 		settingsNavProjectsPins + ".pin-current",
 		settingsNavProjectsPins + ".select",
 		settingsNavProjectsCandidates,
-		settingsNavProjectSnapshots + ".saved",
-		settingsNavProjectSnapshots + ".saved.save-latest",
-		settingsNavProjectSnapshots + ".saved.save-named",
 	} {
 		if counts[kept] != 1 {
 			t.Errorf("collection row %q produced %d result rows, want 1", kept, counts[kept])

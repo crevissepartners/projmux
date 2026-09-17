@@ -11,8 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
 
 const (
@@ -45,7 +43,7 @@ type Preset struct {
 	Windows       []Window
 }
 
-// Window mirrors the reusable tmux session-state window shape.
+// Window is one tmux window of a layout preset.
 type Window struct {
 	Index           int
 	Name            string
@@ -54,12 +52,12 @@ type Window struct {
 	Panes           []Pane
 }
 
-// Pane mirrors the reusable tmux session-state pane shape with a compact
-// command field for startup recipes.
+// Pane is one tmux pane of a layout preset, with a compact command field for
+// startup recipes.
 type Pane struct {
 	Index    int
 	CWD      string
-	Recipe   sessionstate.Recipe
+	Recipe   Recipe
 	Agent    string
 	ResumeID string
 	Topic    string
@@ -98,7 +96,7 @@ func (a Artifact) ExecutableCommands() []string {
 	var commands []string
 	for _, window := range a.Preset.Windows {
 		for _, pane := range window.Panes {
-			if pane.Recipe.Kind != sessionstate.RecipeKindStartup {
+			if pane.Recipe.Kind != RecipeKindStartup {
 				continue
 			}
 			command := strings.TrimSpace(pane.Recipe.Command)
@@ -319,30 +317,6 @@ func (s Store) Save(name string, preset Preset) error {
 	return nil
 }
 
-func FromSnapshot(snap sessionstate.Snapshot, projectRoot, description, mode string) Preset {
-	p := Preset{
-		SchemaVersion: SchemaVersion,
-		Description:   strings.TrimSpace(description),
-		Mode:          normalizeMode(mode),
-		DefaultCWD:    portablePath(snap.DefaultCWD, projectRoot),
-		Windows:       make([]Window, 0, len(snap.Windows)),
-	}
-	for _, window := range snap.Windows {
-		out := Window{
-			Index:           window.Index,
-			Name:            window.Name,
-			Layout:          window.Layout,
-			ActivePaneIndex: window.ActivePaneIndex,
-			Panes:           make([]Pane, 0, len(window.Panes)),
-		}
-		for _, pane := range window.Panes {
-			out.Panes = append(out.Panes, paneFromSnapshot(pane, projectRoot))
-		}
-		p.Windows = append(p.Windows, out)
-	}
-	return p.Normalize()
-}
-
 func (p Preset) Validate() error {
 	if p.SchemaVersion == 0 {
 		return fmt.Errorf("%w: schema_version is required", ErrInvalidPreset)
@@ -403,29 +377,29 @@ func (p Preset) Normalize() Preset {
 			pane.ResumeID = strings.TrimSpace(pane.ResumeID)
 			pane.Topic = strings.TrimSpace(pane.Topic)
 			pane.Command = strings.TrimSpace(pane.Command)
-			if pane.Command == "" && pane.Recipe.Kind == sessionstate.RecipeKindStartup {
+			if pane.Command == "" && pane.Recipe.Kind == RecipeKindStartup {
 				pane.Command = strings.TrimSpace(pane.Recipe.Command)
 			}
 			if pane.Recipe.Kind == "" {
 				switch {
 				case pane.Command != "":
-					pane.Recipe = sessionstate.StartupRecipe(pane.Command)
+					pane.Recipe = StartupRecipe(pane.Command)
 				case pane.Agent != "":
-					pane.Recipe = sessionstate.AgentRecipe(pane.Agent, pane.ResumeID, pane.Topic)
+					pane.Recipe = AgentRecipe(pane.Agent, pane.ResumeID, pane.Topic)
 				default:
-					pane.Recipe = sessionstate.ShellRecipe()
+					pane.Recipe = ShellRecipe()
 				}
 			}
-			if pane.Recipe.Kind == sessionstate.RecipeKindAgent {
-				pane.Recipe = sessionstate.AgentRecipe(pane.Agent, pane.ResumeID, pane.Topic)
+			if pane.Recipe.Kind == RecipeKindAgent {
+				pane.Recipe = AgentRecipe(pane.Agent, pane.ResumeID, pane.Topic)
 			}
-			if pane.Recipe.Kind == sessionstate.RecipeKindStartup && pane.Command != "" {
-				pane.Recipe = sessionstate.StartupRecipe(pane.Command)
+			if pane.Recipe.Kind == RecipeKindStartup && pane.Command != "" {
+				pane.Recipe = StartupRecipe(pane.Command)
 			}
-			if pane.Recipe.Kind == sessionstate.RecipeKindStartup {
+			if pane.Recipe.Kind == RecipeKindStartup {
 				pane.Command = strings.TrimSpace(pane.Recipe.Command)
 			}
-			if pane.Recipe.Kind == sessionstate.RecipeKindAgent {
+			if pane.Recipe.Kind == RecipeKindAgent {
 				pane.Agent = strings.TrimSpace(pane.Recipe.Agent)
 				pane.ResumeID = strings.TrimSpace(pane.Recipe.ResumeID)
 				pane.Topic = strings.TrimSpace(pane.Recipe.Topic)
@@ -551,13 +525,13 @@ func Render(p Preset) string {
 			b.WriteString(strconv.Quote(pane.CWD))
 			b.WriteString("\n")
 			switch pane.Recipe.Kind {
-			case sessionstate.RecipeKindStartup:
+			case RecipeKindStartup:
 				b.WriteString("command = ")
 				b.WriteString(strconv.Quote(strings.TrimSpace(pane.Recipe.Command)))
 				b.WriteString("\n")
-			case sessionstate.RecipeKindAgent:
+			case RecipeKindAgent:
 				b.WriteString("recipe = ")
-				b.WriteString(strconv.Quote(sessionstate.RecipeKindAgent))
+				b.WriteString(strconv.Quote(RecipeKindAgent))
 				b.WriteString("\n")
 				b.WriteString("agent = ")
 				b.WriteString(strconv.Quote(pane.Recipe.Agent))
@@ -574,7 +548,7 @@ func Render(p Preset) string {
 				}
 			default:
 				b.WriteString("recipe = ")
-				b.WriteString(strconv.Quote(sessionstate.RecipeKindShell))
+				b.WriteString(strconv.Quote(RecipeKindShell))
 				b.WriteString("\n")
 			}
 		}
@@ -681,7 +655,7 @@ func applyValue(p *Preset, section parserSection, currentWindow, currentPane int
 				return fmt.Errorf("line %d: pane command: %w", lineNo, err)
 			}
 			pane.Command = value
-			pane.Recipe = sessionstate.StartupRecipe(value)
+			pane.Recipe = StartupRecipe(value)
 		case "agent":
 			value, err := parseStringValue(raw)
 			if err != nil {
@@ -803,39 +777,6 @@ func normalizeMode(mode string) string {
 		return ModeInheritAutosave
 	}
 	return mode
-}
-
-func paneFromSnapshot(pane sessionstate.Pane, projectRoot string) Pane {
-	out := Pane{
-		Index:  pane.Index,
-		CWD:    portablePath(pane.CWD, projectRoot),
-		Recipe: pane.Recipe,
-	}
-	switch pane.Recipe.Kind {
-	case sessionstate.RecipeKindStartup:
-		out.Command = strings.TrimSpace(pane.Recipe.Command)
-	case sessionstate.RecipeKindAgent:
-		out.Agent = pane.Recipe.Agent
-		out.ResumeID = pane.Recipe.ResumeID
-		out.Topic = pane.Recipe.Topic
-	}
-	return out
-}
-
-func portablePath(path, projectRoot string) string {
-	path = filepath.Clean(strings.TrimSpace(path))
-	projectRoot = filepath.Clean(strings.TrimSpace(projectRoot))
-	if path == "" || projectRoot == "" {
-		return path
-	}
-	rel, err := filepath.Rel(projectRoot, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return path
-	}
-	if rel == "." {
-		return "${PROJMUX_CWD}"
-	}
-	return "${PROJMUX_CWD}/" + filepath.ToSlash(rel)
 }
 
 func presetEntry(name, path string, preset Preset) Entry {

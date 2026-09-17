@@ -131,7 +131,7 @@ procfs collector supplies PID+starttime identity, SID, CPU ticks, RSS, and host
 capacity. Pure aggregation builds pane, unique-window, and project rows without
 using labels, topics, titles, or cwd-derived names as ownership keys.
 
-Resource snapshots are not Session State and are never saved or restored. See
+Resource snapshots are in-memory only and are never saved or restored. See
 [resource-attribution.md](resource-attribution.md) for metric, partial-state,
 host-remainder, privacy, and measurement contracts.
 
@@ -144,7 +144,7 @@ CLI information architecture v2 resource routes.
 Packages:
 
 - `internal/core/metadata` is pure: the resource model, validation, name
-  allocation, schema migration, snapshot reconciliation, and the operation
+  allocation, schema migration, and the operation
   transaction. It performs no I/O; the clock, uid source, and root-directory
   probe are injected through `Mutator`.
 - `internal/core/resourcegraph` is pure: the resolved resource graph that joins
@@ -171,7 +171,7 @@ Packages:
   fills a `resourcegraph.Inventory` from one exact server.
 - `internal/integrations/tmuxopts` is a dependency-free leaf holding the
   canonical spelling of every projmux-owned tmux option name, so the generated
-  tmux config, session-state replay, and the resource mirror cannot drift.
+  tmux config and the resource mirror cannot drift.
 
 Resources and ownership:
 
@@ -321,7 +321,7 @@ support reports expose those counts but redact item reasons and identifiers.
 Identity and naming:
 
 - `metadata.uid` is opaque, immutable, and independent of tmux lifecycle. It
-  survives snapshot/restore, runtime creation, and root rebind.
+  survives runtime stop/Continue, runtime creation, and root rebind.
 - `metadata.name` is the stable unique-within-scope query key. Project names
   and ControlSession names are unique within their own root kind across the
   registry. Window, Pane, and Agent names are unique by
@@ -736,9 +736,8 @@ Registry file and schema:
   directory-existence and uid adapters.
 - The canonical anchor is a schema-v2 write invariant. Until the separately
   planned Project-start projection lands, the legacy `New` startup path's
-  prune-to-zero transaction fails validation and commits zero Registry bytes.
-  The Registry verdict precedes snapshot deletion, so that rejection also
-  preserves the latest snapshot byte-for-byte and performs no tmux mutation.
+  prune-to-zero transaction fails validation and commits zero Registry bytes
+  and performs no tmux mutation.
   This fail-closed ordering is not Phase 3 authority to redesign Project start.
 - Downgrade writes remain unsupported. Unversioned, malformed, and future
   envelopes still fail closed before backup, staging, or replace.
@@ -967,21 +966,11 @@ Resolved resource graph (`internal/core/resourcegraph`):
   process, and no tmux, so the same inputs always produce byte-identical output
   and a read can never materialize state.
 
-Session State interoperability:
+Saved Project state:
 
-- Session snapshots carry resource identity through additive `omitempty`
-  `metadata` blocks at the unchanged snapshot `version: 1` — one for the owning
-  Project at the top level, one per Window, and one per Pane, each with
-  `uid`, `name`, `labels`, `owner_kind`, and `owner_uid` in the snapshot's own
-  snake_case spelling. No schema bump was needed, and a snapshot written
-  without resource metadata still serializes byte-identically to the older form.
-- Snapshots written before resource metadata existed still project
-  deterministically into an explicitly selected, closed Registry Project:
-  existing Windows and Panes are reused positionally in Registry order and any
-  additional descendants receive new stable identities. Restore validates a
-  pure Project-scoped plan, atomically commits that desired subtree, and only
-  then invokes the ordinary Project materializer. It never directly replays
-  snapshot topology into tmux and never replaces the global Registry.
+- The Registry is the only saved Project state. projmux keeps no separate
+  Project snapshot store, and a closed Project starts only from its Registry
+  desired state through the ordinary Project materializer.
 
 tmux transport mirror:
 
@@ -1000,7 +989,7 @@ tmux transport mirror:
   every other mirror goes through, on the same plain `tmux` transport the session
   was created on. The write is gated strictly on "this open registered the
   Project": every already-registered Project converges through the Registry
-  topology engine, including desired state previously committed from a snapshot,
+  topology engine,
   and opening `$HOME` mints no managed identity at all, so neither writes a mirror
   option through this first-open gate. That gate is also what makes repeating an
   open write nothing. Repairing a session that is already live without its
@@ -1284,7 +1273,7 @@ Lifecycle trigger convergence:
   transaction deletes exactly that Window, its Panes, its owned Agents, and
   their reservations. A non-last Project Window reanchors to its existing
   sibling. The last Project Window leaves the exact Project uid, root,
-  reservation, pins, and snapshot bytes in the valid zero-Window state. A
+  reservation, and pins in the valid zero-Window state. A
   ControlSession likewise loses only the Window and keeps its root uid.
   Abnormal/killed/unknown exits, stale generations, unpaired or foreign handles,
   unavailable/empty observations, and missing-server or permission failures
@@ -1298,11 +1287,9 @@ Lifecycle trigger convergence:
   managed runtime and preserves every desired UID. Continue on retained-window
   writes only runtime and materializes the same descendant UIDs; Continue on
   zero-window atomically allocates one canonical Window/shell below the same
-  Project UID before runtime materialization. The deleted+Continue cell accepts
-  only a usable-snapshot precondition, then atomically creates a new Project UID
-  and restores new descendant UIDs from that snapshot; without the precondition
-  the same cell is an unavailable zero-write refusal and never falls back to
-  Fresh. Fresh atomically replaces either
+  Project UID before runtime materialization. The deleted+Continue cell is
+  always an unavailable zero-write `project-is-not-registered` refusal that
+  points to Fresh and never falls back to it. Fresh atomically replaces either
   registered state with a new Project/Window/shell UID chain and exactly one
   same-root claimant. Within this runtime/startup lifecycle table, canonical
   `delete project --yes` alone unregisters the Project graph; the separately
@@ -1681,15 +1668,14 @@ Explicit Registry topology materialization:
   deletion removes that desire. Exact uid/name/owner mirrors are retained. Stored
   Pane CWD drives only that Pane's detached runtime cwd, while Project root
   remains the session path anchor and `PROJMUX_CWD` hook value.
-  `Pane.spec.command`, snapshot recipes, notifications, and ephemeral sessions
+  `Pane.spec.command`, notifications, and ephemeral sessions
   are never execution inputs.
 - An Agent whose managed Pane is not live is replayed into a new managed Pane on
   its Window's proven anchor, through the same allocation, activation ledger,
   ownership-checked adoption, and rollback the shell half uses. The **only**
   replay identifier is Registry `status.sessionRef`: no provider conversation
   store is read, `ClaudeSessionRef.TranscriptPath` in particular is never
-  consulted, and snapshot recipe `resumeID` is a separate value that never feeds
-  this path. The launch argv comes from the two seams `create agent` already
+  consulted. The launch argv comes from the two seams `create agent` already
   owns -- `PlanAgentResume` for a ref that names a conversation, `PlanAgentLaunch`
   with no payload otherwise -- so the topology engine holds no launch builder of
   its own and the Settings enabled-agents gate still applies. An Agent that
@@ -1703,13 +1689,6 @@ Explicit Registry topology materialization:
   the Window from it, and then replays the anchor Agent while preserving the
   Agent Pane uid. The default shell is bootstrap, not a replacement anchor. A
   successful repeat is a Registry-write-free and topology-write-free no-op.
-- Snapshot restore is a target-Project subtree projection, never a Registry
-  restore. Metadata-bearing v1 snapshots preserve surviving final-v2
-  anchor/default refs; metadata-free snapshots choose the first Window-local
-  Pane as anchor and the first direct shell as optional default. Agent-only
-  desired Windows remain Agent-anchored and acquire a shell only through the
-  ordinary materializer. Source snapshot bytes and unrelated roots are never
-  rewritten, and a second projection is byte-stable.
 - `Recreate Project` replaces the exact same-root Project graph, after an
   explicit confirmation, in one Registry
   commit. It always allocates a new Project UID plus one new canonical Window
@@ -1955,8 +1934,8 @@ Selector and the implicit active target:
   hit. The describe family remains the intentional Project-only difference;
   Phase 14 extends only the generic rename family to ControlSession.
   `get projects`, `describe|rename project`, `delete`, `rebind`, and `agent
-  resume` are outside that reference scope, and notifications and snapshots
-  belong to separate stores. Delete's exact live preflight nevertheless follows
+  resume` are outside that reference scope, and notifications belong to a
+  separate store. Delete's exact live preflight nevertheless follows
   either root kind through the selected descendant's owner chain.
 - `--all-projects` is the explicit registry-wide escape for those three reads.
   It is deliberately different from destructive `delete --all`, whose existing
@@ -2033,14 +2012,6 @@ Projmux keeps visible naming separate from source metadata:
   user pane labels.
 - **Git branch** belongs in the statusbar git segment. Branch-based terminal
   title overwrites are not promoted to the primary Projmux pane or window name.
-- **Session snapshots** store source metadata separately: `window_name`, raw
-  `pane_title`, user `label`, `@projmux_ai_topic`, manual topic ownership, and
-  agent resume metadata. Old snapshots decode with an absent label and absent
-  ownership; title/topic equality never infers either. Replay writes each
-  semantic field to the exact pane id returned by tmux creation and restores
-  raw title from `Pane.Title` after launch/startup replay. Snapshots do not
-  store a resolved `display_label`; visible labels are recomputed by display
-  policy.
 
 ## Notify queue
 
@@ -2183,7 +2154,7 @@ The maintained product table in `internal/app/runtime_mutation_surface.go` maps
 generated catalog/menu producers, native provider/resume picker selections,
 sidebar/session-picker stops, and app lifecycle entrypoints in both directions
 to their handler and plan verb. It also records exact semantic exemptions for
-focus, labels, operator-requested layout, mouse forwarding, snapshot replay,
+focus, labels, operator-requested layout, mouse forwarding,
 ephemeral maintenance, app quit, and human runtime maintenance. Managed argv
 verbs are selected only by the typed executor seam; generated Window
 create/rename, Pane-menu create/delete, and automatic post-split layout writes

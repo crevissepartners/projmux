@@ -41,7 +41,6 @@ var lifecycleMutationSurfaceInventory = []string{
 	"runtime prune",
 	"internal focus switch-client",
 	"shell open-app",
-	"snapshot replay create",
 	"popup-toggle cancel restore",
 }
 
@@ -121,7 +120,6 @@ type App struct {
 	rebind      *rebindCommand
 	reconcile   *resourceReconcileCommand
 	rename      *renameCommand
-	restore     *restoreCommand
 	runtime     *runtimeCommand
 	// runtimeDiagnostics is the Runtime diagnostics escape hatch handler, held
 	// beside the namespace so the narrow fixtures that rebuild `runtime` can
@@ -148,7 +146,6 @@ type App struct {
 	quit         *quitCommand
 	resources    *resourceCommand
 	sessions     *sessionsCommand
-	sessionState *sessionStateCommand
 	sessionPopup *sessionPopupCommand
 	settings     *settingsCommand
 	setup        *setupCommand
@@ -192,7 +189,6 @@ func New() *App {
 // NewWithLifecycleDiagnostics builds the application graph with one recorder
 // shared by every Phase 2 lifecycle surface.
 func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
-	sessionStateDiagnostics := recorder.SessionState()
 	notifyFocusDiagnostics := recorder.NotifyFocus()
 	aiOperationalDiagnostics := recorder.AI()
 	resourceOperationalDiagnostics := recorder.Resource()
@@ -209,7 +205,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	}
 	windowCmd := newWindowCommand(recorder)
 	recentWindowCmd := windowCmd.recent
-	switcher.sessionStateDiagnostics = sessionStateDiagnostics
 	attach := newAttachCommand(recorder)
 	kill := newKillCommand(recorder)
 	sessions := newSessionsCommand(recorder)
@@ -220,7 +215,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	notificationCmd := newNotificationCommand()
 	notificationCmd.notify = notifyCmd
 	pruneCmd := newPruneCommand(recorder)
-	pruneCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	previewCleaner := newKilledSessionPreviewCleaner()
 	cleanupKilledSession := previewCleaner.cleanup
 	attach.cleanupKilledSession = cleanupKilledSession
@@ -232,13 +226,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		_ = notifyCmd.runReconcileWithOwnership(nil, io.Discard, io.Discard, false)
 	}
 	initCmd := newInitCommand()
-	sessionStateCmd := newSessionStateCommand(recorder)
-	sessionStateCmd.diagnostics = sessionStateDiagnostics
-	if topology, ok := sessionStateCmd.projectTopology.(*registryProjectTopologyMaterializer); ok {
-		topology.agents = ai
-	}
 	settingsCmd := newSettingsCommand(ai, switcher, update, quit)
-	settingsCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	tmuxCmd := newTmuxCommand(recorder)
 	tmuxCmd.ai = ai
 	// The public config domain. Each route is a parity alias over the AI or
@@ -268,12 +256,8 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	tagCmd := newTagCommand()
 	getCmd := newGetCommand()
 	getCmd.notify = notifyCmd
-	getCmd.snapshots = sessionStateCmd
 	deleteCmd := newDeleteCommand()
 	deleteCmd.notify = notifyCmd
-	deleteCmd.snapshots = sessionStateCmd
-	restoreCmd := newRestoreCommand()
-	restoreCmd.snapshots = sessionStateCmd
 	// The Agent namespace. `create` and `agent` normalize the Agent spellings
 	// the `ai` route mixes together; every subcommand except `agent resume`
 	// forwards raw argv to the handler that already owns the behavior, so the
@@ -281,7 +265,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	usageCmd := usagecmd.New(nil)
 	createCmd := newCreateCommand()
 	createCmd.notify = notifyCmd
-	createCmd.snapshots = sessionStateCmd
 	// `create agent` consumes the AI command through the narrow provider-launch
 	// seam only. There is no raw-argv half left: every create kind is
 	// resource-backed, so nothing forwards a split.
@@ -405,7 +388,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		rebind:             newRebindCommand(),
 		reconcile:          reconcileCmd,
 		rename:             newRenameCommand(),
-		restore:            restoreCmd,
 		runtime:            runtimeCmd,
 		runtimeDiagnostics: runtimeDiagnosticsCmd,
 		keyBroker:          keyBrokerCmd,
@@ -424,7 +406,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		quit:               quit,
 		resources:          resourcesCmd,
 		sessions:           sessions,
-		sessionState:       sessionStateCmd,
 		sessionPopup:       sessionPopupCmd,
 		settings:           settingsCmd,
 		setup:              newSetupCommand(initCmd),
@@ -538,7 +519,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			replacement: func([]string) string { return "`projmux pin project ...`" },
 		},
 		"prune": legacyRouteGate{
-			name: "prune", target: a.prune, allowedFirst: []string{"agent", "project", "snapshot"},
+			name: "prune", target: a.prune, allowedFirst: []string{"agent", "project"},
 			replacement: pruneReplacement,
 		},
 		"open":       openProject,
@@ -547,7 +528,6 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"reconcile":  a.reconcile,
 		"rename":     a.rename,
 		"resources":  a.resources,
-		"restore":    a.restore,
 		"runtime":    runtime,
 		"settings":   a.settings,
 		"setup":      a.setup,
@@ -683,7 +663,7 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 			return false
 		}
 	case "prune":
-		if len(args) < 2 || (args[1] != "project" && args[1] != "snapshot") {
+		if len(args) < 2 || args[1] != "project" {
 			return false
 		}
 	}
@@ -691,10 +671,9 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	// Doctor is a read-only diagnostic, and `get`/`describe` are read-only
 	// resource resolutions. None of them may trigger the otherwise automatic
 	// legacy-hook filesystem migration: a read that resolves nothing must leave
-	// zero mutations behind, including this one. The two delegating read kinds
-	// (`get notifications`, `get snapshots`) therefore skip a pre-dispatch write
-	// their current spellings still perform; their stdout, stderr, and exit code
-	// are unchanged.
+	// zero mutations behind, including this one. The delegating read kind
+	// (`get notifications`) therefore skips a pre-dispatch write its current
+	// spelling still performs; its stdout, stderr, and exit code are unchanged.
 	case "doctor", "get", "describe", "reconcile":
 		return false
 	}

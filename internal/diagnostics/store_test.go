@@ -399,7 +399,6 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 		{args: []string{"doctor", "--json", "--section", "deps"}, runID: "doctor-read-ok"},
 		{args: []string{"diagnostics", "report", "--output", "/private/report"}, runID: "report-read-ok"},
 		{args: []string{"agent", "integrate", "codex", "--dry-run"}, runID: "integration-preview-ok"},
-		{args: []string{"restore", "snapshot", "--dry-run"}, runID: "restore-preview-ok"},
 	}
 	for _, success := range readOnlySuccesses {
 		if err := RecordOutcome(store, success.args, success.runID, "0.8.4", "tmux", start, nil, false, false); err != nil {

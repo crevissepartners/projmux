@@ -92,10 +92,10 @@ request with `projmux pin project migrate`; see
 [upgrading.md](upgrading.md#pins-are-typed-and-migrate-on-request) for the
 per-line outcomes and the ambiguity refusal.
 
-## Legacy Project Layout Snapshots
+## Legacy Project Layout Files
 
-Older checkouts may already have named layout snapshots in the legacy storage
-directory:
+Older checkouts may already have named layout files in the project-local
+storage directory:
 
 ```text
 <project>/.projmux/layouts/<name>.toml
@@ -103,12 +103,14 @@ directory:
 
 The project context comes from `PROJMUX_CWD` when set, otherwise projmux walks
 upward from the current directory to the nearest `.projmux` or `.git` marker.
-Files outside that project tree are not discovered. This storage is treated as
-legacy import data for explicit conversion and preview. Closed-Project startup
-does not expose legacy snapshot choices; current user-facing surfaces describe
-the restore unit as a snapshot, not as a separate layout or preset feature.
+Files outside that project tree are not discovered. No current projmux surface
+opens or writes these files: closed-Project startup does not offer layout
+choices, and Settings no longer saves a named layout from a live session. The
+format stays documented so existing files can be recognized, and a declared
+startup `command` stays behind project automation trust (see
+[hooks.md](hooks.md#trust-model)).
 
-The legacy schema is intentionally close to the session-state snapshot shape:
+The schema describes Windows and Panes:
 
 ```toml
 schema_version = 1
@@ -128,8 +130,7 @@ cwd = "${PROJMUX_CWD}"
 command = "make watch"
 ```
 
-`command` records a startup recipe, matching the supported session-state replay
-recipe. Panes without `command` may use `recipe = "shell"`. Supported
+`command` records a startup recipe. Panes without `command` may use `recipe = "shell"`. Supported
 interpolation placeholders are limited to `${PROJMUX_CWD}` and
 `${PROJMUX_SESSION}`; other `${...}` values are rejected during load.
 
@@ -649,17 +650,8 @@ existence/mtime. They do not open SQLite content and do not treat `.db-wal`,
 latest-session floor rather than complete history. Missing/malformed cache,
 workspace-less metadata, and stale mappings degrade to legacy `history.jsonl`
 without changing the shared exact/depth/sort/cap behavior.
-Live hook/session-state resume metadata is a separate high-confidence lane and
-is not a disk-picker candidate. When a disk picker selection creates a pane,
-its source is persisted so Session State preview and doctor can report medium
-confidence for DB-validated cache sources or low confidence for legacy history.
-
-Session State saves the exact bound Codex session/thread id before considering
-discovery. An existing bound session id or persisted resume id is replayed
-without an app-server read. Only a thread-only candidate is validated with
-`thread/read` and `includeTurns=false`; this validation is probe-only and never
-starts the shared daemon. Failure retains the persisted id or uses the current
-rollout fallback, and a read response can never substitute a different id.
+Live hook resume metadata is a separate high-confidence lane and is not a
+disk-picker candidate.
 
 ## Release channel
 
@@ -718,7 +710,7 @@ installed; that install stays put until its stable line ships.
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
 | `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from the `projmux internal status usage` renderer to stderr. |
 | `PROJMUX_USAGE_LIMITS_PATH` | Deprecated. Read but ignored; limits now come from upstream APIs and local Codex rollout state. |
-| `PROJMUX_SESSIONSTATE_AUTOSAVE` | Ignored by the runtime. projmux no longer autosaves snapshots; the Settings Snapshots page may still display the value, but it has no effect. |
+| `PROJMUX_SESSIONSTATE_AUTOSAVE` | Ignored. Project snapshots and their auto-save were removed. |
 | `PROJMUX_SESSIONSTATE_DEBUG` | Ignored. It only gated stderr for the removed quiet autosave. |
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
@@ -964,17 +956,18 @@ ${PROJMUX_USAGE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/usage}/
 See [Usage tracking](usage-tracking.md) for adapter behavior, throttling, and
 failure handling.
 
-## Session State
+## Project Startup
 
-Snapshots are written only by the explicit snapshot commands and stored under
-`${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`. The app tmux status
-tick no longer autosaves: generated status lines carry no autosave job, and the
-hidden `internal tmux autosave-session-state` route that older generated
-configs still call is a silent no-op that writes nothing, reads no snapshot,
-and records no diagnostics. The global `sessionstate-autosave` and
-`sessionstate-autosave-interval` files, the per-Project
-`sessionstate-projects/<session>/autosave` file, and
-`PROJMUX_SESSIONSTATE_AUTOSAVE` are ignored by the runtime without a warning.
+The Registry (`registry.json`) is the only saved Project state; see
+[session-restore.md](session-restore.md). projmux keeps no separate Project
+snapshot store. The former `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`
+directory is no longer read or written and is left in place. The app tmux
+status tick saves nothing: generated status lines carry no auto-save job, and
+the hidden `internal tmux autosave-session-state` route that older generated
+configs still call is a silent no-op that writes nothing and records no
+diagnostics. The `sessionstate-autosave` and `sessionstate-autosave-interval`
+files, the per-Project `sessionstate-projects/<session>/autosave` files, and
+`PROJMUX_SESSIONSTATE_AUTOSAVE` are ignored without a warning.
 
 With no saved preference, Project open from the Alt-1 sidebar shows a native
 `Start project` step with exactly `Continue project` and `Recreate Project`.
@@ -984,12 +977,11 @@ choice and reports `Continue project / Recreate Project - on - saved`. A saved `
 reports `Continue project - off - saved` and skips the picker: a registered root
 continues, while an unregistered root follows the existing Fresh adjudication.
 An explicit `Continue project` on a root that is not a registered Project
-refuses with zero writes and points to `Recreate Project`; it never reads
-snapshot files.
+refuses with zero writes and points to `Recreate Project`.
 Resolving or cancelling the missing-file default never creates the preference
 file or changes saved bytes or mtime. `Recreate Project` confirms first, then atomically replaces the old Project graph
 with a new Project UID and a new canonical Window/shell UID pair. Exactly one
-same-root Project claimant remains. Snapshot bytes, the root directory,
+same-root Project claimant remains. The root directory,
 Git/worktree data, and the trust decision remain unchanged. Esc returns to
 Projects with zero writes. After
 the startup mode is selected, project automation trust is evaluated if needed.
@@ -1001,56 +993,18 @@ Deny/cancel refreshes the original sidebar query/selection context with a
 visible status message. Existing sessions switch directly without a startup
 picker.
 
-Default `projmux shell` no longer opens a startup picker or replays session-state
-snapshots before attach. It still derives the default app session identity and
-startup directory from the current project context when available; otherwise it
-uses the `home` target and home directory. Snapshot restore is an explicit CLI
-operation that requires both the source session and the exact target Project;
-it is not a Project-startup choice.
+Default `projmux shell` does not open a startup picker before attach. It
+derives the default app session identity and startup directory from the
+current project context when available; otherwise it uses the `home` target
+and home directory.
 
-Settings > Session State is global settings only: global auto-save, auto-save
-interval, and storage/retention policy. The auto-save rows below are still
-shown and saved, but the runtime ignores them. Settings > Project > Session State
-is override/effective-focused: project identity, project auto-save
-`inherit`/`on`/`off`, effective auto-save value/source, and snapshot save
-actions. Snapshot inspection lives under `Projects > Sessions > State`, whose
-overview shows latest/named snapshot status and the window -> pane read model
-without immediate mutation.
-
-The saved global toggles live under
-`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave`,
-`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-autosave-interval`, and
-`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`. Project
-auto-save overrides live under
-`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-projects/<session>/autosave`.
-These auto-save files are no longer read by the runtime.
-`sidebar-startup-picker` accepts the existing `on` and `off` bytes; absence is a
-read-only effective `on - default`, not a migration or an implicit write.
-
-Manual snapshot actions are available from the CLI:
-
-```sh
-projmux get snapshots
-projmux create snapshot
-projmux delete snapshot [--session <name>]
-projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref>] --dry-run
-projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref>] --yes [--client <tmux-client>]
-```
-
-`status` prints the source label (`autosave`, `layout(<name>)`, or `fresh`), the
-effective auto-save state, and a compact snapshot preview for the
-target session. Older snapshots without a source field display as `autosave`.
-`save` captures the current tmux session immediately; it requires a current
-tmux session. `delete` removes the target snapshot without an interactive
-confirmation. Restore treats the snapshot as desired-state input for one exact
-closed Project, never as a global Registry replacement or tmux replay.
-`--dry-run` prints scoped projection counts with zero writes. `--yes` commits
-that target subtree atomically, runs the ordinary materializer, and performs an
-explicit client handoff last when `--client` is present. Restore never modifies
-or deletes the source snapshot.
+The closed-Project startup preference lives in
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`. It accepts
+the existing `on` and `off` bytes; absence is a read-only effective
+`on - default`, not a migration or an implicit write.
 
 Interactive `projmux quit` offers only `Quit projmux` and `Cancel`. Neither it
-nor `quit --yes` / `quit --force` captures, reads, or writes snapshots.
+nor `quit --yes` / `quit --force` saves Project state.
 
 ## Decoration Mode
 

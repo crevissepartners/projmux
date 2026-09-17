@@ -17,7 +17,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -470,21 +469,18 @@ func TestShellExplicitHomeSessionKeepsHomeTargetInsideProject(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store := sessionstate.NewStore(t.TempDir())
-	saveShellSnapshot(t, store, "repos-projmux", project)
 	foreground := &recordingShellRunner{}
 	tmux := &scriptedShellTmuxRunner{}
 	cmd := &shellCommand{
-		executable:   func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:    func(string) string { return "" },
-		homeDir:      func() (string, error) { return home, nil },
-		writeFile:    os.WriteFile,
-		runCommand:   foreground.run,
-		tmuxRunner:   tmux,
-		sessionStore: func() (sessionstate.Store, error) { return store, nil },
-		getwd:        func() (string, error) { return project, nil },
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: foreground.run,
+		tmuxRunner: tmux,
+		getwd:      func() (string, error) { return project, nil },
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("startup picker should not use project snapshot for explicit home session: %#v", options)
+			t.Fatalf("startup picker should not open for explicit home session: %#v", options)
 			return intpickercompat.Result{}, nil
 		})),
 	}
@@ -1732,31 +1728,6 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 
 func shellTmuxCallKey(name string, args ...string) string {
 	return strings.Join(append([]string{name}, args...), "\x00")
-}
-
-func saveShellSnapshot(t *testing.T, store sessionstate.Store, sessionName, cwd string) {
-	t.Helper()
-	saveShellSnapshotSource(t, store, sessionName, cwd, "")
-}
-
-func saveShellSnapshotSource(t *testing.T, store sessionstate.Store, sessionName, cwd, source string) {
-	t.Helper()
-	if err := store.Save(sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    sessionName,
-		Source:     source,
-		DefaultCWD: cwd,
-		SavedAt:    time.Date(2026, 5, 12, 1, 2, 3, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index:           0,
-			Name:            "main",
-			Layout:          "layout",
-			ActivePaneIndex: 0,
-			Panes:           []sessionstate.Pane{{Index: 0, CWD: cwd, Recipe: sessionstate.ShellRecipe()}},
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
 }
 
 type shellUpdateRunnerFunc func(options intpickercompat.Options) (intpickercompat.Result, error)

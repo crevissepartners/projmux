@@ -176,12 +176,12 @@ func TestCreateRepeatedProjectScopeIsRefused(t *testing.T) {
 // The retired product model needed a raw-argv forwarder to reach `ai split`.
 // Removing the discriminator without removing that seam would leave a route one
 // edit away from dual dispatch, so the seam itself is asserted gone: the only
-// raw-argv forwarders left on `create` are the two parity kinds that never
-// created a Projmux resource in the first place.
+// raw-argv forwarder left on `create` is the notification parity kind, which
+// never created a Projmux resource in the first place.
 func TestCreateHasNoCompatibilitySplitSeam(t *testing.T) {
 	t.Parallel()
 
-	wantForwarders := map[string]bool{"notify": true, "snapshots": true}
+	wantForwarders := map[string]bool{"notify": true}
 	structType := reflect.TypeFor[createCommand]()
 	forwarder := reflect.TypeFor[rawArgvCommand]()
 	for i := range structType.NumField() {

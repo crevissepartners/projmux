@@ -38,13 +38,12 @@ var configRenderArtifacts = []string{"standalone", "app"}
 // leading tokens only and hands the entire remainder through untouched, so
 // `--bin` and friends stay the leaf parser's business and no node in the command
 // tree turns flag parsing on. It also matches the repo's verb-then-kind grammar
-// -- `get panes`, `delete pane`, `restore snapshot` -- rather than inventing a
+// -- `get panes`, `delete pane`, `prune project` -- rather than inventing a
 // boolean that selects between two nouns.
 //
 // A bare `config render` is a usage error listing the artifacts, which is what
 // every other kind-taking namespace does (`get`, `create`, `delete`, `describe`,
-// `restore`, `runtime`, `agent` all answer a bare invocation the same way and
-// exit 2). Defaulting to one artifact would make the other one look like an
+// `runtime`, `agent` all answer a bare invocation the same way and exit 2). Defaulting to one artifact would make the other one look like an
 // afterthought and would silently pick a payload on the user's behalf.
 //
 // `apply` takes no artifact because there is only one: it writes the app tmux

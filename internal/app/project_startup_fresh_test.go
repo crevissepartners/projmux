@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -16,7 +17,6 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -664,17 +664,17 @@ func TestProjectFreshStartHasNoConfirmationSurface(t *testing.T) {
 }
 
 // freshStartSwitchFixture wires a switchCommand for the closed-Project `new`
-// flow: a Registry with the shared resource fixture, a real session-state store
-// with an auto-saved snapshot, and recorders for tmux calls and operator reports.
+// flow: a Registry with the shared resource fixture, a legacy snapshot file an
+// older release saved (which Recreate must leave byte-identical), and recorders
+// for tmux calls and operator reports.
 func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 	*switchCommand, *fakeResourceStore, *capturingSwitchSessionExecutor,
-	*recordingTmuxRunner, *recordingProjectStartupReporter, sessionstate.Store,
+	*recordingTmuxRunner, *recordingProjectStartupReporter, string,
 ) {
 	t.Helper()
 	home := t.TempDir()
 	enableSidebarStartupPickerForTest(t, home)
-	stateStore := sessionstate.NewStore(filepath.Join(home, "state", "projmux", "sessions"))
-	saveSwitchProjectStartupSnapshot(t, stateStore, "alpha")
+	snapshotPath := writeLegacyProjectSnapshotFile(t, filepath.Join(home, "state", "projmux", "sessions"), "alpha", "/tmp/workspace")
 
 	store := freshStartFixtureStore(t)
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
@@ -704,23 +704,19 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 		},
 		startupNotices: reporter,
 	}
-	return cmd, store, executor, tmux, reporter, stateStore
+	return cmd, store, executor, tmux, reporter, snapshotPath
 }
 
 // TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
 // covers the full successful fresh action.
 func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity(t *testing.T) {
-	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
+	cmd, store, executor, tmux, reporter, snapshotPath := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupRecreateConfirmValue}},
 	})
 	topology := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
 	topology.materialized = true
 	oldProject, _ := store.registry.ProjectByRoot("/srv/alpha")
-	snapshotPath, err := stateStore.Path("alpha")
-	if err != nil {
-		t.Fatal(err)
-	}
 	snapshotBefore, err := os.ReadFile(snapshotPath)
 	if err != nil {
 		t.Fatalf("read snapshot before Open fresh: %v", err)
@@ -745,7 +741,7 @@ func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
 	if claimants != 1 {
 		t.Fatalf("Open fresh same-root claimants=%d", claimants)
 	}
-	if _, err := stateStore.Summary("alpha"); err != nil {
+	if _, err := os.Stat(snapshotPath); err != nil {
 		t.Fatalf("Open fresh removed the source snapshot: %v", err)
 	}
 	snapshotAfter, err := os.ReadFile(snapshotPath)
@@ -766,7 +762,7 @@ func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
 }
 
 func TestSwitchProjectStartupOpenFreshRefusesExactLiveProjectBeforeCommit(t *testing.T) {
-	cmd, store, executor, _, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
+	cmd, store, executor, _, reporter, snapshotPath := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupRecreateConfirmValue}},
 	})
@@ -778,10 +774,6 @@ func TestSwitchProjectStartupOpenFreshRefusesExactLiveProjectBeforeCommit(t *tes
 	cmd.projectFreshStart.(*registryProjectFreshStarter).runner = routed
 
 	registryBefore := store.snapshot()
-	snapshotPath, err := stateStore.Path("alpha")
-	if err != nil {
-		t.Fatal(err)
-	}
 	snapshotBefore, err := os.ReadFile(snapshotPath)
 	if err != nil {
 		t.Fatal(err)
@@ -824,7 +816,7 @@ func TestSwitchProjectStartupOpenFreshRefusesExactLiveProjectBeforeCommit(t *tes
 // which is what "confirmation before mutation" means operationally.
 func TestSwitchProjectStartupRecreateConfirmsBeforeReplacingIdentity(t *testing.T) {
 	var confirmation intpickercompat.Options
-	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
+	cmd, store, executor, tmux, reporter, snapshotPath := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
 		{observe: func(o intpickercompat.Options) { confirmation = o },
 			reply: intpickercompat.Result{Key: "enter", Value: projectStartupRecreateConfirmValue}},
@@ -842,7 +834,7 @@ func TestSwitchProjectStartupRecreateConfirmsBeforeReplacingIdentity(t *testing.
 	if store.writes != 1 {
 		t.Fatalf("confirmed Recreate writes=%d, want 1", store.writes)
 	}
-	if _, err := stateStore.Summary("alpha"); err != nil {
+	if _, err := os.Stat(snapshotPath); err != nil {
 		t.Fatalf("Recreate changed the latest snapshot: %v", err)
 	}
 	if len(tmux.calls) != 0 {
@@ -860,7 +852,7 @@ func TestSwitchProjectStartupRecreateConfirmsBeforeReplacingIdentity(t *testing.
 // declined confirmation returns to the startup rows with the Registry, the
 // snapshot, and the runtime untouched.
 func TestSwitchProjectStartupRecreateDeclineWritesNothing(t *testing.T) {
-	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
+	cmd, store, executor, tmux, reporter, snapshotPath := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
 		{reply: intpickercompat.Result{Key: "enter", Value: ""}},
 	})
@@ -872,7 +864,7 @@ func TestSwitchProjectStartupRecreateDeclineWritesNothing(t *testing.T) {
 	if store.writes != 0 {
 		t.Fatalf("declined Recreate writes=%d, want 0", store.writes)
 	}
-	if _, err := stateStore.Summary("alpha"); err != nil {
+	if _, err := os.Stat(snapshotPath); err != nil {
 		t.Fatalf("declined Recreate changed the latest snapshot: %v", err)
 	}
 	if len(tmux.calls) != 0 {
@@ -1096,12 +1088,7 @@ func TestProjectFreshStartKeepsEverySnapshot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	stateStore := sessionstate.NewStore(filepath.Join(home, "state", "projmux", "sessions"))
-	saveSwitchProjectStartupSnapshot(t, stateStore, "workspace")
-	snapshotPath, err := stateStore.Path("workspace")
-	if err != nil {
-		t.Fatal(err)
-	}
+	snapshotPath := writeLegacyProjectSnapshotFile(t, filepath.Join(home, "state", "projmux", "sessions"), "workspace", "/tmp/workspace")
 	snapshotBefore, err := os.ReadFile(snapshotPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1393,4 +1380,21 @@ func TestNewSwitchCommandWiresFreshStartAndReportSurface(t *testing.T) {
 	if !ok || activation == nil {
 		t.Fatalf("topology activation notices = %T, want the same report surface", newRegistryProjectTopologyMaterializer().notices)
 	}
+}
+
+// projectionMissingSessionRunner answers every has-session probe with "no such
+// session" and records every call, so a Fresh replacement sees a closed
+// Project without touching a real tmux server.
+type projectionMissingSessionRunner struct{ calls [][]string }
+
+func (r *projectionMissingSessionRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, append([]string{name}, args...))
+	command := args
+	if len(command) >= 2 && (command[0] == "-L" || command[0] == "-S") {
+		command = command[2:]
+	}
+	if len(command) > 0 && command[0] == "has-session" {
+		return nil, exec.Command("sh", "-c", "exit 1").Run()
+	}
+	return nil, nil
 }

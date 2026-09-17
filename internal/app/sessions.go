@@ -8,14 +8,11 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
-	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -23,7 +20,6 @@ import (
 )
 
 const sessionsKillExpectKey = "ctrl-x"
-const sessionsStateExpectKey = "ctrl-s"
 
 type sessionsRecentResolver interface {
 	RecentSessionSummaries(ctx context.Context) ([]inttmux.RecentSessionSummary, error)
@@ -52,7 +48,6 @@ type sessionsCommand struct {
 	executable           func() (string, error)
 	lookupEnv            func(string) string
 	homeDir              func() (string, error)
-	stateStore           func() (sessionstate.Store, error)
 	cleanupKilledSession func(string)
 	managedStopStore     *resourceStore
 	// navigation is the shared zero-write Registry read seam. It supplies the
@@ -82,7 +77,6 @@ func newSessionsCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionsCo
 		executable:       resolveExecutablePath,
 		lookupEnv:        os.Getenv,
 		homeDir:          os.UserHomeDir,
-		stateStore:       sessionstate.NewDefaultStoreFromEnv,
 		managedStopStore: newResourceStore(),
 	}
 }
@@ -173,14 +167,11 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			entries = append(entries, runtimeLink)
 		}
 		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.native, intpickercompat.Options{
-			UI:      *ui,
-			Entries: entries,
-			Prompt:  "› ",
-			Footer:  sessionsPickerFooter(locale),
-			ExpectKeys: append(
-				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:KillSession"}, []string{sessionsKillExpectKey}),
-				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:OpenState"}, []string{sessionsStateExpectKey})...,
-			),
+			UI:             *ui,
+			Entries:        entries,
+			Prompt:         "› ",
+			Footer:         sessionsPickerFooter(locale),
+			ExpectKeys:     effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:KillSession"}, []string{sessionsKillExpectKey}),
 			PreviewCommand: previewCommand,
 			PreviewWindow:  sessionsPreviewWindow(*ui),
 			Bindings: append(pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "session-popup", "esc", "ctrl-n"),
@@ -201,12 +192,6 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 				return fmt.Errorf("sessions runtime diagnostics handler is not configured")
 			}
 			return c.runtime.Run([]string{"diagnostics"}, stdout, stderr)
-		}
-		if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "SessionPopup:OpenState", sessionsStateExpectKey) {
-			if err := c.runSessionStateOverview(result.Value, summaries); err != nil {
-				return err
-			}
-			continue
 		}
 		if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "SessionPopup:KillSession", sessionsKillExpectKey) {
 			nextSummaries, err := c.killFocusedSession(context.Background(), summaries, attribution, result.Value)
@@ -233,153 +218,6 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 		return nil
 	}
-}
-
-func (c *sessionsCommand) runSessionStateOverview(sessionName string, summaries []inttmux.RecentSessionSummary) error {
-	entries := c.sessionStateOverviewEntries(sessionName, summaries)
-	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.native, intpickercompat.Options{
-		UI:            "projects-sessions-state",
-		Entries:       entries,
-		Title:         "Projects > Sessions > State",
-		Prompt:        "Projects > Sessions > State > ",
-		Footer:        projmuxFooter("Session state overview is read-only here."),
-		ExpectKeys:    []string{"enter"},
-		Bindings:      pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "session-popup", "esc"),
-		DisableSearch: true,
-	})
-	if err != nil {
-		return fmt.Errorf("run sessions state overview: %w", err)
-	}
-	if strings.TrimSpace(result.Value) == settingsBackValue || strings.TrimSpace(result.Value) == "" {
-		return nil
-	}
-	return nil
-}
-
-func (c *sessionsCommand) sessionStateOverviewEntries(sessionName string, summaries []inttmux.RecentSessionSummary) []intpickercompat.Entry {
-	sessionName = strings.TrimSpace(sessionName)
-	entries := []intpickercompat.Entry{settingsBackEntry()}
-	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelInfo("Session", nonEmpty(sessionName, "-"), "read-only overview"),
-		Value: settingsNoopValue,
-	})
-	summary := sessionsSummaryByName(summaries, sessionName)
-	if strings.TrimSpace(summary.Path) != "" {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Project path", summary.Path, ""),
-			Value: settingsNoopValue,
-		})
-	}
-	entries = append(entries, c.latestSessionStateOverviewEntries(sessionName)...)
-	entries = append(entries, namedSessionStateOverviewEntries(summary.Path)...)
-	return entries
-}
-
-func (c *sessionsCommand) latestSessionStateOverviewEntries(sessionName string) []intpickercompat.Entry {
-	if c.stateStore == nil {
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Latest snapshot", "unavailable", "session state store unavailable"),
-			Value: settingsNoopValue,
-		}}
-	}
-	store, err := c.stateStore()
-	if err != nil {
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Latest snapshot", "unavailable", err.Error()),
-			Value: settingsNoopValue,
-		}}
-	}
-	snap, err := store.Load(sessionName)
-	if err != nil {
-		status := "invalid"
-		if errors.Is(err, sessionstate.ErrNotFound) {
-			status = "missing"
-		}
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Latest snapshot", status, statusbarSessionStateErrorSummary(err)),
-			Value: settingsNoopValue,
-		}}
-	}
-	entries := []intpickercompat.Entry{
-		{
-			Label: settingsLabelInfo("Latest snapshot", "saved", statusbarSessionStateSavedText(snap.SavedAt, time.Time{})),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Snapshot source", snap.SourceLabel(), ""),
-			Value: settingsNoopValue,
-		},
-	}
-	for _, window := range snap.Windows {
-		windowName := statusbarSessionStateClean(window.Name)
-		if windowName == "" {
-			windowName = "window"
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Window", fmt.Sprintf("%d %s", window.Index, windowName), sessionStateCount(len(window.Panes), "pane")),
-			Value: settingsNoopValue,
-		})
-		for _, pane := range window.Panes {
-			entries = append(entries,
-				intpickercompat.Entry{
-					Label: settingsLabelInfo("Pane", fmt.Sprintf("%d.%d %s", window.Index, pane.Index, projectSessionStatePaneTitle(pane)), ""),
-					Value: settingsNoopValue,
-				},
-				intpickercompat.Entry{
-					Label: settingsLabelInfo("Pane cwd", nonEmpty(strings.TrimSpace(pane.CWD), "-"), ""),
-					Value: settingsNoopValue,
-				},
-				intpickercompat.Entry{
-					Label: settingsLabelInfo("Pane recipe", projectSessionStateRecipeText(pane.Recipe, snap.SavedAt), ""),
-					Value: settingsNoopValue,
-				},
-			)
-		}
-	}
-	return entries
-}
-
-func namedSessionStateOverviewEntries(projectPath string) []intpickercompat.Entry {
-	projectPath = strings.TrimSpace(projectPath)
-	if projectPath == "" {
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Named snapshots", "unavailable", "project path unavailable"),
-			Value: settingsNoopValue,
-		}}
-	}
-	named, _, err := corelayout.NewStore(projectPath).List()
-	if err != nil {
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Named snapshots", "unavailable", err.Error()),
-			Value: settingsNoopValue,
-		}}
-	}
-	if len(named) == 0 {
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Named snapshots", "missing", projectPath),
-			Value: settingsNoopValue,
-		}}
-	}
-	entries := []intpickercompat.Entry{{
-		Label: settingsLabelInfo("Named snapshots", fmt.Sprintf("%d", len(named)), "manual snapshots"),
-		Value: settingsNoopValue,
-	}}
-	for _, entry := range named {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Named snapshot", entry.Name, sessionStateCount(entry.Windows, "window")+", "+sessionStateCount(entry.Panes, "pane")),
-			Value: settingsNoopValue,
-		})
-	}
-	return entries
-}
-
-func sessionsSummaryByName(summaries []inttmux.RecentSessionSummary, sessionName string) inttmux.RecentSessionSummary {
-	for _, summary := range summaries {
-		if strings.TrimSpace(summary.Name) == sessionName {
-			return summary
-		}
-	}
-	return inttmux.RecentSessionSummary{}
 }
 
 func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary, attribution sessionsAttribution, locale i18n.Locale) ([]intrender.SessionRow, error) {

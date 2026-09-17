@@ -1273,12 +1273,12 @@ run_inside_lifecycle() {
 mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'off\n' >"$XDG_CONFIG_HOME/projmux/sidebar-startup-picker"
 
-# Session State diagnostics uses the same run-unique socket and isolated XDG
-# root. Register and materialize one exact Project, capture a real snapshot
-# with the explicit CLI, prove the retained autosave route is a silent no-op
-# that neither writes a snapshot nor records an outcome (even with autosave
-# forced on and a failing tmux on PATH), mutate its desired topology, project
-# the saved snapshot back into the closed Project, then delete it canonically.
+# Registered Project lifecycle uses the same run-unique socket and isolated XDG
+# root. Register and materialize one exact Project, prove the retained autosave
+# route is a silent no-op that neither writes Project state nor records an
+# outcome (even with autosave forced on and a failing tmux on PATH), rename its
+# Window and Pane through the generated routes, then stop the runtime and
+# Continue it from the Registry alone.
 session_state_root="$PROJMUX_SMOKE_WORKDIR/raw-session-state-project-$$"
 mkdir -p "$session_state_root"
 session_state_project_uid="$(env -u TMUX -u TMUX_PANE PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
@@ -1342,15 +1342,21 @@ if [[ "$(grep -Fc "env -u TMUX -u TMUX_PANE '$bin' internal tmux converge --sock
   exit 1
 fi
 
-env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
-  TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
-  "$bin" create snapshot >"$PROJMUX_SMOKE_WORKDIR/session-state-save.out"
-
 session_state_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
-session_state_snapshot="$XDG_STATE_HOME/projmux/sessions/$session_state_name.json"
-cp "$session_state_snapshot" "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before"
-session_state_sessions_before="$(ls -lA --time-style=full-iso "$XDG_STATE_HOME/projmux/sessions")"
-session_state_before_autosave="$(wc -l <"$session_state_log")"
+# The retired snapshot store must never be (re)created by any remaining route.
+session_state_retired_store="$XDG_STATE_HOME/projmux/sessions"
+session_state_log_lines() {
+  if [[ -f "$session_state_log" ]]; then
+    wc -l <"$session_state_log"
+  else
+    echo 0
+  fi
+}
+if [[ -e "$session_state_retired_store" ]]; then
+  echo "a Project lifecycle route created the retired snapshot store" >&2
+  exit 1
+fi
+session_state_before_autosave="$(session_state_log_lines)"
 env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
   PROJMUX_SESSIONSTATE_AUTOSAVE=on TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
   "$bin" internal tmux autosave-session-state --force \
@@ -1376,38 +1382,23 @@ for session_state_autosave_output in session-state-autosave.out session-state-au
     exit 1
   fi
 done
-if [[ "$session_state_before_autosave" != "$(wc -l <"$session_state_log")" ]]; then
+if [[ "$session_state_before_autosave" != "$(session_state_log_lines)" ]]; then
   echo "retained autosave route appended an operational event" >&2
   exit 1
 fi
-if [[ "$session_state_sessions_before" != "$(ls -lA --time-style=full-iso "$XDG_STATE_HOME/projmux/sessions")" ]]; then
-  echo "retained autosave route changed the snapshot directory" >&2
+if [[ -e "$session_state_retired_store" ]]; then
+  echo "retained autosave route created the retired snapshot store" >&2
   exit 1
 fi
-cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
 
-env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
-  TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
-  "$bin" create window --project "uid:$session_state_project_uid" --name after-save \
-  >"$PROJMUX_SMOKE_WORKDIR/session-state-mutate.out"
-env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
-env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
-env -u TMUX -u TMUX_PANE PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
-  "$bin" restore snapshot --session "$session_state_name" --project "uid:$session_state_project_uid" \
-  --client "$control_client" --yes \
-  >"$PROJMUX_SMOKE_WORKDIR/session-state-restore.out"
-if ! env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -t "=$session_state_name" 2>/dev/null; then
-  echo "snapshot Registry projection did not recreate $session_state_name" >&2
-  exit 1
-fi
 if [[ "$("$bin" get windows --project "uid:$session_state_project_uid" -o uid | grep -c .)" != "1" ]]; then
-  echo "snapshot Registry projection did not remove the post-save Window" >&2
+  echo "registered Project did not materialize exactly one Window" >&2
   exit 1
 fi
-# The restored one-Window target keeps its name/status/actions/age with KIND
+# The live one-Window target keeps its name/status/actions/age with KIND
 # omitted only from compact; wide and JSON remain available for recovery.
 # Keep its AGE far from a day boundary during the separate CLI invocations.
-python3 - "$XDG_STATE_HOME/projmux/metadata/registry.json" "$session_state_project_uid" <<'RESTORED_AGE'
+python3 - "$XDG_STATE_HOME/projmux/metadata/registry.json" "$session_state_project_uid" <<'LIVE_WINDOW_AGE'
 import datetime
 import json
 import pathlib
@@ -1421,22 +1412,22 @@ assert len(windows) == 1, windows
 created = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2, hours=12)
 windows[0]["metadata"]["createdAt"] = created.isoformat().replace("+00:00", "Z")
 path.write_text(json.dumps(registry) + "\n")
-RESTORED_AGE
-for restored_mode in default wide json; do
-  restored_output_args=()
-  if [[ "$restored_mode" != default ]]; then
-    restored_output_args=(-o "$restored_mode")
+LIVE_WINDOW_AGE
+for window_mode in default wide json; do
+  window_output_args=()
+  if [[ "$window_mode" != default ]]; then
+    window_output_args=(-o "$window_mode")
   fi
-  "$bin" get windows --project "uid:$session_state_project_uid" "${restored_output_args[@]}" \
-    >"$PROJMUX_SMOKE_WORKDIR/restored-window-$restored_mode.out"
+  "$bin" get windows --project "uid:$session_state_project_uid" "${window_output_args[@]}" \
+    >"$PROJMUX_SMOKE_WORKDIR/live-window-$window_mode.out"
 done
-python3 - "$PROJMUX_SMOKE_WORKDIR" <<'RESTORED_COLUMNS'
+python3 - "$PROJMUX_SMOKE_WORKDIR" <<'LIVE_WINDOW_COLUMNS'
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-read = lambda mode: (root / f"restored-window-{mode}.out").read_text()
+read = lambda mode: (root / f"live-window-{mode}.out").read_text()
 compact = [line.split() for line in read("default").splitlines()]
 wide = [line.split() for line in read("wide").splitlines()]
 items = json.loads(read("json"))["items"]
@@ -1447,12 +1438,7 @@ assert len(compact[1]) == 4 and compact[1][:3] == wide[1][1:4]
 assert wide[0][-1] == "AGE" and compact[1][-1] == wide[1][-1] == "2d"
 assert wide[1][0] == "window" and items[0]["kind"] == "Window"
 assert compact[1][0] == items[0]["metadata"]["name"]
-RESTORED_COLUMNS
-if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -c "$control_client" '#{session_name}')" != "$session_state_name" ]]; then
-  echo "snapshot Registry projection did not switch the exact client last" >&2
-  exit 1
-fi
-cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
+LIVE_WINDOW_COLUMNS
 # Generated rename routes. The Window key/menu route and the Pane key route run
 # with an explicit client and anchor the way the generated bindings run them,
 # the prompt response in a quoted here-document on stdin, and must rename the
@@ -1527,40 +1513,19 @@ if [[ "$(session_state_registry_names)" != "smoke-renamed-window|smoke-renamed-p
   echo "generated renames did not survive Continue: registry=$(session_state_registry_names) window=$session_state_continued_window label=$session_state_continued_label" >&2
   exit 1
 fi
-cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
-
-"$bin" delete snapshot --session "$session_state_name" \
-  >"$PROJMUX_SMOKE_WORKDIR/session-state-delete.out"
-if find "$XDG_STATE_HOME/projmux/sessions" -maxdepth 1 -type f -name '*raw-session-state*' -print -quit | grep -q .; then
-  echo "canonical snapshot delete left its target" >&2
-  exit 1
-fi
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
 
-if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.save".*"source":"manual"' "$session_state_log")" != "1" ]]; then
-  echo "manual save did not emit exactly one closed session-state outcome" >&2
+if [[ -e "$session_state_retired_store" ]]; then
+  echo "registered Project Continue created the retired snapshot store" >&2
   exit 1
 fi
-if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.autosave"' "$session_state_log")" != "0" ]]; then
-  echo "retained autosave route emitted a session-state outcome" >&2
-  exit 1
-fi
-if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.restore".*"source":"manual"' "$session_state_log")" != "1" ]]; then
-  echo "snapshot Registry projection did not emit exactly one closed outcome" >&2
-  exit 1
-fi
-if ! grep -q '"event":"session-state.outcome".*"operation":"session-state.delete".*"source":"manual".*"item_count":1' "$session_state_log"; then
-  echo "canonical delete did not project its exact item count" >&2
-  exit 1
-fi
-if grep -q '"event":"command.outcome".*"command":"session-state"' "$session_state_log" ||
-  grep -q '"event":"command.outcome".*"command":"prune","subcommand":"session-state"' "$session_state_log"; then
-  echo "owned Session State mutation emitted a duplicate generic outcome" >&2
+if [[ -f "$session_state_log" ]] && grep -q '"event":"session-state.outcome"' "$session_state_log"; then
+  echo "a Project lifecycle route emitted a retired session-state outcome" >&2
   exit 1
 fi
 for raw in "$session_state_root" "$session_state_name" 'sleep 300' 'raw session-state command' '/seed/private/path'; do
-  if grep -Fq "$raw" "$session_state_log"; then
+  if [[ -f "$session_state_log" ]] && grep -Fq "$raw" "$session_state_log"; then
     echo "session-state operational journal leaked raw metadata: $raw" >&2
     exit 1
   fi

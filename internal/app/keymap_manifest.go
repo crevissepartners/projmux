@@ -50,7 +50,8 @@ type keymapRetiredID struct {
 // The six popup ids were dropped from the action catalog before this schema
 // existed; they resolve to no action today and this Phase does not resurrect
 // them as read aliases. What changes here is only that a migration now *says*
-// so instead of skipping them without a word.
+// so instead of skipping them without a word. The two Session picker snapshot
+// ids were dropped with Project snapshots.
 func keymapRetiredIDs() []keymapRetiredID {
 	return []keymapRetiredID{
 		{
@@ -65,6 +66,9 @@ func keymapRetiredIDs() []keymapRetiredID {
 		{ID: "ai-split-picker-right", Remediation: "use the canonical toggle action id instead of the popup mode name"},
 		{ID: "ai-split-settings", Remediation: "use the canonical toggle action id instead of the popup mode name"},
 		{ID: "sessionizer", Remediation: "use the canonical toggle action id instead of the popup mode name"},
+		// The Session picker snapshot view was removed with Project snapshots.
+		{ID: "SessionPopup:OpenState", Remediation: "Project snapshots were removed; delete this table"},
+		{ID: "session-picker.snapshots.open", Remediation: "Project snapshots were removed; delete this table"},
 	}
 }
 

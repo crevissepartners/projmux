@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -39,7 +41,8 @@ func TestRemovedMixedRootArgvProcessMatrixIsUsageOnly(t *testing.T) {
 		{[]string{"pin", "toggle"}, "pin project"},
 		{[]string{"pin", "clear"}, "pin project"},
 		{[]string{"prune", "ephemeral"}, "runtime prune"},
-		{[]string{"prune", "session-state"}, "prune snapshot"},
+		{[]string{"prune", "session-state"}, "prune project"},
+		{[]string{"prune", "snapshot"}, "prune project"},
 	}
 	for _, test := range tests {
 		t.Run(strings.Join(test.args, "_"), func(t *testing.T) {
@@ -185,7 +188,7 @@ func TestRemovedPublicArgvMatrixReturnsReplacementUsageWithoutHandlerReach(t *te
 		{"attach auto", legacyRouteGate{name: "attach", target: &retirementProbe{}, allowedFirst: []string{"project"}, replacement: func([]string) string { return "`projmux runtime attach ...`" }}, []string{"auto"}, "runtime attach"},
 		{"focus target", legacyRouteGate{name: "focus", target: &retirementProbe{}, allowedFirst: focusKinds, replacement: func([]string) string { return "`projmux focus project|window|pane ...`" }}, []string{"--target", "alpha"}, "focus project|window|pane"},
 		{"pin direct", legacyRouteGate{name: "pin", target: &retirementProbe{}, allowedFirst: []string{"project"}, replacement: func([]string) string { return "`projmux pin project ...`" }}, []string{"toggle", "/repo"}, "pin project"},
-		{"prune ephemeral", legacyRouteGate{name: "prune", target: &retirementProbe{}, allowedFirst: []string{"agent", "project", "snapshot"}, replacement: pruneReplacement}, []string{"ephemeral"}, "runtime prune"},
+		{"prune ephemeral", legacyRouteGate{name: "prune", target: &retirementProbe{}, allowedFirst: []string{"agent", "project"}, replacement: pruneReplacement}, []string{"ephemeral"}, "runtime prune"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -215,9 +218,8 @@ func TestMixedLegacyRootsForwardOnlySurvivingCanonicalChildren(t *testing.T) {
 		{"focus window", focusKinds, []string{"window", "win", "--project", "alpha"}},
 		{"focus pane", focusKinds, []string{"pane", "pan", "--project", "alpha", "--window", "win"}},
 		{"pin project", []string{"project"}, []string{"project", "list"}},
-		{"prune agent", []string{"agent", "project", "snapshot"}, []string{"agent", "--older-than", "720h", "--no-pane"}},
-		{"prune project", []string{"agent", "project", "snapshot"}, []string{"project", "--missing"}},
-		{"prune snapshot", []string{"agent", "project", "snapshot"}, []string{"snapshot", "--older-than", "24h"}},
+		{"prune agent", []string{"agent", "project"}, []string{"agent", "--older-than", "720h", "--no-pane"}},
+		{"prune project", []string{"agent", "project"}, []string{"project", "--missing"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -228,6 +230,50 @@ func TestMixedLegacyRootsForwardOnlySurvivingCanonicalChildren(t *testing.T) {
 				t.Fatalf("error=%v calls=%v, want exact canonical forwarding", err, probe.calls)
 			}
 		})
+	}
+}
+
+// TestRemovedSnapshotRoutesAreUnknownCommands pins the removal of the Project
+// snapshot surface on the real application graph. Every former spelling fails
+// before any handler work: `restore` and the hidden `session-state` root are
+// unknown commands, and the three kind spellings plus `prune snapshot` are
+// refused by the verb that no longer owns the kind. Nothing is written under
+// the isolated HOME, in particular no legacy sessions directory.
+func TestRemovedSnapshotRoutesAreUnknownCommands(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("PROJMUX_CWD", "")
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+
+	for _, test := range []struct {
+		args  []string
+		usage bool
+		want  string
+	}{
+		{args: []string{"create", "snapshot"}, usage: true, want: "create snapshot is not available"},
+		{args: []string{"get", "snapshots"}, usage: true, want: "get snapshots is not available"},
+		{args: []string{"get", "snapshot"}, usage: true, want: "get snapshot is not available"},
+		{args: []string{"delete", "snapshot", "alpha"}, usage: true, want: "delete snapshot is not available"},
+		{args: []string{"prune", "snapshot", "--older-than", "24h"}, usage: true, want: "`projmux prune snapshot --older-than 24h` was removed"},
+		{args: []string{"restore", "snapshot", "--session", "alpha", "--dry-run"}, want: "unknown command: restore"},
+		{args: []string{"session-state", "status"}, want: "unknown command: session-state"},
+	} {
+		t.Run(strings.Join(test.args, "_"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := New().Run(test.args, &stdout, &stderr)
+			if err == nil || IsUsageError(err) != test.usage || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Run(%q) error=%v (usage=%t), want %q (usage=%t)", test.args, err, IsUsageError(err), test.want, test.usage)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("Run(%q) stdout=%q, want empty", test.args, stdout.String())
+			}
+		})
+	}
+	if _, err := os.Stat(filepath.Join(root, "state", "projmux", "sessions")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed snapshot routes touched the legacy sessions directory: %v", err)
 	}
 }
 

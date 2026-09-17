@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
-	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
 
 func TestAuthorizeProjectLayoutArtifactRequiresTrustWithHooksOffAndNoConfig(t *testing.T) {
@@ -100,7 +99,7 @@ func TestAuthorizeProjectLayoutArtifactRenameReplacementInvalidatesApproval(t *t
 				Panes: []corelayout.Pane{{
 					Index:  0,
 					CWD:    "${PROJMUX_CWD}",
-					Recipe: sessionstate.StartupRecipe(command),
+					Recipe: corelayout.StartupRecipe(command),
 				}},
 			}},
 		}

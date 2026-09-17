@@ -82,7 +82,7 @@ func retiredCLINoWrite(args []string) bool {
 	case "pin":
 		return len(args) < 2 || args[1] != "project"
 	case "prune":
-		return len(args) < 2 || (args[1] != "project" && args[1] != "snapshot")
+		return len(args) < 2 || args[1] != "project"
 	default:
 		return false
 	}

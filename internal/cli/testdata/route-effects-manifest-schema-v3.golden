@@ -50,7 +50,6 @@ route=create window identity=created address=allocated topology=established desi
 route=create pane identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
 route=create agent identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
 route=create notification identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
-route=create snapshot identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=create codex identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
 route=create claude identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
 route=create antigravity identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
@@ -60,7 +59,6 @@ route=delete window identity=removed address=released topology=removed desired-s
 route=delete pane identity=removed address=released topology=removed desired-state=removed runtime=unchanged|stopped focus=unchanged|moved-current-client cardinality=one-or-more domain-effect=null
 route=delete agent identity=removed address=released topology=removed desired-state=removed runtime=unchanged|stopped focus=unchanged|moved-current-client cardinality=one-or-more domain-effect=null
 route=delete notification identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
-route=delete snapshot identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=describe identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=describe project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=describe window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
@@ -85,7 +83,6 @@ route=get runtime sessions identity=unchanged address=unchanged topology=unchang
 route=get runtime windows identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=get runtime panes identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=get notifications identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
-route=get snapshots identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=get pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=hook identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=hook list identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
@@ -103,7 +100,6 @@ route=pin project identity=unchanged address=unchanged topology=unchanged desire
 route=prune identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=prune agent identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=prune project identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
-route=prune snapshot identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=quit identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=zero-or-more domain-effect=null
 route=reconcile identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=reconcile resources identity=unchanged|created address=unchanged|allocated topology=unchanged|established|reparented desired-state=unchanged|created|replaced runtime=unchanged|materialized focus=unchanged cardinality=exact-one|zero-or-more domain-effect=null
@@ -116,8 +112,6 @@ route=rename window identity=unchanged address=renamed topology=unchanged desire
 route=rename pane identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=rename agent identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=resources identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
-route=restore identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
-route=restore snapshot identity=unchanged|created|reused|removed|replaced address=unchanged|allocated|released topology=unchanged|established|removed|replaced desired-state=unchanged|created|removed|replaced runtime=unchanged|materialized focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|one-or-more domain-effect=null
 route=runtime identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=runtime sessions identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged|materialized|already-live|stopped focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|exact-one domain-effect=null
 route=runtime diagnostics identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged|materialized|already-live focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|exact-one domain-effect=null

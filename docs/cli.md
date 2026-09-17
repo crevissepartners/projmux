@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 191 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 185 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -75,13 +75,12 @@ projmux <command> [args...]
 | [`projmux notification`](#projmux-notification) | canonical | Manage pending notification workflow state |
 | [`projmux open`](#projmux-open) | canonical | Open a Project runtime and move the current client to it |
 | [`projmux pin`](#projmux-pin) | canonical | Manage pinned project directories |
-| [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects, Agents, and snapshots |
+| [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects and Agents |
 | [`projmux quit`](#projmux-quit) | shortcut | Quit the app-owned projmux tmux runtime |
 | [`projmux reconcile`](#projmux-reconcile) | canonical | Preview or repair Registry and exact tmux resource drift |
 | [`projmux rebind`](#projmux-rebind) | canonical | Rebind a Project to a new absolute root without moving files |
 | [`projmux rename`](#projmux-rename) | canonical | Rename a Projmux resource metadata.name |
 | [`projmux resources`](#projmux-resources) | shortcut | Inspect live Project, Window, and Pane CPU/RSS attribution |
-| [`projmux restore`](#projmux-restore) | canonical | Project a saved snapshot into one exact closed Project desired state |
 | [`projmux runtime`](#projmux-runtime) | canonical | Manage the live and ephemeral tmux runtime inventory |
 | [`projmux settings`](#projmux-settings) | shortcut | Configure projmux |
 | [`projmux setup`](#projmux-setup) | canonical | Probe terminal keys or remediate them with setup terminal |
@@ -1220,7 +1219,6 @@ projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <
 projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create claude|antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
-projmux create snapshot
 ```
 
 Subcommands:
@@ -1232,7 +1230,6 @@ Subcommands:
 | [`projmux create pane`](#projmux-create-pane) | Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor |
 | [`projmux create agent`](#projmux-create-agent) | Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required |
 | [`projmux create notification`](#projmux-create-notification) | Create a pending notification row |
-| [`projmux create snapshot`](#projmux-create-snapshot) | Create a session snapshot |
 
 Provider shortcuts:
 
@@ -1242,7 +1239,7 @@ Provider shortcuts:
 | [`projmux create claude`](#projmux-create-claude) | Provider shortcut for create agent --provider claude |
 | [`projmux create antigravity`](#projmux-create-antigravity) | Provider shortcut for create agent --provider antigravity |
 
-Canonical spelling: `projmux create project`, `projmux create window`, `projmux create pane`, `projmux create agent`, `projmux create notification`, `projmux create snapshot`, `projmux create codex`, `projmux create claude`, `projmux create antigravity`
+Canonical spelling: `projmux create project`, `projmux create window`, `projmux create pane`, `projmux create agent`, `projmux create notification`, `projmux create codex`, `projmux create claude`, `projmux create antigravity`
 
 ### `projmux create project`
 
@@ -1357,27 +1354,6 @@ Allowed effects:
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
 ```
 
-### `projmux create snapshot`
-
-Create a session snapshot
-
-Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux create snapshot
-```
-
 ### `projmux create codex`
 
 Provider shortcut for create agent --provider codex
@@ -1475,18 +1451,17 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux delete project`](#projmux-delete-project) | Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime |
+| [`projmux delete project`](#projmux-delete-project) | Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, and runtime |
 | [`projmux delete window`](#projmux-delete-window) | Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry |
 | [`projmux delete pane`](#projmux-delete-pane) | Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry |
 | [`projmux delete agent`](#projmux-delete-agent) | Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry |
 | [`projmux delete notification`](#projmux-delete-notification) | Delete pending notification rows |
-| [`projmux delete snapshot`](#projmux-delete-snapshot) | Delete saved session snapshots |
 
-Canonical spelling: `projmux unregister project`, `projmux delete window`, `projmux delete pane`, `projmux delete agent`, `projmux delete notification`, `projmux delete snapshot`
+Canonical spelling: `projmux unregister project`, `projmux delete window`, `projmux delete pane`, `projmux delete agent`, `projmux delete notification`
 
 ### `projmux delete project`
 
-Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime
+Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, and runtime
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1600,29 +1575,6 @@ projmux delete notification
 ```
 
 Aliases: `notifications`
-
-### `projmux delete snapshot`
-
-Delete saved session snapshots
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux delete snapshot
-```
-
-Aliases: `snapshots`
 
 ## `projmux describe`
 
@@ -2009,10 +1961,9 @@ Subcommands:
 | [`projmux get agents`](#projmux-get-agents) | List Agent resources as NAME STATUS ACTIONS AGE; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
 | [`projmux get runtime`](#projmux-get-runtime) | List every tmux Session, Window, and Pane on one exact server with its attribution |
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
-| [`projmux get snapshots`](#projmux-get-snapshots) | List saved session snapshots |
 | [`projmux get pane`](#projmux-get-pane) | Read one Pane resource; with no selector inside tmux, the active Pane |
 
-Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get panes`, `projmux get agents`, `projmux get runtime sessions`, `projmux get runtime windows`, `projmux get runtime panes`, `projmux get notifications`, `projmux get snapshots`, `projmux get pane`
+Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get panes`, `projmux get agents`, `projmux get runtime sessions`, `projmux get runtime windows`, `projmux get runtime panes`, `projmux get notifications`, `projmux get pane`
 
 ### `projmux get projects`
 
@@ -2236,29 +2187,6 @@ projmux get notifications
 ```
 
 Aliases: `notification`
-
-### `projmux get snapshots`
-
-List saved session snapshots
-
-Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=zero-or-more`
-- `domain-effect=null`
-
-```
-projmux get snapshots
-```
-
-Aliases: `snapshot`
 
 ### `projmux get pane`
 
@@ -2600,7 +2528,7 @@ projmux pin project list|add|remove|toggle|clear
 
 ## `projmux prune`
 
-Prune stale Projects, Agents, and snapshots
+Prune stale Projects and Agents
 
 Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
@@ -2616,7 +2544,6 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux prune snapshot [--older-than <duration>]
 projmux prune project --missing --older-than <duration> [--yes]
 projmux prune agent --older-than <duration> [--no-session-ref] [--no-pane] [--exclude <agent-ref>]... [--yes]
 ```
@@ -2627,9 +2554,8 @@ Subcommands:
 | --- | --- |
 | [`projmux prune agent`](#projmux-prune-agent) | Delete Offline or Failed Agents past a bounded age whose session ref or managed Panes are gone; live Panes and Running Agents are never selected |
 | [`projmux prune project`](#projmux-prune-project) | Delete Projects whose spec.root has been missing for a bounded age |
-| [`projmux prune snapshot`](#projmux-prune-snapshot) | Inspect or delete preserved session snapshots (canonical spelling) |
 
-Canonical spelling: `projmux prune agent`, `projmux prune project`, `projmux prune snapshot`
+Canonical spelling: `projmux prune agent`, `projmux prune project`
 
 ### `projmux prune agent`
 
@@ -2672,30 +2598,6 @@ Allowed effects:
 ```
 projmux prune project --missing --older-than <duration> [--yes]
 ```
-
-### `projmux prune snapshot`
-
-Inspect or delete preserved session snapshots (canonical spelling)
-
-Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux prune snapshot [--older-than <duration>]
-projmux prune snapshot delete <session>...
-```
-
-Canonical spelling: `projmux delete snapshot`
 
 ## `projmux quit`
 
@@ -2995,56 +2897,6 @@ Allowed effects:
 
 ```
 projmux resources
-```
-
-## `projmux restore`
-
-Project a saved snapshot into one exact closed Project desired state
-
-Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux restore snapshot`](#projmux-restore-snapshot) | Project a saved snapshot into one exact closed Project desired state |
-
-Canonical spelling: `projmux restore snapshot`
-
-### `projmux restore snapshot`
-
-Project a saved snapshot into one exact closed Project desired state
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged|created|reused|removed|replaced`
-- `address=unchanged|allocated|released`
-- `topology=unchanged|established|removed|replaced`
-- `desired-state=unchanged|created|removed|replaced`
-- `runtime=unchanged|materialized`
-- `focus=unchanged|moved-current-client|attached-caller`
-- `cardinality=unchanged|one-or-more`
-- `domain-effect=null`
-
-```
-projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]
 ```
 
 ## `projmux runtime`
@@ -3457,13 +3309,13 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux unregister project`](#projmux-unregister-project) | Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime |
+| [`projmux unregister project`](#projmux-unregister-project) | Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, and runtime |
 
 Canonical spelling: `projmux unregister project`
 
 ### `projmux unregister project`
 
-Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime
+Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, and runtime
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 

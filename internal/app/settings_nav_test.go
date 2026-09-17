@@ -67,8 +67,6 @@ func settingsEntryOwnerName(owner settingsEntryOwner) string {
 		return "notifications"
 	case settingsOwnerAppearance:
 		return "appearance"
-	case settingsOwnerSessionState:
-		return "session-state"
 	case settingsOwnerKeybindings:
 		return "keybindings"
 	case settingsOwnerAbout:
@@ -842,7 +840,6 @@ func TestSettingsRenderedRowsMapOntoNavigationCatalog(t *testing.T) {
 		"automation events":     cmd.hookLifecycleEntries(hookScopeGlobal),
 		"appearance":            cmd.statusbarEntries(),
 		"status bar":            cmd.statusBarEntries(),
-		"snapshots":             cmd.sessionStateEntries(),
 		"about":                 cmd.aboutEntries(),
 		"about updates":         cmd.aboutUpdateEntries(),
 	}
@@ -898,17 +895,17 @@ func TestSettingsRemovedRoutesAreUnreachable(t *testing.T) {
 	}
 }
 
-func TestProjectSettingsTreeHasOnlyAutomationAndSnapshotsAndRejectsRetiredRoutes(t *testing.T) {
+func TestProjectSettingsTreeHasOnlyAutomationAndRejectsRetiredRoutes(t *testing.T) {
 	t.Parallel()
 
 	children := settingsNavChildren(settingsNavScopeProject)
-	if len(children) != 2 || children[0].ID != settingsNavProjectAutomation || children[1].ID != settingsNavProjectSnapshots {
-		t.Fatalf("Project Settings children = %#v, want only Automation and Snapshots", children)
+	if len(children) != 1 || children[0].ID != settingsNavProjectAutomation {
+		t.Fatalf("Project Settings children = %#v, want only Automation", children)
 	}
 	home := t.TempDir()
 	cmd := settingsNavTestCommand(t, home)
 	rendered := settingsNavAllRenderedEntries(t, cmd)
-	for _, retired := range []string{"section:project-config", "section:effective-merge", "project-config:kube", "project-config:kube:context:set", "project-config:env", "project-config:startup"} {
+	for _, retired := range []string{"section:project-config", "section:effective-merge", "project-config:kube", "project-config:kube:context:set", "project-config:env", "project-config:startup", "section:project-sessionstate", "section:sessionstate"} {
 		for _, entry := range rendered {
 			if strings.TrimSpace(entry.Value) == retired {
 				t.Fatalf("retired Project route %q is still rendered: %#v", retired, entry)
@@ -991,7 +988,7 @@ func TestSettingsDisplayLabelsKeepMachineIdentifiers(t *testing.T) {
 	catalog := defaultKeyBindingCatalog()
 	for _, id := range []string{
 		"new-window", "Sidebar:KillSession", "ai-split-right", "ai-split-claude-down",
-		"current-project-session", "SessionPopup:OpenState", "NotifySidebar:ClearAll",
+		"current-project-session", "SessionPopup:KillSession", "NotifySidebar:ClearAll",
 		"Settings:SwitchTabNext", "previous-window", "select-pane-left",
 	} {
 		action, ok := keyBindingActionByID(catalog, id)
@@ -1008,9 +1005,7 @@ func TestSettingsDisplayLabelsKeepMachineIdentifiers(t *testing.T) {
 
 	// Config and runtime spellings are unchanged behind the renamed rows.
 	for _, pair := range []struct{ label, value string }{
-		{"Snapshots", settingsSectionSessionState},
-		{"Snapshots", settingsActionPrefixSessionState + "autosave:on"},
-		{"Closed Project startup", settingsActionPrefixSessionStateSidebarStartup + "on"},
+		{"Closed Project startup", settingsActionPrefixSidebarStartup + "on"},
 		{"Project automation policy", settingsActionPrefixHooks + "off"},
 		{"Resources", settingsActionPrefixLiveResources + "on"},
 		{"Status Bar", settingsActionPrefixStatusbar + "git:symbol"},
@@ -1021,7 +1016,7 @@ func TestSettingsDisplayLabelsKeepMachineIdentifiers(t *testing.T) {
 			t.Fatalf("%s row lost its compatibility action spelling %q", pair.label, pair.value)
 		}
 	}
-	for _, prefix := range []string{"sessionstate:", "project-hooks:", "live-resources:", "statusbar-decoration:", "workdir:", "projdir:", "switch:", "keymap:", "theme:"} {
+	for _, prefix := range []string{"sidebar-startup:", "project-hooks:", "live-resources:", "statusbar-decoration:", "workdir:", "projdir:", "switch:", "keymap:", "theme:"} {
 		if _, ok := settingsEntryMetaForValue(prefix + "contract-fixture"); !ok {
 			t.Fatalf("compatibility action prefix %q lost its owner contract", prefix)
 		}
@@ -1101,7 +1096,7 @@ func TestSettingsCategoryEnterDoesNotMutate(t *testing.T) {
 	settingsNavAllRenderedEntries(t, cmd)
 	for _, section := range []string{
 		settingsSectionProject, settingsSectionAI, settingsSectionNotifications,
-		settingsSectionAutomation, settingsSectionStatusbar, settingsSectionSessionState,
+		settingsSectionAutomation, settingsSectionStatusbar,
 		settingsSectionKeybindings, settingsSectionAbout,
 	} {
 		if _, err := cmd.sectionOptions(section); err != nil {
@@ -1219,12 +1214,10 @@ func TestSettingsResourceVocabularyGolden(t *testing.T) {
 		settingsNavStatusBar + ".working-directory": "Working directory",
 		settingsNavStatusBar + ".notifications-hud": "Notifications HUD",
 		settingsNavStatusBar + ".resources":         "Resources",
-		settingsNavSnapshots:                        "Snapshots",
 		settingsNavKeybindings:                      "Keybindings",
 		settingsNavAbout:                            "About",
 		settingsNavAbout + ".quit":                  "Quit Projmux",
 		settingsNavProjectAutomation:                "Automation",
-		settingsNavProjectSnapshots:                 "Snapshots",
 	}
 	for id, label := range want {
 		if got := settingsNavLabelLocale(i18n.FallbackLocale, id); got != label {
@@ -1333,7 +1326,6 @@ func settingsNavAllRenderedEntries(t *testing.T, cmd *settingsCommand) []intpick
 	all = append(all, cmd.statusbarEntries()...)
 	all = append(all, cmd.statusBarEntries()...)
 	all = append(all, cmd.statusbarDecorationTargetEntries(statusbarDecorationTargetGit)...)
-	all = append(all, cmd.sessionStateEntries()...)
 	all = append(all, cmd.aboutEntries()...)
 	all = append(all, cmd.aboutUpdateEntries()...)
 	all = append(all, settingsKeybindingActionRows(t, cmd)...)

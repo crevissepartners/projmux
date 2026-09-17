@@ -20,9 +20,9 @@ var resourceVerbs = []string{"get", "describe", "delete", "rename"}
 // shipped route. Pinning the canonical set as a literal makes that a failing
 // test rather than a diff nobody reads.
 var canonicalKindSpellings = map[string][]string{
-	"get":      {"projects", "windows", "panes", "agents", "notifications", "snapshots", "pane"},
+	"get":      {"projects", "windows", "panes", "agents", "notifications", "pane"},
 	"describe": {"project", "window", "pane", "agent"},
-	"delete":   {"project", "window", "pane", "agent", "notification", "snapshot"},
+	"delete":   {"project", "window", "pane", "agent", "notification"},
 	"rename":   {"project", "window", "pane", "agent"},
 }
 

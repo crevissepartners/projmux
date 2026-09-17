@@ -508,11 +508,10 @@ func TestRuntimeDomainForwardsRawArgvToTheCurrentHandlers(t *testing.T) {
 func TestCanonicalAliasesForwardToTheirCurrentHandlers(t *testing.T) {
 	t.Parallel()
 
-	t.Run("get delegates the two non-registry kinds", func(t *testing.T) {
+	t.Run("get delegates the non-registry kind", func(t *testing.T) {
 		t.Parallel()
 		notify := &recordingRawArgv{stdout: "notify-out\n"}
-		snapshots := &recordingRawArgv{stdout: "snapshot-out\n"}
-		cmd := &getCommand{notify: notify, snapshots: snapshots, currentPath: &stubCurrentPath{}}
+		cmd := &getCommand{notify: notify, currentPath: &stubCurrentPath{}}
 
 		if stdout, _, err := runRoute(t, cmd, "notifications", "--json"); err != nil || stdout != "notify-out\n" {
 			t.Fatalf("get notifications stdout=%q err=%v", stdout, err)
@@ -520,19 +519,12 @@ func TestCanonicalAliasesForwardToTheirCurrentHandlers(t *testing.T) {
 		if strings.Join(notify.calls[0], " ") != "list --json" {
 			t.Fatalf("get notifications forwarded %#v", notify.calls)
 		}
-		if stdout, _, err := runRoute(t, cmd, "snapshots"); err != nil || stdout != "snapshot-out\n" {
-			t.Fatalf("get snapshots stdout=%q err=%v", stdout, err)
-		}
-		if strings.Join(snapshots.calls[0], " ") != "status" {
-			t.Fatalf("get snapshots forwarded %#v", snapshots.calls)
-		}
 	})
 
-	t.Run("delete delegates notification and snapshot", func(t *testing.T) {
+	t.Run("delete delegates notification", func(t *testing.T) {
 		t.Parallel()
 		notify := &recordingRawArgv{}
-		snapshots := &recordingRawArgv{}
-		cmd := &deleteCommand{notify: notify, snapshots: snapshots, resolveKinds: deleteRegistryKinds, confirm: newConfirmer()}
+		cmd := &deleteCommand{notify: notify, resolveKinds: deleteRegistryKinds, confirm: newConfirmer()}
 
 		if _, _, err := runRoute(t, cmd, "notification", "abc123"); err != nil {
 			t.Fatalf("delete notification error = %v", err)
@@ -540,28 +532,6 @@ func TestCanonicalAliasesForwardToTheirCurrentHandlers(t *testing.T) {
 		if strings.Join(notify.calls[0], " ") != "ack abc123" {
 			t.Fatalf("delete notification forwarded %#v", notify.calls)
 		}
-		if _, _, err := runRoute(t, cmd, "snapshot", "alpha"); err != nil {
-			t.Fatalf("delete snapshot error = %v", err)
-		}
-		if strings.Join(snapshots.calls[0], " ") != "delete alpha" {
-			t.Fatalf("delete snapshot forwarded %#v", snapshots.calls)
-		}
 	})
 
-	t.Run("restore delegates snapshot", func(t *testing.T) {
-		t.Parallel()
-		snapshots := &recordingRawArgv{}
-		cmd := &restoreCommand{snapshots: snapshots}
-		if _, _, err := runRoute(t, cmd, "snapshot", "alpha", "--dry-run"); err != nil {
-			t.Fatalf("restore snapshot error = %v", err)
-		}
-		if strings.Join(snapshots.calls[0], " ") != "restore alpha --dry-run" {
-			t.Fatalf("restore snapshot forwarded %#v", snapshots.calls)
-		}
-		for _, args := range [][]string{nil, {"session"}} {
-			if _, _, err := runRoute(t, cmd, args...); err == nil || !IsUsageError(err) {
-				t.Fatalf("restore %v error = %v, want a usage error", args, err)
-			}
-		}
-	})
 }

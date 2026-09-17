@@ -34,12 +34,6 @@ Codex control-plane surfaces
   [unobserved] hook-delivery          no hook ingest log was readable
   [unobserved] pane-ownership         no hook ingest log and Registry pair was readable
 
-Session State resume metadata
-  Summary: 0 available, 0 stale, 0 unavailable.
-
-Session State retention
-  Snapshots are never automatically pruned; inspect stale candidates with `projmux prune snapshot` and delete only by explicit name.
-
 Logs
   Summary: 1 info, 3 warning, 0 error.
   [warning] logs.state.missing; remediation: inspect-state-permissions

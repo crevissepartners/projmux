@@ -88,9 +88,6 @@ type projectTopologyMaterializeRequest struct {
 	Root        string
 	SessionName string
 	Anchor      string
-	// AgentReplayAuthority is set only by explicit snapshot restore. Ordinary
-	// Continue leaves the zero value and must prove interrupted evidence.
-	AgentReplayAuthority topologyAgentReplayAuthority
 }
 
 func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionName string) error {
@@ -178,7 +175,7 @@ func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Conte
 		}
 	}
 	if request.Mode.Kind == projectStartupKindNew && !c.openedRootIsHome(request.Target) {
-		_, err = c.continueProjectOpenRequest(ctx, request, openedProjectBootstrap{})
+		err = c.continueProjectOpenRequest(ctx, request, openedProjectBootstrap{})
 		return err
 	}
 	opened, err := c.prepareProjectContinue(ctx, request.Target, request.SessionName)
@@ -186,7 +183,7 @@ func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Conte
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "preparation",
 			opened.project.Metadata.UID, opened.project.Metadata.UID, err)
 	}
-	_, err = c.continueProjectOpenRequest(ctx, request, opened)
+	err = c.continueProjectOpenRequest(ctx, request, opened)
 	return err
 }
 
@@ -292,24 +289,24 @@ func (c *switchCommand) prepareProjectContinue(ctx context.Context, target, sess
 	return c.registerOpenedProjectRoot(ctx, target)
 }
 
-func (c *switchCommand) continueProjectOpenRequest(ctx context.Context, request projectOpenRequest, opened openedProjectBootstrap) (diagnostics.SessionStateCounts, error) {
+func (c *switchCommand) continueProjectOpenRequest(ctx context.Context, request projectOpenRequest, opened openedProjectBootstrap) error {
 	switch request.Mode.Kind {
 	case projectStartupKindNew:
-		return diagnostics.SessionStateCounts{}, c.startProjectFresh(ctx, request.SessionName, request.Target, opened, request.Anchor)
+		return c.startProjectFresh(ctx, request.SessionName, request.Target, opened, request.Anchor)
 	default:
 		oldUID := opened.project.Metadata.UID
 		if err := c.materializeProjectTopology(ctx, projectTopologyMaterializeRequest{
 			Root: request.Target, SessionName: request.SessionName, Anchor: request.Anchor,
 		}, opened); err != nil {
-			return diagnostics.SessionStateCounts{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "topology-materialization", oldUID, oldUID, err)
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "topology-materialization", oldUID, oldUID, err)
 		}
 		if request.Detached {
-			return diagnostics.SessionStateCounts{}, nil
+			return nil
 		}
 		if err := c.openProjectSession(ctx, request.SessionName); err != nil {
-			return diagnostics.SessionStateCounts{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "client-handoff", oldUID, oldUID, err)
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "client-handoff", oldUID, oldUID, err)
 		}
-		return diagnostics.SessionStateCounts{}, nil
+		return nil
 	}
 }
 
@@ -422,7 +419,7 @@ func (c *switchCommand) projectStartupCandidates(sessionName, target string) []p
 	return []projectStartupCandidate{topologyProjectStartupCandidate(locale), newProjectStartupCandidate(locale)}
 }
 
-// topologyProjectStartupCandidate is the non-snapshot start row. It materializes
+// topologyProjectStartupCandidate is the Continue project row. It materializes
 // the Project's own Registry Window and shell Pane topology, so it is a start
 // action rather than the `Empty session` it used to advertise.
 func topologyProjectStartupCandidate(locales ...i18n.Locale) projectStartupCandidate {
@@ -737,14 +734,12 @@ func (c *switchCommand) materializeProjectTopology(ctx context.Context, request 
 	// That transaction still owns a committed recovery result, with no Agents.
 	started := time.Now()
 	err := c.ensureProjectSession(ctx, request, opened)
-	if request.AgentReplayAuthority != topologyAgentReplaySnapshot {
-		result := diagnostics.LifecycleSuccess
-		if err != nil {
-			result = diagnostics.LifecycleError
-		}
-		c.diagnostics.Topology().Record(started, result, diagnostics.TopologyCounts{})
-		c.reportProjectStartup(topologyRecoverySummary(settingsLocale(), result, diagnostics.TopologyCounts{}))
+	result := diagnostics.LifecycleSuccess
+	if err != nil {
+		result = diagnostics.LifecycleError
 	}
+	c.diagnostics.Topology().Record(started, result, diagnostics.TopologyCounts{})
+	c.reportProjectStartup(topologyRecoverySummary(settingsLocale(), result, diagnostics.TopologyCounts{}))
 	return err
 }
 
@@ -823,7 +818,7 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 	defer func() {
 		// Route binding and automatic mirror preflight precede the common
 		// engine. They own an error outcome only if execution never started.
-		if !executed && resultErr != nil && request.AgentReplayAuthority != topologyAgentReplaySnapshot {
+		if !executed && resultErr != nil {
 			m.diagnostics.Topology().Record(started, diagnostics.LifecycleError, diagnostics.TopologyCounts{})
 			reportTopologyRecovery(m.notices, diagnostics.LifecycleError, diagnostics.TopologyCounts{})
 		}
@@ -855,14 +850,13 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		return false, recoveryErr
 	}
 	planner := resourceReconcilePlanner{
-		reader:               explicitTmuxRunner{runner: m.runner, target: m.target},
-		store:                m.resources,
-		newReconciler:        m.newReconciler,
-		materializeProject:   projectRef,
-		materializeSession:   sessionName,
-		exactTarget:          m.target,
-		agents:               m.agents,
-		agentReplayAuthority: request.AgentReplayAuthority,
+		reader:             explicitTmuxRunner{runner: m.runner, target: m.target},
+		store:              m.resources,
+		newReconciler:      m.newReconciler,
+		materializeProject: projectRef,
+		materializeSession: sessionName,
+		exactTarget:        m.target,
+		agents:             m.agents,
 	}
 	run := topologyMaterializeRun{
 		resources:          m.resources,
@@ -886,7 +880,6 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 	executed = true
 	outcome, err := run.execute(ctx, planner, warn)
 	// Continue replaces buffered Agent details with its committed summary.
-	// Snapshot authority retains the existing full-notice display flush.
 	flushProjectStartupNotices(m.notices)
 	if err != nil {
 		stage := outcome.failedStage

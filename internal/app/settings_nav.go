@@ -119,13 +119,11 @@ const (
 	settingsNavAppearance          = "global.appearance"
 	settingsNavAppearanceTheme     = "global.appearance.theme"
 	settingsNavStatusBar           = "global.appearance.status-bar"
-	settingsNavSnapshots           = "global.snapshots"
 	settingsNavKeybindings         = "global.keybindings"
 	settingsNavAbout               = "global.about"
 	settingsNavProjectAutomation   = "project.automation"
 	settingsNavProjectTrust        = "project.automation.trust"
 	settingsNavProjectHooks        = "project.automation.project-hooks"
-	settingsNavProjectSnapshots    = "project.snapshots"
 )
 
 // settingsNodeCatalog is the target Settings navigation, in render order.
@@ -281,15 +279,6 @@ var settingsNodeCatalog = []settingsNavNode{
 	{ID: settingsNavAppearance + ".locale", Parent: settingsNavAppearance, Label: "Language / Locale", LabelKey: "settings.text.language_locale", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsAppearanceLanguage, Owner: settingsOwnerAppearance},
 	{ID: settingsNavAppearance + ".badge", Parent: settingsNavAppearance, Label: "Agent attention badge style", LabelKey: "settings.text.agent_attention_badge_style", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsActionPrefixAIBadgeStyle, Owner: settingsOwnerAppearance},
 
-	// Snapshots ------------------------------------------------------------
-	{ID: settingsNavSnapshots, Parent: settingsNavScopeGlobal, Label: "Snapshots", LabelKey: "settings.text.snapshots", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsSectionSessionState, Owner: settingsOwnerRoot},
-	{ID: settingsNavSnapshots + ".autosave", Parent: settingsNavSnapshots, Label: "Auto-save", LabelKey: "settings.text.auto_save", Kind: settingsNavView, Axis: settingsAxisGlobal, Dynamic: true},
-	{ID: settingsNavSnapshots + ".autosave.state", Parent: settingsNavSnapshots + ".autosave", Label: "Effective / Source / Storage", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue},
-	{ID: settingsNavSnapshots + ".autosave.enabled", Parent: settingsNavSnapshots + ".autosave", Label: "Enabled", Kind: settingsNavToggle, Axis: settingsAxisGlobal, Dynamic: true},
-	{ID: settingsNavSnapshots + ".autosave.interval", Parent: settingsNavSnapshots + ".autosave", Label: "Interval", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true},
-	{ID: settingsNavSnapshots + ".storage", Parent: settingsNavSnapshots, Label: "Storage / Retention", LabelKey: "settings.text.storage_retention", Kind: settingsNavView, Axis: settingsAxisGlobal, Dynamic: true},
-	{ID: settingsNavSnapshots + ".storage.state", Parent: settingsNavSnapshots + ".storage", Label: "Location / Effective retention / Source", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue},
-
 	// Keybindings ----------------------------------------------------------
 	{ID: settingsNavKeybindings, Parent: settingsNavScopeGlobal, Label: "Keybindings", LabelKey: "settings.text.keybindings", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsSectionKeybindings, Owner: settingsOwnerRoot},
 	{ID: settingsNavKeybindings + "." + keyBindingCategoryLaunch, Parent: settingsNavKeybindings, Label: keyBindingCategoryLaunchLabel, LabelKey: "settings.text.keybinding_category_launch", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsActionPrefixKeymapCategory + keyBindingCategoryLaunch, Owner: settingsOwnerKeybindings},
@@ -332,19 +321,6 @@ var settingsNodeCatalog = []settingsNavNode{
 	{ID: settingsNavProjectHooks + ".send-noti.state", Parent: settingsNavProjectHooks + ".send-noti", Label: "Command / Effective / Source / Trust", Kind: settingsNavState, Axis: settingsAxisProject, Value: settingsNoopValue},
 	{ID: settingsNavProjectHooks + ".send-noti.edit", Parent: settingsNavProjectHooks + ".send-noti", Label: "Add or edit command", Kind: settingsNavEdit, Axis: settingsAxisProject, Dynamic: true},
 	{ID: settingsNavProjectHooks + ".send-noti.remove", Parent: settingsNavProjectHooks + ".send-noti", Label: "Remove command", Kind: settingsNavConfirm, Axis: settingsAxisProject, Dynamic: true},
-
-	{ID: settingsNavProjectSnapshots, Parent: settingsNavScopeProject, Label: "Snapshots", LabelKey: "settings.text.snapshots", Kind: settingsNavView, Axis: settingsAxisProject, Value: settingsSectionProjectSessionState, Owner: settingsOwnerRoot},
-	{ID: settingsNavProjectSnapshots + ".autosave", Parent: settingsNavProjectSnapshots, Label: "Auto-save override", Kind: settingsNavView, Axis: settingsAxisProject, Dynamic: true},
-	{ID: settingsNavProjectSnapshots + ".autosave.state", Parent: settingsNavProjectSnapshots + ".autosave", Label: "Global / Project / Effective / Source", Kind: settingsNavState, Axis: settingsAxisProject, Value: settingsNoopValue},
-	{ID: settingsNavProjectSnapshots + ".autosave.choice", Parent: settingsNavProjectSnapshots + ".autosave", Label: "Inherit / Enable / Disable", Kind: settingsNavChoice, Axis: settingsAxisProject, Dynamic: true},
-	{ID: settingsNavProjectSnapshots + ".saved", Parent: settingsNavProjectSnapshots, Label: "Saved Snapshots", Kind: settingsNavView, Axis: settingsAxisProject, Dynamic: true},
-	{ID: settingsNavProjectSnapshots + ".saved.state", Parent: settingsNavProjectSnapshots + ".saved", Label: "Latest / Storage / Retention", Kind: settingsNavState, Axis: settingsAxisProject, Value: settingsNoopValue},
-	{ID: settingsNavProjectSnapshots + ".saved.save-latest", Parent: settingsNavProjectSnapshots + ".saved", Label: "Save latest", Kind: settingsNavAction, Axis: settingsAxisProject, Dynamic: true},
-	{ID: settingsNavProjectSnapshots + ".saved.save-named", Parent: settingsNavProjectSnapshots + ".saved", Label: "Save named", Kind: settingsNavEdit, Axis: settingsAxisProject, Dynamic: true},
-	{ID: settingsNavProjectSnapshots + ".saved.item", Parent: settingsNavProjectSnapshots + ".saved", Label: "<snapshot>", Kind: settingsNavView, Axis: settingsAxisProject, Dynamic: true},
-	{ID: settingsNavProjectSnapshots + ".saved.item.state", Parent: settingsNavProjectSnapshots + ".saved.item", Label: "Name / Created / Source / Contents", Kind: settingsNavState, Axis: settingsAxisProject, Value: settingsNoopValue},
-	{ID: settingsNavProjectSnapshots + ".saved.item.preview", Parent: settingsNavProjectSnapshots + ".saved.item", Label: "Preview restore", Kind: settingsNavAction, Axis: settingsAxisProject, Dynamic: true},
-	{ID: settingsNavProjectSnapshots + ".saved.item.delete", Parent: settingsNavProjectSnapshots + ".saved.item", Label: "Delete snapshot", Kind: settingsNavConfirm, Axis: settingsAxisProject, Dynamic: true},
 }
 
 // settingsNavRemovedRoots are the pre-cutover destinations that must not be

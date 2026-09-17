@@ -104,24 +104,3 @@ func forwardRawArgv(target rawArgvCommand, spelling, route string, prefix, args 
 	forwarded = append(forwarded, args...)
 	return target.Run(forwarded, stdout, stderr)
 }
-
-// restoreCommand implements the canonical `restore` verb. Snapshot restore is
-// owned by the session-state handler, so this is a parity alias over it.
-type restoreCommand struct {
-	snapshots rawArgvCommand
-}
-
-func newRestoreCommand() *restoreCommand {
-	return &restoreCommand{}
-}
-
-// Run dispatches one `restore <kind>` invocation.
-func (c *restoreCommand) Run(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return usageError("restore requires a resource kind: snapshot")
-	}
-	if args[0] != "snapshot" {
-		return usageError(fmt.Sprintf("restore %s is not available; this release implements: snapshot", args[0]))
-	}
-	return forwardRawArgv(c.snapshots, "restore snapshot", "session-state", []string{"restore"}, args[1:], stdout, stderr)
-}

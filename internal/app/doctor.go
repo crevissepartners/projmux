@@ -35,7 +35,6 @@ type doctorCommand struct {
 	getenv                 func(string) string
 	commandVersion         func(name string) string
 	aiDiagnostics          func() []doctorAINotifyIntegration
-	resumeDiagnostics      func() []doctorSessionStateResumeDiagnostic
 	appServerHealth        func(trigger codexappserver.TriggerKind, hookAvailable bool) codexappserver.Health
 	brokerDiagnostic       codexBrokerDiagnosticLookup
 	codexAuthority         codexLifecycleAuthorityLookup
@@ -115,7 +114,6 @@ func newDoctorCommand() *doctorCommand {
 	c.aiDiagnostics = func() []doctorAINotifyIntegration {
 		return doctorAINotifyDiagnostics(newAICommand())
 	}
-	c.resumeDiagnostics = doctorSessionStateResumeDiagnostics
 	c.appServerHealth = func(trigger codexappserver.TriggerKind, hookAvailable bool) codexappserver.Health {
 		health, _ := codexappserver.EnsureDefaultProxyReady(context.Background(), trigger, version.String(), hookAvailable)
 		return health
@@ -254,30 +252,26 @@ type doctorResult struct {
 }
 
 type doctorReport struct {
-	SchemaVersion        int                                  `json:"schema_version"`
-	Dependencies         []doctorResult                       `json:"dependencies"`
-	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
-	CodexAppServer       *codexappserver.Health               `json:"codex_app_server,omitempty"`
-	CodexEndpointRisks   *doctorCodexEndpointMismatch         `json:"codex_endpoint_mismatch,omitempty"`
-	CodexBroker          *codexBrokerDiagnostic               `json:"codex_broker,omitempty"`
-	CodexAuthority       *codexAuthorityCensus                `json:"codex_authority,omitempty"`
-	CodexGenerationPool  *doctorCodexGenerationPool           `json:"codex_generation_pool,omitempty"`
-	CodexQualification   *doctorCodexQualification            `json:"codex_stored_qualification,omitempty"`
-	CodexPayloadFree     *codexgeneration.Projection          `json:"codex_payload_free_capability,omitempty"`
-	CodexControlPlane    *codexControlPlaneReport             `json:"codex_control_plane,omitempty"`
-	ProcessVintage       *projmuxProcessVintage               `json:"projmux_process_vintage,omitempty"`
-	Replacement          *doctorReplacementReport             `json:"replacement,omitempty"`
-	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
-	SessionStatePrune    string                               `json:"session_state_prune"`
-	Runtime              []doctorFinding                      `json:"runtime"`
-	Logs                 []doctorFinding                      `json:"logs"`
-	RegistryInvariants   []doctorFinding                      `json:"registry_invariants"`
-	RegistryDivergences  []resourcegraph.DivergenceCount      `json:"registry_divergences"`
+	SchemaVersion        int                             `json:"schema_version"`
+	Dependencies         []doctorResult                  `json:"dependencies"`
+	AINotifyIntegrations []doctorAINotifyIntegration     `json:"ai_notify_integrations"`
+	CodexAppServer       *codexappserver.Health          `json:"codex_app_server,omitempty"`
+	CodexEndpointRisks   *doctorCodexEndpointMismatch    `json:"codex_endpoint_mismatch,omitempty"`
+	CodexBroker          *codexBrokerDiagnostic          `json:"codex_broker,omitempty"`
+	CodexAuthority       *codexAuthorityCensus           `json:"codex_authority,omitempty"`
+	CodexGenerationPool  *doctorCodexGenerationPool      `json:"codex_generation_pool,omitempty"`
+	CodexQualification   *doctorCodexQualification       `json:"codex_stored_qualification,omitempty"`
+	CodexPayloadFree     *codexgeneration.Projection     `json:"codex_payload_free_capability,omitempty"`
+	CodexControlPlane    *codexControlPlaneReport        `json:"codex_control_plane,omitempty"`
+	ProcessVintage       *projmuxProcessVintage          `json:"projmux_process_vintage,omitempty"`
+	Replacement          *doctorReplacementReport        `json:"replacement,omitempty"`
+	Runtime              []doctorFinding                 `json:"runtime"`
+	Logs                 []doctorFinding                 `json:"logs"`
+	RegistryInvariants   []doctorFinding                 `json:"registry_invariants"`
+	RegistryDivergences  []resourcegraph.DivergenceCount `json:"registry_divergences"`
 }
 
 const doctorSchemaVersion = 2
-
-const doctorSessionStatePruneGuidance = "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune snapshot` and delete only by explicit name."
 
 type doctorSection string
 
@@ -286,7 +280,6 @@ const (
 	doctorSectionDeps         doctorSection = "deps"
 	doctorSectionRuntime      doctorSection = "runtime"
 	doctorSectionIntegrations doctorSection = "integrations"
-	doctorSectionSessionState doctorSection = "session-state"
 	doctorSectionLogs         doctorSection = "logs"
 	doctorSectionRegistry     doctorSection = "registry"
 	doctorSectionReplacement  doctorSection = "replacement"
@@ -296,7 +289,6 @@ var doctorSections = []doctorSection{
 	doctorSectionDeps,
 	doctorSectionRuntime,
 	doctorSectionIntegrations,
-	doctorSectionSessionState,
 	doctorSectionLogs,
 	doctorSectionRegistry,
 	doctorSectionReplacement,
@@ -319,7 +311,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
-	sectionName := fs.String("section", "", "filter diagnostics: deps|runtime|integrations|session-state|logs|registry|replacement")
+	sectionName := fs.String("section", "", "filter diagnostics: deps|runtime|integrations|logs|registry|replacement")
 	verbose := fs.Bool("verbose", false, "include successful checks and full detail in the text report")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -332,7 +324,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	section, ok := parseDoctorSection(*sectionName)
 	if !ok {
-		return usageError("doctor --section must be one of deps, runtime, integrations, session-state, logs, registry, or replacement")
+		return usageError("doctor --section must be one of deps, runtime, integrations, logs, registry, or replacement")
 	}
 
 	report := c.evaluateReport(section)
@@ -434,10 +426,6 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 		)
 		report.CodexControlPlane = &controlPlane
 	}
-	if section == doctorSectionAll || section == doctorSectionSessionState {
-		report.SessionStateResume = c.evaluateSessionStateResume()
-		report.SessionStatePrune = doctorSessionStatePruneGuidance
-	}
 	if section == doctorSectionAll || section == doctorSectionRuntime {
 		if c.projmuxProcessVintage != nil {
 			vintage := c.projmuxProcessVintage()
@@ -533,13 +521,6 @@ func (c *doctorCommand) evaluateAINotifyIntegrations() []doctorAINotifyIntegrati
 	return c.aiDiagnostics()
 }
 
-func (c *doctorCommand) evaluateSessionStateResume() []doctorSessionStateResumeDiagnostic {
-	if c.resumeDiagnostics == nil {
-		return nil
-	}
-	return c.resumeDiagnostics()
-}
-
 func (c *doctorCommand) evaluate() []doctorResult {
 	host := c.hostGOOS()
 	deps := doctorDeps()
@@ -623,9 +604,6 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorCodexQualificationText(&buf, report.CodexQualification)
 		writeDoctorCodexPayloadFreeText(&buf, report.CodexPayloadFree)
 		writeDoctorCodexControlPlaneText(&buf, report.CodexControlPlane)
-	}
-	if section == doctorSectionAll || section == doctorSectionSessionState {
-		writeDoctorSessionStateText(&buf, report, verbose)
 	}
 	if section == doctorSectionAll || section == doctorSectionLogs {
 		writeDoctorFindingsText(&buf, "Logs", report.Logs, verbose)
@@ -970,69 +948,24 @@ func writeDoctorIntegrationsText(buf *bytes.Buffer, results []doctorAINotifyInte
 	}
 }
 
-func writeDoctorSessionStateText(buf *bytes.Buffer, report doctorReport, verbose bool) {
-	buf.WriteString("\nSession State resume metadata\n")
-	counts := map[string]int{}
-	for _, result := range report.SessionStateResume {
-		counts[result.Status]++
-	}
-	fmt.Fprintf(buf, "  Summary: %d available, %d stale, %d unavailable.\n", counts["available"], counts["stale"], counts["unavailable"])
-	for _, r := range report.SessionStateResume {
-		if !verbose && r.Status == "available" {
-			continue
-		}
-		tag := fmt.Sprintf("[%s]", r.Status)
-		fmt.Fprintf(buf, "  %-15s%-8s %s:%d.%d", tag, r.Agent, r.Session, r.WindowIndex, r.PaneIndex)
-		if !verbose {
-			if r.Reason != "" {
-				fmt.Fprintf(buf, "; %s", r.Reason)
-			}
-			buf.WriteString("\n")
-			continue
-		}
-		if r.Confidence != "" {
-			fmt.Fprintf(buf, "; confidence: %s", r.Confidence)
-		}
-		if r.ResumeSource != "" {
-			fmt.Fprintf(buf, "; source: %s", r.ResumeSource)
-		}
-		if r.ResumeUpdatedAt != "" {
-			fmt.Fprintf(buf, "; updated: %s", r.ResumeUpdatedAt)
-		}
-		if r.Reason != "" {
-			fmt.Fprintf(buf, "; %s", r.Reason)
-		}
-		if r.SnapshotPath != "" {
-			fmt.Fprintf(buf, "; snapshot: %s", r.SnapshotPath)
-		}
-		buf.WriteString("\n")
-	}
-	if report.SessionStatePrune != "" {
-		buf.WriteString("\nSession State retention\n")
-		fmt.Fprintf(buf, "  %s\n", report.SessionStatePrune)
-	}
-}
-
 type doctorJSONReport struct {
-	SchemaVersion        int                                   `json:"schema_version"`
-	Dependencies         *[]doctorResult                       `json:"dependencies,omitempty"`
-	AINotifyIntegrations *[]doctorAINotifyIntegration          `json:"ai_notify_integrations,omitempty"`
-	CodexAppServer       *codexappserver.Health                `json:"codex_app_server,omitempty"`
-	CodexEndpointRisks   *doctorCodexEndpointMismatch          `json:"codex_endpoint_mismatch,omitempty"`
-	CodexBroker          *codexBrokerDiagnostic                `json:"codex_broker,omitempty"`
-	CodexAuthority       *codexAuthorityCensus                 `json:"codex_authority,omitempty"`
-	CodexGenerationPool  *doctorCodexGenerationPool            `json:"codex_generation_pool,omitempty"`
-	CodexQualification   *doctorCodexQualification             `json:"codex_stored_qualification,omitempty"`
-	CodexPayloadFree     *codexgeneration.Projection           `json:"codex_payload_free_capability,omitempty"`
-	CodexControlPlane    *codexControlPlaneReport              `json:"codex_control_plane,omitempty"`
-	ProcessVintage       *projmuxProcessVintage                `json:"projmux_process_vintage,omitempty"`
-	Replacement          *doctorReplacementReport              `json:"replacement,omitempty"`
-	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
-	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
-	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
-	Logs                 *[]doctorFinding                      `json:"logs,omitempty"`
-	RegistryInvariants   *[]doctorFinding                      `json:"registry_invariants,omitempty"`
-	RegistryDivergences  *[]resourcegraph.DivergenceCount      `json:"registry_divergences,omitempty"`
+	SchemaVersion        int                              `json:"schema_version"`
+	Dependencies         *[]doctorResult                  `json:"dependencies,omitempty"`
+	AINotifyIntegrations *[]doctorAINotifyIntegration     `json:"ai_notify_integrations,omitempty"`
+	CodexAppServer       *codexappserver.Health           `json:"codex_app_server,omitempty"`
+	CodexEndpointRisks   *doctorCodexEndpointMismatch     `json:"codex_endpoint_mismatch,omitempty"`
+	CodexBroker          *codexBrokerDiagnostic           `json:"codex_broker,omitempty"`
+	CodexAuthority       *codexAuthorityCensus            `json:"codex_authority,omitempty"`
+	CodexGenerationPool  *doctorCodexGenerationPool       `json:"codex_generation_pool,omitempty"`
+	CodexQualification   *doctorCodexQualification        `json:"codex_stored_qualification,omitempty"`
+	CodexPayloadFree     *codexgeneration.Projection      `json:"codex_payload_free_capability,omitempty"`
+	CodexControlPlane    *codexControlPlaneReport         `json:"codex_control_plane,omitempty"`
+	ProcessVintage       *projmuxProcessVintage           `json:"projmux_process_vintage,omitempty"`
+	Replacement          *doctorReplacementReport         `json:"replacement,omitempty"`
+	Runtime              *[]doctorFinding                 `json:"runtime,omitempty"`
+	Logs                 *[]doctorFinding                 `json:"logs,omitempty"`
+	RegistryInvariants   *[]doctorFinding                 `json:"registry_invariants,omitempty"`
+	RegistryDivergences  *[]resourcegraph.DivergenceCount `json:"registry_divergences,omitempty"`
 }
 
 func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) error {
@@ -1050,12 +983,6 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 		out.CodexQualification = report.CodexQualification
 		out.CodexPayloadFree = report.CodexPayloadFree
 		out.CodexControlPlane = report.CodexControlPlane
-	}
-	if (section == doctorSectionAll && len(report.SessionStateResume) > 0) || section == doctorSectionSessionState {
-		out.SessionStateResume = &report.SessionStateResume
-	}
-	if section == doctorSectionAll || section == doctorSectionSessionState {
-		out.SessionStatePrune = &report.SessionStatePrune
 	}
 	if section == doctorSectionAll || section == doctorSectionRuntime {
 		out.Runtime = &report.Runtime

@@ -33,8 +33,5 @@ func pruneReplacement(args []string) string {
 	if len(args) > 0 && args[0] == "ephemeral" {
 		return "`projmux runtime prune ...`"
 	}
-	if len(args) > 1 && args[0] == "session-state" && args[1] == "delete" {
-		return "`projmux delete snapshot ...`"
-	}
-	return "`projmux prune snapshot ...`"
+	return "`projmux prune project ...` or `projmux prune agent ...`"
 }

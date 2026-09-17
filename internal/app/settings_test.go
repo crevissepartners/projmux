@@ -19,11 +19,9 @@ import (
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
-	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -44,7 +42,6 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 		settingsSectionNotifications: {name: "Notifications", axis: settingsAxisGlobal},
 		settingsSectionAutomation:    {name: "Automation", axis: settingsAxisGlobal},
 		settingsSectionStatusbar:     {name: "Appearance", axis: settingsAxisGlobal},
-		settingsSectionSessionState:  {name: "Snapshots", axis: settingsAxisGlobal},
 		settingsSectionKeybindings:   {name: "Keybindings", axis: settingsAxisGlobal},
 		settingsSectionAbout:         {name: "About", axis: settingsAxisGlobal},
 	}
@@ -131,7 +128,6 @@ func assertSettingsRootVisibleEntryOrder(t *testing.T, options intpickercompat.O
 		settingsSectionNotifications,
 		settingsSectionAutomation,
 		settingsSectionStatusbar,
-		settingsSectionSessionState,
 		settingsSectionKeybindings,
 		settingsSectionAbout,
 	}
@@ -203,9 +199,6 @@ func TestSettingsRootOptionsKoreanCatalogDoesNotOverflow(t *testing.T) {
 	}
 	if !hasEntryLabelContaining(options.Entries, "프로젝트") {
 		t.Fatalf("root settings entries = %#v, want Korean Projects row", options.Entries)
-	}
-	if !hasEntryLabelContaining(options.Entries, "자동 저장 꺼짐, 간격 1m") || hasEntryLabelContaining(options.Entries, "autosave off") {
-		t.Fatalf("root settings entries = %#v, want localized Korean Snapshots summary", options.Entries)
 	}
 	projectPicker, err := cmd.sectionOptions(settingsSectionProject)
 	if err != nil {
@@ -651,7 +644,6 @@ func settingsKoreanVisibleOptionSamples(t *testing.T, cmd *settingsCommand) []in
 		settingsSectionNotifications,
 		settingsSectionAutomation,
 		settingsSectionStatusbar,
-		settingsSectionSessionState,
 		settingsSectionKeybindings,
 		settingsSectionAbout,
 	} {
@@ -724,8 +716,6 @@ func settingsKoreanStaticRowSamples() []string {
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Notifications HUD", "off"),
 		settingsLabelLocale(locale, settingsGlyphToggle, settingsColorAdd, "Resources", "on - saved"),
 		settingsLabelInfoLocale(locale, "Current", "symbol", "Notification queue HUD and its icon"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Auto-save", "on - default"),
-		settingsLabelInfoLocale(locale, "Storage / Retention", "latest snapshot only", "per-session JSON under XDG state"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Projmux session lifecycle", "1 of 3 events have a command"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "After notification queued", "no command"),
 		settingsLabelLocale(locale, settingsGlyphToggle, settingsColorAdd, "Project automation policy", "on - default"),
@@ -798,9 +788,6 @@ func settingsEnglishChromeResidue(visible string) (string, bool) {
 		"Notifications HUD",
 		"Resources",
 		"Current",
-		"Snapshots",
-		"Auto-save",
-		"Storage / Retention",
 		"Keybindings",
 		"About",
 		"Welcome",
@@ -1112,11 +1099,10 @@ func TestSettingsProjectContextKeepsActionableRows(t *testing.T) {
 		},
 	}
 	entries := cmd.projectTabEntries()
-	// The Project tab is two containers now: Automation owns trust and the
-	// project hooks, Snapshots owns the auto-save override and the snapshots.
+	// The Project tab is one container: Automation owns trust and the project
+	// hooks.
 	for _, value := range []string{
 		settingsSectionProjectAutomation,
-		settingsSectionProjectSessionState,
 	} {
 		if !hasEntryValue(entries, value) {
 			t.Fatalf("project entries = %#v, want existing actionable/navigation row %q", entries, value)
@@ -1250,7 +1236,6 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsRootTabProjectValue, settingsAxisBoth},
 		{settingsSectionGlobalHooks, settingsAxisGlobal},
 		{settingsSectionProjectHooks, settingsAxisProject},
-		{settingsSectionProjectSessionState, settingsAxisProject},
 		{settingsProjectRootManage, settingsAxisGlobal},
 		{settingsWorkdirList, settingsAxisGlobal},
 		{settingsProjectPins, settingsAxisGlobal},
@@ -1331,8 +1316,6 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	assertCataloguedEntries("appearance locale", cmd.localeEntries())
 	assertCataloguedEntries("appearance AI badge", cmd.aiBadgeStyleEntries())
 	assertCataloguedEntries("appearance icon detail", cmd.statusbarDecorationTargetEntries(statusbarDecorationTargetNotify))
-	assertCataloguedEntries("session state", cmd.sessionStateEntries())
-	assertCataloguedEntries("project session state", cmd.projectSessionStateEntries())
 	assertCataloguedEntries("project picker", cmd.projectPickerEntries())
 	assertCataloguedEntries("status bar", cmd.statusBarEntries())
 	assertCataloguedEntries("status bar icon chooser", cmd.statusbarDecorationIconEntries(statusbarDecorationTargetGit))
@@ -1352,16 +1335,8 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	assertCataloguedEntries("project hooks", cmd.projectHookEntries(ctx))
 	assertCataloguedEntries("project trust", cmd.projectTrustEntries(ctx))
 
-	autosave := sessionStateEffectiveToggle{Mode: config.SessionStateToggleOff, Source: "default"}
-	interval := sessionStateEffectiveInterval{Duration: time.Minute, Source: "default"}
-	assertCataloguedEntries("session state autosave detail", cmd.sessionStateAutosaveDetailEntries(autosave, interval))
-	assertCataloguedEntries("sidebar startup picker detail", cmd.sidebarStartupPickerEntries(autosave))
-	assertCataloguedEntries("project session state autosave unavailable", cmd.projectSessionStateAutosaveDetailEntries())
-	assertCataloguedEntries("project session state actions unavailable", cmd.projectSessionStateActionsDetailEntries())
-	identity := projectSessionStateIdentity{Project: ctx, Session: "project"}
-	assertCataloguedEntries("project session state action rows", cmd.projectSessionStateActionEntries(identity))
-	assertCataloguedEntries("project session state autosave toggles", cmd.projectSessionStateAutosaveToggleEntries(config.SessionStateProjectInherit))
-	assertCataloguedEntries("session state toggles", cmd.sessionStateToggleEntries("Auto-save", "autosave", config.SessionStateToggleOff))
+	sidebarStartup := sidebarStartupPickerEffective{Mode: config.SidebarStartupPickerOff, Source: "default"}
+	assertCataloguedEntries("sidebar startup picker detail", cmd.sidebarStartupPickerEntries(sidebarStartup))
 
 	diagnostic := doctorAINotifyIntegration{
 		ID:             "codex-hooks",
@@ -3552,208 +3527,6 @@ func TestSettingsNotificationsAIDedupeRowsAndCustomWrite(t *testing.T) {
 	}
 }
 
-func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
-	snap := sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "workspace",
-		DefaultCWD: "/tmp",
-		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index:           0,
-			Name:            "main",
-			ActivePaneIndex: 0,
-			Panes: []sessionstate.Pane{
-				{Index: 0, CWD: "/tmp", Recipe: sessionstate.ShellRecipe()},
-				{Index: 1, CWD: "/tmp", Recipe: sessionstate.ShellRecipe()},
-			},
-		}},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return xdgState
-			case "PROJMUX_SESSION":
-				return "workspace"
-			case sessionStateAutosaveEnv:
-				return "off"
-			default:
-				return ""
-			}
-		},
-	}
-
-	entries := cmd.sessionStateEntries()
-	for _, want := range []string{
-		"Auto-save",
-		"off",
-		sessionStateAutosaveEnv + " env",
-		"interval",
-		"1m",
-		"Storage / Retention",
-		"latest snapshot only",
-	} {
-		if !hasEntryLabelContaining(entries, want) {
-			t.Fatalf("session state entries = %#v, want label containing %q", entries, want)
-		}
-	}
-	for _, absent := range []string{"Snapshot session", "Preview", "window 0", "pane 0.0"} {
-		if hasEntryLabelContaining(entries, absent) {
-			t.Fatalf("session state entries = %#v, did not want current snapshot tree label %q", entries, absent)
-		}
-	}
-	for _, want := range []string{
-		settingsSessionStateAutosaveDetail,
-	} {
-		if !hasEntryValue(entries, want) {
-			t.Fatalf("session state entries = %#v, want %q", entries, want)
-		}
-	}
-	for _, absent := range []string{
-		settingsActionPrefixSessionState + "autosave:on",
-		settingsActionPrefixSessionState + "autosave:off",
-		settingsActionPrefixSessionState + "autorestore:on",
-		settingsActionPrefixSessionState + "autorestore:off",
-		settingsActionPrefixSessionState + "sidebar-startup:on",
-		settingsActionPrefixSessionState + "sidebar-startup:off",
-	} {
-		if hasEntryValue(entries, absent) {
-			t.Fatalf("session state entries = %#v, want no direct mutation row %q", entries, absent)
-		}
-	}
-}
-
-func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	project := filepath.Join(home, "source", "repos", "projmux")
-	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
-	snap := sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "repos-projmux",
-		Source:     sessionstate.SourceFresh,
-		DefaultCWD: project,
-		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index:           1,
-			Name:            "dev",
-			ActivePaneIndex: 0,
-			Panes: []sessionstate.Pane{{
-				Index:  0,
-				Title:  "editor",
-				CWD:    project,
-				Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "codex-session", "topic", "session-id", "2026-05-12T03:04:05Z"),
-			}},
-		}},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		tmuxRunner: &recordingTmuxRunner{
-			outputs: map[string]string{
-				strings.Join([]string{"tmux", "has-session", "-t", "repos-projmux"}, "\x00"): "",
-			},
-		},
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return xdgState
-			case "PROJMUX_CWD":
-				return project
-			case "PROJMUX_SESSION":
-				return "live-session"
-			default:
-				return ""
-			}
-		},
-	}
-
-	options, err := cmd.sectionOptions(settingsSectionProjectSessionState)
-	if err != nil {
-		t.Fatalf("sectionOptions() error = %v", err)
-	}
-	if got, want := options.UI, "settings-project-sessionstate"; got != want {
-		t.Fatalf("project session state UI = %q, want %q", got, want)
-	}
-	if got, want := options.Prompt, "Settings > Project > Snapshots > "; got != want {
-		t.Fatalf("project session state prompt = %q, want %q", got, want)
-	}
-	if !strings.Contains(options.Title, "Snapshots") {
-		t.Fatalf("project snapshots title = %q, want the Snapshot noun", options.Title)
-	}
-	for _, want := range []string{
-		"Project",
-		"projmux",
-		"Project path",
-		project,
-		"PROJMUX_CWD env",
-		"Session identity",
-		"repos-projmux",
-		"Project auto-save",
-		"inherit",
-		"Effective auto-save",
-		"off",
-		"global default",
-		"Global auto-save",
-		"Snapshot actions",
-		"preview/delete available",
-	} {
-		if !hasEntryLabelContaining(options.Entries, want) {
-			t.Fatalf("project session state entries = %#v, want label containing %q", options.Entries, want)
-		}
-	}
-	for _, absent := range []string{"Snapshot session", "window 1", "pane 1.0", "Pane cwd", "Pane recipe"} {
-		if hasEntryLabelContaining(options.Entries, absent) {
-			t.Fatalf("project session state entries = %#v, did not want primary snapshot tree label %q", options.Entries, absent)
-		}
-	}
-	if hasEntryLabelContaining(options.Entries, "live-session") {
-		t.Fatalf("project session state entries = %#v, want derived identity instead of live tmux session", options.Entries)
-	}
-	for _, want := range []string{settingsProjectSessionStateAutosaveDetail, settingsProjectSessionStateActionsDetail} {
-		if !hasEntryValue(options.Entries, want) {
-			t.Fatalf("project session state entries = %#v, want project action %q", options.Entries, want)
-		}
-	}
-	for _, absent := range []string{settingsProjectSessionStateSaveLatest, settingsProjectSessionStateSaveNamed, settingsProjectSessionStatePreview, settingsProjectSessionStateDelete} {
-		if hasEntryValue(options.Entries, absent) {
-			t.Fatalf("project session state entries = %#v, want no direct mutation action %q", options.Entries, absent)
-		}
-	}
-}
-
-func TestSettingsSessionStateGlobalDefaultAutosaveOffAndNoTree(t *testing.T) {
-	t.Parallel()
-
-	cmd := &settingsCommand{homeDir: func() (string, error) { return t.TempDir(), nil }}
-	entries := cmd.sessionStateEntries()
-	for _, want := range []string{"Auto-save", "off", "default", "Storage / Retention"} {
-		if !hasEntryLabelContaining(entries, want) {
-			t.Fatalf("session state entries = %#v, want %q", entries, want)
-		}
-	}
-	for _, absent := range []string{"Window", "Pane", "Snapshot session", "Preview restore", "Delete snapshot"} {
-		if hasEntryLabelContaining(entries, absent) {
-			t.Fatalf("session state entries = %#v, did not want %q", entries, absent)
-		}
-	}
-}
-
 func TestSidebarStartupDefaultPolicyIsSharedReadOnlyAndLocaleStable(t *testing.T) {
 	t.Parallel()
 
@@ -3761,13 +3534,13 @@ func TestSidebarStartupDefaultPolicyIsSharedReadOnlyAndLocaleStable(t *testing.T
 	for _, locale := range []string{"en-US", "ko-KR"} {
 		for _, test := range []struct {
 			name       string
-			saved      *config.SessionStateToggle
-			wantMode   config.SessionStateToggle
+			saved      *config.SidebarStartupPicker
+			wantMode   config.SidebarStartupPicker
 			wantSource string
 		}{
-			{name: "no-file", wantMode: config.SessionStateToggleOn, wantSource: "default"},
-			{name: "saved-on", saved: togglePtr(config.SessionStateToggleOn), wantMode: config.SessionStateToggleOn, wantSource: "saved"},
-			{name: "saved-off", saved: togglePtr(config.SessionStateToggleOff), wantMode: config.SessionStateToggleOff, wantSource: "saved"},
+			{name: "no-file", wantMode: config.SidebarStartupPickerOn, wantSource: "default"},
+			{name: "saved-on", saved: togglePtr(config.SidebarStartupPickerOn), wantMode: config.SidebarStartupPickerOn, wantSource: "saved"},
+			{name: "saved-off", saved: togglePtr(config.SidebarStartupPickerOff), wantMode: config.SidebarStartupPickerOff, wantSource: "saved"},
 		} {
 			home := t.TempDir()
 			configHome := filepath.Join(home, "config")
@@ -3779,7 +3552,7 @@ func TestSidebarStartupDefaultPolicyIsSharedReadOnlyAndLocaleStable(t *testing.T
 			var before []byte
 			var beforeInfo os.FileInfo
 			if test.saved != nil {
-				if err := config.SaveSessionStateToggleFile(path, *test.saved); err != nil {
+				if err := config.SaveSidebarStartupPickerFile(path, *test.saved); err != nil {
 					t.Fatal(err)
 				}
 				stamp := time.Unix(1_700_000_000, 0)
@@ -3819,7 +3592,7 @@ func TestSidebarStartupDefaultPolicyIsSharedReadOnlyAndLocaleStable(t *testing.T
 
 			var row intpickercompat.Entry
 			for _, entry := range cmd.projectSidebarEntries() {
-				if entry.Value == settingsSessionStateSidebarStartupPickerDetail {
+				if entry.Value == settingsSidebarStartupPickerDetail {
 					row = entry
 					break
 				}
@@ -3829,7 +3602,7 @@ func TestSidebarStartupDefaultPolicyIsSharedReadOnlyAndLocaleStable(t *testing.T
 			}
 			fmt.Fprintf(&golden, "locale=%s state=%s\nrow=%s\n", locale, test.name, stripANSI(row.Label))
 			for _, entry := range cmd.sidebarStartupPickerEntries(effective) {
-				if entry.Value == settingsNoopValue || strings.HasPrefix(entry.Value, settingsActionPrefixSessionState+"sidebar-startup:") {
+				if entry.Value == settingsNoopValue || strings.HasPrefix(entry.Value, settingsActionPrefixSidebarStartup) {
 					fmt.Fprintf(&golden, "detail=%s value=%s\n", stripANSI(entry.Label), entry.Value)
 				}
 			}
@@ -3865,11 +3638,11 @@ func TestSidebarStartupDefaultPolicyIsSharedReadOnlyAndLocaleStable(t *testing.T
 	}
 }
 
-func togglePtr(value config.SessionStateToggle) *config.SessionStateToggle {
+func togglePtr(value config.SidebarStartupPicker) *config.SidebarStartupPicker {
 	return &value
 }
 
-func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *testing.T) {
+func TestSettingsSidebarStartupPickerDetailPersistsExistingFile(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -3881,12 +3654,12 @@ func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *t
 			if got, want := options.UI, "settings-projects-sidebar"; got != want {
 				t.Fatalf("project sidebar UI = %q, want %q", got, want)
 			}
-			if !hasEntryValue(options.Entries, settingsSessionStateSidebarStartupPickerDetail) {
+			if !hasEntryValue(options.Entries, settingsSidebarStartupPickerDetail) {
 				t.Fatalf("project sidebar entries = %#v, want the closed Project startup row", options.Entries)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateSidebarStartupPickerDetail}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsSidebarStartupPickerDetail}, nil
 		case 2:
-			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
+			if got, want := options.UI, "settings-sidebar-startup-picker"; got != want {
 				t.Fatalf("closed Project startup detail UI = %q, want %q", got, want)
 			}
 			if got, want := options.Title, "Projects - Closed Project startup"; got != want {
@@ -3898,11 +3671,11 @@ func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *t
 			if strings.Contains(options.Title, "Labs") || strings.Contains(options.Prompt, "Labs") {
 				t.Fatalf("sidebar startup detail chrome = title %q prompt %q, want no Labs path", options.Title, options.Prompt)
 			}
-			if !hasEntryValue(options.Entries, settingsActionPrefixSessionState+"sidebar-startup:on") ||
-				!hasEntryValue(options.Entries, settingsActionPrefixSessionState+"sidebar-startup:off") {
+			if !hasEntryValue(options.Entries, settingsActionPrefixSidebarStartup+"on") ||
+				!hasEntryValue(options.Entries, settingsActionPrefixSidebarStartup+"off") {
 				t.Fatalf("sidebar startup detail entries = %#v, want on/off mutation rows", options.Entries)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSessionState + "sidebar-startup:on"}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSidebarStartup + "on"}, nil
 		case 3:
 			if !hasEntryLabelContaining(options.Entries, "Continue project / Recreate Project") {
 				t.Fatalf("closed Project startup entries after save = %#v, want the two-action state", options.Entries)
@@ -3933,548 +3706,11 @@ func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := config.LoadSessionStateToggleFile(paths.SidebarStartupPickerFile()); err != nil || got != config.SessionStateToggleOn {
+	if got, err := config.LoadSidebarStartupPickerFile(paths.SidebarStartupPickerFile()); err != nil || got != config.SidebarStartupPickerOn {
 		t.Fatalf("sidebar startup picker file = %q, %v; want on, nil", got, err)
 	}
 	if got := filepath.Base(paths.SidebarStartupPickerFile()); got != config.SidebarStartupPickerFileName {
 		t.Fatalf("sidebar startup picker file name = %q, want %q", got, config.SidebarStartupPickerFileName)
-	}
-}
-
-func TestSettingsProjectSessionStateShowsEffectiveAutosaveSource(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := config.SaveSessionStateToggleFile(paths.SessionStateAutosaveFile(), config.SessionStateToggleOn); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.SaveSessionStateProjectToggleFile(paths.ProjectSessionStateAutosaveFile("repos-projmux"), config.SessionStateProjectOff); err != nil {
-		t.Fatal(err)
-	}
-	project := filepath.Join(home, "source", "repos", "projmux")
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_CONFIG_HOME":
-				return filepath.Join(home, "config")
-			case "PROJMUX_CWD":
-				return project
-			default:
-				return ""
-			}
-		},
-	}
-
-	entries := cmd.projectSessionStateEntries()
-	for _, want := range []string{"Project auto-save", "off", "saved", "Effective auto-save", "project override", "Global auto-save", "on"} {
-		if !hasEntryLabelContaining(entries, want) {
-			t.Fatalf("project session state entries = %#v, want %q", entries, want)
-		}
-	}
-}
-
-func TestSettingsProjectSessionStateShowsUnavailableMissingAndInvalidStates(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	project := filepath.Join(home, "source", "repos", "projmux")
-	baseCmd := func() *settingsCommand {
-		return &settingsCommand{
-			homeDir:    func() (string, error) { return home, nil },
-			tmuxRunner: &recordingTmuxRunner{err: errors.New("can't find session: repos-projmux")},
-			lookupEnv: func(name string) string {
-				switch name {
-				case "XDG_STATE_HOME":
-					return xdgState
-				case "PROJMUX_CWD":
-					return project
-				default:
-					return ""
-				}
-			},
-		}
-	}
-
-	noProject := baseCmd()
-	noProject.lookupEnv = func(name string) string {
-		if name == "XDG_STATE_HOME" {
-			return xdgState
-		}
-		return ""
-	}
-	noProjectOptions, err := noProject.sectionOptions(settingsSectionProjectSessionState)
-	if err != nil {
-		t.Fatalf("sectionOptions(no project) error = %v", err)
-	}
-	if !hasEntryLabelContaining(noProjectOptions.Entries, "Project") || !hasEntryLabelContaining(noProjectOptions.Entries, "no project context") {
-		t.Fatalf("no project entries = %#v, want unavailable project context", noProjectOptions.Entries)
-	}
-
-	missingOptions, err := baseCmd().sectionOptions(settingsSectionProjectSessionState)
-	if err != nil {
-		t.Fatalf("sectionOptions(missing) error = %v", err)
-	}
-	for _, want := range []string{"Project auto-save", "inherit", "Effective auto-save", "off", "Snapshot actions", "save unavailable: live project session not found", "snapshot missing"} {
-		if !hasEntryLabelContaining(missingOptions.Entries, want) {
-			t.Fatalf("missing snapshot entries = %#v, want %q", missingOptions.Entries, want)
-		}
-	}
-	if hasEntryValue(missingOptions.Entries, settingsProjectSessionStatePreview) || hasEntryValue(missingOptions.Entries, settingsProjectSessionStateDelete) {
-		t.Fatalf("missing snapshot entries = %#v, want preview/delete disabled", missingOptions.Entries)
-	}
-
-	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
-	path, err := store.Path("repos-projmux")
-	if err != nil {
-		t.Fatalf("Path() error = %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"version":1,"session":""}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	invalidOptions, err := baseCmd().sectionOptions(settingsSectionProjectSessionState)
-	if err != nil {
-		t.Fatalf("sectionOptions(invalid) error = %v", err)
-	}
-	for _, absent := range []string{"Window", "Pane", "Save latest snapshot", "Delete snapshot"} {
-		if hasEntryLabelContaining(invalidOptions.Entries, absent) {
-			t.Fatalf("invalid snapshot entries = %#v, want no primary snapshot/action label %q", invalidOptions.Entries, absent)
-		}
-	}
-}
-
-func TestSettingsSessionStateActionsPersistTogglesAndDeleteSnapshot(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	store := saveSettingsWorkspaceSnapshot(t, xdgState)
-	cmd := newSettingsSessionStateCommand(t, home, xdgState)
-
-	if err := cmd.executeSessionStateAction("autosave:off", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("autosave off error = %v", err)
-	}
-	if err := cmd.executeSessionStateAction("autosave-interval:90s", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("autosave interval error = %v", err)
-	}
-	paths, err := config.Homes{HomeDir: home, StateHome: xdgState}.Paths()
-	if err != nil {
-		t.Fatalf("Paths() error = %v", err)
-	}
-	if got, err := config.LoadSessionStateToggleFile(paths.SessionStateAutosaveFile()); err != nil || got != config.SessionStateToggleOff {
-		t.Fatalf("autosave file = %q, %v; want off, nil", got, err)
-	}
-	if got, err := config.LoadSessionStateDurationFileDefault(paths.SessionStateAutosaveIntervalFile(), time.Minute); err != nil || got != 90*time.Second {
-		t.Fatalf("autosave interval file = %s, %v; want 90s, nil", got, err)
-	}
-
-	if err := cmd.executeSessionStateAction("delete", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("delete error = %v", err)
-	}
-	if _, err := store.Load("workspace"); !errors.Is(err, sessionstate.ErrNotFound) {
-		t.Fatalf("Load() after delete error = %v, want %v", err, sessionstate.ErrNotFound)
-	}
-}
-
-func TestSettingsSessionStateDeleteRequiresConfirmation(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	store := saveSettingsWorkspaceSnapshot(t, xdgState)
-
-	var calls int
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			if got, want := options.UI, "settings-sessionstate"; got != want {
-				t.Fatalf("session state UI = %q, want %q", got, want)
-			}
-			if hasEntryValue(options.Entries, settingsSessionStateDelete) {
-				t.Fatalf("session state entries = %#v, want no direct delete action", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateAutosaveDetail}, nil
-		case 2:
-			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
-				t.Fatalf("detail UI = %q, want %q", got, want)
-			}
-			if !hasEntryValue(options.Entries, settingsActionPrefixSessionState+"autosave:off") {
-				t.Fatalf("session state detail entries = %#v, want autosave mutation row", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		default:
-			t.Fatalf("unexpected picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd := newSettingsSessionStateCommand(t, home, xdgState)
-	cmd.nativePicker = nativePickerFromCompatRunner(runner)
-
-	if err := cmd.runSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runSessionStateSection() error = %v", err)
-	}
-	if _, err := store.Load("workspace"); err != nil {
-		t.Fatalf("Load() after view-first navigation error = %v, want snapshot preserved", err)
-	}
-}
-
-func TestSettingsSessionStateDeleteConfirmedRemovesSnapshot(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	store := saveSettingsWorkspaceSnapshot(t, xdgState)
-
-	var calls int
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			if got, want := options.UI, "settings-sessionstate"; got != want {
-				t.Fatalf("session state UI = %q, want %q", got, want)
-			}
-			if hasEntryValue(options.Entries, settingsSessionStateDelete) {
-				t.Fatalf("session state entries = %#v, want no direct delete action", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateAutosaveDetail}, nil
-		case 2:
-			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
-				t.Fatalf("detail UI = %q, want %q", got, want)
-			}
-			if !hasEntryValue(options.Entries, settingsSessionStateAutosaveIntervalSet) {
-				t.Fatalf("session state detail entries = %#v, want autosave interval row", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateAutosaveIntervalSet}, nil
-		case 3:
-			if got, want := options.UI, "settings-sessionstate-autosave-interval"; got != want {
-				t.Fatalf("interval UI = %q, want %q", got, want)
-			}
-			if !options.AcceptQuery {
-				t.Fatalf("interval picker AcceptQuery = false, want true")
-			}
-			return intpickercompat.Result{Key: "enter", Query: "2m"}, nil
-		case 4:
-			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
-				t.Fatalf("detail UI after apply = %q, want %q", got, want)
-			}
-			if !hasEntryLabelContaining(options.Entries, "2m") {
-				t.Fatalf("session state detail entries = %#v, want applied 2m interval", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		default:
-			t.Fatalf("unexpected picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd := newSettingsSessionStateCommand(t, home, xdgState)
-	cmd.nativePicker = nativePickerFromCompatRunner(runner)
-
-	if err := cmd.runSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runSessionStateSection() error = %v", err)
-	}
-	paths, err := config.Homes{HomeDir: home, StateHome: xdgState}.Paths()
-	if err != nil {
-		t.Fatalf("Paths() error = %v", err)
-	}
-	if got, err := config.LoadSessionStateDurationFileDefault(paths.SessionStateAutosaveIntervalFile(), time.Minute); err != nil || got != 2*time.Minute {
-		t.Fatalf("autosave interval file = %s, %v; want 2m, nil", got, err)
-	}
-	if _, err := store.Load("workspace"); err != nil {
-		t.Fatalf("Load() after autosave interval detail change error = %v, want snapshot preserved", err)
-	}
-}
-
-func TestSettingsProjectSessionStateSaveNowCapturesProjectSession(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	project := filepath.Join(home, "source", "repos", "projmux")
-	storeDir := filepath.Join(xdgState, "projmux", "sessions")
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}"}, "\x1f")
-	paneFormat := strings.Join([]string{
-		"#{window_index}",
-		"#{pane_index}",
-		"#{pane_title}",
-		"#{@projmux_pane_label}",
-		"#{?pane_active,1,0}",
-		"#{pane_current_path}",
-		"#{@projmux_recipe_kind}",
-		"#{@projmux_startup_command}",
-		"#{@projmux_ai_managed}",
-		"#{@projmux_ai_agent}",
-		"#{@projmux_ai_topic}",
-		"#{@projmux_ai_topic_manual}",
-		"#{@projmux_ai_resume_id}",
-		"#{@projmux_ai_resume_source}",
-		"#{@projmux_ai_resume_updated_at}",
-		"#{pane_id}",
-		"#{@projmux_pane_uid}",
-	}, "\x1f")
-	refreshFormat := strings.Join([]string{
-		"#{pane_id}",
-		"#{pane_current_path}",
-		"#{@projmux_ai_managed}",
-		"#{@projmux_ai_agent}",
-		"#{@projmux_ai_session_id}",
-		"#{@projmux_ai_resume_id}",
-		"#{@projmux_ai_transcript_path}",
-	}, "\x1f")
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "has-session", "-t", "repos-projmux"}, "\x00"):                           "",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "repos-projmux", "-F", refreshFormat}, "\x00"): "",
-			strings.Join([]string{"tmux", "list-windows", "-t", "repos-projmux", "-F", windowFormat}, "\x00"):      "0\x1fmain\x1flayout\n",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "repos-projmux", "-F", paneFormat}, "\x00"):    "0\x1f0\x1feditor\x1f1\x1f" + project + "\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\n",
-		},
-	}
-	cmd := &settingsCommand{
-		homeDir:    func() (string, error) { return home, nil },
-		tmuxRunner: runner,
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return xdgState
-			case "PROJMUX_CWD":
-				return project
-			default:
-				return ""
-			}
-		},
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.executeSessionStateAction("project-save", &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("project-save error = %v", err)
-	}
-	if !strings.Contains(stdout.String(), "saved project session snapshot: repos-projmux") {
-		t.Fatalf("stdout = %q, want project save message", stdout.String())
-	}
-	snap, err := sessionstate.NewStore(storeDir).Load("repos-projmux")
-	if err != nil {
-		t.Fatalf("Load(project snapshot) error = %v", err)
-	}
-	if snap.Session != "repos-projmux" || len(snap.Windows) != 1 || snap.Windows[0].Panes[0].Title != "editor" {
-		t.Fatalf("snapshot = %#v, want captured project session", snap)
-	}
-	for _, call := range runner.calls {
-		if len(call.args) >= 3 && call.args[0] == "display-message" && call.args[2] == "#{session_name}" {
-			t.Fatalf("project save resolved current session unexpectedly: %#v", runner.calls)
-		}
-	}
-}
-
-func TestSettingsProjectSessionStateSaveNamedSnapshotUsesPortablePaths(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	project := filepath.Join(home, "source", "repos", "projmux")
-	service := filepath.Join(project, "service")
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}"}, "\x1f")
-	paneFormat := strings.Join([]string{
-		"#{window_index}",
-		"#{pane_index}",
-		"#{pane_title}",
-		"#{@projmux_pane_label}",
-		"#{?pane_active,1,0}",
-		"#{pane_current_path}",
-		"#{@projmux_recipe_kind}",
-		"#{@projmux_startup_command}",
-		"#{@projmux_ai_managed}",
-		"#{@projmux_ai_agent}",
-		"#{@projmux_ai_topic}",
-		"#{@projmux_ai_topic_manual}",
-		"#{@projmux_ai_resume_id}",
-		"#{@projmux_ai_resume_source}",
-		"#{@projmux_ai_resume_updated_at}",
-		"#{pane_id}",
-		"#{@projmux_pane_uid}",
-	}, "\x1f")
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "has-session", "-t", "repos-projmux"}, "\x00"):                        "",
-			strings.Join([]string{"tmux", "list-windows", "-t", "repos-projmux", "-F", windowFormat}, "\x00"):   "0\x1fmain\x1flayout\n",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "repos-projmux", "-F", paneFormat}, "\x00"): "0\x1f0\x1feditor\x1f1\x1f" + service + "\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\n",
-		},
-	}
-	cmd := &settingsCommand{
-		homeDir:    func() (string, error) { return home, nil },
-		tmuxRunner: runner,
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return xdgState
-			case "PROJMUX_CWD":
-				return project
-			default:
-				return ""
-			}
-		},
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.executeSessionStateAction("project-save-named:team", &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("project-save-named error = %v", err)
-	}
-	preset, err := corelayout.NewStore(project).Load("team")
-	if err != nil {
-		t.Fatalf("Load(named snapshot) error = %v", err)
-	}
-	if got, want := preset.DefaultCWD, "${PROJMUX_CWD}/service"; got != want {
-		t.Fatalf("default cwd = %q, want portable %q", got, want)
-	}
-	if got, want := preset.Windows[0].Panes[0].CWD, "${PROJMUX_CWD}/service"; got != want {
-		t.Fatalf("pane cwd = %q, want portable %q", got, want)
-	}
-}
-
-func TestSettingsProjectSessionStatePreviewAndDeleteAreProjectScopedAndConfirmed(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	xdgState := t.TempDir()
-	project := filepath.Join(home, "source", "repos", "projmux")
-	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
-	snap := sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "repos-projmux",
-		DefaultCWD: project,
-		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index:           0,
-			Name:            "main",
-			Layout:          "layout",
-			ActivePaneIndex: 0,
-			Panes:           []sessionstate.Pane{{Index: 0, Title: "editor", CWD: project, Recipe: sessionstate.ShellRecipe()}},
-		}},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-
-	cmd := &settingsCommand{
-		homeDir:    func() (string, error) { return home, nil },
-		tmuxRunner: &recordingTmuxRunner{},
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return xdgState
-			case "PROJMUX_CWD":
-				return project
-			case "PROJMUX_SESSION":
-				return "live-session"
-			default:
-				return ""
-			}
-		},
-	}
-
-	var preview bytes.Buffer
-	if err := cmd.executeSessionStateAction("project-preview", &preview, &bytes.Buffer{}); err != nil {
-		t.Fatalf("project-preview error = %v", err)
-	}
-	if output := preview.String(); !strings.Contains(output, "repos-projmux") || !strings.Contains(output, "Restore Preview") || strings.Contains(output, "live-session") {
-		t.Fatalf("preview output = %q, want project-scoped read-only preview", output)
-	}
-
-	var calls int
-	cmd.nativePicker = nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			if got, want := options.UI, "settings-project-sessionstate"; got != want {
-				t.Fatalf("project session state UI = %q, want %q", got, want)
-			}
-			if hasEntryValue(options.Entries, settingsProjectSessionStateDelete) {
-				t.Fatalf("project session state entries = %#v, want no direct delete action", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateActionsDetail}, nil
-		case 2:
-			if got, want := options.UI, "settings-project-sessionstate-actions"; got != want {
-				t.Fatalf("project actions UI = %q, want %q", got, want)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateDelete}, nil
-		case 3:
-			if got, want := options.UI, "settings-project-sessionstate-delete-confirm"; got != want {
-				t.Fatalf("confirm UI = %q, want %q", got, want)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmNo}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		default:
-			t.Fatalf("unexpected picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	}))
-	if err := cmd.runProjectSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runProjectSessionStateSection(cancel delete) error = %v", err)
-	}
-	if _, err := store.Load("repos-projmux"); err != nil {
-		t.Fatalf("Load() after cancelled project delete error = %v, want snapshot preserved", err)
-	}
-
-	calls = 0
-	cmd.nativePicker = nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateActionsDetail}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsProjectSessionStateDelete}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateConfirmYes}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		default:
-			t.Fatalf("unexpected picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	}))
-	if err := cmd.runProjectSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runProjectSessionStateSection(confirm delete) error = %v", err)
-	}
-	if _, err := store.Load("repos-projmux"); !errors.Is(err, sessionstate.ErrNotFound) {
-		t.Fatalf("Load() after confirmed project delete error = %v, want %v", err, sessionstate.ErrNotFound)
-	}
-}
-
-func TestSettingsSessionStateMissingSnapshotDisablesDelete(t *testing.T) {
-	t.Parallel()
-
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			if name == "PROJMUX_SESSION" {
-				return "workspace"
-			}
-			return ""
-		},
-	}
-
-	entries := cmd.sessionStateEntries()
-	if hasEntryLabelContaining(entries, "Snapshot") || hasEntryLabelContaining(entries, "missing") {
-		t.Fatalf("session state entries = %#v, want global settings only", entries)
-	}
-	if hasEntryValue(entries, settingsSessionStateDelete) {
-		t.Fatalf("session state entries = %#v, want delete disabled when missing", entries)
 	}
 }
 
@@ -6869,7 +6105,7 @@ func TestSettingsMutationFeedbackInventoryExcludesViewerFlows(t *testing.T) {
 		settingsActionPrefixDesktopNotifyMode + "notify",
 		settingsActionPrefixProjdir + "clear",
 		settingsActionPrefixStatusbar + "notify:emoji",
-		settingsActionPrefixSessionState + "autosave:on",
+		settingsActionPrefixSidebarStartup + "on",
 		settingsActionPrefixWorkdir + "remove:/tmp/example",
 	} {
 		if _, ok := settingsMutationLabel(value); !ok {
@@ -6880,7 +6116,7 @@ func TestSettingsMutationFeedbackInventoryExcludesViewerFlows(t *testing.T) {
 		settingsWelcomeShow,
 		settingsQuitOpen,
 		settingsActionPrefixHookView + "global:send-noti",
-		settingsActionPrefixSessionState + "project-preview",
+		settingsSidebarStartupPickerDetail,
 		settingsKeybindingsDiagnostic,
 		settingsKeybindingsProbe,
 	} {
@@ -6927,9 +6163,6 @@ func TestSettingsHandledCustomValidationFeedbackInventory(t *testing.T) {
 		}},
 		{name: "notification dedupe", summary: "AI notification dedupe failed", run: func(c *settingsCommand, stderr io.Writer) error {
 			return c.runNotificationsAIDedupeCustom(&bytes.Buffer{}, stderr)
-		}},
-		{name: "session interval", summary: "Snapshots interval failed", run: func(c *settingsCommand, stderr io.Writer) error {
-			return c.runSessionStateAutosaveIntervalTyped(&bytes.Buffer{}, stderr)
 		}},
 	}
 	for _, tc := range tests {
@@ -7566,33 +6799,6 @@ func newSettingsLiveApplyHarness(t *testing.T, state settingsLiveTmuxState, runE
 	}
 	wireSettingsLiveTestRunner(harness.cmd)
 	return harness
-}
-
-func saveSettingsWorkspaceSnapshot(t *testing.T, xdgState string) *sessionstate.Store {
-	t.Helper()
-	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
-	if err := store.Save(sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "workspace",
-		DefaultCWD: "/tmp",
-		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index: 0, ActivePaneIndex: 0,
-			Panes: []sessionstate.Pane{{Index: 0, CWD: "/tmp", Recipe: sessionstate.ShellRecipe()}},
-		}},
-	}); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	return &store
-}
-
-func newSettingsSessionStateCommand(t *testing.T, home, xdgState string) *settingsCommand {
-	t.Helper()
-	env := map[string]string{"XDG_STATE_HOME": xdgState, "PROJMUX_SESSION": "workspace"}
-	return &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string { return env[name] },
-	}
 }
 
 type settingsRunCapture struct {

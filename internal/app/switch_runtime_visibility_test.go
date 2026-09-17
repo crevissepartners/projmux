@@ -524,7 +524,7 @@ func TestProjectSidebarOffersTheRuntimeDiagnosticsChoice(t *testing.T) {
 	for _, entry := range command.projectSidebarEntries() {
 		values = append(values, entry.Value)
 	}
-	want := []string{settingsBackValue, settingsSessionStateSidebarStartupPickerDetail, settingsRuntimeDiagnosticsVisibilityDetail}
+	want := []string{settingsBackValue, settingsSidebarStartupPickerDetail, settingsRuntimeDiagnosticsVisibilityDetail}
 	if !reflect.DeepEqual(values, want) {
 		t.Fatalf("Project Sidebar rows = %#v, want the Runtime diagnostics choice beside the startup choice %#v", values, want)
 	}

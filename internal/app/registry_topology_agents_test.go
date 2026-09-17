@@ -950,7 +950,7 @@ func TestTopologyAgentContinueResumePreparationMatrix(t *testing.T) {
 				test.configure(launcher, &agent)
 			}
 			plan := &registryTopologyPlan{}
-			work, ok := planTopologyAgentReplay(plan, coremetadata.Project{Spec: coremetadata.ProjectSpec{Root: root}}, agent, "main/matrix", launcher, topologyAgentReplayInterrupted)
+			work, ok := planTopologyAgentReplay(plan, coremetadata.Project{Spec: coremetadata.ProjectSpec{Root: root}}, agent, "main/matrix", launcher)
 			if ok != (test.conversation != "") || len(launcher.launches) != 0 {
 				t.Fatalf("planned=%t fresh=%v notices=%v", ok, launcher.launches, plan.notices)
 			}
@@ -960,25 +960,6 @@ func TestTopologyAgentContinueResumePreparationMatrix(t *testing.T) {
 				}
 			} else if !strings.Contains(strings.Join(plan.notices, "\n"), test.want) {
 				t.Fatalf("notices=%v want %q", plan.notices, test.want)
-			}
-		})
-	}
-}
-
-func TestTopologyAgentSnapshotKeepsFreshFallback(t *testing.T) {
-	for _, hasRef := range []bool{false, true} {
-		t.Run(fmt.Sprintf("resume-fails-%t", hasRef), func(t *testing.T) {
-			root := t.TempDir()
-			launcher := newFakeTopologyAgentLauncher()
-			agent := coremetadata.Agent{Spec: coremetadata.AgentSpec{Provider: "claude", Workspace: coremetadata.AgentWorkspace{CWD: root}}}
-			if hasRef {
-				agent.Status.SessionRef = claudeConversationRef("saved-conversation")
-				launcher.resumeErr["claude"] = fmt.Errorf("cannot prepare")
-			}
-			plan := &registryTopologyPlan{}
-			work, ok := planTopologyAgentReplay(plan, coremetadata.Project{}, agent, "main/snapshot", launcher, topologyAgentReplaySnapshot)
-			if !ok || work.conversationID != "" || !slices.Equal(launcher.launches, []string{"claude"}) || !strings.Contains(strings.Join(plan.notices, "\n"), "starts a new conversation") {
-				t.Fatalf("snapshot fallback=%t work=%+v fresh=%v notices=%v", ok, work, launcher.launches, plan.notices)
 			}
 		})
 	}

@@ -15,9 +15,12 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `prune agent` joined `prune project` as the
-// bounded stale Offline/Failed Agent prune, which adds its row and names Agents
-// in the `prune` summary. Before that, it moved when the send summary named its
+// The baseline last moved when the Project snapshot routes were removed:
+// `create snapshot`, `get snapshots`, `delete snapshot`, `restore snapshot`,
+// and `prune snapshot` lost their rows, and the `prune` summary stopped naming
+// snapshots. Before that, it moved when `prune agent` joined `prune project` as
+// the bounded stale Offline/Failed Agent prune, which adds its row and names
+// Agents in the `prune` summary. Before that, it moved when the send summary named its
 // exit rule: nonzero after printing a failed, refused, expired, or stale
 // receipt. The prior move
 // described --source as an anchor rather than caller authentication. Before
@@ -38,7 +41,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "f3d2f0eb354696458f31c008e0b0d4da6f07000caf6efefb1e77aa73a6be31f6"
+	const want = "c0fd5e0e650a9a94e4f5ad4eaf8d592a5ff329058574633f091c1a6896081984"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

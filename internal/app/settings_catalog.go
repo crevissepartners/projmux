@@ -82,7 +82,6 @@ const (
 	settingsOwnerAI
 	settingsOwnerNotifications
 	settingsOwnerAppearance
-	settingsOwnerSessionState
 	settingsOwnerKeybindings
 	settingsOwnerLabs
 	settingsOwnerAbout
@@ -148,7 +147,7 @@ var settingsDynamicEntryCatalog = []struct {
 	{settingsActionPrefixWorkdirItem, settingsNavProjectsExtraRoots + ".item", settingsNavigationMeta("Additional discovery roots", "settings.text.additional_discovery_roots", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixPinItem, settingsNavProjectsPins + ".item", settingsNavigationMeta("Pinned Projects", "settings.text.pinned_projects", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixCandidatePinItem, settingsNavProjectsCandidates + ".item", settingsNavigationMeta("Candidate Pins", "settings.text.candidate_pins", settingsAxisGlobal, settingsOwnerProjectPicker)},
-	{settingsActionPrefixSessionStateSidebarStartup, "", settingsActionMeta("Closed Project startup", "settings.text.closed_project_startup", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixSidebarStartup, "", settingsActionMeta("Closed Project startup", "settings.text.closed_project_startup", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixRuntimeDiagnostics, "", settingsActionMeta("Runtime diagnostics", "picker.runtime.title", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixHookAdd, "", settingsActionMeta("Hook maker - add", "settings.text.hooks", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixHookEdit, "", settingsActionMeta("Hook maker - edit", "settings.text.hooks", settingsAxisBoth, settingsOwnerHooks)},
@@ -159,7 +158,6 @@ var settingsDynamicEntryCatalog = []struct {
 	{settingsActionPrefixLocale, "", settingsActionMeta("Language / Locale", "settings.text.language_locale", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixTrust, "", settingsActionMeta("Trust", "settings.text.trust", settingsAxisProject, settingsOwnerProject)},
 	{settingsActionPrefixProjdir, "", settingsActionMeta("Primary discovery root", "settings.text.primary_discovery_root", settingsAxisGlobal, settingsOwnerProject)},
-	{settingsActionPrefixSessionState, "", settingsActionMeta("Snapshots", "settings.text.snapshots", settingsAxisGlobal, settingsOwnerSessionState)},
 	{settingsActionPrefixStatusbar, "", settingsActionMeta("Status Bar", "settings.text.status_bar", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixSwitch, "", settingsActionMeta("Pinned Projects", "settings.text.pinned_projects", settingsAxisGlobal, settingsOwnerProject)},
 	{settingsActionPrefixTheme, "", settingsActionMeta("Theme", "settings.text.theme", settingsAxisBoth, settingsOwnerTheme)},
@@ -232,9 +230,9 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 		switch value {
 		case settingsRootTabGlobalValue, settingsRootTabProjectValue,
 			settingsSectionProject, settingsSectionAI, settingsSectionNotifications,
-			settingsSectionAutomation, settingsSectionStatusbar, settingsSectionSessionState,
+			settingsSectionAutomation, settingsSectionStatusbar,
 			settingsSectionKeybindings, settingsSectionAbout,
-			settingsSectionProjectAutomation, settingsSectionProjectSessionState:
+			settingsSectionProjectAutomation:
 			return true
 		}
 		// A global result row is owned by the root loop: it names a destination
@@ -244,14 +242,14 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 		switch value {
 		case settingsProjectAdd, settingsProjectPins, settingsProjectCandidatePins,
 			settingsProjectRootManage, settingsWorkdirAdd,
-			settingsWorkdirList, settingsProjectsSidebar, settingsSessionStateSidebarStartupPickerDetail,
+			settingsWorkdirList, settingsProjectsSidebar, settingsSidebarStartupPickerDetail,
 			settingsRuntimeDiagnosticsVisibilityDetail:
 			return true
 		}
 		return strings.HasPrefix(value, settingsActionPrefixWorkdirItem) ||
 			strings.HasPrefix(value, settingsActionPrefixPinItem) ||
 			strings.HasPrefix(value, settingsActionPrefixCandidatePinItem) ||
-			strings.HasPrefix(value, settingsActionPrefixSessionStateSidebarStartup) ||
+			strings.HasPrefix(value, settingsActionPrefixSidebarStartup) ||
 			strings.HasPrefix(value, settingsActionPrefixRuntimeDiagnostics)
 	case settingsOwnerAI:
 		return value == settingsAIDefaultMode || value == settingsAIEnabledAgents ||
@@ -286,8 +284,6 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			strings.HasPrefix(value, settingsActionPrefixStatusbar) ||
 			strings.HasPrefix(value, settingsActionPrefixHUDVisibility) ||
 			strings.HasPrefix(value, settingsActionPrefixLiveResources)
-	case settingsOwnerSessionState:
-		return value == settingsSessionStateDelete || strings.HasPrefix(value, settingsActionPrefixSessionState)
 	case settingsOwnerKeybindings:
 		return value == settingsKeybindingsBindings || value == settingsKeybindingsDiagnostic ||
 			value == settingsKeybindingsProbe ||
@@ -337,12 +333,10 @@ const (
 	settingsSectionProjectHooks            = "section:hooks-project"
 	settingsSectionProjectTrust            = "section:project-trust"
 	settingsSectionGlobalTheme             = "section:theme-global"
-	settingsSectionProjectSessionState     = "section:project-sessionstate"
 	settingsSectionKeybindings             = "section:keybindings"
 	settingsSectionProject                 = "section:project-picker"
 	settingsSectionNotifications           = "section:notifications"
 	settingsSectionStatusbar               = "section:statusbar"
-	settingsSectionSessionState            = "section:sessionstate"
 	settingsSectionLabs                    = "section:labs"
 	settingsSectionAbout                   = "section:about"
 	settingsActionPrefixAI                 = "ai:"
@@ -373,77 +367,74 @@ const (
 	settingsActionPrefixHookEvent          = "hook-event:"
 	// settingsActionPrefixRuntimeDiagnostics owns the Projects sidebar
 	// Runtime diagnostics visibility choice. It is its own spelling rather
-	// than a `sessionstate:` reuse because the preference is a sidebar
-	// presentation policy and touches no snapshot state.
+	// than a `sidebar-startup:` reuse because the two preferences are
+	// independent sidebar presentation policies.
 	settingsActionPrefixRuntimeDiagnostics = "runtime-diagnostics:"
 	// settingsActionPrefixRootResult owns the global Settings-root search
 	// results. The suffix is the catalog node ID of the target row plus, for a
 	// code-enumerated template, its instance chain.
 	settingsActionPrefixRootResult = "root-result:"
-	// settingsActionPrefixSessionStateSidebarStartup keeps the shipped
-	// `sessionstate:` config/action spelling while the row itself moves under
-	// Projects > Project Sidebar. Only the destination and the label change.
-	settingsActionPrefixSessionStateSidebarStartup = settingsActionPrefixSessionState + "sidebar-startup:"
-	settingsActionPrefixLocale                     = "locale:"
-	settingsActionPrefixWelcome                    = "welcome:"
-	settingsActionPrefixTrust                      = "trust:"
-	settingsActionPrefixProjdir                    = "projdir:"
-	settingsActionPrefixSessionState               = "sessionstate:"
-	settingsActionPrefixStatusbar                  = "statusbar-decoration:"
-	settingsActionPrefixSwitch                     = "switch:"
-	settingsActionPrefixTheme                      = "theme:"
-	settingsActionPrefixUpdate                     = "update:"
-	settingsActionPrefixWorkdir                    = "workdir:"
-	settingsActionPrefixQuit                       = "quit:"
-	settingsProjectAdd                             = "project:add"
-	settingsProjectPins                            = "project:pins"
-	settingsProjectCandidatePins                   = "project:candidate-pins"
-	settingsProjectRootManage                      = "project-root:manage"
-	settingsProjdirClear                           = "projdir:clear"
-	settingsProjdirSetCurrent                      = "projdir:set-current"
-	settingsProjdirSetTyped                        = "projdir:set-typed"
-	settingsUpdateApply                            = "update:apply"
-	settingsUpdateCheck                            = "update:check"
-	settingsUpdateReleaseChannel                   = "update:release-channel"
-	settingsQuitOpen                               = "quit:open"
-	settingsWorkdirAdd                             = "workdir:add"
-	settingsWorkdirList                            = "workdir:list"
-	settingsWorkdirTyped                           = "workdir:typed"
-	settingsKeybindingsBindings                    = "keybindings:bindings"
-	settingsKeybindingsDiagnostic                  = "keybindings:diagnostic"
-	settingsKeybindingsProbe                       = "keybindings:probe"
-	settingsAIDefaultMode                          = "ai-default-mode"
-	settingsAIEnabledAgents                        = "ai-enabled-agents"
-	settingsAIResumePicker                         = "ai-resume-picker"
-	settingsAIResumePickerLimit                    = "ai-resume-picker-limit"
-	settingsAIResumePickerDepth                    = "ai-resume-picker-depth"
-	settingsAISplitCWDFrom                         = "ai-split-cwd-from"
-	settingsAINotifyDiagnostics                    = "ai-notify-diagnostics"
-	settingsNotificationsDesktop                   = "notifications:desktop"
-	settingsNotificationsAIDedupe                  = "notifications:ai-dedupe"
-	settingsNotificationsDelivery                  = "notifications:delivery"
-	settingsNotificationsHookActions               = "notifications:hook-actions"
-	settingsAppearanceLanguage                     = "appearance:language"
-	settingsAppearanceTheme                        = "appearance:theme"
-	settingsAppearanceStatusBar                    = "appearance:status-bar"
-	settingsAppearanceAgentUsageHUD                = "appearance:status-bar:agent-usage-hud"
-	settingsAppearanceAgentUsageProviderPrefix     = "appearance:status-bar:agent-usage-provider:"
-	settingsAutomationLifecycle                    = "automation:lifecycle"
-	settingsAutomationSendNoti                     = "automation:send-noti"
-	settingsAutomationProjectPolicy                = "automation:project-policy"
-	settingsProjectAutomationLifecycle             = "project-automation:lifecycle"
-	settingsProjectAutomationSendNoti              = "project-automation:send-noti"
-	settingsProjectsSidebar                        = "projects:sidebar"
-	settingsNotificationsProviders                 = "notifications:provider-integrations"
-	settingsNotificationsTmuxSource                = "notifications:tmux-event-source"
-	settingsAboutUpdates                           = "about:updates"
-	settingsNativeKeysToggle                       = "native-keys:toggle"
-	settingsLabsProjectHooks                       = "labs:project-hooks"
-	settingsSessionStateDelete                     = "sessionstate:delete"
-	settingsWelcomeShow                            = "welcome:show"
-	settingsKeymapFieldPlain                       = "plain"
-	settingsKeymapFieldKeys                        = "keys"
-	settingsKeymapFieldPrefix                      = "prefix"
+	// settingsActionPrefixSidebarStartup owns the Projects sidebar
+	// Closed Project startup choice.
+	settingsActionPrefixSidebarStartup         = "sidebar-startup:"
+	settingsActionPrefixLocale                 = "locale:"
+	settingsActionPrefixWelcome                = "welcome:"
+	settingsActionPrefixTrust                  = "trust:"
+	settingsActionPrefixProjdir                = "projdir:"
+	settingsActionPrefixStatusbar              = "statusbar-decoration:"
+	settingsActionPrefixSwitch                 = "switch:"
+	settingsActionPrefixTheme                  = "theme:"
+	settingsActionPrefixUpdate                 = "update:"
+	settingsActionPrefixWorkdir                = "workdir:"
+	settingsActionPrefixQuit                   = "quit:"
+	settingsProjectAdd                         = "project:add"
+	settingsProjectPins                        = "project:pins"
+	settingsProjectCandidatePins               = "project:candidate-pins"
+	settingsProjectRootManage                  = "project-root:manage"
+	settingsProjdirClear                       = "projdir:clear"
+	settingsProjdirSetCurrent                  = "projdir:set-current"
+	settingsProjdirSetTyped                    = "projdir:set-typed"
+	settingsUpdateApply                        = "update:apply"
+	settingsUpdateCheck                        = "update:check"
+	settingsUpdateReleaseChannel               = "update:release-channel"
+	settingsQuitOpen                           = "quit:open"
+	settingsWorkdirAdd                         = "workdir:add"
+	settingsWorkdirList                        = "workdir:list"
+	settingsWorkdirTyped                       = "workdir:typed"
+	settingsKeybindingsBindings                = "keybindings:bindings"
+	settingsKeybindingsDiagnostic              = "keybindings:diagnostic"
+	settingsKeybindingsProbe                   = "keybindings:probe"
+	settingsAIDefaultMode                      = "ai-default-mode"
+	settingsAIEnabledAgents                    = "ai-enabled-agents"
+	settingsAIResumePicker                     = "ai-resume-picker"
+	settingsAIResumePickerLimit                = "ai-resume-picker-limit"
+	settingsAIResumePickerDepth                = "ai-resume-picker-depth"
+	settingsAISplitCWDFrom                     = "ai-split-cwd-from"
+	settingsAINotifyDiagnostics                = "ai-notify-diagnostics"
+	settingsNotificationsDesktop               = "notifications:desktop"
+	settingsNotificationsAIDedupe              = "notifications:ai-dedupe"
+	settingsNotificationsDelivery              = "notifications:delivery"
+	settingsNotificationsHookActions           = "notifications:hook-actions"
+	settingsAppearanceLanguage                 = "appearance:language"
+	settingsAppearanceTheme                    = "appearance:theme"
+	settingsAppearanceStatusBar                = "appearance:status-bar"
+	settingsAppearanceAgentUsageHUD            = "appearance:status-bar:agent-usage-hud"
+	settingsAppearanceAgentUsageProviderPrefix = "appearance:status-bar:agent-usage-provider:"
+	settingsAutomationLifecycle                = "automation:lifecycle"
+	settingsAutomationSendNoti                 = "automation:send-noti"
+	settingsAutomationProjectPolicy            = "automation:project-policy"
+	settingsProjectAutomationLifecycle         = "project-automation:lifecycle"
+	settingsProjectAutomationSendNoti          = "project-automation:send-noti"
+	settingsProjectsSidebar                    = "projects:sidebar"
+	settingsNotificationsProviders             = "notifications:provider-integrations"
+	settingsNotificationsTmuxSource            = "notifications:tmux-event-source"
+	settingsAboutUpdates                       = "about:updates"
+	settingsNativeKeysToggle                   = "native-keys:toggle"
+	settingsLabsProjectHooks                   = "labs:project-hooks"
+	settingsWelcomeShow                        = "welcome:show"
+	settingsKeymapFieldPlain                   = "plain"
+	settingsKeymapFieldKeys                    = "keys"
+	settingsKeymapFieldPrefix                  = "prefix"
 )
 
 func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Options, error) {
@@ -517,26 +508,6 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, ctx.hasProject(), c.locale()),
 			Prompt:     "Settings > Appearance > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
-			ExpectKeys: []string{"enter"},
-			Bindings:   c.settingsCloseBindings(),
-		}, nil
-	case settingsSectionSessionState:
-		return intpickercompat.Options{
-			UI:         "settings-sessionstate",
-			Entries:    c.sessionStateEntries(),
-			Title:      "Snapshots - Auto-save and storage",
-			Prompt:     "Settings > Snapshots > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
-			ExpectKeys: []string{"enter"},
-			Bindings:   c.settingsCloseBindings(),
-		}, nil
-	case settingsSectionProjectSessionState:
-		return intpickercompat.Options{
-			UI:         "settings-project-sessionstate",
-			Entries:    c.projectSessionStateEntries(),
-			Title:      c.projectSessionStateTitle(),
-			Prompt:     "Settings > Project > Snapshots > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		}, nil

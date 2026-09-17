@@ -39,15 +39,13 @@ func TestProjectStartupRetiredPathsNegativeAudit(t *testing.T) {
 		}
 	}
 
-	// Restore and fresh may commit their scoped Registry plans, but must never
-	// call a snapshot persistence mutation. Parsing only these execution
-	// functions avoids conflating the separate explicit save/delete commands.
+	// Fresh may commit its scoped Registry plan, but must never call a
+	// persistence or replay mutation outside the Registry.
 	audited := map[string]bool{
-		"commitSnapshotProjection": false,
-		"startProjectFresh":        false,
-		"PruneProjectFreshStart":   false,
+		"startProjectFresh":      false,
+		"PruneProjectFreshStart": false,
 	}
-	for _, path := range []string{"session_state.go", "project_startup_fresh.go"} {
+	for _, path := range []string{"project_startup_fresh.go"} {
 		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 		if err != nil {
 			t.Fatal(err)
@@ -62,23 +60,6 @@ func TestProjectStartupRetiredPathsNegativeAudit(t *testing.T) {
 			}
 			audited[fn.Name.Name] = true
 			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				if assignment, ok := node.(*ast.AssignStmt); ok && fn.Name.Name == "commitSnapshotProjection" {
-					for i, left := range assignment.Lhs {
-						star, ok := left.(*ast.StarExpr)
-						if !ok {
-							continue
-						}
-						owner, ownerOK := star.X.(*ast.Ident)
-						if !ownerOK || owner.Name != "working" || i >= len(assignment.Rhs) {
-							continue
-						}
-						right, ok := assignment.Rhs[i].(*ast.SelectorExpr)
-						base, baseOK := right.X.(*ast.Ident)
-						if !ok || !baseOK || base.Name != "plan" || right.Sel.Name != "Desired" {
-							t.Errorf("%s.%s replaces the Registry from a source other than the scoped projection plan", path, fn.Name.Name)
-						}
-					}
-				}
 				call, ok := node.(*ast.CallExpr)
 				if !ok {
 					return true
@@ -97,8 +78,8 @@ func TestProjectStartupRetiredPathsNegativeAudit(t *testing.T) {
 		}
 	}
 
-	// Snapshot startup recipes may be represented in Registry desired state,
-	// but the ordinary materializer must never turn Pane.Spec.Command into an
+	// Startup commands may be represented in Registry desired state, but the
+	// ordinary materializer must never turn Pane.Spec.Command into an
 	// executable argv. Project lifecycle commands remain behind the separately
 	// approved Project-open trust gate.
 	materializer, err := parser.ParseFile(token.NewFileSet(), "registry_topology_materialize.go", nil, 0)
@@ -123,7 +104,7 @@ func TestProjectStartupRetiredPathsNegativeAudit(t *testing.T) {
 		t.Fatal("negative audit did not find ordinary topology executor")
 	}
 
-	// Agents are the one executable snapshot recipe and must stay on the exact
+	// Agents are the one executable Registry recipe and must stay on the exact
 	// provider launch/resume interface shared with canonical Agent routes.
 	typ := reflect.TypeFor[registryProjectTopologyMaterializer]()
 	agents, ok := typ.FieldByName("agents")

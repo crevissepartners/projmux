@@ -30,10 +30,6 @@ type resourceReconcileCommand struct {
 	// materialization consumes. It is the same object `create agent` and
 	// `agent resume` hold; this route never builds a provider launch of its own.
 	agents topologyAgentLauncher
-	// agentReplayAuthority is zero for the public reconcile route. Tests that
-	// drive the same engine as explicit snapshot restore set its distinct
-	// authority without widening the public flag grammar.
-	agentReplayAuthority topologyAgentReplayAuthority
 	// registry is the sibling recovery boundary. `reconcile` dispatches to it
 	// rather than owning recovery here: the resource planner needs a loadable
 	// Registry as its input, and recovery is what runs when that input is the
@@ -138,7 +134,6 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		materializeProject:   firstRepeatedValue(opts.materializeProjects),
 		exactTarget:          target,
 		agents:               c.agents,
-		agentReplayAuthority: c.agentReplayAuthority,
 		approvedOrphanImport: opts.importOrphanMirrors,
 	}
 	ctx := context.Background()

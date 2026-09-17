@@ -138,7 +138,7 @@ type projectFreshStartCommit struct {
 
 // registryProjectFreshStarter projects one closed Project to its canonical
 // schema-v2 Window/shell anchor. The desired Registry is re-derived under the
-// store lock and committed atomically; snapshot storage is never consulted or
+// store lock and committed atomically; nothing outside the Registry is read or
 // changed by this seam.
 type registryProjectFreshStarter struct {
 	resources *resourceStore
@@ -174,8 +174,8 @@ func (s *registryProjectFreshStarter) ProjectRegistered(root string) (bool, erro
 // reused exactly; a zero-Window Project receives one new canonical Window and
 // shell atomically before runtime materialization. A root that is not a
 // registered Project has no identity to continue: the call refuses with zero
-// Registry writes and points to Recreate Project. Snapshot files are never read
-// here.
+// Registry writes and points to Recreate Project. Nothing outside the Registry
+// is read here.
 func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, _ string) (openedProjectBootstrap, error) {
 	if s == nil || s.resources == nil {
 		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "registry-read", "", "",
@@ -451,9 +451,9 @@ func (c *switchCommand) planProjectFreshStart(sessionName, target string) (proje
 // startProjectFresh executes Open fresh: commit the canonical projection,
 // verify it, materialize through the ordinary path, report, then switch client.
 //
-// Registry authority goes first. A rejected replacement must retain snapshots as
-// well as the Registry and tmux runtime; Open fresh never writes snapshot
-// storage.
+// Registry authority goes first. A rejected replacement must retain the
+// Registry and tmux runtime; Open fresh writes no Project state outside the
+// Registry.
 // The mirror decision stays in the one place that owns Project registration.
 func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, target string, opened openedProjectBootstrap, anchor string) error {
 	anchor = strings.TrimSpace(anchor)

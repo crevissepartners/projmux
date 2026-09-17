@@ -3,8 +3,8 @@
 Phase 0 provides the read-only attribution contract consumed by the Resource
 Inspector shipped in Phase 1. `projmux resources`, the client-scoped
 `resource-inspector` popup, the statusbar range, and `Resources:Open` all keep
-the snapshot in memory only for the interactive process lifetime; it remains
-outside Session State.
+the snapshot in memory only for the interactive process lifetime; it is never
+persisted.
 
 ## Identity and inventory
 

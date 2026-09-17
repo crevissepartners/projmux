@@ -119,7 +119,7 @@ Global hooks under `$XDG_CONFIG_HOME` are prompt-free.
 Project-local executable automation is gated by trust-on-first-use. This
 includes `.projmux/config.toml` before projmux runs hooks or applies
 startup/session environment settings, and a selected
-`.projmux/layouts/*.toml` named snapshot before projmux replays any declared
+`.projmux/layouts/*.toml` layout preset before projmux runs any declared
 `command`.
 Approving "always"
 records the file content hash in:
@@ -135,14 +135,14 @@ When file content changes or the layout path is replaced, projmux asks again
 and shows the old and new SHA-256 hashes. Layout symlinks, including symlinked
 `.projmux` or `layouts` path components, are rejected. The selected layout is
 read once; those exact bytes are both hashed and parsed, and the resulting
-in-memory snapshot is what restore uses. In non-interactive contexts such as
+in-memory preset is what projmux uses. In non-interactive contexts such as
 tmux run-shell or CI, untrusted or changed project-local executable files fail
 closed with a warning.
 
 Set `PROJMUX_PROJECT_HOOKS=off` to disable project-local hook discovery
 entirely. Project-local hooks can also be disabled from `projmux settings`
 under Labs. The global hook still runs either way. This setting does not trust
-or bypass executable named-snapshot commands. A layout without a startup
+or bypass executable layout preset commands. A layout without a startup
 `command` does not require executable-artifact approval.
 
 ## Startup Commands
@@ -759,9 +759,9 @@ The named entry in `hooks.json` remains the install source of truth. Use
 `agy -p '/hooks' --output-format json` only as a read-only runtime diagnosis of
 loaded sources/events; its result is never used to generate or rewrite config.
 Antigravity ingest uses `conversationId` as pane thread metadata for matching
-and as session-state resume metadata. Session restore uses
+and as Agent resume metadata. Resume uses
 `agy --conversation <uuid>` only when that id is present and UUID-shaped;
-otherwise preview and doctor render `resume unavailable`. Official snake_case
+otherwise the resume is refused rather than starting a fresh Agent. Official snake_case
 `cwd`, `conversation_id`, `transcript_path`, `agent_state`,
 `tool_confirmation_pending`, and structured `context_window.used_percentage`
 plus token fields are parsed directly. The structured percentage is persisted
@@ -827,13 +827,12 @@ empty.
 | `PROJMUX_SESSION_KIND` | `persistent` or `ephemeral` | `persistent` or `ephemeral` | empty | empty |
 | `PROJMUX_VERSION` | projmux version | projmux version | projmux version | projmux version |
 | `PROJMUX_SOCKET` | app socket metadata (`projmux`) | app socket metadata (`projmux`) | app socket metadata (`projmux`) | queue-entry socket when known; otherwise omitted |
-| `PROJMUX_PANE` | omitted: no pane exists yet | exact id returned by standard persistent/ephemeral `tmux new-session`, such as `%7`; omitted for snapshot replay | omitted | target pane when known; otherwise omitted |
+| `PROJMUX_PANE` | omitted: no pane exists yet | exact id returned by standard persistent/ephemeral `tmux new-session`, such as `%7` | omitted | target pane when known; otherwise omitted |
 
 `pre-create` intentionally has no `PROJMUX_PANE`: it runs before
 `tmux new-session` creates the first pane. Standard persistent and ephemeral
 `post-create` paths run after creation and therefore receive that exact pane
-id. Snapshot replay can restore multiple panes and does not expose a single
-returned pane at its lifecycle boundary, so it omits `PROJMUX_PANE`.
+id.
 `PROJMUX_SOCKET` is routing metadata for hook commands; it does not imply that
 the tmux client itself adds `-L` to its commands. The `post-attach` and
 `send-noti` cells describe their existing contexts; this contract adds no pane

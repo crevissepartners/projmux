@@ -51,7 +51,7 @@
 ## Hook Contract Stability
 - The post-create hook contract (`[hooks.post-create]`, `PROJMUX_*` env vars, 5s timeout) is part of the public API. Adding, removing, or renaming any `PROJMUX_*` env var requires at minimum a minor release input; use a `feat(hooks): ...` PR title and leave the version/manifest update to release-please.
 - `PROJMUX_SOCKET` is the app socket name (`projmux`) supplied as hook routing metadata; it does not change how the tmux client invokes commands.
-- `PROJMUX_PANE` is the exact first pane id returned by standard persistent/ephemeral session creation for `post-create`. It is intentionally absent from `pre-create`, which runs before that pane exists, and from snapshot replay whose multi-pane replay boundary exposes no single returned pane.
+- `PROJMUX_PANE` is the exact first pane id returned by standard persistent/ephemeral session creation for `post-create`. It is intentionally absent from `pre-create`, which runs before that pane exists.
 
 ## Release Flow
 - `release-please-action` watches `main`, accumulates Conventional Commit subjects, and opens or refreshes a "chore(main): release X.Y.Z" PR. That PR contains the version bump (`internal/version/version.go` + `.release-please-manifest.json`), `CHANGELOG.md` updates, and the release notes.
@@ -95,7 +95,7 @@ Post-create hook contract environment:
 - `PROJMUX_CWD` — absolute path of the project directory.
 - `PROJMUX_SESSION_KIND` — `persistent` or `ephemeral`.
 - `PROJMUX_SOCKET` — tmux app socket name (`projmux`), supplied as metadata so hook commands can use `tmux -L "$PROJMUX_SOCKET"`.
-- `PROJMUX_PANE` — exact first pane id returned by `tmux new-session`, such as `%7`, for standard persistent/ephemeral creation; omitted for snapshot replay.
+- `PROJMUX_PANE` — exact first pane id returned by `tmux new-session`, such as `%7`, for standard persistent/ephemeral creation; omitted from `pre-create`.
 - `PROJMUX_VERSION` — the binary's `internal/version` string.
 
 Tunables (rarely touched):

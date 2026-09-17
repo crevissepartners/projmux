@@ -111,7 +111,7 @@ func SanitizeMessage(message, home string) string {
 var (
 	allowedLevels     = stringSet("info", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent)
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -263,7 +263,7 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 	if len(out.Version) > 64 || !safeVersion(out.Version) {
 		return Event{}, fmt.Errorf("invalid diagnostics version")
 	}
-	class := Classify([]string{out.Command, out.Subcommand})
+	class := classifyRecorded([]string{out.Command, out.Subcommand})
 	if out.Command != "" && class.Command != out.Command {
 		return Event{}, fmt.Errorf("unsafe diagnostics command")
 	}
@@ -321,7 +321,7 @@ func validateEventShape(event Event) error {
 		if !operationAcceptsCode(Operation(event.Operation), Code(event.Code)) {
 			return fmt.Errorf("invalid lifecycle operation code")
 		}
-	case "session-state.outcome":
+	case sessionStateOutcomeEvent:
 		if event.Component != "session-state" || event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.hasNotifyFocusFields() || event.hasAIFields() || event.hasResourceFields() {
 			return fmt.Errorf("invalid session-state outcome shape")
 		}
@@ -335,7 +335,7 @@ func validateEventShape(event Event) error {
 			return fmt.Errorf("invalid session-state operation")
 		}
 		if event.Result == "error" {
-			if event.Level != "error" || event.Kind != "runtime" || event.Code != string(failureCode(operation)) || event.hasCounts() {
+			if event.Level != "error" || event.Kind != "runtime" || event.Code != string(sessionStateFailureCode(operation)) || event.hasCounts() {
 				return fmt.Errorf("invalid session-state error shape")
 			}
 		} else if event.Result == "success" {

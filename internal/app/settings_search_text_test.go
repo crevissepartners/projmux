@@ -31,10 +31,6 @@ const settingsSearchFrameFloor = 200
 // exemption that becomes reachable fails as stale.
 var settingsSearchUnreachedNodes = map[string]string{
 	settingsNavAppearanceTheme + ".tokens.item.fallback": "rendered as the direct theme color-set default mutation row inside the captured token View; there is no chooser frame",
-	settingsNavSnapshots + ".autosave.interval":          "opens a typed input form, which the walker closes without answering",
-	settingsNavSnapshots + ".storage":                    "rendered as a passive information row in Snapshots, not a View",
-	settingsNavProjectSnapshots + ".autosave.choice":     "the Inherit/Enable/Disable choices are mutation rows inside the captured Auto-save override View",
-	settingsNavProjectSnapshots + ".saved.item":          "needs a saved Project snapshot, which needs a live tmux session the fixture refuses",
 }
 
 // settingsSearchReadOnlyTmux are the tmux subcommands Settings Views may issue
@@ -100,7 +96,7 @@ func settingsSearchFixedNode(id string) func(string) string {
 // prefix is shared with mutations) but whose owning loop only opens a View or
 // chooser. Each is scoped to the UI that renders it.
 var settingsSearchViewOpeners = []settingsSearchViewOpener{
-	{"settings-projects-sidebar", settingsSearchExact(settingsSessionStateSidebarStartupPickerDetail), settingsSearchFixedNode(settingsNavProjectsSidebar + ".closed-startup")},
+	{"settings-projects-sidebar", settingsSearchExact(settingsSidebarStartupPickerDetail), settingsSearchFixedNode(settingsNavProjectsSidebar + ".closed-startup")},
 	{"settings-projects-sidebar", settingsSearchExact(settingsRuntimeDiagnosticsVisibilityDetail), settingsSearchFixedNode(settingsNavProjectsSidebar + ".runtime-diagnostics")},
 	{"settings-notifications-desktop", settingsSearchExact(settingsActionPrefixDesktopNotifyMode + "choose"), settingsSearchFixedNode(settingsNavNotifyDesktop + ".mode")},
 	{"settings-theme-global", settingsSearchExact(themeAction("preset")), settingsSearchFixedNode(settingsNavAppearanceTheme + ".preset")},
@@ -110,9 +106,6 @@ var settingsSearchViewOpeners = []settingsSearchViewOpener{
 	{"settings-statusbar-detail", func(value string) bool {
 		return strings.HasPrefix(value, settingsActionPrefixStatusbar) && strings.HasSuffix(value, ":icon")
 	}, func(parent string) string { return parent + ".icon" }},
-	{"settings-sessionstate", settingsSearchExact(settingsSessionStateAutosaveDetail), settingsSearchFixedNode(settingsNavSnapshots + ".autosave")},
-	{"settings-project-sessionstate", settingsSearchExact(settingsProjectSessionStateAutosaveDetail), settingsSearchFixedNode(settingsNavProjectSnapshots + ".autosave")},
-	{"settings-project-sessionstate", settingsSearchExact(settingsProjectSessionStateActionsDetail), settingsSearchFixedNode(settingsNavProjectSnapshots + ".saved")},
 	{"settings-keybindings-category", settingsSearchPrefix(settingsActionPrefixKeymap), func(parent string) string { return parent + ".action" }},
 	{"settings-keybindings-surface", settingsSearchPrefix(settingsActionPrefixKeymap), func(parent string) string { return parent + ".action" }},
 	{"settings-keybinding-detail", func(value string) bool {

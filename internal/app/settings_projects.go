@@ -33,34 +33,28 @@ func (ctx settingsProjectContext) hasProject() bool {
 func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 	ctx := c.resolveSettingsProjectContext()
 	if !ctx.hasProject() {
-		// Keep one textual explanation instead of repeating it on Automation
-		// and Snapshots. The disabled
-		// Project chip remains the scope signal; this passive row explains
-		// how to make that scope actionable.
+		// Keep one textual explanation instead of repeating it on Automation.
+		// The disabled Project chip remains the scope signal; this passive row
+		// explains how to make that scope actionable.
 		return []intpickercompat.Entry{
 			{
 				Label:     settingsRootLabelDim("Project context", "open Settings from a managed project to enable project actions"),
 				Value:     settingsNoopValue,
-				SearchKey: "project context managed project trust hooks automation snapshots",
+				SearchKey: "project context managed project trust hooks automation",
 			},
 		}
 	}
 
 	// The project context label is conveyed by the chip strip plus the
 	// popup header — keep the picker entries focused on actionable rows.
-	// The Project tab is two containers: Automation owns trust plus the
-	// project-local lifecycle scripts, and Snapshots owns the auto-save
-	// override and the saved snapshots.
+	// The Project tab is one container: Automation owns trust plus the
+	// project-local lifecycle scripts.
 	return []intpickercompat.Entry{
 		{
 			Label:     settingsNodeRootLabelLocale(c.locale(), settingsNavProjectAutomation, settingsGlyphOpen, "trust and project lifecycle scripts in "+filepath.Join(ctx.Path, ".projmux")),
 			Value:     settingsSectionProjectAutomation,
 			SearchKey: "automation trust project hooks lifecycle send-noti config.toml",
 		},
-		settingsRootEntryWithSearchKey(intpickercompat.Entry{
-			Label: c.projectSessionStateSettingsRootLabel(ctx),
-			Value: settingsSectionProjectSessionState,
-		}),
 	}
 }
 
@@ -1131,7 +1125,7 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar, settingsGlyphOpen, settingsColorType, c.projectSidebarSummary()),
 		Value:     settingsProjectsSidebar,
-		SearchKey: "project sidebar closed project startup snapshot topology runtime diagnostics",
+		SearchKey: "project sidebar closed project startup continue recreate topology runtime diagnostics",
 	})
 	return entries
 }
@@ -1171,7 +1165,7 @@ func (c *settingsCommand) runProjectSidebarSection(stdout, stderr io.Writer) err
 			return nil
 		case settingsNoopValue:
 			continue
-		case settingsSessionStateSidebarStartupPickerDetail:
+		case settingsSidebarStartupPickerDetail:
 			if err := c.runSidebarStartupPickerDetail(stdout, stderr); err != nil {
 				return err
 			}
@@ -1195,7 +1189,7 @@ func (c *settingsCommand) projectSidebarEntries() []intpickercompat.Entry {
 		settingsBackEntryLocale(locale),
 		{
 			Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar+".closed-startup", settingsGlyphOpen, settingsColorType, choice+" - "+source),
-			Value:     settingsSessionStateSidebarStartupPickerDetail,
+			Value:     settingsSidebarStartupPickerDetail,
 			SearchKey: "closed project startup continue open fresh sidebar startup picker",
 		},
 		{

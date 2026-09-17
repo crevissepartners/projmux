@@ -1025,13 +1025,14 @@ exec 9>&-
 smoke_contract_pass
 fi
 if smoke_linux_scenario_enabled L05; then
-smoke_contract_begin L05 session-replay tmux-adapter
+smoke_contract_begin L05 registry-continue startup-controller
 
-# Save, destroy, and replay a shell/startup/agent field matrix through a
-# disposable exact tmux server. The Go harness also changes pane-base-index
-# between save and restore to prove replay uses returned %pane_id targets.
-PROJMUX_REAL_TMUX_TEST=1 go test ./internal/integrations/tmux \
-  -run '^TestRealTmuxSessionStateSaveDestroyReplayFieldFidelity$' -count=1
+# The Go harness builds a registered Project's Registry desired state on a
+# disposable exact tmux server, kills that runtime, runs Continue project, and
+# compares the Registry-owned fields (Window/Pane UIDs, names, cwd, order)
+# before and after. The Registry is the only durable Project state.
+PROJMUX_REAL_TMUX_TEST=1 go test ./internal/app \
+  -run '^TestRealTmuxRegistryContinueFieldFidelity$' -count=1
 
 smoke_contract_pass
 fi
@@ -5920,23 +5921,6 @@ echo \$? >"$startup_root/open-continue.rc"
 STARTUP_CONTINUE_SCRIPT
 chmod 0755 "$startup_root/open-continue.sh"
 
-cat >"$startup_root/restore-project.sh" <<STARTUP_RESTORE_SCRIPT
-#!/usr/bin/env bash
-export HOME="$startup_root/home"
-export XDG_CONFIG_HOME="$startup_root/config"
-export XDG_STATE_HOME="$startup_root/state"
-export XDG_RUNTIME_DIR="$startup_root/runtime"
-export PROJMUX_MANAGED_ROOTS="$startup_root/work"
-export TMUX_TMPDIR="$startup_root/tmux"
-export SHELL="$startup_shell"
-export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
-env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
-  $(printf %q "$bin") restore snapshot --session "\$1" --project "\$2" --yes --client "\$3" \
-  >"$startup_root/restore-project.out" 2>"$startup_root/restore-project.err"
-echo \$? >"$startup_root/restore-project.rc"
-STARTUP_RESTORE_SCRIPT
-chmod 0755 "$startup_root/restore-project.sh"
-
 startup_tmux new-session -d -s "$startup_session" -n main -c "$startup_project" sleep 600
 startup_tmux set-option -t "$startup_session" -q @projmux_project_path "$startup_project"
 startup_tmux new-session -d -s "$startup_driver" -c "$startup_root" bash --noprofile --norc
@@ -6280,26 +6264,7 @@ if [[ -z "$startup_explicit_resume_pane_uid" ]] ||
   exit 1
 fi
 
-# Seed a real latest snapshot while the Project session is current. The
-# fail-closed `new` attempt below must retain these exact source bytes.
-startup_create_pmx create snapshot >"$startup_root/create-latest-snapshot.out"
-smoke_assert_file_contains "$startup_root/create-latest-snapshot.out" "saved session snapshot: $startup_session"
-startup_latest_snapshot="$startup_root/state/projmux/sessions/$startup_session.json"
-if [[ ! -s "$startup_latest_snapshot" ]]; then
-  echo "startup e2e did not seed the latest snapshot" >&2
-  exit 1
-fi
-cp "$startup_latest_snapshot" "$startup_root/latest-snapshot.saved.json"
-
-# Mutate desired state after the save. The later projection must replace only
-# this Project subtree with the saved desired state and leave the source bytes
-# untouched.
-startup_create_pmx create window --project "uid:$startup_project_uid" --name after-save >"$startup_root/create-after-save.out"
-startup_windows_after_mutate="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | grep -c .)"
-if [[ "$startup_windows_after_mutate" != "3" ]]; then
-  echo "snapshot projection fixture did not add the post-save Window" >&2
-  exit 1
-fi
+startup_windows_before_refusal="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
 
 # 2. A failed preflight must not move the client. The Project root is taken away,
 # so the plan is refused before the first create and the client stays put.
@@ -6325,50 +6290,32 @@ if [[ "$(startup_tmux display-message -p -c "$startup_client" '#{session_name}')
 fi
 mv "$startup_project-withdrawn" "$startup_project"
 
-# 3. Project the saved snapshot into the exact closed Project. The source
-# snapshot stays byte-identical, the post-save Window disappears, ordinary
-# materialization runs, and the explicit-client switch is the final handoff even
-# though the continuation has no inherited TMUX.
-# Own the detached continuation by its exact invocation PID and require both
-# process termination and its status receipt within the existing bounded
-# startup oracle. This is a semantic boundary: it neither retries the operation
-# nor weakens or stretches the timing guard.
-bash "$startup_root/restore-project.sh" "$startup_session" "uid:$startup_project_uid" "$startup_client" &
-startup_restore_pid=$!
-printf '%s\n' "$startup_restore_pid" >"$startup_root/restore-project.pid"
-startup_restore_terminal() {
-  ! kill -0 "$startup_restore_pid" 2>/dev/null && [[ -s "$startup_root/restore-project.rc" ]]
-}
-startup_wait_for "snapshot Registry projection terminal receipt" startup_restore_terminal
-wait "$startup_restore_pid" || true
-if kill -0 "$startup_restore_pid" 2>/dev/null || [[ ! -s "$startup_root/restore-project.rc" ]]; then
-  echo "snapshot Registry projection did not produce a terminal receipt for pid $startup_restore_pid" >&2
+# 3. Reopen the exact closed Project after the refused attempt. The Registry is
+# the only durable Project state: Continue rebuilds the same Window UIDs, the
+# client handoff is final, and the retained Agent resumes its exact
+# conversation. Seed a second Agent whose provider exits normally; it will be
+# clean A in the Continue eligibility pair below.
+rm -f "$startup_root/open-reopened.rc"
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-project.sh' '$startup_project' reopened" Enter
+startup_wait_for "closed Project reopen after refusal" test -s "$startup_root/open-reopened.rc"
+if [[ "$(tr -d '[:space:]' <"$startup_root/open-reopened.rc")" != "0" ]]; then
+  echo "closed Project reopen after refusal failed" >&2
+  cat "$startup_root/open-reopened.err" >&2 || true
   exit 1
 fi
-if [[ "$(tr -d '[:space:]' <"$startup_root/restore-project.rc")" != "0" ]]; then
-  echo "snapshot Registry projection failed" >&2
-  cat "$startup_root/restore-project.err" >&2 || true
+startup_wait_for "reopen client handoff" startup_client_is_on "$startup_session"
+if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)" != "$startup_windows_before_refusal" ]]; then
+  echo "closed Project reopen changed the Registry Window set" >&2
   exit 1
 fi
-cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
-startup_wait_for "projection client handoff" startup_client_is_on "$startup_session"
-if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | grep -c .)" != "2" ]]; then
-  echo "snapshot projection did not remove the post-save Window" >&2
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-reopen.json"
+if ! grep -Fq '"phase": "Running"' "$startup_root/agent-after-reopen.json" ||
+  ! grep -Fq 'startup-thread' "$startup_root/agent-after-reopen.json"; then
+  echo "closed Project reopen lost the retained Agent conversation" >&2
   exit 1
 fi
-
-# Snapshot restore remains explicit replay authority: the Agent recipe resumes
-# the exact conversation. Seed a second Agent whose provider exits normally; it
-# will be clean
-# A in the Continue eligibility pair below.
-startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-snapshot-restore.json"
-if ! grep -Fq '"phase": "Running"' "$startup_root/agent-after-snapshot-restore.json" ||
-  ! grep -Fq 'startup-thread' "$startup_root/agent-after-snapshot-restore.json"; then
-  echo "explicit snapshot restore lost its Agent replay authority" >&2
-  exit 1
-fi
-startup_wait_for "snapshot restore exact Agent resume argv" sh -c \
-  "test \"\$(grep -c 'resume startup-thread' '$startup_agent_argv')\" -ge 2"
+startup_wait_for "reopen exact Agent resume argv" sh -c \
+  "test \"\$(grep -c 'resume startup-thread' '$startup_agent_argv')\" -ge 3"
 
 startup_create_anchor_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_owner_kind}' | awk -F '|' '$2 == "Window" { print $1; exit }')"
 startup_clean_exit="$startup_root/clean-a.exit"
@@ -6484,7 +6431,7 @@ if [[ "$startup_clean_launches_before_continue" != "1" ]]; then
 fi
 rm -f "$startup_root/open-continue.rc"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
-startup_wait_for "Continue project after projection" test -s "$startup_root/open-continue.rc"
+startup_wait_for "Continue project after reopen" test -s "$startup_root/open-continue.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" != "0" ]]; then
   cat "$startup_root/open-continue.err" >&2 || true
   exit 1
@@ -6539,8 +6486,7 @@ fi
 startup_pmx diagnostics log --component topology --tail 1000 --json >"$startup_root/repeated-continue-journal.jsonl"
 cmp "$startup_root/retained-continue-journal.jsonl" "$startup_root/repeated-continue-journal.jsonl"
 
-echo ">> startup Continue eligibility clean-agent=$startup_clean_agent_uid clean-pane=$startup_clean_pane_uid clean-launches=0 interrupted-agent=$startup_agent_uid interrupted-pane=$startup_retained_agent_pane_uid interrupted-launches=1 repeat-duplicates=0 external-hup-launches=1 snapshot=preserved explicit-resume=preserved"
-cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
+echo ">> startup Continue eligibility clean-agent=$startup_clean_agent_uid clean-pane=$startup_clean_pane_uid clean-launches=0 interrupted-agent=$startup_agent_uid interrupted-pane=$startup_retained_agent_pane_uid interrupted-launches=1 repeat-duplicates=0 external-hup-launches=1 explicit-resume=preserved"
 
 # Nine long Korean names must never crowd counts or the diagnostics command
 # out of the actual startup result. The fixture adds no provider process.
@@ -6612,12 +6558,10 @@ if [[ "$startup_zero_window_continue_project_uid" != "$startup_project_uid" ]] |
   echo "zero-Window Continue did not preserve Project identity while minting canonical descendants" >&2
   exit 1
 fi
-cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 
 # 6. Fresh from the retained one-Window state runs from a detached continuation
 # with explicit client authority. It must atomically replace the complete uid
-# chain, leave exactly one same-root claimant, and preserve the filesystem root
-# and snapshot source bytes.
+# chain, leave exactly one same-root claimant, and preserve the filesystem root.
 startup_project_uid_before_fresh="$startup_project_uid"
 startup_primary_window_before="$startup_zero_window_continue_window_uid"
 startup_primary_pane_before="$startup_zero_window_continue_pane_uid"
@@ -6662,7 +6606,6 @@ if [[ "$startup_runtime_project_uid" != "$startup_project_uid_after" ]] ||
   echo "Recreate Project runtime identity does not match the new canonical Registry shell: project=$startup_runtime_project_uid/$startup_project_uid_after window=$startup_runtime_window_uid/$startup_primary_window_after pane=$startup_runtime_pane_uid/$startup_primary_pane_after" >&2
   exit 1
 fi
-cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 if [[ -s "$startup_agent_argv" ]]; then
   echo "Recreate Project launched a removed Agent" >&2
   cat "$startup_agent_argv" >&2 || true
@@ -6821,7 +6764,6 @@ if [[ -z "$startup_repeat_fresh_project_uid" ]] || [[ "$(printf '%s\n' "$startup
   echo "repeat Recreate Project did not replace the zero-Window Project with one new canonical UID chain" >&2
   exit 1
 fi
-cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 
 # 9. Mode SELECTION on the ARRIVAL side of the re-exec boundary. Steps 1-8 all
 # pass `--mode` explicitly, so they prove each mode's EXECUTION and say nothing

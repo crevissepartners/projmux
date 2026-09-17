@@ -201,7 +201,7 @@ the item: only an exact UID-bound live Window name or Pane title sets
 `observed: true`; Project and Agent context, Registry fallbacks, and unmatched
 runtime objects remain unobserved. This is a read projection, not stored
 resource state or selector authority. It does not change `-o metadata`, the
-Registry or snapshot schema, singular `describe ... -o json`, or `get pane -o
+Registry schema, singular `describe ... -o json`, or `get pane -o
 json`; an empty plural result remains one List document with `"items": []`.
 
 ### Reference scope: the active Project namespace
@@ -596,7 +596,7 @@ with its live `$N/@N` in the same commit. A non-last Pane is removed while its d
 Agent is retained Offline with its conversation identity. For a last Pane, that evidence is retained until a
 matching `window-unlinked` hook removes the Window; a final Project Window also
 removes its Window descendants while retaining the exact Project uid, root,
-reservation, pins, snapshots, and external assets as a valid zero-Window
+reservation, pins, and external assets as a valid zero-Window
 Project. Managed runtime Stop is different: it stops only the exact runtime and
 keeps the complete desired Project/Window/Pane graph closed for a same-UID
 Continue. Shell and Claude/Codex clean exit have the same result; `/exit`, pane
@@ -774,7 +774,7 @@ A retained graph keeps descendant UIDs; a
 zero-Window Project atomically receives a new canonical Window/shell UID chain.
 A root that is not a registered Project cannot be continued: Continue is an
 explicit zero-write refusal that points to `Recreate Project`, with no Fresh
-fallback and no snapshot read. `Recreate Project` is the one startup row that replaces identity, and it asks
+fallback. `Recreate Project` is the one startup row that replaces identity, and it asks
 before it does. Choosing it opens a confirmation naming the exact old Project
 UID and its Window/Pane/Agent counts; declining returns to the startup rows
 with zero Registry writes, and an unreadable confirmation declines rather than
@@ -782,7 +782,7 @@ proceeds. An unregistered root has no identity to replace and is not asked.
 Confirmed, it atomically replaces the same-root graph with a new Project UID
 and new canonical Window/shell UIDs, then hands off only after ordinary
 materialization. A repeat replaces identity again. The root, git/worktrees,
-trust decision, unrelated roots, and snapshot bytes remain unchanged.
+trust decision, and unrelated roots remain unchanged.
 
 Materialization launches or resumes declared Agents through the canonical
 provider/trust path and creates their managed Agent-owned Panes. An individual
@@ -1108,7 +1108,7 @@ shows every key arriving, skip terminal remediation.
 ## doctor
 
 ```
-projmux doctor [--json] [--section deps|runtime|integrations|session-state|logs] [--verbose]
+projmux doctor [--json] [--section deps|runtime|integrations|logs] [--verbose]
 ```
 
 Runs read-only diagnostics, including a dependency check for `tmux ≥ 3.4`,
@@ -1116,23 +1116,13 @@ Runs read-only diagnostics, including a dependency check for `tmux ≥ 3.4`,
 for Codex hooks, Claude Code hooks, Antigravity hooks, and the tmux bell
 fallback. AI notify integration statuses are `installed`, `missing`, or
 `conflict`; missing or conflicting integrations are informational and do not
-make doctor fail. It also reports read-only Session State resume metadata
-diagnostics for saved agent panes, including `available`, `stale`, or
-`unavailable` status plus confidence, source, updated-at, and the affected
-snapshot/window/pane.
-
-Session State preview and doctor report the resume source captured on the pane.
-Live `hook`/`session-id` metadata is high confidence; DB-validated Antigravity
-`antigravity-last-conversation` and `antigravity-conversation-metadata` picker
-sources are medium confidence; legacy `antigravity-history` is low confidence.
-Disk discovery never lowers or overwrites an already captured live source.
+make doctor fail.
 
 The default text report shows per-section summaries plus failing or warning
 items. `--verbose` adds successful checks and complete typed detail, including
 versions, paths, confidence/source metadata, and displayed remediation.
 `--section` projects the same inventory used by text and JSON: `deps` selects
-dependencies, `integrations` selects AI notify integrations, and
-`session-state` selects resume metadata plus retention guidance. `runtime`
+dependencies, and `integrations` selects AI notify integrations. `runtime`
 selects the fixed `tmux` backend, an actual one-second read-only probe of the
 app socket, generated-versus-live config digest state, and a
 `projmux_process_vintage` census of this executable's live children by role and
@@ -1156,8 +1146,7 @@ bits are authoritative on both, so a readable path always resolves to a
 private or insecure classification. Doctor never changes permissions.
 
 JSON reports have integer `schema_version: 2`. An unfiltered report retains the
-existing typed `dependencies`, `ai_notify_integrations`,
-`session_state_resume`, and `session_state_prune` detail and adds ordered
+existing typed `dependencies` and `ai_notify_integrations` detail and adds ordered
 `runtime` and `logs` finding arrays. Every finding has closed `severity`,
 stable `code`, and closed `remediation`; bounded aggregates may add `count`
 and `safe_codes`. A filtered report contains only the selected typed field(s).
@@ -1180,8 +1169,9 @@ diagnose terminal key delivery; use `projmux setup` for that.
 
 JSON migration: consumers must switch on `schema_version` before decoding.
 Version 2 changes the previously empty/reserved `runtime` and `logs` arrays to
-the typed finding shape above; field meanings inside the version 1 dependency,
-integration, and Session State inventories are unchanged. Consumers that only
+the typed finding shape above; field meanings inside the version 1 dependency
+and integration inventories are unchanged. The former `session_state_resume`
+and `session_state_prune` fields are no longer emitted. Consumers that only
 understand version 1 must reject version 2 rather than decoding the new arrays
 as the old empty placeholder shape.
 
@@ -1305,7 +1295,7 @@ before anything is materialized.
 declares exactly one runtime outcome, and reporting `runtime=stopped` for a
 session that was never running would be false. `unregister project` is the
 inverse -- it removes the Registry graph and deliberately leaves the running
-session, the root, Git/worktrees, and snapshots exactly as they were.
+session, the root, and Git/worktrees exactly as they were.
 
 `delete project` is a deprecated alias of `unregister project`. It keeps its
 exact behavior and its exact stdout; it adds one deprecation line on stderr and
@@ -1508,7 +1498,7 @@ Defensive ambiguous attribution stays in its stable internal bucket, is
 included in Attributed totals, and appears only as a bounded CPU/RSS/pane
 diagnostic rather than a project row. Warming, partial, unavailable, unknown,
 and overage states also remain explicit. No process
-command list, mutation, history, graph, daemon, persistence, or Session State
+command list, mutation, history, graph, daemon, or persistence
 telemetry is created. Linux/tmux provides attribution; unsupported platforms
 show an unavailable reason rather than zero metrics.
 
@@ -1742,7 +1732,7 @@ other case reports review as unavailable without changing the Agent. This route
 projects only the initial response into interaction status. It does not claim
 the later notification-driven completion lifecycle.
 
-Live Antigravity hook/session-state resume metadata remains a separate,
+Live Antigravity hook resume metadata remains a separate,
 high-confidence lane; it is not enumerated from disk by the picker. Within the
 picker's disk discovery, source order is the workspace-to-latest-UUID mapping
 in `cache/last_conversations.json`, workspace-bearing summarized rows in
@@ -1874,12 +1864,11 @@ unknown reasons remain info completions with diagnostic metadata rather than
 being promoted to critical. Official camelCase fields retained by the parser
 also include `artifactDirectoryPath`, `modelName`, `invocationNum`,
 `initialNumSteps`, `toolCall`, `stepIdx`, `executionNum`, and `fullyIdle`.
-Antigravity notify metadata uses `agent=antigravity`. Phase 3 session-state
-restore is included: Antigravity ingest stores `conversationId` as pane thread
-metadata for matching and as session-state resume metadata. Restore uses
-`agy --conversation <uuid>` when that id is present and UUID-shaped; otherwise
-session-state preview/doctor render `resume unavailable`. projmux records no
-Antigravity usage, context, or quota. Transcript contents are not read.
+Antigravity notify metadata uses `agent=antigravity`. Antigravity ingest stores
+`conversationId` as pane thread metadata for matching and as Agent resume
+metadata. Resume uses `agy --conversation <uuid>` when that id is present and
+UUID-shaped and is refused otherwise. projmux records no Antigravity usage,
+context, or quota. Transcript contents are not read.
 
 The canonical `internal agent-hook ingest bell --pane <pane_id>` route is the
 narrow tmux-bell fallback ingest path.
@@ -2223,7 +2212,7 @@ The live tmux inventory is under `runtime`: `runtime sessions`, `runtime
 attach`, `runtime stop`, `runtime tag`, and `runtime prune`. Project pins use
 `pin project list|add|remove|toggle|clear|migrate`; `list` takes `--kind
 project|candidate` and `migrate` takes `--dry-run`. Resource retention uses `prune
-project|snapshot`, while explicit snapshot deletion uses `delete snapshot`.
+agent|project`.
 
 Popup-marker, preview, status, and tmux configuration plumbing is hidden under
 `internal session-popup`, `internal preview`, `internal status`, `internal
@@ -2241,17 +2230,17 @@ human configuration work should prefer `config render` and `config apply`.
   and `Recreate Project`; Esc returns to Projects without writing config. Saved `on`
   keeps that picker, while saved `off` skips it and preserves the existing
   automatic registered-Continue/unregistered-Fresh decision. `Continue
-  project` restores a deleted Project only from its usable exact snapshot and
-  otherwise refuses with zero Registry writes. `Recreate Project` confirms the
+  project` on a root that is not a registered Project, including a deleted one,
+  refuses with zero Registry writes and points to `Recreate Project`. `Recreate Project` confirms the
   exact old Project UID and its counts, then atomically replaces the Project
   with a new Project/Window/shell UID chain and one same-root claimant. A
   declined confirmation returns to the startup rows and writes nothing.
-  Repeating it allocates another new identity. Neither action modifies snapshot
-  bytes, the project directory, git/worktrees, unrelated roots, or trust state.
+  Repeating it allocates another new identity. Neither action modifies the
+  project directory, git/worktrees, unrelated roots, or trust state.
 - `quit` — open an action picker with `Quit projmux` and `Cancel`. `Quit
   projmux` runs the physical-socket, app-marker, and logical-route guarded
   shutdown; missing servers and runtimes without the app marker are no-ops.
-  Quit never captures, reads, or writes snapshots. Non-interactive `--yes` and
+  Quit never saves Project state. Non-interactive `--yes` and
   `--force` callers use the same shutdown route without the picker; the
   default command always uses the action picker.
 - `attach project <ref>` — enter a Project runtime from outside tmux.

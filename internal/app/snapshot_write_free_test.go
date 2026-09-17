@@ -13,20 +13,20 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
-// snapshotWriteFreeHomes is one isolated HOME/XDG layout whose sessions
-// directory already holds a valid snapshot, so any later write, rewrite, or
-// removal under it is observable.
+// snapshotWriteFreeHomes is one isolated HOME/XDG layout whose legacy
+// sessions directory already holds a snapshot file written by an older
+// release, so any later read-triggered rewrite or removal under it is
+// observable. projmux no longer knows this directory; the tests name it by its
+// literal historical path.
 type snapshotWriteFreeHomes struct {
 	root        string
 	home        string
@@ -56,28 +56,51 @@ func newSnapshotWriteFreeHomes(t *testing.T, session, snapshotRoot string) snaps
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
 
-	store, err := sessionstate.NewDefaultStoreFromEnv()
+	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(homes.stateHome, "projmux", "sessions"); store.Dir != want {
-		t.Fatalf("sessions dir = %q, want isolated %q", store.Dir, want)
+	homes.sessionsDir = filepath.Join(paths.StateDir, "sessions")
+	if want := filepath.Join(homes.stateHome, "projmux", "sessions"); homes.sessionsDir != want {
+		t.Fatalf("sessions dir = %q, want isolated %q", homes.sessionsDir, want)
 	}
-	homes.sessionsDir = store.Dir
-	snap := sessionstate.Snapshot{
-		Version: sessionstate.Version, Session: session, Source: sessionstate.SourceAutosave,
-		DefaultCWD: snapshotRoot, SavedAt: time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC),
-		Windows: []sessionstate.Window{{Index: 0, Name: "main", ActivePaneIndex: 0,
-			Panes: []sessionstate.Pane{{Index: 0, CWD: snapshotRoot, Recipe: sessionstate.ShellRecipe()}},
-		}},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatalf("seed snapshot: %v", err)
-	}
-	if _, err := store.LoadReadOnly(session); err != nil {
-		t.Fatalf("seeded snapshot is not usable: %v", err)
-	}
+	writeLegacyProjectSnapshotFile(t, homes.sessionsDir, session, snapshotRoot)
 	return homes
+}
+
+// writeLegacyProjectSnapshotFile writes one snapshot file in the shape older
+// releases saved under `${XDG_STATE_HOME}/projmux/sessions`, and returns its
+// path. Current projmux must neither read nor write it.
+func writeLegacyProjectSnapshotFile(t *testing.T, sessionsDir, session, root string) string {
+	t.Helper()
+	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"version":1,"session":%q,"source":"autosave","default_cwd":%q,"saved_at":"2026-08-23T10:00:00Z","windows":[{"index":0,"name":"main","active_pane_index":0,"panes":[{"index":0,"cwd":%q,"recipe":{"kind":"shell"}}]}]}`+"\n", session, root, root)
+	path := filepath.Join(sessionsDir, session+".json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed legacy snapshot: %v", err)
+	}
+	return path
+}
+
+// writeLegacyAutosaveSettings turns every retired autosave switch on in the
+// files older releases read, so a test can prove nothing reacts to them.
+func writeLegacyAutosaveSettings(t *testing.T, configDir, session string) {
+	t.Helper()
+	for rel, body := range map[string]string{
+		"sessionstate-autosave":                                     "on\n",
+		"sessionstate-autosave-interval":                            "1s\n",
+		filepath.Join("sessionstate-projects", session, "autosave"): "on\n",
+	} {
+		path := filepath.Join(configDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // treeFingerprint lists every entry below root with its kind, mode, size,
@@ -126,17 +149,13 @@ func assertTreeUnchanged(t *testing.T, label string, before, after []string) {
 // store, nor the diagnostics log, and exits 0 for every historical flag form.
 func TestAutosaveSessionStateRouteIsWriteFreeNoOp(t *testing.T) {
 	homes := newSnapshotWriteFreeHomes(t, "workspace", "/srv/workspace")
-	t.Setenv(sessionStateAutosaveEnv, "on")
+	t.Setenv("PROJMUX_SESSIONSTATE_AUTOSAVE", "on")
 	t.Setenv("PROJMUX_SESSIONSTATE_DEBUG", "1")
-	saveGlobalAutosaveForTest(t, homes.home, config.SessionStateToggleOn)
-	saveProjectAutosaveForTest(t, homes.home, "workspace", config.SessionStateProjectOn)
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := config.SaveSessionStateDurationFile(paths.SessionStateAutosaveIntervalFile(), time.Second); err != nil {
-		t.Fatal(err)
-	}
+	writeLegacyAutosaveSettings(t, paths.ConfigDir, "workspace")
 	before := treeFingerprint(t, homes.root)
 	sessionsBefore := treeFingerprint(t, homes.sessionsDir)
 
@@ -275,9 +294,9 @@ func TestQuitNeverWritesProjectSnapshots(t *testing.T) {
 }
 
 // TestContinueProjectUnregisteredRootRefusesWithoutReadingSnapshots uses the
-// real Registry file and the real default snapshot directory. A valid,
-// same-session, same-root snapshot is present, and Continue still refuses:
-// snapshot files are not startup evidence.
+// real Registry file and the legacy snapshot directory older releases wrote. A
+// same-session, same-root snapshot file is present, and Continue still refuses:
+// projmux no longer reads snapshot files at all.
 func TestContinueProjectUnregisteredRootRefusesWithoutReadingSnapshots(t *testing.T) {
 	workRoot := t.TempDir()
 	continued := filepath.Join(workRoot, "continued")
@@ -352,10 +371,5 @@ func TestContinueProjectUnregisteredRootRefusesWithoutReadingSnapshots(t *testin
 	assertTreeUnchanged(t, "state home", stateBefore, treeFingerprint(t, homes.stateHome))
 	if calls := starter.runner.(*recordingTmuxRunner).calls; len(calls) != 0 {
 		t.Fatalf("refused Continue reached tmux: %#v", calls)
-	}
-	// The snapshot is still valid afterwards: the refusal was not caused by an
-	// unreadable file.
-	if _, err := sessionstate.NewStore(homes.sessionsDir).LoadReadOnly("continued"); err != nil {
-		t.Fatalf("seeded snapshot no longer loads: %v", err)
 	}
 }

@@ -68,18 +68,6 @@ type registryTopologyAgentPlan struct {
 	paneName string
 }
 
-// topologyAgentReplayAuthority names why a stored Agent is being considered
-// for automatic materialization. Ordinary Project Continue and explicit
-// reconcile resume retained conversations after unplanned stops. Snapshot restore
-// is an explicit, separate replay authority and keeps the pre-existing snapshot
-// recipe behavior.
-type topologyAgentReplayAuthority uint8
-
-const (
-	topologyAgentReplayInterrupted topologyAgentReplayAuthority = iota
-	topologyAgentReplaySnapshot
-)
-
 // decideTopologyAgentContinueEligibility admits only a current managed activation
 // after an unplanned stop. Runtime liveness and foreign UID claims are checked
 // separately by the topology observer and owner guard, including under the lock.
@@ -217,9 +205,8 @@ type topologyAgentResumeDecision struct {
 // decision.
 //
 // Every branch that cannot produce a conversation id answers with a reason so
-// the caller's replay authority can apply its own fail-closed rule. An eligible
-// Continue Agent must resume a recorded conversation exactly. Explicit snapshot
-// restore retains its older recipe fallback.
+// the caller can refuse with it. An eligible Continue Agent must resume a
+// recorded conversation exactly.
 func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDecision {
 	declared := strings.TrimSpace(agent.Spec.Provider)
 	ref := agent.Status.SessionRef
@@ -248,8 +235,7 @@ func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDeci
 	}
 	// spec.provider is cross-checked only when the Agent declares one, matching
 	// `agent resume`. A mismatch is never resolved by guessing which side is
-	// right: ordinary Continue refuses it, while explicit snapshot restore may
-	// retain the recipe's declared-provider fallback.
+	// right: Continue refuses it.
 	if declared != "" && declared != provider {
 		return topologyAgentResumeDecision{
 			provider: declared,
@@ -275,7 +261,6 @@ func planTopologyWindowAgents(
 	live []observedTopologyPane,
 	launcher topologyAgentLauncher,
 	anchorPaneUID string,
-	authority topologyAgentReplayAuthority,
 ) []registryTopologyAgentPlan {
 	liveUIDs := map[string]bool{}
 	for _, pane := range live {
@@ -303,17 +288,15 @@ func planTopologyWindowAgents(
 		if materialized {
 			continue
 		}
-		if authority != topologyAgentReplaySnapshot {
-			if eligible, code, reason := decideTopologyAgentContinueEligibility(registry, agent); !eligible {
-				plan.noteAgent(label, code, reason)
-				continue
-			}
+		if eligible, code, reason := decideTopologyAgentContinueEligibility(registry, agent); !eligible {
+			plan.noteAgent(label, code, reason)
+			continue
 		}
 		if !coremetadata.CanTransitionAgent(agent.Status.Phase, coremetadata.PhaseRunning) {
 			plan.noteAgent(label, diagnostics.TopologyAgentPhaseIneligible, "phase "+string(agent.Status.Phase)+" cannot move to Running")
 			continue
 		}
-		work, ok := planTopologyAgentReplay(plan, project, agent, label, launcher, authority)
+		work, ok := planTopologyAgentReplay(plan, project, agent, label, launcher)
 		if !ok {
 			continue
 		}
@@ -348,34 +331,31 @@ func planTopologyAgentReplay(
 	agent coremetadata.Agent,
 	label string,
 	launcher topologyAgentLauncher,
-	authority topologyAgentReplayAuthority,
 ) (registryTopologyAgentPlan, bool) {
 	if launcher == nil {
 		plan.noteAgent(label, diagnostics.TopologyAgentProviderUnavailable, "the Agent provider launcher is not configured on this route")
 		return registryTopologyAgentPlan{}, false
 	}
 	decision := decideTopologyAgentResume(agent)
-	if authority != topologyAgentReplaySnapshot {
-		if decision.conversationID == "" {
-			plan.noteAgent(label, decision.code, "no exact conversation can be resumed: "+decision.reason)
-			return registryTopologyAgentPlan{}, false
-		}
-		// ConversationID selects the populated union member, so check that the
-		// member really belongs to the discriminator before passing it onward.
-		ref := agent.Status.SessionRef
-		validRef := false
-		switch decision.provider {
-		case "claude":
-			validRef = ref.Claude != nil && ref.Codex == nil && ref.Antigravity == nil
-		case "codex":
-			validRef = ref.Codex != nil && ref.Claude == nil && ref.Antigravity == nil
-		case "antigravity":
-			validRef = ref.Antigravity != nil && ref.Claude == nil && ref.Codex == nil
-		}
-		if !validRef {
-			plan.noteAgent(label, diagnostics.TopologyAgentSessionRefInvalid, "the recorded session ref has an unsupported provider or mismatched provider member")
-			return registryTopologyAgentPlan{}, false
-		}
+	if decision.conversationID == "" {
+		plan.noteAgent(label, decision.code, "no exact conversation can be resumed: "+decision.reason)
+		return registryTopologyAgentPlan{}, false
+	}
+	// ConversationID selects the populated union member, so check that the
+	// member really belongs to the discriminator before passing it onward.
+	ref := agent.Status.SessionRef
+	validRef := false
+	switch decision.provider {
+	case "claude":
+		validRef = ref.Claude != nil && ref.Codex == nil && ref.Antigravity == nil
+	case "codex":
+		validRef = ref.Codex != nil && ref.Claude == nil && ref.Antigravity == nil
+	case "antigravity":
+		validRef = ref.Antigravity != nil && ref.Claude == nil && ref.Codex == nil
+	}
+	if !validRef {
+		plan.noteAgent(label, diagnostics.TopologyAgentSessionRefInvalid, "the recorded session ref has an unsupported provider or mismatched provider member")
+		return registryTopologyAgentPlan{}, false
 	}
 	if decision.provider == "" {
 		plan.noteAgent(label, diagnostics.TopologyAgentProviderUnavailable, "neither the Agent nor its session ref names a provider")
@@ -397,32 +377,13 @@ func planTopologyAgentReplay(
 	workspace.CWD = cwd
 
 	work := registryTopologyAgentPlan{agent: agent, provider: decision.provider, cwd: cwd}
-	if decision.conversationID != "" {
-		title, argv, err := launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID)
-		if err == nil {
-			work.conversationID, work.title, work.argv = decision.conversationID, title, argv
-			return work, true
-		}
-		if authority != topologyAgentReplaySnapshot {
-			plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
-				decision.provider, decision.conversationID, err))
-			return registryTopologyAgentPlan{}, false
-		}
-		// Explicit snapshot restore retains the prior recipe fallback: the Agent
-		// still comes back on a new conversation and the operator is told why.
-		// Ordinary Continue returned above instead of degrading the recorded
-		// conversation.
-		decision.reason = fmt.Sprintf("the %s provider could not build a resume launch for conversation %s: %v",
-			decision.provider, decision.conversationID, err)
-	}
-	title, argv, err := launcher.PlanAgentLaunch(decision.provider, workspace, nil)
+	title, argv, err := launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID)
 	if err != nil {
-		plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("%s, and no fresh %s launch could be built either: %v",
-			decision.reason, decision.provider, err))
+		plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
+			decision.provider, decision.conversationID, err))
 		return registryTopologyAgentPlan{}, false
 	}
-	work.title, work.argv = title, argv
-	plan.noteNewConversation(label, decision.reason)
+	work.conversationID, work.title, work.argv = decision.conversationID, title, argv
 	return work, true
 }
 

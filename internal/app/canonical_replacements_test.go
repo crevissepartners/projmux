@@ -37,7 +37,6 @@ func TestCanonicalReplacementRoutesForwardRawArgvStreamsAndErrors(t *testing.T) 
 		{"config edit set", []string{"edit", "--set", "codex"}, []string{"settings", "--set", "codex"}, func(p *parityForwardProbe) rawArgvCommand { return &configCommand{ai: p} }},
 		{"config edit unknown flag", []string{"edit", "--unknown", "안녕"}, []string{"settings", "--unknown", "안녕"}, func(p *parityForwardProbe) rawArgvCommand { return &configCommand{ai: p} }},
 		{"create notification", []string{"notification", "--text", "hello", "--bogus"}, []string{"push", "--text", "hello", "--bogus"}, func(p *parityForwardProbe) rawArgvCommand { return &createCommand{notify: p} }},
-		{"create snapshot", []string{"snapshot", "--", "payload"}, []string{"save", "--", "payload"}, func(p *parityForwardProbe) rawArgvCommand { return &createCommand{snapshots: p} }},
 		{"notification ack", []string{"ack", "--all", "--bogus"}, []string{"ack", "--all", "--bogus"}, func(p *parityForwardProbe) rawArgvCommand { return &notificationCommand{notify: p} }},
 		{"notification reconcile", []string{"reconcile", "--json", "--", "tail"}, []string{"reconcile", "--json", "--", "tail"}, func(p *parityForwardProbe) rawArgvCommand { return &notificationCommand{notify: p} }},
 		{"diagnostics agent-hook", []string{"agent-hook", "--tail", "7", "--json"}, []string{"ingest", "log", "--tail", "7", "--json"}, func(p *parityForwardProbe) rawArgvCommand { return &diagnosticsCommand{ai: p} }},
@@ -70,7 +69,6 @@ func TestCanonicalReplacementGraphSharesExistingHandlerInstances(t *testing.T) {
 	for name, pair := range map[string][2]rawArgvCommand{
 		"config edit":            {application.config.ai, application.ai},
 		"create notification":    {application.create.notify, application.notify},
-		"create snapshot":        {application.create.snapshots, application.sessionState},
 		"notification ack":       {application.notification.notify, application.notify},
 		"notification reconcile": {application.notification.notify, application.notify},
 		"diagnostics agent-hook": {application.diagnostics.ai, application.ai},

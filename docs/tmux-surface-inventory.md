@@ -10,7 +10,6 @@ Primary production sources:
 
 - `internal/integrations/mux/`
 - `internal/integrations/tmux/`
-- `internal/integrations/sessionstate/`
 - `internal/app/`
 - generated config from `projmux config render standalone`,
   `projmux config render app`, and `projmux shell`
@@ -79,7 +78,7 @@ focus resolution, preview, and recent-window inventory.
 
 The typed `internal/integrations/tmux.Client` owns higher-level operations
 such as ensure/open/kill sessions, recent session summaries, preview inventory,
-resource inventory, and session-state capture/replay.
+and resource inventory.
 
 ## Generated Configuration Surface
 
@@ -87,7 +86,7 @@ The standalone and app configs own:
 
 - app/runtime marker options such as `@projmux_app`;
 - status rows, ranges, palette options, mouse dispatch, and popup bindings;
-- AI, attention, notify, recent-window, session-state, and resource hooks;
+- AI, attention, notify, recent-window, and resource hooks;
 - project-root and live-resource options;
 - reload/apply behavior for default and named sockets.
 
@@ -102,11 +101,11 @@ integration or e2e coverage when live tmux behavior changes.
 | Identity | `display-message -p`, `list-clients -F` | focus, switch, hooks |
 | Pane/window inventory | `list-panes -a -F`, `list-windows -F` | preview, notify, attention, recent windows |
 | Session lifecycle | `has-session`, `new-session`, `attach-session`, `switch-client`, `kill-session` | attach, switch, sessions |
-| Split/window creation | `split-window`, `new-window` | AI split, shell, session restore |
+| Split/window creation | `split-window`, `new-window` | AI split, shell, Project materialization |
 | Metadata | `set-option -p`, `show-options`, `display-message` | AI state, labels, app ownership |
 | Hooks | `set-hook`, `show-hooks`, `run-shell -b` | notify, attention, recent windows |
 | Interactive UI | `display-popup`, `capture-pane`, `resize-pane` | popup surfaces, title watch, layout |
-| State replay | `rename-window`, `select-layout`, `select-pane`, `send-keys` | session state |
+| Topology materialization | `rename-window`, `select-layout`, `select-pane`, `send-keys` | Project Continue and Registry reconcile |
 | Config | `source-file`, global/session options | install, apply, shell |
 | Resource inventory | `list-panes -a -F` with PID/TTY/project fields | Linux resource attribution |
 

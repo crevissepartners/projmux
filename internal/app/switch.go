@@ -100,10 +100,9 @@ type switchPreviewStore interface {
 }
 
 type switchCommand struct {
-	diagnostics             *diagnostics.LifecycleRecorder
-	sessionStateDiagnostics *diagnostics.SessionStateRecorder
-	discover                candidateDiscoverer
-	pinStore                switchPinStoreFactory
+	diagnostics *diagnostics.LifecycleRecorder
+	discover    candidateDiscoverer
+	pinStore    switchPinStoreFactory
 	// pinProjects reads the Registry Project identities a pin resolution matches
 	// against. It is a seam so a fixture can declare a Registry without a file.
 	pinProjects          func() ([]pins.ProjectRef, error)

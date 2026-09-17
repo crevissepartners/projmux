@@ -79,12 +79,7 @@ func planRegistryTopology(
 	sessions []observedResourceProjectSession,
 	exactTarget tmuxTransport,
 	launcher topologyAgentLauncher,
-	agentReplayAuthorities ...topologyAgentReplayAuthority,
 ) (*registryTopologyPlan, error) {
-	agentReplayAuthority := topologyAgentReplayInterrupted
-	if len(agentReplayAuthorities) != 0 {
-		agentReplayAuthority = agentReplayAuthorities[0]
-	}
 	if strings.TrimSpace(projectRef) == "" {
 		return nil, nil
 	}
@@ -250,7 +245,7 @@ func planRegistryTopology(
 				work.panes = append(work.panes, registryTopologyPanePlan{pane: pane, create: true})
 				plan.addItem((wi+1)*1000+pi, coremetadata.KindPane, window.Metadata.Name+"/"+pane.Metadata.Name, pane.Metadata.UID, "materialize")
 			}
-			work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher, work.anchor.Metadata.UID, agentReplayAuthority)
+			work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher, work.anchor.Metadata.UID)
 			if work.anchor.Spec.Role == coremetadata.PaneRoleAgent && !slices.ContainsFunc(work.agents, func(agent registryTopologyAgentPlan) bool {
 				return agent.reusePaneUID == work.anchor.Metadata.UID
 			}) {
@@ -327,7 +322,7 @@ func planRegistryTopology(
 			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
 				"stored anchor Pane has no exact live binding; refusing alternate live Pane inference")
 		}
-		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher, work.anchor.Metadata.UID, agentReplayAuthority)
+		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher, work.anchor.Metadata.UID)
 		plan.windows = append(plan.windows, work)
 	}
 	return plan, nil
@@ -426,13 +421,6 @@ func (p *registryTopologyPlan) noteAgent(label string, code diagnostics.Topology
 	}
 	p.agentSkips[code]++
 	p.notices = append(p.notices, fmt.Sprintf("projmux: agent/%s was not restored: %s", label, reason))
-}
-
-// noteNewConversation records that one stored Agent comes back on a *new*
-// provider conversation rather than the one it recorded.
-func (p *registryTopologyPlan) noteNewConversation(label, reason string) {
-	p.notices = append(p.notices,
-		fmt.Sprintf("projmux: agent/%s starts a new conversation instead of resuming: %s", label, reason))
 }
 
 // writeNotices discloses the Agent decisions of one plan. A write failure is
@@ -590,9 +578,6 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 	started := time.Now()
 	recorder := r.diagnostics.Topology()
 	defer func() {
-		if planner.agentReplayAuthority == topologyAgentReplaySnapshot {
-			return
-		}
 		result := diagnostics.LifecycleSuccess
 		if runErr != nil {
 			result = diagnostics.LifecycleError
@@ -809,10 +794,8 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	}
 	route, err := bindExplicitMaterializeSocket(ctx, c.runner, target, c.lookupEnv)
 	if err != nil {
-		if planner.agentReplayAuthority != topologyAgentReplaySnapshot {
-			c.diagnostics.Topology().Record(time.Now(), diagnostics.LifecycleError, diagnostics.TopologyCounts{})
-			reportTopologyRecovery(stderr, diagnostics.LifecycleError, diagnostics.TopologyCounts{})
-		}
+		c.diagnostics.Topology().Record(time.Now(), diagnostics.LifecycleError, diagnostics.TopologyCounts{})
+		reportTopologyRecovery(stderr, diagnostics.LifecycleError, diagnostics.TopologyCounts{})
 		return err
 	}
 	run := topologyMaterializeRun{
@@ -836,9 +819,7 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	if runErr != nil {
 		remaining, replanErr := c.replanAfterFailure(ctx, planner)
 		report := reportForFailure(outcome.plan, remaining, reportTarget, outcome.completed, outcome.failedStage, retry, runErr, replanErr)
-		if planner.agentReplayAuthority != topologyAgentReplaySnapshot {
-			report.Recovery = &outcome.recovery
-		}
+		report.Recovery = &outcome.recovery
 		if writeErr := writeResourceReconcileReport(stdout, opts.output, report); writeErr != nil {
 			return writeErr
 		}
@@ -850,9 +831,7 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	}
 	completed := append(outcome.completed, stage)
 	report := reportForExecute(outcome.plan, reportTarget, completed, retry)
-	if planner.agentReplayAuthority != topologyAgentReplaySnapshot {
-		report.Recovery = &outcome.recovery
-	}
+	report.Recovery = &outcome.recovery
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 

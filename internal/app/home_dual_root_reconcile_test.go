@@ -10,7 +10,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
-	"github.com/crevissepartners/projmux/internal/core/sessionstate"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -142,7 +142,7 @@ func TestHomeDualRootClaimantPrecedenceAndPhysicalAllocation(t *testing.T) {
 	if got := r.projectPhysicalSessionName(registry, *project); got != correctiveAProjectSession {
 		t.Fatalf("collision-safe Project session = %q, want %q", got, correctiveAProjectSession)
 	}
-	if err := sessionstate.ValidateSessionName(correctiveAProjectSession); err != nil {
+	if err := coresessions.ValidateSessionName(correctiveAProjectSession); err != nil {
 		t.Fatalf("full-UID collision suffix violates existing tmux session-name rules: %v", err)
 	}
 	project.Status.Session = &coremetadata.SessionProjection{Name: correctiveAProjectSession, Live: false}

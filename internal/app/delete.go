@@ -20,8 +20,8 @@ import (
 var deleteKinds = cli.ChildSpellings("delete")
 
 // deleteRegistryKinds are the kinds this verb deletes out of the resource
-// registry. `notification` and `snapshot` are parity aliases over the existing
-// queue and snapshot handlers instead.
+// registry. `notification` is a parity alias over the existing queue handler
+// instead.
 var deleteRegistryKinds = map[string]coremetadata.Kind{
 	"project": coremetadata.KindProject,
 	"window":  coremetadata.KindWindow,
@@ -48,7 +48,6 @@ type deleteCommand struct {
 	store        *resourceStore
 	confirm      *confirmer
 	notify       rawArgvCommand
-	snapshots    rawArgvCommand
 	resolveKinds map[string]coremetadata.Kind
 	// activeTarget is the empty-selector fallback seam; see active_target.go.
 	activeTarget activeTargetLookup
@@ -122,8 +121,6 @@ func (c *deleteCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch token {
 	case "notification":
 		return forwardRawArgv(c.notify, "delete notification", "notify", []string{"ack"}, args[1:], stdout, stderr)
-	case "snapshot":
-		return forwardRawArgv(c.snapshots, "delete snapshot", "session-state", []string{"delete"}, args[1:], stdout, stderr)
 	}
 	kind, ok := c.resolveKinds[token]
 	if !ok {
@@ -582,7 +579,7 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 
 // runProjectUnregister is the explicit unregister cell of the Project lifecycle
 // table. It performs one Registry-only cascade and deliberately does not stop a
-// runtime, close a Window, or touch the root, Git/worktree, or snapshot stores.
+// runtime, close a Window, or touch the root or Git/worktree state.
 //
 // Both public spellings land here with the same plan, the same confirmation,
 // and the same transaction. The deprecated `delete project` differs by one
@@ -901,7 +898,7 @@ func flushDeleteResult(stdout io.Writer) error {
 // spelling prints. It names the replacement rather than only the deprecation,
 // because a warning an operator cannot act on is noise.
 const projectDeleteAliasWarning = "delete project is deprecated; use `projmux unregister project` instead. " +
-	"Behavior is unchanged: the Registry subtree is removed and the runtime, root, Git/worktrees, and snapshots are preserved."
+	"Behavior is unchanged: the Registry subtree is removed and the runtime, root, and Git/worktrees are preserved."
 
 // warnDeprecatedProjectDeleteAlias writes the alias notice to stderr.
 //

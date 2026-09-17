@@ -102,7 +102,6 @@ Ledger.DistinctOperations	Test-only installed qualification API retained for con
 Ledger.HasOperation	Test-only installed qualification API retained for canonical proxy observation proof.
 Ledger.record	Test-only installed qualification helper retained for owned lifecycle command evidence.
 ListLinesWithScrollbar	Default-rows entry point of ListLinesWithScrollbarRows retained as the scrollbar thumb geometry seam.
-LoadSessionStateToggleFile	Explicit-path entry point of LoadSessionStateToggleFileDefault retained as the session-state toggle round-trip seam.
 Localizer.Styled	Styled-fragment lookup retained as the test seam that pins the kind-mismatch error of the live catalog lookup.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
 Manifest.ContentID	Phase 0 canonical bundle identity is retained for generation lease persistence.
@@ -117,6 +116,7 @@ NewExisting	Test-only installed qualification API retained for unchanged model-d
 NewGenerationPool	Phase 2 dark bounded broker-pool constructor is retained for the later upgrade coordinator.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
 NewState	Recent-window state constructor retained as the test seam over the live normalizeEntries MRU contract.
+NewStore	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 NewTuple	Phase 1 complete executable tuple constructor is retained for private conformance and later production observation.
 NewWithConfig	Credential and endpoint injection constructor retained as the only seam that exercises the live Claude usage adapter without real credentials.
 NewWithRoot	Rollout-root injection constructor retained as the only seam that pins the live rollout parser without probing the installed Codex.
@@ -124,6 +124,7 @@ NextPane	Direction-bound entry point of cyclePane retained as the test seam for 
 NextWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
 Open	Phase 0 immutable bundle reopen verification is retained for source-removal relaunch and later recovery.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
+Parse	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
 PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.
 PlanUpgrade	Phase 0 pure read-only upgrade plan is retained for the later upgrade command.
@@ -165,13 +166,15 @@ ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnos
 Refusal.String	Phase 0 closed bundle refusal token renderer is retained for content-free diagnostics.
 RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.
 Registry.rebuildMissingReservations	v0-to-v1 name reservation rebuild retained as the migration proof for the live scopeFor reservation scoping.
-Registry.snapshotPanesOf	Snapshot pane lookup remains part of the retained snapshot reconciliation implementation.
+Render	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 RenderBar	Uncolored HUD bar renderer retained as the test seam that pins the BarFillCount fill math shared with RenderColoredBar.
 RenderSwitchPreview	Default badge-style entry point of RenderSwitchPreviewWithAIBadgeStyle retained as the switch preview golden seam.
 Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained as the frame inner-width seam.
 Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
 Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
+ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained with the per-provider ResumeCommand wrappers after snapshot replay, its only product caller, was removed.
+ResumeCommand	Per-provider Agent CLI resume command wrappers retained as the tested adapter surface after snapshot replay, their only product caller, was removed.
 ResumeDefaultThread	The default-endpoint resume wrapper is retained for installed protocol qualification; generation-pinned product routing uses explicit routes.
 RetainedQualificationFields	Phase 0 qualification privacy allowlist is retained for schema redaction audits.
 RouteLocalFieldProjections	Closed route-local field projection catalog retained as the test seam that keeps -o cwd out of the shared enum.
@@ -184,8 +187,13 @@ SharedOutputModes	Closed shared -o catalog retained as the test seam that pins c
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
 StartDefaultThread	The default-endpoint start wrapper is retained for installed turn-free protocol qualification; generation-pinned product routing uses explicit routes.
 StartPrivateGeneration	Phase 2 complete-lease private app-server launcher is retained for the later upgrade coordinator.
+Store.Dir	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
+Store.List	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
+Store.Load	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
+Store.LoadArtifact	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
+Store.Save	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
 StringAuditFinding.IsCandidate	Candidate predicate of the governance string audit retained with the guard that classifies shipped literals.
 TeardownEventKinds	Closed teardown event vocabulary retained as the test seam that pins the teardown decision table totality.
@@ -197,12 +205,14 @@ UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefix
 UnknownRecord	Phase 1 exact-tuple unknown record is retained for fail-closed cache misses and invalid evidence.
 UpgradePlan.JSON	Phase 0 exact JSON plan projection is retained for the later upgrade command.
 UpgradePlan.Text	Phase 0 exact text plan projection is retained for the later upgrade command.
+ValidateName	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
 absoluteNonRoot	Phase 2 private-host path validator is retained to refuse broad or noncanonical lifecycle targets.
 aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained as the AI notification label seam.
+applyValue	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 awaitPrivateGenerationReady	Phase 2 event-driven socket plus initialized-handshake barrier is retained to avoid polling sleeps.
 boundedBuffer.Bytes	Test-only installed qualification helper retained for bounded public status decoding.
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
@@ -265,8 +275,11 @@ notifySidebarStateBadge	Live-display entry point of notifySidebarStateBadgeForDi
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
 openReadyThreadClient	The default-endpoint client helper remains behind installed protocol qualification wrappers, not generation-pinned product routing.
 ownerPrivateDirectory	Phase 2 owner/mode/leaf-symlink directory proof is retained before private socket launch.
+parseIntValue	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
+parseStringValue	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
+presetEntry	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 privateGenerationEnvironment	Phase 2 environment reducer is retained to strip inherited tmux routing and pin CODEX_HOME.
 productionCodexManagedCurrentActivator.Ensure	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
 productionCodexManagedCurrentActivator.qualificationFor	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
@@ -275,6 +288,7 @@ qualifiedBundleRequirements	Phase 2 immutable qualified artifact and role set is
 randomRuntimeID	Phase 2 endpoint-host runtime nonce generator is retained as a launch-proof axis distinct from broker runtime.
 readCommittedRegularFile	Phase 0 committed bundle reader is retained to keep manifest and artifact authority inside the lease root.
 readyPrivateGeneration	Phase 2 initialized private app-server handshake is retained as the readiness publication barrier.
+rejectArtifactSymlinks	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 remoteNewTMUXArgs	Test-only installed qualification argv allowlist is retained to prove remote-new starts without a prompt, resume operand, or send-keys path.
 removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
 removeExactSocket	Phase 2 inode-and-change-time-matched private socket cleanup is retained to avoid ambient/default mutation.
@@ -289,6 +303,9 @@ runShellSourceSites	Closed run-shell source site ledger; the package source swee
 runtimeMutationPlan.withoutEffects	Effect-free plan projection retained as the property-test seam that pins guarded, ordered, idempotent runtime mutation.
 safeRoot	Phase 0 lease root validator is retained to keep future bundle mutations off broad or relative targets.
 settingsCommand.rootEntries	Fallback-locale entry point of the settings root entry builder retained as the axis metadata seam.
+shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
+shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
+sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
 sortedProbeLabels	Ordering helper retained as the test seam that pins the live default probe key catalog coverage of the terminal key spec.
 terminateOwnedSession	Phase 2 exact private-group termination and dual process/session barrier is retained for descendant-complete cleanup.
 tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.

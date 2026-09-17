@@ -477,23 +477,17 @@ func TestPluralReadProjectScopeBoundaries(t *testing.T) {
 		}
 	})
 
-	t.Run("notification and snapshot forwarding never enters Project scope", func(t *testing.T) {
+	t.Run("notification forwarding never enters Project scope", func(t *testing.T) {
 		t.Parallel()
 		store := newFakeResourceStore(t)
 		active := insideTmux("pan-alpha-zsh", "win-alpha-main")
 		notify := &recordedRawArgv{stdout: "notifications\n"}
-		snapshots := &recordedRawArgv{stdout: "snapshots\n"}
 		cmd := newTestListGetCommandWithActiveTarget(t, store, active)
 		cmd.notify = notify
-		cmd.snapshots = snapshots
 
 		stdout, _, err := runRoute(t, cmd, "notifications", "--all-projects")
 		if err != nil || stdout != "notifications\n" || len(notify.calls) != 1 || strings.Join(notify.calls[0], " ") != "list --all-projects" {
 			t.Fatalf("notification forwarding stdout=%q calls=%v error=%v", stdout, notify.calls, err)
-		}
-		stdout, _, err = runRoute(t, cmd, "snapshots", "--all-projects")
-		if err != nil || stdout != "snapshots\n" || len(snapshots.calls) != 1 || strings.Join(snapshots.calls[0], " ") != "status --all-projects" {
-			t.Fatalf("snapshot forwarding stdout=%q calls=%v error=%v", stdout, snapshots.calls, err)
 		}
 		if active.calls != 0 {
 			t.Fatalf("forwarded subsystems consulted active Project %d times", active.calls)

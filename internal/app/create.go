@@ -22,7 +22,7 @@ import (
 )
 
 // createKinds lists the resource kinds `create` implements, in help order.
-var createKinds = []string{"project", "window", "pane", "agent", "notification", "snapshot"}
+var createKinds = []string{"project", "window", "pane", "agent", "notification"}
 
 // placementDirections is the closed placement enum shared by the Pane and Agent
 // create routes. `left`/`up` are outside current parity and stay out of v2's
@@ -78,11 +78,9 @@ type codexCapabilityAgentLauncher interface {
 //   - The provider shortcuts carry the provider in the command name, so passing
 //     `--provider` as well is a usage error rather than a silent winner.
 type createCommand struct {
-	// notify and snapshots are parity-forwarder seams. They keep the canonical
-	// resource spellings on the exact handlers and leaf parsers that own the
-	// legacy routes.
-	notify    rawArgvCommand
-	snapshots rawArgvCommand
+	// notify is a parity-forwarder seam. It keeps the canonical resource
+	// spelling on the exact handler and leaf parser that own the legacy route.
+	notify rawArgvCommand
 	// agents builds the provider launch of the `create agent` route.
 	agents agentLauncher
 	// resumes builds the provider *resume* launch. It is the same object as
@@ -281,8 +279,6 @@ func (c *createCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runResourcePane(rest, stdout, stderr)
 	case "notification":
 		return forwardRawArgv(c.notify, "create notification", "notify", []string{"push"}, rest, stdout, stderr)
-	case "snapshot":
-		return forwardRawArgv(c.snapshots, "create snapshot", "session-state", []string{"save"}, rest, stdout, stderr)
 	}
 	// A provider shortcut normalizes to `create agent --provider <id>`; the
 	// provider is already specified, so repeating it is an error.

@@ -82,7 +82,7 @@ step, never a silent no-op.
     atomically replaces the old Project graph with a new Project UID and a new
     canonical Window/shell UID pair, and leaves exactly one same-root claimant
     before ordinary materialization. Esc returns to Projects. Neither action
-    deletes or rewrites snapshots, root, Git, or worktree data. The saved file
+    deletes or rewrites root, Git, or worktree data. The saved file
     keeps its `sidebar-startup-picker` spelling.
 - **AI** — `AI` is a product category, never an addressable resource.
   - `Default launch target [Choice]` — an Agent Provider, a Shell Pane, or
@@ -163,8 +163,6 @@ step, never a silent no-op.
     presentation-only and do not disable their underlying producers, cache,
     backoff, explicit table/JSON command, or cached popup.
   - `Language / Locale [Choice]` and `Agent attention badge style [Choice]`.
-- **Snapshots** — the visible noun is the Snapshot resource. `session-state`
-  remains the config/route spelling and appears only as source detail.
 - **Keybindings** — `Launch & popups`, `Agent & Pane launch`,
   `Pane & Window navigation`, `Sidebar & picker actions` (nested by surface:
   Project Sidebar, Session Picker, Notification Sidebar, Settings), and
@@ -221,7 +219,6 @@ step, never a silent no-op.
   the approve/revoke actions) and `Project hooks [View]` (`Session lifecycle`
   plus `After notification queued`, with the same per-event Views the global
   scope uses, extended by a trust state row).
-- **Snapshots** — the auto-save override and the saved snapshots.
 
 Without an actionable project context the Project surface renders a single
 passive guidance row rather than repeating a disabled reason per row.
@@ -236,14 +233,14 @@ Confirm and Action rows included, so `Quit Projmux` and `Reset theme` are
 focused and never fired. The list is scope-pure: a Global query never returns
 Project nodes and a Project query never returns Global ones, and with no project
 context the Project tab returns nothing. User-data collection items -- an
-individual discovery root, pinned Project, candidate or snapshot -- are data
+individual discovery root, pinned Project or candidate -- are data
 rather than settings, so results stop at their parent View and at the
 collection-level controls. Inside a View the query still filters that View's
 rows, and category rows carry their members' search text so search crosses
 categories.
 
 The result rows are built from the catalog alone: no Registry, tmux,
-filesystem or snapshot read participates, because a result is a destination
+or filesystem read participates, because a result is a destination
 rather than a rendered value. Where that leaves a row unnameable -- a saved
 user path, a command whose row spelling depends on whether a command is
 already stored, a read-only state row that stands for several rendered lines --
@@ -254,7 +251,7 @@ more: the View opens, unfocused, and nothing errors.
 ## Vocabulary and compatibility
 
 Visible nouns follow the shared resource vocabulary: `Project`, `Window`,
-`Pane`, `Agent`, `Provider`, `Notification`, `Snapshot`, with `AI` as a category
+`Pane`, `Agent`, `Provider`, `Notification`, with `AI` as a category
 and `Session` as the runtime projection. The Agent Usage HUD is a presentation
 of what the canonical `agent usage` command provides; there is no addressable
 `Usage` resource, and Settings never spells usage as a readable resource kind.
@@ -302,7 +299,7 @@ result replaces it. Typed validation and staged apply failures stay in the popup
 instead of being visible only on stdout/stderr.
 
 The generic feedback inventory deliberately excludes Welcome, Quit, read-only
-hook/effective/notification diagnostics, Snapshot preview, and key
+hook/effective/notification diagnostics, and key
 capture/probe/diagnostic bodies. Those flows own a viewer, confirmation, or
 multi-step output surface; only an actual Settings write at their boundary is
 eligible for transient mutation feedback.

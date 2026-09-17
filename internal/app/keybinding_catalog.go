@@ -846,18 +846,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			PlainChord:  "C-x",
 		},
 		{
-			ID:          "SessionPopup:OpenState",
-			DisplayName: "Open Snapshots",
-			Category:    keyBindingCategorySurfaces,
-			Semantics:   keyBindingActionSemantics{TargetKind: "Snapshot", ResultKind: "open Snapshots for the focused Session", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-			CanonicalID: "session-picker.snapshots.open",
-			Description: "Open session state for the focused session",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
-			Surface:     "SessionPopup",
-			PlainChord:  "C-s",
-		},
-		{
 			ID:          "SessionPopup:CyclePreviewWindowPrev",
 			DisplayName: "Preview previous Window",
 			Category:    keyBindingCategorySurfaces,

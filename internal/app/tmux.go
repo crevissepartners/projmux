@@ -224,8 +224,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 // `internal tmux autosave-session-state` route. projmux no longer saves Project
 // state from a status tick, but tmux configs rendered by older installs still
 // call this route from status-format until the next config apply. It accepts
-// and ignores the historical flags, and performs no tmux call, no snapshot
-// store access, no diagnostics record, and no filesystem write.
+// and ignores the historical flags, and performs no tmux call, no diagnostics
+// record, and no filesystem write.
 func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("tmux autosave-session-state", flag.ContinueOnError)
 	fs.SetOutput(stderr)

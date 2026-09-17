@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
-	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
@@ -26,7 +25,7 @@ func TestAuthorizeProjectLayoutBridgesExactArtifactToHookTrust(t *testing.T) {
 				ActivePaneIndex: 0,
 				Panes: []corelayout.Pane{{
 					Index:  0,
-					Recipe: sessionstate.StartupRecipe("make watch"),
+					Recipe: corelayout.StartupRecipe("make watch"),
 				}},
 			}},
 		},
@@ -72,7 +71,7 @@ func TestAuthorizeProjectLayoutFailsClosedWithoutAuthorizer(t *testing.T) {
 			Index: 0,
 			Panes: []corelayout.Pane{{
 				Index:  0,
-				Recipe: sessionstate.StartupRecipe("unsafe"),
+				Recipe: corelayout.StartupRecipe("unsafe"),
 			}},
 		}}},
 	}

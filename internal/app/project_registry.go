@@ -17,7 +17,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
-	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -691,7 +690,7 @@ func (r *registryReconciler) projectsBySessionName(registry coremetadata.Registr
 // projections are preserved. When another Registry root owns that exact
 // physical name, the Project receives a deterministic full-UID suffix; the
 // suffix is stable across order, restart, and repeat reconcile, and is valid
-// under the existing session-state/tmux name rules.
+// under the existing tmux session name rules.
 func (r *registryReconciler) projectPhysicalSessionName(registry coremetadata.Registry, project coremetadata.Project) string {
 	preferred := ""
 	if project.Status.Session != nil {
@@ -712,7 +711,7 @@ func (r *registryReconciler) projectPhysicalSessionName(registry coremetadata.Re
 		if suffix > 0 {
 			candidate += "-" + strconv.Itoa(suffix+1)
 		}
-		if sessionstate.ValidateSessionName(candidate) != nil {
+		if coresessions.ValidateSessionName(candidate) != nil {
 			return ""
 		}
 		if !projectSessionNameClaimedByOtherRoot(registry, candidate) {
