@@ -40,7 +40,9 @@
       status = "gone";
       stream.close();
     });
-    stream.addEventListener("error", () => {
+    stream.addEventListener("error", (event) => {
+      // Only the EventSource's own error is a lost connection.
+      if (event instanceof MessageEvent) return;
       if (status !== "gone") status = "warn";
       if (!layout) error = t("web.status.reconnecting");
     });

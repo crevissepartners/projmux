@@ -14,6 +14,9 @@ export const live = $state({
   usage: { hud: [], rows: [] } as Usage,
   system: { supported: false, cpuPercent: null, memoryPercent: null } as System,
   connected: false,
+  /** The last failure of each topic, cleared by that topic's next frame. */
+  errors: {} as Record<string, string>,
+  /** One of `errors`, for a place that shows a single line. */
   error: "",
   updatedAt: "",
 });
@@ -28,6 +31,23 @@ function take<T>(event: MessageEvent, apply: (body: T) => void): void {
   }
 }
 
+function setError(topic: string, message: string): void {
+  if (message) live.errors[topic] = message;
+  else if (topic in live.errors) delete live.errors[topic];
+  else return;
+  live.error = Object.values(live.errors)[0] || "";
+}
+
+/** Read one topic frame; a frame for a topic clears that topic's error. */
+function follow<T>(stream: EventSource, topic: string, apply: (body: T) => void): void {
+  stream.addEventListener(topic, (event) =>
+    take<T>(event, (body) => {
+      apply(body);
+      setError(topic, "");
+    }),
+  );
+}
+
 export function connect(): void {
   source?.close();
   const stream = new EventSource("/api/v1/events");
@@ -35,30 +55,27 @@ export function connect(): void {
   stream.addEventListener("open", () => {
     live.connected = true;
   });
-  stream.addEventListener("error", () => {
-    // EventSource reconnects by itself; the flag shows it is trying.
+  stream.addEventListener("error", (event) => {
+    // Only the EventSource's own error is a lost connection; it reconnects by
+    // itself, and the flag shows it is trying. A topic failure is the
+    // `topic-error` frame, which leaves the stream open.
+    if (event instanceof MessageEvent) return;
     live.connected = false;
   });
-  stream.addEventListener("graph", (event) =>
-    take<Graph>(event, (graph) => {
-      live.tree = buildTree(graph);
-      live.updatedAt = new Date().toISOString();
-      live.error = "";
-    }),
-  );
-  stream.addEventListener("notifications", (event) =>
-    take<{ items: Notification[] }>(event, (body) => {
-      live.notifications = body.items || [];
-    }),
-  );
-  stream.addEventListener("usage", (event) => take<Usage>(event, (body) => (live.usage = body)));
-  stream.addEventListener("system", (event) => take<System>(event, (body) => (live.system = body)));
-  stream.addEventListener("error", (event) => {
-    if (!(event instanceof MessageEvent)) return;
-    take<{ error: { message: string } }>(event, (body) => {
-      live.error = body.error.message;
-    });
+  follow<Graph>(stream, "graph", (graph) => {
+    live.tree = buildTree(graph);
+    live.updatedAt = new Date().toISOString();
   });
+  follow<{ items: Notification[] }>(stream, "notifications", (body) => {
+    live.notifications = body.items || [];
+  });
+  follow<Usage>(stream, "usage", (body) => (live.usage = body));
+  follow<System>(stream, "system", (body) => (live.system = body));
+  stream.addEventListener("topic-error", (event) =>
+    take<{ error: { message: string; details?: { topic?: string } } }>(event, (body) => {
+      setError(body.error.details?.topic || "events", body.error.message);
+    }),
+  );
 }
 
 /** Read the graph once, for a change the page made and wants to see at once. */
@@ -66,7 +83,8 @@ export async function refresh(): Promise<void> {
   try {
     live.tree = buildTree(await get<Graph>("/api/v1/graph"));
     live.updatedAt = new Date().toISOString();
+    setError("graph", "");
   } catch (err) {
-    live.error = err instanceof ApiError ? err.message : String(err);
+    setError("graph", err instanceof ApiError ? err.message : String(err));
   }
 }

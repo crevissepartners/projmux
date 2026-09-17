@@ -16,12 +16,20 @@ import (
 
 // Event topics. Each is also the SSE event name its frames carry, and each
 // frame's data is the same body the topic's GET route returns.
+//
+// A topic that fails to read is reported as a TopicErrorEvent frame. It is not
+// called `error`: an EventSource fires its own `error` event when the
+// connection drops, and a listener for one would take the other for it.
 const (
 	TopicGraph         = "graph"
 	TopicNotifications = "notifications"
 	TopicUsage         = "usage"
 	TopicSystem        = "system"
 )
+
+// TopicErrorEvent is the SSE event name of a failed topic read. Its data is
+// the error envelope with the topic in `details.topic`.
+const TopicErrorEvent = "topic-error"
 
 var eventTopics = []string{TopicGraph, TopicNotifications, TopicUsage, TopicSystem}
 
@@ -168,22 +176,28 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // followTopic sends the topic once at once, then again whenever a signal
-// leads to a different body.
+// leads to a different body. A failed read sends a TopicErrorEvent frame and
+// forgets the last body, so the next good read is sent even when it is the
+// same body as before: that frame is what tells the client the topic
+// recovered.
 func (s *Server) followTopic(ctx context.Context, out *sseWriter, topic string, changes <-chan struct{}) {
 	var digest [32]byte
+	fail := func(err error) bool {
+		digest = [32]byte{}
+		frame, _ := json.Marshal(map[string]*Error{"error": withTopic(asError(err), topic)})
+		return out.event(TopicErrorEvent, frame) == nil
+	}
 	send := func() bool {
 		body, err := s.readTopic(ctx, topic)
 		if ctx.Err() != nil {
 			return false
 		}
 		if err != nil {
-			frame, _ := json.Marshal(map[string]*Error{"error": withTopic(asError(err), topic)})
-			return out.event("error", frame) == nil
+			return fail(err)
 		}
 		frame, err := json.Marshal(body)
 		if err != nil {
-			frame, _ = json.Marshal(map[string]*Error{"error": withTopic(asError(err), topic)})
-			return out.event("error", frame) == nil
+			return fail(err)
 		}
 		next := sha256.Sum256(frame)
 		if next == digest {

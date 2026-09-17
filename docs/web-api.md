@@ -181,10 +181,16 @@ server-sent-events stream. The event names are fixed:
 | `notifications` | the same body as `GET /api/v1/notifications` | the notify queue publishes a refresh or its file changes |
 | `usage` | the same body as `GET /api/v1/usage` | the snapshot file changes |
 | `system` | the same body as `GET /api/v1/system` | on a fixed tick, only when a value changes |
-| `error` | the error envelope | a read failed; the stream stays open |
+| `topic-error` | the error envelope, with the topic in `details.topic` | a read failed; the stream stays open |
 
 The first frame of each topic is sent at once. After that, a frame is sent
-only on change. A `: keepalive` comment follows 20 seconds of silence.
+only on change, except that the first good read after a `topic-error` is
+always sent, so a client can clear that topic's error when a frame for the
+topic arrives. A `: keepalive` comment follows 20 seconds of silence.
+
+No frame is named `error`: an `EventSource` fires its own `error` event when
+the connection drops, and a client listening for one would take a topic
+failure for a lost connection.
 
 ## Web routes
 

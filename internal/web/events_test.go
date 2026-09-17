@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -103,14 +104,82 @@ func TestEventsSendOnChangeOnly(t *testing.T) {
 	if got := nextFrame(t, frames); got.data != `{"cpu":2}` {
 		t.Fatalf("frame after change = %+v, want cpu 2 and no repeat of cpu 1", got)
 	}
-	// A failed read is an error frame, and the stream stays open.
+	// A failed read is a topic-error frame, and the stream stays open.
 	backend.set(nil, NotFound("gone"))
-	if got := nextFrame(t, frames); got.event != "error" || !strings.Contains(got.data, `"topic":"system"`) || !strings.Contains(got.data, CodeNotFound) {
+	if got := nextFrame(t, frames); got.event != TopicErrorEvent || !strings.Contains(got.data, `"topic":"system"`) || !strings.Contains(got.data, CodeNotFound) {
 		t.Fatalf("error frame = %+v", got)
 	}
 	backend.set(map[string]int{"cpu": 3}, nil)
 	if got := nextFrame(t, frames); got.data != `{"cpu":3}` {
 		t.Fatalf("frame after error = %+v", got)
+	}
+}
+
+// An EventSource fires its own `error` event when the connection drops, so a
+// topic failure named `error` reads as a disconnect in the browser.
+func TestEventsNameATopicFailureTopicErrorNeverError(t *testing.T) {
+	backend := &eventBackend{fail: NewError(http.StatusConflict, CodeNotLive, "down"), signals: make(chan struct{}, 4)}
+	srv := httptest.NewServer(New(backend, nil).Handler())
+	defer srv.Close()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/api/v1/events?topics=system", nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	frames := make(chan sseFrame, 8)
+	go readFrames(t, bufio.NewScanner(res.Body), frames)
+
+	got := nextFrame(t, frames)
+	if got.event != "topic-error" {
+		t.Fatalf("failure frame event = %q, want topic-error", got.event)
+	}
+	var body struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(got.data), &body); err != nil || body.Error.Code != CodeNotLive || body.Error.Details["topic"] != TopicSystem {
+		t.Fatalf("failure frame body = %s (%v)", got.data, err)
+	}
+	backend.set(map[string]int{"cpu": 1}, nil)
+	if got := nextFrame(t, frames); got.event == "error" {
+		t.Fatalf("a frame was named error: %+v", got)
+	}
+}
+
+// The client clears a topic's error when a frame for the topic arrives, so a
+// good read after a failure is sent even when its body did not change.
+func TestEventsResendAnUnchangedBodyAfterAFailure(t *testing.T) {
+	backend := &eventBackend{system: map[string]int{"cpu": 1}, signals: make(chan struct{}, 4)}
+	srv := httptest.NewServer(New(backend, nil).Handler())
+	defer srv.Close()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/api/v1/events?topics=system", nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	frames := make(chan sseFrame, 8)
+	go readFrames(t, bufio.NewScanner(res.Body), frames)
+
+	if got := nextFrame(t, frames); got.event != TopicSystem || got.data != `{"cpu":1}` {
+		t.Fatalf("first frame = %+v", got)
+	}
+	backend.set(nil, NotFound("blip"))
+	if got := nextFrame(t, frames); got.event != TopicErrorEvent {
+		t.Fatalf("failure frame = %+v", got)
+	}
+	backend.set(map[string]int{"cpu": 1}, nil)
+	if got := nextFrame(t, frames); got.event != TopicSystem || got.data != `{"cpu":1}` {
+		t.Fatalf("frame after the failure = %+v, want the unchanged body sent again", got)
+	}
+	// Without a failure in between, the same body is still skipped.
+	backend.set(map[string]int{"cpu": 1}, nil)
+	backend.set(map[string]int{"cpu": 2}, nil)
+	if got := nextFrame(t, frames); got.data != `{"cpu":2}` {
+		t.Fatalf("frame after a repeat = %+v, want cpu 2", got)
 	}
 }
 
