@@ -126,10 +126,8 @@ history without a current activation is excluded. A complete comparison with no
 mismatches emits no comparison block. An unreadable Registry or missing,
 inconsistent, orphaned, or unobservable activation produces an `unavailable` or
 `incomplete` enumeration signal; confirmed mismatches remain visible alongside
-those gaps. A foreign Codex state domain, opaque generation, or a present or
-unreadable generation pool is unobservable from the default daemon probe.
-Private pool generations can also have version-shaped IDs, so Doctor does not
-infer their running endpoint from that spelling or from admission-current.
+those gaps. A foreign Codex state domain or an opaque generation is
+unobservable from the default daemon probe.
 
 The additive `codex_endpoint_mismatch` JSON field carries the same mismatch set,
 enumeration gaps, and evidence strength without changing the schema version.

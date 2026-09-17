@@ -10,12 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbundle"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 // codexDaemonGuidanceCase is one default-endpoint readiness decision a native
@@ -210,56 +206,22 @@ func TestDoctorAttachableCodexEndpointHasNoDaemonGuidance(t *testing.T) {
 // mtime stay exactly as found.
 func TestIncompleteManagedActivationIsNeverResumedByCreate(t *testing.T) {
 	root := t.TempDir()
-	journal := codexupgrade.NewStateStore(filepath.Join(root, "state"))
 	old := coremetadata.CodexEndpointRef{StateDomainID: "test-domain", EndpointGenerationID: "codex-0.152.1"}
 	target := coremetadata.CodexEndpointRef{StateDomainID: "test-domain", EndpointGenerationID: "codex-0.153.0"}
-	config := codexupgrade.GenerationConfig{
-		Endpoint: target, StateDomainPath: filepath.Join(root, "domain"), PrivateRoot: filepath.Join(root, "runtime"),
-		SocketPath: filepath.Join(root, "runtime", "s"), LeaseRoot: filepath.Join(root, "lease"),
-		RequiredProtocol: codexbundle.ProtocolRange{Min: 2, Max: 2},
+	// A managed activation that committed admission to its private candidate
+	// and never published the drain of the old unmanaged endpoint.
+	operation := map[string]any{
+		"journalVersion": 1, "operationRef": "managed-activation-test", "stateDomainID": target.StateDomainID,
+		"oldGenerationID": old.EndpointGenerationID, "targetGenerationID": target.EndpointGenerationID,
+		"phase": "admission-current", "candidateLaunchIntended": true, "candidateStarted": true,
+		"candidateReady": true, "admissionCommitted": true, "drainPublished": false,
+		"handoverRequested": false, "abortIntended": false, "aborted": false,
+		"mutations": map[string]any{"candidateLaunchIntent": 1, "candidateStart": 1, "admissionCommit": 1},
 	}
-	operation, err := codexgeneration.NewRollingUpgradeOperation("managed-activation-test", target.StateDomainID, old.EndpointGenerationID, target.EndpointGenerationID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation, _, err = operation.RecordCandidateLaunchIntent()
-	if err == nil {
-		operation, _, err = operation.RecordCandidateStart()
-	}
-	if err == nil {
-		operation, _, err = operation.RecordAction(codexgeneration.RollingActionPrepareCandidate, nil)
-	}
-	if err == nil {
-		operation, _, err = operation.RecordAction(codexgeneration.RollingActionCommitAdmission, nil)
-	}
-	if err != nil {
-		t.Fatalf("post-admission operation fixture: %v", err)
-	}
-	seeded := codexupgrade.Journal{
-		Version: codexupgrade.JournalVersion, StateDomainID: target.StateDomainID,
-		CurrentGenerationID: target.EndpointGenerationID,
-		Routes: []codexupgrade.GenerationRoute{
-			{
-				Generation: codexgeneration.Generation{Endpoint: old, State: codexgeneration.StateDraining, Owner: codexgeneration.OwnerUnmanaged, BundleID: "external-0.152.1"},
-				Version:    "0.152.1",
-			},
-			{
-				Generation: codexgeneration.Generation{Endpoint: target, State: codexgeneration.StateCurrent, Owner: codexgeneration.OwnerProjmuxPrivate, BundleID: "sha256-managed"},
-				Version:    "0.153.0", Config: config, TUIPath: filepath.Join(root, "lease", "bin", "codex"), Ready: true,
-				Proof: &codexgenerationhost.LaunchProof{
-					Endpoint:   codexgenerationhost.EndpointIdentity{StateDomainID: target.StateDomainID, EndpointGenerationID: target.EndpointGenerationID},
-					SocketPath: config.SocketPath, BundleID: "sha256-managed",
-				},
-			},
-		},
-		Operation: &operation,
-	}
-	if _, err := journal.Update(context.Background(), func(got *codexupgrade.Journal, _ bool) error {
-		*got = seeded
-		return nil
-	}); err != nil {
-		t.Fatalf("seed incomplete managed activation: %v", err)
-	}
+	journal := writeCodexRollingJournal(t, filepath.Join(root, "state"), target.StateDomainID, target.EndpointGenerationID, []codexJournalRoute{
+		{endpoint: old, state: coremetadata.CodexGenerationDraining, version: "0.152.1", bundleID: "external-0.152.1"},
+		{endpoint: target, state: coremetadata.CodexGenerationCurrent, version: "0.153.0", bundleID: "sha256-managed", private: true, root: root},
+	}, operation)
 	bytesBefore, modBefore := snapshotCodexJournal(t, journal)
 	controller := newCodexNativeThreadController(filepath.Join(root, "state"))
 	daemon := nativeTestDefaultRoute("codex-0.152.1")
@@ -274,9 +236,5 @@ func TestIncompleteManagedActivationIsNeverResumedByCreate(t *testing.T) {
 	if !reflect.DeepEqual(bytesBefore, bytesAfter) || !modBefore.Equal(modAfter) {
 		t.Fatalf("create advanced the managed activation: bytes-equal=%t mtime %s -> %s",
 			reflect.DeepEqual(bytesBefore, bytesAfter), modBefore, modAfter)
-	}
-	loaded, exists, err := journal.Load()
-	if err != nil || !exists || loaded.Operation == nil || loaded.Operation.DrainPublished {
-		t.Fatalf("incomplete activation changed shape: exists=%t err=%v operation=%+v", exists, err, loaded.Operation)
 	}
 }

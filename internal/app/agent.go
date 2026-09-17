@@ -83,8 +83,6 @@ type agentCommand struct {
 	// frame pre-check render. Nil means os.Executable.
 	messageExecutable func() (string, error)
 	focus             rawArgvCommand
-	codexUpgrade      rawArgvCommand
-	codexHandover     rawArgvCommand
 }
 
 func newAgentCommand() *agentCommand {
@@ -152,18 +150,6 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runApproval(rest, stdout, stderr)
 	case "review":
 		return c.runReview(rest, stdout, stderr)
-	case "app-server":
-		if len(rest) == 0 {
-			return usageError("agent app-server requires upgrade or handover")
-		}
-		switch rest[0] {
-		case "upgrade":
-			return forwardRawArgv(c.codexUpgrade, "agent app-server upgrade", "agent app-server upgrade", nil, rest[1:], stdout, stderr)
-		case "handover":
-			return forwardRawArgv(c.codexHandover, "agent app-server handover", "agent app-server handover", nil, rest[1:], stdout, stderr)
-		default:
-			return usageError("agent app-server requires upgrade or handover")
-		}
 	case "capabilities":
 		return c.runCapabilities(rest, stdout, stderr)
 	case "message":

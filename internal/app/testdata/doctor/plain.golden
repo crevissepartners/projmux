@@ -9,8 +9,8 @@ Replacement and restoration
        underlying: platform.observable=false
   [L2] long-lived-projmux-processes       replacement=unknown      restoration=unknown        reason=unsupported-platform
        underlying: platform.observable=false
-  [L3] provider-sessions-and-generations  replacement=unknown      restoration=unknown        reason=generation-pool-unobserved
-       underlying: registry.observed=true; pool.status=unobserved; sessions.running=0; sessions.live=0; sessions.dead=0; sessions.unobservable=0
+  [L3] provider-sessions-and-generations  replacement=not-replaced restoration=unknown        reason=provider-sessions-uncontradicted
+       underlying: registry.observed=true; sessions.running=0; sessions.live=0; sessions.dead=0; sessions.unobservable=0
 
 Runtime
   Summary: 2 info, 2 warning, 0 error.
@@ -19,10 +19,6 @@ Runtime
 
 AI notify integrations
   Summary: 0 installed, 0 missing, 0 stale, 0 conflict, 0 skipped.
-
-Codex payload-free capability
-  Cache key: ; durable-zero-turn-resume: unknown; remote-new-session: unknown
-  Create route: plain-fallback; reason: exact-capability-unknown
 
 Codex control-plane surfaces
   Diagnosis vintage: unknown on this platform; a process running a replaced image cannot be told apart from one running the installed build

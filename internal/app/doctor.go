@@ -23,9 +23,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgeneration"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -47,15 +44,9 @@ type doctorCommand struct {
 	// from. It is the snapshot read rather than the ordinary load so running
 	// diagnostics on a machine that never created a Project does not create the
 	// state directory as a side effect.
-	readRegistry       func() (coremetadata.Registry, error)
-	codexGeneration    func(coremetadata.Registry) *doctorCodexGenerationPool
-	codexQualification func() *doctorCodexQualification
+	readRegistry func() (coremetadata.Registry, error)
 	// codexEndpointDomain resolves the existing canonical Codex state root without creating it.
 	codexEndpointDomain func() (string, error)
-	// codexPayloadFreeCapability is the same immutable record seam consumed by
-	// the create planner. Doctor only projects it; it never runs qualification or
-	// mutates a provider lifecycle.
-	codexPayloadFreeCapability func() codexgeneration.Record
 	// hookRecords reads the tail of the provider hook ingest log. It is one
 	// bounded read that three projections share, because attribution, delivery
 	// and ownership are layers of one path and reading them separately would
@@ -178,24 +169,8 @@ func newDoctorCommand() *doctorCommand {
 	c.resolveGeneratedConfig = func() (string, error) { return doctorGeneratedConfigPath(c.getenv, os.UserHomeDir) }
 	c.readGeneratedConfig = doctorReadRegularFileBounded
 	c.readRegistry = snapshotResourceRegistry
-	c.codexQualification = c.readCodexQualification
 	c.codexEndpointDomain = func() (string, error) {
 		return defaultCodexStateDomainID(c.getenv, os.UserHomeDir)
-	}
-	c.codexGeneration = func(registry coremetadata.Registry) *doctorCodexGenerationPool {
-		paths, err := configPaths(os.UserHomeDir, c.getenv)
-		if err != nil {
-			return &doctorCodexGenerationPool{Status: "blocked", Reason: "state-path-unavailable", Generations: []doctorCodexGeneration{}, PinnedAgents: []doctorCodexPinnedAgent{}}
-		}
-		journal, exists, err := codexupgrade.NewStateStore(paths.StateDir).Load()
-		if err != nil {
-			return &doctorCodexGenerationPool{Status: "blocked", Reason: "invalid-admission-tuple", Generations: []doctorCodexGeneration{}, PinnedAgents: []doctorCodexPinnedAgent{}}
-		}
-		if !exists {
-			return &doctorCodexGenerationPool{Status: "absent", Reason: "generation-pool-not-installed", Generations: []doctorCodexGeneration{}, PinnedAgents: []doctorCodexPinnedAgent{}}
-		}
-		report := diagnoseCodexGenerationPool(journal, registry, codexgenerationhost.VerifyPrivateGenerationBundle)
-		return &report
 	}
 	return c
 }
@@ -259,9 +234,6 @@ type doctorReport struct {
 	CodexEndpointRisks   *doctorCodexEndpointMismatch    `json:"codex_endpoint_mismatch,omitempty"`
 	CodexBroker          *codexBrokerDiagnostic          `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus           `json:"codex_authority,omitempty"`
-	CodexGenerationPool  *doctorCodexGenerationPool      `json:"codex_generation_pool,omitempty"`
-	CodexQualification   *doctorCodexQualification       `json:"codex_stored_qualification,omitempty"`
-	CodexPayloadFree     *codexgeneration.Projection     `json:"codex_payload_free_capability,omitempty"`
 	CodexControlPlane    *codexControlPlaneReport        `json:"codex_control_plane,omitempty"`
 	ProcessVintage       *projmuxProcessVintage          `json:"projmux_process_vintage,omitempty"`
 	Replacement          *doctorReplacementReport        `json:"replacement,omitempty"`
@@ -386,11 +358,6 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 		report.Dependencies = c.evaluate()
 	}
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
-		if c.codexQualification != nil {
-			report.CodexQualification = c.codexQualification()
-		}
-		projection := projectCodexPayloadFree(c.codexPayloadFreeCapability)
-		report.CodexPayloadFree = &projection
 		report.AINotifyIntegrations = c.evaluateAINotifyIntegrations()
 		if c.appServerHealth != nil {
 			health := c.appServerHealth(trigger, codexHookFallbackAvailable(report.AINotifyIntegrations))
@@ -400,20 +367,17 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 			broker := c.brokerDiagnostic()
 			report.CodexBroker = &broker
 		}
-		if c.readRegistry != nil && (c.codexAuthority != nil || c.codexGeneration != nil || c.codexEndpointDomain != nil) {
+		if c.readRegistry != nil && (c.codexAuthority != nil || c.codexEndpointDomain != nil) {
 			registry, err := c.readRegistry()
 			if err == nil {
 				if c.codexAuthority != nil {
 					census := censusCodexLifecycleAuthority(registry, c.codexAuthority)
 					report.CodexAuthority = &census
 				}
-				if c.codexGeneration != nil {
-					report.CodexGenerationPool = c.codexGeneration(registry)
-				}
 			}
 			if c.codexEndpointDomain != nil {
 				domain, domainErr := c.codexEndpointDomain()
-				report.CodexEndpointRisks = diagnoseCodexEndpointMismatch(registry, err, domain, domainErr, report.CodexGenerationPool, report.CodexAppServer)
+				report.CodexEndpointRisks = diagnoseCodexEndpointMismatch(registry, err, domain, domainErr, report.CodexAppServer)
 			}
 		} else if c.codexEndpointDomain != nil {
 			report.CodexEndpointRisks = &doctorCodexEndpointMismatch{Status: "unavailable", Reason: "registry-unavailable"}
@@ -441,11 +405,11 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 		report.RegistryDivergences = c.evaluateRegistryDivergences()
 	}
 	if section == doctorSectionAll || section == doctorSectionReplacement {
-		// The pool and broker readings the integrations section already took
-		// are handed over rather than retaken. Retaking them would put two
-		// samples of the same runtime into one report and let its two sections
-		// disagree about the generation a verdict was reached on.
-		replacement := c.evaluateReplacement(report.CodexGenerationPool, report.CodexBroker)
+		// The broker reading the integrations section already took is handed
+		// over rather than retaken. Retaking it would put two samples of the
+		// same runtime into one report and let its two sections disagree about
+		// the runtime a verdict was reached on.
+		replacement := c.evaluateReplacement(report.CodexBroker)
 		report.Replacement = &replacement
 	}
 	return report
@@ -457,8 +421,8 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 // Every input is a value another section already produces, and the Registry
 // read is the zero-write snapshot read, so asking this question on a machine
 // that never created a Project still creates nothing.
-func (c *doctorCommand) evaluateReplacement(pool *doctorCodexGenerationPool, broker *codexBrokerDiagnostic) doctorReplacementReport {
-	in := doctorReplacementInputs{Pool: pool, Cutoff: resolveReplacementCutoff(c.getenv)}
+func (c *doctorCommand) evaluateReplacement(broker *codexBrokerDiagnostic) doctorReplacementReport {
+	in := doctorReplacementInputs{Cutoff: resolveReplacementCutoff(c.getenv)}
 	if c.installedImage != nil {
 		in.Image = c.installedImage()
 	}
@@ -483,9 +447,6 @@ func (c *doctorCommand) evaluateReplacement(pool *doctorCodexGenerationPool, bro
 	}
 	if c.readRegistry != nil {
 		if registry, err := c.readRegistry(); err == nil {
-			if in.Pool == nil && c.codexGeneration != nil {
-				in.Pool = c.codexGeneration(registry)
-			}
 			probe := doctorProviderSessionProbe{ProcessAlive: c.processAlive}
 			if broker != nil && broker.State == codexBrokerStateRunning {
 				probe.BrokerRuntimeID = broker.Runtime
@@ -600,9 +561,6 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorCodexEndpointMismatchText(&buf, report.CodexEndpointRisks)
 		writeDoctorCodexBrokerText(&buf, report.CodexBroker)
 		writeDoctorCodexAuthorityText(&buf, report.CodexAuthority)
-		writeDoctorCodexGenerationText(&buf, report.CodexGenerationPool)
-		writeDoctorCodexQualificationText(&buf, report.CodexQualification)
-		writeDoctorCodexPayloadFreeText(&buf, report.CodexPayloadFree)
 		writeDoctorCodexControlPlaneText(&buf, report.CodexControlPlane)
 	}
 	if section == doctorSectionAll || section == doctorSectionLogs {
@@ -613,16 +571,6 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	}
 	_, err := w.Write(buf.Bytes())
 	return err
-}
-
-func writeDoctorCodexPayloadFreeText(buf *bytes.Buffer, capability *codexgeneration.Projection) {
-	if capability == nil {
-		return
-	}
-	buf.WriteString("\nCodex payload-free capability\n")
-	fmt.Fprintf(buf, "  Cache key: %s; durable-zero-turn-resume: %s; remote-new-session: %s\n",
-		capability.CacheKey, capability.DurableResume, capability.RemoteNew)
-	fmt.Fprintf(buf, "  Create route: %s; reason: %s\n", capability.CreateRoute, capability.Reason)
 }
 
 func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) {
@@ -956,9 +904,6 @@ type doctorJSONReport struct {
 	CodexEndpointRisks   *doctorCodexEndpointMismatch     `json:"codex_endpoint_mismatch,omitempty"`
 	CodexBroker          *codexBrokerDiagnostic           `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus            `json:"codex_authority,omitempty"`
-	CodexGenerationPool  *doctorCodexGenerationPool       `json:"codex_generation_pool,omitempty"`
-	CodexQualification   *doctorCodexQualification        `json:"codex_stored_qualification,omitempty"`
-	CodexPayloadFree     *codexgeneration.Projection      `json:"codex_payload_free_capability,omitempty"`
 	CodexControlPlane    *codexControlPlaneReport         `json:"codex_control_plane,omitempty"`
 	ProcessVintage       *projmuxProcessVintage           `json:"projmux_process_vintage,omitempty"`
 	Replacement          *doctorReplacementReport         `json:"replacement,omitempty"`
@@ -979,9 +924,6 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 		out.CodexEndpointRisks = report.CodexEndpointRisks
 		out.CodexBroker = report.CodexBroker
 		out.CodexAuthority = report.CodexAuthority
-		out.CodexGenerationPool = report.CodexGenerationPool
-		out.CodexQualification = report.CodexQualification
-		out.CodexPayloadFree = report.CodexPayloadFree
 		out.CodexControlPlane = report.CodexControlPlane
 	}
 	if section == doctorSectionAll || section == doctorSectionRuntime {

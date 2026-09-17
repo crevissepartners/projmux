@@ -1,7 +1,7 @@
 # Replacement completion and restorability
 
 Three layers of this application hold an execution image, and every consumer of
-`make install`, `npm install`, or a provider generation upgrade believes one
+`make install`, `npm install`, or a provider upgrade believes one
 sentence about all three at once. That sentence is false in a different way on
 each layer. This document fixes what is guaranteed, what is not, and how a
 report can be recovered from the tokens the diagnosis prints.
@@ -13,7 +13,7 @@ the `projmux doctor` replacement table:
 | --- | --- | --- |
 | `L1` | `installed-executable-image` | the file the installed path publishes |
 | `L2` | `long-lived-projmux-processes` | every running child of that file |
-| `L3` | `provider-sessions-and-generations` | provider sessions and the managed generation pool |
+| `L3` | `provider-sessions-and-generations` | provider sessions, whose app-server lifetime the upstream `codex app-server daemon` owns |
 
 `projmux doctor` renders the table on an unfiltered run and under
 `projmux doctor --section replacement`. It is read-only in the same sense as
@@ -44,22 +44,14 @@ image accepts no new work on any of the three layers*.
   replace it and is left alone — see *The L2 replacement policy* below. A
   replacement that has not finished within the drain cutoff is reported as
   `replacement-cutoff-reached` and is still not ended.
-- `L3` cannot enter `draining` without a qualified version pair. Both doors into
-  a generation switch require a measured receipt for exactly the pair they are
-  about: managed activation refuses before it writes the journal, and a handover
-  resume refuses before it drives any effect — the one exception being a
-  generation nothing is bound to, which the planner has always been allowed to
-  retire because a receipt proves a thread survives a cross-version resume and
-  such a generation has no thread to carry. Each refusal names the action that
-  clears it, and that action is now runnable: `scripts/test-generation-pool-qualification.sh`
-  measures a declared pair in isolation and
-  `projmux agent app-server upgrade qualify --receipt <absolute-json>` installs
-  the receipt it writes where both doors read it. **What is not guaranteed is
-  the measurement's honesty.** The gate checks that the receipt's coverage
-  counters can have come from a run — an acceptance claim with no observation
-  behind it is refused as forged — but a determined forger who writes a coverage
-  count of one is not contradicted by anything else in the receipt. The gate
-  makes the receipt state its coverage; it does not attest to it.
+- `L3` is not replaced by an install at all, and this application no longer
+  switches an app-server generation: the endpoint lifetime belongs to the
+  upstream `codex app-server daemon`, and the private generation pool that once
+  owned it — with its upgrade, qualification, and handover commands — is gone.
+  What the row still reports is the Registry against provider evidence: a
+  `Running` Agent that provider evidence contradicts, and a `Running` Agent that
+  nothing can confirm. Absence of both is not evidence of a restore route, so
+  restoration stays `unknown`.
 
 **Non-Guarantee.** Explicitly outside this contract:
 
@@ -68,13 +60,14 @@ image accepts no new work on any of the three layers*.
   `unsupported-platform` with the `unknown` verdict on both axes. This contract
   does not build a substitute observation for that platform; it states the gap.
 - The provider's own upstream seamless-upgrade contract. `L3` reasons about the
-  pool this application manages, never about what the provider promises.
+  Registry and the provider evidence it can reach, never about what the provider
+  promises.
 - An externally owned (`unmanaged`) app-server. Its state is not this
   application's to observe or restore.
 - Automatic classification of which changes form one invariant. See C-2.
 
 **Scope.** In space: one machine's projmux installation, the long-lived
-processes it owns, and the generation pool it manages. In time: from the return
+processes it owns, and the provider sessions its Registry records. In time: from the return
 of one `install` or `update` to the next. **Expiry: a verdict expires when the
 installed binary's SHA changes.** A table printed before an install describes an
 installation that no longer exists.
@@ -85,7 +78,7 @@ installation that no longer exists.
 | --- | --- | --- |
 | `L1` | this reader's own executable link carries the kernel's `(deleted)` suffix | none for the binary. No copy of the replaced image is retained, and the recovery text the install prints on failure is config convergence, never a rollback. Restorability is `not-restorable` on every supported path. |
 | `L2` | the whole-fleet vintage census, the newest `install-residue.jsonl` record whose own census observed anything, and the last `install-replacement.json` pass | end and relaunch the residual process through the routes this application already ships. The drain cutoff bounds the wait, and reaching it changes the row rather than the fleet, so a failed replacement leaves every process exactly where a successful one would have found it. |
-| `L3` | generation-pool status, its qualification result, and the Running-versus-live-session census | produce a receipt for the pair with `scripts/test-generation-pool-qualification.sh <old> <new> <output-dir>` and install it with `projmux agent app-server upgrade qualify --receipt <absolute-json>`. **The producer is the recovery route**: a pool that can be qualified can be entered, and one that cannot is refused before it enters. The 2026-09-07 measurement — no route back once `draining` was entered without a verdict — held because nothing read a produced receipt; the entry paths now refuse rather than reach that state. |
+| `L3` | the Running-versus-live-session census | there is no projmux-owned generation switch to undo. A `Running` Agent whose provider session is gone is rebound with `projmux agent resume <ref>`, which moves a retired endpoint reference onto the daemon endpoint; a session nothing can confirm has no route this application can establish. |
 
 **Enforcement.** `TestDoctorReplacementLayerVerdictsAreFixedByInputCombination`
 fixes every input combination to its two verdicts and its token.
@@ -93,15 +86,8 @@ fixes every input combination to its two verdicts and its token.
 to name the evidence that was missing.
 `TestDoctorReplacementDarwinReportsUnsupportedPlatformForImageAndProcessLayers`
 holds the platform branch.
-`TestDoctorReplacementQualificationMissingMakesGenerationPoolNotRestorable`
-holds the `L3` mapping and
-`TestDoctorReplacementL3RestorationMovesWhenTheQualificationLaneOpens` holds the
-transition across it. For the `L3` guarantee above,
-`TestActivateManagedCurrentRefusesEveryUnqualifiedRequestBeforeDraining` and
-`TestResumeRefusesAnUnqualifiedPairBeforeAnyHandoverEffect` hold the two doors,
-`TestResumeStillRetiresAVacantGenerationWithoutAReceipt` holds the vacancy
-exception, and `TestQualificationGateRefusesEvidenceCountersNoObservationBacks`
-holds the forgery refusal. For the `L2` guarantee above,
+`TestDoctorReplacementCensusSeparatesRegistryRunningFromLiveProviderSession`
+holds the `L3` census and its mismatch token. For the `L2` guarantee above,
 `TestBrokerRuntimeDrainsWhenItsOwnImageWasReplaced` holds the vintage entry
 condition and that a runtime on the installed image is not drained by it,
 `TestReplacementRolePoliciesMatchTheContractDocument` and
@@ -250,19 +236,14 @@ the token constants in the code equal, in both directions.
 | `L2` | `install-residue-recorded` | `not-replaced` | `restorable` | no live child was observable, and the newest ledger record whose own census observed anything says that install left residue |
 | `L2` | `install-residue-clean` | `replaced` | `restorable` | no live child was observable, and the newest ledger record whose own census observed anything says that install left none |
 | `L2` | `no-observed-processes` | `unknown` | `unknown` | neither the live census nor any ledger record observed anything. Every reading is silent; none says the fleet is clean |
-| `L3` | `generation-pool-unobserved` | `unknown` | `unknown` | no pool diagnosis was read |
-| `L3` | `registry-running-provider-session-dead` | pool-derived | `not-restorable` | provider evidence contradicts a Registry `Running` Agent |
-| `L3` | `qualification-missing` | pool-derived | `not-restorable` | the pool is installed and carries no qualification result. A pool in this state predates the entry gates or had its receipt removed; the row's `pool.action` names the producer that clears it |
-| `L3` | `generation-pool-blocked` | pool-derived | `not-restorable` | the pool diagnosis is blocked |
-| `L3` | `generation-handover-required` | pool-derived | `restorable` | the pool has a pending operation with a handover route |
-| `L3` | `registry-running-session-unobserved` | pool-derived | `unknown` | Running Agents rest on the Registry alone, with no provider handle to check |
-| `L3` | `generation-pool-not-installed` | `not-replaced` | `unknown` | no generation journal exists. Absence of a journal is absence of evidence about a restore route, not evidence of one |
-| `L3` | `generation-pool-ready` | pool-derived | `restorable` | the pool is installed, qualified, and settled |
+| `L3` | `registry-unobserved` | `unknown` | `unknown` | no Registry was read, so nothing about the provider sessions was observed |
+| `L3` | `registry-running-provider-session-dead` | `not-replaced` | `not-restorable` | provider evidence contradicts a Registry `Running` Agent |
+| `L3` | `registry-running-session-unobserved` | `not-replaced` | `unknown` | Running Agents rest on the Registry alone, with no provider handle to check |
+| `L3` | `provider-sessions-uncontradicted` | `not-replaced` | `unknown` | the Registry was read and no Running Agent is contradicted or unconfirmed. Nothing contradicts the sessions; nothing establishes a restore route for them either |
 
-`pool-derived` means the replacement axis follows the pool rather than the
-token: `replaced` once a generation is draining, handover-pending, or retired —
-because such a generation accepts no new admission, which is exactly the
-sentence C-1's Assumption makes — and `not-replaced` otherwise.
+The `L3` replacement axis is `not-replaced` on every reading that reached the
+Registry: an install replaces no provider session, and this application owns no
+app-server generation switch that could replace one.
 
 ## Process role vocabulary
 
@@ -567,13 +548,6 @@ reconstruction.
 | `replacement.drained` | `L2` | counter |
 | `replacement.reported` | `L2` | counter |
 | `registry.observed` | `L3` | `true` / `false` |
-| `pool.status` | `L3` | pool status token, or `unobserved` when no pool diagnosis was read |
-| `pool.reason` | `L3` | pool reason token |
-| `pool.action` | `L3` | pool action token |
-| `pool.generations.live` | `L3` | counter |
-| `pool.generations.draining` | `L3` | counter |
-| `qualification.verdict` | `L3` | qualification verdict token |
-| `qualification.reason` | `L3` | qualification reason token |
 | `sessions.running` | `L3` | counter |
 | `sessions.live` | `L3` | counter |
 | `sessions.dead` | `L3` | counter |
@@ -591,6 +565,5 @@ The replacement policy above is the one thing on this page that acts, and it
 acts through a strictly narrower door. `TestReplacementPathEndsNoProcess` holds
 the same guard over the policy table and the install pass: they carry no
 termination, no signalling, and no restart either. **The whole of the action is
-a socket handshake, and the runtime decides.** `L1` atomicity and the `L3`
-qualification gate are separate work on separate doors, and no change on this
-path may alter their behavior.
+a socket handshake, and the runtime decides.** `L1` atomicity is separate work
+on a separate door, and no change on this path may alter its behavior.

@@ -48,9 +48,6 @@ func doctorEndpointHealth() codexappserver.Health {
 func doctorEndpointCommand(registry coremetadata.Registry, health codexappserver.Health) *doctorCommand {
 	doctor := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true})
 	doctor.readRegistry = func() (coremetadata.Registry, error) { return registry, nil }
-	doctor.codexGeneration = func(coremetadata.Registry) *doctorCodexGenerationPool {
-		return &doctorCodexGenerationPool{Status: "absent"}
-	}
 	doctor.codexEndpointDomain = func() (string, error) { return doctorEndpointFixtureDomain, nil }
 	doctor.appServerHealth = func(codexappserver.TriggerKind, bool) codexappserver.Health { return health }
 	return doctor
@@ -71,7 +68,7 @@ func TestDoctorCodexEndpointMismatchExactActivationSet(t *testing.T) {
 			registry := doctorEndpointFixture(test.versions...)
 			before, _ := json.Marshal(registry)
 			health := doctorEndpointHealth()
-			got := diagnoseCodexEndpointMismatch(registry, nil, doctorEndpointFixtureDomain, nil, &doctorCodexGenerationPool{Status: "absent"}, &health)
+			got := diagnoseCodexEndpointMismatch(registry, nil, doctorEndpointFixtureDomain, nil, &health)
 			var uids []string
 			if got != nil {
 				for _, agent := range got.Mismatches {
@@ -101,7 +98,7 @@ func TestDoctorCodexEndpointMismatchIncludesBoundNonRunningActivation(t *testing
 	registry.Agents[2].Spec.Provider = "claude"
 	registry.Panes[2].Status.Activation.Codex = nil
 	health := doctorEndpointHealth()
-	got := diagnoseCodexEndpointMismatch(registry, nil, doctorEndpointFixtureDomain, nil, &doctorCodexGenerationPool{Status: "absent"}, &health)
+	got := diagnoseCodexEndpointMismatch(registry, nil, doctorEndpointFixtureDomain, nil, &health)
 	if got == nil || got.Status != "complete" || got.Agents != 1 || len(got.Mismatches) != 1 || got.Mismatches[0].AgentUID != "agent-fixture-0" {
 		t.Fatalf("wrong activation scope: %+v", got)
 	}
@@ -143,7 +140,7 @@ func TestDoctorCodexEndpointMismatchSignalsEnumerationGaps(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			registry, health := doctorEndpointFixture("0.153.2"), doctorEndpointHealth()
 			test.change(&registry, &health)
-			got := diagnoseCodexEndpointMismatch(registry, nil, doctorEndpointFixtureDomain, nil, &doctorCodexGenerationPool{Status: "absent"}, &health)
+			got := diagnoseCodexEndpointMismatch(registry, nil, doctorEndpointFixtureDomain, nil, &health)
 			if got == nil || got.Status != "incomplete" || len(got.Mismatches) != 0 || len(got.UnobservedAgents) != 1 || got.UnobservedAgents[0].Reason != test.reason {
 				t.Fatalf("missing enumeration signal: %+v", got)
 			}
@@ -162,25 +159,9 @@ func TestDoctorCodexEndpointMismatchSignalsEnumerationGaps(t *testing.T) {
 		{registryErr: errors.New("private path failure"), reason: "registry-unavailable"},
 		{domainErr: errors.New("private path failure"), reason: "state-domain-unavailable"},
 	} {
-		got := diagnoseCodexEndpointMismatch(registry, test.registryErr, doctorEndpointFixtureDomain, test.domainErr, &doctorCodexGenerationPool{Status: "absent"}, &health)
+		got := diagnoseCodexEndpointMismatch(registry, test.registryErr, doctorEndpointFixtureDomain, test.domainErr, &health)
 		if got == nil || got.Reason != test.reason || len(got.Mismatches) > 0 {
 			t.Fatalf("missing read failure: %+v", got)
-		}
-	}
-}
-
-func TestDoctorCodexEndpointMismatchDoesNotGuessPrivateGenerationRouting(t *testing.T) {
-	for _, pool := range []*doctorCodexGenerationPool{
-		nil,
-		{Status: "blocked", Reason: "invalid-admission-tuple"},
-		{Status: "ready", StateDomainID: doctorEndpointFixtureDomain, CurrentGenerationID: "codex-0.153.2",
-			Generations: []doctorCodexGeneration{{GenerationID: "codex-0.153.2", Owner: "projmux-private", Version: "0.153.2"}}},
-	} {
-		doctor := doctorEndpointCommand(doctorEndpointFixture("0.153.2"), doctorEndpointHealth())
-		doctor.codexGeneration = func(coremetadata.Registry) *doctorCodexGenerationPool { return pool }
-		got := doctor.evaluateReport(doctorSectionIntegrations).CodexEndpointRisks
-		if got == nil || got.Status != "incomplete" || len(got.Mismatches) != 0 || got.UnobservedAgents[0].Reason != "endpoint-routing-unobserved" {
-			t.Fatalf("default daemon version became private endpoint evidence: pool=%+v report=%+v", pool, got)
 		}
 	}
 }

@@ -32,14 +32,6 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 		{value: Event{}, fields: []string{"Fence", "Origin", "Sequence", "Method", "Params", "Snapshot", "Lease"}},
 		{value: Config{}, fields: []string{"Endpoint", "Opener", "Lifecycle", "Clock", "Jitter", "Backlog"}},
 		{value: EndpointIdentity{}, fields: []string{"StateDomainID", "EndpointGenerationID"}},
-		{value: GenerationRoute{}, fields: []string{"Endpoint", "ThreadID"}},
-		{value: PoolAuthority{}, fields: []string{"Endpoint", "Runtime", "Fence"}},
-		{value: BindingLedgerEntry{}, fields: []string{"ThreadID", "BindingEpoch"}},
-		{value: GenerationLedger{}, fields: []string{
-			"Endpoint", "BrokerRuntimeID", "Preparing", "Ready", "Initializes", "ConnectionEpoch",
-			"Snapshots", "Reconnects", "Restarts", "BindingRestores", "Bindings",
-		}},
-		{value: PoolConfig{}, fields: []string{"Endpoint", "Opener", "Clock", "Jitter", "Backlog"}},
 		{value: Diagnostics{}, fields: []string{
 			"Endpoint", "ConnectionEpoch", "OpenAttempts", "Connects", "Disconnects", "Bindings",
 			"ReleasedBindings", "RevokedBindings", "BufferedEvents", "DeliveredEvents",
@@ -63,7 +55,7 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 	// not even be shaped like provider content.
 	for _, retained := range []any{
 		Diagnostics{}, WriteRecord{}, HostStats{}, RevocationCount{}, RuntimeTelemetry{},
-		EndpointIdentity{}, PoolAuthority{}, BindingLedgerEntry{}, GenerationLedger{},
+		EndpointIdentity{},
 	} {
 		valueType := reflect.TypeOf(retained)
 		for i := range valueType.NumField() {
@@ -152,37 +144,7 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 		t.Fatalf("retained broker state kept provider content: %s", retained)
 	}
 
-	// The generation wrapper restores machine-local binding inputs in-process,
-	// but its exported durable ledger remains path/prompt free. Provider
-	// payloads are forwarded to the exact endpoint and never retained here.
 	const privatePath = "/private/operator/worktree"
-	poolEndpoint := newFakeEndpoint()
-	poolOpener := &scriptedOpener{steps: []*fakeEndpoint{poolEndpoint}}
-	pool := NewGenerationPool()
-	t.Cleanup(func() { _ = pool.Close() })
-	identity := EndpointIdentity{StateDomainID: "domain-content-free", EndpointGenerationID: "generation-one"}
-	if err := pool.Prepare(PoolConfig{Endpoint: identity, Opener: poolOpener.open}); err != nil {
-		t.Fatal(err)
-	}
-	route := GenerationRoute{Endpoint: identity, ThreadID: "thread-opaque"}
-	pooled, err := pool.BindExisting(route, privatePath, []string{privatePath + "/root"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	awaitPooledSnapshot(t, pooled, route.ThreadID)
-	authority, err := pooled.ControlAuthority()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pooled.Submit(t.Context(), route, authority, Mutation{
-		Method: "turn/start", Params: map[string]string{"text": secret},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	poolRetained := fmt.Sprintf("%+v", pool.Ledger())
-	if strings.Contains(poolRetained, privatePath) || strings.Contains(poolRetained, secret) {
-		t.Fatalf("generation ledger retained local/provider content: %s", poolRetained)
-	}
 	pathCause := errors.New(privatePath)
 	if rendered := refuse(RefusalBindingRestoreFailed, pathCause).Error(); rendered != "codex broker refused: binding-restore-failed" || strings.Contains(rendered, privatePath) {
 		t.Fatalf("generation refusal rendered its path-bearing cause: %q", rendered)

@@ -21,13 +21,6 @@
     }
   ],
   "ai_notify_integrations": null,
-  "codex_payload_free_capability": {
-    "cache_key": "",
-    "durable_zero_turn_resume": "unknown",
-    "remote_new_session": "unknown",
-    "create_route": "plain-fallback",
-    "reason": "exact-capability-unknown"
-  },
   "codex_control_plane": {
     "vintage": {
       "supported": false
@@ -101,17 +94,13 @@
       {
         "layer": "L3",
         "subject": "provider-sessions-and-generations",
-        "replacement": "unknown",
+        "replacement": "not-replaced",
         "restoration": "unknown",
-        "reason": "generation-pool-unobserved",
+        "reason": "provider-sessions-uncontradicted",
         "signals": [
           {
             "key": "registry.observed",
             "value": "true"
-          },
-          {
-            "key": "pool.status",
-            "value": "unobserved"
           },
           {
             "key": "sessions.running",

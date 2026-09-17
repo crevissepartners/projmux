@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 185 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 173 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -123,11 +123,6 @@ projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
-projmux agent app-server upgrade qualify --receipt <absolute-json>
-projmux agent app-server upgrade plan|apply --request <absolute-json>
-projmux agent app-server upgrade resume|abort --operation <ref>
-projmux agent app-server handover plan|apply --request <absolute-json>
-projmux agent app-server handover resume|abort --operation <ref>
 projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
 projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message status <message-ref> [-o json]
@@ -147,12 +142,11 @@ Subcommands:
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install, remove, or preview provider hooks and tmux-bell integration |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
-| [`projmux agent app-server`](#projmux-agent-app-server) | Manage explicitly requested private Codex app-server generation operations |
 | [`projmux agent capabilities`](#projmux-agent-capabilities) | Read static provider support or one exact Agent's Registry-backed runtime eligibility |
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade qualify`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`
 
 ### `projmux agent status`
 
@@ -424,290 +418,6 @@ Allowed effects:
 
 ```
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
-```
-
-### `projmux agent app-server`
-
-Manage explicitly requested private Codex app-server generation operations
-
-Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux agent app-server upgrade`](#projmux-agent-app-server-upgrade) | Plan, apply, resume, or abort one exact rolling generation operation |
-| [`projmux agent app-server handover`](#projmux-agent-app-server-handover) | Plan, apply, resume, or abort one exact generation-wide handover |
-
-Canonical spelling: `projmux agent app-server upgrade qualify`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`
-
-#### `projmux agent app-server upgrade`
-
-Plan, apply, resume, or abort one exact rolling generation operation
-
-Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server upgrade
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux agent app-server upgrade qualify`](#projmux-agent-app-server-upgrade-qualify) | Install one measured version-pair qualification receipt for the generation entry paths |
-| [`projmux agent app-server upgrade plan`](#projmux-agent-app-server-upgrade-plan) | Read the mutation-zero plan for one exact private generation upgrade |
-| [`projmux agent app-server upgrade apply`](#projmux-agent-app-server-upgrade-apply) | Apply one exact crash-resumable private generation admission switch |
-| [`projmux agent app-server upgrade resume`](#projmux-agent-app-server-upgrade-resume) | Resume one exact durable rolling generation operation |
-| [`projmux agent app-server upgrade abort`](#projmux-agent-app-server-upgrade-abort) | Abort one pre-admission operation and clean only its exact candidate |
-
-Canonical spelling: `projmux agent app-server upgrade qualify`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`
-
-##### `projmux agent app-server upgrade qualify`
-
-Install one measured version-pair qualification receipt for the generation entry paths
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server upgrade qualify --receipt <absolute-json>
-```
-
-##### `projmux agent app-server upgrade plan`
-
-Read the mutation-zero plan for one exact private generation upgrade
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server upgrade plan --request <absolute-json>
-```
-
-##### `projmux agent app-server upgrade apply`
-
-Apply one exact crash-resumable private generation admission switch
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server upgrade apply --request <absolute-json>
-```
-
-##### `projmux agent app-server upgrade resume`
-
-Resume one exact durable rolling generation operation
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server upgrade resume --operation <ref>
-```
-
-##### `projmux agent app-server upgrade abort`
-
-Abort one pre-admission operation and clean only its exact candidate
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server upgrade abort --operation <ref>
-```
-
-#### `projmux agent app-server handover`
-
-Plan, apply, resume, or abort one exact generation-wide handover
-
-Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server handover
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux agent app-server handover plan`](#projmux-agent-app-server-handover-plan) | Read the exact target-set generation handover plan |
-| [`projmux agent app-server handover apply`](#projmux-agent-app-server-handover-apply) | Apply one crash-resumable generation-wide handover |
-| [`projmux agent app-server handover resume`](#projmux-agent-app-server-handover-resume) | Resume one exact durable generation handover |
-| [`projmux agent app-server handover abort`](#projmux-agent-app-server-handover-abort) | Abort one exact pre-stop generation handover |
-
-Canonical spelling: `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`
-
-##### `projmux agent app-server handover plan`
-
-Read the exact target-set generation handover plan
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server handover plan --request <absolute-json>
-```
-
-##### `projmux agent app-server handover apply`
-
-Apply one crash-resumable generation-wide handover
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server handover apply --request <absolute-json>
-```
-
-##### `projmux agent app-server handover resume`
-
-Resume one exact durable generation handover
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server handover resume --operation <ref>
-```
-
-##### `projmux agent app-server handover abort`
-
-Abort one exact pre-stop generation handover
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux agent app-server handover abort --operation <ref>
 ```
 
 ### `projmux agent capabilities`

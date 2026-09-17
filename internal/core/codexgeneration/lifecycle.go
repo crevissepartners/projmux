@@ -12,8 +12,8 @@ import (
 // and endpoint identity are sufficient to distinguish planned drain/recovery
 // from an ordinary provider or process failure.
 //
-// This package consumes the ref but never creates it. Upgrade, drain, and
-// handover producers belong to later phases.
+// This package consumes the ref but never creates it; refs already stored in
+// the Registry stay readable.
 type LifecycleOperationRef = metadata.CodexGenerationOperationRef
 
 // LifecycleProjectionInput is the complete semantic input to the canonical
@@ -155,7 +155,7 @@ func validPlannedProjection(input LifecycleProjectionInput) bool {
 }
 
 // GenerationStates returns the complete v1 state vocabulary in transition
-// order. Projection properties and the pool validator share this owner.
+// order. The lifecycle projection and its properties share this owner.
 func GenerationStates() []GenerationState {
 	return []GenerationState{
 		StatePreparing,

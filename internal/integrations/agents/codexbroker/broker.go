@@ -148,8 +148,8 @@ func (b *Broker) Bind(threadID, cwd string, roots []string) (*Binding, error) {
 }
 
 // bindAtEpoch restores an exact binding epoch when desired is non-zero. It is
-// package-private because only GenerationPool's sorted broker-restart ledger
-// may preserve an epoch; ordinary callers always receive the next one.
+// package-private because only an in-package broker-restart ledger may
+// preserve an epoch; ordinary callers always receive the next one.
 func (b *Broker) bindAtEpoch(threadID, cwd string, roots []string, desired BindingEpoch) (*Binding, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {

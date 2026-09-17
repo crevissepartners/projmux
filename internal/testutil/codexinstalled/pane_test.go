@@ -26,20 +26,6 @@ func TestRemoteNewPaneArgvIsContentFree(t *testing.T) {
 	}
 }
 
-func TestPayloadFreeSmokeRootRejectsOverlongPrivatePathWithoutDisclosingIt(t *testing.T) {
-	if err := validatePayloadFreeSmokeRoot("/tmp/projmux-payload-free-XXXXXX"); err != nil {
-		t.Fatalf("documented payload-free smoke root exceeded private tmux path budget: %v", err)
-	}
-	privateRoot := "/tmp/" + strings.Repeat("private-", 20)
-	err := validatePayloadFreeSmokeRoot(privateRoot)
-	if err == nil {
-		t.Fatal("overlong private tmux path was accepted")
-	}
-	if strings.Contains(err.Error(), privateRoot) {
-		t.Fatal("private tmux path was disclosed in validation error")
-	}
-}
-
 func TestTurnFreeAttachPaneCommandExcludesCredentialsAndAmbientIdentity(t *testing.T) {
 	binDir := t.TempDir()
 	tmuxPath := filepath.Join(binDir, "tmux")

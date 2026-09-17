@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
@@ -27,10 +26,6 @@ type replacementCase struct {
 	replacement string
 	restoration string
 	reason      string
-}
-
-func replacementQualified() *codexgeneration.QualificationResult {
-	return &codexgeneration.QualificationResult{Verdict: codexgeneration.VerdictYes, Reason: codexgeneration.ReasonQualified}
 }
 
 // replacementFreshResidualVintage is a fleet an install has just left behind:
@@ -165,16 +160,15 @@ func replacementCases() []replacementCase {
 			reason: doctorReplacementReasonNoObservedProcess,
 		},
 		{
-			name:        "L3 pool diagnosis was never read",
+			name:        "L3 Registry was never read",
 			inputs:      doctorReplacementInputs{},
 			layer:       doctorReplacementLayerProvider,
 			replacement: doctorReplacementUnknown, restoration: doctorRestorationUnknown,
-			reason: doctorReplacementReasonPoolUnobserved,
+			reason: doctorReplacementReasonRegistryUnobserved,
 		},
 		{
 			name: "L3 provider evidence contradicts a Registry Running Agent",
 			inputs: doctorReplacementInputs{
-				Pool:     &doctorCodexGenerationPool{Status: "ready", Reason: "qualified", Qualification: replacementQualified()},
 				Sessions: doctorProviderSessionCensus{Observed: 1, Running: 4, Live: 1, Dead: 3},
 			},
 			layer:       doctorReplacementLayerProvider,
@@ -182,55 +176,8 @@ func replacementCases() []replacementCase {
 			reason: doctorReplacementReasonSessionDead,
 		},
 		{
-			name: "L3 pool installed with no qualification result",
-			inputs: doctorReplacementInputs{
-				Pool: &doctorCodexGenerationPool{
-					Status: "blocked", Reason: "qualification-missing",
-					Action: "run-isolated-version-pair-qualification",
-					Generations: []doctorCodexGeneration{
-						{GenerationID: "codex-0.153.2", State: codexgeneration.StateDraining},
-						{GenerationID: "codex-0.153.4", State: codexgeneration.StateCurrent},
-					},
-				},
-				Sessions: live,
-			},
-			layer:       doctorReplacementLayerProvider,
-			replacement: doctorReplacementReplaced, restoration: doctorRestorationNotRestorable,
-			reason: doctorReplacementReasonQualification,
-		},
-		{
-			name: "L3 pool diagnosis blocked for a reason other than qualification",
-			inputs: doctorReplacementInputs{
-				Pool: &doctorCodexGenerationPool{
-					Status: "blocked", Reason: "bundle-drift", Action: "restore-bundle",
-					Qualification: replacementQualified(),
-				},
-				Sessions: live,
-			},
-			layer:       doctorReplacementLayerProvider,
-			replacement: doctorReplacementNotReplaced, restoration: doctorRestorationNotRestorable,
-			reason: doctorReplacementReasonPoolBlocked,
-		},
-		{
-			name: "L3 pending operation with a handover route",
-			inputs: doctorReplacementInputs{
-				Pool: &doctorCodexGenerationPool{
-					Status: "action-required", Reason: "handover-required",
-					Qualification: replacementQualified(),
-					Generations: []doctorCodexGeneration{
-						{GenerationID: "codex-0.153.2", State: codexgeneration.StateHandoverPending},
-					},
-				},
-				Sessions: live,
-			},
-			layer:       doctorReplacementLayerProvider,
-			replacement: doctorReplacementReplaced, restoration: doctorRestorationRestorable,
-			reason: doctorReplacementReasonHandoverRequired,
-		},
-		{
 			name: "L3 Running Agents resting on the Registry alone",
 			inputs: doctorReplacementInputs{
-				Pool:     &doctorCodexGenerationPool{Status: "ready", Reason: "qualified", Qualification: replacementQualified()},
 				Sessions: doctorProviderSessionCensus{Observed: 1, Running: 3, Live: 2, Unobservable: 1},
 			},
 			layer:       doctorReplacementLayerProvider,
@@ -238,24 +185,13 @@ func replacementCases() []replacementCase {
 			reason: doctorReplacementReasonSessionUnobserved,
 		},
 		{
-			name: "L3 no generation journal exists",
+			name: "L3 every Running Agent has a live provider session",
 			inputs: doctorReplacementInputs{
-				Pool:     &doctorCodexGenerationPool{Status: "absent", Reason: "generation-pool-not-installed"},
 				Sessions: live,
 			},
 			layer:       doctorReplacementLayerProvider,
 			replacement: doctorReplacementNotReplaced, restoration: doctorRestorationUnknown,
-			reason: doctorReplacementReasonPoolNotInstalled,
-		},
-		{
-			name: "L3 pool installed qualified and settled",
-			inputs: doctorReplacementInputs{
-				Pool:     &doctorCodexGenerationPool{Status: "ready", Reason: "qualified", Qualification: replacementQualified()},
-				Sessions: live,
-			},
-			layer:       doctorReplacementLayerProvider,
-			replacement: doctorReplacementNotReplaced, restoration: doctorRestorationRestorable,
-			reason: doctorReplacementReasonPoolReady,
+			reason: doctorReplacementReasonSessionsUncontradicted,
 		},
 	}
 }
@@ -304,9 +240,9 @@ func TestDoctorReplacementUnknownVerdictsNameTheEvidenceGap(t *testing.T) {
 		doctorReplacementReasonUnsupportedPlatform,
 		doctorReplacementReasonImageUnresolved,
 		doctorReplacementReasonNoObservedProcess,
-		doctorReplacementReasonPoolUnobserved,
+		doctorReplacementReasonRegistryUnobserved,
 		doctorReplacementReasonSessionUnobserved,
-		doctorReplacementReasonPoolNotInstalled,
+		doctorReplacementReasonSessionsUncontradicted,
 	}
 	seen := map[string]bool{}
 	for _, tc := range replacementCases() {
@@ -372,7 +308,7 @@ func TestDoctorReplacementSignalValuesCarryNoPathProcessOrFreeFormText(t *testin
 
 	// A hostile value never reaches a serialized surface, and the row still
 	// keeps a discriminant because the key names which evidence decided it.
-	signals := doctorReplacementSignals(doctorReplacementSignalPoolReason, "/home/someone/.local/state/projmux/registry.json")
+	signals := doctorReplacementSignals(doctorReplacementSignalPassRefusal, "/home/someone/.local/state/projmux/registry.json")
 	if len(signals) != 1 || signals[0].Value != doctorReplacementUnclassified {
 		t.Fatalf("path-shaped signal value = %+v, want a single %q", signals, doctorReplacementUnclassified)
 	}
@@ -401,31 +337,6 @@ func TestDoctorReplacementDarwinReportsUnsupportedPlatformForImageAndProcessLaye
 		if len(row.Signals) == 0 {
 			t.Fatalf("%s reported unsupported-platform with no discriminant", layer)
 		}
-	}
-}
-
-// TestDoctorReplacementQualificationMissingMakesGenerationPoolNotRestorable is
-// the acceptance mapping for C-1's L3 Guarantee, fixed against a fixture rather
-// than against whatever this machine's pool happens to hold.
-func TestDoctorReplacementQualificationMissingMakesGenerationPoolNotRestorable(t *testing.T) {
-	t.Parallel()
-
-	pool := &doctorCodexGenerationPool{
-		Status: "blocked", Reason: "qualification-missing",
-		Action: "run-isolated-version-pair-qualification",
-		Generations: []doctorCodexGeneration{
-			{GenerationID: "codex-0.153.2", State: codexgeneration.StateDraining},
-		},
-	}
-	row := projectDoctorReplacementProviderRow(pool, doctorProviderSessionCensus{Observed: 1, Running: 1, Live: 1})
-	if row.Reason != doctorReplacementReasonQualification {
-		t.Fatalf("reason = %q, want %q", row.Reason, doctorReplacementReasonQualification)
-	}
-	if row.Restoration != doctorRestorationNotRestorable {
-		t.Fatalf("restoration = %q, want %q", row.Restoration, doctorRestorationNotRestorable)
-	}
-	if row.Replacement != doctorReplacementReplaced {
-		t.Fatalf("replacement = %q, want %q for a draining generation", row.Replacement, doctorReplacementReplaced)
 	}
 }
 
@@ -520,8 +431,7 @@ func TestDoctorReplacementCensusSeparatesRegistryRunningFromLiveProviderSession(
 		t.Fatalf("census = %+v, want %+v", census, want)
 	}
 
-	row := projectDoctorReplacementProviderRow(
-		&doctorCodexGenerationPool{Status: "absent", Reason: "generation-pool-not-installed"}, census)
+	row := projectDoctorReplacementProviderRow(census)
 	if row.Reason != doctorReplacementReasonSessionDead {
 		t.Fatalf("reason = %q, want the dedicated mismatch token %q", row.Reason, doctorReplacementReasonSessionDead)
 	}
@@ -735,9 +645,7 @@ func TestDoctorReplacementSectionCreatesNothing(t *testing.T) {
 	cmd.brokerDiagnostic = func() codexBrokerDiagnostic {
 		return codexBrokerDiagnostic{State: codexBrokerStateAbsent}
 	}
-	cmd.codexGeneration = nil
-
-	report := cmd.evaluateReplacement(nil, nil)
+	report := cmd.evaluateReplacement(nil)
 	if len(report.Rows) != len(doctorReplacementLayerOrder) {
 		t.Fatalf("rows = %d, want %d", len(report.Rows), len(doctorReplacementLayerOrder))
 	}

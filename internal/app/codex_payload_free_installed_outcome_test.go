@@ -30,7 +30,7 @@ type installedPayloadFreeCreateOutcome struct {
 
 var installedPayloadFreeResumeFailurePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^agent resume: native Codex thread preparation failed after provider identity became indeterminate; refusing a second CLI lane: codex app-server response refused: (thread-not-durable|thread-absent|protocol-error) \(code -?[0-9]+\)$`),
-	regexp.MustCompile(`^agent resume: the stored Codex thread cannot be resumed natively right now \((generation-unavailable|legacy-generation-unavailable|handover-required)\); refusing to rebind it onto a lane with no native turn control: Codex generation route: (generation-unavailable|legacy-generation-unavailable|handover-required)$`),
+	regexp.MustCompile(`^agent resume: the stored Codex thread cannot be resumed natively right now \((generation-unavailable|legacy-generation-unavailable)\); refusing to rebind it onto a lane with no native turn control: Codex generation route: (generation-unavailable|legacy-generation-unavailable)$`),
 }
 
 func runInstalledPayloadFreeCreate(

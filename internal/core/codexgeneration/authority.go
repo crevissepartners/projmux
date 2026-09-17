@@ -35,32 +35,3 @@ func DecideAuthority(durable *metadata.CodexEndpointRef, stored, presented *meta
 	}
 	return AuthorityAllowed
 }
-
-type ResumeDecision string
-
-const (
-	ResumeAllowed            ResumeDecision = "allowed"
-	ResumeOwnerStillLive     ResumeDecision = "owner-still-live"
-	ResumeTargetMismatch     ResumeDecision = "target-mismatch"
-	ResumeNotDurable         ResumeDecision = "thread-not-durable"
-	ResumeAuthorityUncertain ResumeDecision = "authority-unavailable"
-)
-
-// DecideSuccessorResume is the content-free old-stop semantic barrier used by
-// qualification. It does not call the provider; the caller may do so only for
-// ResumeAllowed.
-func DecideSuccessorResume(owner, successor metadata.CodexEndpointRef, oldStopped, completedPersisted bool) ResumeDecision {
-	if !owner.Valid() || !successor.Valid() || owner.StateDomainID != successor.StateDomainID {
-		return ResumeAuthorityUncertain
-	}
-	if owner.Same(successor) {
-		return ResumeTargetMismatch
-	}
-	if !oldStopped {
-		return ResumeOwnerStillLive
-	}
-	if !completedPersisted {
-		return ResumeNotDurable
-	}
-	return ResumeAllowed
-}

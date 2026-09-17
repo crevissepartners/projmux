@@ -66,7 +66,7 @@ func TestClaudeQualificationRouteIsExplicitJSONAgentDelivery(t *testing.T) {
 	}
 }
 
-func TestAgentIntegrationAndGenerationLeafHelpMatchesCapabilityCatalog(t *testing.T) {
+func TestAgentIntegrationAndUsageLeafHelpMatchesCapabilityCatalog(t *testing.T) {
 	t.Parallel()
 
 	_, integrate, ok := Resolve([]string{"agent", "integrate"})
@@ -92,21 +92,6 @@ func TestAgentIntegrationAndGenerationLeafHelpMatchesCapabilityCatalog(t *testin
 	for _, target := range aiprovider.UsageTargets() {
 		if !strings.Contains(usageHelp, target) {
 			t.Errorf("agent usage help omits target %q: %s", target, usageHelp)
-		}
-	}
-
-	var generationRoutes []string
-	for _, action := range aiprovider.AgentActions() {
-		if strings.HasPrefix(action.ID, "app-server.") {
-			generationRoutes = append(generationRoutes, action.Route)
-		}
-	}
-	if len(generationRoutes) != 8 {
-		t.Fatalf("generation leaf count = %d, want 8", len(generationRoutes))
-	}
-	for _, route := range generationRoutes {
-		if _, ok := LookupCanonicalRoute(route); !ok {
-			t.Errorf("generation route %q missing", route)
 		}
 	}
 }

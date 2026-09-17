@@ -15,7 +15,10 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when the Project snapshot routes were removed:
+// The baseline last moved when the private Codex app-server generation routes
+// were removed: the five `agent app-server upgrade` rows and the four `agent
+// app-server handover` rows lost their rows with the generation pool they
+// operated. Before that, it moved when the Project snapshot routes were removed:
 // `create snapshot`, `get snapshots`, `delete snapshot`, `restore snapshot`,
 // and `prune snapshot` lost their rows, and the `prune` summary stopped naming
 // snapshots. Before that, it moved when `prune agent` joined `prune project` as
@@ -41,7 +44,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "c0fd5e0e650a9a94e4f5ad4eaf8d592a5ff329058574633f091c1a6896081984"
+	const want = "1eb832a194b0de5e58fbd4ec5958c86d504f3ca32ec36137791978c305ab32d3"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

@@ -18,7 +18,6 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 // retiredRefsDefaultGeneration is the default daemon endpoint generation the
@@ -455,7 +454,6 @@ func TestRetiredCodexRefDoctorReportsResumeOutcome(t *testing.T) {
 func runRetiredRefsDoctor(t *testing.T, transcript *retiredRefsTranscript) {
 	t.Helper()
 	health := codexappserver.Health{EndpointReadiness: codexappserver.EndpointReady, RunningVersion: strings.TrimPrefix(retiredRefsDefaultGeneration, "codex-")}
-	pool := &doctorCodexGenerationPool{Status: "absent"}
 	for _, test := range []struct {
 		name   string
 		ref    *coremetadata.AgentSessionRef
@@ -470,7 +468,7 @@ func runRetiredRefsDoctor(t *testing.T, transcript *retiredRefsTranscript) {
 		t.Run(test.name, func(t *testing.T) {
 			store := newFakeResourceStore(t)
 			setFixtureSessionRef(t, store, "agt-beta-codex", test.ref)
-			report := diagnoseCodexEndpointMismatch(store.registry, nil, "test-domain", nil, pool, &health)
+			report := diagnoseCodexEndpointMismatch(store.registry, nil, "test-domain", nil, &health)
 			var rows []doctorCodexRetiredRef
 			if report != nil {
 				rows = report.RetiredRefs
@@ -532,46 +530,23 @@ func TestRetiredCodexRefOperatorTextGolden(t *testing.T) {
 	transcript.check(t, "codex_retired_generation_refs.golden")
 }
 
-// retiredRefsJournalFixture writes a valid journal with a ready current and a
+// retiredRefsJournalFixture writes a journal with a ready current and a
 // draining private route for domain under stateDir and pins its mtime.
-func retiredRefsJournalFixture(t *testing.T, stateDir, domain string) (*codexupgrade.Store, []byte, time.Time) {
+func retiredRefsJournalFixture(t *testing.T, stateDir, domain string) (codexRollingJournal, []byte, time.Time) {
 	t.Helper()
-	store := codexupgrade.NewStateStore(stateDir)
-	fixture, _, current := codexPoolInventoryFixture(t)
-	journal, exists, err := fixture.Load()
-	if err != nil || !exists {
-		t.Fatalf("pool fixture: exists=%t err=%v", exists, err)
-	}
-	journal.StateDomainID = domain
-	for i := range journal.Routes {
-		journal.Routes[i].Generation.Endpoint.StateDomainID = domain
-		journal.Routes[i].Config.Endpoint.StateDomainID = domain
-		journal.Routes[i].Proof.Endpoint.StateDomainID = domain
-	}
-	journal.CurrentGenerationID = current.Generation.Endpoint.EndpointGenerationID
-	if _, err := store.Update(context.Background(), func(got *codexupgrade.Journal, _ bool) error {
-		*got = journal
-		return nil
-	}); err != nil {
-		t.Fatalf("seed journal: %v", err)
-	}
-	if loaded, _, err := store.Load(); err != nil {
-		t.Fatalf("journal fixture is not valid: %v", err)
-	} else if _, ok := loaded.CurrentRoute(); !ok {
-		t.Fatal("journal fixture has no ready current route")
-	}
+	journal, _, _ := codexPoolInventoryFixture(t, stateDir, domain)
 	pinned := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	if err := os.Chtimes(store.Path(), pinned, pinned); err != nil {
+	if err := os.Chtimes(journal.Path(), pinned, pinned); err != nil {
 		t.Fatal(err)
 	}
-	body, mod := snapshotCodexJournal(t, store)
-	return store, body, mod
+	body, mod := snapshotCodexJournal(t, journal)
+	return journal, body, mod
 }
 
 // sealJournalDir makes any read or Lstat of the journal fail with a
 // permission error until the returned restore runs, so a route that consults
 // the journal refuses instead of passing.
-func sealJournalDir(t *testing.T, store *codexupgrade.Store) func() {
+func sealJournalDir(t *testing.T, store codexRollingJournal) func() {
 	t.Helper()
 	dir := filepath.Dir(store.Path())
 	if err := os.Chmod(dir, 0); err != nil {
@@ -629,7 +604,6 @@ func TestCodexJournalNeverDecidesNativeRoute(t *testing.T) {
 		t.Fatalf("App state dir %q (err %v) differs from broker state domain %q", paths.StateDir, err, stateDir)
 	}
 	journal, bodyBefore, modBefore := retiredRefsJournalFixture(t, stateDir, domain)
-	journaled, _, _ := journal.Load()
 
 	health := codexappserver.Decide(codexappserver.AvailabilityAvailable, codexappserver.ReasonNone, "0.154.0",
 		codexappserver.EndpointStdioProxy, codexappserver.ConnectionReady, true)
@@ -658,10 +632,10 @@ func TestCodexJournalNeverDecidesNativeRoute(t *testing.T) {
 	if err != nil || len(routes) != 1 || !isDefault(routes[0]) {
 		t.Fatalf("catalog = %+v, %v", routes, err)
 	}
-	for _, route := range journaled.Routes {
-		resolved, err := controller.Resolve(context.Background(), route.Generation.Endpoint)
+	for _, endpoint := range journal.endpoints {
+		resolved, err := controller.Resolve(context.Background(), endpoint)
 		if err != nil || !isDefault(resolved) {
-			t.Fatalf("resolve journaled %s = %+v, %v", route.Generation.Endpoint.EndpointGenerationID, resolved, err)
+			t.Fatalf("resolve journaled %s = %+v, %v", endpoint.EndpointGenerationID, resolved, err)
 		}
 	}
 	workspace := coremetadata.AgentWorkspace{CWD: home}
@@ -697,7 +671,7 @@ func TestCodexJournalNeverDecidesNativeRoute(t *testing.T) {
 
 // retiredRefsJournalDirState lists the journal directory entries with their
 // sizes and mtimes, so a new lock or temp file is visible.
-func retiredRefsJournalDirState(t *testing.T, store *codexupgrade.Store) string {
+func retiredRefsJournalDirState(t *testing.T, store codexRollingJournal) string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Dir(store.Path()))
 	if err != nil {

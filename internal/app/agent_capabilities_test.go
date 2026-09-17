@@ -55,7 +55,6 @@ func TestAgentCapabilitiesExactProjectionSeparatesRuntimeEpochAndAvailability(t 
 	reviewStarts := &countingReviewStarter{}
 	providerCommands := &recordingArgv{}
 	usageCommands := &recordingArgv{}
-	generationCommands := &recordingArgv{}
 	tmuxRunner := &exactControlRouteRunner{}
 	routeLookups := 0
 	providerCalls := 0
@@ -64,8 +63,6 @@ func TestAgentCapabilitiesExactProjectionSeparatesRuntimeEpochAndAvailability(t 
 	cmd.reviews = reviewStarts
 	cmd.ai = providerCommands
 	cmd.usage = usageCommands
-	cmd.codexUpgrade = generationCommands
-	cmd.codexHandover = generationCommands
 	cmd.controlRunner = tmuxRunner
 	cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) {
 		routeLookups++
@@ -84,9 +81,9 @@ func TestAgentCapabilitiesExactProjectionSeparatesRuntimeEpochAndAvailability(t 
 	if stderr.Len() != 0 || store.snapshot() != before || store.writes != writes || store.transactions != transactions || store.reads != reads+1 {
 		t.Fatalf("capability read effects: stderr=%q reads=%d writes=%d transactions=%d changed=%t", stderr.String(), store.reads-reads, store.writes-writes, store.transactions-transactions, store.snapshot() != before)
 	}
-	if controlLookup.calls != 0 || reviewLookup.calls != 0 || reviewStarts.calls != 0 || routeLookups != 0 || providerCalls != 0 || len(tmuxRunner.calls) != 0 || len(providerCommands.calls) != 0 || len(usageCommands.calls) != 0 || len(generationCommands.calls) != 0 {
-		t.Fatalf("capability read reached runtime: control=%d reviewLookup=%d reviewStart=%d routes=%d provider=%d tmux=%d providerCommands=%d usage=%d generation=%d",
-			controlLookup.calls, reviewLookup.calls, reviewStarts.calls, routeLookups, providerCalls, len(tmuxRunner.calls), len(providerCommands.calls), len(usageCommands.calls), len(generationCommands.calls))
+	if controlLookup.calls != 0 || reviewLookup.calls != 0 || reviewStarts.calls != 0 || routeLookups != 0 || providerCalls != 0 || len(tmuxRunner.calls) != 0 || len(providerCommands.calls) != 0 || len(usageCommands.calls) != 0 {
+		t.Fatalf("capability read reached runtime: control=%d reviewLookup=%d reviewStart=%d routes=%d provider=%d tmux=%d providerCommands=%d usage=%d",
+			controlLookup.calls, reviewLookup.calls, reviewStarts.calls, routeLookups, providerCalls, len(tmuxRunner.calls), len(providerCommands.calls), len(usageCommands.calls))
 	}
 	var projection agentCapabilityProjection
 	if err := json.Unmarshal(stdout.Bytes(), &projection); err != nil {

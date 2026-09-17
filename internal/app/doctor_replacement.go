@@ -8,19 +8,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
 // The replacement and restoration table.
 //
 // Three layers replace an execution image, and a consumer of `make install`,
-// `npm install`, or a provider generation upgrade believes one sentence about
+// `npm install`, or a provider upgrade believes one sentence about
 // all three: from the moment the install returned success, the old image takes
 // no new work. That sentence is false in a different way on each layer, and
 // until now an operator had to establish each of them by hand from a different
-// surface -- /proc links for one, a JSON Lines ledger for another, a generation
-// journal for the third.
+// surface -- /proc links for one, a JSON Lines ledger for another, the
+// Registry and provider evidence for the third.
 //
 // This section is the one place that states, per layer, whether the replacement
 // completed and whether the pre-replacement state can be restored. It reads
@@ -96,14 +95,10 @@ const (
 	doctorReplacementReasonNoObservedProcess = "no-observed-processes"
 
 	// L3 tokens.
-	doctorReplacementReasonPoolUnobserved    = "generation-pool-unobserved"
-	doctorReplacementReasonSessionDead       = "registry-running-provider-session-dead"
-	doctorReplacementReasonQualification     = "qualification-missing"
-	doctorReplacementReasonPoolBlocked       = "generation-pool-blocked"
-	doctorReplacementReasonHandoverRequired  = "generation-handover-required"
-	doctorReplacementReasonSessionUnobserved = "registry-running-session-unobserved"
-	doctorReplacementReasonPoolNotInstalled  = "generation-pool-not-installed"
-	doctorReplacementReasonPoolReady         = "generation-pool-ready"
+	doctorReplacementReasonRegistryUnobserved     = "registry-unobserved"
+	doctorReplacementReasonSessionDead            = "registry-running-provider-session-dead"
+	doctorReplacementReasonSessionUnobserved      = "registry-running-session-unobserved"
+	doctorReplacementReasonSessionsUncontradicted = "provider-sessions-uncontradicted"
 )
 
 // doctorReplacementLayerReasons is the per-layer closed token list, in
@@ -126,14 +121,10 @@ var doctorReplacementLayerReasons = map[string][]string{
 		doctorReplacementReasonNoObservedProcess,
 	},
 	doctorReplacementLayerProvider: {
-		doctorReplacementReasonPoolUnobserved,
+		doctorReplacementReasonRegistryUnobserved,
 		doctorReplacementReasonSessionDead,
-		doctorReplacementReasonQualification,
-		doctorReplacementReasonPoolBlocked,
-		doctorReplacementReasonHandoverRequired,
 		doctorReplacementReasonSessionUnobserved,
-		doctorReplacementReasonPoolNotInstalled,
-		doctorReplacementReasonPoolReady,
+		doctorReplacementReasonSessionsUncontradicted,
 	},
 }
 
@@ -175,13 +166,6 @@ const (
 	doctorReplacementSignalPassDrained      = "replacement.drained"
 	doctorReplacementSignalPassReported     = "replacement.reported"
 	doctorReplacementSignalRegistryObserved = "registry.observed"
-	doctorReplacementSignalPoolStatus       = "pool.status"
-	doctorReplacementSignalPoolReason       = "pool.reason"
-	doctorReplacementSignalPoolAction       = "pool.action"
-	doctorReplacementSignalPoolLive         = "pool.generations.live"
-	doctorReplacementSignalPoolDraining     = "pool.generations.draining"
-	doctorReplacementSignalQualVerdict      = "qualification.verdict"
-	doctorReplacementSignalQualReason       = "qualification.reason"
 	doctorReplacementSignalSessionsRunning  = "sessions.running"
 	doctorReplacementSignalSessionsLive     = "sessions.live"
 	doctorReplacementSignalSessionsDead     = "sessions.dead"
@@ -239,13 +223,6 @@ var doctorReplacementFixedSignalInventory = []string{
 	doctorReplacementSignalPassDrained,
 	doctorReplacementSignalPassReported,
 	doctorReplacementSignalRegistryObserved,
-	doctorReplacementSignalPoolStatus,
-	doctorReplacementSignalPoolReason,
-	doctorReplacementSignalPoolAction,
-	doctorReplacementSignalPoolLive,
-	doctorReplacementSignalPoolDraining,
-	doctorReplacementSignalQualVerdict,
-	doctorReplacementSignalQualReason,
 	doctorReplacementSignalSessionsRunning,
 	doctorReplacementSignalSessionsLive,
 	doctorReplacementSignalSessionsDead,
@@ -472,8 +449,6 @@ type doctorReplacementInputs struct {
 	// was made and refused.
 	Replacement   installReplacementOutcome
 	ReplacementOK bool
-	// Pool is the generation-pool diagnosis, nil when it was not read.
-	Pool *doctorCodexGenerationPool
 	// Sessions is the Running-versus-live-provider-session census.
 	Sessions doctorProviderSessionCensus
 }
@@ -483,7 +458,7 @@ func projectDoctorReplacement(in doctorReplacementInputs) doctorReplacementRepor
 	return doctorReplacementReport{Rows: []doctorReplacementRow{
 		projectDoctorReplacementImageRow(in.Image),
 		projectDoctorReplacementProcessRow(in),
-		projectDoctorReplacementProviderRow(in.Pool, in.Sessions),
+		projectDoctorReplacementProviderRow(in.Sessions),
 	}}
 }
 
@@ -667,68 +642,24 @@ func projmuxProcessRolesOldestResidualAge(roles []projmuxProcessRoleVintage) (in
 	return oldest, found
 }
 
-// projectDoctorReplacementProviderRow reads L3: provider sessions and the
-// managed generation pool.
+// projectDoctorReplacementProviderRow reads L3: provider sessions.
 //
-// The replacement axis follows the pool, because a generation that has entered
-// `draining` takes no new admission -- which is exactly the sentence the
-// contract's Assumption makes about a replaced image. The restoration axis is
-// where this layer differs from the other two: a draining generation's live
-// obligations move only through a qualified handover, and without a
-// qualification result there is no route back at all.
+// An install never replaces a provider session: the Codex app-server lifetime
+// is owned by the upstream daemon, and a Claude or plain Codex session lives in
+// its own Pane. The replacement axis is therefore `not-replaced` whenever the
+// Registry was read, and `unknown` when it was not.
 //
 // A Running Agent whose provider session is contradicted by provider evidence
-// outranks every pool token. The pool's own state is a property of a managed
-// upgrade an operator may not have started; a Running Agent with a dead session
-// is a live inconsistency, and it must not be masked by a token about a pool
-// that is merely absent.
-func projectDoctorReplacementProviderRow(pool *doctorCodexGenerationPool, sessions doctorProviderSessionCensus) doctorReplacementRow {
+// is the governing fact: it is a live inconsistency. Running Agents resting on
+// the Registry alone come next, because nothing confirms them. Absence of both
+// is not evidence of a restore route, so restoration stays `unknown`.
+func projectDoctorReplacementProviderRow(sessions doctorProviderSessionCensus) doctorReplacementRow {
 	row := doctorReplacementRow{Layer: doctorReplacementLayerProvider, Subject: doctorReplacementSubjectProvider}
-	// The two coverage facts are unconditional. A row whose token is
-	// `generation-pool-unobserved` would otherwise carry nothing at all, and a
-	// token with no discriminant is the one shape C-3 forbids: it cannot be
-	// told apart from a pool that was read and found empty.
+	// The coverage fact is unconditional. A row whose token is
+	// `registry-unobserved` would otherwise carry nothing at all, and a token
+	// with no discriminant is the one shape C-3 forbids.
 	signals := []string{
 		doctorReplacementSignalRegistryObserved, strconv.FormatBool(sessions.Observed > 0),
-	}
-	if pool == nil {
-		signals = append(signals, doctorReplacementSignalPoolStatus, "unobserved")
-	}
-	if pool != nil {
-		live, draining := 0, 0
-		for _, generation := range pool.Generations {
-			if generation.State == codexgeneration.StateRetired {
-				continue
-			}
-			live++
-			if generation.State == codexgeneration.StateDraining || generation.State == codexgeneration.StateHandoverPending {
-				draining++
-			}
-		}
-		signals = append(signals,
-			doctorReplacementSignalPoolStatus, pool.Status,
-			doctorReplacementSignalPoolReason, pool.Reason,
-			doctorReplacementSignalPoolLive, strconv.Itoa(live),
-			doctorReplacementSignalPoolDraining, strconv.Itoa(draining),
-		)
-		if strings.TrimSpace(pool.Action) != "" {
-			signals = append(signals, doctorReplacementSignalPoolAction, pool.Action)
-		}
-		if pool.Qualification != nil {
-			signals = append(signals,
-				doctorReplacementSignalQualVerdict, string(pool.Qualification.Verdict),
-				doctorReplacementSignalQualReason, string(pool.Qualification.Reason),
-			)
-		}
-		row.Replacement = doctorReplacementNotReplaced
-		if draining > 0 || len(pool.Generations) > live {
-			row.Replacement = doctorReplacementReplaced
-		}
-		if pool.Status == "absent" {
-			row.Replacement = doctorReplacementNotReplaced
-		}
-	} else {
-		row.Replacement = doctorReplacementUnknown
 	}
 	if sessions.Observed > 0 {
 		signals = append(signals,
@@ -741,38 +672,21 @@ func projectDoctorReplacementProviderRow(pool *doctorCodexGenerationPool, sessio
 	row.Signals = doctorReplacementSignals(signals...)
 
 	switch {
-	case pool == nil:
-		row.Restoration = doctorRestorationUnknown
-		row.Reason = doctorReplacementReasonPoolUnobserved
+	case sessions.Observed == 0:
+		row.Replacement, row.Restoration = doctorReplacementUnknown, doctorRestorationUnknown
+		row.Reason = doctorReplacementReasonRegistryUnobserved
 	case sessions.Dead > 0:
-		row.Restoration = doctorRestorationNotRestorable
+		row.Replacement, row.Restoration = doctorReplacementNotReplaced, doctorRestorationNotRestorable
 		row.Reason = doctorReplacementReasonSessionDead
-	case pool.Status != "absent" && pool.Qualification == nil:
-		// The whole of C-1's L3 Guarantee: a pool can enter draining without a
-		// qualified version pair, and once there the handover that would move
-		// its obligations back has no verdict to run under.
-		row.Restoration = doctorRestorationNotRestorable
-		row.Reason = doctorReplacementReasonQualification
-	case pool.Status == "blocked":
-		row.Restoration = doctorRestorationNotRestorable
-		row.Reason = doctorReplacementReasonPoolBlocked
-	case pool.Status == "action-required":
-		row.Restoration = doctorRestorationRestorable
-		row.Reason = doctorReplacementReasonHandoverRequired
-	case sessions.Observed > 0 && sessions.Unobservable > 0:
+	case sessions.Unobservable > 0:
 		// Running Agents resting on the Registry alone. Nothing contradicts
 		// them, and nothing confirms them either, so the restore route cannot
 		// be established for those obligations.
-		row.Restoration = doctorRestorationUnknown
+		row.Replacement, row.Restoration = doctorReplacementNotReplaced, doctorRestorationUnknown
 		row.Reason = doctorReplacementReasonSessionUnobserved
-	case pool.Status == "absent":
-		// No journal, so no evidence about a restore route -- which is not the
-		// same as evidence that one exists.
-		row.Restoration = doctorRestorationUnknown
-		row.Reason = doctorReplacementReasonPoolNotInstalled
 	default:
-		row.Restoration = doctorRestorationRestorable
-		row.Reason = doctorReplacementReasonPoolReady
+		row.Replacement, row.Restoration = doctorReplacementNotReplaced, doctorRestorationUnknown
+		row.Reason = doctorReplacementReasonSessionsUncontradicted
 	}
 	return row
 }

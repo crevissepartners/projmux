@@ -12,10 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexhandover"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -270,22 +267,9 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// resource-backed, so nothing forwards a split.
 	createCmd.agents = ai
 	createCmd.resumes = ai
-	var rollingCoordinator *codexupgrade.Coordinator
-	var handoverCoordinator *codexhandover.Coordinator
-	var qualificationStore *codexupgrade.QualificationStore
 	createCmd.codexNative = defaultCodexNativeThreadController{}
 	if paths, pathsErr := config.DefaultPathsFromEnv(); pathsErr == nil {
-		journal := codexupgrade.NewStateStore(paths.StateDir)
-		qualificationStore = codexupgrade.NewQualificationStateStore(paths.StateDir)
-		registry := intmetadata.NewDefaultStore(paths)
-		rollingCoordinator = &codexupgrade.Coordinator{Journal: journal, Registry: registry, Mutator: intmetadata.DefaultMutator}
-		handoverCoordinator = &codexhandover.Coordinator{
-			Journal: journal, Registry: registry, Requester: rollingCoordinator,
-			Effects: &codexHandoverEffects{registry: registry, mutator: intmetadata.DefaultMutator(),
-				runner: createCmd.runtime.runner, materialize: createCmd.runtime, launcher: ai},
-		}
-		// The rolling-upgrade journal feeds only the retained upgrade/handover
-		// commands; native routes always use the default daemon endpoint.
+		// Native routes always use the default daemon endpoint.
 		createCmd.codexNative = newCodexNativeThreadController(paths.StateDir)
 	}
 	ai.codexNative = createCmd.codexNative
@@ -307,12 +291,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// implementations of "which conversation does it join".
 	agentCmd.rebind = newAgentRebinder(createCmd, ai)
 	agentCmd.focus = focusCmd
-	if rollingCoordinator != nil {
-		agentCmd.codexUpgrade = &codexUpgradeCommand{coordinator: rollingCoordinator, qualification: qualificationStore}
-	}
-	if handoverCoordinator != nil {
-		agentCmd.codexHandover = &codexHandoverCommand{coordinator: handoverCoordinator}
-	}
 	runtimeDiagnosticsCmd := newRuntimeDiagnosticsCommand(tmuxCmd.runner)
 	runtimeDiagnosticsCmd.focus = focusCmd
 	runtimeDiagnosticsCmd.attach = attach
@@ -645,7 +623,7 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 		if len(args) >= 2 && (args[1] == "claude-endpoint-register" || args[1] == "claude-endpoint-helper" || (len(args) >= 4 && args[1] == "agent-hook" && args[2] == "ingest" && args[3] == "claude-hook")) {
 			return false
 		}
-		if len(args) >= 2 && (args[1] == "codex-generation-launch" || args[1] == "install-residue" || args[1] == "claude-message-wait" || args[1] == "claude-message-reply" || args[1] == "claude-message-boundary" || args[1] == "claude-reply-tool" || args[1] == "claude-dialogue-exec" || args[1] == "claude-dialogue-observe") {
+		if len(args) >= 2 && (args[1] == "install-residue" || args[1] == "claude-message-wait" || args[1] == "claude-message-reply" || args[1] == "claude-message-boundary" || args[1] == "claude-reply-tool" || args[1] == "claude-dialogue-exec" || args[1] == "claude-dialogue-observe") {
 			return false
 		}
 	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",

@@ -43,9 +43,6 @@ const (
 	mutationWriteRouteMarker        runtimeMutationVerb = "write-route-marker"
 	mutationWriteProjectAnchor      runtimeMutationVerb = "write-project-anchor"
 	mutationConvergeControlIdentity runtimeMutationVerb = "converge-control-identity"
-	mutationCodexHandoverFence      runtimeMutationVerb = "codex-handover-fence"
-	mutationCodexHandoverRestore    runtimeMutationVerb = "codex-handover-restore"
-	mutationCodexHandoverRelaunch   runtimeMutationVerb = "codex-handover-relaunch"
 )
 
 type runtimeMutationContract struct {
@@ -86,9 +83,6 @@ var runtimeMutationInventory = map[runtimeMutationVerb]runtimeMutationContract{
 	mutationStopUnmanagedSession:    {GuardKind: "exact-unmanaged-session", Effect: "exact unowned or ephemeral session is absent"},
 	mutationBootstrapControlSession: {GuardKind: "exact-control-session-absence", Effect: "one detached app-owned control session exists"},
 	mutationRenameWindow:            {GuardKind: "exact-window-evidence", Effect: "exact owned window name equals desired value"},
-	mutationCodexHandoverFence:      {GuardKind: "exact-agent-pane-thread-tuple", Effect: "old native binding authority is fenced"},
-	mutationCodexHandoverRestore:    {GuardKind: "exact-agent-pane-thread-tuple", Effect: "pre-stop old native binding authority is restored"},
-	mutationCodexHandoverRelaunch:   {GuardKind: "exact-agent-pane-thread-tuple", Effect: "same Pane runs successor leased-bundle attachment and carries its operation receipt"},
 	mutationWriteRouteMarker:        {GuardKind: "exact-app-owned-session", Effect: "server logical route marker equals invocation route"},
 	mutationWriteProjectAnchor:      {GuardKind: "create-operation-lease", Effect: "exact created session Project path anchor equals Registry root"},
 	mutationConvergeControlIdentity: {GuardKind: "exact-control-session-containment", Effect: "control root UID and exact Window/Pane mirrors equal desired identity"},
@@ -168,7 +162,7 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 			return nil, fmt.Errorf("runtime mutation plan: action %q carries hidden managed verb operand %q", action.Verb, operand)
 		}
 	}
-	if len(action.Command) > 0 && action.Verb != mutationCreateWindow && action.Verb != mutationCreatePane && action.Verb != mutationCodexHandoverRelaunch {
+	if len(action.Command) > 0 && action.Verb != mutationCreateWindow && action.Verb != mutationCreatePane {
 		return nil, fmt.Errorf("runtime mutation plan: action %q carries an unexpected child command", action.Verb)
 	}
 	var verb string
@@ -200,19 +194,6 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 		}
 	case mutationTombstonePane, mutationRestorePane, mutationWriteIdentity, mutationWriteOption, mutationWritePresentationOption, mutationWriteStableName, mutationWriteProjectAnchor:
 		verb = "set-option"
-	case mutationCodexHandoverFence:
-		return []string{"set-option", "-p", "-u", "-t", action.Target.ID, aiPaneCodexAuthorityOption}, nil
-	case mutationCodexHandoverRestore:
-		return []string{"set-option", "-p", "-t", action.Target.ID, aiPaneCodexAuthorityOption, codexAuthorityHook}, nil
-	case mutationCodexHandoverRelaunch:
-		if len(action.Operands) != 2 || strings.TrimSpace(action.Operands[0]) == "" || strings.TrimSpace(action.Operands[1]) == "" || len(action.Command) == 0 {
-			return nil, errors.New("runtime mutation plan: Codex handover relaunch is incomplete")
-		}
-		argv := []string{"respawn-pane", "-k", "-t", action.Target.ID, "--"}
-		argv = append(argv, action.Command...)
-		return append(argv,
-			";", "set-option", "-p", "-t", action.Target.ID, codexHandoverOperationPane, action.Operands[0],
-			";", "set-option", "-p", "-t", action.Target.ID, codexHandoverGenerationPane, action.Operands[1]), nil
 	case mutationQueuePaneKill, mutationQueueWindowKill:
 		if action.Queue == nil || !filepath.IsAbs(action.Queue.PhysicalSocket) || filepath.Clean(action.Queue.PhysicalSocket) != action.Queue.PhysicalSocket ||
 			action.Queue.PhysicalSocket != action.Target.PhysicalSocket ||
@@ -396,7 +377,7 @@ func guardRuntimeMutationQueueRoute(ctx context.Context, runner tmuxCommandRunne
 
 func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 	if len(action.Command) > 0 {
-		if action.Verb != mutationCreateWindow && action.Verb != mutationCreatePane && action.Verb != mutationCodexHandoverRelaunch {
+		if action.Verb != mutationCreateWindow && action.Verb != mutationCreatePane {
 			return fmt.Errorf("runtime mutation plan: action %q carries an unsupported child command", action.Verb)
 		}
 		if strings.HasPrefix(action.Command[0], "-") {
@@ -524,12 +505,10 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 		exactPrefix = "$"
 	case mutationCreatePane, mutationWriteLayout, mutationKillPane, mutationKillWindow, mutationStopManagedSession, mutationStopUnmanagedSession,
 		mutationKillOwned, mutationTombstonePane, mutationRestorePane, mutationWriteIdentity, mutationWriteOption, mutationWritePresentationOption, mutationWriteStableName,
-		mutationWriteLease, mutationClearLease, mutationRenameWindow, mutationWriteProjectAnchor, mutationFinalizeSession,
-		mutationCodexHandoverFence, mutationCodexHandoverRestore, mutationCodexHandoverRelaunch:
+		mutationWriteLease, mutationClearLease, mutationRenameWindow, mutationWriteProjectAnchor, mutationFinalizeSession:
 		want = action.Target.ID
 		switch action.Verb {
-		case mutationCreatePane, mutationWriteLayout, mutationKillPane, mutationTombstonePane, mutationRestorePane,
-			mutationCodexHandoverFence, mutationCodexHandoverRestore, mutationCodexHandoverRelaunch:
+		case mutationCreatePane, mutationWriteLayout, mutationKillPane, mutationTombstonePane, mutationRestorePane:
 			exactPrefix = "%"
 		case mutationKillWindow, mutationRenameWindow, mutationWriteStableName:
 			exactPrefix = "@"
@@ -571,16 +550,6 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 		}
 		return nil
 	default:
-		return nil
-	}
-	if action.Verb == mutationCodexHandoverFence || action.Verb == mutationCodexHandoverRestore || action.Verb == mutationCodexHandoverRelaunch {
-		if exactTmuxHandle(action.Target.ID, "%") == "" || action.Target.Kind != "pane" {
-			return errors.New("runtime mutation plan: Codex handover action has no exact Pane target")
-		}
-		if (action.Verb != mutationCodexHandoverRelaunch && (len(action.Operands) != 0 || len(action.Command) != 0)) ||
-			(action.Verb == mutationCodexHandoverRelaunch && (len(action.Operands) != 2 || len(action.Command) == 0)) {
-			return errors.New("runtime mutation plan: Codex handover action has an invalid closed shape")
-		}
 		return nil
 	}
 	if exactPrefix != "" && exactTmuxHandle(action.Target.ID, exactPrefix) == "" {

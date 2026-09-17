@@ -116,12 +116,6 @@ func printableRuntimeMutationInventory() runtimeMutationPlan {
 			action.Operands = []string{"-t", "$1", inttmux.ProjectPathSessionOption, "/work"}
 		case mutationStopManagedSession, mutationStopUnmanagedSession, mutationKillOwned:
 			action.Operands = []string{"-t", "$1"}
-		case mutationCodexHandoverFence, mutationCodexHandoverRestore:
-			action.Target.Kind, action.Target.ID, action.Target.UID = "pane", "%1", "pan-1"
-		case mutationCodexHandoverRelaunch:
-			action.Target.Kind, action.Target.ID, action.Target.UID = "pane", "%1", "pan-1"
-			action.Operands = []string{"handover-op", "handover-generation"}
-			action.Command = []string{"projmux", "internal", "supervise"}
 		}
 		bindRuntimeMutationGuard(&action, "inventory")
 		actions = append(actions, action)
@@ -133,9 +127,6 @@ func TestPlanOnlyMutationInventoryIsClosedAndPrintable(t *testing.T) {
 	want := []runtimeMutationVerb{
 		mutationBootstrapControlSession,
 		mutationClearLease,
-		mutationCodexHandoverFence,
-		mutationCodexHandoverRelaunch,
-		mutationCodexHandoverRestore,
 		mutationConvergeControlIdentity,
 		mutationCreatePane,
 		mutationCreateSession,
@@ -1948,16 +1939,6 @@ func TestRuntimeMutationArgvKeepsRefusingFlagSlotRouteAndAttachedOperands(t *tes
 				t.Fatalf("runtimeMutationArgv(%q) error = %v, want %q", tt.operands, err, tt.want)
 			}
 		})
-	}
-	// A verb with no tmux argument row has no value slots: a non-dash token
-	// never turns the tokens after it into values.
-	relaunch := newRuntimeMutation(1, mutationCodexHandoverRelaunch, runtimeMutationTarget{
-		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "pane", ID: "%1", UID: "pan-1", Parent: "codex.handover",
-	})
-	relaunch.Operands = []string{"op-1", "-tfoo"}
-	relaunch.Command = []string{"/bin/true"}
-	if _, err := runtimeMutationArgv(relaunch); err == nil || err.Error() != attached(mutationCodexHandoverRelaunch, "-tfoo") {
-		t.Fatalf("no-row relaunch operands error = %v, want %q", err, attached(mutationCodexHandoverRelaunch, "-tfoo"))
 	}
 }
 

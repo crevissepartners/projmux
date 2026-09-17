@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
 )
 
 // internalSubcommands lists the hidden internal plumbing namespaces, in help
@@ -24,7 +22,6 @@ var internalSubcommands = []string{
 	"supervise",
 	"activation-exec",
 	"codex-broker",
-	"codex-generation-launch",
 	"install-residue",
 	"install-replace",
 }
@@ -125,8 +122,6 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return runClaudeMessageBoundary(rest)
 	case "codex-broker":
 		return forwardRawArgv(c.codexBroker, "internal codex-broker", "codex-broker", nil, rest, stdout, stderr)
-	case "codex-generation-launch":
-		return codexgenerationhost.RunDurableLaunchSupervisor(rest)
 	case "install-replace":
 		// The install-side replacement pass. Like the census below it is
 		// machine-invoked plumbing -- a step of `make install` -- rather than a

@@ -33,7 +33,6 @@ const (
 	CompletionProviderLaunch    CompletionPrecision = "provider-launch"
 	CompletionExactTurn         CompletionPrecision = "exact-turn"
 	CompletionExactApproval     CompletionPrecision = "exact-approval"
-	CompletionExactOperation    CompletionPrecision = "exact-operation"
 	CompletionPlanPreview       CompletionPrecision = "plan-preview"
 	CompletionLocalConfigCommit CompletionPrecision = "local-config-commit"
 	CompletionProviderSnapshot  CompletionPrecision = "provider-snapshot"
@@ -132,14 +131,6 @@ var agentActions = []AgentAction{
 	{ID: "integrate.remove", Group: "integrate", Route: "agent integrate", Callable: true, Cells: cells(SupportProviderHook, CompletionLocalConfigCommit)},
 	{ID: "integrate.dry-run", Group: "integrate", Route: "agent integrate", Callable: true, Cells: cells(SupportProviderHook, CompletionPlanPreview)},
 	{ID: "usage", Group: "usage", Route: "agent usage", Callable: true, Cells: usageAdapters(CompletionProviderSnapshot)},
-	{ID: "app-server.upgrade.plan", Group: "app-server", Route: "agent app-server upgrade plan", Callable: true, Cells: codexOnly(CompletionPlanPreview)},
-	{ID: "app-server.upgrade.apply", Group: "app-server", Route: "agent app-server upgrade apply", Callable: true, Cells: codexOnly(CompletionExactOperation)},
-	{ID: "app-server.upgrade.resume", Group: "app-server", Route: "agent app-server upgrade resume", Callable: true, Cells: codexOnly(CompletionExactOperation)},
-	{ID: "app-server.upgrade.abort", Group: "app-server", Route: "agent app-server upgrade abort", Callable: true, Cells: codexOnly(CompletionExactOperation)},
-	{ID: "app-server.handover.plan", Group: "app-server", Route: "agent app-server handover plan", Callable: true, Cells: codexOnly(CompletionPlanPreview)},
-	{ID: "app-server.handover.apply", Group: "app-server", Route: "agent app-server handover apply", Callable: true, Cells: codexOnly(CompletionExactOperation)},
-	{ID: "app-server.handover.resume", Group: "app-server", Route: "agent app-server handover resume", Callable: true, Cells: codexOnly(CompletionExactOperation)},
-	{ID: "app-server.handover.abort", Group: "app-server", Route: "agent app-server handover abort", Callable: true, Cells: codexOnly(CompletionExactOperation)},
 	{ID: "message.send", Group: "message", Route: "agent message send", Callable: true, Cells: coordination(CompletionBrokerAccepted, Codex, Claude)},
 	{ID: "message.status", Group: "message", Route: "agent message status", Callable: true, Cells: coordination(CompletionDeliveryReceipt, Codex, Claude)},
 	{ID: "wait.idle", Group: "wait", Route: "agent wait", Callable: true, Cells: cells(SupportGenericRegistry, CompletionInteractionIdle)},

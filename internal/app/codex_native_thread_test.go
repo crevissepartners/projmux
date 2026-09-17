@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,13 +14,9 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbundle"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 var errFakeNativeUnavailable = errors.New("fake app-server unavailable")
@@ -756,9 +753,6 @@ func TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding(t *testing.
 				agent.Status.Activation.Source != "" || pane.Status.Activation.RuntimeID == "" {
 				t.Fatalf("empty plain Agent/Pane binding = agent:%#v pane:%#v", agent.Status, pane.Status)
 			}
-			if obligation, projected := codexgeneration.ProjectAgentObligation(agent, false); projected {
-				t.Fatalf("plain fallback projected a native obligation=%+v", obligation)
-			}
 		})
 	}
 }
@@ -882,13 +876,11 @@ var phase3EmptyPromptSymbolMigrationReceipt = map[string]string{
 	"TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane": "canonical-shortcut-interactive-argv-parity",
 	"TestInstalledPayloadFreePlainFallbackOutcomeSmoke":                               "installed-payload-free-plain-success",
 	"TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke":                     "historical-negative-safety-evidence",
-	"TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration":             "historical-generation-fixture-negative-parity",
 }
 
 var payloadFreeInstalledOutcomeSymbolRefs = []func(*testing.T){
 	TestInstalledPayloadFreePlainFallbackOutcomeSmoke,
 	TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke,
-	TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration,
 }
 
 func TestPhase3EmptyPromptSymbolsHaveExplicitDurableResumeMigrationReceipt(t *testing.T) {
@@ -899,13 +891,12 @@ func TestPhase3EmptyPromptSymbolsHaveExplicitDurableResumeMigrationReceipt(t *te
 		"TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane": "canonical-shortcut-interactive-argv-parity",
 		"TestInstalledPayloadFreePlainFallbackOutcomeSmoke":                               "installed-payload-free-plain-success",
 		"TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke":                     "historical-negative-safety-evidence",
-		"TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration":             "historical-generation-fixture-negative-parity",
 	}
 	if !reflect.DeepEqual(phase3EmptyPromptSymbolMigrationReceipt, want) {
 		t.Fatalf("Phase 3 symbol migration receipt = %v, want %v", phase3EmptyPromptSymbolMigrationReceipt, want)
 	}
-	if len(payloadFreeInstalledOutcomeSymbolRefs) != 3 || payloadFreeInstalledOutcomeSymbolRefs[0] == nil ||
-		payloadFreeInstalledOutcomeSymbolRefs[1] == nil || payloadFreeInstalledOutcomeSymbolRefs[2] == nil {
+	if len(payloadFreeInstalledOutcomeSymbolRefs) != 2 || payloadFreeInstalledOutcomeSymbolRefs[0] == nil ||
+		payloadFreeInstalledOutcomeSymbolRefs[1] == nil {
 		t.Fatalf("installed symbol migration refs = %v", payloadFreeInstalledOutcomeSymbolRefs)
 	}
 }
@@ -1350,55 +1341,128 @@ func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
 	}
 }
 
-func snapshotCodexJournal(t *testing.T, store *codexupgrade.Store) ([]byte, time.Time) {
+// codexRollingJournal is the owner-private rolling-upgrade journal the retired
+// private generation layer kept under the state directory. No product code
+// reads or writes it any more. Fixtures write one as plain bytes, in the shape
+// that layer wrote, so a test can prove that its presence decides nothing and
+// that nothing touches it.
+type codexRollingJournal struct {
+	path string
+	// endpoints are the journaled route endpoints, in route order.
+	endpoints []coremetadata.CodexEndpointRef
+}
+
+func (journal codexRollingJournal) Path() string { return journal.path }
+
+func codexRollingJournalPath(stateDir string) string {
+	return filepath.Join(stateDir, "codex-generations", "rolling-upgrade.json")
+}
+
+// codexJournalRoute is one journaled route. A private route carries the
+// path-bearing launch configuration and a ready proof; an external route
+// carries neither.
+type codexJournalRoute struct {
+	endpoint coremetadata.CodexEndpointRef
+	state    coremetadata.CodexGenerationState
+	version  string
+	bundleID string
+	private  bool
+	// root is the private route's runtime/lease root.
+	root string
+}
+
+func (route codexJournalRoute) document() map[string]any {
+	endpoint := func(ref coremetadata.CodexEndpointRef) map[string]any {
+		return map[string]any{"stateDomainID": ref.StateDomainID, "endpointGenerationID": ref.EndpointGenerationID}
+	}
+	owner := "unmanaged"
+	config := map[string]any{
+		"endpoint": endpoint(coremetadata.CodexEndpointRef{}), "stateDomainPath": "", "privateRoot": "",
+		"socketPath": "", "leaseRoot": "", "requiredProtocol": map[string]any{"min": 0, "max": 0},
+	}
+	doc := map[string]any{"version": route.version, "tuiPath": "", "ready": false}
+	if route.private {
+		owner = "projmux-private"
+		runtime := filepath.Join(route.root, "runtime", route.version)
+		socket := filepath.Join(runtime, "s")
+		lease := filepath.Join(route.root, "lease", route.version)
+		config = map[string]any{
+			"endpoint": endpoint(route.endpoint), "stateDomainPath": filepath.Join(route.root, "domain"),
+			"privateRoot": runtime, "socketPath": socket, "leaseRoot": lease,
+			"requiredProtocol": map[string]any{"min": 2, "max": 2},
+		}
+		doc["tuiPath"] = filepath.Join(lease, "bin", "codex")
+		doc["ready"] = true
+		doc["proof"] = map[string]any{
+			"endpoint": endpoint(route.endpoint), "endpointRuntimeID": "", "pid": 0, "processGroupID": 0,
+			"socketPath": socket, "executablePath": "", "executableSHA256": "", "bundleID": route.bundleID,
+		}
+	}
+	doc["generation"] = map[string]any{
+		"endpoint": endpoint(route.endpoint), "state": string(route.state), "owner": owner, "bundleID": route.bundleID,
+	}
+	doc["config"] = config
+	return doc
+}
+
+// writeCodexRollingJournal writes one journal naming currentGenerationID as
+// its admission-current route, with an optional in-flight operation.
+func writeCodexRollingJournal(t *testing.T, stateDir, stateDomain, currentGenerationID string, routes []codexJournalRoute, operation map[string]any) codexRollingJournal {
 	t.Helper()
-	body, err := os.ReadFile(store.Path())
+	journal := codexRollingJournal{path: codexRollingJournalPath(stateDir)}
+	documents := make([]map[string]any, 0, len(routes))
+	for _, route := range routes {
+		documents = append(documents, route.document())
+		journal.endpoints = append(journal.endpoints, route.endpoint)
+	}
+	body := map[string]any{
+		"version": 1, "stateDomainID": stateDomain, "currentGenerationID": currentGenerationID, "routes": documents,
+	}
+	if operation != nil {
+		body["operation"] = operation
+	}
+	encoded, err := json.MarshalIndent(body, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(journal.path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journal.path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return journal
+}
+
+func snapshotCodexJournal(t *testing.T, journal codexRollingJournal) ([]byte, time.Time) {
+	t.Helper()
+	body, err := os.ReadFile(journal.Path())
 	if err != nil {
 		t.Fatalf("read journal: %v", err)
 	}
-	info, err := os.Stat(store.Path())
+	info, err := os.Stat(journal.Path())
 	if err != nil {
 		t.Fatalf("stat journal: %v", err)
 	}
 	return body, info.ModTime()
 }
 
-// codexPoolInventoryFixture writes one Current + one Draining private route so
-// the catalog inventory has more than the admission-current slot to project.
-func codexPoolInventoryFixture(t *testing.T) (*codexupgrade.Store, codexupgrade.GenerationRoute, codexupgrade.GenerationRoute) {
+// codexPoolInventoryFixture writes one Current + one Draining private route
+// for stateDomain under stateDir.
+func codexPoolInventoryFixture(t *testing.T, stateDir, stateDomain string) (codexRollingJournal, coremetadata.CodexEndpointRef, coremetadata.CodexEndpointRef) {
 	t.Helper()
 	root := t.TempDir()
-	store := codexupgrade.NewStateStore(filepath.Join(root, "state"))
-	stateDomain := "test-domain-inventory"
-	route := func(version, bundle string, state codexgeneration.GenerationState) codexupgrade.GenerationRoute {
-		endpoint := coremetadata.CodexEndpointRef{StateDomainID: stateDomain, EndpointGenerationID: "codex-" + version}
-		config := codexupgrade.GenerationConfig{
-			Endpoint: endpoint, StateDomainPath: filepath.Join(root, "domain"), PrivateRoot: filepath.Join(root, "runtime", version),
-			SocketPath: filepath.Join(root, "runtime", version, "s"), LeaseRoot: filepath.Join(root, "lease", version),
-			RequiredProtocol: codexbundle.ProtocolRange{Min: 2, Max: 2},
-		}
-		return codexupgrade.GenerationRoute{
-			Generation: codexgeneration.Generation{Endpoint: endpoint, State: state, Owner: codexgeneration.OwnerProjmuxPrivate, BundleID: bundle},
-			Version:    version, Config: config, TUIPath: filepath.Join(root, "lease", version, "bin", "codex"), Ready: true,
-			Proof: &codexgenerationhost.LaunchProof{
-				Endpoint:   codexgenerationhost.EndpointIdentity{StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID},
-				SocketPath: config.SocketPath, BundleID: bundle,
-			},
+	route := func(version, bundle string, state coremetadata.CodexGenerationState) codexJournalRoute {
+		return codexJournalRoute{
+			endpoint: coremetadata.CodexEndpointRef{StateDomainID: stateDomain, EndpointGenerationID: "codex-" + version},
+			state:    state, version: version, bundleID: bundle, private: true, root: root,
 		}
 	}
-	draining := route("0.152.1", "sha256-draining", codexgeneration.StateDraining)
-	current := route("0.153.0", "sha256-current", codexgeneration.StateCurrent)
-	if _, err := store.Update(context.Background(), func(journal *codexupgrade.Journal, _ bool) error {
-		*journal = codexupgrade.Journal{
-			Version: codexupgrade.JournalVersion, StateDomainID: stateDomain,
-			CurrentGenerationID: current.Generation.Endpoint.EndpointGenerationID,
-			Routes:              []codexupgrade.GenerationRoute{draining, current},
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("seed pool inventory: %v", err)
-	}
-	return store, draining, current
+	draining := route("0.152.1", "sha256-draining", coremetadata.CodexGenerationDraining)
+	current := route("0.153.0", "sha256-current", coremetadata.CodexGenerationCurrent)
+	journal := writeCodexRollingJournal(t, stateDir, stateDomain, current.endpoint.EndpointGenerationID,
+		[]codexJournalRoute{draining, current}, nil)
+	return journal, draining.endpoint, current.endpoint
 }
 
 func TestDefaultCatalogRoutesIsOneAttachOnlyReadWithoutLifecycleCalls(t *testing.T) {

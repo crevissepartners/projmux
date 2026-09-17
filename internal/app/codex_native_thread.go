@@ -320,6 +320,29 @@ func (controller defaultCodexNativeThreadController) retiredGenerationRunning(ct
 	return socketPath, listen(ctx, socketPath)
 }
 
+const (
+	managedCodexRuntimeKeyBytes    int = 16
+	managedCodexSocketPathMaxBytes int = 100
+)
+
+// managedCodexRuntimeLocation is the deterministic private root and socket a
+// retired private generation of one state domain and version was started on.
+// It only locates that socket for the retired-generation check; nothing here
+// creates or launches a generation.
+func managedCodexRuntimeLocation(stateDir, stateDomainID, targetVersion string) (string, string, error) {
+	stateDir = filepath.Clean(strings.TrimSpace(stateDir))
+	if !filepath.IsAbs(stateDir) || strings.TrimSpace(stateDomainID) == "" || !codexappserver.IsSafeDiagnosticVersion(targetVersion) {
+		return "", "", errors.New("managed Codex runtime identity is invalid")
+	}
+	sum := sha256.Sum256([]byte(stateDomainID + "\x00" + targetVersion))
+	privateRoot := filepath.Join(stateDir, "g", hex.EncodeToString(sum[:managedCodexRuntimeKeyBytes]))
+	socketPath := filepath.Join(privateRoot, "s")
+	if len([]byte(socketPath)) > managedCodexSocketPathMaxBytes {
+		return privateRoot, socketPath, errors.New("managed Codex runtime socket exceeds the platform-safe bound")
+	}
+	return privateRoot, socketPath, nil
+}
+
 func dialCodexRetiredGenerationSocket(ctx context.Context, socketPath string) bool {
 	if _, err := os.Lstat(socketPath); err != nil {
 		return false

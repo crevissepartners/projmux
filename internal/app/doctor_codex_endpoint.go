@@ -31,9 +31,9 @@ type doctorCodexEndpointMismatch struct {
 
 // doctorCodexRetiredRef is one resumable Codex Agent whose stored endpoint is
 // not the default daemon endpoint, or still carries a draining /
-// handover-pending marker of the retired private generation pool. It states
-// what `projmux agent resume` will do and the next command. It is judged from
-// the Registry and the default endpoint only, never from the rolling journal.
+// handover-pending marker of a retired private generation. It states what
+// `projmux agent resume` will do and the next command. It is judged from the
+// Registry and the default endpoint only.
 type doctorCodexRetiredRef struct {
 	AgentUID             string `json:"agent_uid"`
 	EndpointGenerationID string `json:"endpoint_generation_id"`
@@ -62,19 +62,15 @@ type doctorCodexEndpointUnobserved struct {
 // and Windows. A Running Agent with missing activation evidence is not silently
 // treated as matching. Durable offline conversations are not current activations.
 // Only the existing default endpoint's codex-<running-version> identity can be
-// compared: a pool's admission-current or a broker's published key does not
-// establish which executable is now serving an activation after replacement.
-func diagnoseCodexEndpointMismatch(registry coremetadata.Registry, registryErr error, domain string, domainErr error, pool *doctorCodexGenerationPool, health *codexappserver.Health) *doctorCodexEndpointMismatch {
+// compared: a broker's published key does not establish which executable is
+// now serving an activation after replacement.
+func diagnoseCodexEndpointMismatch(registry coremetadata.Registry, registryErr error, domain string, domainErr error, health *codexappserver.Health) *doctorCodexEndpointMismatch {
 	out := &doctorCodexEndpointMismatch{Status: "complete"}
 	if registryErr != nil {
 		out.Status, out.Reason = "unavailable", "registry-unavailable"
 		return out
 	}
-	if pool == nil || pool.Status != "absent" {
-		// Private pool generations can also use codex-<version> IDs. The
-		// default daemon observation cannot establish their running endpoint.
-		out.Reason = "endpoint-routing-unobserved"
-	} else if domainErr != nil || domain == "" {
+	if domainErr != nil || domain == "" {
 		out.Reason = "state-domain-unavailable"
 	} else if health == nil || health.EndpointReadiness != codexappserver.EndpointReady ||
 		!plainCodexEndpointVersion(health.RunningVersion) {
@@ -268,7 +264,7 @@ func safeDoctorCodexEndpointMismatchString(parent, key, value string) bool {
 	}
 	if (parent == "codex_endpoint_mismatch" || parent == "unobserved_agents") && key == "reason" {
 		switch value {
-		case "registry-unavailable", "state-domain-unavailable", "running-endpoint-unavailable", "endpoint-routing-unobserved",
+		case "registry-unavailable", "state-domain-unavailable", "running-endpoint-unavailable",
 			"activation-missing", "activation-agent-unresolved", "activation-endpoint-missing",
 			"activation-endpoint-invalid", "activation-endpoint-conflict", "endpoint-domain-unobserved",
 			"endpoint-generation-unobserved":

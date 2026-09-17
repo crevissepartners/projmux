@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
@@ -240,17 +239,6 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 		pane.Status.Activation.Codex.TurnID != "" || pane.Status.Activation.RuntimeID == "" {
 		t.Fatalf("payload-free installed identity chain drifted: agent=%#v pane=%#v", agent.Status, pane.Status)
 	}
-	for projection := range 3 {
-		obligation, projected := codexgeneration.ProjectAgentObligation(*agent, false)
-		if !projected || obligation.State != codexgeneration.ObligationNoTurn ||
-			obligation.EndpointGenerationID != ref.Endpoint.EndpointGenerationID {
-			t.Fatalf("no-turn projection %d=%+v projected=%t", projection, obligation, projected)
-		}
-	}
-	if obligation, projected := codexgeneration.ProjectAgentObligation(*agent, true); !projected || obligation.State != codexgeneration.ObligationClosed {
-		t.Fatalf("explicit close did not replace no-turn with closed: obligation=%+v projected=%t", obligation, projected)
-	}
-
 	// The generation-keyed discovery artifacts are the semantic startup barrier.
 	// A turn-free installed thread has no rollout for thread/resume yet, so the
 	// broker is expected to remain an unbound producer until the first real TUI

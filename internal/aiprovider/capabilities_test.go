@@ -45,15 +45,15 @@ func TestAgentCapabilityCatalogIsClosedCartesianMatrix(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 26 {
-		t.Fatalf("action count = %d, want 26", len(seen))
+	if len(seen) != 18 {
+		t.Fatalf("action count = %d, want 18", len(seen))
 	}
 }
 
 func TestAgentCapabilityCatalogPinsCurrentGroupsAndDeferredVocabulary(t *testing.T) {
 	t.Parallel()
 
-	wantGroups := []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "app-server", "message", "wait"}
+	wantGroups := []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "message", "wait"}
 	if got := AgentGroups(); !reflect.DeepEqual(got, wantGroups) {
 		t.Fatalf("groups = %v, want %v", got, wantGroups)
 	}
@@ -76,8 +76,6 @@ func TestAgentCapabilityCatalogPinsCodexNativeAndSharedFamilies(t *testing.T) {
 
 	for _, id := range []string{
 		"turn.start", "turn.steer", "turn.interrupt", "approval.review", "review",
-		"app-server.upgrade.plan", "app-server.upgrade.apply", "app-server.upgrade.resume", "app-server.upgrade.abort",
-		"app-server.handover.plan", "app-server.handover.apply", "app-server.handover.resume", "app-server.handover.abort",
 	} {
 		for _, provider := range AgentProviders() {
 			_, cell, ok := LookupAgentCapability(id, provider)

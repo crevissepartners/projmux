@@ -10,7 +10,6 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 // A broker barrier is authority only while that exact connection is current.
@@ -341,7 +340,7 @@ func TestRecoveredDefaultBrokerReopensSameEndpointDespiteRollingJournal(t *testi
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
-	journal := codexupgrade.PathFor(discovery.Domain())
+	journal := codexRollingJournalPath(discovery.Domain())
 	if err := os.MkdirAll(filepath.Dir(journal), 0o700); err != nil {
 		t.Fatal(err)
 	}
