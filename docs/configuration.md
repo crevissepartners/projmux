@@ -960,14 +960,18 @@ failure handling.
 
 The Registry (`registry.json`) is the only saved Project state; see
 [session-restore.md](session-restore.md). projmux keeps no separate Project
-snapshot store. The former `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions`
-directory is no longer read or written and is left in place. The app tmux
-status tick saves nothing: generated status lines carry no auto-save job, and
-the hidden `internal tmux autosave-session-state` route that older generated
-configs still call is a silent no-op that writes nothing and records no
-diagnostics. The `sessionstate-autosave` and `sessionstate-autosave-interval`
-files, the per-Project `sessionstate-projects/<session>/autosave` files, and
-`PROJMUX_SESSIONSTATE_AUTOSAVE` are ignored without a warning.
+snapshot store. Nothing reads the former
+`${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions/*.json` snapshot
+files; they are removed by `config apply`. The app tmux status tick saves
+nothing: generated status lines carry no auto-save job, and the hidden
+`internal tmux autosave-session-state` route that older generated configs
+still call is a silent no-op that writes nothing and records no diagnostics.
+The `sessionstate-autosave` and `sessionstate-autosave-interval` files and the
+per-Project `sessionstate-projects/<session>/autosave` files are removed by
+`config apply`, together with the `sessions/` and `sessionstate-projects/`
+directories once they are empty. Any other entry there is kept, and listed
+by the apply that removes the files.
+`PROJMUX_SESSIONSTATE_AUTOSAVE` is still ignored without a warning.
 
 With no saved preference, Project open from the Alt-1 sidebar shows a native
 `Start project` step with exactly `Continue project` and `Recreate Project`.

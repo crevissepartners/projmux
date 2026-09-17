@@ -1413,6 +1413,13 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		managedIngestFileRollback = rollback
 	}
 
+	// Reclaim the retired Project snapshot and autosave files once both
+	// refusing preflights above have passed, and before the route branches on
+	// --no-reload and live server state, so every apply that goes on to write
+	// reaches it exactly once. It never fails the apply and has no rollback:
+	// the files it removes are read by nothing.
+	c.reclaimRetiredSnapshotFiles(stdout)
+
 	resolved := ""
 	var err error
 	writeGenerated := func() error {

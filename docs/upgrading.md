@@ -108,10 +108,17 @@ projmux no longer emits `session-state.outcome` diagnostics records. Records
 with that event in existing logs are still read and accepted.
 
 The existing `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/sessions` directory
-is no longer read or written. projmux leaves it in place. The
-`sessionstate-autosave` and `sessionstate-autosave-interval` files and the
-`sessionstate-projects/` directory under the config directory are ignored, as
-is `PROJMUX_SESSIONSTATE_AUTOSAVE`. Tmux configs rendered by older installs may
+is no longer read. `projmux config apply` (which `make install` runs) removes
+the `*.json` snapshot files in it once, along with the `sessionstate-autosave`
+and `sessionstate-autosave-interval` files and the
+`sessionstate-projects/<session>/autosave` files under the config directory,
+and then removes the `sessions/` and `sessionstate-projects/` directories if
+they end up empty. It only removes regular files with those names and never
+follows symlinks. Any other entry there is kept, and the apply that removes
+the files lists it on its one `reclaimed retired Project snapshot files: ...`
+line; later applies with nothing left to remove print nothing. To keep the old files,
+copy those directories before you upgrade. `PROJMUX_SESSIONSTATE_AUTOSAVE` is
+ignored. Tmux configs rendered by older installs may
 still call `projmux internal tmux autosave-session-state`; that route stays and
 exits 0 without writing anything.
 
