@@ -381,6 +381,9 @@ func TestCodexDiagnosticProxyProcess(t *testing.T) {
 	}
 	switch strings.Join(args[split:], " ") {
 	case "app-server daemon version":
+		if delay, err := time.ParseDuration(os.Getenv("CODEX_DIAGNOSTIC_MANAGER_DELAY")); err == nil {
+			time.Sleep(delay)
+		}
 		fmt.Fprintln(os.Stdout, os.Getenv("CODEX_DIAGNOSTIC_MANAGER"))
 		os.Exit(0)
 	case "--version":

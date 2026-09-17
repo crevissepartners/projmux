@@ -33,8 +33,23 @@ type managerObservation struct {
 	RunningVersion string
 }
 
-func observeDefaultManager(ctx context.Context, timeout time.Duration) managerObservation {
-	return observeManager(ctx, timeout, exec.LookPath, defaultDaemonVersionCommand)
+// daemonVersionProbeTimeout is the floor for the read-only `codex app-server
+// daemon version` manager probe. That command spawns a Codex process and asks
+// the control socket, so under CPU contention it routinely outlasts
+// DefaultProbeTimeout even when the daemon is healthy and version-matched;
+// a timeout there is insufficient evidence and refuses native actions. The
+// floor only raises this one probe: the proxy probe and every other
+// DefaultProbeTimeout consumer keep their own bound.
+const daemonVersionProbeTimeout = 3 * time.Second
+
+// managerProbeTimeout keeps a caller budget that is already longer than the
+// floor, so raising the floor never shortens a slower caller's probe.
+func managerProbeTimeout(callerTimeout time.Duration) time.Duration {
+	return max(callerTimeout, daemonVersionProbeTimeout)
+}
+
+func observeDefaultManager(ctx context.Context, callerTimeout time.Duration) managerObservation {
+	return observeManager(ctx, managerProbeTimeout(callerTimeout), exec.LookPath, defaultDaemonVersionCommand)
 }
 
 func defaultDaemonVersionCommand(ctx context.Context, path string, _ ...string) *exec.Cmd {
@@ -49,7 +64,7 @@ func observeManager(ctx context.Context, timeout time.Duration, lookPath func(st
 		unknown.Evidence.Result = "executable-missing"
 		return unknown
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, positiveDuration(timeout, DefaultProbeTimeout))
+	probeCtx, cancel := context.WithTimeout(ctx, positiveDuration(timeout, daemonVersionProbeTimeout))
 	defer cancel()
 	cmd := command(probeCtx, path, "app-server", "daemon", "version")
 	var stdout boundedReadOnlyCapture

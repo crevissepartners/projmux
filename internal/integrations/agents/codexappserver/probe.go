@@ -42,7 +42,9 @@ func (s *commandStream) Close() error {
 
 // ProbeDefaultProxy performs an initialize-only probe against the existing
 // local app-server control socket through Codex's stdio proxy. It never starts,
-// restarts, configures, logs into, or otherwise mutates the daemon.
+// restarts, configures, logs into, or otherwise mutates the daemon. timeout
+// bounds the proxy probe; the manager probe that follows never gets less than
+// daemonVersionProbeTimeout.
 func ProbeDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool) Health {
 	health := probeProxy(ctx, timeout, projmuxVersion, hookAvailable, exec.LookPath, func(ctx context.Context) *exec.Cmd {
 		return exec.CommandContext(ctx, "codex", "app-server", "proxy")
