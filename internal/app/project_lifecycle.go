@@ -13,11 +13,11 @@ const absentProjectLifecycleUID = "-"
 
 // projectLifecycleStateFor is the app-side classifier for the core lifecycle
 // table. It reads desired Registry topology only; runtime absence is never
-// promoted to deleted Project identity.
+// promoted to an unregistered root.
 func projectLifecycleStateFor(registry coremetadata.Registry, root string) (coremetadata.ProjectLifecycleState, string) {
 	project, ok := registry.ProjectByRoot(cleanOptionalPath(root))
 	if !ok {
-		return coremetadata.ProjectLifecycleDeleted, ""
+		return coremetadata.ProjectLifecycleUnregistered, ""
 	}
 	if len(registry.WindowsOf(project.Metadata.UID)) == 0 {
 		return coremetadata.ProjectLifecycleZeroWindows, project.Metadata.UID

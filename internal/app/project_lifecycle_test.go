@@ -24,7 +24,7 @@ func TestProjectLifecycleAppClassifiesAllThreeDesiredStatesWithoutRuntimeEvidenc
 	}{
 		{root: "/srv/alpha", state: coremetadata.ProjectLifecycleRetainedWindows, uid: "prj-alpha"},
 		{root: "/srv/gone", state: coremetadata.ProjectLifecycleZeroWindows, uid: "prj-gone"},
-		{root: "/srv/deleted", state: coremetadata.ProjectLifecycleDeleted},
+		{root: "/srv/unregistered", state: coremetadata.ProjectLifecycleUnregistered},
 	}
 	for _, input := range inputs {
 		state, uid := projectLifecycleStateFor(store.registry, input.root)

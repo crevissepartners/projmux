@@ -98,15 +98,9 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	if exists {
 		return c.openProjectSession(ctx, sessionName)
 	}
-	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
-	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
-		mode = c.pickProjectStartupMode(sessionName, target)
-	} else {
-		resolved, err := c.defaultProjectStartupMode(target)
-		if err != nil {
-			return err
-		}
-		mode = resolved
+	mode, err := c.resolveProjectStartupMode(sessionName, target)
+	if err != nil {
+		return err
 	}
 	if mode.Kind == projectStartupKindBack {
 		return errProjectStartupBack
@@ -114,16 +108,48 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	return c.authorizeAndContinueProjectOpen(ctx, target, sessionName, mode)
 }
 
+// resolveProjectStartupMode is the order every closed-Project open uses:
+// registration is adjudicated first, and the startup screen is offered only for
+// a root that adjudication left on `continue`.
+//
+// Both rows of that screen are about a Project that already exists -- continue
+// its Registry topology, or replace that identity -- so an unregistered root has
+// no answer to the question. Asking it anyway is what shipped: the default row
+// was `continue`, and continuing a root no Project claims is refused. `fresh`
+// registers and opens in one transaction, which is the whole of what that root
+// needs, so the screen is skipped rather than answered for the operator.
+//
+// The predicate is deliberately "adjudication chose fresh", never "registration
+// was not proven". defaultProjectStartupMode leaves three roots on `continue`
+// that are not unregistered Projects -- a starter that does not expose
+// ProjectRegistered, the settings and runtime sentinels, and the operator's own
+// home -- and inverting the predicate would route those into `fresh`, adding a
+// Registry write to paths that never had one.
+func (c *switchCommand) resolveProjectStartupMode(sessionName, target string) (projectStartupCandidate, error) {
+	adjudicated, err := c.defaultProjectStartupMode(target)
+	if err != nil {
+		return projectStartupCandidate{}, err
+	}
+	if adjudicated.Kind != projectStartupKindTopology {
+		return adjudicated, nil
+	}
+	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
+		return c.pickProjectStartupMode(sessionName, target), nil
+	}
+	return adjudicated, nil
+}
+
 // defaultProjectStartupMode is the single adjudication of the startup mode a
-// closed Project is opened with when the startup picker is off, and therefore
-// the only reader of Registry registration in that decision.
+// closed Project is opened with, and therefore the only reader of Registry
+// registration in that decision.
 //
 // Every entry point that can open a closed Project routes through it: the
 // in-process open, the sidebar emit point that builds the continuation's
 // `--mode` token, and the continuation itself after the re-exec. Keeping one
 // decision point is the contract -- when the sidebar fixed the mode on its own
 // it always sent `continue`, so an unregistered root on a fresh install reached
-// ContinueProject and was refused.
+// ContinueProject and was refused. The startup picker runs after it, never
+// before it, so the same refusal cannot return through the screen.
 //
 // The sentinel roots and the operator's own home are excluded because they are
 // not Registry Projects at all; promoting them to `fresh` would prune nothing

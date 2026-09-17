@@ -810,7 +810,12 @@ type ProjectLifecycleState string
 const (
 	ProjectLifecycleRetainedWindows ProjectLifecycleState = "retained-window"
 	ProjectLifecycleZeroWindows     ProjectLifecycleState = "zero-window"
-	ProjectLifecycleDeleted         ProjectLifecycleState = "deleted"
+	// ProjectLifecycleUnregistered is a root the Registry has no Project for.
+	// The axis this table classifies is Registry shape, so the exact negation of
+	// registered is what the cell is named after: nothing was deleted, and
+	// nothing was ever registered. The cell is real and load-bearing --
+	// unregistered x Fresh is the create-and-open one Enter performs.
+	ProjectLifecycleUnregistered ProjectLifecycleState = "unregistered"
 )
 
 // ProjectLifecycleAction is the complete user-intent vocabulary at this
@@ -926,7 +931,7 @@ func DecideProjectLifecycle(state ProjectLifecycleState, action ProjectLifecycle
 		default:
 			return unavailableProjectLifecyclePlan(state, action, "invalid-action")
 		}
-	case ProjectLifecycleDeleted:
+	case ProjectLifecycleUnregistered:
 		switch action {
 		case ProjectLifecycleFresh:
 			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDCreated, ProjectDescendantUIDsCreated

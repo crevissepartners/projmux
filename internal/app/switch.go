@@ -1724,19 +1724,15 @@ func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, pl
 		return nil
 	}
 	// The emitted `--mode` is the sidebar's half of the one startup decision.
-	// Deciding it here through defaultProjectStartupMode -- the same helper the
+	// Deciding it here through resolveProjectStartupMode -- the same helper the
 	// in-process open uses -- is what stops the continuation from being launched
-	// with `continue` for a root no Project claims. The re-exec re-adjudicates
-	// again on arrival, which covers a token emitted by an older client.
-	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
-	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
-		mode = c.pickProjectStartupMode(sessionName, target)
-	} else {
-		resolved, err := c.defaultProjectStartupMode(target)
-		if err != nil {
-			return err
-		}
-		mode = resolved
+	// with `continue` for a root no Project claims, and what keeps the startup
+	// screen off that root instead of asking it the registered Project's
+	// question. The re-exec re-adjudicates again on arrival, which covers a token
+	// emitted by an older client.
+	mode, err := c.resolveProjectStartupMode(sessionName, target)
+	if err != nil {
+		return err
 	}
 	if mode.Kind == projectStartupKindBack {
 		return errProjectStartupBack
@@ -1919,10 +1915,13 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 // defaultProjectStartupMode, the same single adjudication the in-process open
 // and the emit point use, closes that boundary.
 //
-// A mode that arrived while the picker is enabled is the operator's explicit
-// choice and is honored verbatim, and `fresh` is never demoted.
+// The re-adjudication is unconditional on this side. The startup picker now
+// runs behind the same adjudication at the emit point, so an arriving `continue`
+// can no longer be an operator choice made for an unregistered root -- it is
+// either a registered Project, which adjudication leaves on `continue`, or a
+// token this process must correct. `fresh` is never demoted.
 func (c *switchCommand) openSidebarClosedProject(ctx context.Context, target, sessionName, anchor string, mode projectStartupCandidate) error {
-	if mode.Kind == projectStartupKindTopology && !sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
+	if mode.Kind == projectStartupKindTopology {
 		resolved, err := c.defaultProjectStartupMode(target)
 		if err != nil {
 			return err

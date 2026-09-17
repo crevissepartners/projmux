@@ -240,7 +240,7 @@ func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, _
 		}
 		return openedProjectBootstrap{project: project.Clone()}, nil
 	}
-	if decision.State != coremetadata.ProjectLifecycleDeleted || decision.Available || uid != "" {
+	if decision.State != coremetadata.ProjectLifecycleUnregistered || decision.Available || uid != "" {
 		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", "", "",
 			fmt.Errorf("unregistered Continue did not fail closed: %+v", decision))
 	}

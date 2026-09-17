@@ -811,7 +811,7 @@ func TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells(t *testing.T) {
 	states := []ProjectLifecycleState{
 		ProjectLifecycleRetainedWindows,
 		ProjectLifecycleZeroWindows,
-		ProjectLifecycleDeleted,
+		ProjectLifecycleUnregistered,
 	}
 	actions := []ProjectLifecycleAction{
 		ProjectLifecycleStop,
@@ -870,11 +870,11 @@ func TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells(t *testing.T) {
 	}
 	// A root that is not a registered Project has nothing to continue. The cell
 	// is unconditionally unavailable, and its reason names registration.
-	deletedContinue := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
-	if deletedContinue.Available || deletedContinue.Reason != "project-is-not-registered" ||
-		deletedContinue.ProjectUID != ProjectUIDAbsent || deletedContinue.DescendantUIDs != ProjectDescendantUIDsAbsent ||
-		!slices.Equal(deletedContinue.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteNone}) {
-		t.Fatalf("unregistered Continue = %+v", deletedContinue)
+	unregisteredContinue := DecideProjectLifecycle(ProjectLifecycleUnregistered, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
+	if unregisteredContinue.Available || unregisteredContinue.Reason != "project-is-not-registered" ||
+		unregisteredContinue.ProjectUID != ProjectUIDAbsent || unregisteredContinue.DescendantUIDs != ProjectDescendantUIDsAbsent ||
+		!slices.Equal(unregisteredContinue.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteNone}) {
+		t.Fatalf("unregistered Continue = %+v", unregisteredContinue)
 	}
 }
 

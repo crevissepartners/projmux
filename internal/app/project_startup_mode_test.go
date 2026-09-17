@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -94,16 +95,54 @@ func startupModeConfigHome(t *testing.T, pickerState startupModePickerState) (st
 	}
 }
 
+// startupModePickerLog records the UI of every picker screen a fixture opened.
+// Whether the startup screen appeared is the observation this Task is about, and
+// it cannot be inferred from the mode that came out: `fresh` is both what the
+// screen's second row produces and what skipping the screen produces.
+type startupModePickerLog struct {
+	opened []string
+}
+
+func (l *startupModePickerLog) startupScreens() int {
+	count := 0
+	for _, ui := range l.opened {
+		if ui == "project-startup" {
+			count++
+		}
+	}
+	return count
+}
+
+// startupModeScriptedPicker is scriptedPicker plus that log.
+func startupModeScriptedPicker(t *testing.T, steps []pickerStep) (intpicker.Runner, *startupModePickerLog) {
+	t.Helper()
+	log := &startupModePickerLog{}
+	calls := 0
+	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+		log.opened = append(log.opened, options.UI)
+		idx := calls
+		calls++
+		if idx >= len(steps) {
+			return intpickercompat.Result{}, nil
+		}
+		if steps[idx].observe != nil {
+			steps[idx].observe(options)
+		}
+		return steps[idx].reply, steps[idx].err
+	})
+	return nativePickerFromCompatRunner(runner), log
+}
+
 // startupModeFixture wires one closed-Project open with every seam the mode
 // decision touches: the picker toggle, the registration reader, and the two
 // lifecycles a chosen mode can enter.
-func startupModeFixture(t *testing.T, pickerState startupModePickerState, registered bool, steps []pickerStep) (*switchCommand, *startupModeFreshStarter, *capturingSwitchSessionExecutor, string) {
+func startupModeFixture(t *testing.T, pickerState startupModePickerState, registered bool, steps []pickerStep) (*switchCommand, *startupModeFreshStarter, *capturingSwitchSessionExecutor, string, *startupModePickerLog) {
 	t.Helper()
 	home, lookupEnv := startupModeConfigHome(t, pickerState)
 	target := t.TempDir()
 	starter := &startupModeFreshStarter{registered: registered}
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
-	_, native := scriptedPicker(t, steps)
+	native, pickerLog := startupModeScriptedPicker(t, steps)
 	cmd := &switchCommand{
 		sessions:          executor,
 		identity:          stubSwitchIdentityResolver{name: "workspace"},
@@ -117,7 +156,7 @@ func startupModeFixture(t *testing.T, pickerState startupModePickerState, regist
 		startupNotices:    &recordingProjectStartupReporter{},
 	}
 	wireFakeProjectSessionPlan(cmd)
-	return cmd, starter, executor, target
+	return cmd, starter, executor, target, pickerLog
 }
 
 // sidebarEmittedStartupMode drives the sidebar emit point -- the half that runs
@@ -163,9 +202,10 @@ func sidebarContinuationModeToken(t *testing.T, command string) string {
 // The no-file/on/off x registered/unregistered x explicit-choice matrix is
 // driven through the in-process open, the sidebar emitter, and the sidebar
 // continuation after re-exec. Every acted-on entry point must land on the same
-// startup mode exactly once. The saved-off, unregistered row preserves the
-// earlier repair: the sidebar must not send its old fixed `continue` token
-// straight into ContinueProject.
+// startup mode exactly once, and must agree on whether the startup screen was
+// shown at all. The unregistered rows are the whole point of the ordering:
+// registration is adjudicated before the screen, so no unregistered root is ever
+// asked the registered Project's question, whatever the toggle says.
 func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T) {
 	t.Parallel()
 
@@ -174,18 +214,18 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 		pickerState startupModePickerState
 		// registered reports the opened root as an existing Registry Project.
 		registered bool
-		// choice is the row the operator picks when the picker is on. It is also
-		// exactly what the sidebar forwards as `--mode`; with the picker off the
-		// sidebar has no choice to carry and always forwards `continue`.
+		// choice is the row the operator picks when the startup screen is shown.
 		choice string
 		// want is the lifecycle the chosen mode must enter.
 		want string
+		// wantScreens is how many startup screens one entry point may open.
+		wantScreens int
 	}{
 		{
 			name:        "saved off promotes an unregistered root to fresh",
 			pickerState: startupModePickerOff,
-			want:        projectStartupKindNew,
 			choice:      projectStartupKindTopology,
+			want:        projectStartupKindNew,
 		},
 		{
 			name:        "saved off keeps a registered root on continue",
@@ -195,15 +235,15 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 			want:        projectStartupKindTopology,
 		},
 		{
-			name:        "no file honors an explicit continue on an unregistered root",
+			name:        "no file never asks about an unregistered root",
 			pickerState: startupModePickerNoFile,
 			choice:      projectStartupKindTopology,
-			want:        projectStartupKindTopology,
+			want:        projectStartupKindNew,
 		},
 		{
-			name:        "no file honors an explicit fresh on an unregistered root",
-			pickerState: startupModePickerNoFile,
-			choice:      projectStartupKindNew,
+			name:        "saved on never asks about an unregistered root",
+			pickerState: startupModePickerOn,
+			choice:      projectStartupKindTopology,
 			want:        projectStartupKindNew,
 		},
 		{
@@ -212,6 +252,7 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 			registered:  true,
 			choice:      projectStartupKindTopology,
 			want:        projectStartupKindTopology,
+			wantScreens: 1,
 		},
 		{
 			name:        "no file honors an explicit fresh on a registered root",
@@ -219,18 +260,7 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 			registered:  true,
 			choice:      projectStartupKindNew,
 			want:        projectStartupKindNew,
-		},
-		{
-			name:        "saved on honors an explicit continue on an unregistered root",
-			pickerState: startupModePickerOn,
-			choice:      projectStartupKindTopology,
-			want:        projectStartupKindTopology,
-		},
-		{
-			name:        "saved on honors an explicit fresh on an unregistered root",
-			pickerState: startupModePickerOn,
-			choice:      projectStartupKindNew,
-			want:        projectStartupKindNew,
+			wantScreens: 1,
 		},
 		{
 			name:        "saved on honors an explicit continue on a registered root",
@@ -238,6 +268,7 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 			registered:  true,
 			choice:      projectStartupKindTopology,
 			want:        projectStartupKindTopology,
+			wantScreens: 1,
 		},
 		{
 			name:        "saved on honors an explicit fresh on a registered root",
@@ -245,6 +276,7 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 			registered:  true,
 			choice:      projectStartupKindNew,
 			want:        projectStartupKindNew,
+			wantScreens: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -252,30 +284,35 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 
 			steps := []pickerStep{{reply: intpickercompat.Result{Key: "enter", Value: test.choice}}}
 
-			inProcess, inProcessStarter, _, inProcessTarget := startupModeFixture(t, test.pickerState, test.registered, steps)
+			inProcess, inProcessStarter, _, inProcessTarget, inProcessPicker := startupModeFixture(t, test.pickerState, test.registered, steps)
 			if err := inProcess.openProjectTarget(context.Background(), inProcessTarget, "workspace"); err != nil {
 				t.Fatalf("openProjectTarget() error = %v", err)
+			}
+			if got := inProcessPicker.startupScreens(); got != test.wantScreens {
+				t.Fatalf("in-process startup screens = %d, want %d", got, test.wantScreens)
 			}
 
 			// The sidebar's own share of the decision: which `--mode` does the
 			// emitted continuation command carry?
-			emit, _, _, emitTarget := startupModeFixture(t, test.pickerState, test.registered, steps)
+			emit, _, _, emitTarget, emitPicker := startupModeFixture(t, test.pickerState, test.registered, steps)
 			if got := sidebarEmittedStartupMode(t, emit, emitTarget); got != test.want {
 				t.Fatalf("emitted --mode = %q, want %q", got, test.want)
 			}
-
-			sidebar, sidebarStarter, _, sidebarTarget := startupModeFixture(t, test.pickerState, test.registered, steps)
-			// What the re-exec acts on. The picker-off arrival is deliberately
-			// driven with the neutral `continue` token an older client would still
-			// emit, so the second layer is exercised on its own.
-			forwarded := projectStartupKindTopology
-			if test.pickerState != startupModePickerOff {
-				forwarded = test.choice
+			if got := emitPicker.startupScreens(); got != test.wantScreens {
+				t.Fatalf("sidebar emit startup screens = %d, want %d", got, test.wantScreens)
 			}
+
+			sidebar, sidebarStarter, _, sidebarTarget, sidebarPicker := startupModeFixture(t, test.pickerState, test.registered, steps)
+			// What the re-exec acts on: the token the emit point just produced.
+			// The screen belongs to the emit point, so the continuation must open
+			// none of its own however the mode was decided.
 			if err := sidebar.runSidebarOpen([]string{
-				"--path", sidebarTarget, "--session", "workspace", "--mode", forwarded, "--anchor", "%12",
+				"--path", sidebarTarget, "--session", "workspace", "--mode", test.want, "--anchor", "%12",
 			}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("runSidebarOpen() error = %v", err)
+			}
+			if got := sidebarPicker.startupScreens(); got != 0 {
+				t.Fatalf("sidebar continuation startup screens = %d, want 0", got)
 			}
 
 			if got, want := inProcessStarter.lifecycle, []string{test.want}; !equalStrings(got, want) {
@@ -301,12 +338,12 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 func TestSidebarOpenPromotesUnregisteredRootToFreshWhenPickerIsOff(t *testing.T) {
 	t.Parallel()
 
-	emit, _, _, emitTarget := startupModeFixture(t, startupModePickerOff, false, nil)
+	emit, _, _, emitTarget, _ := startupModeFixture(t, startupModePickerOff, false, nil)
 	if got, want := sidebarEmittedStartupMode(t, emit, emitTarget), projectStartupKindNew; got != want {
 		t.Fatalf("emitted --mode = %q, want %q: the sidebar must not launch continue for an unregistered root", got, want)
 	}
 
-	cmd, starter, executor, target := startupModeFixture(t, startupModePickerOff, false, nil)
+	cmd, starter, executor, target, _ := startupModeFixture(t, startupModePickerOff, false, nil)
 	if err := cmd.runSidebarOpen([]string{
 		"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
 	}, &bytes.Buffer{}); err != nil {
@@ -329,12 +366,12 @@ func TestSidebarOpenPromotesUnregisteredRootToFreshWhenPickerIsOff(t *testing.T)
 func TestSidebarOpenKeepsRegisteredRootOnContinue(t *testing.T) {
 	t.Parallel()
 
-	emit, _, _, emitTarget := startupModeFixture(t, startupModePickerOff, true, nil)
+	emit, _, _, emitTarget, _ := startupModeFixture(t, startupModePickerOff, true, nil)
 	if got, want := sidebarEmittedStartupMode(t, emit, emitTarget), projectStartupKindTopology; got != want {
 		t.Fatalf("emitted --mode = %q, want %q", got, want)
 	}
 
-	cmd, starter, executor, target := startupModeFixture(t, startupModePickerOff, true, nil)
+	cmd, starter, executor, target, _ := startupModeFixture(t, startupModePickerOff, true, nil)
 	topology := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
 	if err := cmd.runSidebarOpen([]string{
 		"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
@@ -353,20 +390,23 @@ func TestSidebarOpenKeepsRegisteredRootOnContinue(t *testing.T) {
 }
 
 // TestSidebarOpenHonorsExplicitPickerChoice proves the re-adjudication never
-// second-guesses the operator. With the picker on, the arriving `--mode` is a
-// choice that was already made on screen, so an unregistered root that the
-// operator asked to continue stays on continue.
+// second-guesses the operator. The startup screen is now shown only for a
+// registered Project, and for that root an arriving `continue` is the row the
+// operator picked -- adjudication leaves it exactly there.
 func TestSidebarOpenHonorsExplicitPickerChoice(t *testing.T) {
 	t.Parallel()
 
-	emit, _, _, emitTarget := startupModeFixture(t, startupModePickerOn, false, []pickerStep{
+	emit, _, _, emitTarget, emitPicker := startupModeFixture(t, startupModePickerOn, true, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueTopology}},
 	})
 	if got, want := sidebarEmittedStartupMode(t, emit, emitTarget), projectStartupKindTopology; got != want {
 		t.Fatalf("emitted --mode = %q, want %q: the operator's row is what the sidebar forwards", got, want)
 	}
+	if got := emitPicker.startupScreens(); got != 1 {
+		t.Fatalf("startup screens = %d, want 1: a registered Project still gets the screen", got)
+	}
 
-	cmd, starter, _, target := startupModeFixture(t, startupModePickerOn, false, nil)
+	cmd, starter, _, target, _ := startupModeFixture(t, startupModePickerOn, true, nil)
 	if err := cmd.runSidebarOpen([]string{
 		"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
 	}, &bytes.Buffer{}); err != nil {
@@ -375,8 +415,115 @@ func TestSidebarOpenHonorsExplicitPickerChoice(t *testing.T) {
 	if got, want := starter.lifecycle, []string{projectStartupKindTopology}; !equalStrings(got, want) {
 		t.Fatalf("sidebar lifecycle = %q, want %q: an explicit choice must not be promoted", got, want)
 	}
-	if starter.registerCalls != 0 {
-		t.Fatalf("registration reads = %d, want none behind an explicit choice", starter.registerCalls)
+}
+
+// TestStartupScreenIsShownOnlyForRegisteredProjects is the contract this change
+// adds, observed on the screen itself rather than on the mode that came out.
+//
+// With the toggle saved `on`, one Enter on an unregistered root must register
+// and open it with no screen in between, while a registered closed Project must
+// still reach the screen.
+func TestStartupScreenIsShownOnlyForRegisteredProjects(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		registered  bool
+		wantScreens int
+		wantCycle   string
+	}{
+		{name: "unregistered root opens with no screen", wantCycle: projectStartupKindNew},
+		{name: "registered Project still gets the screen", registered: true, wantScreens: 1, wantCycle: projectStartupKindTopology},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			steps := []pickerStep{{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueTopology}}}
+			cmd, starter, executor, target, pickerLog := startupModeFixture(t, startupModePickerOn, test.registered, steps)
+			if err := cmd.openProjectTarget(context.Background(), target, "workspace"); err != nil {
+				t.Fatalf("openProjectTarget() error = %v", err)
+			}
+			if got := pickerLog.startupScreens(); got != test.wantScreens {
+				t.Fatalf("startup screens = %d, want %d", got, test.wantScreens)
+			}
+			if got, want := starter.lifecycle, []string{test.wantCycle}; !equalStrings(got, want) {
+				t.Fatalf("lifecycle = %q, want %q", got, want)
+			}
+			if got, want := executor.calls, []string{"authorize:" + target, "open:workspace"}; !equalStrings(got, want) {
+				t.Fatalf("session calls = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// registrationBlindFreshStarter is a starter that does not expose
+// ProjectRegistered. It is the fourth root adjudication leaves on `continue`.
+type registrationBlindFreshStarter struct{}
+
+func (registrationBlindFreshStarter) PlanProjectFreshStart(string) (projectFreshStartPlan, error) {
+	return projectFreshStartPlan{}, nil
+}
+
+func (registrationBlindFreshStarter) PruneProjectFreshStart(context.Context, string, projectFreshStartPlan) (projectFreshStartCommit, error) {
+	return projectFreshStartCommit{}, nil
+}
+
+func (registrationBlindFreshStarter) ContinueProject(_ context.Context, root, sessionName string) (openedProjectBootstrap, error) {
+	return openedProjectBootstrap{project: coremetadata.Project{
+		Metadata: coremetadata.ObjectMeta{UID: "proj-existing", Name: sessionName},
+		Spec:     coremetadata.ProjectSpec{Root: root},
+	}}, nil
+}
+
+// TestResolveProjectStartupModeKeepsSentinelsAndHomeOnThePickerPath pins the
+// gate's predicate.
+//
+// It asks whether adjudication chose `fresh`, never whether registration was
+// proven. The settings sentinel, the runtime sentinel, the operator's own home,
+// and a starter that cannot answer the registration question are all left on
+// `continue` and must keep reaching the screen: inverting the predicate would
+// route those four into `fresh` and add a Registry write to paths that never
+// had one.
+func TestResolveProjectStartupModeKeepsSentinelsAndHomeOnThePickerPath(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name         string
+		target       func(home, tempDir string) string
+		blindStarter bool
+	}{
+		{name: "settings sentinel", target: func(string, string) string { return switchSettingsSentinel }},
+		{name: "runtime sentinel", target: func(string, string) string { return switchRuntimeSentinel }},
+		{name: "operator home", target: func(home, _ string) string { return home }},
+		{name: "starter without a registration reader", target: func(_, tempDir string) string { return tempDir }, blindStarter: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			steps := []pickerStep{{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueTopology}}}
+			cmd, starter, _, tempTarget, pickerLog := startupModeFixture(t, startupModePickerOn, false, steps)
+			home, err := cmd.homeDir()
+			if err != nil {
+				t.Fatalf("homeDir() error = %v", err)
+			}
+			if test.blindStarter {
+				cmd.projectFreshStart = registrationBlindFreshStarter{}
+			}
+
+			mode, err := cmd.resolveProjectStartupMode("workspace", test.target(home, tempTarget))
+			if err != nil {
+				t.Fatalf("resolveProjectStartupMode() error = %v", err)
+			}
+			if mode.Kind != projectStartupKindTopology {
+				t.Fatalf("mode kind = %q, want %q: this root is not an unregistered Project", mode.Kind, projectStartupKindTopology)
+			}
+			if got := pickerLog.startupScreens(); got != 1 {
+				t.Fatalf("startup screens = %d, want 1", got)
+			}
+			if !test.blindStarter && starter.registerCalls != 0 {
+				t.Fatalf("registration reads = %d, want none: the root is excluded before the read", starter.registerCalls)
+			}
+		})
 	}
 }
 
@@ -397,7 +544,7 @@ func TestSidebarOpenNeverDemotesAnArrivingFreshMode(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd, starter, _, target := startupModeFixture(t, startupModePickerOff, test.registered, nil)
+			cmd, starter, _, target, _ := startupModeFixture(t, startupModePickerOff, test.registered, nil)
 			if err := cmd.runSidebarOpen([]string{
 				"--path", target, "--session", "workspace", "--mode", projectStartupKindNew, "--anchor", "%12",
 			}, &bytes.Buffer{}); err != nil {
@@ -420,7 +567,7 @@ func TestSidebarOpenSurfacesRegistrationReadFailure(t *testing.T) {
 	t.Parallel()
 
 	readErr := errors.New("injected registration read failure")
-	cmd, starter, executor, target := startupModeFixture(t, startupModePickerOff, false, nil)
+	cmd, starter, executor, target, _ := startupModeFixture(t, startupModePickerOff, false, nil)
 	starter.registerErr = readErr
 	cmd.tmuxRunner = &recordingTmuxRunner{}
 
@@ -438,43 +585,35 @@ func TestSidebarOpenSurfacesRegistrationReadFailure(t *testing.T) {
 	}
 }
 
-// TestSidebarOpenContinueOnUnregisteredRootKeepsTheRecreateRefusal pins the
-// message the promotion exists to avoid. Reaching continue on an unregistered
-// root is still possible -- an explicit picker choice does exactly that -- and
-// when it happens the operator must still be told the root is not a registered
-// Project and what to choose instead. Snapshot files play no part in it.
-func TestSidebarOpenContinueOnUnregisteredRootKeepsTheRecreateRefusal(t *testing.T) {
+// TestSidebarOpenContinueTokenOnUnregisteredRootNoLongerRefuses is the user
+// -visible repair.
+//
+// `switch sidebar-open --mode continue --path <unregistered root>` used to end in
+// "continue project unavailable", and with the startup picker on that was the
+// default row -- one Enter produced a refusal the sidebar never displayed. The
+// continuation now re-adjudicates whatever the toggle says, so the token is
+// corrected to `fresh` and the root is registered and opened instead.
+func TestSidebarOpenContinueTokenOnUnregisteredRootNoLongerRefuses(t *testing.T) {
 	t.Parallel()
 
-	for _, pickerState := range []startupModePickerState{startupModePickerNoFile, startupModePickerOn} {
+	for _, pickerState := range []startupModePickerState{startupModePickerNoFile, startupModePickerOn, startupModePickerOff} {
 		t.Run(string(pickerState), func(t *testing.T) {
 			t.Parallel()
 
-			home, lookupEnv := startupModeConfigHome(t, pickerState)
-			target := t.TempDir()
-			executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
-			cmd := &switchCommand{
-				sessions:   executor,
-				identity:   stubSwitchIdentityResolver{name: "workspace"},
-				homeDir:    func() (string, error) { return home, nil },
-				lookupEnv:  lookupEnv,
-				tmuxRunner: &recordingTmuxRunner{},
-				executable: func() (string, error) { return "/tmp/projmux", nil },
-				projectFreshStart: &registryProjectFreshStarter{
-					resources: newFakeResourceStore(t).store(),
-				},
-			}
-			wireFakeProjectSessionPlan(cmd)
-
-			err := cmd.runSidebarOpen([]string{
+			cmd, starter, executor, target, pickerLog := startupModeFixture(t, pickerState, false, nil)
+			if err := cmd.runSidebarOpen([]string{
 				"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
-			}, &bytes.Buffer{})
-			want := "continue project unavailable: " + target + " is not a registered Project; choose Recreate Project"
-			if err == nil || !strings.Contains(err.Error(), want) {
-				t.Fatalf("runSidebarOpen() error = %v, want a message containing %q", err, want)
+			}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("runSidebarOpen() error = %v, want an open", err)
 			}
-			if strings.Contains(strings.ToLower(strings.ReplaceAll(err.Error(), target, "<root>")), "snapshot") {
-				t.Fatalf("runSidebarOpen() error = %v, want no snapshot wording", err)
+			if got, want := starter.lifecycle, []string{projectStartupKindNew}; !equalStrings(got, want) {
+				t.Fatalf("sidebar lifecycle = %q, want %q: the arriving continue must be corrected", got, want)
+			}
+			if got := pickerLog.startupScreens(); got != 0 {
+				t.Fatalf("startup screens = %d, want 0 in the continuation", got)
+			}
+			if got, want := executor.calls, []string{"authorize:" + target, "open:workspace"}; !equalStrings(got, want) {
+				t.Fatalf("session calls = %q, want %q", got, want)
 			}
 		})
 	}
