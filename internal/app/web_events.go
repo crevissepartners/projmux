@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
@@ -61,11 +60,12 @@ func (b *webBackend) Changes(ctx context.Context, topic string) (<-chan struct{}
 		}
 		return webMerge(ctx, changes, pushed), nil
 	case web.TopicUsage:
-		dir := strings.TrimSpace(os.Getenv(usagecmd.StateDirEnvVar))
-		if dir == "" {
-			dir = filepath.Join(paths.StateDir, "usage")
+		// The Usage route reads through usagecmd, so the watcher takes the
+		// cache file from the same resolver instead of rebuilding the path.
+		file, err := usagecmd.New(nil).SnapshotCacheFile()
+		if err != nil {
+			return nil, err
 		}
-		file := filepath.Join(dir, "snapshots.json")
 		return webPoll(ctx, time.Second, 0, func() string { return webFileMark(file) }), nil
 	case web.TopicSystem:
 		return webPoll(ctx, webSystemTick, webSystemTick, func() string { return "" }), nil

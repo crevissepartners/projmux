@@ -437,12 +437,23 @@ func (c *Command) CachedState() (usage.State, []UnsupportedProvider, time.Time, 
 	state = filterUsageStateByModels(state, modelScope)
 	unsupported := c.unsupportedUsageProviders("all", false)
 	var cacheMTime time.Time
-	if stateDir, err := c.resolveStateDir(); err == nil {
-		if info, statErr := os.Stat(usage.NewStore(stateDir).FilePath()); statErr == nil {
+	if file, err := c.SnapshotCacheFile(); err == nil {
+		if info, statErr := os.Stat(file); statErr == nil {
 			cacheMTime = info.ModTime()
 		}
 	}
 	return state, unsupported, cacheMTime, nil
+}
+
+// SnapshotCacheFile is the snapshot cache file the usage store reads and
+// writes, resolved the way the store's directory is, so a watcher follows
+// the same file CachedState loads.
+func (c *Command) SnapshotCacheFile() (string, error) {
+	stateDir, err := c.resolveStateDir()
+	if err != nil {
+		return "", err
+	}
+	return usage.NewStore(stateDir).FilePath(), nil
 }
 
 func (c *Command) modelScope(model string) ([]string, bool) {
