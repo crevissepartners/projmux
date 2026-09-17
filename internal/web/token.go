@@ -44,12 +44,20 @@ func tokenCookieName(port string) string {
 
 // requireToken admits a request that carries the start token as the cookie
 // this server set or as an `Authorization: Bearer` header. A GET or HEAD that
-// carries it as `?token=` instead gets the cookie and a redirect to the same
-// URL without the token, so the token does not stay in the address bar or the
-// history, and the page's own requests carry the cookie from then on.
+// carries it as `?token=` instead gets the cookie and a redirect to `/`, so the
+// token does not stay in the address bar or the history, and the page's own
+// requests carry the cookie from then on.
 //
-// Nothing here logs or echoes a token: refusals log the path only, and the
-// redirect target is built without the parameter.
+// The redirect target is the constant `/`, never the request's path or query:
+// the only URL `projmux web` prints is `/?token=<token>`, and a request-built
+// target would turn `//evil.example/?token=<token>` into an off-site,
+// protocol-relative redirect.
+//
+// The cookie is HttpOnly and SameSite=Strict but not Secure: the listener is
+// plain http on loopback, and browsers that do not count http loopback as a
+// secure context (WebKit) drop a Secure cookie there and lock the operator out.
+//
+// Nothing here logs or echoes a token: refusals log the path only.
 func requireToken(port, token string, log *slog.Logger, next http.Handler) http.Handler {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -65,20 +73,15 @@ func requireToken(port, token string, log *slog.Logger, next http.Handler) http.
 				refuseToken(w, r, log)
 				return
 			}
-			http.SetCookie(w, &http.Cookie{
+			http.SetCookie(w, &http.Cookie{ // #nosec G124 -- plain-http loopback listener; Secure would make WebKit drop the cookie, HttpOnly and SameSite=Strict are set.
 				Name:     cookieName,
 				Value:    token,
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteStrictMode,
 			})
-			query.Del(tokenQuery)
-			location := r.URL.EscapedPath()
-			if encoded := query.Encode(); encoded != "" {
-				location += "?" + encoded
-			}
 			w.Header().Set("Cache-Control", "no-store")
-			http.Redirect(w, r, location, http.StatusSeeOther)
+			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 		if cookie, err := r.Cookie(cookieName); err == nil && valid(cookie.Value) {

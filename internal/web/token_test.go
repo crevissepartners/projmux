@@ -210,12 +210,12 @@ func TestTokenQuerySetsTheCookieAndRedirectsWithoutIt(t *testing.T) {
 	log := &syncBuffer{}
 	l := serveWithToken(t, &fakeBackend{}, slog.New(slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	res := l.get(t, l.noJump, l.base+"/project/a?token="+l.token+"&tab=b", nil)
+	res := l.get(t, l.noJump, l.base+"/?token="+l.token, nil)
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("GET ?token = %d, want 303", res.StatusCode)
 	}
-	if got := res.Header.Get("Location"); got != "/project/a?tab=b" {
-		t.Errorf("Location = %q, want the same URL without the token", got)
+	if got := res.Header.Get("Location"); got != "/" {
+		t.Errorf("Location = %q, want /", got)
 	}
 	cookies := res.Cookies()
 	if len(cookies) != 1 {
@@ -231,11 +231,8 @@ func TestTokenQuerySetsTheCookieAndRedirectsWithoutIt(t *testing.T) {
 	}
 
 	// The cookie the redirect set is what the page's requests carry.
-	if res := l.get(t, l.noJump, l.base+"/project/a?tab=b", l.cookie(c.Value)); res.StatusCode != http.StatusOK {
+	if res := l.get(t, l.noJump, l.base+"/", l.cookie(c.Value)); res.StatusCode != http.StatusOK {
 		t.Errorf("the redirect target with the cookie = %d, want 200", res.StatusCode)
-	}
-	if res := l.get(t, l.noJump, l.base+"/?token="+l.token, nil); res.Header.Get("Location") != "/" {
-		t.Errorf("Location without other parameters = %q, want /", res.Header.Get("Location"))
 	}
 	// Refused and served requests are both logged, by path only.
 	l.get(t, l.noJump, l.base+"/api/v1/nope?token=x", nil)
@@ -246,6 +243,25 @@ func TestTokenQuerySetsTheCookieAndRedirectsWithoutIt(t *testing.T) {
 	}
 	if strings.Contains(logged, l.token) || strings.Contains(logged, "token=") {
 		t.Fatalf("request log carries a token:\n%s", logged)
+	}
+}
+
+// The redirect target is always `/`, never built from the request, so a
+// protocol-relative path cannot send the browser off-site.
+func TestTokenQueryRedirectsOnlyToTheRoot(t *testing.T) {
+	l := serveWithToken(t, &fakeBackend{}, nil)
+	for _, path := range []string{
+		"//evil.example/?token=" + l.token,
+		"/some/path?token=" + l.token + "&x=1",
+	} {
+		res := l.get(t, l.noJump, l.base+path, nil)
+		if res.StatusCode != http.StatusSeeOther {
+			t.Errorf("GET %s = %d, want 303", strings.Replace(path, l.token, "<token>", 1), res.StatusCode)
+			continue
+		}
+		if got := res.Header.Get("Location"); got != "/" {
+			t.Errorf("GET %s: Location = %q, want exactly /", strings.Replace(path, l.token, "<token>", 1), got)
+		}
 	}
 }
 

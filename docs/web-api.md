@@ -58,9 +58,11 @@ A TCP request is admitted when it carries the token in either form:
 - `Authorization: Bearer <token>`, for clients other than a browser.
 
 A `GET` or `HEAD` with `?token=<token>` sets that cookie and answers `303` to
-the same path and query without `token`, so the token leaves the address bar
-and the browser history. The client then uses only relative, same-origin
-`fetch` and `EventSource` URLs, which send the cookie on their own.
+`/`, whatever the request's path and other query parameters were, so the token
+leaves the address bar and the browser history. The target is fixed so that a
+request path can never make it an off-site redirect. The client then uses only
+relative, same-origin `fetch` and `EventSource` URLs, which send the cookie on
+their own.
 
 A missing or wrong token, including a wrong `?token=`, is `401 unauthorized`
 with the usual error envelope. The comparison is constant-time. The token is
