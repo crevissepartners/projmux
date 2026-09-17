@@ -127,7 +127,7 @@ chmod +x "$root/wrap/tmux"
 wrapped_pane="$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE PATH="$root/wrap:$PATH" \
   TMUX="$socket_path,$server_pid,0" TMUX_PANE="$host_pane" "$bin" create pane --project "uid:$project_uid" --primary-window -o pane-id)"
 [[ "$wrapped_pane" =~ ^%[0-9]+$ ]] || fail "wrapped create pane stdout was not one pane id: $wrapped_pane"
-first_write="$(grep -nE ' (set-environment|set-option|split-window|new-window|new-session|resize-pane|rename-window|kill-session|kill-window|kill-pane|select-pane) ' "$argv_log" | head -1 | cut -d: -f1)"
+first_write="$(grep -m1 -nE ' (set-environment|set-option|split-window|new-window|new-session|resize-pane|rename-window|kill-session|kill-window|kill-pane|select-pane) ' "$argv_log" | cut -d: -f1)"
 [[ -n "$first_write" ]] || fail "wrapped create pane logged no tmux write"
 before_write="$(head -n "$((first_write - 1))" "$argv_log")"
 grep -qF 'display-message -p -F #{socket_path}' <<<"$before_write" || fail "no socket_path identity read before the first write"
@@ -169,7 +169,7 @@ iso_tmux has-session -t "=$continue_session" 2>/dev/null || fail "start project 
   fail "the Continue replay rebuilt a different Pane uid set"
 echo "PASS: start project replays a closed Project's stored topology onto the exact server"
 
-continue_first_write="$(grep -nE ' (set-environment|set-option|split-window|new-window|new-session|resize-pane|rename-window|kill-session|kill-window|kill-pane|select-pane) ' "$argv_log" | head -1 | cut -d: -f1)"
+continue_first_write="$(grep -m1 -nE ' (set-environment|set-option|split-window|new-window|new-session|resize-pane|rename-window|kill-session|kill-window|kill-pane|select-pane) ' "$argv_log" | cut -d: -f1)"
 [[ -n "$continue_first_write" ]] || fail "the Continue replay logged no tmux write"
 continue_before_write="$(head -n "$((continue_first_write - 1))" "$argv_log")"
 grep -qF 'display-message -p -F #{socket_path}' <<<"$continue_before_write" || fail "the Continue replay wrote before reading socket_path"
