@@ -41,6 +41,11 @@ type splitFocusRealTmux struct {
 	store     *fakeResourceStore
 	newCreate func() *createCommand
 	physical  explicitTmuxRunner
+	// runner is the unrouted runner every explicit target above is built on.
+	// A seam that resolves its own server from the invocation -- the canonical
+	// Pane delete -- needs it unpinned, plus the inherited env below.
+	runner    tmuxCommandRunner
+	lookupEnv func(string) string
 }
 
 func newSplitFocusRealTmux(t *testing.T, ctx context.Context) *splitFocusRealTmux {
@@ -203,6 +208,7 @@ func newSplitFocusRealTmux(t *testing.T, ctx context.Context) *splitFocusRealTmu
 	fx := &splitFocusRealTmux{
 		tmux: tmux, socket: socket, serverPID: serverPID, env: environment,
 		windowID: windowID, originID: paneID, store: store, newCreate: newCreate, physical: physical,
+		runner: runner, lookupEnv: lookupEnv,
 	}
 	fx.client = fx.attachControlClient(t, sessionID)
 	return fx

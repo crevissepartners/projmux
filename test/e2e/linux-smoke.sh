@@ -940,6 +940,11 @@ fi
 # pane proves Escape and unknown continuation are consumed (zero pane input),
 # while two shared-prefix actions prove one dispatch per completed sequence.
 sequence_capture="$PROJMUX_SMOKE_WORKDIR/sequence-pane-input.bin"
+# The shared-prefix leg below dispatches window.create and counts Windows. Pin
+# the saved launch default to `shell` so the new Window's first Pane is the
+# shell the create made instead of the picker popup an unset default opens.
+mkdir -p "$XDG_CONFIG_HOME/projmux"
+printf 'shell\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
 install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2.toml" "$XDG_CONFIG_HOME/projmux/keymap.toml"
 "$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$recorder_socket" \
   >"$PROJMUX_SMOKE_WORKDIR/sequence-e2e-apply.out"
@@ -9887,6 +9892,13 @@ menu_client_log="$menu_root/client.log"
 menu_client_input="$menu_root/client.in"
 mkdir -p "$menu_root"/{home,cache,config,runtime,state,tmux,work/alpha}
 chmod 0700 "$menu_root/runtime"
+# window.create and the Window menu's New At End open the new Window's first
+# Pane with the saved launch default. This leg drives those producers through
+# foreground `run-shell` jobs and asserts the `Created Window` line, so it pins
+# the default to `shell`; the unset default is `selective`, which would open a
+# picker popup on this client and wait for a selection nobody makes here.
+mkdir -p "$menu_root/config/projmux"
+printf 'shell\n' >"$menu_root/config/projmux/tmux-ai-split-mode"
 
 menu_env=(
   env -u TMUX -u TMUX_PANE -u PROJMUX_SMOKE_TMUX_SOCKET

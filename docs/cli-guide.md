@@ -361,7 +361,8 @@ Every create is **detached**: no create moves the client. Use `focus pane` or
 `-o pane-id` when you want to end up in the new pane. One exception: the human
 intent route `internal tmux window-create` (the `window.create` key and the
 Window menu New At End) moves the pressing client to the new Window after its
-create commits; public `create` stays detached. A natural create validates
+create commits and then opens that Window's first Pane with the saved launch
+default; public `create` stays detached and never reads that saved default. A natural create validates
 the inherited exact route and Pane containment. An explicit resource scope
 binds the selected app resource route without letting unrelated inherited
 `TMUX`/`TMUX_PANE` choose or change the resource target; exact Project plus

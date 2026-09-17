@@ -1892,7 +1892,11 @@ Resource-first create:
   `-o pane-id` are how a caller ends up in the new pane. One exception: the
   human intent route `internal tmux window-create` (`window.create` key, Window
   menu New At End) moves exactly the pressing client to the new Window after
-  its create commits; public `create` stays detached.
+  its create commits, and then applies the saved launch default to that
+  Window's committed shell Pane -- an Agent through the same canonical create
+  funnel a split uses plus a canonical delete of the shell, or a picker popup
+  anchored on it; public `create` stays detached and never reads that saved
+  default.
 - **Focus is navigation-only.** `focus project|window|pane` reads live tmux
   inventory and may move an existing client, but has no Registry store and
   issues no session/Window/Pane creation, identity-marker, rename, respawn, or

@@ -129,6 +129,11 @@ type aiCommand struct {
 	// to. It is nil unless explicitly wired; see createPaneFromIntent for why an
 	// unwired seam fails loudly instead of quietly creating nothing.
 	panes canonicalPaneCreator
+	// paneDelete is the canonical Pane delete the replacing split UI removes a
+	// replaced origin shell with. It is the same adapter the Pane menu Kill item
+	// uses, and it is a field only so a test can stop before the real Registry
+	// and tmux mutations; production installs no second deleter here.
+	paneDelete paneMenuDeleteFunc
 	// A hook's session ref and semantic interaction are staged until the event
 	// has been classified, then committed in one Registry transaction. Quiet
 	// events flush only the session ref at the top-level ingest return.
@@ -170,6 +175,7 @@ func newAICommand() *aiCommand {
 		// transaction, so ingest can never create or corrupt the registry.
 		loadRegistry:   loadResourceRegistry,
 		updateRegistry: updateResourceRegistry,
+		paneDelete:     deletePaneThroughCanonicalRoute,
 	}
 }
 
@@ -1257,6 +1263,14 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 	// inherited-target path unchanged.
 	intent.anchorPaneID = c.splitOriginPane()
 	intent.targetClient = c.splitOriginClient()
+	// A replacing producer created the origin Pane only so this picker would
+	// have somewhere to hang off; what it picks takes that Pane's place. The
+	// branch is here, at the same funnel, so every terminal action -- provider,
+	// Codex advanced, shell, resume, and the resume picker's `new` row --
+	// answers the marker the same way.
+	if c.splitReplacesOrigin() {
+		return c.finishReplacingSplit(intent)
+	}
 	var diagnostics bytes.Buffer
 	created, err := c.panes.createFromIntent(intent, io.Discard, &diagnostics)
 	if err == nil {
@@ -2163,16 +2177,27 @@ func (c *aiCommand) enabledAIAgents() []config.AIAgentProvider {
 }
 
 func (c *aiCommand) requireAIAgentEnabled(mode string, path aiSplitLaunchPath) error {
-	provider, ok := aiModeProvider(mode)
-	if !ok {
+	message, disabled := c.aiAgentDisabledLaunchMessage(mode, path)
+	if !disabled {
 		return nil
 	}
-	if aiEnabledAgentsContains(c.enabledAIAgents(), provider) {
-		return nil
-	}
-	message := disabledAIAgentLaunchMessage(mode, path)
 	_ = c.displayMessage(message)
 	return errors.New(message)
+}
+
+// aiAgentDisabledLaunchMessage is the Settings gate itself, without the ambient
+// message requireAIAgentEnabled shows. A producer that knows the exact client
+// it acts for reads the gate here and puts the same sentence on that client
+// instead, so one disabled provider is still reported exactly once.
+func (c *aiCommand) aiAgentDisabledLaunchMessage(mode string, path aiSplitLaunchPath) (string, bool) {
+	provider, ok := aiModeProvider(mode)
+	if !ok {
+		return "", false
+	}
+	if aiEnabledAgentsContains(c.enabledAIAgents(), provider) {
+		return "", false
+	}
+	return disabledAIAgentLaunchMessage(mode, path), true
 }
 
 func aiModeProvider(mode string) (config.AIAgentProvider, bool) {

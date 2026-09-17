@@ -194,7 +194,7 @@ Optional direct keys can be added for actions such as:
 | `AIResumePickerToggle` | AI resume session picker; default `Alt-4`; pressing again closes the picker popup |
 | `ai-split-right` | Open a new direct AI split to the right |
 | `ai-split-down` | Open a new direct AI split below |
-| `new-window` | New tmux window in the current pane directory |
+| `new-window` | New tmux window in the current pane directory, opened with the saved launch default |
 | `rename-window` | Rename the current Window in the Registry; see [Rename keys](#rename-keys) |
 | `rename-pane-label` | Rename the current Pane in the Registry; see [Rename keys](#rename-keys) |
 
@@ -217,6 +217,33 @@ client is never moved to the Window. If the focus step itself fails, the Pane
 is kept and that client sees one line:
 `Created Pane, but projmux could not focus it: <reason>`. The public
 `projmux create pane` and `create agent` commands never change focus.
+
+### The new Window's first Pane
+
+`window.create` (v0 id `new-window`) and the Window menu's New At End create the
+Window with one shell Pane, move the pressing client onto it, and then open that
+Pane according to the saved launch default -- the same setting the saved-default
+split key reads (Settings > AI Settings, stored in
+`$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode`):
+
+| Saved default | The new Window ends up with |
+| --- | --- |
+| `shell` | the shell Pane the create made; nothing else runs |
+| `claude`, `codex`, `antigravity` | exactly that Agent Pane: the Agent is created first and the shell is then removed through the canonical Pane delete |
+| `selective` (also the unset default) | the `Alt-7` picker on the pressing client, anchored on the new shell; the selection replaces the shell, and the shell row keeps it |
+| `resume` | the resume picker on the pressing client, on the same terms |
+
+Cancelling a picker leaves the shell Pane. Nothing here rolls the Window back:
+a provider that Settings has since disabled, an Agent that could not be created,
+or a shell that could not be removed keeps the Window and reports one line on
+the pressing client instead of the usual `Created Window`. A create whose
+pressing client could not be moved keeps its existing line and applies no
+launch default, because there is no client left to show a picker or a result
+on.
+
+The typed `projmux create window` and `projmux create agent --create-window`
+are unchanged and never read the saved default: a typed command's outcome
+stays visible in its own argv.
 
 Pane switching is catalogued as transport-dependent and the generated app tmux
 config binds `M-Left`, `M-Right`, `M-Up`, and `M-Down` to `select-pane`
@@ -308,7 +335,9 @@ write; the projmux process never issues `kill-pane` or `kill-window`.
 
 A mouse menu acts on what was clicked, not on what is focused: Kill, Rename, and
 New At End in the status-line Window menu act on the clicked Window, and the
-Rename prompt starts with that Window's name.
+Rename prompt starts with that Window's name. New At End opens the new Window's
+first Pane with the saved launch default; see
+[The new Window's first Pane](#the-new-windows-first-pane).
 
 ## Rename keys
 

@@ -45,11 +45,15 @@ type windowCreateIntent struct {
 
 // createdWindowRuntime is the exact runtime placement of the Window a committed
 // intent create made: the stable `$N` Session and `@N` Window handles the
-// transaction bound into the Registry. It carries no identity authority; the
-// generated route only uses it to address the pressing client's move.
+// transaction bound into the Registry, plus the `%N` of the shell Pane the
+// Window was created with. It carries no identity authority; the generated
+// route only uses it to address the pressing client's move and to hand the
+// committed shell Pane to the saved launch default, which needs the exact Pane
+// rather than whatever is focused by the time it runs.
 type createdWindowRuntime struct {
 	sessionID string
 	windowID  string
+	paneID    string
 }
 
 // createdPaneRuntime is the exact runtime Pane a committed split intent made:
@@ -157,7 +161,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		observeActivationRuntime(working, mutator, activation, created.PaneID, c.runtime.warn)
 		result = createResult{kind: coremetadata.KindWindow, uid: window.Metadata.UID, name: window.Metadata.Name,
 			paneID: created.PaneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
-		placement = createdWindowRuntime{sessionID: scope.sessionID, windowID: created.WindowID}
+		placement = createdWindowRuntime{sessionID: scope.sessionID, windowID: created.WindowID, paneID: created.PaneID}
 		return createErr
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {

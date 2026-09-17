@@ -110,6 +110,14 @@ type tmuxCommand struct {
 	windowCreate   windowCreateIntentFunc
 	windowRename   windowRenameIntentFunc
 	paneRename     paneRenameIntentFunc
+	// launchDefault applies the saved launch default to the shell Pane a
+	// generated Window create committed. It is injected for the same reason the
+	// routes above are -- a test fakes the whole application without a Registry
+	// -- and because the saved mode file stays readable in exactly one place:
+	// the aiCommand behind this func. A nil route is today's behavior, the
+	// shell Pane the create made, which is what the fixtures that exercise only
+	// the create and the client move expect.
+	launchDefault launchDefaultFunc
 	// stdin carries the raw prompt response of a generated rename binding. The
 	// binding hands it over in a quoted here-document so no shell parses it;
 	// see generatedRenameResponseHeredoc.
@@ -150,6 +158,15 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 		},
 		stdin:        os.Stdin,
 		windowDelete: deleteWindowThroughCanonicalRoute,
+	}
+	// The saved launch default is read by the AI command, the one owner of that
+	// file. tmuxCmd.ai is wired by the application graph; a helper invocation
+	// built without it keeps the shell Pane the create made.
+	cmd.launchDefault = func(originPaneID, client string) launchDefaultResult {
+		if cmd.ai == nil {
+			return launchDefaultResult{}
+		}
+		return cmd.ai.applyLaunchDefault(originPaneID, client)
 	}
 	if len(recorders) > 0 {
 		cmd.diagnostics = recorders[0]
@@ -533,9 +550,28 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 	// The create has committed. A human asked for this Window, so the client
 	// that pressed the key now shows it. A failed move keeps the Window.
 	if moveErr := c.moveIntentClientToCreatedWindow(context.Background(), strings.TrimSpace(*client), created); moveErr != nil {
+		// The saved launch default is deliberately not applied here. It either
+		// replaces the shell Pane with an Agent or opens a picker popup, and
+		// both need the exact client that would see the result -- which is the
+		// one thing this branch has just established it does not have.
 		return c.displayPaneMenuMessage(strings.TrimSpace(*client), windowCreatedUnshownMessage+strings.TrimSpace(moveErr.Error()))
 	}
-	return c.finishWindowIntent(*client, "Create Window", windowCreatedMessage, "", nil)
+	success := windowCreatedMessage
+	if c.launchDefault != nil {
+		switch applied := c.launchDefault(created.paneID, strings.TrimSpace(*client)); {
+		case applied.problem != "":
+			// The Window and its shell Pane stay; the one line says what did
+			// not happen on top of them.
+			return c.displayPaneMenuMessage(strings.TrimSpace(*client), applied.problem)
+		case applied.picker:
+			// The picker popup has already come and gone on this client. It
+			// owns whatever it reported, so nothing is written over it.
+			return nil
+		case applied.notice != "":
+			success += ": " + applied.notice
+		}
+	}
+	return c.finishWindowIntent(*client, "Create Window", success, "", nil)
 }
 
 // moveIntentClientToCreatedWindow moves exactly the pressing client onto a
@@ -705,13 +741,23 @@ func (c *tmuxCommand) finishWindowIntent(client, label, success, detail string, 
 }
 
 func deletePaneThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writer) error {
-	command := newDeleteCommand()
+	return deleteExactPaneThroughCommand(newDeleteCommand(), defaultAnchoredActiveTargetLookup(anchorPaneID),
+		anchorPaneID, stdout, stderr)
+}
+
+// deleteExactPaneThroughCommand is the body of the generated Pane delete with
+// its two production seams -- the delete command and the anchored active-target
+// lookup -- stated by the caller. Production states the real ones; a test
+// states ones bound to its own Registry and tmux server.
+func deleteExactPaneThroughCommand(command *deleteCommand, lookup activeTargetLookup,
+	anchorPaneID string, stdout, stderr io.Writer,
+) error {
 	command.routeAnchor = exactTmuxHandle(strings.TrimSpace(anchorPaneID), "%")
 	registry, err := command.store.load()
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	ref, resolved, err := activeTargetRef(defaultAnchoredActiveTargetLookup(anchorPaneID), coremetadata.KindPane, registry)
+	ref, resolved, err := activeTargetRef(lookup, coremetadata.KindPane, registry)
 	if err != nil {
 		return err
 	}
@@ -1014,6 +1060,8 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	fs.SetOutput(stderr)
 	clientKey := fs.String("client", "", "tmux client key used to scope the popup marker")
 	anchorPane := fs.String("anchor", "", "exact tmux Pane that originated the popup")
+	replaceOrigin := fs.Bool(strings.TrimPrefix(popupToggleReplaceOriginFlag, "--"), false,
+		"the picker selection replaces the exact anchor Pane")
 	if err := fs.Parse(args); err != nil {
 		return tmuxPopupToggleMode{}, err
 	}
@@ -1028,6 +1076,14 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	if anchor != "" && exactTmuxHandle(anchor, "%") == "" {
 		return tmuxPopupToggleMode{}, errors.New("tmux popup-toggle --anchor requires an exact %N Pane handle")
 	}
+	// Replacing a Pane is only meaningful for the split pickers, and only when
+	// the producer named both the Pane being replaced and the client that sees
+	// the result. Anything else is a producer bug, not a degraded mode.
+	splitPicker := strings.HasPrefix(raw, "ai-split-picker-") || strings.HasPrefix(raw, "ai-split-resume-")
+	if *replaceOrigin && (anchor == "" || client == "" || !splitPicker) {
+		return tmuxPopupToggleMode{}, fmt.Errorf(
+			"tmux popup-toggle %s requires --client, --anchor, and an AI split picker mode", popupToggleReplaceOriginFlag)
+	}
 	if _, ok := popupToggleActionIDForMode(raw); !ok {
 		printTmuxUsage(stderr)
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
@@ -1036,13 +1092,17 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "recent-windows", "ai-split-settings", resourceInspectorPopupMode:
 		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client, AnchorPane: anchor}, nil
 	case "ai-split-picker-right":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client, AnchorPane: anchor}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client, AnchorPane: anchor,
+			ReplaceOrigin: *replaceOrigin}, nil
 	case "ai-split-picker-down":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down", ClientKey: client, AnchorPane: anchor}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down", ClientKey: client, AnchorPane: anchor,
+			ReplaceOrigin: *replaceOrigin}, nil
 	case "ai-split-resume-right":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "right", ClientKey: client, AnchorPane: anchor}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "right", ClientKey: client, AnchorPane: anchor,
+			ReplaceOrigin: *replaceOrigin}, nil
 	case "ai-split-resume-down":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "down", ClientKey: client, AnchorPane: anchor}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "down", ClientKey: client, AnchorPane: anchor,
+			ReplaceOrigin: *replaceOrigin}, nil
 	default:
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
@@ -1804,6 +1864,11 @@ type tmuxPopupToggleMode struct {
 	Direction  string
 	ClientKey  string
 	AnchorPane string
+	// ReplaceOrigin marks a split picker whose selection takes the anchor
+	// Pane's place. It is private producer evidence, like AnchorPane: the
+	// Window producer that created a shell Pane only to anchor this picker is
+	// the only caller that may state it.
+	ReplaceOrigin bool
 }
 
 type tmuxPopupContext struct {
@@ -1955,6 +2020,25 @@ func withHookTrustInlineEnv(options inttmux.PopupOptions) inttmux.PopupOptions {
 	return options
 }
 
+// popupToggleReplaceOriginFlag is the private producer flag of the hidden
+// popup-toggle route. It is not a public CLI spelling: `internal tmux` is the
+// generated-artifact surface, and the only producer allowed to state it is the
+// one that made the Pane it names.
+const popupToggleReplaceOriginFlag = "--replace-origin"
+
+// addSplitReplaceOriginEnv hands a split picker popup the replacement intent
+// its producer stated. The popup is a separate process, so the marker travels
+// as env beside the origin Pane and client it already carries, and the popup is
+// pinned to the exact client that pressed the key instead of whichever client
+// tmux would resolve for the job.
+func addSplitReplaceOriginEnv(env map[string]string, options *inttmux.PopupOptions, mode tmuxPopupToggleMode, ctx tmuxPopupContext) {
+	if !mode.ReplaceOrigin {
+		return
+	}
+	env[splitReplaceOriginEnv] = "1"
+	options.Client = strings.TrimSpace(ctx.TargetClient)
+}
+
 func addSwitchTargetClientEnv(env map[string]string, ctx tmuxPopupContext) {
 	if strings.TrimSpace(ctx.TargetClient) != "" {
 		env[inttmux.SwitchTargetClientEnv] = ctx.TargetClient
@@ -2033,6 +2117,7 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
 		env[canonicalCreateTargetClientEnv] = ctx.TargetClient
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
+		addSplitReplaceOriginEnv(env, &options, mode, ctx)
 		commandArgs = []string{"internal", "agent-pane", "picker", "--inside", mode.Direction}
 	case "ai-split-resume-right", "ai-split-resume-down":
 		options.Width = popupSize(ctx.ClientWidth, 55, 110)
@@ -2041,6 +2126,7 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
 		env[canonicalCreateTargetClientEnv] = ctx.TargetClient
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
+		addSplitReplaceOriginEnv(env, &options, mode, ctx)
 		commandArgs = []string{"internal", "agent-pane", "picker", "--resume", "--inside", mode.Direction}
 	case "ai-split-settings":
 		options.Width = popupSize(ctx.ClientWidth, 55, 80)
