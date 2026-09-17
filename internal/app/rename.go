@@ -349,7 +349,6 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 	rootKind := coremetadata.KindProject
 	if _, ok := registry.Project(rootUID); !ok {
 		if _, ok := registry.ControlSession(rootUID); !ok {
-			//lint:ignore ST1005 Window is the canonical Registry resource kind in this diagnostic.
 			return "", committedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("Window owner root disappeared from Registry"))
 		}
 		rootKind = coremetadata.KindControlSession
@@ -383,16 +382,13 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 			return runtimeWindowRenameObservation{}, false, nil
 		}
 		if len(found) != 1 || exactTmuxHandle(found[0].windowID, "@") == "" || exactTmuxHandle(found[0].sessionID, "$") == "" {
-			//lint:ignore ST1005 Window is the canonical Registry resource kind in this diagnostic.
 			return runtimeWindowRenameObservation{}, false, errors.New("Window runtime identity is ambiguous")
 		}
 		if rootKind == coremetadata.KindProject {
 			if found[0].projectUID != rootUID || found[0].role != "" {
-				//lint:ignore ST1005 Window and Project are canonical Registry resource kinds in this diagnostic.
 				return runtimeWindowRenameObservation{}, false, errors.New("Window Project containment drifted")
 			}
 		} else if found[0].projectUID != "" || found[0].role != resourcegraph.ControlSessionRole {
-			//lint:ignore ST1005 Window and ControlSession are canonical Registry resource kinds in this diagnostic.
 			return runtimeWindowRenameObservation{}, false, errors.New("Window ControlSession containment drifted")
 		}
 		return found[0], true, nil
@@ -445,7 +441,6 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 					return err
 				}
 				if !ok || current != observed {
-					//lint:ignore ST1005 Window is the canonical Registry resource kind in this diagnostic.
 					return errors.New("Window runtime identity drifted before rename")
 				}
 				return nil
