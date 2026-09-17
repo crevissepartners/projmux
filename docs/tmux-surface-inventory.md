@@ -121,7 +121,6 @@ Changes to this surface should preserve the repository validation order:
 5. `make test-integration`;
 6. `make test-e2e`.
 
-The maintained test list in [agent-workflow.md](agent-workflow.md) must change
-with behavior. Live tests must use isolated tmux sockets and must validate
-returned ids or queried server state rather than pane ordering, screen content,
-or `send-keys` as a completion signal.
+Live tests must use isolated tmux sockets and must validate returned ids or
+queried server state rather than pane ordering, screen content, or `send-keys`
+as a completion signal.

@@ -64,6 +64,3 @@ records `github-actions:33566050834:1`.
   sends no input or turn, so remote-new remains unknown.
 - `TestInstalledCensusDeletionReceiptHasOneOwnerPerPrimitive` — topology and
   protocol ownership plus the Phase 2 merge receipt.
-
-The maintained repository-wide list in `docs/agent-workflow.md` records the
-current Phase-1 authority separately.

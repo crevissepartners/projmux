@@ -17,7 +17,7 @@ picker process. `internal/ui/picker` owns the interaction contract and
 | Deferred state | Deferred and event-triggered updates preserve query and selection by value, can repeat, and may explicitly choose a new focus value. | `TestNativeInteractiveDeferredUpdateTriggerRefreshesRepeatedly`; switch and notify sidebar mutable-refresh app tests |
 | Preview | Popup previews use a right split, sidebar previews use a bottom split, control bytes and tabs are normalized before clipping, and preview scrolling/cycling rerenders in place. | `TestNativeInteractiveRendersWidePreviewBesideList`; `TestNativeInteractiveRendersDownPreviewBelowList`; `TestRenderSplitPreviewRowsNormalizesPreviewTabsBeforeTruncating`; `TestNativeInteractiveRendersPreviewOffset` |
 | Mouse | SGR mouse input focuses on primary down, follows drag, accepts on matching release, and scrolls with the wheel. | `TestNativeInteractiveSelectsOnMouseRelease`; `TestNativeInteractiveMouseDragFollowsSelection`; `TestNativeInteractiveSupportsMouseWheelSelection` |
-| Lifecycle | Interactive runs use the alternate screen, synchronized/coalesced frame updates, controlling-TTY fallback, and deterministic reader cleanup. | `TestNativeInteractiveUsesAlternateScreen`; `TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates`; picker/setup lifecycle tests in `docs/agent-workflow.md` |
+| Lifecycle | Interactive runs use the alternate screen, synchronized/coalesced frame updates, controlling-TTY fallback, and deterministic reader cleanup. | `TestNativeInteractiveUsesAlternateScreen`; `TestNativeInteractiveWrapsRedrawsInSynchronizedUpdates`; picker/setup lifecycle tests in `internal/ui/picker/backend_test.go` and `internal/app/native_picker_test.go` |
 
 ## Rendering And Popup Chrome
 
@@ -97,7 +97,5 @@ saved-selector access, propagation, or external picker launch path.
 
 ## Maintenance
 
-Update this document and the maintained list in
-[`docs/agent-workflow.md`](agent-workflow.md) whenever picker behavior changes
-coverage level, gains a new product flow, or changes input/render/action
-semantics.
+Update this document whenever picker behavior changes coverage level, gains a
+new product flow, or changes input/render/action semantics.

@@ -110,7 +110,6 @@ Files:
 - `internal/app/*help*`
 - `docs/cli.md`
 - `docs/cli-guide.md`
-- `docs/agent-workflow.md`
 
 Classification:
 

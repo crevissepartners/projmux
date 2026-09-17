@@ -93,8 +93,7 @@ projmux create claude --project mobile-client -- "마이그레이션 계획 초�
 [상태 표시줄](docs/statusbar.md) ·
 [훅](docs/hooks.md) ·
 [사용량 추적](docs/usage-tracking.md) ·
-[운영 진단](docs/operational-diagnostics.md) ·
-[에이전트 작업 흐름](docs/agent-workflow.md)
+[운영 진단](docs/operational-diagnostics.md)
 
 ## 개발
 

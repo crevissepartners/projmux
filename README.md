@@ -92,8 +92,7 @@ Templates and naming conventions are in
 [Statusbar](docs/statusbar.md) ·
 [Hooks](docs/hooks.md) ·
 [Usage tracking](docs/usage-tracking.md) ·
-[Operational Diagnostics](docs/operational-diagnostics.md) ·
-[Agent Workflow](docs/agent-workflow.md)
+[Operational Diagnostics](docs/operational-diagnostics.md)
 
 ## Development
 
