@@ -22,10 +22,13 @@ const ViaWeb = "projmux-web"
 // metadata, a source notice and reply instructions; those are transport
 // scaffolding, not conversation, and the reader drops them.
 type coordinationEnvelope struct {
-	Kind       string `json:"kind"`
-	MessageRef string `json:"messageRef"`
-	Payload    string `json:"payload"`
-	Source     struct {
+	Kind string `json:"kind"`
+	// SchemaVersion names the frame's shape. It is decoded so a reader can say
+	// which shape it got, never so it can refuse one: see unwrapCoordination.
+	SchemaVersion int    `json:"schemaVersion"`
+	MessageRef    string `json:"messageRef"`
+	Payload       string `json:"payload"`
+	Source        struct {
 		AgentUID string `json:"agentUID"`
 		Provider string `json:"provider"`
 	} `json:"source"`
@@ -35,6 +38,11 @@ type coordinationEnvelope struct {
 }
 
 const coordinationKind = "projmux-coordination"
+
+// coordinationSchemaVersionDefault is what a frame without a schemaVersion, or
+// with an explicit 0, is read as. Frames predating the field are version 1 by
+// definition: the field was added to name the shape they already had.
+const coordinationSchemaVersionDefault = 1
 
 // Turn.Kind values for coordination frames. A frame is recorded directly as a
 // user turn when the session was idle, or as a queued attachment when it was
@@ -53,6 +61,10 @@ type coordinationFrame struct {
 	payload    string
 	messageRef string
 	via        string
+	// schemaVersion is the normalized frame shape version. It is kept so a
+	// future field can be gated on it, and deliberately not carried out to
+	// Turn: a person reading a transcript has no use for it.
+	schemaVersion int
 	// self is true when the frame's source and target are the same Agent.
 	self bool
 	// from is the peer, nil for a self-anchored frame or one with no source.
@@ -95,6 +107,14 @@ func (f coordinationFrame) turn(at, kind string) Turn {
 // operator's own messages look like someone else's, so such a frame carries
 // no From.
 //
+// The frame's schemaVersion is read but is never grounds for rejection. A
+// producer newer than this reader can only have added or restated fields; the
+// ones decoded here are the oldest and most load bearing, and a change to what
+// they mean would have changed kind instead. Refusing such a frame would make
+// a peer's message vanish from the transcript with no trace, leaving the
+// operator to conclude nothing was sent, so an unknown version reads the
+// fields it knows and still yields a turn.
+//
 // ok is false when text is not such a frame.
 func unwrapCoordination(text string) (coordinationFrame, bool) {
 	if !strings.Contains(text, coordinationKind) {
@@ -114,8 +134,12 @@ func unwrapCoordination(text string) (coordinationFrame, bool) {
 	}
 
 	frame := coordinationFrame{
-		payload:    strings.TrimSpace(envelope.Payload),
-		messageRef: strings.TrimSpace(envelope.MessageRef),
+		payload:       strings.TrimSpace(envelope.Payload),
+		messageRef:    strings.TrimSpace(envelope.MessageRef),
+		schemaVersion: envelope.SchemaVersion,
+	}
+	if frame.schemaVersion <= 0 {
+		frame.schemaVersion = coordinationSchemaVersionDefault
 	}
 	// The messageRef is where the web client signs its own sends. Without it
 	// a self-anchored frame is indistinguishable from text typed at the

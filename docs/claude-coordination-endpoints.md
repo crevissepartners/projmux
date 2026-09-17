@@ -173,6 +173,16 @@ the exact source/target routes, `messageRef`, `conversationRef`, `replyTo`, and
 payload. It cannot start or steer a user turn, answer an approval, interrupt a
 turn, execute a tool, call a connector, or write Codex app-server/model history.
 
+The object also carries the integer `schemaVersion`, currently `1`. It names
+that object's shape only and moves independently of the durable envelope
+version and the message store's on-disk version. A missing `schemaVersion`, or
+an explicit `0`, reads as `1`: every frame written before the field existed has
+that shape. A reader meeting a higher `schemaVersion` reads the fields it knows
+and still surfaces the message; an unknown version is never a drop and never an
+error, because a peer message that silently disappears is worse than one read
+by a slightly stale reader. The append-only eviction history log record uses
+the same field name, the same default, and the same higher-version rule.
+
 Reply egress uses only documented official `Stop.last_assistant_message` plus
 one delivered Projmux-owned pending record at the same boundary. Push ingress
 correlates only an ordinary Stop (`stop_hook_active=false`); recursive Stop,

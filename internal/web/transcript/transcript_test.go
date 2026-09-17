@@ -423,3 +423,90 @@ func TestIdlePeerMessageIsKept(t *testing.T) {
 		t.Fatal("a compaction summary was shown")
 	}
 }
+
+// versionedCoordinationText wraps one coordination envelope in the harness
+// prose a provider record carries around it. A negative version omits
+// schemaVersion entirely, which is the shape every frame written before the
+// field existed has.
+func versionedCoordinationText(t *testing.T, version int, ref, payload string) string {
+	t.Helper()
+	envelope := obj{
+		"kind":       "projmux-coordination",
+		"messageRef": ref,
+		"payload":    payload,
+		"source":     obj{"agentUID": "agent-peer", "provider": "codex"},
+		"target":     obj{"agentUID": "agent-me"},
+	}
+	if version >= 0 {
+		envelope["schemaVersion"] = version
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "A projmux coordination message arrived:\n" + string(encoded) + "\nHandle it according to the rules."
+}
+
+// TestCoordinationFrameWithoutSchemaVersionReadsUnchanged pins that adding the
+// field changed nothing for the frames already in every session log on disk.
+// Those records are immutable history, so a frame with no schemaVersion is
+// version 1 and produces exactly the Turn it produced before the field existed.
+func TestCoordinationFrameWithoutSchemaVersionReadsUnchanged(t *testing.T) {
+	path := writeJSONL(t, claudeRecord("user",
+		coordinationText(t, "agent-peer", "agent-me", "codex", "ref-1", "  please review  ")))
+	got, err := ReadTranscript("claude", path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Turn{
+		Role: "peer", Text: "please review", At: "2026-01-01T00:00:00Z", Kind: "coordination",
+		From: &Sender{AgentUID: "agent-peer", Provider: "codex"}, MessageRef: "ref-1",
+	}
+	if len(got.Turns) != 1 {
+		t.Fatalf("turns = %+v", got.Turns)
+	}
+	if turn := got.Turns[0]; turn.Role != want.Role || turn.Text != want.Text || turn.At != want.At ||
+		turn.Kind != want.Kind || turn.MessageRef != want.MessageRef || turn.Via != want.Via ||
+		turn.From == nil || *turn.From != *want.From {
+		t.Fatalf("turn = %+v, want %+v", turn, want)
+	}
+	frame, ok := unwrapCoordination(versionedCoordinationText(t, -1, "ref-1", "please review"))
+	if !ok || frame.schemaVersion != coordinationSchemaVersionDefault {
+		t.Fatalf("missing schemaVersion = %d ok=%v", frame.schemaVersion, ok)
+	}
+}
+
+// TestCoordinationSchemaVersionNormalizesAndNeverRejects pins the one rule the
+// field must never break: it cannot cost a reader a message. A version the
+// reader has never heard of still carries a payload, messageRef and source
+// that mean what they always meant, so it is read and shown rather than
+// dropped with nothing to say why.
+func TestCoordinationSchemaVersionNormalizesAndNeverRejects(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		version int
+		want    int
+	}{
+		{name: "missing", version: -1, want: 1},
+		{name: "explicit zero", version: 0, want: 1},
+		{name: "current", version: 1, want: 1},
+		{name: "later producer", version: 99, want: 99},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			frame, ok := unwrapCoordination(versionedCoordinationText(t, test.version, "ref-9", "ship it"))
+			if !ok {
+				t.Fatalf("schemaVersion %d dropped the frame", test.version)
+			}
+			if frame.schemaVersion != test.want {
+				t.Fatalf("schemaVersion = %d, want %d", frame.schemaVersion, test.want)
+			}
+			turn := frame.turn("2026-01-01T00:00:00Z", coordinationKindDirect)
+			if turn.Role != "peer" || turn.Text != "ship it" || turn.MessageRef != "ref-9" {
+				t.Fatalf("turn = %+v", turn)
+			}
+			if turn.From == nil || *turn.From != (Sender{AgentUID: "agent-peer", Provider: "codex"}) {
+				t.Fatalf("turn from = %+v", turn.From)
+			}
+		})
+	}
+}
