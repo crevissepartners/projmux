@@ -32,6 +32,7 @@ type codexNativeThreadController interface {
 
 type defaultCodexNativeThreadController struct {
 	current      func(context.Context) (codexNativeEndpointRoute, error)
+	probe        func(context.Context) codexappserver.Health
 	open         func(context.Context, codexNativeEndpointRoute, bool) (codexNativeThreadClient, error)
 	awaitDurable func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) error
 	guard        func(context.Context, codexNativeEndpointRoute) error
@@ -48,12 +49,16 @@ type codexNativeThreadClient interface {
 // admission journal on the attach-only default endpoint. An absent journal
 // preserves the Phase 3 default behavior; a present journal is exact and never
 // falls through to or adopts the ambient endpoint.
+//
+// It never launches, resumes, or completes a private app-server generation.
+// The official `codex app-server daemon` owns the app-server lifecycle, so a
+// default endpoint that cannot be attached -- a version skew included -- ends
+// in the default controller's typed refusal and its daemon guidance.
 type rollingCodexNativeThreadController struct {
-	journal   *codexupgrade.Store
-	fallback  defaultCodexNativeThreadController
-	activator codexManagedCurrentActivator
-	observe   func(context.Context, codexupgrade.GenerationRoute) error
-	create    func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, string) (codexappserver.ThreadBinding, error)
+	journal  *codexupgrade.Store
+	fallback defaultCodexNativeThreadController
+	observe  func(context.Context, codexupgrade.GenerationRoute) error
+	create   func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, string) (codexappserver.ThreadBinding, error)
 }
 
 func (controller rollingCodexNativeThreadController) Current(ctx context.Context) (codexNativeEndpointRoute, error) {
@@ -62,70 +67,13 @@ func (controller rollingCodexNativeThreadController) Current(ctx context.Context
 		return codexNativeEndpointRoute{}, err
 	}
 	if !exists {
-		route, fallbackErr := controller.fallback.Current(ctx)
-		if fallbackErr == nil {
-			return route, nil
-		}
-		if controller.activator == nil {
-			return codexNativeEndpointRoute{}, fallbackErr
-		}
-		if activationErr := controller.activator.Ensure(ctx); activationErr != nil {
-			var refusal *managedCodexActivationError
-			if errors.As(activationErr, &refusal) {
-				return codexNativeEndpointRoute{}, &codexNativeRouteError{
-					Reason: "managed-generation-activation-blocked", OperatorAction: refusal.Action, err: activationErr,
-				}
-			}
-			return codexNativeEndpointRoute{}, &codexNativeRouteError{
-				Reason:         "managed-generation-activation-blocked",
-				OperatorAction: "run `projmux doctor --section integrations --json --verbose` and perform the exact generation action it reports before retrying",
-				err:            activationErr,
-			}
-		}
-		journal, exists, err = controller.load()
-		if err != nil || !exists {
-			return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, err: err}
-		}
+		return controller.fallback.Current(ctx)
 	}
 	route, ok := journal.CurrentRoute()
-	if ok && controller.activator != nil && incompleteManagedActivation(journal) {
-		if activationErr := controller.activator.Ensure(ctx); activationErr != nil {
-			var refusal *managedCodexActivationError
-			if errors.As(activationErr, &refusal) {
-				return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: "managed-generation-activation-blocked", OperatorAction: refusal.Action, err: activationErr}
-			}
-			return codexNativeEndpointRoute{}, &codexNativeRouteError{
-				Reason:         "managed-generation-activation-blocked",
-				OperatorAction: "run `projmux doctor --section integrations --json --verbose` and perform the exact generation action it reports before retrying",
-				err:            activationErr,
-			}
-		}
-		journal, _, err = controller.load()
-		if err != nil {
-			return codexNativeEndpointRoute{}, err
-		}
-		route, ok = journal.CurrentRoute()
-	}
 	if !ok || controller.observeRoute(ctx, route) != nil {
 		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
 	return rollingNativeRoute(route), nil
-}
-
-func incompleteManagedActivation(journal codexupgrade.Journal) bool {
-	if journal.Operation == nil || journal.Operation.Aborted || (journal.Operation.AdmissionCommitted && journal.Operation.DrainPublished) {
-		return false
-	}
-	oldExternal, targetPrivate := false, false
-	for _, route := range journal.Routes {
-		switch route.Generation.Endpoint.EndpointGenerationID {
-		case journal.Operation.OldGenerationID:
-			oldExternal = route.Generation.Owner == codexgeneration.OwnerUnmanaged || route.Generation.Owner == codexgeneration.OwnerOfficialManaged
-		case journal.Operation.TargetGenerationID:
-			targetPrivate = route.Generation.Owner == codexgeneration.OwnerProjmuxPrivate
-		}
-	}
-	return oldExternal && targetPrivate
 }
 
 func (controller rollingCodexNativeThreadController) CatalogRoutes(ctx context.Context) ([]codexNativeEndpointRoute, error) {
@@ -265,6 +213,34 @@ func (e *codexNativeRouteError) Error() string {
 
 func (e *codexNativeRouteError) Unwrap() error { return e.err }
 
+// codexDaemonStartGuidance is the operator step for a default endpoint whose
+// readiness decision names no more exact recovery: the endpoint is absent,
+// unreachable, or speaks another protocol.
+const codexDaemonStartGuidance = "Start the shared Codex app server with `codex app-server daemon start`, or run `codex app-server daemon restart` after upgrading Codex, then retry."
+
+// codexDaemonGuidance names the `codex app-server daemon` step that makes the
+// default endpoint attachable, or nothing for a ready endpoint whose readiness
+// decision needs no recovery. It is guidance only: Projmux never runs it from a
+// create, and it never launches a private app-server in its place.
+func codexDaemonGuidance(health codexappserver.Health) string {
+	if guidance := health.OperatorRecovery.Guidance(); guidance != "" {
+		return guidance
+	}
+	if health.EndpointReadiness != codexappserver.EndpointReady {
+		return codexDaemonStartGuidance
+	}
+	return ""
+}
+
+// codexDaemonOperatorAction is the refusal's action for a default endpoint
+// that was not attachable. A refusal always names a daemon step.
+func codexDaemonOperatorAction(health codexappserver.Health) string {
+	if guidance := codexDaemonGuidance(health); guidance != "" {
+		return guidance
+	}
+	return codexDaemonStartGuidance
+}
+
 const (
 	codexNativeReasonGenerationUnavailable = "generation-unavailable"
 	codexNativeReasonLegacyEndpointMissing = "legacy-generation-unavailable"
@@ -275,9 +251,17 @@ func (controller defaultCodexNativeThreadController) Current(ctx context.Context
 	if controller.current != nil {
 		return controller.current(ctx)
 	}
-	health := codexappserver.ProbeDefaultProxy(ctx, codexNativeThreadTimeout, version.String(), true)
+	probe := controller.probe
+	if probe == nil {
+		probe = func(ctx context.Context) codexappserver.Health {
+			return codexappserver.ProbeDefaultProxy(ctx, codexNativeThreadTimeout, version.String(), true)
+		}
+	}
+	health := probe(ctx)
 	if codexappserver.AuthorityFor(health).Attach != codexappserver.EndpointAttachAllowed {
-		return codexNativeEndpointRoute{}, codexappserver.WithHealthDiagnostic(&codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}, health)
+		return codexNativeEndpointRoute{}, codexappserver.WithHealthDiagnostic(&codexNativeRouteError{
+			Reason: codexNativeReasonGenerationUnavailable, OperatorAction: codexDaemonOperatorAction(health),
+		}, health)
 	}
 	runningVersion := strings.TrimSpace(health.RunningVersion)
 	if !codexappserver.IsSafeDiagnosticVersion(runningVersion) {
@@ -628,7 +612,7 @@ func nativeCreatePreparationRefusalForCapability(spelling string, err error, cap
 	return errors.New(spelling + ": native Codex thread preparation is unavailable (" + nativeThreadReason(err) +
 		") and no provider conversation was mutated; refusing to create a managed Agent with no native thread binding. " +
 		"Re-run with " + interactiveOnlyFlag + " for a plain interactive Codex Agent with no native turn control, " +
-		"or make the Codex app-server endpoint available. Install capability " + string(guidance.Capability) + ": " +
+		"or make the shared Codex app server attachable with `codex app-server daemon` (the native error names the exact step). Install capability " + string(guidance.Capability) + ": " +
 		guidance.Text() + ". Native error: " + err.Error())
 }
 

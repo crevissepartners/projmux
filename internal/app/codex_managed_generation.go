@@ -27,10 +27,6 @@ const (
 	managedCodexSocketPathMaxBytes int    = 100
 )
 
-type codexManagedCurrentActivator interface {
-	Ensure(context.Context) error
-}
-
 type managedCodexActivationError struct {
 	Reason string
 	Action string
@@ -57,10 +53,6 @@ type productionCodexManagedCurrentActivator struct {
 	lease       func(string, string, string, codexbundle.ProtocolRange) (codexbundle.Lease, error)
 	activate    func(context.Context, codexupgrade.ManagedCurrentActivation) (codexupgrade.Journal, error)
 	qualified   func(codexgeneration.VersionPair) (codexgeneration.QualificationResult, bool, error)
-}
-
-func newProductionCodexManagedCurrentActivator(stateDir string, coordinator *codexupgrade.Coordinator) *productionCodexManagedCurrentActivator {
-	return &productionCodexManagedCurrentActivator{stateDir: stateDir, coordinator: coordinator}
 }
 
 func (activator *productionCodexManagedCurrentActivator) Ensure(ctx context.Context) error {

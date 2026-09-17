@@ -3,23 +3,17 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
-	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbundle"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
-
-type codexManagedCurrentActivatorFunc func(context.Context) error
-
-func (fn codexManagedCurrentActivatorFunc) Ensure(ctx context.Context) error { return fn(ctx) }
 
 func shortManagedActivationRoot(t *testing.T) string {
 	t.Helper()
@@ -226,163 +220,6 @@ func TestProductionManagedActivationUnsafeStateDomainNamesExactActionWithZeroMut
 	}
 	if _, err := os.Stat(activator.stateDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unsafe gate created state dir: %v", err)
-	}
-}
-
-func TestOrdinaryCodexCreateSpellingsActivateRollingManagedCurrent(t *testing.T) {
-	stateDir := filepath.Join(t.TempDir(), "state")
-	journal := codexupgrade.NewStateStore(stateDir)
-	endpoint := coremetadata.CodexEndpointRef{StateDomainID: "test-domain", EndpointGenerationID: "codex-0.153.0"}
-	config := codexupgrade.GenerationConfig{
-		Endpoint: endpoint, StateDomainPath: "/test/state-domain", PrivateRoot: "/test/runtime",
-		SocketPath: "/test/runtime/s", LeaseRoot: "/test/lease",
-		RequiredProtocol: codexbundle.ProtocolRange{Min: 2, Max: 2},
-	}
-	proof := &codexgenerationhost.LaunchProof{
-		Endpoint:   codexgenerationhost.EndpointIdentity{StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID},
-		SocketPath: config.SocketPath, BundleID: "sha256-managed",
-	}
-	operation, err := codexgeneration.NewRollingUpgradeOperation("managed-activation-test", endpoint.StateDomainID, "codex-0.152.1", endpoint.EndpointGenerationID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation, _, err = operation.RecordCandidateLaunchIntent()
-	if err == nil {
-		operation, _, err = operation.RecordCandidateStart()
-	}
-	if err == nil {
-		operation, _, err = operation.RecordAction(codexgeneration.RollingActionPrepareCandidate, nil)
-	}
-	if err == nil {
-		operation, _, err = operation.RecordAction(codexgeneration.RollingActionCommitAdmission, nil)
-	}
-	if err != nil {
-		t.Fatalf("post-admission operation fixture: %v", err)
-	}
-	activationCalls, createCalls := 0, 0
-	controller := rollingCodexNativeThreadController{
-		journal: journal,
-		fallback: defaultCodexNativeThreadController{current: func(context.Context) (codexNativeEndpointRoute, error) {
-			return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-		}},
-		activator: codexManagedCurrentActivatorFunc(func(ctx context.Context) error {
-			activationCalls++
-			_, err := journal.Update(ctx, func(got *codexupgrade.Journal, exists bool) error {
-				if exists {
-					next, _, recordErr := got.Operation.RecordAction(codexgeneration.RollingActionPublishDrain, nil)
-					got.Operation = &next
-					return recordErr
-				}
-				*got = codexupgrade.Journal{
-					Version: codexupgrade.JournalVersion, StateDomainID: endpoint.StateDomainID,
-					CurrentGenerationID: endpoint.EndpointGenerationID,
-					Routes: []codexupgrade.GenerationRoute{
-						{
-							Generation: codexgeneration.Generation{Endpoint: coremetadata.CodexEndpointRef{StateDomainID: endpoint.StateDomainID, EndpointGenerationID: "codex-0.152.1"}, State: codexgeneration.StateDraining, Owner: codexgeneration.OwnerUnmanaged, BundleID: "external-0.152.1"},
-							Version:    "0.152.1",
-						},
-						{
-							Generation: codexgeneration.Generation{Endpoint: endpoint, State: codexgeneration.StateCurrent, Owner: codexgeneration.OwnerProjmuxPrivate, BundleID: "sha256-managed"},
-							Version:    "0.153.0", Config: config, TUIPath: "/test/lease/bin/codex", Ready: true, Proof: proof,
-						},
-					},
-					Operation: &operation,
-				}
-				return nil
-			})
-			return err
-		}),
-		observe: func(context.Context, codexupgrade.GenerationRoute) error { return nil },
-		create: func(_ context.Context, route codexNativeEndpointRoute, _ coremetadata.AgentWorkspace, prompt, _ string) (codexappserver.ThreadBinding, error) {
-			createCalls++
-			if !route.Endpoint.Same(endpoint) || route.State != codexgeneration.StateCurrent {
-				t.Fatalf("create route = %+v", route)
-			}
-			binding := codexappserver.ThreadBinding{ThreadID: fmt.Sprintf("thread-managed-%d", createCalls)}
-			if prompt != "" {
-				binding.TurnID = fmt.Sprintf("turn-managed-%d", createCalls)
-			}
-			return binding, nil
-		},
-	}
-
-	store := newFakeResourceStore(t)
-	for index := range store.registry.Agents {
-		if store.registry.Agents[index].Metadata.UID == "agt-alpha-codex" {
-			store.registry.Agents[index].Status.Interaction.Kind = coremetadata.InteractionApprovalRequired
-			store.registry.Agents[index].Status.SessionRef = &coremetadata.AgentSessionRef{
-				Provider: "codex", ObservedAt: resourceFixtureClock,
-				Codex: &coremetadata.CodexSessionRef{ThreadID: "thread-old-0.152.1", HasStartedTurn: true},
-			}
-		}
-	}
-	oldBefore, _ := store.registry.Agent("agt-alpha-codex")
-	tmux := newFakeTmux()
-	seedOwnedSession(seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh", "pan-alpha-codex"), "prj-alpha", "/srv/alpha")
-	create, _ := newTestAgentCreateCommand(t, store, tmux)
-	panes := &fakeNativePaneLauncher{}
-	create.codexNative = controller
-	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
-	for _, argv := range [][]string{
-		{"codex", "--project", "alpha", "--window", "main"},
-		{"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "new generation prompt"},
-	} {
-		if stdout, stderr, err := runRoute(t, create, argv...); err != nil || stdout == "" || stderr != "" {
-			t.Fatalf("ordinary create %v: stdout=%q stderr=%q err=%v", argv, stdout, stderr, err)
-		}
-	}
-	if activationCalls != 2 || createCalls != 1 {
-		t.Fatalf("payload-free create reached generation activation: activation calls=%d create calls=%d, want 2/1 from the prompted create only",
-			activationCalls, createCalls)
-	}
-	converged, exists, err := journal.Load()
-	if err != nil || !exists || converged.Operation == nil || !converged.Operation.DrainPublished {
-		t.Fatalf("ordinary create observed unconverged activation: exists=%t err=%v journal=%+v", exists, err, converged)
-	}
-	oldAfter, _ := store.registry.Agent("agt-alpha-codex")
-	if oldAfter.Status.PaneRef != oldBefore.Status.PaneRef || oldAfter.Status.Phase != oldBefore.Status.Phase ||
-		oldAfter.Status.Interaction != oldBefore.Status.Interaction || oldAfter.Status.SessionRef == nil ||
-		!oldAfter.Status.SessionRef.SameConversation(oldBefore.Status.SessionRef) || oldAfter.Status.SessionRef.Codex.Endpoint != nil {
-		t.Fatalf("legacy old-generation Agent continuity changed: before=%#v after=%#v", oldBefore.Status, oldAfter.Status)
-	}
-	plain := agentNamed(t, store, "win-alpha-main", "agent-test-1")
-	if plain.Status.Phase != coremetadata.PhaseRunning || plain.Status.PaneRef == "" || plain.Status.SessionRef != nil {
-		t.Fatalf("payload-free Agent did not remain on the pre-provider plain lane: %#v", plain.Status)
-	}
-	native := agentNamed(t, store, "win-alpha-main", "agent-test-3")
-	if native.Status.SessionRef == nil || native.Status.SessionRef.Codex == nil || native.Status.SessionRef.Codex.Endpoint == nil ||
-		!native.Status.SessionRef.Codex.Endpoint.Same(endpoint) {
-		t.Fatalf("prompted Agent not pinned to managed current: %#v", native.Status.SessionRef)
-	}
-}
-
-func TestOrdinaryCodexCreateActivationGateReturnsExactActionWithZeroMutation(t *testing.T) {
-	stateDir := filepath.Join(t.TempDir(), "state")
-	action := "run `chmod 700 \"/exact/codex-home\"` after verifying that it is the intended CODEX_HOME, then retry"
-	controller := rollingCodexNativeThreadController{
-		journal: codexupgrade.NewStateStore(stateDir),
-		fallback: defaultCodexNativeThreadController{current: func(context.Context) (codexNativeEndpointRoute, error) {
-			return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-		}},
-		activator: codexManagedCurrentActivatorFunc(func(context.Context) error {
-			return managedActivationRefusal("state-domain-not-owner-private", action, errors.New("mode is not 0700"))
-		}),
-	}
-	store := newFakeResourceStore(t)
-	tmux := newFakeTmux()
-	create, _ := newTestAgentCreateCommand(t, store, tmux)
-	create.codexNative = controller
-	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
-	before := store.snapshot()
-	stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "must not send")
-	if err == nil || stdout != "" || stderr != "" || !strings.Contains(err.Error(), "managed-generation-activation-blocked") || !strings.Contains(err.Error(), action) {
-		t.Fatalf("activation gate stdout=%q stderr=%q err=%v", stdout, stderr, err)
-	}
-	if store.snapshot() != before || store.writes != 0 || tmux.argvContains("split-window") || tmux.argvContains("new-window") {
-		t.Fatalf("activation gate mutated registry/tmux writes=%d calls=%v", store.writes, tmux.calls)
-	}
-	if _, statErr := os.Stat(stateDir); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("activation gate created journal state: %v", statErr)
 	}
 }
 

@@ -676,7 +676,7 @@ func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) 
 	}
 	fmt.Fprintf(buf, "  Native action: %s; refusal: %s; interruption risk: %s; operator recovery: %s\n",
 		health.NativeAction, health.NativeRefusal, health.InterruptionRisk, health.OperatorRecovery)
-	if guidance := health.OperatorRecovery.Guidance(); guidance != "" {
+	if guidance := codexDaemonGuidance(*health); guidance != "" {
 		fmt.Fprintf(buf, "  Guidance: %s\n", guidance)
 	}
 }

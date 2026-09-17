@@ -302,9 +302,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 			Effects: &codexHandoverEffects{registry: registry, mutator: intmetadata.DefaultMutator(),
 				runner: createCmd.runtime.runner, materialize: createCmd.runtime, launcher: ai},
 		}
-		createCmd.codexNative = rollingCodexNativeThreadController{
-			journal: journal, activator: newProductionCodexManagedCurrentActivator(paths.StateDir, rollingCoordinator),
-		}
+		createCmd.codexNative = rollingCodexNativeThreadController{journal: journal}
 	}
 	ai.codexNative = createCmd.codexNative
 	// The Projmux split UI produces canonical create intents and nothing else.

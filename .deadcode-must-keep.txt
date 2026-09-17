@@ -94,6 +94,7 @@ IsolatedPane.run	Test-only installed qualification helper retained for inherited
 Kinds	Closed Registry kind set retained as the test seam that pins kind-set closure and cardinality matrix coverage.
 LaunchProof.String	Phase 2 launch-proof diagnostic rendering is retained without making it durable broker authority.
 Lease.Paths	Phase 0 verified bundle role resolver is retained for generation-pinned server, TUI, and helper launch.
+LeaseStandaloneRelease	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
 Ledger.AmbientMutations	Test-only installed qualification API retained for typed ambient mutation counting proof.
 Ledger.AssertNoAmbientMutation	Test-only installed qualification API retained for zero ambient mutation proof.
 Ledger.AssertNoLifecycleMutation	Test-only installed qualification API retained for broker-smoke lifecycle non-mutation proof.
@@ -215,6 +216,8 @@ cleanupFailedLaunch	Phase 2 exact failed-child and socket cleanup is retained fo
 cloneManifest	Phase 0 manifest clone helper is retained to canonicalize without aliasing caller state.
 codexHooksBlock	Default-events entry point of codexHooksBlockForEvents retained as the managed Codex hook block seam.
 copyVerified	Phase 0 staged bundle copier is retained for hash, size, mode, and source-identity pre-commit verification.
+createOwnerPrivateDirectory	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+directoryOwnedBy	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 execGenerationProcess.Done	Phase 2 repeatable process-exit barrier is retained for readiness and exact cleanup consumers.
 execGenerationProcess.ExitError	Phase 2 process-exit cause accessor is retained behind path-free refusal rendering.
@@ -236,6 +239,13 @@ launchOwnedGenerationProcess	Phase 2 exact leased executable launcher is retaine
 leaseArtifact	Phase 2 exact server-role manifest lookup is retained to bind executable hash into launch proof.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
+managedActivationRefusal	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+managedCodexActivationError.Error	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+managedCodexActivationError.Unwrap	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+managedCodexActivationFailureAction	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+managedCodexActivationOperationRef	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+managedCodexPathsOverlap	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+managedCodexRuntimeLocation	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
 nativeAppendPartialNextItemLines	Default-theme entry point of nativeAppendPartialNextItemLinesWithTheme retained as the partial multiline item seam.
 nativeInteractiveItemLines	Default-theme entry point over InteractiveRowLines retained as the multiline selection seam.
 nativeInteractiveListLines	Default-theme entry point over InteractiveListLines retained as the interactive list line seam.
@@ -259,6 +269,8 @@ ownerPrivateDirectory	Phase 2 owner/mode/leaf-symlink directory proof is retaine
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 privateGenerationEnvironment	Phase 2 environment reducer is retained to strip inherited tmux routing and pin CODEX_HOME.
+productionCodexManagedCurrentActivator.Ensure	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
+productionCodexManagedCurrentActivator.qualificationFor	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 qualifiedBundleRequirements	Phase 2 immutable qualified artifact and role set is retained inside the private host.
 randomRuntimeID	Phase 2 endpoint-host runtime nonce generator is retained as a launch-proof axis distinct from broker runtime.
@@ -270,6 +282,7 @@ removeExactSocket	Phase 2 inode-and-change-time-matched private socket cleanup i
 renderNativeInteractive	Cursor-at-end entry point of renderNativeInteractiveWithCursor retained as the native picker frame golden seam.
 renderNotifyBadge	Severity badge entry point retained as the test seam over the live renderNotifyBlockBadge palette.
 renderSettingsNavTree	Settings navigation tree renderer retained as the golden seam over the live settingsNavChildren topology.
+requireOwnerPrivateDirectory	Retired managed private-generation activation: native create no longer calls it (the official codex app-server daemon owns the lifecycle); retained only until the generation-pool removal deletes it.
 revalidateOwnerPrivateDirectory	Phase 2 post-readiness root identity check is retained to refuse ancestor replacement before publication.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
 runShellOutputLedger	Closed run-shell producer ledger; the C-1 no-overlay contract is enforced by sweeping shipped generated config against it.

@@ -1397,19 +1397,13 @@ func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
 	}
 }
 
-// codexInventoryLedger records every lifecycle-capable call a read-only route
-// inventory could make, so "start/stop/admit/drain 0" is an assertion rather
-// than a claim.
+// codexInventoryLedger records every route observation a read-only route
+// inventory makes and the journal it started from, so "no journal write" is an
+// assertion rather than a claim. The controller has no lifecycle seam at all.
 type codexInventoryLedger struct {
-	activations  int
 	observations []coremetadata.CodexEndpointRef
 	journalBytes []byte
 	journalMod   time.Time
-}
-
-func (ledger *codexInventoryLedger) Ensure(context.Context) error {
-	ledger.activations++
-	return nil
 }
 
 func snapshotCodexJournal(t *testing.T, store *codexupgrade.Store) ([]byte, time.Time) {
@@ -1473,7 +1467,6 @@ func TestCatalogRoutesProjectsCurrentAndDrainingWithZeroLifecycleWrites(t *testi
 			t.Error("pool inventory fell through to the ambient default endpoint")
 			return codexNativeEndpointRoute{}, errFakeNativeUnavailable
 		}},
-		activator: ledger,
 		observe: func(_ context.Context, route codexupgrade.GenerationRoute) error {
 			ledger.observations = append(ledger.observations, route.Generation.Endpoint)
 			return nil
@@ -1494,9 +1487,9 @@ func TestCatalogRoutesProjectsCurrentAndDrainingWithZeroLifecycleWrites(t *testi
 			t.Fatalf("route %d identity drifted: got=%+v want=%+v", i, route, want[i])
 		}
 	}
-	if ledger.activations != 0 || len(ledger.observations) != 2 ||
+	if len(ledger.observations) != 2 ||
 		!ledger.observations[0].Same(draining.Generation.Endpoint) || !ledger.observations[1].Same(current.Generation.Endpoint) {
-		t.Fatalf("inventory lifecycle ledger: activations=%d observations=%+v", ledger.activations, ledger.observations)
+		t.Fatalf("inventory observation ledger: %+v", ledger.observations)
 	}
 	body, modified := snapshotCodexJournal(t, store)
 	if !reflect.DeepEqual(body, ledger.journalBytes) || !modified.Equal(ledger.journalMod) {
@@ -1520,17 +1513,13 @@ func TestUnobservableCatalogRoutesRefuseWithoutMutatingThePool(t *testing.T) {
 			t.Error("unobservable pool fell through to the ambient default endpoint")
 			return codexNativeEndpointRoute{}, errFakeNativeUnavailable
 		}},
-		activator: ledger,
-		observe:   func(context.Context, codexupgrade.GenerationRoute) error { return errFakeNativeUnavailable },
+		observe: func(context.Context, codexupgrade.GenerationRoute) error { return errFakeNativeUnavailable },
 	}
 
 	routes, err := controller.CatalogRoutes(context.Background())
 	var routeErr *codexNativeRouteError
 	if len(routes) != 0 || !errors.As(err, &routeErr) || routeErr.Reason != codexNativeReasonGenerationUnavailable {
 		t.Fatalf("unobservable inventory = %+v, %v", routes, err)
-	}
-	if ledger.activations != 0 {
-		t.Fatalf("refusal ran %d activations", ledger.activations)
 	}
 	body, modified := snapshotCodexJournal(t, store)
 	if !reflect.DeepEqual(body, ledger.journalBytes) || !modified.Equal(ledger.journalMod) {

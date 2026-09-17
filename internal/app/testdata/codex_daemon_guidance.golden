@@ -1,0 +1,35 @@
+== managed-skew
+refusal: create agent: native Codex thread preparation is unavailable (generation-unavailable) and no provider conversation was mutated; refusing to create a managed Agent with no native thread binding. Re-run with --interactive-only for a plain interactive Codex Agent with no native turn control, or make the shared Codex app server attachable with `codex app-server daemon` (the native error names the exact step). Install capability managed-ready: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli. Native error: Codex generation route: generation-unavailable; operator action: This interrupts every client sharing the app server. After confirming that interruption, run `codex app-server daemon restart`, then rerun diagnostics.
+doctor:
+Codex app-server
+  Source: App Server; availability: available; reason: none; endpoint: stdio-proxy; connection: ready; version: 0.153.0
+  App-server probe: none; install capability: managed-ready
+  Capability guidance: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli
+  Endpoint readiness: ready; running executable: unknown; version relation: skew; manager ownership: managed; remote control: unknown
+  Versions: CLI 0.154.0; managed 0.154.0; running 0.153.0
+  Native action: refused; refusal: version-skew; interruption risk: shared-clients-disconnect; operator recovery: restart-managed-daemon
+  Guidance: This interrupts every client sharing the app server. After confirming that interruption, run `codex app-server daemon restart`, then rerun diagnostics.
+
+== unmanaged-skew
+refusal: create agent: native Codex thread preparation is unavailable (generation-unavailable) and no provider conversation was mutated; refusing to create a managed Agent with no native thread binding. Re-run with --interactive-only for a plain interactive Codex Agent with no native turn control, or make the shared Codex app server attachable with `codex app-server daemon` (the native error names the exact step). Install capability managed-ready: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli. Native error: Codex generation route: generation-unavailable; operator action: This app server is not daemon-managed. Close every sharing Codex client, then run `codex app-server daemon bootstrap` and rerun diagnostics. The observed `pid` backend requires bootstrap again after reboot. Projmux will not kill or restart it.
+doctor:
+Codex app-server
+  Source: App Server; availability: available; reason: none; endpoint: stdio-proxy; connection: ready; version: 0.153.0
+  App-server probe: none; install capability: managed-ready
+  Capability guidance: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli
+  Endpoint readiness: ready; running executable: unknown; version relation: skew; manager ownership: unmanaged; remote control: unknown
+  Versions: CLI 0.154.0; managed 0.154.0; running 0.153.0
+  Native action: refused; refusal: unmanaged-version-skew; interruption risk: shared-clients-disconnect; operator recovery: stop-owner-then-start-managed-daemon
+  Guidance: This app server is not daemon-managed. Close every sharing Codex client, then run `codex app-server daemon bootstrap` and rerun diagnostics. The observed `pid` backend requires bootstrap again after reboot. Projmux will not kill or restart it.
+
+== daemon-not-running
+refusal: create agent: native Codex thread preparation is unavailable (generation-unavailable) and no provider conversation was mutated; refusing to create a managed Agent with no native thread binding. Re-run with --interactive-only for a plain interactive Codex Agent with no native turn control, or make the shared Codex app server attachable with `codex app-server daemon` (the native error names the exact step). Install capability managed-ready: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli. Native error: Codex generation route: generation-unavailable; operator action: Start the shared Codex app server with `codex app-server daemon start`, or run `codex app-server daemon restart` after upgrading Codex, then retry.
+doctor:
+Codex app-server
+  Source: Hook fallback; availability: unavailable; reason: daemon-not-running; endpoint: stdio-proxy; connection: disconnected
+  App-server probe: daemon-not-running; install capability: managed-ready
+  Capability guidance: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli
+  Endpoint readiness: dead; running executable: unknown; version relation: unknown; manager ownership: unknown; remote control: unavailable
+  Native action: unknown; refusal: none; interruption risk: none; operator recovery: none
+  Guidance: Start the shared Codex app server with `codex app-server daemon start`, or run `codex app-server daemon restart` after upgrading Codex, then retry.
+
