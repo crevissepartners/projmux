@@ -129,6 +129,31 @@ and its `sidebar-startup-picker` file are unchanged. Settings no longer saves a
 named layout from a live session into `<project>/.projmux/layouts`, and no
 current surface opens those files.
 
+### Private Codex generation files reclaimed
+
+The private Codex generation pool is gone; app-server lifetime belongs to
+`codex app-server daemon`. Nothing reads the files that pool left on disk, and
+`projmux config apply` (which `make install` and `projmux update apply` also
+run) removes them once:
+
+- under `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/codex-generations/`:
+  `rolling-upgrade.json` and its `.flock`, the stored `qualification/*.json`
+  records, and the leased release bundles in `bundles/sha256-<digest>/`, which
+  are the bulk of that directory;
+- under `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/g/<key>/`: each private
+  host's `.projmux-launch-<generation>.json` intent, its `.guard`, and the
+  app-server socket nothing listens on anymore.
+
+Each directory is removed once it ends up empty. Only entries whose names have
+exactly those shapes are removed, and symlinks are never followed. A private
+host whose socket still accepts a connection keeps its whole directory and is
+named on the report line instead, so an app-server that outlived projmux does
+not lose the socket under it. Any other entry is kept and listed on the single
+`reclaimed retired Codex generation files: ...` line that apply prints; later
+applies with nothing left to remove print nothing. A failure is reported on
+that line and never fails the apply, and a rerun converges. To keep the old
+files, copy those directories before you upgrade.
+
 ### Claude dialogue endpoint revalidation
 
 The heterogeneous dialogue release moves the public message envelope and

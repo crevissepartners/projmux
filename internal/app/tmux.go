@@ -1479,6 +1479,9 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	// reaches it exactly once. It never fails the apply and has no rollback:
 	// the files it removes are read by nothing.
 	c.reclaimRetiredSnapshotFiles(stdout)
+	// The retired private Codex generation pool left its own files behind, and
+	// reclaims them on the same step and under the same rules.
+	c.reclaimRetiredCodexGenerationFiles(stdout)
 
 	resolved := ""
 	var err error
