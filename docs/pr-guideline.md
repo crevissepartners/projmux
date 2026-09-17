@@ -59,33 +59,70 @@ classifies the whole PR by its title type, not by content.
 
 ## PR body
 
-Use this template:
+Use this template. Keep all six sections in this order.
+[`.github/pull_request_template.md`](../.github/pull_request_template.md)
+pre-fills new PRs with the same template; keep the two in sync when either
+changes.
 
 ```markdown
 ## Summary
-- 1–3 bullets describing what changed and why.
+- What changed, in 1–3 bullets.
 
-## Test plan
-- [ ] make fmt-check
-- [ ] make test
-- [ ] manual verification step (if relevant)
+## Background
+- Why this is needed: the problem, a reproduction, related issues or PRs.
 
-## Globalization
-- [ ] No user-facing string changes.
-- [ ] User-facing strings are behind `internal/i18n` catalog keys with tests.
-- [ ] Non-translated strings are classified as literal/data/debug-only.
+## Changes
+- Behavior and code changes, grouped by area.
+- Breaking: what breaks and how to migrate (if any).
+
+## Scope
+- In scope:
+- Out of scope (and follow-ups):
+
+## Verification
+- [ ] Fast local gates: `make fmt` → `make fix` → `make test`
+- [ ] Long local gates: `make test-integration` → `make test-e2e`
+- [ ] Required CI checks green
+- [ ] Manual steps (if relevant):
+- Globalization (check exactly one):
+  - [ ] No user-facing string changes.
+  - [ ] User-facing strings are behind `internal/i18n` catalog keys with tests.
+  - [ ] Non-translated strings are classified as literal/data/debug-only.
+
+## Measurements
+- (If relevant) before/after numbers, method, environment, run ids.
+  Mark each number as observed or inferred.
 ```
 
-Notes:
+Per-section rules:
 
-- **Why** matters more than **what**. Diff already shows the what.
-- Reference issues with `Closes #<n>` so they auto-close on merge.
-- Mention follow-ups explicitly when scope was deliberately deferred.
-- For any new or changed user-facing text, check exactly one Globalization
-  item. Normal UX copy needs a catalog key and test coverage. Commands, paths,
-  config keys, env vars, provider payloads, locale enum values, product names,
-  debug logs, and internal diagnostics may stay out of the catalog only when
-  explicitly classified in the PR body.
+- **Summary** — the short version a reviewer reads first. The diff already
+  shows the code; say what changed in terms of behavior.
+- **Background** — **why** matters more than **what**. State the problem, how
+  to reproduce it, and related issues or PRs. Reference issues with
+  `Closes #<n>` so they auto-close on merge.
+- **Changes** — group by area rather than by file. Any breaking change must be
+  listed here with a migration note, and the title must also carry `!` or the
+  body a `BREAKING CHANGE:` footer (see the title rules above).
+- **Scope** — say what is deliberately left out and name the follow-ups
+  (issue or PR) instead of leaving deferred work implicit.
+- **Verification** — list the gates in the order
+  [AGENTS.md](../AGENTS.md) runs them: fast local gates, then the long local
+  gates (which may still be running while CI runs on the published head), then
+  the required CI checks, then any manual steps. For any new or changed
+  user-facing text, check exactly one Globalization item. Normal UX copy needs
+  a catalog key and test coverage. Commands, paths, config keys, env vars,
+  provider payloads, locale enum values, product names, debug logs, and
+  internal diagnostics may stay out of the catalog only when explicitly
+  classified in the PR body.
+- **Measurements** — fill it when the PR claims a change in speed, size, or
+  resource use (for example a `perf` PR). Give the method, environment, and
+  run ids so the numbers can be reproduced, and mark which values were
+  observed and which inferred.
+
+For small PRs, **Background** and **Measurements** may be written as `N/A`
+with a one-line reason. Do not delete them, so the section order stays the
+same across PRs.
 
 ## Branch protection in effect
 
