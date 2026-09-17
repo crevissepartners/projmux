@@ -132,6 +132,13 @@ same across PRs.
 - Required status checks are the five CI job names `Format`, `Unit Tests`,
   `NPM Packages`, `Integration Tests`, and `E2E Tests`. The aggregate `Test`
   job is observed as the project-wide fan-in, but it is not ruleset-required.
+- A required check is a job *name*. Renaming or splitting one of those five
+  stops that context from ever being reported, and GitHub holds the PR at
+  `expected` forever: every check green, merge blocked. Keep a thin aggregate
+  job under the original name with `needs: [<new jobs>]` and `if: always()`.
+  Without `if: always()` the job skips on child failure, which is neither green
+  nor red. `test/e2e/shard-contract.sh` fails when the `E2E Tests` aggregate is
+  missing.
 - Admin bypass is `pull_request` mode — admin can self-merge without
   approvals, but the PR itself is mandatory.
 - Linear history is enforced. The merge methods exposed are

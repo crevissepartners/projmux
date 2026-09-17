@@ -695,7 +695,7 @@ installed; that install stays put until its stable line ships.
 
 | Variable | Purpose |
 | --- | --- |
-| `PROJMUX_PROJDIR` | Explicit primary project root. Accepts an OS-native PATH-style multi-value: the first non-empty entry is the primary root and later entries are prepended to managed-root discovery. The primary value is memoized to `~/.config/projmux/projdir`. |
+| `PROJMUX_PROJDIR` | Explicit primary project root. Accepts an OS-native PATH-style multi-value: the first non-empty entry is the primary root and later entries are prepended to managed-root discovery. The primary value is memoized to `~/.config/projmux/projdir`. The legacy `PROJDIR` and `RP` env vars are no longer honored. |
 | `PROJMUX_MANAGED_ROOTS` | Search-root override. Uses the OS-native path-list separator and takes priority over the saved workdirs file and default weak probes. |
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
 | `PROJMUX_LOCALE` | UI locale override. `auto` resumes detection; `en-US` and `ko-KR` pin supported locales. Unsupported tags fall back to `en-US` and surface a Settings warning. |
@@ -707,12 +707,12 @@ installed; that install stays put until its stable line ships.
 | `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `off` / `none` / `notify` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. The retired `raise` / `auto-raise` / `autoraise` literals are still accepted and read as `notify`. |
 | `PROJMUX_DESKTOP_NOTIFY` | Legacy on/off override kept for backward compatibility. `on` maps to `notify`, `off` maps to `none`. Honored only when `PROJMUX_DESKTOP_NOTIFY_MODE` is unset. |
 | `PROJMUX_WSL_TOAST_ICON_DIR` | Directory used when copying the WSL toast icon into a Windows-readable path. |
-| `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
+| `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. The value is used as given, with no `~` expansion. |
 | `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from the `projmux internal status usage` renderer to stderr. |
 | `PROJMUX_USAGE_LIMITS_PATH` | Deprecated. Read but ignored; limits now come from upstream APIs and local Codex rollout state. |
 | `PROJMUX_SESSIONSTATE_AUTOSAVE` | Ignored. Project snapshots and their auto-save were removed. |
 | `PROJMUX_SESSIONSTATE_DEBUG` | Ignored. It only gated stderr for the removed quiet autosave. |
-| `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
+| `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr with the target, session, window, pane, socket, client, source, and kind. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
 | `PROJMUX_RELEASE_CHANNEL` | Release channel the update judgment is made against, orthogonal to `PROJMUX_INSTALLER`. Only an exact `rc` opts in; unset, empty, and unrecognised values all mean the default `stable` channel, which never sees a prerelease. An rc install is answered with whichever of the stable and rc lines is newer, so it returns to stable as soon as that line ships. Read only until `[update] release_channel` exists; see [Release channel](#release-channel). |
 | `PROJMUX_SHELL_UPDATE_CHECK_TIMEOUT_MS` | Timeout in milliseconds for the best-effort release check attempted by `projmux shell` when the update cache is missing or stale. Invalid, zero, or negative values use the default. |
@@ -1152,6 +1152,6 @@ These are intended for debugging or local policy, not routine setup:
 
 | Variable | Purpose |
 | --- | --- |
-| `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` | Override the Settings/default collapse window for duplicate AI desktop notifications keyed on the pane-local AI notification key. |
+| `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` | Override the Settings/default collapse window for duplicate AI desktop notifications keyed on the pane-local AI notification key. The Settings value and default apply only when this env is unset or not a positive integer. |
 | `PROJMUX_CODEX_TITLE_WATCH_INTERVAL` | Title-watch loop pacing for Codex panes. |
 | `PROJMUX_CODEX_REPLY_SETTLE_LOOPS` | Reply-detection settle-loop pacing for Codex panes. |

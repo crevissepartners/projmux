@@ -1,129 +1,150 @@
 # Agent Guide
 
+## Commands
+
+Run these in order for every change. `## Workflow` explains the rules behind the order.
+
+```sh
+# start: confirm the checkout and its state
+pwd
+git status --short
+
+# base check (on failure: rebase onto origin/main first)
+git fetch origin main
+git merge-base --is-ancestor origin/main HEAD
+
+# fast local gates
+make fmt
+make fix
+make test
+
+# publish: re-run the base check right before pushing
+git fetch origin main
+git merge-base --is-ancestor origin/main HEAD
+git push -u origin <branch>            # after a rebase: git push --force-with-lease
+gh pr create --title '<type>(<scope>): <summary>' --body-file <body.md>   # body: docs/pr-guideline.md
+
+# long local gates, while CI runs on that head
+make test-integration
+make test-e2e
+
+# merge only when the full local sequence, the required checks, and the aggregate `Test` check are green
+gh pr checks <num> --watch
+gh pr merge <num> --squash --delete-branch   # add --auto to queue it
+
+# after merge only (never before the merge and pull)
+git pull --ff-only
+make install
+```
+
 ## Scope
 - `projmux` is a standalone tmux session-management application.
-- Supported build targets are Linux and macOS on amd64 and arm64. That matrix is the whole contract: the release workflow builds only those four, no CI job builds any other `GOOS`, and `GOOS=windows` compilation is **not** supported or guaranteed. The repository carries no `_windows.go` files and no `//go:build windows` or `//go:build !windows` constraints; do not add them. WSL is not a separate target — it runs the Linux build under the Linux contract, and WSL-specific behavior such as `PROJMUX_WSL_TOAST_ICON_DIR` stays inside that build.
 - Keep portable session-management behavior in `projmux`.
 - Keep machine-local policy outside the application unless the migration plan explicitly calls for it.
-- Keep `AGENTS.md` focused on repo contract. Personal agent recipes, reverse-engineering notes, and machine-local operating memos belong in external local docs (Obsidian/dotfiles anchors), not this tracked file.
-- Local-only agent overlays may live in an untracked `AGENTS.local.md` anchored via dotfiles. This tracked file stays shareable and tool-agnostic.
+- This file is the shareable, tool-agnostic repo contract. Personal agent recipes, reverse-engineering notes, and machine-local operating memos belong in your own untracked notes, not this tracked file.
+- Local-only agent overlays may live in an untracked `AGENTS.local.md`.
 
-## Startup Checks
-- Confirm you are in the intended checkout/worktree with `pwd`.
-- Check local state with `git status --short`.
+## Repo map
+| Path | Purpose |
+| --- | --- |
+| `cmd/projmux` | Binary entrypoint; CLI wiring only. |
+| `internal/app` | Command implementations and app wiring. |
+| `internal/cli` | Canonical command catalog, help, output, and receipts. |
+| `internal/core` | Product rules and state that are testable without tmux. |
+| `internal/config` | Config files and saved settings. |
+| `internal/integrations` | Adapters: tmux, AI agents, hooks, metadata, session state. |
+| `internal/ui` | Native picker and rendering. |
+| `internal/state` | Simple file-backed state helpers. |
+| `internal/i18n`, `internal/theme` | Message catalog and locales; built-in palette and theme resolution. |
+| `internal/tools/gendocs` | Build-time generator for `docs/cli.md` (`make docs`). |
+| `test/` | `integration/`, `e2e/`, and `install/` suites, Docker images, fixtures, and workflow contract tests. |
+| `scripts/` | Development, CI, and security tooling only; no product logic. |
+| `npm/` | npm launcher and per-platform packages. |
+| `docs/` | User and contributor docs. |
 
-## Branch And Checkout Rules
-- Use one branch per task. Preferred names: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `refactor/<topic>`, `chore/<topic>`.
+See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/repo-layout.md), [docs/testing.md](docs/testing.md), and [docs/cli.md](docs/cli.md).
+
+## Workflow
+- Use one branch per task, named `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `refactor/<topic>`, or `chore/<topic>`.
 - Use a dedicated checkout/worktree per task when parallel work would otherwise collide.
 - Keep one agent per checkout/worktree. Do not share a dirty checkout across agents.
 - If another agent owns a file, do not overwrite their changes. Adjust around them or coordinate a handoff.
 - Keep changes narrow. Split docs, bootstrap, migration, and feature work into separate branches unless they are inseparable.
-
-## Branch Protection And PR Flow
-- `main` is protected by the repository ruleset `main-protect`. Direct pushes to `main` are blocked even for repository admins.
-- Every change ships through a pull request. The required status checks are five CI **job names**: `Format`, `Unit Tests`, `NPM Packages`, `Integration Tests`, `E2E Tests`. The aggregate `Test` job is **not** required; it fans in every child, including the security and Darwin jobs the ruleset does not require.
-- A required check is a job *name*. Renaming or splitting one of those five stops that context from ever being reported, and GitHub holds the PR at `expected` forever — every check green, merge blocked. Keep a thin aggregate job under the original name with `needs: [<new jobs>]` and `if: always()`; without `if: always()` the job skips on child failure, which is neither green nor red. `test/e2e/shard-contract.sh` fails when the `E2E Tests` aggregate is missing.
-- Admin bypass mode is `pull_request`: the admin can self-merge a PR without approvals, but the PR itself is mandatory.
-- Default merge method is **squash**. The PR title becomes the squash commit subject and is what release-please parses, so write it as a Conventional Commit. Follow [docs/pr-guideline.md](docs/pr-guideline.md) for full conventions.
-- `make install` cannot run before the PR is merged into `main`. The full team-lead loop is: push branch → open PR → wait for CI → merge → `git pull --ff-only` → `make install`.
-
-## Standard Dev Flow
 - Make targets are the contract for local validation. Keep them stable and predictable.
-- Refresh and validate the candidate base before every first push or force-push:
-  1. `git fetch origin main`.
-  2. Require `git merge-base --is-ancestor origin/main HEAD`. If it fails, rebase onto latest `origin/main` before continuing. The repository-policy range scan rejects a PR base that is not an ancestor of its head, so knowingly publishing that state only creates a deterministic failed CI run.
-  3. Run the fast local gates in order: `make fmt` → `make fix` → `make test`.
-  4. Refresh `origin/main` and check ancestry once more immediately before publishing. If main advanced, rebase and restart the fast local gates for the new head.
-- Publish the validated head as soon as the fast gates pass; do not serialize remote CI behind the long-running local gates:
-  5. `git push -u origin <branch>` for the first push, or `git push --force-with-lease` after a rebase.
-  6. Create or refresh the PR with a Conventional Commit title (see [docs/pr-guideline.md](docs/pr-guideline.md)).
-  7. While CI runs on that exact head, finish the remaining local gates in order: `make test-integration` → `make test-e2e`.
-  8. If a local or remote gate fails, keep merge blocked, fix the cause, and publish a new validated head through the same flow. Any rebase invalidates the previous local gate evidence, so rerun the full local sequence for the rebased head while starting its CI after the fast gates.
-  9. Wait for both the complete local gate sequence and the required CI `Test` check to turn green (`gh pr checks <num> --watch`). Use `--auto` on `gh pr merge` if you want it queued.
-  10. `gh pr merge <num> --squash --delete-branch`.
-- Promote the build only after merge:
-  11. `git -C <repo> pull --ff-only`
-  12. `make install` — atomic replace of `$(go env GOPATH)/bin/projmux` plus `projmux config apply`. **Never run it before step 11**; pre-merge state has not cleared CI yet and may not match what `main` will hold.
-  13. Retire the merged checkout/worktree with your local tooling if you used one.
-- If a target is missing for the area you are changing, add it or leave the repository in a state where the gap is explicit in docs and review notes.
-- Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and test execution are separate gates.
+- If a target is missing for the area you are changing, add it or leave the gap explicit in docs and review notes.
+- Check ancestry before every first push or force-push. The repository-policy range scan rejects a PR base that is not an ancestor of its head, so publishing that state only produces a failed CI run.
+- If `main` advanced before publishing, rebase and restart the fast local gates for the new head.
+- Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and tests are separate gates.
+- Publish as soon as the fast gates pass. Do not serialize remote CI behind the long local gates.
+- If a local or remote gate fails, keep the merge blocked, fix the cause, and publish a new validated head the same way.
+- Any rebase invalidates earlier local gate evidence. Rerun the full local sequence for the rebased head, and start its CI after the fast gates.
+- `make install` atomically replaces `$(go env GOPATH)/bin/projmux` and runs `projmux config apply`.
+- Never run `make install` before the merge and `git pull --ff-only`. Pre-merge state has not cleared CI and may not match `main`.
+- After merge, retire the merged checkout/worktree with your local tooling if you used one.
 
-## Hook Contract Stability
-- The post-create hook contract (`[hooks.post-create]`, `PROJMUX_*` env vars, 5s timeout) is part of the public API. Adding, removing, or renaming any `PROJMUX_*` env var requires at minimum a minor release input; use a `feat(hooks): ...` PR title and leave the version/manifest update to release-please.
-- `PROJMUX_SOCKET` is the app socket name (`projmux`) supplied as hook routing metadata; it does not change how the tmux client invokes commands.
-- `PROJMUX_PANE` is the exact first pane id returned by standard persistent/ephemeral session creation for `post-create`. It is intentionally absent from `pre-create`, which runs before that pane exists.
+Migration discipline:
+- Port one stable slice at a time. Do not mix bootstrap, feature redesign, and parity fixes in one change without a strong reason.
+- Match existing behavior first, then simplify or redesign in a later change.
+- When replacing shell logic with Go, keep user-facing entrypoints stable until the adapter layer is intentionally updated.
+- Compare new behavior against the maintained parity tests when the migrated feature already has coverage.
+- Record intentional behavior differences in docs and review notes.
 
-## Release Flow
-- `release-please-action` watches `main`, accumulates Conventional Commit subjects, and opens or refreshes a "chore(main): release X.Y.Z" PR. That PR contains the version bump (`internal/version/version.go` + `.release-please-manifest.json`), `CHANGELOG.md` updates, and the release notes.
-- Merging the release PR creates the GitHub Release with auto-generated notes as a **draft** (`draft` in `release-please-config.json`). The same package config sets `force-tag-creation` so release-please creates `refs/tags/vX.Y.Z` during its release pass, before it computes the next release PR; that tag creation triggers the tag workflow through the release-please PAT. Do not move tag creation into a post-action workflow step: release-please-action creates releases before pull requests, and a delayed tag makes the same run treat the just-released commits as unreleased.
-- `.github/workflows/release.yml` triggers on the tag push, runs the shipped E2E shard/suite matrix behind the fail-closed `Release E2E Tests` aggregate, then builds the linux/darwin × amd64/arm64 matrix and uploads tarballs to the drafted release (`gh release upload --clobber`). `Build Release` depends on the aggregate rather than individual shards. Do not add hardcoded notes back to that workflow — release-please owns the notes.
-- The release becomes visible only in the final `publish-release` job, after `publish-npm` succeeds. That ordering is the contract: users never see a GitHub release for a version npm cannot install yet, and a failed npm publish leaves the release drafted and the workflow red instead of shipping a half-published version.
-- Release candidates are cut **outside** release-please, by the `workflow_dispatch`-only `.github/workflows/release-rc.yml`. It takes an `X.Y.Z-rc.N` version, drafts a GitHub Release marked `--prerelease` against `main` HEAD, then pushes `vX.Y.Z-rc.N` with the release-please PAT so the same `release.yml` builds, uploads, and publishes it. Running it is a deliberate manual act: npm publishes cannot be recalled.
-- Do **not** add `prerelease` or `prerelease-type` to `release-please-config.json` to get that. release-please gates the prerelease flag on `config.prerelease && (version.preRelease || version.major === 0)`; this repository is `0.x`, so the key would stamp *stable* releases as prereleases, `releases/latest` would stop resolving, and default-channel updates would go silently dead.
-- The rc path writes exactly one ref — the tag. It never touches `.release-please-manifest.json`, so release-please keeps measuring the next stable release from the previous *stable* release: it picks the boundary by matching the manifest value against a tag, with no prerelease filter on that path, and an rc holding the manifest slot would silently trim the next stable release notes and its `compare/` link.
-- `release.yml` branches on the tag only where the channel is decided: a prerelease tag publishes npm with `--tag rc` and keeps `--prerelease` when the release is undrafted, and a stable tag runs exactly as before. Job names, order, and the `publish-npm → publish-release` gating are identical for both. `test/release_workflow_contract_test.py` executes both step scripts against a stable and an rc tag to hold that split.
-- Non-Conventional commit subjects on `main` are silently skipped by release-please. Keep PR titles strict; squash merge ensures the PR title is the only subject that lands.
+Communication:
+- Use concise progress updates.
+- Report blockers early, especially parity uncertainty or overlap with another agent's files.
+- When handing off, state the branch, checkout/worktree path, changed files, and remaining risks.
 
-## Configuration And Environment
-
-Project root and discovery:
-
-- `PROJMUX_PROJDIR` is the canonical project-root env. It accepts an OS-native PATH-style multi-value (`filepath.SplitList`): the first non-empty entry is the primary repo root (memoized to `~/.config/projmux/projdir`), and any additional entries are prepended to managed roots. The legacy `PROJDIR`/`RP` env vars are no longer honored.
-- `PROJMUX_MANAGED_ROOTS` is the colon-separated search-root override (priority: env > saved file > defaults). Legacy alias `TMUX_SESSIONIZER_ROOTS` is still honored at runtime.
-- `~/.config/projmux/workdirs` stores the cumulative workdirs list managed via the Settings UX. It is read only when no env list is set.
-- `tmux set-option -g @projmux_projdir <path>` is a declarative source for `PROJMUX_PROJDIR` that the switch command reads through `tmuxProjdirOption`.
-
-Notifications:
-
-- `PROJMUX_NOTIFY_HOOK` — external executable that receives AI desktop notifications instead of the built-in sender. The hook is invoked with positional arguments: summary, body, OS urgency, app name, tag, group, icon path. The urgency argument is the transient OS notification urgency, not the persistent notify-queue severity. When unset, projmux uses `notify-send` on Linux and PowerShell toasts on WSL.
-- `PROJMUX_NOTIFY_EXPIRE_MS` — AI desktop notification expiration in milliseconds. Defaults to `5000`; unset, zero, negative, and non-numeric values fall back to the default.
-- `PROJMUX_WSL_TOAST_ICON_DIR` — override directory for the icon copied into a Windows-readable path before the WSL toast call.
-
-Usage tracking:
-
-- `PROJMUX_USAGE_STATE_DIR` — override for the snapshot cache directory. Defaults to `<state>/projmux/usage`. Point at a synced location (Dropbox, iCloud Drive) to share authoritative usage between machines. Resolved verbatim, no `~` expansion.
-- `PROJMUX_USAGE_DEBUG` — when non-empty, surfaces adapter errors from `projmux status usage` to stderr instead of swallowing them.
-- `PROJMUX_USAGE_LIMITS_PATH` — deprecated. v2 takes limits straight from the upstream APIs; the variable is read but ignored.
-
-Focus:
-
-- `PROJMUX_FOCUS_DEBUG` — when non-empty, `projmux focus` prints a one-line telemetry record (target/session/window/pane/socket/source/kind) to stderr.
-
-Post-create hook contract environment:
-
-- `PROJMUX_SESSION` — session name being created.
-- `PROJMUX_CWD` — absolute path of the project directory.
-- `PROJMUX_SESSION_KIND` — `persistent` or `ephemeral`.
-- `PROJMUX_SOCKET` — tmux app socket name (`projmux`), supplied as metadata so hook commands can use `tmux -L "$PROJMUX_SOCKET"`.
-- `PROJMUX_PANE` — exact first pane id returned by `tmux new-session`, such as `%7`, for standard persistent/ephemeral creation; omitted from `pre-create`.
-- `PROJMUX_VERSION` — the binary's `internal/version` string.
-
-Tunables (rarely touched):
-
-- `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` — top-level override for the AI desktop notification dedupe window; Settings saved value and default are used only when this env is unset or invalid.
-- `PROJMUX_CODEX_TITLE_WATCH_INTERVAL`, `PROJMUX_CODEX_REPLY_SETTLE_LOOPS` — pacing knobs for the AI title-watch loop.
-
-## Review Expectations
-- Reviews should be small enough to reason about quickly.
-- Include the command list you ran, especially the `make` targets and any parity checks.
+## PR
+- The default merge method is squash. The PR title becomes the squash subject that release-please parses, so write it as a Conventional Commit.
+- release-please silently skips non-Conventional subjects.
+- The PR body uses the six sections of [docs/pr-guideline.md](docs/pr-guideline.md), which holds the full conventions.
+- Keep reviews small enough to reason about quickly.
+- List the commands you ran, especially the `make` targets and any parity checks.
 - Call out behavior changes separately from refactors.
 - Flag unverified areas instead of implying coverage you did not run.
 - If migration parity is incomplete, state the exact gap and the follow-up branch or issue.
 
-## Migration Discipline
-- Port one stable slice at a time. Do not mix bootstrap, feature redesign, and parity fixes in one change without a strong reason.
-- Match existing behavior first, then simplify or redesign in a later change.
-- When replacing shell logic with Go, keep the user-facing entrypoints stable until the adapter layer is intentionally updated.
-- Compare new behavior against the maintained parity tests whenever the migrated feature already has coverage.
-- Record intentional behavior differences in docs and review notes.
+Branch protection:
+- `main` is protected by the ruleset `main-protect`. Direct pushes are blocked, even for repository admins.
+- Every change ships through a pull request. Admin bypass mode is `pull_request`: an admin can self-merge without approvals, but the PR is mandatory.
+- The required checks are five CI job names: `Format`, `Unit Tests`, `NPM Packages`, `Integration Tests`, `E2E Tests`.
+- The aggregate `Test` job is not required. It fans in every child, including security and Darwin jobs the ruleset does not require.
+- Never rename or split a required job without keeping an aggregate under the old name. See [docs/pr-guideline.md](docs/pr-guideline.md#branch-protection-in-effect).
 
-## Testing Policy
+## Testing
 - Unit tests cover pure naming, selection, parsing, and state logic.
 - Integration tests cover tmux command orchestration, config loading, and state file interactions.
 - End-to-end tests cover full session flows against real tmux behavior.
-- When adding a feature, decide where it belongs in that stack and add or update the corresponding test entry.
+- When adding a feature, decide where it belongs in that stack and add or update the test there.
+- Details: [docs/testing.md](docs/testing.md).
 
-## Communication
-- Use concise progress updates.
-- Report blockers early, especially if they involve parity uncertainty or overlap with another agent's files.
-- When handing off, state the branch, checkout/worktree path, changed files, and remaining risks.
+## Security
+- `make security` runs three groups in parallel; CI runs each as its own job: `make security-go` (govulncheck, gosec), `make security-static` (staticcheck), `make security-policy` (gitleaks, actionlint, shellcheck).
+- `make security-tools` installs the Go-based scanners at the versions pinned in `.security/security-tools.versions`.
+- gosec and staticcheck findings are compared with the reviewed baselines `.security/gosec-baseline.json` and `.security/staticcheck-baseline.json`. A finding beyond its baseline count fails the gate.
+- `.security/security-current-findings.json` pins the current finding counts and the baseline hashes. A change to either must update it.
+- gitleaks uses `.gitleaks.toml`. Never commit credentials or tokens.
+
+## Compatibility
+Platforms:
+- Supported build targets are Linux and macOS on amd64 and arm64. That matrix is the whole contract.
+- The release workflow builds only those four, and no CI job builds any other `GOOS`.
+- `GOOS=windows` compilation is not supported or guaranteed.
+- The repository has no `_windows.go` files and no `//go:build windows` or `//go:build !windows` constraints. Do not add them.
+- WSL is not a separate target. It runs the Linux build under the Linux contract, and WSL-specific behavior such as `PROJMUX_WSL_TOAST_ICON_DIR` stays inside that build.
+
+Hook contract:
+- The post-create hook contract (`[hooks.post-create]`, `PROJMUX_*` env vars, 5s timeout) is public API.
+- Adding, removing, or renaming any `PROJMUX_*` env var needs at least a minor release input: use a `feat(hooks): ...` PR title and leave the version/manifest update to release-please.
+- `PROJMUX_SOCKET` is the app socket name (`projmux`), supplied as hook routing metadata. It does not change how the tmux client invokes commands.
+- `PROJMUX_PANE` is the exact first pane id from standard persistent/ephemeral creation for `post-create`. It is intentionally absent from `pre-create`, which runs before that pane exists.
+- Details: [docs/hooks.md](docs/hooks.md#environment).
+
+Configuration and environment:
+- [docs/configuration.md](docs/configuration.md#environment-variables), [rare tunables](docs/configuration.md#rare-tunables), and [hook environment](docs/hooks.md#environment).
+
+Release:
+- release-please owns version bumps, `CHANGELOG.md`, and release notes. The squash subject is its input.
+- Release candidates are cut only by manually dispatching `.github/workflows/release-rc.yml`. npm publishes cannot be recalled.
+- Do not add `prerelease` or `prerelease-type` to `release-please-config.json`.
+- Details: [docs/release.md](docs/release.md).
