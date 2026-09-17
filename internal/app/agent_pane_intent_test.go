@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -38,11 +39,14 @@ import (
 type recordingPaneCreator struct {
 	intents []agentPaneIntent
 	err     error
+	// created is the committed runtime Pane the fake reports. It is empty
+	// unless a test models a committed split, so no focus step runs.
+	created createdPaneRuntime
 }
 
-func (r *recordingPaneCreator) createFromIntent(intent agentPaneIntent, _, _ io.Writer) error {
+func (r *recordingPaneCreator) createFromIntent(intent agentPaneIntent, _, _ io.Writer) (createdPaneRuntime, error) {
 	r.intents = append(r.intents, intent)
-	return r.err
+	return r.created, r.err
 }
 
 type appServerPickerCatalog struct{ client *codexappserver.Client }
@@ -644,7 +648,7 @@ func TestTheIntentRefusesAnIncoherentCombination(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := create.createFromIntent(tt.intent, &bytes.Buffer{}, &bytes.Buffer{})
+			_, err := create.createFromIntent(tt.intent, &bytes.Buffer{}, &bytes.Buffer{})
 			if err == nil {
 				t.Fatalf("intent %+v was accepted", tt.intent)
 			}
@@ -664,7 +668,7 @@ func TestTheResumeIntentReachesTheSharedAgentBodyWithTheConversation(t *testing.
 	launcher := &recordingAgentLauncher{}
 	create := &createCommand{agents: launcher, resumes: launcher}
 
-	err := create.createFromIntent(agentPaneIntent{
+	_, err := create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerResumePicker,
 		provider: aiModeCodex, placement: "right", conversationID: "conv-7",
 	}, &bytes.Buffer{}, &bytes.Buffer{})
@@ -705,4 +709,91 @@ func (r *recordingAgentLauncher) AwaitAgentActivation(context.Context, tmuxComma
 
 func (r *recordingAgentLauncher) PlanAgentResume(string, coremetadata.AgentWorkspace, string) (string, []string, error) {
 	return "", nil, errors.New("resume launch reached")
+}
+
+// TestAISplitFocusConditionTable is C-2 acceptance 1-3 at the AI split funnel,
+// createPaneFromIntent, which every AI split path reaches: the pressing client
+// comes from the popup/key environment, and only that client on the new Pane's
+// exact Window gets `select-pane -t %N`. An empty client never reads the
+// client inventory. A failed focus step keeps the create, exits zero, and shows
+// one line on the pressing client.
+func TestAISplitFocusConditionTable(t *testing.T) {
+	const client = "/dev/pts/7"
+	cases := splitFocusCases(client)
+	cases = append(cases, splitFocusCase{
+		name: "no pressing client", client: "", created: createdPaneRuntime{paneID: "%42"},
+		clients: client + focusFieldSeparator + "@7\n", paneWindow: "@7\n",
+	})
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			cmd, creator := intentAICommand(t, home)
+			creator.created = test.created
+			cmd.lookupEnv = func(key string) string {
+				switch key {
+				case "HOME":
+					return home
+				case canonicalCreateTargetClientEnv:
+					return test.client
+				default:
+					return ""
+				}
+			}
+			runner := &recordingTmuxRunner{
+				outputs: map[string]string{splitFocusClientsKey: test.clients, splitFocusPaneWindowKey("%42"): test.paneWindow},
+				errors:  test.errors,
+			}
+			cmd.runCommand = func(ctx context.Context, name string, args ...string) error {
+				_, err := runner.Run(ctx, name, args...)
+				return err
+			}
+			cmd.readCommand = runner.Run
+			if err := cmd.createShellPane(canonicalProducerDirectShell, "right"); err != nil {
+				t.Fatalf("createShellPane() error = %v", err)
+			}
+			if len(creator.intents) != 1 {
+				t.Fatalf("intents = %#v, want one", creator.intents)
+			}
+			reads, selects := focusStepCalls(runner.calls)
+			if (reads > 0) != test.wantReads {
+				t.Fatalf("focus reads = %d, want reads=%t: %#v", reads, test.wantReads, runner.calls)
+			}
+			var wantSelects [][]string
+			if test.wantFocus {
+				wantSelects = [][]string{{"select-pane", "-t", "%42"}}
+			}
+			if !equalArgvs(selects, wantSelects) {
+				t.Fatalf("select-pane calls = %v, want %v", selects, wantSelects)
+			}
+			var messages [][]string
+			for _, call := range runner.calls {
+				if len(call.args) > 0 && call.args[0] == "display-message" && slices.Contains(call.args, "-c") {
+					messages = append(messages, call.args)
+				}
+			}
+			if test.wantFailed == "" {
+				if len(messages) != 0 {
+					t.Fatalf("a successful split wrote client messages %v", messages)
+				}
+				return
+			}
+			if len(messages) != 1 || messages[0][2] != client {
+				t.Fatalf("client messages = %v, want one line on %s", messages, client)
+			}
+			text := messages[0][len(messages[0])-1]
+			if !strings.HasPrefix(text, paneCreatedUnfocusedMessage) || !strings.Contains(text, test.wantFailed) {
+				t.Fatalf("message = %q, want %q with %q", text, paneCreatedUnfocusedMessage, test.wantFailed)
+			}
+		})
+	}
+}
+
+// TestSplitFocusFailureCarriesTheSplitStartNotice keeps the one-line promise
+// when a committed split has both a split start notice and a failed focus step.
+func TestSplitFocusFailureCarriesTheSplitStartNotice(t *testing.T) {
+	line := splitFocusFailureLine(errors.New("focus: select-pane \"%42\": gone"), "split start notice:\n cwd was not used")
+	want := paneCreatedUnfocusedMessage + `focus: select-pane "%42": gone; split start notice: cwd was not used`
+	if line != want {
+		t.Fatalf("line = %q, want %q", line, want)
+	}
 }

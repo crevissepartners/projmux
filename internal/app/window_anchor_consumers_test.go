@@ -229,7 +229,7 @@ func TestAnchorAwarePopupOriginPaneBeatsStoredAgentAnchor(t *testing.T) {
 	command, _ := newTestResourceCreateCommand(t, store, tmux)
 	withPopupOrigin(command, tmux, popupEnv(shellID))
 
-	err := command.createFromIntent(agentPaneIntent{
+	_, err := command.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: shellID,
 	}, ioDiscard{}, ioDiscard{})
 	if err != nil {

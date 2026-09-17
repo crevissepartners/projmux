@@ -282,7 +282,7 @@ func runRetiredRefsPickerRow(t *testing.T, state coremetadata.CodexGenerationSta
 		listenRetiredGeneration(t, stateDir, tc.endpoint)
 	}
 	before, paneCount := fx.store.snapshot(), fx.tmux.paneCount()
-	err := fx.create.createFromIntent(agentPaneIntent{
+	_, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
 		conversationID: id, resumeSource: aisessions.SourceCodexAppServer, anchorPaneID: fx.originID,
 		resumeEndpoint: tc.endpoint, resumeGenerationState: state,

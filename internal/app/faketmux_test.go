@@ -116,6 +116,9 @@ type fakeTmuxWindow struct {
 	name  string
 	opts  map[string]string
 	panes []*fakeTmuxPane
+	// active is the Window's active Pane id, set only by a focusing
+	// `select-pane -t %N`. Empty means no focus step ever ran.
+	active string
 }
 
 type fakeTmuxPane struct {
@@ -552,6 +555,16 @@ func (f *fakeTmux) runResizePane(args []string) ([]byte, error) {
 }
 
 func (f *fakeTmux) runSelectPane(args []string) ([]byte, error) {
+	// A bare `select-pane -t %N` makes that exact Pane its Window's active
+	// Pane; nothing else is accepted as a focus step.
+	if len(args) == 3 && args[1] == "-t" {
+		_, window, pane := f.pane(exactTmuxHandle(args[2], "%"))
+		if pane == nil {
+			return nil, fmt.Errorf("fake tmux: select-pane: can't find exact pane %q", args[2])
+		}
+		window.active = pane.id
+		return nil, nil
+	}
 	if !slices.Contains(args, "-T") {
 		return nil, fmt.Errorf("fake tmux: select-pane: unsupported argv %v", args)
 	}
@@ -575,7 +588,11 @@ func (f *fakeTmux) runListClients(args []string) ([]byte, error) {
 		if session := f.session(client.session); session != nil {
 			sessionName = session.name
 		}
-		fmt.Fprintf(&b, "%s\n", strings.NewReplacer("#{client_name}", client.name, "#{client_session}", sessionName).Replace(format))
+		// In list-clients the Window formats resolve to the Window the client
+		// shows: its Session's current Window.
+		_, windowID := f.clientView(client.name)
+		fmt.Fprintf(&b, "%s\n", strings.NewReplacer("#{client_name}", client.name, "#{client_session}", sessionName,
+			"#{window_id}", windowID).Replace(format))
 	}
 	return []byte(b.String()), nil
 }

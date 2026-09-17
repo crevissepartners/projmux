@@ -1258,8 +1258,19 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 	intent.anchorPaneID = c.splitOriginPane()
 	intent.targetClient = c.splitOriginClient()
 	var diagnostics bytes.Buffer
-	err := c.panes.createFromIntent(intent, io.Discard, &diagnostics)
+	created, err := c.panes.createFromIntent(intent, io.Discard, &diagnostics)
 	if err == nil {
+		// The split has committed. The pressing client, if it still shows this
+		// Window, now has the new Pane active. A failed focus keeps the Pane and
+		// is the one line that client sees, carrying any split start notice.
+		focusRunner := splitFocusRunner{runCommand: c.runCommand, readCommand: c.readCommand}
+		if focusErr := focusCreatedSplitPane(context.Background(), focusRunner, intent.targetClient, created); focusErr != nil {
+			line := splitFocusFailureLine(focusErr, strings.Join(strings.Fields(diagnostics.String()), " "))
+			if displayErr := c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", tmuxLiteralMessage(line)); displayErr != nil {
+				return fmt.Errorf("%s; display split focus failure to client %q: %v", line, intent.targetClient, displayErr)
+			}
+			return nil
+		}
 		// A successful split writes nothing. The producer on the other end of
 		// this call is a foreground tmux `run-shell` job, and tmux paints
 		// whatever such a job writes -- diagnostics included -- as a view-mode

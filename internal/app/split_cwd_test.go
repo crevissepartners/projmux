@@ -519,7 +519,7 @@ func TestSplitCWDDefaultIntentAndPaneMenuAreByteIdentical(t *testing.T) {
 			configure(fx)
 		}
 		var stdout, stderr bytes.Buffer
-		err := fx.create.createFromIntent(agentPaneIntent{
+		_, err := fx.create.createFromIntent(agentPaneIntent{
 			producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.anchorID,
 		}, &stdout, &stderr)
 		if err != nil {
@@ -624,7 +624,7 @@ func TestCreateSplitStartsInTheActivePaneDirectory(t *testing.T) {
 		fx.runner.cwds[fx.anchorID] = sub
 		fx.writeProjectConfig("[ai]\nsplit_cwd_from = \"pane\"\n")
 		var stdout, stderr bytes.Buffer
-		if err := fx.create.createFromIntent(agentPaneIntent{
+		if _, err := fx.create.createFromIntent(agentPaneIntent{
 			producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.anchorID,
 		}, &stdout, &stderr); err != nil {
 			t.Fatalf("intent create failed: %v (stderr %q)", err, stderr.String())
@@ -771,9 +771,9 @@ func TestSplitCWDFallbackReachesTheClientOnce(t *testing.T) {
 // start notice, which is the only stderr a committed split writes.
 type splitNoticeCreator struct{ notice string }
 
-func (c splitNoticeCreator) createFromIntent(_ agentPaneIntent, _, stderr io.Writer) error {
+func (c splitNoticeCreator) createFromIntent(_ agentPaneIntent, _, stderr io.Writer) (createdPaneRuntime, error) {
 	_, _ = fmt.Fprintln(stderr, c.notice)
-	return nil
+	return createdPaneRuntime{}, nil
 }
 
 // TestSplitCWDFlagRefusalsCreateNothing is acceptance criterion 4.
@@ -914,7 +914,7 @@ func TestSplitCWDLeavesExcludedRoutesUnchanged(t *testing.T) {
 				configure(fx)
 			}
 			var stdout, stderr bytes.Buffer
-			err := fx.create.createFromIntent(agentPaneIntent{
+			_, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right",
 				conversationID: "conv-7", anchorPaneID: fx.anchorID,
 			}, &stdout, &stderr)
@@ -960,7 +960,7 @@ func TestSplitCWDLeavesExcludedRoutesUnchanged(t *testing.T) {
 			// A directory the pane source would have taken if it ran here.
 			fx.runner.cwds[fx.anchorID] = fx.t.TempDir()
 			var stdout, stderr bytes.Buffer
-			if err := fx.create.createFromIntent(agentPaneIntent{
+			if _, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.anchorID,
 			}, &stdout, &stderr); err != nil {
 				t.Fatalf("ControlSession intent failed: %v (stderr %q)", err, stderr.String())
@@ -1027,7 +1027,7 @@ func TestSplitCWDNeverWritesTheScopeIdentity(t *testing.T) {
 		return filepath.Base(root)
 	}
 	var stdout, stderr bytes.Buffer
-	if err := fx.create.createFromIntent(agentPaneIntent{
+	if _, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.anchorID,
 	}, &stdout, &stderr); err != nil {
 		t.Fatalf("intent create failed: %v (stderr %q)", err, stderr.String())
@@ -1118,7 +1118,7 @@ func TestCLISplitCreateOpensNoSplitStartConfig(t *testing.T) {
 	ui.runner.cwds[ui.anchorID] = uiSub
 	ui.writeProjectConfig("[ai]\nsplit_cwd_from = \"pane\"\n")
 	var stdout, stderr bytes.Buffer
-	if err := ui.create.createFromIntent(agentPaneIntent{
+	if _, err := ui.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: ui.anchorID,
 	}, &stdout, &stderr); err != nil {
 		t.Fatalf("UI intent create failed: %v (stderr %q)", err, stderr.String())

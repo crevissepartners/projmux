@@ -2284,6 +2284,115 @@ func TestTmuxPrintAppConfigBindsPaneContextMenu(t *testing.T) {
 	}
 }
 
+// splitFocusClientsKey and splitFocusPaneWindowKey are the exact reads of the
+// UI split focus step: the attached clients with the Window each shows, and the
+// runtime Window of the committed Pane.
+var splitFocusClientsKey = recordedTmuxCallKey("tmux", "list-clients", "-F", "#{client_name}"+focusFieldSeparator+"#{window_id}")
+
+func splitFocusPaneWindowKey(paneID string) string {
+	return recordedTmuxCallKey("tmux", "display-message", "-p", "-t", paneID, "-F", "#{window_id}")
+}
+
+// splitFocusCase is one row of the UI split focus condition table.
+type splitFocusCase struct {
+	name       string
+	client     string
+	created    createdPaneRuntime
+	clients    string
+	paneWindow string
+	errors     map[string]error
+	wantFocus  bool
+	wantFailed string
+	wantReads  bool
+}
+
+func splitFocusCases(client string) []splitFocusCase {
+	selectKey := recordedTmuxCallKey("tmux", "select-pane", "-t", "%42")
+	onWindow := client + focusFieldSeparator + "@7\n/dev/pts/other" + focusFieldSeparator + "@9\n"
+	return []splitFocusCase{
+		{name: "same Window", client: client, created: createdPaneRuntime{paneID: "%42"}, clients: onWindow, paneWindow: "@7\n", wantFocus: true, wantReads: true},
+		{name: "other Window", client: client, created: createdPaneRuntime{paneID: "%42"}, clients: onWindow, paneWindow: "@9\n", wantReads: true},
+		{name: "detached", client: client, created: createdPaneRuntime{paneID: "%42"}, clients: "/dev/pts/other" + focusFieldSeparator + "@7\n", paneWindow: "@7\n", wantReads: true},
+		{name: "no clients", client: client, created: createdPaneRuntime{paneID: "%42"}, clients: "", paneWindow: "@7\n", wantReads: true},
+		{name: "empty committed Pane", client: client, created: createdPaneRuntime{}, clients: onWindow, paneWindow: "@7\n"},
+		{name: "non-exact committed Pane", client: client, created: createdPaneRuntime{paneID: "42"}, clients: onWindow, paneWindow: "@7\n"},
+		{name: "Window-shaped committed Pane", client: client, created: createdPaneRuntime{paneID: "@7"}, clients: onWindow, paneWindow: "@7\n"},
+		{name: "list-clients error", client: client, created: createdPaneRuntime{paneID: "%42"}, paneWindow: "@7\n", wantReads: true,
+			errors: map[string]error{splitFocusClientsKey: errors.New("injected list-clients failure")}, wantFailed: "injected list-clients failure"},
+		{name: "Pane Window read error", client: client, created: createdPaneRuntime{paneID: "%42"}, clients: onWindow, wantReads: true,
+			errors: map[string]error{splitFocusPaneWindowKey("%42"): errors.New("injected Pane Window read failure")}, wantFailed: "injected Pane Window read failure"},
+		{name: "select-pane error", client: client, created: createdPaneRuntime{paneID: "%42"}, clients: onWindow, paneWindow: "@7\n", wantFocus: true, wantReads: true,
+			errors: map[string]error{selectKey: errors.New("injected select-pane failure")}, wantFailed: "injected select-pane failure"},
+	}
+}
+
+// focusStepCalls drops everything but the focus step's own tmux calls.
+func focusStepCalls(calls []recordedTmuxCall) (reads int, selects [][]string) {
+	for _, call := range calls {
+		switch {
+		case len(call.args) > 0 && call.args[0] == "select-pane":
+			selects = append(selects, call.args)
+		case len(call.args) > 0 && (call.args[0] == "list-clients" ||
+			(call.args[0] == "display-message" && slices.Contains(call.args, "#{window_id}"))):
+			reads++
+		}
+	}
+	return reads, selects
+}
+
+// TestTmuxPaneMenuSplitFocusConditionTable is C-2 acceptance 1-3 at the pane
+// menu seam: only a pressing client attached to the new Pane's exact Window
+// gets `select-pane -t %N`; an absent client, another Window, or a non-exact
+// committed Pane gets nothing; a failed focus step keeps the create and turns
+// the one success line into the one reason line.
+func TestTmuxPaneMenuSplitFocusConditionTable(t *testing.T) {
+	t.Parallel()
+	const client = "/dev/pts/7"
+	for _, test := range splitFocusCases(client) {
+		t.Run(test.name, func(t *testing.T) {
+			creator := &recordingPaneCreator{created: test.created}
+			runner := &recordingTmuxRunner{
+				outputs: map[string]string{splitFocusClientsKey: test.clients, splitFocusPaneWindowKey("%42"): test.paneWindow},
+				errors:  test.errors,
+			}
+			cmd := &tmuxCommand{runner: runner, paneMenuCreate: creator.createFromIntent}
+			if err := cmd.Run([]string{"pane-menu", "--client", client, "split-right", "%17"}, ioDiscard{}, ioDiscard{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			reads, selects := focusStepCalls(runner.calls)
+			if (reads > 0) != test.wantReads {
+				t.Fatalf("focus reads = %d, want reads=%t: %#v", reads, test.wantReads, runner.calls)
+			}
+			var wantSelects [][]string
+			if test.wantFocus {
+				wantSelects = [][]string{{"select-pane", "-t", "%42"}}
+			}
+			if !equalArgvs(selects, wantSelects) {
+				t.Fatalf("select-pane calls = %v, want %v", selects, wantSelects)
+			}
+			var messages []recordedTmuxCall
+			for _, call := range runner.calls {
+				if len(call.args) > 0 && call.args[0] == "display-message" && slices.Contains(call.args, "-c") {
+					messages = append(messages, call)
+				}
+			}
+			if len(messages) != 1 {
+				t.Fatalf("client messages = %#v, want exactly one", messages)
+			}
+			text := messages[0].args[len(messages[0].args)-1]
+			if test.wantFailed == "" {
+				if text != paneMenuCreatedMessage {
+					t.Fatalf("message = %q, want %q", text, paneMenuCreatedMessage)
+				}
+				return
+			}
+			if !strings.HasPrefix(text, paneCreatedUnfocusedMessage) || !strings.Contains(text, test.wantFailed) {
+				t.Fatalf("message = %q, want %q with %q", text, paneCreatedUnfocusedMessage, test.wantFailed)
+			}
+		})
+	}
+}
+
 func TestTmuxPaneMenuRoutesSplitAndKillThroughCanonicalIntents(t *testing.T) {
 	t.Parallel()
 
@@ -2366,11 +2475,11 @@ func TestTmuxPaneMenuFailuresRemainVisibleWithoutFallbackMutation(t *testing.T) 
 			runner := &recordingTmuxRunner{}
 			cmd := &tmuxCommand{
 				runner: runner,
-				paneMenuCreate: func(_ agentPaneIntent, _ io.Writer, stderr io.Writer) error {
+				paneMenuCreate: func(_ agentPaneIntent, _ io.Writer, stderr io.Writer) (createdPaneRuntime, error) {
 					if test.name == "split" {
 						_, _ = io.WriteString(stderr, "exact action stderr detail")
 					}
-					return test.createErr
+					return createdPaneRuntime{}, test.createErr
 				},
 				paneMenuDelete: func(string, io.Writer, io.Writer) error {
 					return test.deleteErr

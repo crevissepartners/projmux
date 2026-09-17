@@ -31,16 +31,16 @@ type capabilityPlanningPaneCreator struct {
 	argv    []string
 }
 
-func (c *capabilityPlanningPaneCreator) createFromIntent(intent agentPaneIntent, _, _ io.Writer) error {
+func (c *capabilityPlanningPaneCreator) createFromIntent(intent agentPaneIntent, _, _ io.Writer) (createdPaneRuntime, error) {
 	c.intents = append(c.intents, intent)
 	if intent.codexCapability == nil {
 		_, argv, err := c.cmd.PlanAgentLaunch(intent.provider, coremetadata.AgentWorkspace{CWD: "/repo"}, []string{"task"})
 		c.argv = argv
-		return err
+		return createdPaneRuntime{}, err
 	}
 	_, argv, err := c.cmd.PlanAgentLaunchWithCapability(intent.provider, coremetadata.AgentWorkspace{CWD: "/repo"}, []string{"task"}, *intent.codexCapability)
 	c.argv = argv
-	return err
+	return createdPaneRuntime{}, err
 }
 
 func TestCodexProviderPickerDefaultAndAdvancedRowsGolden(t *testing.T) {

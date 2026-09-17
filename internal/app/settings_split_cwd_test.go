@@ -162,7 +162,7 @@ func TestSettingsSplitCWDFromWritesOnlyTheGlobalKeyAndMovesTheNextUISplit(t *tes
 	sub := fx.subdir("services", "api")
 	fx.runner.cwds[fx.anchorID] = sub
 	var out, errOut bytes.Buffer
-	if err := fx.create.createFromIntent(agentPaneIntent{
+	if _, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.anchorID,
 	}, &out, &errOut); err != nil {
 		t.Fatalf("UI intent create failed: %v (stderr %q)", err, errOut.String())

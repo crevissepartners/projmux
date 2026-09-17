@@ -72,7 +72,7 @@ func TestCanonicalCreateIntentRefusesSemanticErrorBeforeRuntimeRouteBinding(t *t
 		return errors.New("runtime route must not preempt intent validation")
 	}
 	var stdout, stderr bytes.Buffer
-	err := command.createFromIntent(agentPaneIntent{placement: "diagonal"}, &stdout, &stderr)
+	_, err := command.createFromIntent(agentPaneIntent{placement: "diagonal"}, &stdout, &stderr)
 	if err == nil || !IsUsageError(err) {
 		t.Fatalf("invalid canonical intent error = %v, want usage error", err)
 	}

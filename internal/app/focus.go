@@ -764,6 +764,29 @@ func (c *focusCommand) listClients(ctx context.Context, socket string) ([]focusC
 	return parseFocusClients(out), nil
 }
 
+// listClientWindows lists attached clients with the exact `@N` Window each one
+// currently shows. In list-clients the Window formats resolve to the client's
+// Session's current Window, so this is what the client is looking at. A missing
+// server is no clients, like listClients.
+func (c *focusCommand) listClientWindows(ctx context.Context) ([]focusClient, error) {
+	format := strings.Join([]string{"#{client_name}", "#{window_id}"}, focusFieldSeparator)
+	out, err := c.runner.Run(ctx, "tmux", "list-clients", "-F", format)
+	if err != nil {
+		if isNoServerLikeError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("focus: list-clients: %w", err)
+	}
+	// parseFocusClients reads the second field into Session; in this format
+	// that field is the Window id.
+	parsed := parseFocusClients(out)
+	clients := make([]focusClient, 0, len(parsed))
+	for _, client := range parsed {
+		clients = append(clients, focusClient{Name: client.Name, WindowID: client.Session})
+	}
+	return clients, nil
+}
+
 func (c *focusCommand) switchClient(ctx context.Context, socket, clientName, sessionName string) error {
 	if c.runner == nil {
 		return errors.New("focus runner is not configured")
@@ -875,6 +898,9 @@ func combineFallback(parts ...string) string {
 type focusClient struct {
 	Name    string
 	Session string
+	// WindowID is the exact `@N` Window the client shows. Only
+	// listClientWindows fills it.
+	WindowID string
 }
 
 // pickFocusClient prefers the explicit origin client, then a client already

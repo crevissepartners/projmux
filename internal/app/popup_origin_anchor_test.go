@@ -109,7 +109,7 @@ func TestPopupOriginAnchorResolvesTheCreateScopeWithNoInheritedPane(t *testing.T
 			before := paneUIDsByWindow(store)
 			registryBefore := store.snapshot()
 
-			err := create.createFromIntent(
+			_, err := create.createFromIntent(
 				agentPaneIntent{producer: canonicalProducerProviderPicker, placement: "right", anchorPaneID: anchor},
 				&bytes.Buffer{}, &bytes.Buffer{})
 

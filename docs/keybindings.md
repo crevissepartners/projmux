@@ -206,6 +206,18 @@ The direct AI split actions create a new managed AI pane each time they run.
 Existing AI panes are left in place; the requested direction controls where the
 new pane is created.
 
+A UI split focuses the new Pane. This covers the saved-default split key, the
+provider and shell direct keys, a selection in the `Alt-7` picker or the resume
+picker (including its `new` row), and the Pane menu's Horizontal Split /
+Vertical Split. Once the create commits, the new Pane becomes the Window's
+active Pane, but only when the client that pressed the key or clicked the menu
+is still attached and still showing that Window. If that client has detached
+or moved to another Window, focus is left alone and the new Pane stays. The
+client is never moved to the Window. If the focus step itself fails, the Pane
+is kept and that client sees one line:
+`Created Pane, but projmux could not focus it: <reason>`. The public
+`projmux create pane` and `create agent` commands never change focus.
+
 Pane switching is catalogued as transport-dependent and the generated app tmux
 config binds `M-Left`, `M-Right`, `M-Up`, and `M-Down` to `select-pane`
 movement. Previous/next window remain transport-dependent and the generated app

@@ -789,7 +789,7 @@ func TestNativeResumePickerDuplicateVisibilityUsesKnownOwnerOrRefusesAmbiguous(t
 			legacy := newFakeResumeLauncher()
 			fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
 			before := fx.store.snapshot()
-			err := fx.create.createFromIntent(agentPaneIntent{
+			_, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
 				conversationID: threadID, resumeSource: found[0].Source, resumeEndpoint: codexSummaryEndpoint(found[0]),
 				resumeGenerationState: coremetadata.CodexGenerationState(found[0].GenerationState),
@@ -849,7 +849,7 @@ func TestNativeResumePickerSoleCurrentVisibilityNeverOverridesKnownOldOwner(t *t
 	fx.create.codexNative = &fakeNativeThreadController{catalogRoutes: []codexNativeEndpointRoute{current}, resolvedRoute: current}
 	fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
 	before := fx.store.snapshot()
-	err := fx.create.createFromIntent(agentPaneIntent{
+	_, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
 		conversationID: selection.resumeID, resumeSource: selection.source, resumeEndpoint: selection.endpoint,
 		resumeGenerationState: selection.state,

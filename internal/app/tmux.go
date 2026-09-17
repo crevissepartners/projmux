@@ -66,7 +66,7 @@ type tmuxRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
-type paneMenuCreateFunc func(agentPaneIntent, io.Writer, io.Writer) error
+type paneMenuCreateFunc func(agentPaneIntent, io.Writer, io.Writer) (createdPaneRuntime, error)
 type paneMenuDeleteFunc func(string, io.Writer, io.Writer) error
 type windowCreateIntentFunc func(windowCreateIntent, io.Writer, io.Writer) (createdWindowRuntime, error)
 type windowRenameIntentFunc func(windowRenameIntent, io.Writer, io.Writer) error
@@ -135,7 +135,7 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 		popupOptions:  defaultPopupPreviewOptions,
 		switchPopup:   defaultPopupSwitchOptions,
 		sessionsPopup: defaultPopupSessionsOptions,
-		paneMenuCreate: func(intent agentPaneIntent, stdout, stderr io.Writer) error {
+		paneMenuCreate: func(intent agentPaneIntent, stdout, stderr io.Writer) (createdPaneRuntime, error) {
 			return newCreateCommand().createFromIntent(intent, stdout, stderr)
 		},
 		paneMenuDelete: deletePaneThroughCanonicalRoute,
@@ -442,18 +442,19 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 	var actionOut bytes.Buffer
 	var actionErr bytes.Buffer
 	var err error
+	var created createdPaneRuntime
 	switch action {
 	case "split-right":
 		if c.paneMenuCreate == nil {
 			err = errors.New("canonical create pane route is not configured")
 		} else {
-			err = c.paneMenuCreate(agentPaneIntent{producer: canonicalProducerPaneMenu, placement: "right", anchorPaneID: paneID}, &actionOut, &actionErr)
+			created, err = c.paneMenuCreate(agentPaneIntent{producer: canonicalProducerPaneMenu, placement: "right", anchorPaneID: paneID}, &actionOut, &actionErr)
 		}
 	case "split-down":
 		if c.paneMenuCreate == nil {
 			err = errors.New("canonical create pane route is not configured")
 		} else {
-			err = c.paneMenuCreate(agentPaneIntent{producer: canonicalProducerPaneMenu, placement: "down", anchorPaneID: paneID}, &actionOut, &actionErr)
+			created, err = c.paneMenuCreate(agentPaneIntent{producer: canonicalProducerPaneMenu, placement: "down", anchorPaneID: paneID}, &actionOut, &actionErr)
 		}
 	case "kill":
 		if c.paneMenuDelete == nil {
@@ -491,8 +492,15 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 	}
 	// A committed split writes stderr only for its split start notice, which
 	// rides on the one success message instead of replacing it.
+	notice := strings.TrimSpace(actionErr.String())
+	// The split has committed. The clicking client, if it still shows this
+	// Window, now has the new Pane active; a failed focus keeps the Pane and
+	// replaces the success line with the one reason line.
+	if focusErr := focusCreatedSplitPane(context.Background(), c.runner, strings.TrimSpace(*client), created); focusErr != nil {
+		return c.displayPaneMenuMessage(strings.TrimSpace(*client), splitFocusFailureLine(focusErr, notice))
+	}
 	message := paneMenuCreatedMessage
-	if notice := strings.TrimSpace(actionErr.String()); notice != "" {
+	if notice != "" {
 		message += ": " + notice
 	}
 	return c.displayPaneMenuMessage(strings.TrimSpace(*client), message)

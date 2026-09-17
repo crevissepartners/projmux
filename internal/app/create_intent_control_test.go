@@ -140,12 +140,21 @@ func TestCanonicalCreateProducerRootOutcomeTable(t *testing.T) {
 					configureCanonicalNativeCreate(fx, "thread-canonical-"+string(row.producer))
 				}
 				var stdout, stderr bytes.Buffer
-				if err := fx.create.createFromIntent(intent, &stdout, &stderr); err != nil {
+				created, err := fx.create.createFromIntent(intent, &stdout, &stderr)
+				if err != nil {
 					t.Fatalf("createFromIntent(%+v) error = %v (stderr=%q)", intent, err, stderr.String())
 				}
 				added := addedPaneUIDs(before, paneUIDsByWindow(fx.store))[fx.windowUID]
 				if len(added) != 1 {
 					t.Fatalf("origin Window gained %v, want exactly one managed Pane\n%s", added, fx.store.snapshot())
+				}
+				// The committed `%N` comes back as a value: it is the live Pane
+				// mirroring the created uid, and the create itself moved no client.
+				if live := livePaneWithUID(t, fx.tmux, added[0]); created.paneID != live || exactTmuxHandle(created.paneID, "%") == "" {
+					t.Fatalf("createFromIntent returned Pane %q, want the committed runtime Pane %q", created.paneID, live)
+				}
+				if moves, _ := clientMovingCalls(fx.tmux.calls); len(moves) != 0 {
+					t.Fatalf("canonical intent create moved a client itself: %v", moves)
 				}
 				pane, ok := fx.store.registry.Pane(added[0])
 				if !ok || livePaneWithUID(t, fx.tmux, added[0]) == "" {
@@ -203,7 +212,7 @@ func TestResumePickerCreateCommitsExactSessionRefBeforeAnyHook(t *testing.T) {
 			for _, agent := range fx.store.registry.Agents {
 				before[agent.Metadata.UID] = true
 			}
-			if err := fx.create.createFromIntent(agentPaneIntent{
+			if _, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerResumePicker, provider: test.provider, placement: "right",
 				conversationID: test.conversation, resumeSource: resumeSource, anchorPaneID: fx.originID,
 			}, ioDiscard{}, ioDiscard{}); err != nil {
@@ -239,7 +248,7 @@ func TestOrdinaryFreshPickerCreateLeavesSessionRefUnset(t *testing.T) {
 	for _, agent := range fx.store.registry.Agents {
 		before[agent.Metadata.UID] = true
 	}
-	if err := fx.create.createFromIntent(agentPaneIntent{
+	if _, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right", anchorPaneID: fx.originID,
 	}, ioDiscard{}, ioDiscard{}); err != nil {
 		t.Fatal(err)
@@ -257,7 +266,7 @@ func TestResumePickerPreparationFailureCreatesNoFreshAgent(t *testing.T) {
 	resume.planErr = errors.New("provider refused exact picker conversation")
 	registryBefore, runtimeBefore := fx.store.snapshot(), fx.tmux.state()
 	agentsBefore, panesBefore := len(fx.store.registry.Agents), len(fx.store.registry.Panes)
-	err := fx.create.createFromIntent(agentPaneIntent{
+	_, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right",
 		conversationID: "claude-picker-session", anchorPaneID: fx.originID,
 	}, ioDiscard{}, ioDiscard{})
@@ -304,7 +313,7 @@ func TestResumePickerCreateRollbackLeavesNoAgentPaneOrRefOrphan(t *testing.T) {
 			registryBefore, runtimeBefore := fx.store.snapshot(), fx.tmux.state()
 			agentsBefore, panesBefore := len(fx.store.registry.Agents), len(fx.store.registry.Panes)
 			test.inject(&fx)
-			err := fx.create.createFromIntent(agentPaneIntent{
+			_, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
 				conversationID: "thread-rollback", anchorPaneID: fx.originID,
 			}, ioDiscard{}, ioDiscard{})
@@ -358,7 +367,7 @@ func TestCanonicalProjectIntentDerivesLiveSessionWhenStatusSessionIsNil(t *testi
 			fx.store.registry.Projects[i] = *project
 		}
 	}
-	if err := fx.create.createFromIntent(agentPaneIntent{
+	if _, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.originID,
 	}, ioDiscard{}, ioDiscard{}); err != nil {
 		t.Fatalf("canonical Project create with nil status.session: %v", err)
@@ -460,7 +469,7 @@ func TestC1ExistingLiveManagedRootCreateRebindsCurrentWindowAndClearsMissingRunt
 				t.Fatal("fixture did not carry stale MissingRuntime")
 			}
 
-			if err := fx.create.createFromIntent(agentPaneIntent{
+			if _, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.originID,
 			}, ioDiscard{}, ioDiscard{}); err != nil {
 				t.Fatalf("existing-live %s create: %v", rootName, err)
@@ -762,7 +771,7 @@ func TestCanonicalCreateRefusesSameNameRuntimeSessionReplacementBeforeLeaseWrite
 		replacement.windows[0].panes[0].opts[tmuxopts.PaneUID] = "pan-alpha-zsh"
 		return baseUpdate(fn)
 	}
-	err := fx.create.createFromIntent(agentPaneIntent{
+	_, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.originID,
 	}, ioDiscard{}, ioDiscard{})
 	if err == nil || !strings.Contains(err.Error(), "runtime session changed before commit") {
@@ -809,7 +818,7 @@ func TestCanonicalCreateConflictAndLostAnchorHaveZeroWritesAndExactReason(t *tes
 			test.mutate(&fx)
 			beforeRegistry := fx.store.snapshot()
 			beforeCalls := len(fx.tmux.calls)
-			err := fx.create.createFromIntent(agentPaneIntent{producer: canonicalProducerProviderPicker,
+			_, err := fx.create.createFromIntent(agentPaneIntent{producer: canonicalProducerProviderPicker,
 				provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want exact reason containing %q", err, test.want)
@@ -837,7 +846,7 @@ func TestCanonicalCreateLeaseFailureHasZeroRegistryOrRuntimeCreateWrites(t *test
 			fx.tmux.fail = []string{"set-environment", createOperationEnvironment}
 			fx.tmux.failMessage = "phase12 create lease refusal"
 			before := fx.store.snapshot()
-			err := fx.create.createFromIntent(agentPaneIntent{
+			_, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.originID,
 			}, ioDiscard{}, ioDiscard{})
 			if err == nil || !strings.Contains(err.Error(), "phase12 create lease refusal") {
@@ -923,7 +932,7 @@ func TestHomePaneMenuSplitUsesCanonicalCreate(t *testing.T) {
 	before := paneUIDsByWindow(fx.store)
 	command := &tmuxCommand{
 		runner: fx.tmux,
-		paneMenuCreate: func(intent agentPaneIntent, stdout, stderr io.Writer) error {
+		paneMenuCreate: func(intent agentPaneIntent, stdout, stderr io.Writer) (createdPaneRuntime, error) {
 			return fx.create.createFromIntent(intent, stdout, stderr)
 		},
 	}
@@ -941,7 +950,7 @@ func TestCanonicalProducerNegativeAuditHasZeroHiddenStderr(t *testing.T) {
 	fx.tmux.fail = []string{"split-window"}
 	fx.tmux.failMessage = "phase12 exact split refusal"
 	before := fx.store.snapshot()
-	err := fx.create.createFromIntent(agentPaneIntent{
+	_, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.originID,
 	}, ioDiscard{}, ioDiscard{})
 	if err == nil || !strings.Contains(err.Error(), "phase12 exact split refusal") {
@@ -968,9 +977,9 @@ type diagnosticPaneCreator struct {
 	detail string
 }
 
-func (d diagnosticPaneCreator) createFromIntent(_ agentPaneIntent, _ io.Writer, stderr io.Writer) error {
+func (d diagnosticPaneCreator) createFromIntent(_ agentPaneIntent, _ io.Writer, stderr io.Writer) (createdPaneRuntime, error) {
 	_, _ = io.WriteString(stderr, d.detail)
-	return d.err
+	return createdPaneRuntime{}, d.err
 }
 
 func TestPopupCanonicalFailureIsProjectedToExactOriginatingClient(t *testing.T) {
@@ -1023,7 +1032,7 @@ func FuzzCanonicalUIIntentStaysManaged(f *testing.F) {
 		if intent.provider == aiModeCodex && intent.conversationID == "" {
 			configureCanonicalNativeCreate(fx, "thread-fuzz-native")
 		}
-		if err := fx.create.createFromIntent(intent, ioDiscard{}, ioDiscard{}); err != nil {
+		if _, err := fx.create.createFromIntent(intent, ioDiscard{}, ioDiscard{}); err != nil {
 			t.Fatalf("producer=%s control=%t: %v", row.producer, control, err)
 		}
 		added := addedPaneUIDs(before, paneUIDsByWindow(fx.store))[fx.windowUID]
@@ -1336,4 +1345,285 @@ func TestWindowCreateIntentCreateFailureIssuesNoClientMoveAndKeepsItsMessage(t *
 			t.Fatalf("tmux calls = %v, want only the unchanged refusal line %v", server.calls, want)
 		}
 	})
+}
+
+const (
+	splitFocusPressingClient  = "/dev/pts/31"
+	splitFocusBystanderClient = "/dev/pts/32"
+)
+
+// splitFocusView is where the pressing client is when the split commits.
+type splitFocusView string
+
+const (
+	splitFocusSameWindow         splitFocusView = "same Window"
+	splitFocusOtherSessionWindow splitFocusView = "other Session Window"
+	splitFocusOtherWindowSameSes splitFocusView = "other Window of the origin Session"
+	splitFocusDetached           splitFocusView = "detached"
+	splitFocusNoClient           splitFocusView = "no pressing client"
+)
+
+// splitFocusRoute is one UI split path wired onto the real canonical create
+// over the fixture's fake server. client is the pressing client the path
+// states; it is empty for the no-client row.
+type splitFocusRoute struct {
+	name string
+	menu bool
+	run  func(t *testing.T, fx canonicalRootFixture, client string) error
+}
+
+// splitFocusAICommand is an AI split producer whose tmux reads and writes all
+// reach the fixture's fake server, started from a popup that names the origin
+// Pane and, when set, the pressing client.
+func splitFocusAICommand(t *testing.T, fx canonicalRootFixture, client string) *aiCommand {
+	t.Helper()
+	home := t.TempDir()
+	enableAgents(t, home, "codex", "claude")
+	ai := testAICommand(home)
+	origin := popupOriginLookupEnv(home, fx.originID)
+	ai.lookupEnv = func(key string) string {
+		if key == canonicalCreateTargetClientEnv {
+			return client
+		}
+		return origin(key)
+	}
+	ai.runCommand = func(ctx context.Context, name string, args ...string) error {
+		if name != "tmux" {
+			return nil
+		}
+		_, err := fx.tmux.Run(ctx, name, args...)
+		return err
+	}
+	ai.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, errors.New("no reader for " + name)
+		}
+		return fx.tmux.Run(ctx, name, args...)
+	}
+	ai.panes = fx.create
+	return ai
+}
+
+// splitFocusRoutes are the six UI split paths of the focus contract. The
+// resume picker's `new` row is runAgentPickerSelection itself (ai.go), so the
+// AI picker row covers it.
+var splitFocusRoutes = []splitFocusRoute{
+	{name: "launch-default key", run: func(t *testing.T, fx canonicalRootFixture, client string) error {
+		ai := splitFocusAICommand(t, fx, client)
+		if err := ai.setMode(aiModeClaude); err != nil {
+			t.Fatalf("set saved mode: %v", err)
+		}
+		return ai.runLaunchDefault([]string{"right"}, ioDiscard{})
+	}},
+	{name: "provider direct key", run: func(t *testing.T, fx canonicalRootFixture, client string) error {
+		return splitFocusAICommand(t, fx, client).runDirectProvider([]string{aiModeClaude, "down"}, ioDiscard{})
+	}},
+	{name: "shell direct key", run: func(t *testing.T, fx canonicalRootFixture, client string) error {
+		return splitFocusAICommand(t, fx, client).runDirectShell([]string{"right"}, ioDiscard{})
+	}},
+	{name: "AI picker selection", run: func(t *testing.T, fx canonicalRootFixture, client string) error {
+		ai := splitFocusAICommand(t, fx, client)
+		stubAIPickerSelection(ai, aiModeClaude)
+		return ai.runAgentPickerSelection("down")
+	}},
+	{name: "resume picker selection", run: func(t *testing.T, fx canonicalRootFixture, client string) error {
+		ai := splitFocusAICommand(t, fx, client)
+		return ai.runSelectedResumeSession(aiResumeSelection{
+			agent: aiModeClaude, resumeID: "11111111-2222-4333-8444-555555555555",
+		}, "right")
+	}},
+	{name: "pane menu split", menu: true, run: func(t *testing.T, fx canonicalRootFixture, client string) error {
+		menu := &tmuxCommand{runner: fx.tmux, paneMenuCreate: fx.create.createFromIntent}
+		return menu.runPaneMenuAction([]string{"--client", client, "split-right", fx.originID}, ioDiscard{}, ioDiscard{})
+	}},
+}
+
+// placeSplitFocusClients attaches a bystander and, per view, the pressing
+// client, and returns the pressing client name the route should state.
+func placeSplitFocusClients(t *testing.T, fx canonicalRootFixture, view splitFocusView) string {
+	t.Helper()
+	origin, originWindow, _ := fx.tmux.pane(fx.originID)
+	if origin == nil {
+		t.Fatal("fixture origin Pane has no runtime Session")
+	}
+	// The origin Session shows the origin Window, as it does when the key is
+	// pressed in it.
+	origin.current = originWindow.id
+	fx.tmux.attachClient(splitFocusBystanderClient, origin)
+	switch view {
+	case splitFocusSameWindow:
+		fx.tmux.attachClient(splitFocusPressingClient, origin)
+	case splitFocusOtherSessionWindow:
+		fx.tmux.attachClient(splitFocusPressingClient, fx.tmux.addSession("other-view"))
+	case splitFocusOtherWindowSameSes:
+		other := &fakeTmuxWindow{id: fx.tmux.mint("@"), name: "other", opts: map[string]string{}}
+		other.panes = append(other.panes, newFakeTmuxPane(fx.tmux.mint("%")))
+		origin.windows = append(origin.windows, other)
+		origin.current = other.id
+		fx.tmux.attachClient(splitFocusPressingClient, origin)
+	case splitFocusDetached:
+	case splitFocusNoClient:
+		return ""
+	}
+	return splitFocusPressingClient
+}
+
+// focusSelectPaneCalls returns every focusing `select-pane` (not a title write).
+func focusSelectPaneCalls(calls [][]string) [][]string {
+	var out [][]string
+	for _, call := range calls {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "select-pane" && !slices.Contains(argv, "-T") {
+			out = append(out, argv)
+		}
+	}
+	return out
+}
+
+// keptSplitPane returns the live `%N` of the one Pane the route added to the
+// origin Window, and its runtime Window.
+func keptSplitPane(t *testing.T, fx canonicalRootFixture, before map[string][]string) (string, *fakeTmuxWindow) {
+	t.Helper()
+	added := addedPaneUIDs(before, paneUIDsByWindow(fx.store))[fx.windowUID]
+	if len(added) != 1 {
+		t.Fatalf("origin Window gained %v, want exactly one kept Pane\n%s", added, fx.store.snapshot())
+	}
+	paneID := livePaneWithUID(t, fx.tmux, added[0])
+	_, window, _ := fx.tmux.pane(paneID)
+	return paneID, window
+}
+
+// TestUISplitFocusesTheNewPaneOnlyForThePressingClientOnThatWindow is C-2
+// acceptance 1 and 2 over every UI split path: after the canonical create
+// commits, the new `%N` becomes the Window's active Pane exactly when the
+// pressing client is attached and shows that Window. A client that is on
+// another Window, detached, or unnamed gets no focus step, and the split is
+// kept. No path ever drags a client with switch-client or select-window.
+func TestUISplitFocusesTheNewPaneOnlyForThePressingClientOnThatWindow(t *testing.T) {
+	views := []splitFocusView{splitFocusSameWindow, splitFocusOtherSessionWindow, splitFocusOtherWindowSameSes, splitFocusDetached, splitFocusNoClient}
+	for _, route := range splitFocusRoutes {
+		for _, view := range views {
+			if route.menu && view == splitFocusNoClient {
+				// The pane menu route refuses a missing --client before any create.
+				continue
+			}
+			t.Run(route.name+"/"+string(view), func(t *testing.T) {
+				fx := canonicalFixture(t, false)
+				client := placeSplitFocusClients(t, fx, view)
+				before := paneUIDsByWindow(fx.store)
+
+				err := route.run(t, fx, client)
+				if route.menu && view == splitFocusDetached {
+					// The menu's one result line has no client to land on; that is
+					// the route's existing undeliverable-message error.
+					if err == nil || !strings.Contains(err.Error(), paneMenuCreatedMessage) {
+						t.Fatalf("detached pane menu error = %v, want the undeliverable %q line", err, paneMenuCreatedMessage)
+					}
+				} else if err != nil {
+					t.Fatalf("%s error = %v", route.name, err)
+				}
+				paneID, window := keptSplitPane(t, fx, before)
+				focused := focusSelectPaneCalls(fx.tmux.calls)
+				if view == splitFocusSameWindow {
+					if want := [][]string{{"select-pane", "-t", paneID}}; !equalArgvs(focused, want) {
+						t.Fatalf("focus calls = %v, want exactly %v", focused, want)
+					}
+					if window.active != paneID {
+						t.Fatalf("Window %s active Pane = %q, want the new Pane %s", window.id, window.active, paneID)
+					}
+				} else {
+					if len(focused) != 0 || window.active != "" {
+						t.Fatalf("%s: focus calls = %v active = %q, want no focus step", view, focused, window.active)
+					}
+				}
+				for _, call := range fx.tmux.calls {
+					argv := tmuxCommandArgv(call)
+					if len(argv) > 0 && (argv[0] == "switch-client" || argv[0] == "select-window") {
+						t.Fatalf("UI split dragged a client: %v", argv)
+					}
+				}
+				var wantMessages []fakeTmuxClientMessage
+				if route.menu && view != splitFocusDetached {
+					wantMessages = []fakeTmuxClientMessage{{client: client, text: paneMenuCreatedMessage}}
+				}
+				if !slices.Equal(fx.tmux.clientMessages, wantMessages) {
+					t.Fatalf("client messages = %+v, want %+v", fx.tmux.clientMessages, wantMessages)
+				}
+			})
+		}
+	}
+}
+
+// TestUISplitFocusFailureKeepsThePaneAndTellsThePressingClient is C-2
+// acceptance 3: when the focus step itself fails -- the client inventory read
+// or the select-pane -- the committed Pane stays, nothing is deleted, the
+// route exits zero, and the pressing client sees exactly one line naming the
+// kept Pane and the reason.
+func TestUISplitFocusFailureKeepsThePaneAndTellsThePressingClient(t *testing.T) {
+	for _, route := range splitFocusRoutes {
+		for _, verb := range []string{"list-clients", "select-pane"} {
+			t.Run(route.name+"/"+verb, func(t *testing.T) {
+				fx := canonicalFixture(t, false)
+				client := placeSplitFocusClients(t, fx, splitFocusSameWindow)
+				failure := "injected " + verb + " failure"
+				// The canonical create issues neither verb, so the one-shot
+				// trigger lands on the focus step.
+				fx.tmux.fail = []string{verb}
+				fx.tmux.failMessage = failure
+				before := paneUIDsByWindow(fx.store)
+
+				if err := route.run(t, fx, client); err != nil {
+					t.Fatalf("displayed focus failure escaped as an exit code: %v", err)
+				}
+				paneID, window := keptSplitPane(t, fx, before)
+				if window.active != "" {
+					t.Fatalf("failed focus still set active Pane %q", window.active)
+				}
+				for _, call := range fx.tmux.calls {
+					argv := tmuxCommandArgv(call)
+					if len(argv) > 0 && slices.Contains([]string{"kill-pane", "kill-window", "switch-client", "select-window"}, argv[0]) {
+						t.Fatalf("failed focus issued %v; the split must be kept and no client moved", argv)
+					}
+				}
+				if len(fx.tmux.clientMessages) != 1 || fx.tmux.clientMessages[0].client != client {
+					t.Fatalf("client messages = %+v, want one line on the pressing client", fx.tmux.clientMessages)
+				}
+				text := fx.tmux.clientMessages[0].text
+				if !strings.HasPrefix(text, paneCreatedUnfocusedMessage) || !strings.Contains(text, failure) {
+					t.Fatalf("message = %q, want %q with the reason %q", text, paneCreatedUnfocusedMessage, failure)
+				}
+				if verb == "select-pane" && !strings.Contains(text, strings.ReplaceAll(paneID, "%", "%%")) {
+					t.Fatalf("message = %q, want the kept Pane %s named", text, paneID)
+				}
+			})
+		}
+	}
+}
+
+// TestPublicCreatePaneAndAgentNeverFocus is C-2 acceptance 4: the public
+// `create pane` and `create agent` routes issue zero select-pane, even with a
+// client attached to the Window the Pane lands in.
+func TestPublicCreatePaneAndAgentNeverFocus(t *testing.T) {
+	for _, argv := range [][]string{
+		{"pane", "--project", "alpha", "--window", "main"},
+		{"agent", "--provider", "claude", "--project", "alpha", "--window", "main"},
+	} {
+		t.Run(argv[0], func(t *testing.T) {
+			fx := canonicalFixture(t, false)
+			placeSplitFocusClients(t, fx, splitFocusSameWindow)
+			before := paneUIDsByWindow(fx.store)
+			if _, stderr, err := runRoute(t, fx.create, argv...); err != nil {
+				t.Fatalf("create %v error = %v (stderr=%q)", argv, err, stderr)
+			}
+			if added := addedPaneUIDs(before, paneUIDsByWindow(fx.store))[fx.windowUID]; len(added) != 1 {
+				t.Fatalf("create %v added %v, want one Pane", argv, added)
+			}
+			for _, call := range fx.tmux.calls {
+				if argv := tmuxCommandArgv(call); len(argv) > 0 && argv[0] == "select-pane" {
+					t.Fatalf("public create issued %v", argv)
+				}
+			}
+			assertNoClientMovement(t, fx.tmux)
+		})
+	}
 }

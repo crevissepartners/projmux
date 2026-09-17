@@ -412,7 +412,7 @@ func (p canonicalCreateProducer) valid() bool {
 
 // canonicalPaneCreator is the seam the split UI hands its intents to.
 type canonicalPaneCreator interface {
-	createFromIntent(intent agentPaneIntent, stdout, stderr io.Writer) error
+	createFromIntent(intent agentPaneIntent, stdout, stderr io.Writer) (createdPaneRuntime, error)
 }
 
 var _ canonicalPaneCreator = (*createCommand)(nil)
@@ -426,31 +426,32 @@ var _ canonicalPaneCreator = (*createCommand)(nil)
 // `--resume` on create, and adding one would widen the public surface for an
 // interactive selection -- so it reaches the shared body with the one extra field
 // set.
-func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr io.Writer) error {
+func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr io.Writer) (createdPaneRuntime, error) {
 	argv, provider, conversation, err := intent.canonicalArgv()
 	if err != nil {
-		return err
+		return createdPaneRuntime{}, err
 	}
 	if !intent.producer.valid() {
-		return usageError("canonical create intent has no classified producer; nothing was created")
+		return createdPaneRuntime{}, usageError("canonical create intent has no classified producer; nothing was created")
 	}
 	if provider != "" {
 		if c.agents == nil {
-			return errors.New("create agent: the provider launcher is not configured")
+			return createdPaneRuntime{}, errors.New("create agent: the provider launcher is not configured")
 		}
 		if err := c.agents.RequireAgentEnabled(provider); err != nil {
-			return err
+			return createdPaneRuntime{}, err
 		}
 	}
 	scope, err := c.resolveCanonicalIntentScope(intent)
 	if err != nil {
-		return err
+		return createdPaneRuntime{}, err
 	}
 	// Where the split starts is resolved here, before the Registry transaction
 	// opens, and stays separate from the scope's identity fields.
 	launchDir, notice := c.intentSplitLaunchDir(scope, conversation)
 	if provider == "" {
-		return finishSplitIntent(stderr, notice, c.createCanonicalIntentPane(scope, intent, launchDir, stdout))
+		created, createErr := c.createCanonicalIntentPane(scope, intent, launchDir, stdout)
+		return created, finishSplitIntent(stderr, notice, createErr)
 	}
 	// A resume cannot be spelled: `create` has no public `--resume`. The intent
 	// route still parses the exact public argv before attaching its private
@@ -458,14 +459,15 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 	shape := resourceCreateShape{split: true, provider: true}
 	flags, err := parseResourceCreateFlags(canonicalCreateAgent, argv[1:], stderr, shape)
 	if err != nil {
-		return err
+		return createdPaneRuntime{}, err
 	}
 	flags.resumeConversation = conversation
 	flags.resumeSource = strings.TrimSpace(intent.resumeSource)
 	flags.resumeEndpoint = intent.resumeEndpoint
 	flags.resumeGenerationState = intent.resumeGenerationState
 	flags.codexCapability = intent.codexCapability
-	return finishSplitIntent(stderr, notice, c.createCanonicalIntentAgent(scope, intent, provider, launchDir, flags, stdout))
+	created, err := c.createCanonicalIntentAgent(scope, intent, provider, launchDir, flags, stdout)
+	return created, finishSplitIntent(stderr, notice, err)
 }
 
 // visibleCanonicalCreateError prevents a subprocess ExitCode from escaping a

@@ -779,7 +779,7 @@ func TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane(t *testing.T) {
 			fx.create.codexNative = native
 			fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacyResume, fakeNativePaneLauncher: panes}
 
-			err := fx.create.createFromIntent(agentPaneIntent{
+			_, err := fx.create.createFromIntent(agentPaneIntent{
 				producer: producer, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
 			}, ioDiscard{}, ioDiscard{})
 			if err != nil {
@@ -1024,7 +1024,7 @@ func TestNativeCatalogPickerResumeUsesExactThreadAndCreatesZeroThreads(t *testin
 	fx.create.codexNative = native
 	fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
 
-	err := fx.create.createFromIntent(agentPaneIntent{
+	_, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
 		conversationID: id, resumeSource: aisessions.SourceCodexAppServer, anchorPaneID: fx.originID,
 		resumeEndpoint: route.Endpoint, resumeGenerationState: coremetadata.CodexGenerationCurrent,
@@ -1047,7 +1047,7 @@ func TestRolloutCatalogPickerResumeStaysOnCurrentCLILane(t *testing.T) {
 	launcher := &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
 	fx.create.resumes = launcher
 
-	err := fx.create.createFromIntent(agentPaneIntent{
+	_, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
 		conversationID: id, resumeSource: aisessions.SourceCodexRollout, anchorPaneID: fx.originID,
 	}, ioDiscard{}, ioDiscard{})
@@ -1087,7 +1087,7 @@ func TestUnavailableNativePickerResumeRefusesInsteadOfRebindingOntoTheRolloutLan
 	fx.create.codexNative = native
 	fx.create.resumes = launcher
 
-	err := fx.create.createFromIntent(agentPaneIntent{
+	_, err := fx.create.createFromIntent(agentPaneIntent{
 		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
 		conversationID: id, resumeSource: aisessions.SourceCodexAppServer, anchorPaneID: fx.originID,
 		resumeEndpoint: native.resolvedRoute.Endpoint, resumeGenerationState: coremetadata.CodexGenerationCurrent,

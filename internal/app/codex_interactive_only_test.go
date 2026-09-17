@@ -548,7 +548,7 @@ func TestPayloadFreeCodexPlainLaunchFailureRollsBackWithoutProviderMutation(t *t
 		fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
 		fx.tmux.fail = []string{"split-window"}
 		beforeRegistry, beforeTmux := fx.store.snapshot(), fx.tmux.state()
-		err := fx.create.createFromIntent(agentPaneIntent{
+		_, err := fx.create.createFromIntent(agentPaneIntent{
 			producer: canonicalProducerSavedDefault, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
 		}, ioDiscard{}, ioDiscard{})
 		if err == nil {

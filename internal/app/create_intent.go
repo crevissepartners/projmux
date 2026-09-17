@@ -52,6 +52,14 @@ type createdWindowRuntime struct {
 	windowID  string
 }
 
+// createdPaneRuntime is the exact runtime Pane a committed split intent made:
+// the `%N` the materializer returned and the transaction bound into the
+// Registry. Like createdWindowRuntime it carries no identity authority; the UI
+// split callers only use it to address the focus step.
+type createdPaneRuntime struct {
+	paneID string
+}
+
 // windowRenameIntent and paneRenameIntent are the generated rename surfaces'
 // complete input: the exact anchor Pane the key or menu item targeted, the
 // client that sees the result, and the raw prompt response. The response is
@@ -507,8 +515,9 @@ func (c *createCommand) canonicalIntentGuards(scope canonicalIntentScope) []crea
 	return guards
 }
 
-func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, intent agentPaneIntent, launchDir string, stdout io.Writer) error {
+func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, intent agentPaneIntent, launchDir string, stdout io.Writer) (createdPaneRuntime, error) {
 	var result createResult
+	var created createdPaneRuntime
 	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
@@ -561,17 +570,18 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 		c.runtime.equalizeSplitLayout(ctx, scope.anchorPaneID, intent.placement)
 		result = createResult{kind: coremetadata.KindPane, uid: pane.Metadata.UID, name: pane.Metadata.Name,
 			paneID: paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
+		created = createdPaneRuntime{paneID: paneID}
 		return nil
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
-		return err
+		return createdPaneRuntime{}, err
 	}
-	return c.writeResults(stdout, canonicalCreatePane, cli.OutputModeDefault, coremetadata.KindPane, []createResult{result})
+	return created, c.writeResults(stdout, canonicalCreatePane, cli.OutputModeDefault, coremetadata.KindPane, []createResult{result})
 }
 
-func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, intent agentPaneIntent, provider, launchDir string, flags resourceCreateFlags, stdout io.Writer) error {
+func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, intent agentPaneIntent, provider, launchDir string, flags resourceCreateFlags, stdout io.Writer) (createdPaneRuntime, error) {
 	if c.agents == nil {
-		return errors.New("create agent: the provider launcher is not configured")
+		return createdPaneRuntime{}, errors.New("create agent: the provider launcher is not configured")
 	}
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
 	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
@@ -581,16 +591,16 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	rolloutResume := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
 		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexRollout
 	if provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" && !nativeCatalogResume && !rolloutResume {
-		return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
+		return createdPaneRuntime{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
 	}
 	var nativeRoute codexNativeEndpointRoute
 	if freshNativeCreate {
 		_, exactPrompt := nativePrompt(flags.payload)
 		if flags.codexCapability != nil || !exactPrompt {
-			return nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: "unsupported-create-shape"})
+			return createdPaneRuntime{}, nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: "unsupported-create-shape"})
 		}
 		if !nativeLaunchCapable || c.codexNative == nil {
-			return nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+			return createdPaneRuntime{}, nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
 		}
 		nativeCtx, cancel := prepareNativeContext(context.Background())
 		var routeErr error
@@ -600,11 +610,11 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 			if routeErr == nil {
 				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 			}
-			return nativeCreatePreparationRefusal(canonicalCreateAgent, routeErr)
+			return createdPaneRuntime{}, nativeCreatePreparationRefusal(canonicalCreateAgent, routeErr)
 		}
 	} else if nativeCatalogResume {
 		if !nativeLaunchCapable || c.codexNative == nil || !flags.resumeEndpoint.Valid() {
-			return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
+			return createdPaneRuntime{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
 		}
 		// Draining and handover-pending rows are leftovers of the retired
 		// private generation pool; they resolve like current rows, switching
@@ -612,7 +622,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		switch flags.resumeGenerationState {
 		case coremetadata.CodexGenerationCurrent, coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
 		default:
-			return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+			return createdPaneRuntime{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
 		}
 		nativeCtx, cancel := prepareNativeContext(context.Background())
 		var routeErr error
@@ -626,10 +636,11 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 			if routeErr == nil {
 				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 			}
-			return nativeResumePreparationRefusal(canonicalCreateAgent, routeErr)
+			return createdPaneRuntime{}, nativeResumePreparationRefusal(canonicalCreateAgent, routeErr)
 		}
 	}
 	var result createResult
+	var created createdPaneRuntime
 	var nativeLifecycleTarget codexLifecycleObserverTarget
 	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
@@ -816,15 +827,16 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		}
 		result = createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name,
 			paneID: paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
+		created = createdPaneRuntime{paneID: paneID}
 		return nil
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
-		return err
+		return createdPaneRuntime{}, err
 	}
 	if nativeLifecycleTarget.valid() {
 		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTarget)
 	}
-	return c.writeResults(stdout, canonicalCreateAgent, cli.OutputModeDefault, coremetadata.KindAgent, []createResult{result})
+	return created, c.writeResults(stdout, canonicalCreateAgent, cli.OutputModeDefault, coremetadata.KindAgent, []createResult{result})
 }
 
 // pickerResumeSessionObservation projects the provider-discriminated picker
