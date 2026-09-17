@@ -10058,7 +10058,8 @@ menu_client_pane_before="$(menu_tmux display-message -p -c "$menu_client" '#{pan
 
 # menu_assert_no_overlay is the whole C-1 assertion in one place: the origin
 # pane is not in any mode, is certainly not in view-mode, still runs the same
-# process, and the client is still looking at it.
+# process, and the client is still looking at it. It is for every action except
+# a split: those leave the client's focus alone.
 menu_assert_no_overlay() {
   local label="$1"
   local in_mode mode pid client_pane
@@ -10077,6 +10078,51 @@ menu_assert_no_overlay() {
   fi
   if [[ "$client_pane" != "$menu_client_pane_before" ]]; then
     echo "$label moved the client: $menu_client_pane_before -> $client_pane" >&2
+    exit 1
+  fi
+}
+
+# menu_client_pane is the Pane the menu client shows. Per-client state comes
+# from list-clients: `display-message -c` formats against the most recent
+# session, not the named client's.
+menu_client_pane() {
+  menu_tmux list-clients -F '#{client_name}|#{pane_id}' | awk -F'|' -v client="$menu_client" '$1 == client { print $2 }'
+}
+
+# menu_assert_split_focused is the split form of menu_assert_no_overlay. The
+# origin pane is still out of any mode and runs the same process, but a UI split
+# moves the pressing client's focus to the new Pane on the same Window. The
+# assertion then puts focus back on the origin pane, so every later leg starts
+# from the same state.
+menu_assert_split_focused() {
+  local label="$1"
+  local new_pane="$2"
+  local in_mode mode pid client_pane
+  in_mode="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_in_mode}')"
+  mode="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_mode}')"
+  pid="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_pid}')"
+  client_pane="$(menu_client_pane)"
+  if [[ "$in_mode" != "0" ]] || [[ "$mode" == *view-mode* ]]; then
+    echo "$label put the origin pane in a mode: pane_in_mode=$in_mode pane_mode=$mode" >&2
+    menu_tmux capture-pane -p -t "$menu_origin_pane" | tail -n 20 >&2 || true
+    exit 1
+  fi
+  if [[ "$pid" != "$menu_origin_pid_before" ]]; then
+    echo "$label replaced the origin pane process: $menu_origin_pid_before -> $pid" >&2
+    exit 1
+  fi
+  if [[ ! "$new_pane" =~ ^%[0-9]+$ ]] || [[ "$new_pane" == "$menu_origin_pane" ]]; then
+    echo "$label has no new Pane to check focus on: new=$new_pane origin=$menu_origin_pane" >&2
+    exit 1
+  fi
+  if [[ "$client_pane" != "$new_pane" ]]; then
+    echo "$label did not focus the new Pane: client on $client_pane, want $new_pane" >&2
+    exit 1
+  fi
+  menu_tmux select-pane -t "$menu_origin_pane"
+  client_pane="$(menu_client_pane)"
+  if [[ "$client_pane" != "$menu_origin_pane" ]]; then
+    echo "$label: could not put focus back on the origin pane: client on $client_pane" >&2
     exit 1
   fi
 }
@@ -10117,8 +10163,8 @@ menu_select_item "$menu_origin_pane" h
 smoke_wait_for "managed Horizontal Split" menu_wait_for_pane_count 2
 smoke_wait_for "Horizontal Split client message" menu_client_saw "$menu_split_log_offset" "Created Pane"
 menu_settle_run_shell
-menu_assert_no_overlay "Horizontal Split menu item"
 menu_horizontal_pane="$(menu_new_pane_except "$menu_origin_pane")"
+menu_assert_split_focused "Horizontal Split menu item" "$menu_horizontal_pane"
 smoke_wait_for "Horizontal Split Registry identity" menu_pane_is_managed "$menu_horizontal_pane"
 menu_horizontal_uid="$(menu_tmux show-options -pqv -t "$menu_horizontal_pane" @projmux_pane_uid)"
 if [[ -z "$menu_horizontal_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu_horizontal_uid"; then
@@ -10140,8 +10186,8 @@ menu_select_item "$menu_origin_pane" v
 smoke_wait_for "managed Vertical Split" menu_wait_for_pane_count 2
 smoke_wait_for "Vertical Split client message" menu_client_saw "$menu_vertical_log_offset" "Created Pane"
 menu_settle_run_shell
-menu_assert_no_overlay "Vertical Split menu item"
 menu_vertical_pane="$(menu_new_pane_except "$menu_origin_pane")"
+menu_assert_split_focused "Vertical Split menu item" "$menu_vertical_pane"
 smoke_wait_for "Vertical Split Registry identity" menu_pane_is_managed "$menu_vertical_pane"
 menu_vertical_uid="$(menu_tmux show-options -pqv -t "$menu_vertical_pane" @projmux_pane_uid)"
 if [[ -z "$menu_vertical_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu_vertical_uid"; then
@@ -10173,7 +10219,8 @@ menu_assert_no_overlay "Vertical Kill menu item"
 # the same managed Pane the menu selections above used, with a real long-running
 # foreground process (`sleep 600`) in the origin pane, and measures the three
 # things that would have moved: the origin pane's mode, its process, and the
-# client's focus. Every generated producer is driven through the exact transport
+# client's focus. A split moves the pressing client's focus to the new Pane on
+# the same Window; every other action leaves focus alone. Every generated producer is driven through the exact transport
 # the generated config uses -- a foreground `run-shell` targeting that pane --
 # because the transport is what this contract is about.
 # ---------------------------------------------------------------------------
@@ -10234,10 +10281,10 @@ fi
 #    reaches, and its canonical Kill.
 menu_overlay_offset="$(stat -c %s "$menu_client_log")"
 menu_run_producer "$menu_origin_pane" internal tmux pane-menu --client "$menu_client" split-right "$menu_origin_pane"
-menu_assert_no_overlay "pane-menu split"
 smoke_wait_for "Created Pane client message" menu_client_saw "$menu_overlay_offset" "Created Pane"
 smoke_wait_for "pane-menu split pane" menu_wait_for_pane_count 2
 menu_overlay_pane="$(menu_new_pane_except "$menu_origin_pane")"
+menu_assert_split_focused "pane-menu split" "$menu_overlay_pane"
 smoke_wait_for "pane-menu split Registry identity" menu_pane_is_managed "$menu_overlay_pane"
 menu_overlay_uid="$(menu_tmux show-options -pqv -t "$menu_overlay_pane" @projmux_pane_uid)"
 menu_overlay_offset="$(stat -c %s "$menu_client_log")"
@@ -10246,11 +10293,12 @@ menu_assert_no_overlay "pane-menu kill"
 smoke_wait_for "canonical Kill convergence" menu_delete_converged "$menu_overlay_uid" "$menu_overlay_offset" 1
 
 # 3. A direct split hotkey and a status-bar action. Neither reports success in
-#    words; the proof is that the pane is untouched and the resource appeared.
+#    words; the proof is that the origin pane is untouched and the resource
+#    appeared. The split also moves the pressing client to the new Pane.
 menu_run_producer "$menu_origin_pane" internal agent-pane launch-shell right
-menu_assert_no_overlay "direct shell split"
 smoke_wait_for "direct split pane" menu_wait_for_pane_count 2
 menu_direct_pane="$(menu_new_pane_except "$menu_origin_pane")"
+menu_assert_split_focused "direct shell split" "$menu_direct_pane"
 smoke_wait_for "direct split Registry identity" menu_pane_is_managed "$menu_direct_pane"
 menu_direct_uid="$(menu_tmux show-options -pqv -t "$menu_direct_pane" @projmux_pane_uid)"
 menu_pmx delete pane "uid:$menu_direct_uid" --yes --socket "$menu_socket" >"$menu_root/direct-delete.out"
@@ -10625,8 +10673,8 @@ menu_select_open_item "$menu_offset" "Horizontal Split" h
 smoke_wait_for "Pane menu Horizontal Split pane" menu_wait_for_pane_count 2
 smoke_wait_for "Pane menu Horizontal Split client message" menu_client_saw "$menu_offset" "Created Pane"
 menu_settle_run_shell
-menu_assert_no_overlay "Pane menu Horizontal Split"
 menu_target_pane="$(menu_new_pane_except "$menu_origin_pane")"
+menu_assert_split_focused "Pane menu Horizontal Split" "$menu_target_pane"
 smoke_wait_for "Pane menu split Registry identity" menu_pane_is_managed "$menu_target_pane"
 menu_target_pane_uid="$(menu_tmux show-options -pqv -t "$menu_target_pane" @projmux_pane_uid)"
 menu_offset="$(stat -c %s "$menu_client_log")"
