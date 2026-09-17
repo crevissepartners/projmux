@@ -895,17 +895,25 @@ func (m *materializer) observeMaterializeMutationEffect(ctx context.Context, act
 		}
 		return got == action.Operands[len(action.Operands)-1], true, nil
 	case mutationKillOwned:
-		command, format := "list-sessions", "#{session_id}"
+		// Each kind carries its own argv, flags included. -a widens
+		// list-windows and list-panes past the current session, but
+		// list-sessions is already server wide and rejects -a outright, so a
+		// flag shared across the three kinds failed every session reobserve:
+		// rollback then stopped on an unknown observation before its kill and
+		// left the created session on the server it had just started.
+		var out []byte
+		var err error
+		runner := m.routedRunner()
 		switch action.Target.Kind {
 		case "window":
-			command, format = "list-windows", "#{window_id}"
+			out, err = runner.Run(ctx, "tmux", "list-windows", "-a", "-F", "#{window_id}")
 		case "pane":
-			command, format = "list-panes", "#{pane_id}"
+			out, err = runner.Run(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_id}")
 		case "session":
+			out, err = runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_id}")
 		default:
 			return false, true, errors.New("owned kill effect has an unknown target kind")
 		}
-		out, err := m.routedRunner().Run(ctx, "tmux", command, "-a", "-F", format)
 		if err != nil {
 			if inttmux.IsNoServerFailure(err) {
 				return true, true, nil

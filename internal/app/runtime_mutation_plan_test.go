@@ -3859,3 +3859,60 @@ func TestGenericWindowPaneMirrorIsRecorderOnlyOutsideNativePhase2(t *testing.T) 
 		t.Fatal("project Registry generic Window/Pane mirror is not structurally recorder-only")
 	}
 }
+
+// TestOwnedKillReobserveArgvMatchesEachTargetKind pins the reobserve argv the
+// kill-owned effect issues per target kind. The flags are not shared: -a widens
+// list-windows and list-panes past the current session, and list-sessions, which
+// is already server wide, rejects it. A single -a for all three kinds therefore
+// failed every session reobserve, stopping rollback with an unknown observation
+// and leaving the created session on the server.
+func TestOwnedKillReobserveArgvMatchesEachTargetKind(t *testing.T) {
+	t.Parallel()
+
+	const socket = "/tmp/projmux-owned-kill/reobserve"
+	for _, row := range []struct {
+		kind string
+		id   string
+		argv []string
+	}{
+		{kind: "session", id: "$7", argv: []string{"list-sessions", "-F", "#{session_id}"}},
+		{kind: "window", id: "@7", argv: []string{"list-windows", "-a", "-F", "#{window_id}"}},
+		{kind: "pane", id: "%7", argv: []string{"list-panes", "-a", "-F", "#{pane_id}"}},
+	} {
+		t.Run(row.kind, func(t *testing.T) {
+			t.Parallel()
+
+			target := tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}
+			wantArgv := append(append([]string(nil), target.Args()...), row.argv...)
+			// The killed object is still listed, so the effect is unobserved;
+			// the empty case below is the same argv with the object absent.
+			recorder := &recordingTmuxRunner{outputs: map[string]string{
+				recordedTmuxCallKey("tmux", wantArgv...): row.id + "\n",
+			}}
+			runtime := &materializer{runner: explicitTmuxRunner{runner: recorder, target: target}, target: target}
+			action := materializeMutationAction(mutationKillOwned,
+				runtime.boundMutationTarget(row.kind, row.id, "uid-"+row.kind),
+				"same mirrored ownership uid", "owned created "+row.kind+" is absent", "-t", row.id)
+
+			observed, supported, err := runtime.observeMaterializeMutationEffect(context.Background(), action)
+			if err != nil || !supported || observed {
+				t.Fatalf("present %s reobserve = (%t, %t, %v), want (false, true, nil)", row.kind, observed, supported, err)
+			}
+			if len(recorder.calls) != 1 || recorder.calls[0].name != "tmux" ||
+				!slices.Equal(recorder.calls[0].args, wantArgv) {
+				t.Fatalf("%s reobserve calls = %#v, want one tmux %v", row.kind, recorder.calls, wantArgv)
+			}
+
+			recorder.outputs[recordedTmuxCallKey("tmux", wantArgv...)] = "\n"
+			observed, supported, err = runtime.observeMaterializeMutationEffect(context.Background(), action)
+			if err != nil || !supported || !observed {
+				t.Fatalf("absent %s reobserve = (%t, %t, %v), want (true, true, nil)", row.kind, observed, supported, err)
+			}
+			for _, call := range recorder.calls {
+				if slices.Contains(call.args, "-a") != (row.kind != "session") {
+					t.Fatalf("%s reobserve argv carries the wrong scope flag: %#v", row.kind, call.args)
+				}
+			}
+		})
+	}
+}
