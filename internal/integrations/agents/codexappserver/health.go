@@ -325,11 +325,13 @@ func IsSafeDiagnosticVersion(value string) bool {
 	return len(value) <= 64 && diagnosticVersionPattern.MatchString(value)
 }
 
-// strictEvidenceVersion admits only the known Codex product prefixes and a
-// bounded release number. Unlike an arbitrary substring search it cannot turn
-// a path, provider prose, or embedded token into lifecycle evidence.
+// strictEvidenceVersion admits only the known Codex product prefixes, this
+// client's own name, and a bounded release number. The app server reports its
+// Codex version under the initialize clientInfo.name
+// ("projmux/0.154.0 (...)"). Unlike an arbitrary substring search it cannot
+// turn a path, provider prose, or embedded token into lifecycle evidence.
 func strictEvidenceVersion(raw string) string {
-	for _, prefix := range []string{"codex-cli/", "codex_cli_rs/", "codex/"} {
+	for _, prefix := range []string{"codex-cli/", "codex_cli_rs/", "codex/", clientName + "/"} {
 		if after, ok := strings.CutPrefix(raw, prefix); ok {
 			raw = after
 			break

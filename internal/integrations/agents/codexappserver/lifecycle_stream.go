@@ -204,7 +204,7 @@ func OpenPrivateUnixLifecycle(
 
 func (c *LifecycleClient) initialize(ctx context.Context, version string, experimental bool) (err error) {
 	defer func() { err = withRequestFailure(methodInitialize, err) }()
-	params := initializeParams{ClientInfo: clientInfo{Name: "projmux", Title: "Projmux", Version: safeVersion(version)}}
+	params := initializeParams{ClientInfo: clientInfo{Name: clientName, Title: "Projmux", Version: safeVersion(version)}}
 	if experimental {
 		params.Capabilities = &initializeCapabilities{ExperimentalAPI: true}
 	}

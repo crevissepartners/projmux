@@ -453,7 +453,11 @@ func TestCodexDiagnosticProxyProcess(t *testing.T) {
 		var result any
 		switch message.Method {
 		case "initialize":
-			result = map[string]string{"userAgent": "codex-cli/" + os.Getenv("CODEX_DIAGNOSTIC_VERSION")}
+			userAgent := os.Getenv("CODEX_DIAGNOSTIC_USER_AGENT")
+			if userAgent == "" {
+				userAgent = "codex-cli/" + os.Getenv("CODEX_DIAGNOSTIC_VERSION")
+			}
+			result = map[string]string{"userAgent": userAgent}
 		case "initialized":
 			continue
 		case "remoteControl/status/read":

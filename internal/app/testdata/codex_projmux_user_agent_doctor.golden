@@ -1,0 +1,23 @@
+== live-same-version
+doctor:
+Codex app-server
+  Source: App Server; availability: available; reason: none; endpoint: stdio-proxy; connection: ready; version: projmux/0.154.0; lifecycle: not-attempted/read-only
+  App-server probe: none; install capability: managed-ready
+  Manager evidence: status running; backend pid; result observed; agreement consistent; manager version 0.154.0
+  Capability guidance: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli
+  Endpoint readiness: ready; running executable: managed; version relation: current; manager ownership: managed; remote control: disabled
+  Versions: CLI 0.154.0; managed 0.154.0; running 0.154.0
+  Native action: ready; refusal: none; interruption risk: none; operator recovery: none
+
+== attach-version-differs
+doctor:
+Codex app-server
+  Source: App Server; availability: available; reason: none; endpoint: stdio-proxy; connection: ready; version: projmux/0.153.4; lifecycle: not-attempted/read-only
+  App-server probe: none; install capability: managed-ready
+  Manager evidence: status running; backend pid; result observed; agreement contradictory; manager version 0.154.0
+  Capability guidance: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli
+  Endpoint readiness: ready; running executable: unknown; version relation: unknown; manager ownership: unknown; remote control: disabled
+  Versions: CLI 0.154.0; managed 0.154.0; running 0.153.4
+  Native action: refused; refusal: evidence-contradictory; interruption risk: shared-clients-disconnect; operator recovery: inspect-process-ownership
+  Guidance: Process ownership or running version is unknown, insufficient, or contradictory. Identify the owning operator before changing the shared app server, then rerun diagnostics. Projmux will not kill or restart it. Once the owner agrees, `codex app-server daemon restart` replaces an app server the official daemon manages.
+

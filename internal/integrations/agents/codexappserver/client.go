@@ -15,6 +15,11 @@ import (
 )
 
 const (
+	// clientName is the initialize clientInfo.name. The app server echoes it as
+	// the product token of its userAgent, so it is also the attach-version prefix
+	// strictEvidenceVersion accepts.
+	clientName = "projmux"
+
 	maxFrameBytes       = 1 << 20
 	frameReaderBytes    = 4096
 	notificationBacklog = 64
@@ -199,7 +204,7 @@ func (c *Client) ExperimentalAPI() bool {
 
 func (c *Client) initialize(ctx context.Context, version string, experimental bool) (string, error) {
 	var result initializeResult
-	params := initializeParams{ClientInfo: clientInfo{Name: "projmux", Title: "Projmux", Version: safeVersion(version)}}
+	params := initializeParams{ClientInfo: clientInfo{Name: clientName, Title: "Projmux", Version: safeVersion(version)}}
 	if experimental {
 		params.Capabilities = &initializeCapabilities{ExperimentalAPI: true}
 	}
