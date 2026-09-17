@@ -147,10 +147,10 @@ step, never a silent no-op.
     HUD`, `Working directory` and `Git` are component Views because each owns a
     `Visible` Toggle plus an icon `Choice`; cwd/Git icon `off` removes only the
     icon and leaves the text segment visible. `Agent Usage HUD` is a component
-    View with `Visible`, then Claude/Codex/Antigravity provider Views in the
+    View with `Visible`, then Claude/Codex provider Views in the
     usage-supported catalog order. Each provider owns `Visible` plus only its
-    explicit HUD windows: Claude/Codex own `5h` and `Weekly`; Antigravity owns
-    `Weekly` only. Parent off states gate effective visibility without rewriting
+    explicit HUD windows, `5h` and `Weekly`; Antigravity has no usage source and
+    no provider View. Parent off states gate effective visibility without rewriting
     saved child values. Provider/window rows show saved, effective, and source.
     `Project`, `Clock` and `Settings launcher` are direct visibility Toggles. These global
     presentation values default on except Codex `5h`, which defaults off to

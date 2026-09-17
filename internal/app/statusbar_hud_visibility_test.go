@@ -123,18 +123,23 @@ func TestAgentUsageSettingsCapabilityOrderRowsAndLocaleProjection(t *testing.T) 
 	home := t.TempDir()
 	cmd := settingsNavTestCommand(t, home)
 	rows := cmd.agentUsageHUDEntries()
-	positions := make([]int, 3)
-	for i, provider := range []string{"Claude", "Codex", "Antigravity"} {
+	positions := make([]int, 2)
+	for i, provider := range []string{"Claude", "Codex"} {
 		positions[i] = entryLabelIndex(rows, provider)
 		if positions[i] < 0 {
 			t.Fatalf("missing provider row %s: %#v", provider, rows)
 		}
 	}
-	if !(positions[0] < positions[1] && positions[1] < positions[2]) {
+	if positions[0] >= positions[1] {
 		t.Fatalf("provider order = %v, want UsageSupported declared order", positions)
 	}
-	if got := cmd.agentUsageProviderEntries("antigravity"); !hasEntryLabelContainingAll(got, "Weekly") || hasEntryLabelContainingAll(got, "5h") {
-		t.Fatalf("Antigravity rows = %#v, want Weekly only", got)
+	// Antigravity has no usage source, so Settings offers no usage row or
+	// visibility leaf for it.
+	if entryLabelIndex(rows, "Antigravity") >= 0 || hasEntryValue(rows, "appearance:status-bar:agent-usage-provider:antigravity") {
+		t.Fatalf("usage HUD rows = %#v, want no Antigravity row", rows)
+	}
+	if got := cmd.agentUsageProviderEntries("antigravity"); hasEntryLabelContainingAll(got, "Weekly") || hasEntryLabelContainingAll(got, "5h") {
+		t.Fatalf("Antigravity rows = %#v, want no window leaves", got)
 	}
 	claudeRows := cmd.agentUsageProviderEntries("claude")
 	if !hasEntryLabelContainingAll(claudeRows, "5h", "saved on", "effective on", "default") || !hasEntryLabelContainingAll(claudeRows, "Weekly", "saved on", "effective on", "default") {

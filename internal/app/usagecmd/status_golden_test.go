@@ -149,26 +149,36 @@ var statusbarUsageBudgets = []int{40, 60, 100, 120, 140, 160}
 
 // statusbarLadderUsageBudgets drops the two narrowest entries, because the
 // width-parameterized staleness table below locates the marker by the
-// `Antigravity` label and the ladder switches to single-letter labels under
+// `Codex` label and the ladder switches to single-letter labels under
 // 70-odd cells. The narrow budgets are not skipped, they are covered by
 // TestStalenessAtTheNarrowestClientBudgets and frozen in the golden, so what a
 // 60- or 80-column client sees stays visible to a reviewer.
 var statusbarLadderUsageBudgets = statusbarUsageBudgets[2:]
 
-// statusbarGoldenSnapshots is the three-provider shape a real install renders:
-// Claude (5h + weekly, age indicator opted in), Codex (5h, opted out) and
-// weekly-only Antigravity (opted in). Claude is pinned at a cosmetic level-0
-// age so the fixture reproduces the exact pressure that used to evict the
-// marker: the segment carries one purely decorative `(3m)` plus one real
-// staleness signal, and the full-age tier does not fit 120 cells.
-// antigravityAge parameterizes the staleness level under test.
-func statusbarGoldenSnapshots(antigravityAge time.Duration) []usage.Snapshot {
+// statusbarGoldenSnapshots is the stale-provider shape the ladder walks:
+// Claude (5h + weekly, age indicator opted in) and a Codex 5h row retained
+// after its app-server disconnected, which opts Codex into the age indicator
+// too. Claude is pinned at a cosmetic level-0 age so the fixture reproduces
+// the exact pressure that used to evict the marker: the segment carries one
+// purely decorative `(3m)` plus one real staleness signal. codexAge
+// parameterizes the staleness level under test.
+func statusbarGoldenSnapshots(codexAge time.Duration) []usage.Snapshot {
 	claude := statusGoldenNow.Add(-3 * time.Minute)
 	return []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: claude},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: claude},
-		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow.Add(-antigravityAge)},
+		staleCodexSnapshot(usage.Window5h, 71, time.Hour, codexAge),
+	}
+}
+
+// staleCodexSnapshot is a Codex row retained from a disconnected app-server,
+// last refreshed age ago. The retained-row reason is what makes Codex show an
+// age and a staleness marker at all.
+func staleCodexSnapshot(window usage.Window, pct float64, resetIn, age time.Duration) usage.Snapshot {
+	return usage.Snapshot{
+		Model: "codex", Window: window, Pct: pct,
+		ResetsAt: statusGoldenNow.Add(resetIn), UpdatedAt: statusGoldenNow.Add(-age),
+		Source: usage.SourceAppServer, StaleReason: usage.ReasonAppServerDisconnected,
 	}
 }
 
@@ -176,7 +186,7 @@ func statusbarGoldenSnapshots(antigravityAge time.Duration) []usage.Snapshot {
 // for the defect this file's product-width goldens were added for: at 120 the
 // full-age render overflowed, the whole-segment tier ladder that then selected
 // the output fell through to a tier with NO age element at all, and the `~~` on
-// a three-day-old Antigravity row vanished together with the cosmetic `(3m)` on
+// a three-day-old row vanished together with the cosmetic `(3m)` on
 // healthy Claude.
 //
 // The contract pinned here is width-independent: from the narrowest legacy
@@ -189,7 +199,7 @@ func TestFormatStatusUsageStalenessSurvivesStatusbarWidths(t *testing.T) {
 	states := []struct {
 		name string
 		age  time.Duration
-		// marker is the exact staleness marker the Antigravity block must
+		// marker is the exact staleness marker the Codex block must
 		// carry at every width; "" means the block must stay marker-free.
 		marker string
 	}{
@@ -207,11 +217,11 @@ func TestFormatStatusUsageStalenessSurvivesStatusbarWidths(t *testing.T) {
 					t.Fatalf("visualLen=%d exceeds budget %d: %q", got, width, out)
 				}
 				plain := intrender.StripTmuxEscapes(out)
-				// The marker belongs to the Antigravity block and nothing else:
-				// Claude is level 0 and Codex opted out entirely.
-				_, antigravity, ok := strings.Cut(plain, "Antigravity")
+				// The marker belongs to the Codex block and nothing else:
+				// Claude is level 0.
+				_, codex, ok := strings.Cut(plain, "Codex")
 				if !ok {
-					t.Fatalf("Antigravity block missing at width %d: %q", width, plain)
+					t.Fatalf("Codex block missing at width %d: %q", width, plain)
 				}
 				if state.marker == "" {
 					if strings.Contains(plain, "~") {
@@ -219,11 +229,11 @@ func TestFormatStatusUsageStalenessSurvivesStatusbarWidths(t *testing.T) {
 					}
 					return
 				}
-				if !strings.Contains(antigravity, "~") {
-					t.Fatalf("Antigravity block lost its %q marker at width %d: %q", state.marker, width, plain)
+				if !strings.Contains(codex, "~") {
+					t.Fatalf("Codex block lost its %q marker at width %d: %q", state.marker, width, plain)
 				}
 				// Exactly len(marker) tildes in the whole segment: Claude is
-				// level 0 and Codex opted out, so the count both locates the
+				// level 0, so the count both locates the
 				// marker on the right provider and keeps `~~` from ever being
 				// readable as `~`.
 				if got := strings.Count(plain, "~"); got != len(state.marker) {
@@ -238,24 +248,23 @@ func TestFormatStatusUsageStalenessSurvivesStatusbarWidths(t *testing.T) {
 	}
 }
 
-// statusbarInstalledShapeSnapshots is the provider shape an actually installed
-// projmux renders on the machine this Phase was measured on: Claude with both
-// official windows, Codex with weekly only, and a long-stale weekly-only
-// Antigravity. It is the fixture that reproduces the defect this Phase fixes —
-// its second-bar tier needs more than 120 cells, so the hardcoded 120 budget
-// dropped Claude's weekly bar on a terminal with room to spare.
-func statusbarInstalledShapeSnapshots(antigravityAge time.Duration) []usage.Snapshot {
+// statusbarInstalledShapeSnapshots is the provider shape an installed projmux
+// renders: Claude with both official windows and a long-stale weekly-only
+// Codex retained from a disconnected app-server. It is the fixture that
+// reproduces the defect this Phase fixes — its second-bar tier needs more
+// than 120 cells, so the hardcoded 120 budget dropped Claude's weekly bar on
+// a terminal with room to spare.
+func statusbarInstalledShapeSnapshots(codexAge time.Duration) []usage.Snapshot {
 	claude := statusGoldenNow.Add(-3 * time.Minute)
 	return []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: claude},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: claude},
-		{Model: "codex", Window: usage.WindowWeekly, Pct: 20, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow.Add(-antigravityAge)},
+		staleCodexSnapshot(usage.WindowWeekly, 38, 7*24*time.Hour, codexAge),
 	}
 }
 
 // statusGoldenStates is the staleness ladder every width-parameterized golden
-// walks: level 0, level 1 and level 2 on the Antigravity row.
+// walks: level 0, level 1 and level 2 on the Codex row.
 var statusGoldenStates = []struct {
 	name string
 	age  time.Duration
@@ -276,7 +285,7 @@ func renderUsageBudgetTable() string {
 		name  string
 		build func(time.Duration) []usage.Snapshot
 	}{
-		{name: "trio", build: statusbarGoldenSnapshots},
+		{name: "ladder", build: statusbarGoldenSnapshots},
 		{name: "installed", build: statusbarInstalledShapeSnapshots},
 	} {
 		for _, width := range statusbarUsageBudgets {
@@ -332,42 +341,29 @@ func claudeWeeklyBarPresent(out string) bool {
 
 // installedShapeWeeklyBarBudget is the smallest budget at which the installed
 // shape's second-bar tier fits. It is a property of the fixture's data, not a
-// tunable: the tier renders 124 cells, so 124 is where Claude's weekly bar
-// comes back.
+// tunable.
 //
-// With `status-format[0]` reserving notify's FLOOR instead of its design cap,
-// that budget arrives on a 144-column client, and the 191-column terminal the
-// defect was reported from gets 140 cells — past this threshold and past the
-// 134 the full HUD tier needs. Under PR #624 the same client got 111 and the
-// bar stayed missing; that inversion is what this file's threshold now guards.
-//
-// A 140-column client still lands four cells short at 120. That is the honest
-// remaining limit of a change that only re-derives the budget: making a
-// 140-column row show the weekly bar needs per-provider tier selection, not
-// more cells.
-const installedShapeWeeklyBarBudget = 124
+// The defect this guards came from a three-provider row whose second-bar tier
+// needed 124 cells, past the old hardcoded 120-cell cap. With Antigravity usage
+// removed the HUD holds at most Claude and Codex, and the installed shape fits
+// well under that cap; the test keeps pinning where the weekly bar returns so
+// a renderer change that pushes it back past a real client budget fails here.
+const installedShapeWeeklyBarBudget = 94
 
 // TestAWideEnoughClientRecoversTheClaudeWeeklyBar is the product acceptance
-// this Phase exists for. The old hardcoded 120-cell cap was the ceiling on
-// every terminal however wide, so the installed shape could never reach its
-// second-bar tier. A budget that tracks the row does reach it.
+// this Phase exists for: a budget that tracks the row reaches the installed
+// shape's second-bar tier.
 //
 // The staleness marker is asserted at every one of those budgets too: buying
 // the weekly bar back must not cost the signal PR #620 established.
 func TestAWideEnoughClientRecoversTheClaudeWeeklyBar(t *testing.T) {
 	t.Parallel()
 
-	const oldHardcodedBudget = 120
-	narrow := formatStatusUsage(statusbarInstalledShapeSnapshots(72*time.Hour), oldHardcodedBudget, statusGoldenNow)
-	if claudeWeeklyBarPresent(narrow) {
-		t.Fatalf("fixture no longer reproduces the defect: %q renders a Claude weekly bar at %d cells",
-			intrender.StripTmuxEscapes(narrow), oldHardcodedBudget)
-	}
 	if got := formatStatusUsage(statusbarInstalledShapeSnapshots(72*time.Hour), installedShapeWeeklyBarBudget-1, statusGoldenNow); claudeWeeklyBarPresent(got) {
 		t.Fatalf("the weekly-bar tier fits below %d cells; the documented threshold has drifted",
 			installedShapeWeeklyBarBudget)
 	}
-	for _, budget := range []int{installedShapeWeeklyBarBudget, 160, 320} {
+	for _, budget := range []int{installedShapeWeeklyBarBudget, 120, 160, 320} {
 		for _, state := range statusGoldenStates {
 			out := formatStatusUsage(statusbarInstalledShapeSnapshots(state.age), budget, statusGoldenNow)
 			if got := intrender.VisualLen(out); got > budget {
@@ -388,13 +384,11 @@ func TestAWideEnoughClientRecoversTheClaudeWeeklyBar(t *testing.T) {
 // statusbarUsageBudgets actually render, because the width-parameterized table
 // above cannot reach them.
 //
-// At 60 cells (an 80-column client) every step of usageShedOrder has been
-// spent and the marker is still intact and level-distinguishable. At 40 (a
-// 60-column client) the segment is in hard rune-truncation, below the drop
-// order entirely, and a `~~` can be cut down to a single `~` — level 2 stops
-// being distinguishable from level 1. That is a limit of truncation, not of
-// the budget and not of the drop order: no budget an 80-column row can offer
-// fixes it. Pinning it here keeps the limitation visible instead of latent.
+// At 60 cells (an 80-column client) the marker is intact and
+// level-distinguishable. At 40 (a 60-column client) the segment is in hard
+// rune-truncation, below the drop order entirely. Truncation can in general
+// cut a `~~` down to `~`; this fixture's marker sits before the cut, so both
+// budgets must keep the three levels apart.
 func TestStalenessAtTheNarrowestClientBudgets(t *testing.T) {
 	t.Parallel()
 
@@ -418,16 +412,10 @@ func TestStalenessAtTheNarrowestClientBudgets(t *testing.T) {
 			}
 		}
 	}
-	// 60 cells still distinguishes all three levels.
-	if plain(60, 15*time.Minute) == plain(60, 72*time.Hour) {
-		t.Fatalf("a 60-cell budget can no longer distinguish stale from very stale: %q", plain(60, 72*time.Hour))
-	}
-	// 40 cells does not, and the golden shows exactly how. Asserting the
-	// collapse rather than ignoring it means a later fix fails here loudly and
-	// is upgraded to a real assertion instead of slipping by.
-	if plain(40, 15*time.Minute) != plain(40, 72*time.Hour) {
-		t.Fatalf("a 40-cell budget now distinguishes stale from very stale; upgrade this test to require it:\n stale=%q\n very=%q",
-			plain(40, 15*time.Minute), plain(40, 72*time.Hour))
+	for _, budget := range []int{40, 60} {
+		if plain(budget, 15*time.Minute) == plain(budget, 72*time.Hour) {
+			t.Fatalf("a %d-cell budget can no longer distinguish stale from very stale: %q", budget, plain(budget, 72*time.Hour))
+		}
 	}
 }
 
@@ -445,16 +433,18 @@ func renderFreshWidthParity() string {
 		fmt.Fprintf(&b, "pair|%d\t%s\n", w, formatStatusUsage(statusGoldenSnapshots(3*time.Minute), w, statusGoldenNow))
 	}
 	for _, w := range freshWidthParityWidths {
-		fmt.Fprintf(&b, "trio|%d\t%s\n", w, formatStatusUsage(statusbarGoldenSnapshots(3*time.Minute), w, statusGoldenNow))
+		fmt.Fprintf(&b, "ladder|%d\t%s\n", w, formatStatusUsage(statusbarGoldenSnapshots(3*time.Minute), w, statusGoldenNow))
 	}
 	return b.String()
 }
 
 // TestFormatStatusUsageFreshBytesMatchPreChangeTree is the fresh-state parity
-// proof. testdata/status-usage-fresh-widths.golden was GENERATED BY THE
-// PRE-CHANGE TREE (98ec3b1) — not by this code — so a match proves that a
-// healthy install is repainted at no width, across the staleness work that
-// captured it AND across the move to element-priority degradation.
+// proof. The `pair` rows of testdata/status-usage-fresh-widths.golden were
+// GENERATED BY THE PRE-CHANGE TREE (98ec3b1) — not by this code — so a match
+// proves that a healthy install is repainted at no width, across the staleness
+// work that captured it AND across the move to element-priority degradation.
+// The `ladder` rows were regenerated on 071596e1, the tree before Antigravity
+// usage was removed, once the fixture dropped its Antigravity row.
 //
 // The collapse is exact by construction rather than by coincidence:
 // renderHUDAgeSuffix and staleMarkerText both return "" at staleness level 0,
@@ -501,45 +491,43 @@ type usageSweepFixture struct {
 // alone is not enough.
 //
 //   - installed:  the shape a real install renders — Claude 5h+weekly with a
-//     cosmetic `(3m)`, weekly-only Codex, long-stale weekly-only Antigravity.
-//     One cosmetic age, one stale age, one secondary window.
+//     cosmetic `(3m)` and a long-stale weekly-only Codex. One cosmetic age,
+//     one stale age, one secondary window.
 //   - dual-window: Claude and Codex both carry 5h AND weekly, so the secondary
-//     window rule has TWO eligible providers; Claude and Antigravity are both
-//     at a cosmetic level-0 age, so the cosmetic rule has two as well.
+//     window rule has TWO eligible providers; both are at a cosmetic level-0
+//     age, so the cosmetic rule has two as well.
 //   - mixed-staleness: dual windows on Claude and Codex, a cosmetic age on
-//     Claude and a level-2 age on Antigravity, i.e. every rule in the order is
+//     Claude and a level-2 age on Codex, i.e. every rule in the order is
 //     eligible at once.
 func usageSweepFixtures() []usageSweepFixture {
 	cosmetic := statusGoldenNow.Add(-3 * time.Minute)
-	cosmetic2 := statusGoldenNow.Add(-6 * time.Minute)
-	veryStale := statusGoldenNow.Add(-72 * time.Hour)
+	const cosmetic2 = 6 * time.Minute
+	const veryStale = 72 * time.Hour
 	return []usageSweepFixture{
 		{
 			name:         "installed",
 			snaps:        statusbarInstalledShapeSnapshots(72 * time.Hour),
-			ageProviders: []string{"Claude", "Antigravity"},
+			ageProviders: []string{"Claude", "Codex"},
 		},
 		{
 			name: "dual-window",
 			snaps: []usage.Snapshot{
 				{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: cosmetic},
 				{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic},
-				{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
-				{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
-				{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic2},
+				staleCodexSnapshot(usage.Window5h, 71, time.Hour, cosmetic2),
+				staleCodexSnapshot(usage.WindowWeekly, 55, 7*24*time.Hour, cosmetic2),
 			},
-			ageProviders: []string{"Claude", "Antigravity"},
+			ageProviders: []string{"Claude", "Codex"},
 		},
 		{
 			name: "mixed-staleness",
 			snaps: []usage.Snapshot{
 				{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: cosmetic},
 				{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic},
-				{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
-				{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
-				{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: veryStale},
+				staleCodexSnapshot(usage.Window5h, 71, time.Hour, veryStale),
+				staleCodexSnapshot(usage.WindowWeekly, 55, 7*24*time.Hour, veryStale),
 			},
-			ageProviders: []string{"Claude", "Antigravity"},
+			ageProviders: []string{"Claude", "Codex"},
 		},
 	}
 }
@@ -565,10 +553,11 @@ func renderUsageWideParity() string {
 // per-provider degradation Phase: a row wide enough to shed nothing renders
 // byte-identically to what whole-segment tier selection produced.
 //
-// testdata/status-usage-wide-prechange.golden was GENERATED BY THE PRE-CHANGE
-// TREE (main 6dfed76, the whole-segment "first tier that fits" ladder) — not by
-// the element-priority code — so a match is a parity proof and not a
-// self-consistency check.
+// testdata/status-usage-wide-prechange.golden was first GENERATED BY THE
+// PRE-CHANGE TREE (main 6dfed76, the whole-segment "first tier that fits"
+// ladder). When the sweep fixtures dropped their Antigravity rows it was
+// regenerated on 071596e1, the tree before Antigravity usage was removed, so a
+// match is still a parity proof and not a self-consistency check.
 func TestUsageWideWidthBytesMatchPreChangeTree(t *testing.T) {
 	t.Parallel()
 

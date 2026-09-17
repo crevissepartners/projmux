@@ -37,10 +37,7 @@ type antigravityQuietHookFixture struct {
 	registry     *coremetadata.Registry
 	agentUID     string
 	explicitPane string
-	// paneState is what a tmux read of @projmux_ai_state answers, so a test can
-	// stand a Pane in a completed state before a late busy Statusline arrives.
-	paneState string
-	loads     int
+	loads        int
 }
 
 func newAntigravityQuietHookFixture(t *testing.T, owned bool) *antigravityQuietHookFixture {
@@ -127,8 +124,6 @@ func newAntigravityQuietHookFixture(t *testing.T, owned bool) *antigravityQuietH
 				if paneUID != "" {
 					return []byte(paneUID + "\n"), nil
 				}
-			case "#{" + aiPaneStateOption + "}":
-				return []byte(f.paneState + "\n"), nil
 			}
 		}
 		return nil, os.ErrNotExist
@@ -218,13 +213,12 @@ func TestAntigravityQuietHookMarksThePaneOnce(t *testing.T) {
 		event     string
 		payload   map[string]any
 		action    string
-		paneState string
 		options   []string
 		forbidden []string
 		// wantTmux is every recorded tmux command of the one ingest call: the
 		// marker set-options and nothing else, because a quiet event writes no
-		// status. The route probe, the Pane uid read and the late Statusline's
-		// terminal-state reads are reads, not commands.
+		// status. The route probe and the Pane uid read are reads, not
+		// commands.
 		//   owned:   10 marker options = 10.
 		//   unbound: 10 minus managed and agent = 8.
 		wantTmux int
@@ -243,21 +237,6 @@ func TestAntigravityQuietHookMarksThePaneOnce(t *testing.T) {
 		{name: "owned PostInvocation", owned: true, event: "PostInvocation", options: ownedOptions, wantTmux: 10, wantLoads: 3},
 		{name: "owned unknown event", owned: true, event: "ExperimentalEvent", options: ownedOptions, wantTmux: 10, wantLoads: 3},
 		{
-			name: "owned Statusline idle", owned: true, event: "Statusline",
-			payload: map[string]any{"agent_state": "idle", "tool_confirmation_pending": false},
-			options: ownedOptions, wantTmux: 10, wantLoads: 3,
-		},
-		{
-			name: "owned Statusline default", owned: true, event: "Statusline",
-			payload: map[string]any{"agent_state": "compacting", "tool_confirmation_pending": false},
-			options: ownedOptions, wantTmux: 10, wantLoads: 3,
-		},
-		{
-			name: "owned Statusline thinking late", owned: true, event: "Statusline",
-			payload:   map[string]any{"agent_state": "thinking", "tool_confirmation_pending": false},
-			paneState: "waiting", options: ownedOptions, wantTmux: 10, wantLoads: 3,
-		},
-		{
 			name: "owned Stop runtime quiet", owned: true, event: "Stop",
 			payload: map[string]any{"terminationReason": "completed"}, action: aiHookActionQuiet,
 			options: ownedOptions, wantTmux: 10, wantLoads: 3,
@@ -265,11 +244,6 @@ func TestAntigravityQuietHookMarksThePaneOnce(t *testing.T) {
 		{
 			name: "owned PreInvocation runtime quiet", owned: true, event: "PreInvocation",
 			action: aiHookActionQuiet, options: ownedOptions, wantTmux: 10, wantLoads: 3,
-		},
-		{
-			name: "owned Statusline approval runtime quiet", owned: true, event: "Statusline",
-			payload: map[string]any{"agent_state": "tool_use", "tool_confirmation_pending": true},
-			action:  aiHookActionQuiet, options: ownedOptions, wantTmux: 10, wantLoads: 3,
 		},
 		{
 			name: "unbound PostToolUse", event: "PostToolUse", options: unboundOptions,
@@ -281,7 +255,6 @@ func TestAntigravityQuietHookMarksThePaneOnce(t *testing.T) {
 			t.Parallel()
 
 			f := newAntigravityQuietHookFixture(t, tc.owned)
-			f.paneState = tc.paneState
 			if tc.action != "" {
 				f.runtimeAction(t, tc.event, tc.action)
 			}
@@ -330,7 +303,7 @@ type antigravityQuietHookOutcome struct {
 }
 
 // TestAntigravityHookOutcomeIsUnchangedByMarkingOnce characterizes every
-// Antigravity dispatch family, including every Statusline branch, on an owned
+// Antigravity dispatch family on an owned
 // Pane with golden values. It was green before quietAntigravityHook stopped
 // re-marking the Pane and must stay green after: the second mark repeated
 // identical writes, so collapsing it changes no state.
@@ -369,14 +342,12 @@ func TestAntigravityHookOutcomeIsUnchangedByMarkingOnce(t *testing.T) {
 		return options
 	}
 	stopPayload := map[string]any{"terminationReason": "completed"}
-	approvalPayload := map[string]any{"agent_state": "tool_use", "tool_confirmation_pending": true}
 	tests := []struct {
-		name      string
-		event     string
-		payload   map[string]any
-		action    string
-		paneState string
-		want      antigravityQuietHookOutcome
+		name    string
+		event   string
+		payload map[string]any
+		action  string
+		want    antigravityQuietHookOutcome
 	}{
 		{name: "Stop notify", event: "Stop", payload: stopPayload, want: antigravityQuietHookOutcome{
 			PaneOptions: markers(map[string]string{
@@ -408,77 +379,6 @@ func TestAntigravityHookOutcomeIsUnchangedByMarkingOnce(t *testing.T) {
 			ActivationState: "pending",
 			Records:         record("Stop", "quiet", "runtime quiet event"),
 		}},
-		{name: "Statusline approval notify", event: "Statusline", payload: approvalPayload, want: antigravityQuietHookOutcome{
-			PaneOptions: markers(map[string]string{
-				"@projmux_ai_state":                 "waiting",
-				"@projmux_ai_badge_kind":            "approval_required",
-				"@projmux_attention_state":          "reply",
-				"@projmux_attention_focus_armed":    "1",
-				"@projmux_desktop_notified":         "1",
-				"@projmux_desktop_notification_key": "hook|approval needed · tool_use",
-				"@projmux_desktop_notification_at":  "1789464600",
-			}),
-			SessionRef:      ref,
-			ActivationState: "acknowledged", ActivationSource: "provider-hook",
-			Records: record("Statusline", "notify", ""),
-		}},
-		{name: "Statusline approval runtime state", event: "Statusline", payload: approvalPayload, action: aiHookActionState, want: antigravityQuietHookOutcome{
-			PaneOptions: markers(map[string]string{
-				"@projmux_ai_state":              "waiting",
-				"@projmux_ai_badge_kind":         "approval_required",
-				"@projmux_attention_state":       "reply",
-				"@projmux_attention_focus_armed": "1",
-			}),
-			SessionRef:      ref,
-			ActivationState: "acknowledged", ActivationSource: "provider-hook",
-			Records: record("Statusline", "state", "runtime state event"),
-		}},
-		{name: "Statusline approval runtime quiet", event: "Statusline", payload: approvalPayload, action: aiHookActionQuiet, want: antigravityQuietHookOutcome{
-			PaneOptions: markers(nil), SessionRef: ref,
-			ActivationState: "pending",
-			Records:         record("Statusline", "quiet", "runtime quiet event"),
-		}},
-		{
-			name: "Statusline thinking busy", event: "Statusline",
-			payload: map[string]any{"agent_state": "thinking", "tool_confirmation_pending": false},
-			want: antigravityQuietHookOutcome{
-				PaneOptions: markers(map[string]string{
-					"@projmux_ai_state":        "thinking",
-					"@projmux_ai_badge_kind":   "in_progress",
-					"@projmux_attention_state": "busy",
-				}),
-				SessionRef:      ref,
-				ActivationState: "acknowledged", ActivationSource: "provider-hook",
-				Records: record("Statusline", "state", "statusline agent_state is busy"),
-			},
-		},
-		{
-			name: "Statusline thinking late", event: "Statusline", paneState: "waiting",
-			payload: map[string]any{"agent_state": "thinking", "tool_confirmation_pending": false},
-			want: antigravityQuietHookOutcome{
-				PaneOptions: markers(nil), SessionRef: ref,
-				ActivationState: "pending",
-				Records:         record("Statusline", "quiet", "late busy statusline; preserving existing completion or approval state"),
-			},
-		},
-		{
-			name: "Statusline idle", event: "Statusline",
-			payload: map[string]any{"agent_state": "idle", "tool_confirmation_pending": false},
-			want: antigravityQuietHookOutcome{
-				PaneOptions: markers(nil), SessionRef: ref,
-				ActivationState: "pending",
-				Records:         record("Statusline", "quiet", "statusline agent_state is idle; preserving existing completion or attention state"),
-			},
-		},
-		{
-			name: "Statusline default", event: "Statusline",
-			payload: map[string]any{"agent_state": "compacting", "tool_confirmation_pending": false},
-			want: antigravityQuietHookOutcome{
-				PaneOptions: markers(nil), SessionRef: ref,
-				ActivationState: "pending",
-				Records:         record("Statusline", "quiet", "unknown event"),
-			},
-		},
 		{name: "PreInvocation state", event: "PreInvocation", want: antigravityQuietHookOutcome{
 			PaneOptions: markers(map[string]string{
 				"@projmux_ai_state":        "thinking",
@@ -520,7 +420,6 @@ func TestAntigravityHookOutcomeIsUnchangedByMarkingOnce(t *testing.T) {
 			t.Parallel()
 
 			f := newAntigravityQuietHookFixture(t, true)
-			f.paneState = tc.paneState
 			if tc.action != "" {
 				f.runtimeAction(t, tc.event, tc.action)
 			}

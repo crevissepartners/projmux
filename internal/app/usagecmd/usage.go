@@ -22,7 +22,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/usage"
-	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
 	codexadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/codex"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -123,7 +122,7 @@ const veryStaleAfter = 1 * time.Hour
 func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	model := fs.String("model", "all", "filter by model: codex | claude | antigravity | all")
+	model := fs.String("model", "all", "filter by model: codex | claude | all")
 	window := fs.String("window", "all", "filter by window: 5h | weekly | context | quota | all")
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the tab-aligned table")
 	// --force / -f bypasses the per-adapter throttle floor AND clears
@@ -180,10 +179,11 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	// Conversation-local context fullness is diagnostic hook metadata, not
 	// account usage. Suppress legacy cached context rows before every CLI
 	// rendering mode while retaining lossless named account quota buckets.
+	// The model scope filter applies to explicit models too: a provider
+	// without a usage adapter has an empty scope, so rows it left in the
+	// cache (e.g. Antigravity) are never printed.
 	filtered := filterSnapshots(accountUsageSnapshots(snaps), *model, *window)
-	if !explicitModel {
-		filtered = filterSnapshotsByModels(filtered, modelScope)
-	}
+	filtered = filterSnapshotsByModels(filtered, modelScope)
 	filtered = usage.SortedSnapshots(filtered)
 
 	state, _ := mgr.LoadState()
@@ -371,9 +371,6 @@ func (c *Command) managerForScopeReadOnly(modelScope []string) (*usage.Manager, 
 }
 
 func (c *Command) defaultManager(modelScope []string, readOnly bool) (*usage.Manager, error) {
-	// Resolve the state dir up front: the Antigravity adapter reads its
-	// context sidecar from the same directory the snapshot cache lives in,
-	// so it needs the resolved path at construction time.
 	stateDir, err := c.resolveStateDir()
 	if err != nil {
 		return nil, err
@@ -396,10 +393,6 @@ func (c *Command) defaultManager(modelScope []string, readOnly bool) (*usage.Man
 			}
 			if err := registry.Register(adapter); err != nil {
 				return nil, fmt.Errorf("usage: register codex adapter: %w", err)
-			}
-		case aiprovider.Antigravity:
-			if err := registry.Register(antigravityadapter.New(stateDir)); err != nil {
-				return nil, fmt.Errorf("usage: register antigravity adapter: %w", err)
 			}
 		}
 	}
@@ -1392,8 +1385,8 @@ func snapshotProvenanceLabel(snapshot usage.Snapshot) string {
 // Snapshot source/reason fields directly and therefore remain lossless.
 //
 // Non-Codex providers deliberately retain their existing compact provenance
-// spelling so this Codex-only presentation change cannot move Claude or
-// Antigravity semantics.
+// spelling so this Codex-only presentation change cannot move Claude
+// semantics.
 func compactModelDisplayLabels(snapshot usage.Snapshot) (string, string) {
 	longLabel := ModelDisplayLabel(snapshot.Model)
 	shortLabel := modelShortLabel(snapshot.Model)
@@ -1500,10 +1493,6 @@ func HUDProviderCapabilities() []HUDProviderCapability {
 				{Window: usage.Window5h, Key: "5h", Label: "5h", DefaultVisibility: config.StatusbarVisibilityOff},
 				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly", DefaultVisibility: config.StatusbarVisibilityOn},
 			}
-		case aiprovider.Antigravity:
-			capability.Windows = []HUDWindowCapability{
-				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly", DefaultVisibility: config.StatusbarVisibilityOn},
-			}
 		}
 		out = append(out, capability)
 	}
@@ -1581,9 +1570,8 @@ func filterStatusProjectionByVisibility(projected []usage.Snapshot, prefs hudVis
 // projectStatusSnapshots derives the ambient HUD input without mutating the
 // lossless snapshot/cache identity used by account-inspection surfaces. The
 // explicit HUD capability seam admits Claude/Codex fixed 5h/weekly rows.
-// Antigravity's exact upstream gemini-weekly bucket is the sole named quota
-// projected as weekly; coincidental fixed windows, context, 3p-weekly, future
-// providers without a declared projection, and unknown buckets stay outside.
+// Named quotas, context, providers without a declared capability (including
+// cached rows from removed adapters), and unknown buckets stay outside.
 func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 	projected := make([]usage.Snapshot, 0, len(snaps))
 	direct := make(map[string]usage.Snapshot)
@@ -1600,25 +1588,8 @@ func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 			direct[k] = snapshot
 		}
 	}
-	seen := make(map[string]bool, len(direct))
-	for k, snapshot := range direct {
-		seen[k] = true
+	for _, snapshot := range direct {
 		projected = append(projected, snapshot)
-	}
-	for _, snapshot := range snaps {
-		if !strings.EqualFold(strings.TrimSpace(snapshot.Model), "antigravity") ||
-			snapshot.Window != usage.WindowQuota || snapshot.Bucket != "gemini-weekly" {
-			continue
-		}
-		weekly := snapshot
-		weekly.Window = usage.WindowWeekly
-		weekly.Bucket = ""
-		k := key(weekly)
-		if seen[k] {
-			continue
-		}
-		seen[k] = true
-		projected = append(projected, weekly)
 	}
 	return usage.SortedSnapshots(projected)
 }
@@ -1649,12 +1620,10 @@ func preferHUDSnapshot(candidate, current usage.Snapshot) bool {
 }
 
 // directHUDWindowSupported is the source half of the explicit projection
-// seam. Claude/Codex publish canonical fixed windows directly. Antigravity's
-// weekly capability is sourced only from its exact gemini-weekly quota below,
-// never from a coincidental fixed-window snapshot.
+// seam. Claude/Codex publish canonical fixed windows directly.
 func directHUDWindowSupported(model string, window usage.Window) bool {
 	for _, capability := range HUDProviderCapabilities() {
-		if !strings.EqualFold(capability.Model, strings.TrimSpace(model)) || capability.ID == aiprovider.Antigravity {
+		if !strings.EqualFold(capability.Model, strings.TrimSpace(model)) {
 			continue
 		}
 		for _, candidate := range capability.Windows {
@@ -1712,18 +1681,17 @@ func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 		if !s.UpdatedAt.IsZero() && s.UpdatedAt.After(row.lastSync) {
 			row.lastSync = s.UpdatedAt
 		}
-		// Claude data is throttled/backoff-gated and Antigravity data is
-		// hook-driven (only refreshed when agy emits a statusline), so both
-		// can go stale — surface the age indicator. Codex reads the latest
-		// native/fallback rows do not need cosmetic age (showAge stays false).
-		if strings.EqualFold(s.Model, "claude") || strings.EqualFold(s.Model, "antigravity") {
+		// Claude data is throttled/backoff-gated, so it can go stale —
+		// surface the age indicator. Codex reads the latest native/fallback
+		// rows do not need cosmetic age (showAge stays false).
+		if strings.EqualFold(s.Model, "claude") {
 			row.showAge = true
 		}
 		if s.StaleReason != "" {
 			row.showAge = true
 		}
 	}
-	canonical := []string{"claude", "codex", "antigravity"}
+	canonical := []string{"claude", "codex"}
 	listed := make(map[string]bool, len(canonical))
 	out := make([]modelDisplay, 0, len(byModel))
 	for _, m := range canonical {
@@ -1748,8 +1716,6 @@ func ModelDisplayLabel(model string) string {
 		return "Claude"
 	case "codex":
 		return "Codex"
-	case "antigravity":
-		return "Antigravity"
 	default:
 		if model == "" {
 			return "?"
@@ -1770,8 +1736,6 @@ func modelShortLabel(model string) string {
 		return "C"
 	case "codex":
 		return "X"
-	case "antigravity":
-		return "A"
 	default:
 		if model == "" {
 			return "?"

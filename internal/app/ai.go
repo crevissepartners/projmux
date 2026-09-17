@@ -4400,7 +4400,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux internal agent-hook watch-title [pane]")
 	fmt.Fprintln(w, "  projmux internal agent-hook ingest codex-hook [--pane <pane_uid|pane_id>] < payload.json")
 	fmt.Fprintln(w, "  projmux internal agent-hook ingest claude-hook [--pane <pane_uid|pane_id>] < payload.json")
-	fmt.Fprintln(w, "  projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] [--pane <pane_uid|pane_id>] < payload.json")
+	fmt.Fprintln(w, "  projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop>] [--pane <pane_uid|pane_id>] < payload.json")
 	fmt.Fprintln(w, "  projmux internal agent-hook ingest bell --pane <pane_id>")
 	fmt.Fprintln(w, "  projmux diagnostics agent-hook [--tail N] [--json] [--path]")
 	fmt.Fprintln(w, "  projmux agent integrate <codex|claude|antigravity|tmux-bell> [--dry-run] [--remove]")

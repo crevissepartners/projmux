@@ -35,12 +35,11 @@ func (c *aiCommand) beginManagedIngestProducerFileMigration() (int, func() error
 	if err != nil {
 		return 0, nil, err
 	}
-	statusPlan, err := c.planAntigravityStatusLineIntegration(false)
-	if err != nil {
-		return 0, nil, err
-	}
+	// The legacy statusLine removal never errors or conflicts: whatever a
+	// settings.json statusLine holds, it cannot block install.
+	statusPlan := c.planAntigravityLegacyStatusLineRemoval()
 
-	for _, conflict := range []string{codexPlan.conflict, claudePlan.conflict, hookPlan.conflict, statusPlan.conflict} {
+	for _, conflict := range []string{codexPlan.conflict, claudePlan.conflict, hookPlan.conflict} {
 		if conflict != "" {
 			return 0, nil, errors.New(conflict)
 		}
@@ -69,11 +68,11 @@ func (c *aiCommand) beginManagedIngestProducerFileMigration() (int, func() error
 			write: func() error { return c.writeAntigravityJSON(hookPlan.path, []byte(hookPlan.next), 0o644, "hooks") },
 		})
 	}
-	if strings.Contains(statusPlan.current, antigravityManagedStatusLineMarker) && statusPlan.changed {
+	if statusPlan.changed {
 		mutations = append(mutations, managedIngestFileMutation{
-			path: statusPlan.path, current: statusPlan.current, next: statusPlan.next, mode: 0o600, label: "Antigravity settings",
+			path: statusPlan.path, current: statusPlan.current, next: statusPlan.next, mode: statusPlan.mode, label: "Antigravity settings",
 			write: func() error {
-				return c.writeAntigravityJSON(statusPlan.path, []byte(statusPlan.next), 0o600, "settings")
+				return c.writeAntigravityJSON(statusPlan.path, []byte(statusPlan.next), statusPlan.mode, "settings")
 			},
 		})
 	}

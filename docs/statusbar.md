@@ -29,9 +29,9 @@ row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
   state surface.
   Settings > Appearance > Status Bar controls `Notifications HUD` and `Agent
   Usage HUD` independently. Agent Usage HUD is a View whose `Visible` parent
-  contains Claude/Codex/Antigravity provider Views; each provider has its own
-  `Visible` plus explicit supported windows (Claude/Codex: `5h`, `Weekly`;
-  Antigravity: `Weekly`). Every leaf defaults on except Codex `5h`, which
+  contains Claude/Codex provider Views; each provider has its own
+  `Visible` plus explicit supported windows (`5h`, `Weekly`). Antigravity has
+  no usage source and no row. Every leaf defaults on except Codex `5h`, which
   defaults off; saving it as on explicitly restores that window. Parent off
   preserves saved children, and returning it on restores them. When only one HUD is visible, its
   sole range receives the full `#{client_width}` budget and the absent range and
@@ -303,11 +303,11 @@ as a secondary bar and cannot be shed by rule 3.
 Only hard rune-truncation, below every listed step, can reach either.
 
 Within a per-provider rule the steps run **tail-first** over the canonical
-provider order (Claude, Codex, Antigravity), so the provider a user reads first
-is the last to lose detail. This is why a 120-cell budget renders
-`Claude 5h [bar] · weekly [bar]   Codex 5h [bar]   Antigravity~~ weekly [bar]`
-— Codex's second window paid for Claude's — where whole-segment tier selection
-dropped both second windows at once and rendered 92 cells into a 120-cell row.
+provider order (Claude, Codex), so the provider a user reads first
+is the last to lose detail. This is why a 100-cell budget renders
+`Claude 5h [bar] · weekly [bar]   Codex 5h [bar]` — Codex's second window paid
+for Claude's — where whole-segment tier selection would drop both second
+windows at once.
 
 The order lives in **exactly one place in code**: `usageShedOrder` in
 `internal/app/usagecmd/usage.go`. The entry names above are that variable's
@@ -350,10 +350,10 @@ the queued notify segment, not to the separate window-list live attention badge.
 the cached usage state in-process and aligns model/window rows with
 right-aligned numeric values, dims unavailable values, keeps stale sync/age
 metadata muted, and colors only threshold values: amber at 80% and red at 95%.
-Antigravity rows keep conversation-local `context` separate from account
-`quota/<exact upstream bucket ID>` rows; the popup displays an absolute reset
-when provided and otherwise the exact optional relative reset seconds. Opaque
-bucket IDs are escaped for terminal/tmux safety and are never assigned a
+Named `quota/<exact upstream bucket ID>` rows display an absolute reset when
+provided and otherwise the exact optional relative reset seconds; cached
+Antigravity rows from the removed adapter are not shown, and an enabled
+Antigravity appears only as an `usage unsupported` row. Opaque bucket IDs are escaped for terminal/tmux safety and are never assigned a
 `5h`/`weekly` cadence. Claude retains aggregate `5h`/`weekly` rows alongside
 typed named/model `limits[]` rows in this popup: model-scoped rows display the
 exact upstream group plus model display identity with a bounded terminal-safe

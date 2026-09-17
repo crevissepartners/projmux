@@ -105,9 +105,6 @@ const (
 	aiIngestReasonPaneNotFound    aiIngestReason = "pane not found"
 	aiIngestReasonHighVolumeEvent aiIngestReason = "high-volume event"
 	aiIngestReasonInvocationStart aiIngestReason = "invocation started"
-	aiIngestReasonStatuslineBusy  aiIngestReason = "statusline agent_state is busy"
-	aiIngestReasonStatuslineIdle  aiIngestReason = "statusline agent_state is idle; preserving existing completion or attention state"
-	aiIngestReasonStatuslineLate  aiIngestReason = "late busy statusline; preserving existing completion or approval state"
 )
 
 // aiIngestReasonUnclassified is what a value outside the vocabulary becomes.
@@ -201,9 +198,6 @@ var aiIngestReasons = func() []aiIngestReason {
 		aiIngestReasonPaneNotFound,
 		aiIngestReasonHighVolumeEvent,
 		aiIngestReasonInvocationStart,
-		aiIngestReasonStatuslineBusy,
-		aiIngestReasonStatuslineIdle,
-		aiIngestReasonStatuslineLate,
 
 		aiIngestReasonUnclassified,
 	}

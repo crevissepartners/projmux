@@ -23,7 +23,6 @@ import (
 var usageProviderLabels = []struct{ long, short string }{
 	{long: "Claude", short: "C"},
 	{long: "Codex", short: "X"},
-	{long: "Antigravity", short: "A"},
 }
 
 // observeUsageElements reports the elements a rendered segment ACTUALLY shows,
@@ -60,7 +59,7 @@ func observeUsageElements(out string) []string {
 			tokens = append(tokens, provider+"/short")
 		}
 		// The marker lives in two places depending on how far the segment has
-		// shed: glued to the label (`Antigravity~~`) once the age text is gone,
+		// shed: glued to the label (`Codex [stale]~~`) once the age text is gone,
 		// and inside the age text (`(3d~~)`) while it is still there. Counting
 		// tildes in the block sees it either way, which is the point — the
 		// token records that the user can still see the signal.
@@ -112,58 +111,54 @@ func TestUsageElementPriorityWidthSweep(t *testing.T) {
 	t.Parallel()
 
 	want := map[string]map[int][]string{
-		// The shape a real install renders: one cosmetic age (Claude), one
-		// stale age (Antigravity), one secondary window (Claude weekly). With
-		// a single provider eligible for each per-provider rule this fixture
-		// renders identically to what whole-segment selection produced — which
-		// is the point: the real install shape does not regress.
+		// The shape an install renders: one cosmetic age (Claude), one stale
+		// age (Codex), one secondary window (Claude weekly).
 		"installed": {
-			// 40 cells: hard truncation, and the known limit it exposes —
-			// `~~` is cut to `~`, so level 2 stops being distinguishable.
-			40: {"truncated", "Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/weekly-text", "Antigravity/short", "Antigravity/mark=~"},
-			// 51 cells: rules 1-5 all spent; short labels, text pairs.
-			60: {"Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/weekly-text", "Antigravity/short", "Antigravity/mark=~~", "Antigravity/weekly-text"},
-			// 70 cells: long labels back (rule 5 unspent).
-			80: {"Claude/label", "Claude/5h-text", "Claude/weekly-text", "Codex/label", "Codex/weekly-text", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/weekly-text"},
-			// 98 cells: bars back (rule 4 unspent), Claude's second window not.
-			100: {"Claude/label", "Claude/5h-bar", "Codex/label", "Codex/weekly-bar", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/weekly-bar"},
-			// 98 again: Claude's second bar needs 124, which 120 cannot buy.
-			120: {"Claude/label", "Claude/5h-bar", "Codex/label", "Codex/weekly-bar", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/weekly-bar"},
-			// 134 cells: nothing shed, both age texts present.
-			160: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/weekly-bar", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/age", "Antigravity/weekly-bar"},
-			200: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/weekly-bar", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/age", "Antigravity/weekly-bar"},
+			// 40 cells: hard truncation; the `~~` marker survives it.
+			40: {"truncated", "Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/mark=~~"},
+			// 53 cells: bars gone (rule 4), long labels kept (rule 5 unspent).
+			60: {"Claude/label", "Claude/5h-text", "Claude/weekly-text", "Codex/label", "Codex/mark=~~", "Codex/weekly-text"},
+			// 68 cells: bars back, Claude's second window not (rule 3).
+			80: {"Claude/label", "Claude/5h-bar", "Codex/label", "Codex/mark=~~", "Codex/weekly-bar"},
+			// 99 cells: only the cosmetic age (rule 1) is spent; the stale
+			// age text stays.
+			100: {"Claude/label", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/mark=~~", "Codex/age", "Codex/weekly-bar"},
+			// 104 cells: nothing shed.
+			120: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/mark=~~", "Codex/age", "Codex/weekly-bar"},
+			160: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/mark=~~", "Codex/age", "Codex/weekly-bar"},
+			200: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/mark=~~", "Codex/age", "Codex/weekly-bar"},
 		},
 		// Two providers carry a secondary window and two carry a cosmetic age,
 		// so this fixture is the one that can tell per-provider shedding apart
 		// from whole-segment tier selection.
 		"dual-window": {
-			40: {"truncated", "Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/5h-text", "Codex/weekly-text"},
-			60: {"Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/5h-text", "Codex/weekly-text", "Antigravity/short", "Antigravity/weekly-text"},
-			80: {"Claude/label", "Claude/5h-text", "Claude/weekly-text", "Codex/label", "Codex/5h-text", "Codex/weekly-text", "Antigravity/label", "Antigravity/weekly-text"},
-			// 92 cells: rule 3 spent on both eligible providers.
-			100: {"Claude/label", "Claude/5h-bar", "Codex/label", "Codex/5h-bar", "Antigravity/label", "Antigravity/weekly-bar"},
-			// 118 cells — THE row this Phase exists for. Rule 3 ran tail-first
-			// and stopped: Codex's SECOND window went, Claude's stayed. Whole-
-			// segment selection dropped both and drew 92 cells into a 120-cell
-			// row.
-			120: {"Claude/label", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/5h-bar", "Antigravity/label", "Antigravity/weekly-bar"},
-			// 154 cells: nothing shed.
-			160: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/5h-bar", "Codex/weekly-bar", "Antigravity/label", "Antigravity/age", "Antigravity/weekly-bar"},
-			200: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/5h-bar", "Codex/weekly-bar", "Antigravity/label", "Antigravity/age", "Antigravity/weekly-bar"},
+			40: {"truncated", "Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/5h-text"},
+			60: {"Claude/label", "Claude/5h-text", "Claude/weekly-text", "Codex/label", "Codex/5h-text", "Codex/weekly-text"},
+			// 62 cells: rule 3 spent on both eligible providers.
+			80: {"Claude/label", "Claude/5h-bar", "Codex/label", "Codex/5h-bar"},
+			// 88 cells: rule 3 ran tail-first and stopped: Codex's SECOND
+			// window went, Claude's stayed.
+			100: {"Claude/label", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/5h-bar"},
+			// 119 cells: rule 1 ran tail-first and stopped: Codex's cosmetic
+			// age went, Claude's stayed.
+			120: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/5h-bar", "Codex/weekly-bar"},
+			// 124 cells: nothing shed.
+			160: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/age", "Codex/5h-bar", "Codex/weekly-bar"},
+			200: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/age", "Codex/5h-bar", "Codex/weekly-bar"},
 		},
 		// Every rule in usageShedOrder is eligible at once: a cosmetic age on
-		// Claude, a level-2 age on Antigravity, two secondary windows.
+		// Claude, a level-2 age on Codex, two secondary windows.
 		"mixed-staleness": {
-			40:  {"truncated", "Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/5h-text", "Codex/weekly-text"},
-			60:  {"Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/5h-text", "Codex/weekly-text", "Antigravity/short", "Antigravity/mark=~~", "Antigravity/weekly-text"},
-			80:  {"Claude/label", "Claude/5h-text", "Claude/weekly-text", "Codex/label", "Codex/5h-text", "Codex/weekly-text", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/weekly-text"},
-			100: {"Claude/label", "Claude/5h-bar", "Codex/label", "Codex/5h-bar", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/weekly-bar"},
-			// 120 cells exactly: Codex's second window paid for Claude's, and
-			// the `~~` marker is untouched on the way down.
-			120: {"Claude/label", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/5h-bar", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/weekly-bar"},
-			// 156 cells: nothing shed.
-			160: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/5h-bar", "Codex/weekly-bar", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/age", "Antigravity/weekly-bar"},
-			200: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/5h-bar", "Codex/weekly-bar", "Antigravity/label", "Antigravity/mark=~~", "Antigravity/age", "Antigravity/weekly-bar"},
+			40:  {"truncated", "Claude/short", "Claude/5h-text", "Claude/weekly-text", "Codex/short", "Codex/mark=~~", "Codex/5h-text"},
+			60:  {"Claude/label", "Claude/5h-text", "Claude/weekly-text", "Codex/label", "Codex/mark=~~", "Codex/5h-text", "Codex/weekly-text"},
+			80:  {"Claude/label", "Claude/5h-bar", "Codex/label", "Codex/mark=~~", "Codex/5h-bar"},
+			100: {"Claude/label", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/mark=~~", "Codex/5h-bar"},
+			// 116 cells: both age texts spent, every bar kept, and the `~~`
+			// marker untouched on the way down.
+			120: {"Claude/label", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/mark=~~", "Codex/5h-bar", "Codex/weekly-bar"},
+			// 126 cells: nothing shed.
+			160: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/mark=~~", "Codex/age", "Codex/5h-bar", "Codex/weekly-bar"},
+			200: {"Claude/label", "Claude/age", "Claude/5h-bar", "Claude/weekly-bar", "Codex/label", "Codex/mark=~~", "Codex/age", "Codex/5h-bar", "Codex/weekly-bar"},
 		},
 	}
 
@@ -211,9 +206,19 @@ func officialWindowTokens(fixture usageSweepFixture) []string {
 		if m.hasFive {
 			window = "5h"
 		}
-		tokens = append(tokens, m.label+"/"+window+"-bar")
+		tokens = append(tokens, usageProviderName(m)+"/"+window+"-bar")
 	}
 	return tokens
+}
+
+// usageProviderName is the provider token observeUsageElements uses for a
+// model. The display label can carry a qualifier (`Codex [stale]`), so the
+// name is read back through the same label parser.
+func usageProviderName(m modelDisplay) string {
+	if provider, _, _, ok := cutUsageProviderLabel(m.label); ok {
+		return provider
+	}
+	return m.label
 }
 
 // TestAgeIndicatorsAreShedBeforeAnyOfficialWindowBar is acceptance criterion 1
@@ -280,7 +285,7 @@ func TestStalenessMarkerOutlivesEveryOfficialWindowBar(t *testing.T) {
 		markers := map[string]string{}
 		for _, m := range buildModelDisplays(projectStatusSnapshots(fixture.snaps)) {
 			if marker := staleMarkerText(modelStaleLevel(m, statusGoldenNow)); marker != "" {
-				markers[m.label] = marker
+				markers[usageProviderName(m)] = marker
 			}
 		}
 		if len(markers) == 0 {

@@ -337,7 +337,7 @@ func requireClaudeJournalBytesClosed(t *testing.T, raw []byte, f claudeJournalFi
 // TestUnclassifiedAndNonClaudeWholeFailuresStayCollectFailed keeps the generic
 // token for every whole failure without a Claude class: a Claude error whose
 // text matches a classified message but carries no class (classification never
-// reads text), and Codex / Antigravity failures even when their error wraps a
+// reads text), and Codex failures even when their error wraps a
 // Claude class (classification is Claude-only).
 func TestUnclassifiedAndNonClaudeWholeFailuresStayCollectFailed(t *testing.T) {
 	t.Parallel()
@@ -356,11 +356,6 @@ func TestUnclassifiedAndNonClaudeWholeFailuresStayCollectFailed(t *testing.T) {
 			"codex error wrapping a claude class",
 			&stubAdapter{name: "codex", err: fmt.Errorf("codex: %w", claudeadapter.ErrRateLimited)},
 			diagnostics.ProviderCodex,
-		},
-		{
-			"antigravity plain error",
-			&stubAdapter{name: "antigravity", err: errors.New("read quota: broken")},
-			diagnostics.ProviderAntigravity,
 		},
 	}
 	for _, test := range tests {

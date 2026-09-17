@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -794,7 +795,7 @@ func TestDoctorAntigravityIntegrationDiagnosticManagedStates(t *testing.T) {
 	cmd.readFile = os.ReadFile
 
 	missing := doctorAntigravityIntegrationDiagnostic(cmd)
-	if missing.Status != doctorAINotifyStatusMissing || missing.ConfigPath != filepath.Join(home, antigravityHooksRelativePath) || missing.StatusLinePath != filepath.Join(home, antigravitySettingsRelativePath) {
+	if missing.Status != doctorAINotifyStatusMissing || missing.ConfigPath != filepath.Join(home, antigravityHooksRelativePath) {
 		t.Fatalf("missing diagnostic = %#v", missing)
 	}
 	for _, want := range []string{"projmux agent integrate antigravity", "projmux agent integrate antigravity --remove", "projmux agent integrate antigravity --dry-run"} {
@@ -825,14 +826,61 @@ func TestDoctorAntigravityIntegrationDiagnosticManagedStates(t *testing.T) {
 		t.Fatalf("conflict diagnostic = %#v", conflict)
 	}
 
-	// A separately missing statusline is partial/stale, not fully installed.
-	if err := os.Remove(filepath.Join(home, antigravitySettingsRelativePath)); err != nil {
-		t.Fatal(err)
-	}
+	// Hooks alone are the full install: no settings.json is needed.
 	writeCodexTestFile(t, path, installedData)
-	partial := doctorAntigravityIntegrationDiagnostic(cmd)
-	if partial.Status != doctorAINotifyStatusStale || !strings.Contains(partial.ConflictReason, "partial") {
-		t.Fatalf("partial diagnostic = %#v", partial)
+	if _, err := os.Stat(filepath.Join(home, antigravitySettingsRelativePath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("install created settings.json: %v", err)
+	}
+	if again := doctorAntigravityIntegrationDiagnostic(cmd); again.Status != doctorAINotifyStatusInstalled {
+		t.Fatalf("hooks-only diagnostic = %#v, want installed", again)
+	}
+}
+
+// TestDoctorAntigravityDiagnosisIgnoresStatusLine pins that the Antigravity
+// diagnosis reads hooks only: no settings.json statusLine, marker-owned or
+// not, can move its status, and the JSON carries no statusline path.
+func TestDoctorAntigravityDiagnosisIgnoresStatusLine(t *testing.T) {
+	settingsCases := map[string]string{
+		"user statusLine":   `{"statusLine":{"type":"command","command":"/home/user/custom"}}`,
+		"legacy marker":     "{\n  \"statusLine\": " + legacyAntigravityStatusLineValue("/tmp/projmux", antigravityCanonicalIngestPath) + "\n}\n",
+		"disabled marker":   `{"statusLine":{"command":"x # ` + antigravityLegacyStatusLineMarker + `","enabled":false}}`,
+		"malformed":         `{"statusLine":`,
+		"non-object value":  `{"statusLine":"custom"}`,
+		"no statusLine key": `{"theme":"keep"}`,
+	}
+	for _, hooksInstalled := range []bool{false, true} {
+		want := doctorAINotifyStatusMissing
+		if hooksInstalled {
+			want = doctorAINotifyStatusInstalled
+		}
+		for name, content := range settingsCases {
+			t.Run(name+" hooks="+strconv.FormatBool(hooksInstalled), func(t *testing.T) {
+				home := t.TempDir()
+				cmd := testAICommand(home)
+				cmd.readFile = os.ReadFile
+				if hooksInstalled {
+					if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
+				writeCodexTestFile(t, settingsPath, content)
+				got := doctorAntigravityIntegrationDiagnostic(cmd)
+				if got.Status != want || got.ConflictReason != "" {
+					t.Fatalf("diagnostic = %#v, want status %s with no reason", got, want)
+				}
+				data, err := json.Marshal(got)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(data), "statusline") || strings.Contains(string(data), settingsPath) {
+					t.Fatalf("diagnostic JSON mentions statusline or settings: %s", data)
+				}
+				if readCodexTestFile(t, settingsPath) != content {
+					t.Fatal("doctor changed settings.json")
+				}
+			})
+		}
 	}
 }
 

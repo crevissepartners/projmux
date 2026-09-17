@@ -21,8 +21,9 @@ import (
 )
 
 // installedCacheFixture mirrors the sanitized shape of the installed cache:
-// Claude 5h+weekly, weekly-only Codex, and Antigravity context plus its two
-// exact named quota buckets. All rows are percent-only (Tokens/Limit zero).
+// Claude 5h+weekly, weekly-only Codex, and the Antigravity context plus named
+// quota rows an older adapter left behind, which every surface must now
+// ignore. All rows are percent-only (Tokens/Limit zero).
 func installedCacheFixture(now time.Time) []usage.Snapshot {
 	modelID := "model-redacted-id"
 	return []usage.Snapshot{
@@ -297,12 +298,10 @@ func TestCodexFallbackHUDUsesProvenanceRoleNotThresholdColors(t *testing.T) {
 	mixed := []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 		fallback,
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}
 	segment := formatStatusUsage(mixed, 0, now)
 	for _, want := range []string{
 		"#[fg=" + roles.AccentAIFg + ",bold]Claude#[default]",
-		"#[fg=" + roles.AccentAIFg + ",bold]Antigravity#[default]",
 		"#[fg=" + roles.ProvenanceFg + ",bold]Codex#[default]",
 	} {
 		if !strings.Contains(segment, want) {
@@ -475,7 +474,6 @@ func TestProjectStatusSnapshotsOfficialWindowsOnly(t *testing.T) {
 		window usage.Window
 		pct    float64
 	}{
-		{"antigravity", usage.WindowWeekly, 60},
 		{"claude", usage.Window5h, 10},
 		{"claude", usage.WindowWeekly, 20},
 		{"codex", usage.WindowWeekly, 30},
@@ -498,12 +496,12 @@ func TestFormatStatusUsageCurrentCacheExcludesNonOfficialRows(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
 	got := intrender.StripTmuxEscapes(formatStatusUsage(installedCacheFixture(now), 120, now))
-	for _, want := range []string{"Claude", "Codex", "Antigravity", "weekly", "61%"} {
+	for _, want := range []string{"Claude", "Codex", "weekly"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("HUD = %q, missing %q", got, want)
 		}
 	}
-	for _, excluded := range []string{"ctx", "quota/", "3p-weekly", "gemini-weekly", "future-bucket", "group-redacted-model", "Model Redacted Alpha", "73%"} {
+	for _, excluded := range []string{"Antigravity", "61%", "ctx", "quota/", "3p-weekly", "gemini-weekly", "future-bucket", "group-redacted-model", "Model Redacted Alpha", "73%"} {
 		if strings.Contains(got, excluded) {
 			t.Fatalf("HUD = %q, leaked %q", got, excluded)
 		}
@@ -617,10 +615,9 @@ func TestUsageTablePreservesQuotaResetShapes(t *testing.T) {
 	}
 }
 
-// TestFormatStatusUsageCanonicalOrder locks the HUD ordering: Claude,
-// Codex, then Antigravity, regardless of snapshot input order. This also
-// guards claude/codex against regression when a context-only model is
-// present.
+// TestFormatStatusUsageCanonicalOrder locks the HUD ordering: Claude then
+// Codex regardless of snapshot input order, and a cached row from the removed
+// Antigravity adapter never joins it.
 func TestFormatStatusUsageCanonicalOrder(t *testing.T) {
 	t.Parallel()
 
@@ -634,12 +631,14 @@ func TestFormatStatusUsageCanonicalOrder(t *testing.T) {
 
 	iClaude := strings.Index(got, "Claude")
 	iCodex := strings.Index(got, "Codex")
-	iAgy := strings.Index(got, "Antigravity")
-	if iClaude < 0 || iCodex < 0 || iAgy < 0 {
+	if iClaude < 0 || iCodex < 0 {
 		t.Fatalf("missing a model label: %q", got)
 	}
-	if !(iClaude < iCodex && iCodex < iAgy) {
-		t.Fatalf("canonical order Claude<Codex<Antigravity not held: claude=%d codex=%d agy=%d in %q", iClaude, iCodex, iAgy, got)
+	if iClaude >= iCodex {
+		t.Fatalf("canonical order Claude<Codex not held: claude=%d codex=%d in %q", iClaude, iCodex, got)
+	}
+	if strings.Contains(got, "Antigravity") || strings.Contains(got, "42%") {
+		t.Fatalf("cached Antigravity row reached the HUD: %q", got)
 	}
 }
 
@@ -779,17 +778,20 @@ func TestCurrentCacheWidthTiersPreserveWeeklyOnlyProvider(t *testing.T) {
 		"primary-bar": renderUsageSegment(models, now, usagePlanOfficialOnly(models)),
 		"text":        renderUsageSegment(models, now, usagePlanTextLong(models)),
 	} {
-		for _, provider := range []string{"Claude", "Codex", "Antigravity"} {
+		for _, provider := range []string{"Claude", "Codex"} {
 			if !strings.Contains(out, provider) {
 				t.Fatalf("%s tier dropped %s: %q", name, provider, out)
 			}
+		}
+		if strings.Contains(out, "Antigravity") {
+			t.Fatalf("%s tier rendered a cached Antigravity row: %q", name, out)
 		}
 		if !strings.Contains(out, "Codex") || !strings.Contains(out, "weekly") {
 			t.Fatalf("%s tier did not preserve weekly-only Codex: %q", name, out)
 		}
 	}
 	short := renderUsageSegment(models, now, usagePlanTextShort(models))
-	for _, provider := range []string{"C ", "X weekly:12%", "A weekly:61%"} {
+	for _, provider := range []string{"C ", "X weekly:12%"} {
 		if !strings.Contains(short, provider) {
 			t.Fatalf("short text tier dropped %q: %q", provider, short)
 		}
@@ -1002,24 +1004,31 @@ func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
 	}
 }
 
-func TestUsageStatusProjectsAntigravityGeminiWeekly(t *testing.T) {
+func TestUsageStatusIgnoresCachedAntigravityRows(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	store := usage.NewStore(t.TempDir())
-	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+	if err := store.SaveState(usage.State{Snapshots: []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 63, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "3p-weekly", Pct: 45, UpdatedAt: now},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 22, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowWeekly, Pct: 23, UpdatedAt: now},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	agyAd := &stubAdapter{name: "antigravity"}
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 41, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}}
 
 	c := New(func() time.Time { return now })
 	isolateUsageCommandEnv(t, c)
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
-		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
+		return []config.AIAgentProvider{config.AIAgentAntigravity, config.AIAgentClaude}, nil
 	}
 	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
 		"antigravity": agyAd,
+		"claude":      claudeAd,
 	})
 
 	stdout := &bytes.Buffer{}
@@ -1028,16 +1037,16 @@ func TestUsageStatusProjectsAntigravityGeminiWeekly(t *testing.T) {
 		t.Fatalf("RunStatus: %v", err)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "Antigravity") || !strings.Contains(out, "weekly") || !strings.Contains(out, "22%") {
-		t.Fatalf("expected Antigravity weekly projection: %q", out)
+	if !strings.Contains(out, "Claude") || !strings.Contains(out, "41%") {
+		t.Fatalf("status = %q, want the Claude row", out)
 	}
-	for _, excluded := range []string{"ctx", "63%", "3p-weekly", "gemini-weekly", "quota/"} {
+	for _, excluded := range []string{"Antigravity", "63%", "22%", "23%", "gemini-weekly", "quota/"} {
 		if strings.Contains(out, excluded) {
 			t.Fatalf("status leaked %q: %q", excluded, out)
 		}
 	}
-	if agyAd.collectCalls != 1 {
-		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
+	if agyAd.collectCalls != 0 {
+		t.Fatalf("antigravity collect calls = %d, want 0", agyAd.collectCalls)
 	}
 }
 
@@ -1046,26 +1055,26 @@ func TestUsageRunWindowContextCompatibilityReturnsNoRows(t *testing.T) {
 
 	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
 	store := usage.NewStore(t.TempDir())
-	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
-		{Model: "antigravity", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 31, UpdatedAt: now},
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
+		{Model: "claude", Window: usage.Window5h, Pct: 31, UpdatedAt: now},
 	}}
 	c := New(func() time.Time { return now })
 	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
-		"antigravity": agyAd,
+		"claude": claudeAd,
 	})
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	if err := c.Run([]string{"--model", "antigravity", "--window", "context"}, stdout, stderr); err != nil {
+	if err := c.Run([]string{"--model", "claude", "--window", "context"}, stdout, stderr); err != nil {
 		t.Fatalf("Run compatibility context filter: %v stderr=%q", err, stderr.String())
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "MODEL") || strings.Contains(output, "antigravity") || strings.Contains(output, "55%") {
+	if !strings.Contains(output, "MODEL") || strings.Contains(output, "claude") || strings.Contains(output, "55%") {
 		t.Fatalf("context compatibility output = %q, want empty usage table", output)
 	}
-	if agyAd.collectCalls != 1 {
-		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
+	if claudeAd.collectCalls != 1 {
+		t.Fatalf("claude collect calls = %d, want 1", claudeAd.collectCalls)
 	}
 }
 
@@ -1074,17 +1083,17 @@ func TestUsageRunSuppressesContextAndKeepsNamedQuota(t *testing.T) {
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	store := usage.NewStore(t.TempDir())
-	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
-		{Model: "antigravity", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "3p-weekly", Pct: 44, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 77, UpdatedAt: now},
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowQuota, Bucket: "group-a", Pct: 44, UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowQuota, Bucket: "group-b", Pct: 77, UpdatedAt: now},
 	}}
 	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
-		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
+		return []config.AIAgentProvider{config.AIAgentClaude}, nil
 	}
 	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
-		"antigravity": agyAd,
+		"claude": claudeAd,
 	})
 
 	stdout := &bytes.Buffer{}
@@ -1093,54 +1102,88 @@ func TestUsageRunSuppressesContextAndKeepsNamedQuota(t *testing.T) {
 		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "quota/3p-weekly") || !strings.Contains(output, "quota/gemini-weekly") {
+	if !strings.Contains(output, "claude") || !strings.Contains(output, "quota/group-a") || !strings.Contains(output, "quota/group-b") {
 		t.Fatalf("output = %q, want lossless named quota rows", output)
 	}
 	if strings.Contains(output, "  context") || strings.Contains(output, "55%") {
 		t.Fatalf("output = %q, legacy context row leaked", output)
 	}
-	if strings.Contains(output, "unsupported") {
-		t.Fatalf("output = %q, Antigravity usage should no longer be unsupported", output)
-	}
-	if strings.Contains(output, "enable Claude or Codex") {
-		t.Fatalf("output = %q, should not imply Antigravity is not an enabled agent", output)
-	}
-	if agyAd.collectCalls != 1 {
-		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
+	if claudeAd.collectCalls != 1 {
+		t.Fatalf("claude collect calls = %d, want 1", claudeAd.collectCalls)
 	}
 }
 
-func TestUsageRunExplicitAntigravityWorksWhenDisabled(t *testing.T) {
+// TestUsageRunAntigravityIsUnsupportedAndIgnoresCachedRows pins G-6b:
+// `--model antigravity` is still accepted, prints no row and the unsupported
+// note, exits 0, and never prints the rows an older adapter left in
+// snapshots.json — neither for the explicit model nor for `--model all`.
+func TestUsageRunAntigravityIsUnsupportedAndIgnoresCachedRows(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	store := usage.NewStore(t.TempDir())
-	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+	cached := []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 77, UpdatedAt: now},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 31, UpdatedAt: now},
-	}}
-	c := New(func() time.Time { return now })
-	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
-		return []config.AIAgentProvider{config.AIAgentClaude}, nil
+		{Model: "antigravity", Window: usage.WindowWeekly, Pct: 32, UpdatedAt: now},
+		{Model: "claude", Window: usage.Window5h, Pct: 12, UpdatedAt: now},
 	}
-	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
-		"antigravity": agyAd,
-	})
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		enabled    []config.AIAgentProvider
+		wantClaude bool
+		wantNote   bool
+	}{
+		{name: "explicit", args: []string{"--model", "antigravity"}, enabled: []config.AIAgentProvider{config.AIAgentClaude}, wantNote: true},
+		{name: "explicit uppercase", args: []string{"--model", "Antigravity"}, enabled: []config.AIAgentProvider{config.AIAgentAntigravity}, wantNote: true},
+		{name: "explicit json", args: []string{"--model", "antigravity", "--json"}, enabled: []config.AIAgentProvider{config.AIAgentAntigravity}},
+		{name: "explicit quota window", args: []string{"--model", "antigravity", "--window", "quota"}, enabled: []config.AIAgentProvider{config.AIAgentAntigravity}, wantNote: true},
+		{name: "all", args: []string{"--model", "all"}, enabled: []config.AIAgentProvider{config.AIAgentAntigravity, config.AIAgentClaude}, wantClaude: true, wantNote: true},
+		{name: "all json", args: []string{"--json"}, enabled: []config.AIAgentProvider{config.AIAgentAntigravity, config.AIAgentClaude}, wantClaude: true},
+		{name: "all antigravity only", args: nil, enabled: []config.AIAgentProvider{config.AIAgentAntigravity}, wantNote: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := usage.NewStore(t.TempDir())
+			if err := store.SaveState(usage.State{Snapshots: cached}); err != nil {
+				t.Fatal(err)
+			}
+			agyAd := &stubAdapter{name: "antigravity", snaps: cached[:3]}
+			claudeAd := &stubAdapter{name: "claude", snaps: cached[3:]}
+			c := New(func() time.Time { return now })
+			enabled := tc.enabled
+			c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) { return enabled, nil }
+			c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+				"antigravity": agyAd,
+				"claude":      claudeAd,
+			})
 
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	if err := c.Run([]string{"--model", "antigravity"}, stdout, stderr); err != nil {
-		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
-	}
-	output := stdout.String()
-	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "quota/gemini-weekly") || !strings.Contains(output, "31%") {
-		t.Fatalf("output = %q, want explicit antigravity named quota row", output)
-	}
-	if strings.Contains(output, "  context") || strings.Contains(output, "77%") {
-		t.Fatalf("output = %q, legacy context row leaked", output)
-	}
-	if agyAd.collectCalls != 1 {
-		t.Fatalf("antigravity collect calls = %d, want 1 for explicit model", agyAd.collectCalls)
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			if err := c.Run(tc.args, stdout, stderr); err != nil {
+				t.Fatalf("Run(%v) error = %v stderr=%s", tc.args, err, stderr.String())
+			}
+			output := stdout.String()
+			for _, leaked := range []string{"77%", "31%", "32%", "gemini-weekly", `"antigravity"`} {
+				if strings.Contains(output, leaked) {
+					t.Fatalf("output = %q, cached Antigravity row leaked (%s)", output, leaked)
+				}
+			}
+			for line := range strings.SplitSeq(output, "\n") {
+				if strings.HasPrefix(line, "antigravity") {
+					t.Fatalf("output = %q, printed an antigravity row", output)
+				}
+			}
+			if got := strings.Contains(output, "Antigravity usage unsupported: no supported usage adapter"); got != tc.wantNote {
+				t.Fatalf("output = %q, unsupported note present = %t, want %t", output, got, tc.wantNote)
+			}
+			if got := strings.Contains(output, "claude"); got != tc.wantClaude {
+				t.Fatalf("output = %q, claude row present = %t, want %t", output, got, tc.wantClaude)
+			}
+			if agyAd.collectCalls != 0 {
+				t.Fatalf("antigravity collect calls = %d, want 0", agyAd.collectCalls)
+			}
+		})
 	}
 }
 
@@ -2162,7 +2205,9 @@ func TestHUDProviderCapabilityMatrixFollowsUsageCatalogAndRejectsFabrication(t *
 	}{
 		{aiprovider.Claude, []string{"5h", "weekly"}, []config.StatusbarVisibility{config.StatusbarVisibilityOn, config.StatusbarVisibilityOn}},
 		{aiprovider.Codex, []string{"5h", "weekly"}, []config.StatusbarVisibility{config.StatusbarVisibilityOff, config.StatusbarVisibilityOn}},
-		{aiprovider.Antigravity, []string{"weekly"}, []config.StatusbarVisibility{config.StatusbarVisibilityOn}},
+	}
+	if len(capabilities) != len(want) {
+		t.Fatalf("capabilities = %#v, want Claude and Codex only", capabilities)
 	}
 	for i, expected := range want {
 		if capabilities[i].ID != expected.id {
@@ -2189,8 +2234,10 @@ func TestHUDProviderCapabilityMatrixFollowsUsageCatalogAndRejectsFabrication(t *
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "5h", Pct: 66},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 55},
 	})
-	if got, want := projected, []usage.Snapshot{{Model: "antigravity", Window: usage.WindowWeekly, Pct: 55}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("explicit projection = %#v, want only exact Antigravity gemini-weekly %#v", got, want)
+	// Providers without a declared capability, including cached rows from the
+	// removed Antigravity adapter, never reach the HUD.
+	if len(projected) != 0 {
+		t.Fatalf("explicit projection = %#v, want nothing", projected)
 	}
 }
 
@@ -2211,9 +2258,8 @@ func TestHUDVisibilityDefaultsHideOnlyCodexFiveHourAndSavedOnOverrides(t *testin
 	}
 	prefs := c.loadHUDVisibilityPreferences()
 	for model, windows := range map[string]map[usage.Window]bool{
-		"claude":      {usage.Window5h: true, usage.WindowWeekly: true},
-		"codex":       {usage.Window5h: false, usage.WindowWeekly: true},
-		"antigravity": {usage.WindowWeekly: true},
+		"claude": {usage.Window5h: true, usage.WindowWeekly: true},
+		"codex":  {usage.Window5h: false, usage.WindowWeekly: true},
 	} {
 		if !prefs.providers[model] || !reflect.DeepEqual(prefs.windows[model], windows) {
 			t.Fatalf("%s defaults = provider:%v windows:%v, want provider:on windows:%v", model, prefs.providers[model], prefs.windows[model], windows)
@@ -2229,6 +2275,12 @@ func TestHUDVisibilityDefaultsHideOnlyCodexFiveHourAndSavedOnOverrides(t *testin
 	prefs = c.loadHUDVisibilityPreferences()
 	if !prefs.windows["codex"][usage.Window5h] {
 		t.Fatal("saved Codex 5h on did not override the off default")
+	}
+	if _, known := prefs.providers["antigravity"]; known {
+		t.Fatalf("prefs = %#v, want no Antigravity usage preference", prefs)
+	}
+	if _, known := prefs.windows["antigravity"]; known {
+		t.Fatalf("prefs = %#v, want no Antigravity usage window preference", prefs)
 	}
 }
 
@@ -2286,21 +2338,19 @@ func TestHUDVisibilityFilterLeavesNoProviderWindowSeparatorOrStalenessResidue(t 
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, UpdatedAt: now.Add(-3 * time.Hour)},
 		{Model: "codex", Window: usage.Window5h, Pct: 71, UpdatedAt: now},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, UpdatedAt: now},
 	})
 	prefs := hudVisibilityPreferences{
-		providers: map[string]bool{"claude": false, "codex": true, "antigravity": true},
+		providers: map[string]bool{"claude": false, "codex": true},
 		windows: map[string]map[usage.Window]bool{
-			"claude":      {usage.Window5h: true, usage.WindowWeekly: true},
-			"codex":       {usage.Window5h: false, usage.WindowWeekly: false},
-			"antigravity": {usage.WindowWeekly: true},
+			"claude": {usage.Window5h: true, usage.WindowWeekly: true},
+			"codex":  {usage.Window5h: false, usage.WindowWeekly: true},
 		},
 	}
 	plain := intrender.StripTmuxEscapes(formatProjectedStatusUsage(filterStatusProjectionByVisibility(projected, prefs), 0, now))
-	if !strings.HasPrefix(plain, "Antigravity") || strings.Contains(plain, "Claude") || strings.Contains(plain, "Codex") || strings.Contains(plain, "~~") || strings.Contains(plain, "   ") {
+	if !strings.HasPrefix(plain, "Codex") || strings.Contains(plain, "Claude") || strings.Contains(plain, "5h") || strings.Contains(plain, "~~") || strings.Contains(plain, "   ") {
 		t.Fatalf("filtered output retained provider/window/separator/staleness residue: %q", plain)
 	}
-	prefs.windows["antigravity"][usage.WindowWeekly] = false
+	prefs.windows["codex"][usage.WindowWeekly] = false
 	if got := formatProjectedStatusUsage(filterStatusProjectionByVisibility(projected, prefs), 0, now); got != "" {
 		t.Fatalf("all provider windows off = %q, want empty ambient text", got)
 	}
@@ -2313,18 +2363,16 @@ func TestHUDVisibilityProviderTogglePreservesOtherProviderBytesAndOrder(t *testi
 	snaps := []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, UpdatedAt: now},
 		{Model: "codex", Window: usage.Window5h, Pct: 71, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, UpdatedAt: now},
 	}
 	projected := projectStatusSnapshots(snaps)
 	prefs := hudVisibilityPreferences{
-		providers: map[string]bool{"claude": true, "codex": true, "antigravity": true},
+		providers: map[string]bool{"claude": true, "codex": true},
 		windows: map[string]map[usage.Window]bool{
-			"claude":      {usage.Window5h: true, usage.WindowWeekly: true},
-			"codex":       {usage.Window5h: true, usage.WindowWeekly: true},
-			"antigravity": {usage.WindowWeekly: true},
+			"claude": {usage.Window5h: true, usage.WindowWeekly: true},
+			"codex":  {usage.Window5h: true, usage.WindowWeekly: true},
 		},
 	}
-	for _, hidden := range []string{"claude", "codex", "antigravity"} {
+	for _, hidden := range []string{"claude", "codex"} {
 		prefs.providers[hidden] = false
 		got := formatProjectedStatusUsage(filterStatusProjectionByVisibility(projected, prefs), 0, now)
 		var survivors []usage.Snapshot
@@ -2353,7 +2401,6 @@ func TestHUDVisibilityWindowTogglesAreIndependentAcrossCapabilityMatrix(t *testi
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, UpdatedAt: now},
 		{Model: "codex", Window: usage.Window5h, Pct: 71, UpdatedAt: now},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, UpdatedAt: now},
 	})
 	prefs := hudVisibilityPreferences{providers: map[string]bool{}, windows: map[string]map[usage.Window]bool{}}
 	for _, capability := range HUDProviderCapabilities() {
@@ -2394,7 +2441,7 @@ func TestUsageStatusVisibilityFiltersAfterCollectionAndLeavesExplicitCLIStateLos
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, provider := range []string{"claude", "codex", "antigravity"} {
+	for _, provider := range []string{"claude", "codex"} {
 		if err := config.SaveStatusbarVisibilityFile(paths.StatusbarAgentUsageProviderVisibilityFile(provider), config.StatusbarVisibilityOff); err != nil {
 			t.Fatal(err)
 		}

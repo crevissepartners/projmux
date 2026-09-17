@@ -123,7 +123,7 @@ projmux agent turn interrupt <agent-ref>
 projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
-projmux agent usage [--model <codex|claude|antigravity|all>] [--window <name>] [--json] [--force]
+projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
 projmux agent app-server upgrade qualify --receipt <absolute-json>
 projmux agent app-server upgrade plan|apply --request <absolute-json>
 projmux agent app-server upgrade resume|abort --operation <ref>
@@ -424,7 +424,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent usage [--model <codex|claude|antigravity|all>] [--window <name>] [--json] [--force]
+projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
 ```
 
 ### `projmux agent app-server`

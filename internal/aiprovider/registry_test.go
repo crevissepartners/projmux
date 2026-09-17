@@ -14,7 +14,7 @@ func TestProviderRegistryOrdersSurfaces(t *testing.T) {
 	if got, want := providerIDs(PickerEligible()), []ID{Codex, Claude, Antigravity}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("PickerEligible() = %#v, want %#v", got, want)
 	}
-	if got, want := providerIDs(UsageSupported()), []ID{Claude, Codex, Antigravity}; !reflect.DeepEqual(got, want) {
+	if got, want := providerIDs(UsageSupported()), []ID{Claude, Codex}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UsageSupported() = %#v, want %#v", got, want)
 	}
 	if got, want := providerIDs(HookDiagnosticSupported()), []ID{Claude, Codex, Antigravity}; !reflect.DeepEqual(got, want) {
@@ -61,15 +61,16 @@ func TestProviderRegistryMetadataForCurrentAgents(t *testing.T) {
 	if !ok {
 		t.Fatalf("Lookup(antigravity) missing")
 	}
-	// Antigravity participates in usage, managed hook integration, hook
-	// diagnostics, and session-state surfaces.
-	if !antigravity.UsageSupported || antigravity.UsageModel != string(Antigravity) {
-		t.Fatalf("Antigravity metadata = %#v, want usage support with UsageModel set", antigravity)
+	// Antigravity participates in managed hook integration, hook diagnostics,
+	// and session-state surfaces. It has no usage source: the statusLine
+	// bridge that fed one was removed.
+	if antigravity.UsageSupported || antigravity.UsageModel != "" {
+		t.Fatalf("Antigravity metadata = %#v, want no usage support", antigravity)
 	}
 	if !antigravity.Integrate.Supported || antigravity.Integrate.Command != "projmux agent integrate antigravity" || !antigravity.SessionState.Supported {
 		t.Fatalf("Antigravity metadata = %#v, want managed integration and session-state support", antigravity)
 	}
-	if !antigravity.HookDiagnostics.Supported || antigravity.HookDiagnostics.ID != "antigravity-hooks" || antigravity.HookProvider != "antigravity" {
+	if !antigravity.HookDiagnostics.Supported || antigravity.HookDiagnostics.ID != "antigravity-hooks" || antigravity.HookDiagnostics.Name != "Antigravity hooks" || antigravity.HookProvider != "antigravity" {
 		t.Fatalf("Antigravity hook metadata = %#v, want managed hook diagnostics support", antigravity)
 	}
 }

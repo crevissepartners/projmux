@@ -1079,9 +1079,8 @@ independent global presentation preferences:
 
 - `Notifications HUD > Visible`
 - `Agent Usage HUD > Visible`
-- `Agent Usage HUD > Claude|Codex|Antigravity > Visible`
-- each provider's supported HUD windows (`Claude`/`Codex`: `5h`, `Weekly`;
-  `Antigravity`: `Weekly`)
+- `Agent Usage HUD > Claude|Codex > Visible`
+- each provider's supported HUD windows (`5h`, `Weekly`)
 
 The saved values are `on` or `off` in these files:
 
@@ -1090,12 +1089,10 @@ The saved values are `on` or `off` in these files:
 ~/.config/projmux/statusbar-visibility-agent-usage-hud
 ~/.config/projmux/statusbar-visibility-agent-usage-provider-claude
 ~/.config/projmux/statusbar-visibility-agent-usage-provider-codex
-~/.config/projmux/statusbar-visibility-agent-usage-provider-antigravity
 ~/.config/projmux/statusbar-visibility-agent-usage-window-claude-5h
 ~/.config/projmux/statusbar-visibility-agent-usage-window-claude-weekly
 ~/.config/projmux/statusbar-visibility-agent-usage-window-codex-5h
 ~/.config/projmux/statusbar-visibility-agent-usage-window-codex-weekly
-~/.config/projmux/statusbar-visibility-agent-usage-window-antigravity-weekly
 ```
 
 Missing, empty, and invalid values resolve to `on` except the Codex `5h`
@@ -1109,8 +1106,9 @@ Parent visibility gates only the effective projection. Turning the overall HUD
 or a provider off does not rewrite its provider/window leaf files; turning the
 parent back on restores the saved child selection. Provider rows follow the
 usage-supported provider catalog. Window rows come only from the explicit HUD
-capability map, so opaque quota buckets never create settings and Antigravity
-never gains a fabricated `5h` row.
+capability map, so opaque quota buckets never create settings. Antigravity has
+no usage source; `statusbar-visibility-agent-usage-*-antigravity*` files left by
+older releases are ignored and never deleted.
 
 Visibility does not enable or disable either producer. Hiding Notifications HUD
 does not change the persistent queue, desktop delivery, or Notification

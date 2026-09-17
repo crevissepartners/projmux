@@ -69,183 +69,137 @@ func TestAntigravityManagedHookGolden(t *testing.T) {
 	}
 }
 
-func TestAIIntegrateAntigravityManagesOfficialStackedStatusLineAndRestoresSettings(t *testing.T) {
-	home := t.TempDir()
-	cmd := testAICommand(home)
-	cmd.readFile = os.ReadFile
-	cmd.executable = func() (string, error) { return "/opt/projmux/bin/projmux", nil }
-	settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
-	original := "{\n  \"theme\": \"keep\",\n  \"unknown\": {\"spacing\" : [3, 2, 1]}\n}\n"
-	writeCodexTestFile(t, settingsPath, original)
-	if err := os.Chmod(settingsPath, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	installed := readCodexTestFile(t, settingsPath)
-	if !strings.Contains(installed, `"type": "command"`) || !strings.Contains(installed, `"enabled": true`) || !strings.Contains(installed, `"stack_with_default": true`) || !strings.Contains(installed, antigravityManagedStatusLineMarker) {
-		t.Fatalf("settings missing official managed statusLine:\n%s", installed)
-	}
-	if !strings.Contains(installed, `"unknown": {"spacing" : [3, 2, 1]}`) {
-		t.Fatalf("install normalized unrelated settings:\n%s", installed)
-	}
-	if info, err := os.Stat(settingsPath); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("settings mode = %v err=%v, want 0600", info.Mode().Perm(), err)
-	}
-	first := installed
-	if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := readCodexTestFile(t, settingsPath); got != first {
-		t.Fatalf("reinstall changed settings bytes:\n%s", got)
-	}
-	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := readCodexTestFile(t, settingsPath); got != original {
-		t.Fatalf("remove did not exactly restore unrelated settings:\ngot:\n%s\nwant:\n%s", got, original)
-	}
-	if info, err := os.Stat(settingsPath); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("restored settings mode = %v err=%v, want 0600", info.Mode().Perm(), err)
-	}
+// legacyAntigravityStatusLineValue reproduces the exact statusLine object an
+// older projmux installed, so migration tests exercise real upgrade bytes.
+func legacyAntigravityStatusLineValue(executable, route string) string {
+	return "{\n  \"type\": \"command\",\n  \"command\": " + string(mustJSONMarshal(shellQuote(executable)+route+" --event Statusline # "+antigravityLegacyStatusLineMarker)) + ",\n  \"enabled\": true,\n  \"stack_with_default\": true\n}"
 }
 
-func TestAIIntegrateAntigravityStatusLineEmptyAndConflictPolicy(t *testing.T) {
-	for _, empty := range []string{"null", "{}"} {
-		t.Run("empty "+empty, func(t *testing.T) {
+// TestAIIntegrateAntigravityNeverCreatesOrWritesSettings pins that install and
+// dry-run only own hooks.json: settings.json is never created, and an existing
+// one is never written or judged, whatever its statusLine holds.
+func TestAIIntegrateAntigravityNeverCreatesOrWritesSettings(t *testing.T) {
+	for _, args := range [][]string{
+		{"integrate", "antigravity"},
+		{"integrate", "antigravity", "--dry-run"},
+		{"integrate", "antigravity", "--remove"},
+		{"integrate", "antigravity", "--remove", "--dry-run"},
+	} {
+		t.Run("missing "+strings.Join(args[2:], " "), func(t *testing.T) {
 			home := t.TempDir()
 			cmd := testAICommand(home)
 			cmd.readFile = os.ReadFile
-			path := filepath.Join(home, antigravitySettingsRelativePath)
-			writeCodexTestFile(t, path, `{"keep":true,"statusLine":`+empty+`}`)
-			if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			var stdout bytes.Buffer
+			if err := cmd.Run(args, &stdout, &bytes.Buffer{}); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(readCodexTestFile(t, path), antigravityManagedStatusLineMarker) {
-				t.Fatalf("empty statusLine was not installed: %s", readCodexTestFile(t, path))
+			settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
+			if _, err := os.Stat(filepath.Dir(settingsPath)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("settings directory exists after %v: %v", args, err)
+			}
+			if strings.Contains(strings.ToLower(stdout.String()), "statusline") {
+				t.Fatalf("stdout mentions statusline: %q", stdout.String())
 			}
 		})
 	}
 
+	marker := legacyAntigravityStatusLineValue("/opt/projmux/bin/projmux", antigravityCanonicalIngestPath)
+	for name, content := range map[string]string{
+		"custom statusLine":        `{"theme":"keep","statusLine":{"type":"command","command":"/home/user/custom","stack_with_default":true}}`,
+		"empty statusLine":         `{"statusLine":{}}`,
+		"non-object statusLine":    `{"statusLine":"custom"}`,
+		"malformed":                `{"statusLine":`,
+		"legacy marker on install": "{\n  \"statusLine\": " + marker + "\n}\n",
+	} {
+		for _, args := range [][]string{{"integrate", "antigravity"}, {"integrate", "antigravity", "--dry-run"}} {
+			t.Run(name+" "+strings.Join(args[2:], " "), func(t *testing.T) {
+				home := t.TempDir()
+				cmd := testAICommand(home)
+				cmd.readFile = os.ReadFile
+				settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
+				writeCodexTestFile(t, settingsPath, content)
+				// A read-only settings file proves no preflight or write targets it.
+				if err := os.Chmod(settingsPath, 0o400); err != nil {
+					t.Fatal(err)
+				}
+				var stdout bytes.Buffer
+				if err := cmd.Run(args, &stdout, &bytes.Buffer{}); err != nil {
+					t.Fatalf("%v with %s: %v", args, name, err)
+				}
+				if got := readCodexTestFile(t, settingsPath); got != content {
+					t.Fatalf("settings changed:\ngot:\n%s\nwant:\n%s", got, content)
+				}
+				if strings.Contains(stdout.String(), settingsPath) {
+					t.Fatalf("stdout mentions settings: %q", stdout.String())
+				}
+				if len(args) == 2 && !strings.Contains(readCodexTestFile(t, filepath.Join(home, antigravityHooksRelativePath)), antigravityManagedMarker) {
+					t.Fatal("install did not write managed hooks")
+				}
+			})
+		}
+	}
+}
+
+// TestAIIntegrateAntigravityRemoveStripsOnlyLegacyMarkerStatusLine pins the
+// --remove choice: an uninstall also takes back the statusLine an older
+// projmux wrote, but never touches any other statusLine value.
+func TestAIIntegrateAntigravityRemoveStripsOnlyLegacyMarkerStatusLine(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readFile = os.ReadFile
 	settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
 	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
-	custom := `{"theme":"keep","statusLine":{"type":"command","command":"/home/user/custom","stack_with_default":true}}`
-	writeCodexTestFile(t, settingsPath, custom)
-	err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "unmanaged \"statusLine\" command") || !strings.Contains(err.Error(), "/statusline delete") {
-		t.Fatalf("conflict error = %v", err)
-	}
-	if got := readCodexTestFile(t, settingsPath); got != custom {
-		t.Fatalf("conflict changed settings: %s", got)
-	}
-	if _, statErr := os.Stat(hooksPath); !os.IsNotExist(statErr) {
-		t.Fatalf("statusLine preflight conflict left hooks behind: %v", statErr)
-	}
-	// Removal preserves separately owned custom statusline state while still
-	// removing the independently managed Phase 2 named hooks entry.
 	managedHooks, err := encodeAntigravityManagedHook("/tmp/projmux")
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeCodexTestFile(t, hooksPath, `{"projmux":`+managedHooks+`}`)
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("remove with custom statusline error = %v", err)
-	}
-	if got := readCodexTestFile(t, settingsPath); got != custom {
-		t.Fatalf("remove changed unmanaged statusline settings: %s", got)
-	}
-	if got := readCodexTestFile(t, hooksPath); strings.Contains(got, antigravityManagedMarker) {
-		t.Fatalf("remove retained independently managed hooks: %s", got)
-	}
-	if !strings.Contains(stdout.String(), "preserved unmanaged Antigravity statusline") {
-		t.Fatalf("stdout = %q, want preservation diagnostic", stdout.String())
-	}
-}
-
-func TestAIIntegrateAntigravityStatusLineMalformedSymlinkAndNewMode(t *testing.T) {
-	t.Run("malformed", func(t *testing.T) {
-		home := t.TempDir()
-		cmd := testAICommand(home)
-		cmd.readFile = os.ReadFile
-		path := filepath.Join(home, antigravitySettingsRelativePath)
-		writeCodexTestFile(t, path, `{"statusLine":`)
-		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
-		if err == nil || !strings.Contains(err.Error(), "parse Antigravity settings") || !strings.Contains(err.Error(), "malformed JSON") {
-			t.Fatalf("error = %v", err)
-		}
-	})
-	t.Run("symlink", func(t *testing.T) {
-		home := t.TempDir()
-		cmd := testAICommand(home)
-		cmd.readFile = os.ReadFile
-		path := filepath.Join(home, antigravitySettingsRelativePath)
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		target := filepath.Join(t.TempDir(), "settings.json")
-		writeCodexTestFile(t, target, `{}`)
-		if err := os.Symlink(target, path); err != nil {
-			t.Fatal(err)
-		}
-		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
-		if err == nil || !strings.Contains(err.Error(), "refusing symlink path component") {
-			t.Fatalf("error = %v", err)
-		}
-	})
-	t.Run("new file private", func(t *testing.T) {
-		home := t.TempDir()
-		cmd := testAICommand(home)
-		cmd.readFile = os.ReadFile
-		if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(filepath.Join(home, antigravitySettingsRelativePath))
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("mode = %v err=%v, want 0600", info.Mode().Perm(), err)
-		}
-	})
-	t.Run("settings permission preflight", func(t *testing.T) {
-		home := t.TempDir()
-		cmd := testAICommand(home)
-		cmd.readFile = os.ReadFile
-		settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
-		writeCodexTestFile(t, settingsPath, `{}`)
-		if err := os.Chmod(settingsPath, 0o400); err != nil {
-			t.Fatal(err)
-		}
-		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
-		if err == nil || !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "Antigravity settings") {
-			t.Fatalf("error = %v", err)
-		}
-		if _, statErr := os.Stat(filepath.Join(home, antigravityHooksRelativePath)); !os.IsNotExist(statErr) {
-			t.Fatalf("permission preflight left hooks behind: %v", statErr)
-		}
-	})
-}
-
-func TestAntigravityManagedStatusLineGolden(t *testing.T) {
-	got, err := encodeAntigravityManagedStatusLine("/opt/projmux/bin/projmux")
-	if err != nil {
+	original := "{\n  \"theme\": \"keep\",\n  \"statusLine\": " + legacyAntigravityStatusLineValue("/tmp/projmux", antigravityLegacyIngestPath) + ",\n  \"unknown\": {\"spacing\" : [3, 2, 1]}\n}\n"
+	writeCodexTestFile(t, settingsPath, original)
+	if err := os.Chmod(settingsPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	want := "{\n  \"type\": \"command\",\n  \"command\": \"'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1\",\n  \"enabled\": true,\n  \"stack_with_default\": true\n}"
-	if got != want || !isManagedAntigravityStatusLine(got) {
-		t.Fatalf("managed statusLine mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+
+	var dry bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "antigravity", "--remove", "--dry-run"}, &dry, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
 	}
-	for _, invalid := range []string{
-		`{"type":"command","command":"'/tmp/projmux' ai ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1","enabled":true,"stack_with_default":false}`,
-		`{"type":"command","command":"echo fake ai ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1","enabled":true,"stack_with_default":true}`,
-		`{"type":"command","command":"'/tmp/projmux' ai ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1","enabled":true,"stack_with_default":true,"extra":1}`,
-	} {
-		if isManagedAntigravityStatusLine(invalid) {
-			t.Fatalf("accepted non-exact managed object: %s", invalid)
-		}
+	if !strings.Contains(dry.String(), "would remove legacy projmux Antigravity statusLine from "+settingsPath) {
+		t.Fatalf("dry-run stdout = %q", dry.String())
+	}
+	if got := readCodexTestFile(t, settingsPath); got != original {
+		t.Fatalf("dry-run changed settings: %s", got)
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  \"theme\": \"keep\",\n  \"unknown\": {\"spacing\" : [3, 2, 1]}\n}\n"
+	if got := readCodexTestFile(t, settingsPath); got != want {
+		t.Fatalf("remove result:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if info, err := os.Stat(settingsPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("settings mode = %v err=%v, want 0600", info.Mode().Perm(), err)
+	}
+	if got := readCodexTestFile(t, hooksPath); strings.Contains(got, antigravityManagedMarker) {
+		t.Fatalf("remove retained managed hooks: %s", got)
+	}
+	if !strings.Contains(stdout.String(), "removed legacy projmux Antigravity statusLine") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+
+	custom := `{"theme":"keep","statusLine":{"type":"command","command":"/home/user/custom # mentions projmux"}}`
+	writeCodexTestFile(t, settingsPath, custom)
+	stdout.Reset()
+	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCodexTestFile(t, settingsPath); got != custom {
+		t.Fatalf("remove changed user statusLine: %s", got)
+	}
+	if strings.Contains(stdout.String(), "statusLine") {
+		t.Fatalf("stdout = %q, want no statusLine action", stdout.String())
 	}
 }
 
@@ -1357,11 +1311,7 @@ func TestManagedIngestProducerMigrationUpgradesV0101AndRepeatsWithoutWrites(t *t
 	}
 	writeCodexTestFile(t, hooksPath, "{\n  \"projmux\": "+strings.ReplaceAll(hooks, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
 	statusPath := filepath.Join(home, antigravitySettingsRelativePath)
-	status, err := encodeAntigravityManagedStatusLine("/opt/projmux/bin/projmux")
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+strings.ReplaceAll(status, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+legacyAntigravityStatusLineValue("/opt/projmux/bin/projmux", antigravityLegacyIngestPath)+"\n}\n")
 
 	writes := 0
 	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
@@ -1375,11 +1325,14 @@ func TestManagedIngestProducerMigrationUpgradesV0101AndRepeatsWithoutWrites(t *t
 	if count != 3 || writes != 3 {
 		t.Fatalf("first migration count=%d writes=%d, want 3/3", count, writes)
 	}
-	for _, path := range []string{codexPath, hooksPath, statusPath} {
+	for _, path := range []string{codexPath, hooksPath} {
 		got := readCodexTestFile(t, path)
 		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
 			t.Fatalf("%s did not converge to canonical ingest:\n%s", path, got)
 		}
+	}
+	if got := readCodexTestFile(t, statusPath); strings.Contains(got, "statusLine") || !json.Valid([]byte(got)) {
+		t.Fatalf("legacy statusLine was not removed (never re-installed):\n%s", got)
 	}
 	if got := readCodexTestFile(t, claudePath); got != legacyClaudeSettings {
 		t.Fatalf("automatic Claude migration changed settings bytes:\n%s", got)
@@ -1449,9 +1402,8 @@ func TestManagedIngestProducerMigrationRollsBackAntigravitySecondWrite(t *testin
 	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
 	statusPath := filepath.Join(home, antigravitySettingsRelativePath)
 	hooks, _ := encodeAntigravityManagedHook("/old/projmux")
-	status, _ := encodeAntigravityManagedStatusLine("/old/projmux")
 	originalHooks := "{\n  \"projmux\": " + strings.ReplaceAll(hooks, antigravityCanonicalIngestPath, antigravityLegacyIngestPath) + "\n}\n"
-	originalStatus := "{\n  \"statusLine\": " + strings.ReplaceAll(status, antigravityCanonicalIngestPath, antigravityLegacyIngestPath) + "\n}\n"
+	originalStatus := "{\n  \"statusLine\": " + legacyAntigravityStatusLineValue("/old/projmux", antigravityLegacyIngestPath) + "\n}\n"
 	writeCodexTestFile(t, hooksPath, originalHooks)
 	writeCodexTestFile(t, statusPath, originalStatus)
 	writes := 0
@@ -1476,10 +1428,20 @@ func TestManagedIngestProducerMigrationRollsBackAntigravitySecondWrite(t *testin
 	}
 }
 
-func TestAIIntegrateAntigravityFreshSecondWriteFailureRemovesCreatedLedger(t *testing.T) {
+func TestAIIntegrateAntigravityRemoveSecondWriteFailureRestoresBothFiles(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readFile = os.ReadFile
+	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
+	settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
+	hooks, err := encodeAntigravityManagedHook("/tmp/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalHooks := `{"projmux":` + hooks + `}`
+	originalSettings := `{"keep":1,"statusLine":` + legacyAntigravityStatusLineValue("/tmp/projmux", antigravityCanonicalIngestPath) + `}`
+	writeCodexTestFile(t, hooksPath, originalHooks)
+	writeCodexTestFile(t, settingsPath, originalSettings)
 	writes := 0
 	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
 		writes++
@@ -1487,15 +1449,18 @@ func TestAIIntegrateAntigravityFreshSecondWriteFailureRemovesCreatedLedger(t *te
 			if err := os.WriteFile(path, []byte("partial"), mode); err != nil {
 				return err
 			}
-			return errors.New("injected fresh second write failure")
+			return errors.New("injected remove second write failure")
 		}
 		return os.WriteFile(path, data, mode)
 	}
-	if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "fresh second write failure") {
+	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "remove second write failure") {
 		t.Fatalf("error = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".gemini")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("created Antigravity ledger remains after rollback: %v", err)
+	if got := readCodexTestFile(t, hooksPath); got != originalHooks {
+		t.Fatalf("hooks rollback mismatch:\n%s", got)
+	}
+	if got := readCodexTestFile(t, settingsPath); got != originalSettings {
+		t.Fatalf("settings rollback mismatch:\n%s", got)
 	}
 }
 
@@ -1511,9 +1476,8 @@ func TestV0101ManagedProducerDryRunsShowEveryTargetAndOldToCanonical(t *testing.
 	writeCodexTestFile(t, codexPath, strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand))
 	writeCodexTestFile(t, claudePath, `{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"`+legacyClaudeHookCommand+`"}]}]}}`)
 	hooks, _ := encodeAntigravityManagedHook("/opt/projmux/bin/projmux")
-	status, _ := encodeAntigravityManagedStatusLine("/opt/projmux/bin/projmux")
 	writeCodexTestFile(t, hooksPath, "{\n  \"projmux\": "+strings.ReplaceAll(hooks, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
-	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+strings.ReplaceAll(status, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+legacyAntigravityStatusLineValue("/opt/projmux/bin/projmux", antigravityLegacyIngestPath)+"\n}\n")
 	writes := 0
 	cmd.writeFile = func(string, []byte, os.FileMode) error {
 		writes++
@@ -1528,7 +1492,7 @@ func TestV0101ManagedProducerDryRunsShowEveryTargetAndOldToCanonical(t *testing.
 	}{
 		{provider: "codex", targets: []string{codexPath}, old: legacyCodexHookRoute, new: canonicalCodexHookRoute},
 		{provider: "claude", targets: []string{claudePath}, old: legacyClaudeHookRoute, new: canonicalClaudeHookRoute},
-		{provider: "antigravity", targets: []string{hooksPath, statusPath}, old: strings.TrimSpace(antigravityLegacyIngestPath), new: strings.TrimSpace(antigravityCanonicalIngestPath)},
+		{provider: "antigravity", targets: []string{hooksPath}, old: strings.TrimSpace(antigravityLegacyIngestPath), new: strings.TrimSpace(antigravityCanonicalIngestPath)},
 	} {
 		var stdout bytes.Buffer
 		if err := cmd.Run([]string{"integrate", test.provider, "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1542,6 +1506,9 @@ func TestV0101ManagedProducerDryRunsShowEveryTargetAndOldToCanonical(t *testing.
 		}
 		if !strings.Contains(out, test.old) || !strings.Contains(out, test.new) {
 			t.Errorf("%s dry-run missing old→new command:\n%s", test.provider, out)
+		}
+		if test.provider == "antigravity" && strings.Contains(out, statusPath) {
+			t.Errorf("antigravity install dry-run planned settings.json:\n%s", out)
 		}
 	}
 
@@ -1781,4 +1748,177 @@ func oldCodexHooksBlock() string {
 	}
 	lines = append(lines, codexHooksMarkerEnd)
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// TestManagedIngestProducerMigrationRemovesOnlyLegacyMarkerStatusLine pins
+// M-1 for marker-owned values: whatever shape the user left the legacy entry
+// in (disabled, extra keys, stacking off, relative path), install removes only
+// that member, keeps every other byte and the file mode, and never re-adds it.
+func TestManagedIngestProducerMigrationRemovesOnlyLegacyMarkerStatusLine(t *testing.T) {
+	const marker = "projmux-managed:antigravity-statusline:v1"
+	if antigravityLegacyStatusLineMarker != marker {
+		t.Fatalf("legacy marker = %q, want exact released bytes %q", antigravityLegacyStatusLineMarker, marker)
+	}
+	edited := `{"type": "command", "command": "projmux internal agent-hook ingest antigravity-hook --event Statusline # ` + marker + `", "enabled": false, "stack_with_default": false, "padding": 2, "vendor": {"x": [1, 2]}}`
+	for _, tc := range []struct {
+		name     string
+		original string
+		want     string
+	}{
+		{
+			name:     "middle member with edits",
+			original: "{\n  \"theme\": \"keep\",\n  \"statusLine\": " + edited + ",\n  \"unknown\" : {\"spacing\" : [3, 2, 1]}\n}\n",
+			want:     "{\n  \"theme\": \"keep\",\n  \"unknown\" : {\"spacing\" : [3, 2, 1]}\n}\n",
+		},
+		{
+			name:     "last member enabled missing",
+			original: "{\"theme\":\"keep\",\"statusLine\":{\"command\":\"./bin/projmux ai ingest antigravity-hook --event Statusline # " + marker + "\"}}",
+			want:     "{\"theme\":\"keep\"}",
+		},
+		{
+			name:     "first member absolute released shape",
+			original: "{\n  \"statusLine\": " + legacyAntigravityStatusLineValue("/opt/projmux/bin/projmux", antigravityCanonicalIngestPath) + ",\n  \"theme\": \"keep\"\n}\n",
+			want:     "{\n  \"theme\": \"keep\"\n}\n",
+		},
+		{
+			name:     "only member",
+			original: "{\"statusLine\":{\"enabled\":true,\"command\":\"x # " + marker + "\"}}\n",
+			want:     "{}\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			cmd := testAICommand(home)
+			cmd.readFile = os.ReadFile
+			path := filepath.Join(home, antigravitySettingsRelativePath)
+			writeCodexTestFile(t, path, tc.original)
+			if err := os.Chmod(path, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			count, rollback, err := cmd.beginManagedIngestProducerFileMigration()
+			if err != nil {
+				t.Fatalf("migration error = %v", err)
+			}
+			if count != 1 || rollback == nil {
+				t.Fatalf("migration count = %d, want 1", count)
+			}
+			if got := readCodexTestFile(t, path); got != tc.want {
+				t.Fatalf("migrated settings:\ngot:\n%q\nwant:\n%q", got, tc.want)
+			}
+			if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o640 {
+				t.Fatalf("mode = %v err = %v, want preserved 0640", info.Mode().Perm(), err)
+			}
+			if _, err := os.Stat(filepath.Join(home, antigravityHooksRelativePath)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("migration installed hooks that were never present: %v", err)
+			}
+			count, _, err = cmd.beginManagedIngestProducerFileMigration()
+			if err != nil || count != 0 {
+				t.Fatalf("repeat migration count = %d err = %v, want 0/nil", count, err)
+			}
+			if got := readCodexTestFile(t, path); got != tc.want {
+				t.Fatalf("repeat migration changed settings: %q", got)
+			}
+			if err := rollback(); err != nil {
+				t.Fatal(err)
+			}
+			if got := readCodexTestFile(t, path); got != tc.original {
+				t.Fatalf("rollback did not restore original bytes: %q", got)
+			}
+		})
+	}
+}
+
+// TestManagedIngestProducerMigrationLeavesNonMarkerStatusLineUntouched pins
+// M-1 for everything else: without the legacy marker in an object's command,
+// the statusLine is not judged at all, and an unreadable, symlinked, or
+// malformed settings file cannot fail install either.
+func TestManagedIngestProducerMigrationLeavesNonMarkerStatusLineUntouched(t *testing.T) {
+	marker := antigravityLegacyStatusLineMarker
+	for name, content := range map[string]string{
+		"absent":                  `{"theme":"keep"}`,
+		"empty object":            `{"statusLine":{}}`,
+		"null":                    `{"statusLine":null}`,
+		"empty command":           `{"statusLine":{"type":"command","command":""}}`,
+		"user command":            `{"statusLine":{"type":"command","command":"/home/user/custom","enabled":true,"stack_with_default":true}}`,
+		"projmux route no marker": `{"statusLine":{"type":"command","command":"'/opt/projmux' internal agent-hook ingest antigravity-hook --event Statusline"}}`,
+		"marker outside command":  `{"statusLine":{"type":"command","command":"/home/user/custom","note":"` + marker + `"}}`,
+		"non-string command":      `{"statusLine":{"command":["` + marker + `"]}}`,
+		"string value":            `{"statusLine":"` + marker + `"}`,
+		"number value":            `{"statusLine":42}`,
+		"array value":             `{"statusLine":[{"command":"` + marker + `"}]}`,
+		"malformed JSON":          `{"statusLine":{"command":"` + marker + `"}`,
+		"duplicate keys":          `{"statusLine":{"command":"` + marker + `"},"statusLine":{}}`,
+		"non-object document":     `["` + marker + `"]`,
+		"empty file":              ``,
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			cmd := testAICommand(home)
+			cmd.readFile = os.ReadFile
+			path := filepath.Join(home, antigravitySettingsRelativePath)
+			writeCodexTestFile(t, path, content)
+			count, _, err := cmd.beginManagedIngestProducerFileMigration()
+			if err != nil || count != 0 {
+				t.Fatalf("migration count = %d err = %v, want 0/nil", count, err)
+			}
+			if got := readCodexTestFile(t, path); got != content {
+				t.Fatalf("settings changed:\ngot:  %q\nwant: %q", got, content)
+			}
+		})
+	}
+
+	t.Run("missing file is not created", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.readFile = os.ReadFile
+		count, _, err := cmd.beginManagedIngestProducerFileMigration()
+		if err != nil || count != 0 {
+			t.Fatalf("migration count = %d err = %v, want 0/nil", count, err)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".gemini")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("migration created Antigravity state: %v", err)
+		}
+	})
+	t.Run("unreadable file", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		path := filepath.Join(home, antigravitySettingsRelativePath)
+		cmd.readFile = func(name string) ([]byte, error) {
+			if name == path {
+				return nil, fs.ErrPermission
+			}
+			return os.ReadFile(name)
+		}
+		content := `{"statusLine":{"command":"` + marker + `"}}`
+		writeCodexTestFile(t, path, content)
+		count, _, err := cmd.beginManagedIngestProducerFileMigration()
+		if err != nil || count != 0 {
+			t.Fatalf("migration count = %d err = %v, want 0/nil", count, err)
+		}
+		if got := readCodexTestFile(t, path); got != content {
+			t.Fatalf("settings changed: %q", got)
+		}
+	})
+	t.Run("symlinked file", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.readFile = os.ReadFile
+		path := filepath.Join(home, antigravitySettingsRelativePath)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "settings.json")
+		content := `{"statusLine":{"command":"` + marker + `"}}`
+		writeCodexTestFile(t, target, content)
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		count, _, err := cmd.beginManagedIngestProducerFileMigration()
+		if err != nil || count != 0 {
+			t.Fatalf("migration count = %d err = %v, want 0/nil", count, err)
+		}
+		if got := readCodexTestFile(t, target); got != content {
+			t.Fatalf("symlink target changed: %q", got)
+		}
+	})
 }

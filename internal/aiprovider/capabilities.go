@@ -84,6 +84,21 @@ func codexOnly(precision CompletionPrecision) []AgentCapabilityCell {
 	return out
 }
 
+// usageAdapters marks only registry providers with a usage adapter as
+// supported; the rest are explicit unsupported cells.
+func usageAdapters(precision CompletionPrecision) []AgentCapabilityCell {
+	out := make([]AgentCapabilityCell, 0, len(providerOrder))
+	for _, provider := range AgentProviders() {
+		cell := AgentCapabilityCell{Provider: provider, Mode: SupportUnsupported, CompletionPrecision: CompletionNone}
+		if metadata, ok := Lookup(string(provider)); ok && metadata.UsageSupported && metadata.UsageModel == string(provider) {
+			cell.Mode = SupportReadOnlyAdapter
+			cell.CompletionPrecision = precision
+		}
+		out = append(out, cell)
+	}
+	return out
+}
+
 func coordination(precision CompletionPrecision, providers ...ID) []AgentCapabilityCell {
 	out := make([]AgentCapabilityCell, 0, len(providerOrder))
 	for _, provider := range AgentProviders() {
@@ -116,7 +131,7 @@ var agentActions = []AgentAction{
 	{ID: "integrate.install", Group: "integrate", Route: "agent integrate", Callable: true, Cells: cells(SupportProviderHook, CompletionLocalConfigCommit)},
 	{ID: "integrate.remove", Group: "integrate", Route: "agent integrate", Callable: true, Cells: cells(SupportProviderHook, CompletionLocalConfigCommit)},
 	{ID: "integrate.dry-run", Group: "integrate", Route: "agent integrate", Callable: true, Cells: cells(SupportProviderHook, CompletionPlanPreview)},
-	{ID: "usage", Group: "usage", Route: "agent usage", Callable: true, Cells: cells(SupportReadOnlyAdapter, CompletionProviderSnapshot)},
+	{ID: "usage", Group: "usage", Route: "agent usage", Callable: true, Cells: usageAdapters(CompletionProviderSnapshot)},
 	{ID: "app-server.upgrade.plan", Group: "app-server", Route: "agent app-server upgrade plan", Callable: true, Cells: codexOnly(CompletionPlanPreview)},
 	{ID: "app-server.upgrade.apply", Group: "app-server", Route: "agent app-server upgrade apply", Callable: true, Cells: codexOnly(CompletionExactOperation)},
 	{ID: "app-server.upgrade.resume", Group: "app-server", Route: "agent app-server upgrade resume", Callable: true, Cells: codexOnly(CompletionExactOperation)},
@@ -158,11 +173,15 @@ func AgentActions() []AgentAction {
 func AgentProviders() []ID { return slices.Clone(providerOrder) }
 
 // UsageTargets returns the provider adapters plus the provider-neutral fan-out
-// token accepted by `agent usage --model`.
+// token advertised by `agent usage --model`. Providers without a usage adapter
+// are still accepted by the command (they print unsupported guidance) but are
+// not advertised.
 func UsageTargets() []string {
 	out := make([]string, 0, len(providerOrder)+1)
 	for _, provider := range providerOrder {
-		out = append(out, string(provider))
+		if metadata, ok := Lookup(string(provider)); ok && metadata.UsageSupported && metadata.UsageModel == string(provider) {
+			out = append(out, string(provider))
+		}
 	}
 	return append(out, "all")
 }

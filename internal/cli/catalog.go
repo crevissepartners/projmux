@@ -774,7 +774,7 @@ var routes = []Route{
 			"projmux agent approval review <agent-ref> [--request <normalized-id>]",
 			"projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]",
 			"projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]",
-			"projmux agent usage [--model <codex|claude|antigravity|all>] [--window <name>] [--json] [--force]",
+			"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]",
 			"projmux agent app-server upgrade qualify --receipt <absolute-json>",
 			"projmux agent app-server upgrade plan|apply --request <absolute-json>",
 			"projmux agent app-server upgrade resume|abort --operation <ref>",
@@ -834,7 +834,7 @@ var routes = []Route{
 				Name:       "usage",
 				Invocation: InvocationFanOut,
 				Summary:    "Read provider account usage quota snapshots",
-				Usage:      []string{"projmux agent usage [--model <codex|claude|antigravity|all>] [--window <name>] [--json] [--force]"},
+				Usage:      []string{"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]"},
 				Canonical:  []string{"agent usage"},
 			},
 			{

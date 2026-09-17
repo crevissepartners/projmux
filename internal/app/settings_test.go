@@ -2840,7 +2840,6 @@ func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing
 		ProviderID:     "antigravity",
 		Status:         doctorAINotifyStatusMissing,
 		ConfigPath:     "/home/tester/.gemini/config/hooks.json",
-		StatusLinePath: "/home/tester/.gemini/antigravity-cli/settings.json",
 		TestedVersion:  "Antigravity CLI 1.1.12",
 		Guidance:       "Managed hooks use hooks.json as source of truth; /hooks is read-only diagnosis and PreToolUse is unchanged.",
 		InstallCommand: "projmux agent integrate antigravity",
@@ -2891,7 +2890,6 @@ func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing
 	}
 	for _, want := range []string{
 		"/home/tester/.gemini/config/hooks.json",
-		"/home/tester/.gemini/antigravity-cli/settings.json",
 		"hooks.json as source of truth",
 		"/hooks is read-only diagnosis",
 		"PreToolUse is unchanged",
@@ -2901,6 +2899,11 @@ func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing
 	} {
 		if !hasEntryLabelContaining(detailOptions.Entries, want) {
 			t.Fatalf("antigravity detail entries = %#v, want %q", detailOptions.Entries, want)
+		}
+	}
+	for _, forbidden := range []string{"Statusline config", "settings.json"} {
+		if hasEntryLabelContaining(detailOptions.Entries, forbidden) {
+			t.Fatalf("antigravity detail entries = %#v, want no %q row", detailOptions.Entries, forbidden)
 		}
 	}
 	for _, want := range []string{

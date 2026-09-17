@@ -184,6 +184,14 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		if reader == nil {
 			reader = os.Stdin
 		}
+		// A statusLine bridge left behind by an older projmux still calls this
+		// route. projmux no longer ingests the statusLine, so the call drains its
+		// payload and exits silently: no Pane, notify, usage, or journal change,
+		// and no stdout that would render into the Antigravity status line.
+		if normalizeAntigravityEventName(*eventName) == antigravityLegacyStatuslineEvent {
+			_, _ = io.Copy(io.Discard, reader)
+			return nil
+		}
 		data, err := io.ReadAll(io.LimitReader(reader, 1024*1024+1))
 		if err != nil {
 			c.recordAIIngestFailure(diagnostics.ProviderAntigravity, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadRead)
@@ -197,13 +205,6 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		if strings.TrimSpace(*eventName) == "" {
-			return nil
-		}
-		// Antigravity statusline commands render their stdout. The managed
-		// bridge is ingest-only and must stay empty so stack_with_default=true
-		// leaves the built-in line visible. Hook events retain their response
-		// JSON contracts below.
-		if normalizeAntigravityEventName(*eventName) == "Statusline" {
 			return nil
 		}
 		response, err := antigravityHookResponse(*eventName)
@@ -982,14 +983,6 @@ func firstAny(raw map[string]any, keys ...string) any {
 	return nil
 }
 
-func firstNestedAny(value any, keys ...string) any {
-	nested, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-	return firstAny(nested, keys...)
-}
-
 func firstBool(raw map[string]any, keys ...string) (bool, bool) {
 	for _, key := range keys {
 		if value, ok := boolFromAny(raw[key]); ok {
@@ -997,14 +990,6 @@ func firstBool(raw map[string]any, keys ...string) (bool, bool) {
 		}
 	}
 	return false, false
-}
-
-func firstNestedBool(value any, keys ...string) (bool, bool) {
-	nested, ok := value.(map[string]any)
-	if !ok {
-		return false, false
-	}
-	return firstBool(nested, keys...)
 }
 
 func mapFromAny(value any) map[string]any {

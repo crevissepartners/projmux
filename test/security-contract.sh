@@ -66,7 +66,7 @@ for fragment in required_fragments:
         raise SystemExit(f"security contract: scanner/rule/baseline fragment missing: {fragment}")
 
 baseline_expectations = {
-    ".security/gosec-baseline.json": "5a3064d5c4dcc97e17db31c333cdcec681108a534a06b051eb20715359b83791",
+    ".security/gosec-baseline.json": "a44238062f13b5528f93c636fcb9a07f6c7b286739907d67b8bc346f67b40ebe",
     ".security/staticcheck-baseline.json": "169426e66d681b9002d811c08522b20b93a75264b8e60ba0552b1cdeca35a7f5",
 }
 baseline_digests = {}

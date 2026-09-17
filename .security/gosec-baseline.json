@@ -775,13 +775,6 @@
     },
     {
       "rule": "G304",
-      "path": "internal/core/usage/adapters/antigravity/antigravity.go",
-      "message": "Potential file inclusion via variable",
-      "source": "data, err := os.ReadFile(path)",
-      "max_count": 1
-    },
-    {
-      "rule": "G304",
       "path": "internal/core/usage/adapters/claude/claude.go",
       "message": "Potential file inclusion via variable",
       "source": "data, err := os.ReadFile(path)",

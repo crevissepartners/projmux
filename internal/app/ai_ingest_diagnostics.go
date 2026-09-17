@@ -121,8 +121,6 @@ func classifyAIHookKind(provider diagnostics.Provider, event string) diagnostics
 		switch event {
 		case "Stop":
 			return diagnostics.AIKindStop
-		case "Statusline":
-			return diagnostics.AIKindStatusline
 		case "PreInvocation", "PostInvocation":
 			return diagnostics.AIKindInvocation
 		case "PreToolUse", "PostToolUse":

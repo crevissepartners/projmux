@@ -81,6 +81,13 @@ func TestV0101NormalUpdaterHandoffConvergesThroughCandidateApply(t *testing.T) {
 			}
 			continue
 		}
+		if path == filepath.Join(home, antigravitySettingsRelativePath) {
+			// The legacy statusLine is removed, never canonicalized.
+			if strings.Contains(got, "statusLine") {
+				t.Fatalf("config apply left the legacy statusLine in settings:\n%s", got)
+			}
+			continue
+		}
 		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
 			t.Fatalf("normal handoff did not canonicalize %s:\n%s", path, got)
 		}
@@ -154,6 +161,13 @@ func TestV0101NoApplyIsReplaceOnlyThenExplicitCandidateNoReloadConverges(t *test
 			}
 			continue
 		}
+		if path == filepath.Join(home, antigravitySettingsRelativePath) {
+			// The legacy statusLine is removed, never canonicalized.
+			if strings.Contains(got, "statusLine") {
+				t.Fatalf("config apply left the legacy statusLine in settings:\n%s", got)
+			}
+			continue
+		}
 		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
 			t.Fatalf("explicit candidate --no-reload did not canonicalize %s:\n%s", path, got)
 		}
@@ -178,11 +192,7 @@ func writeV0101ManagedFileFixture(t *testing.T, home string) []string {
 	}
 	writeCodexTestFile(t, hooksPath, "{\n  \"projmux\": "+strings.ReplaceAll(hooks, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
 	statusPath := filepath.Join(home, antigravitySettingsRelativePath)
-	status, err := encodeAntigravityManagedStatusLine("/opt/projmux/bin/projmux")
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+strings.ReplaceAll(status, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+legacyAntigravityStatusLineValue("/opt/projmux/bin/projmux", antigravityLegacyIngestPath)+"\n}\n")
 	return []string{codexPath, claudePath, hooksPath, statusPath}
 }
 

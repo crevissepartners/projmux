@@ -52,6 +52,37 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### Antigravity statusLine support removed
+
+projmux no longer installs, reads, or judges the Antigravity `statusLine` in
+`~/.gemini/antigravity-cli/settings.json`. Only the official hooks entry
+(`projmux` in `~/.gemini/config/hooks.json`) remains.
+
+- The first `projmux config apply` after upgrading (which `make install` and
+  `projmux update apply` also run) removes only a `statusLine` whose `command`
+  carries the `projmux-managed:antigravity-statusline:v1` marker, whatever its
+  `enabled`, `stack_with_default`, extra keys, or executable path. The rest of
+  the file keeps its bytes and mode. It is never re-installed, and
+  `projmux agent integrate antigravity` never creates or writes the file.
+  `agent integrate antigravity --remove` also removes the marker entry.
+- A user-owned `statusLine`, or any value without the marker, is left
+  untouched and can no longer block install, cause a conflict, or change the
+  doctor status. A malformed or unreadable settings file is skipped.
+- Until that removal runs, a leftover bridge calling
+  `internal agent-hook ingest antigravity-hook --event Statusline` exits 0 with
+  empty stdout and changes nothing.
+- Antigravity usage display (`agent usage`, the statusbar HUD and popup, and
+  the Settings usage rows), the Antigravity approval-required notification,
+  and the mid-turn busy detail are gone until Antigravity offers official
+  events for them. `agent usage --model antigravity` is still accepted and
+  prints the `usage unsupported` note; `agent capabilities` reports Antigravity
+  usage as unsupported. Working state still follows the official
+  `PreInvocation`/`Stop` hooks.
+- Leftover `~/.config/projmux/statusbar-visibility-*antigravity*` files,
+  `<state>/usage/antigravity-*.json` sidecars, and cached Antigravity rows in
+  `snapshots.json` are ignored, not deleted. Doctor JSON no longer has
+  `statusline_config_path`, and the diagnostic is named `Antigravity hooks`.
+
 ### Claude dialogue endpoint revalidation
 
 The heterogeneous dialogue release moves the public message envelope and
@@ -359,8 +390,8 @@ queue maintenance.
 
 ### Managed Agent hook producer migration
 
-The installer now writes Codex, Claude, Antigravity named hooks, Antigravity
-Statusline, and the tmux bell fallback with the canonical
+The installer now writes Codex, Claude, Antigravity named hooks, and the tmux
+bell fallback with the canonical
 `projmux internal agent-hook ingest ...` entrypoint. Copyable integration
 commands use `projmux agent integrate <provider>`.
 
@@ -374,8 +405,9 @@ through v0.11.1 before the next release when you need the migration-window
 event guarantee.
 
 Migration is ownership- and transaction-aware. Codex managed blocks and the
-Claude, Antigravity, Statusline, and tmux-bell markers are the only ownership
-evidence. Missing integrations and markerless commands are not installed or
+Claude, Antigravity, and tmux-bell markers are the only ownership
+evidence (the legacy Antigravity statusLine marker is only ever removed; see
+[Antigravity statusLine support removed](#antigravity-statusline-support-removed)). Missing integrations and markerless commands are not installed or
 rewritten. Provider file plans and conflicts are collected before the first
 file write. Live bell state is then inventoried on the exact target socket
 before its first command; a later bell failure rolls back both that live state

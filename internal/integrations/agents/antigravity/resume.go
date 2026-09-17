@@ -29,7 +29,7 @@ var adapter = agents.ResumeAdapter{
 
 // ResumeArgs returns the structured Antigravity CLI argv for resuming a saved
 // conversation. Antigravity's stable external id is the conversation UUID
-// surfaced as statusline `conversation_id` or hook `conversationId`.
+// surfaced as the hook payload `conversationId`.
 func ResumeArgs(resumeID string) ([]string, error) {
 	return adapter.ResumeArgs(resumeID)
 }

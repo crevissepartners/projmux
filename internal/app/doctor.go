@@ -925,27 +925,21 @@ func writeDoctorIntegrationsText(buf *bytes.Buffer, results []doctorAINotifyInte
 			}
 			fmt.Fprintf(buf, "config: %s", r.ConfigPath)
 		}
-		if r.StatusLinePath != "" {
-			if r.ProviderID != "" || r.ConfigPath != "" {
-				buf.WriteString("; ")
-			}
-			fmt.Fprintf(buf, "statusline config: %s", r.StatusLinePath)
-		}
 		if r.ConflictReason != "" {
-			if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" {
 				buf.WriteString("; ")
 			}
 			buf.WriteString(r.ConflictReason)
 		}
 		if r.TestedVersion != "" {
-			if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" || r.ConflictReason != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" {
 				buf.WriteString("; ")
 			}
 			buf.WriteString("tested: ")
 			buf.WriteString(r.TestedVersion)
 		}
 		if r.Guidance != "" {
-			if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
 				buf.WriteString("; ")
 			}
 			buf.WriteString("notice: ")

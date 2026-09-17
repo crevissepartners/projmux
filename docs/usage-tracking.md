@@ -1,22 +1,26 @@
 # Usage tracking
 
 `projmux agent usage` and `projmux internal status usage` report authoritative fixed-window
-utilisation for Claude/Codex and official named quota buckets for Antigravity.
+utilisation for Claude/Codex.
 `--model all`, the tmux
 HUD, and the statusbar usage popup use Settings > AI Settings > Enabled
-agents as the source of truth, so disabled Claude/Codex/Antigravity providers are
+agents as the source of truth, so disabled Claude/Codex providers are
 not refreshed or rendered on ambient/all surfaces. Explicit read-only
-requests such as `projmux agent usage --model claude`, `--model codex`, or
-`--model antigravity`
+requests such as `projmux agent usage --model claude` or `--model codex`
 still collect and render that provider even when it is disabled.
 
-Claude and Codex adapters read the upstream's own account view. Antigravity
-reads only the official managed statusline payload: `context_window` remains
-private conversation-local diagnostic metadata, while each valid `quota` map
-entry is a separate account row. Projmux preserves the upstream bucket ID and
-never guesses that an undocumented ID means `5h` or `weekly`. It does not infer
-quota, cadence, reset timestamps, or account limits from screen scraping,
-tokens, history, OAuth/cache files, or binary strings.
+Claude and Codex adapters read the upstream's own account view. projmux does
+not infer quota, cadence, reset timestamps, or account limits from screen
+scraping, tokens, history, OAuth/cache files, or binary strings.
+
+Antigravity has no usage adapter: Antigravity offers no official usage event,
+and projmux no longer reads its statusLine. `--model antigravity` is still
+accepted; it prints no rows and the `Antigravity usage unsupported` note (exit
+status 0), and an enabled Antigravity shows the same note on `--model all` and
+in the statusbar popup. Rows an older Antigravity adapter left in
+`snapshots.json` are never printed or projected, and leftover
+`usage/antigravity-*.json` sidecars and Antigravity statusbar visibility files
+are neither read nor deleted.
 
 Claude keeps the canonical aggregate `five_hour` and `seven_day` rows and also
 preserves structurally valid typed `limits[]` rows as named account quotas for
@@ -128,30 +132,6 @@ rollout fallback row records `source=rollout` plus the closed fallback reason.
 If neither lane produces rows, Manager preserves the previous source/value and
 adds a closed `stale_reason` to the last-known-good row.
 
-### Antigravity (`internal/core/usage/adapters/antigravity`)
-
-Local managed-statusline sidecars. No network or credential reads.
-
-- `context_window.used_percentage` and its conversation ID remain in the
-  private context sidecar for hook/notify diagnostics. They do not become
-  Usage snapshots. The legacy string percentage remains a writer fallback.
-- The official `quota` map is sorted by its exact bucket ID. Each valid bucket
-  becomes `window=quota`, `bucket=<upstream ID>` and renders as
-  `quota/<upstream ID>` on account-inspection surfaces.
-- Used percent is `100 * (1 - remaining_fraction)`. Non-finite or values
-  outside `[0,1]`, empty IDs, null/disabled entries, and negative relative
-  resets are ignored safely. Rejected and duplicate buckets are skipped
-  individually — the healthy buckets in the same map still become rows — and the
-  skip is reported by sorted row index only, never by bucket ID.
-- `reset_time` and optional `reset_in_seconds` are stored independently. An
-  absent relative reset differs from explicit zero; no value is derived from
-  the other.
-- Context and quota use independent private sidecars. A context-only payload
-  does not erase the last quota observation. An explicit empty/null quota map
-  records no buckets; the manager's existing rule still preserves prior model
-  rows when an adapter returns zero total rows. Context never participates in
-  that account-row replacement decision.
-
 ## Snapshot store
 
 ```
@@ -180,7 +160,7 @@ across machines (Dropbox, iCloud Drive).
 ### `projmux agent usage`
 
 ```
-projmux agent usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all]
+projmux agent usage [--model codex|claude|all] [--window 5h|weekly|context|quota|all]
               [--json] [--force|-f]
 ```
 
@@ -192,7 +172,6 @@ Enabled agents, filters by window, and renders the tab-aligned table:
 MODEL        WINDOW                 PCT  RESETS_AT                 RESET_IN  STALE  SOURCE      REASON
 codex        5h/codex · General     12%  2026-05-07T14:00:00+09:00 -         app-server
 claude       5h                     80%  2026-05-07T14:00:00+09:00 -
-antigravity  quota/gemini-weekly    6%   2026-07-06T16:50:32+09:00 560580s
 claude       quota/group-redacted · Model Redacted Alpha  38%  2031-02-03T15:05:06+09:00  -  *
 ```
 
@@ -210,11 +189,9 @@ claude is in backoff, try again in 30m (use --force to bypass)
 
 When no AI agents are enabled, all-model table output contains no
 provider rows and prints a short Settings hint. `--json` returns an
-empty array. Explicit `--model claude`, `--model codex` and
-`--model antigravity` bypass the enabled-agent filter for read-only
-inspection and collect/render only the requested adapter. Antigravity reports
-zero or more account `quota/<bucket-id>` rows. Legacy cached `window=context`
-rows are suppressed in text and JSON output. `--window quota` selects only
+empty array. Explicit `--model claude` and `--model codex` bypass the
+enabled-agent filter for read-only inspection and collect/render only the
+requested adapter. Legacy cached `window=context` rows are suppressed in text and JSON output. `--window quota` selects only
 account buckets; `--window weekly` never matches an opaque quota bucket named
 `weekly`. `--window context` remains an accepted compatibility filter and
 returns no Usage rows.
@@ -236,11 +213,10 @@ after collection, throttle/backoff, and cache load. If no AI
 agents are enabled, the status segment emits nothing.
 
 The HUD first derives an ambient projection separate from lossless account
-snapshots. The explicit HUD capability map admits Claude/Codex `5h` and
-`weekly`, while Antigravity's exact `quota/gemini-weekly` identity alone is
-projected as `weekly`
-without rewriting the cache. Context, `3p-weekly`, and unknown quota buckets
-do not participate in status width. Claude `limits[]` named/model rows are also
+snapshots. The explicit HUD capability map admits only Claude/Codex `5h` and
+`weekly`. Context, named quota buckets, and cached rows from providers without
+a capability (such as the removed Antigravity adapter) do not participate in
+status width. Claude `limits[]` named/model rows are also
 excluded; only its aggregate official `5h` and `weekly` rows reach the HUD.
 The Settings provider list consumes `aiprovider.UsageSupported()` order, but a
 window toggle exists only when this same projection seam declares it. A future
@@ -355,7 +331,7 @@ When a collection fails, the failure is visible in three places:
    not be read), or `response-invalid` (a 200 body that did not parse). The
    class comes from the adapter's typed error, never from its message text. A
    failure without a class stays `collect-failed`, and so does every whole
-   Codex or Antigravity failure. Status codes, paths, upstream bodies, and
+   Codex failure. Status codes, paths, upstream bodies, and
    credentials never reach the row. Codex rollout fallback records
    `source=rollout` plus its closed fallback reason; retained data records
    `source=last-known-good` plus its closed stale reason. A healthy native

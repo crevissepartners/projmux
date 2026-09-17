@@ -121,8 +121,9 @@ is the generic `ai`; ingest providers are `codex`, `claude`, `antigravity`, or
 for example, `tmux-bell` can only emit `bell`, while watcher events can only use
 the generic `ai` provider and `watcher` kind. Provider event names are projected
 into semantic kinds such as `prompt`, `permission`, `stop`, `notification`,
-`tool`, `session`, `compact`, `subagent`, `teammate`, `statusline`, `invocation`,
-`lifecycle`, `bell`, `payload`, or `unknown`. A raw or future event name can
+`tool`, `session`, `compact`, `subagent`, `teammate`, `invocation`,
+`lifecycle`, `bell`, `payload`, or `unknown`. `statusline` is still accepted
+when reading older records but is no longer written. A raw or future event name can
 therefore be diagnosed as `unknown` but can never extend the journal schema.
 
 One watcher process emits at most one `started` transition, one terminal

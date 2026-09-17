@@ -1113,7 +1113,7 @@ projmux doctor [--json] [--section deps|runtime|integrations|session-state|logs]
 
 Runs read-only diagnostics, including a dependency check for `tmux ≥ 3.4`,
 `git`, and `stty` (POSIX only), then reports read-only AI notify integration diagnostics
-for Codex hooks, Claude Code hooks, Antigravity hooks/statusline, and the tmux bell
+for Codex hooks, Claude Code hooks, Antigravity hooks, and the tmux bell
 fallback. AI notify integration statuses are `installed`, `missing`, or
 `conflict`; missing or conflicting integrations are informational and do not
 make doctor fail. It also reports read-only Session State resume metadata
@@ -1450,7 +1450,7 @@ Authoritative AI account usage. See [usage-tracking.md](usage-tracking.md)
 for adapter detail.
 
 ```
-projmux agent usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all]
+projmux agent usage [--model codex|claude|all] [--window 5h|weekly|context|quota|all]
                     [--json] [--force|-f]
 ```
 
@@ -1541,9 +1541,8 @@ projmux internal status resources
   local changes, `+N` staged entries, and `↑N`/`↓N` ahead/behind counts, with
   compact per-token colors in tmux output.
 - `usage` — HUD-style provider blocks containing only official `5h` and
-  `weekly` windows. Antigravity's exact `quota/gemini-weekly` snapshot is
-  projected as `weekly` without changing its cached identity; other named
-  quotas and context never consume status width. Claude typed `limits[]`
+  `weekly` windows from Claude and Codex; named quotas and context never
+  consume status width. Claude typed `limits[]`
   named/model rows are likewise excluded, so only its aggregate `5h` and
   `weekly` rows reach the status line. Narrow tiers keep one primary window per
   provider (`5h`, otherwise `weekly`) before hard truncation.
@@ -1635,7 +1634,7 @@ projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>]
 projmux internal agent-hook watch-title [pane]
 projmux internal agent-hook ingest codex-hook [--pane <pane_uid|pane_id>] < payload.json
 projmux internal agent-hook ingest claude-hook [--pane <pane_uid|pane_id>] < payload.json
-projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] [--pane <pane_uid|pane_id>] < payload.json
+projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop>] [--pane <pane_uid|pane_id>] < payload.json
 projmux internal agent-hook ingest bell --pane <pane_id>
 projmux diagnostics agent-hook [--tail N] [--json] [--path]
 projmux agent integrate codex [--dry-run] [--remove]
@@ -1823,22 +1822,21 @@ precedence over catalog `action` for known Claude events too; for example a
 noisy notify event can be made state-only or quiet without changing installed
 Claude hook commands.
 
-`ingest antigravity-hook` is the hook/statusline entrypoint for
+`ingest antigravity-hook` is the hook entrypoint for
 Antigravity CLI `agy` payloads. Official v1.1.12 hook commands must pass their
 event identity explicitly, for example
 `projmux internal agent-hook ingest antigravity-hook --event Stop`; the official stdin payload
 does not carry an event field. The explicit selector is authoritative, while
 payload `eventName` and its legacy aliases remain fallback inputs for existing
 manual wiring. `projmux agent integrate antigravity` manages exactly the named
-`projmux` entry in `~/.gemini/config/hooks.json` and, separately, exactly the
-`statusLine` member in `~/.gemini/antigravity-cli/settings.json`. The managed
-statusline uses the official v1.1.12 `{type:"command", enabled:true,
-stack_with_default:true}` shape and an absolute direct ingest command whose
-stdout is empty, so the built-in statusline remains visible. It preserves every
+`projmux` entry in `~/.gemini/config/hooks.json`. It never creates or writes
+`~/.gemini/antigravity-cli/settings.json` and does not judge its `statusLine`;
+only `--remove` also strips a `statusLine` that an older projmux installed
+(its command carries `projmux-managed:antigravity-statusline:v1`), and
+`projmux config apply` removes that legacy entry on upgrade. It preserves every
 other named entry and unknown JSON value, resolves the running projmux
 executable to a stable absolute path, and supports `--dry-run` and `--remove`.
-An existing unmanaged custom `statusLine` is an actionable conflict and is
-never chained, wrapped, or rewritten. An existing
+An existing
 unmanaged `projmux` entry, another Antigravity projmux ingest command, malformed
 JSON, symlinks, and read/write permission failures are reported without
 rewriting the file. Doctor and Settings also report a managed entry as `stale`
@@ -1849,8 +1847,8 @@ The embedded v1.1.12 catalog contains the five official events `PreToolUse`,
 `PostToolUse`, `PreInvocation`, `PostInvocation`, and `Stop`. The managed entry
 installs `PreInvocation`, `PostInvocation`, `PostToolUse`, and `Stop`, each with
 an explicit `--event`; `PreToolUse` remains disabled because its response can
-change permission policy. `Statusline` remains an explicit statusline selector
-outside that official hook catalog.
+change permission policy. A leftover `--event Statusline` call from an older
+statusLine bridge exits 0 with empty stdout and changes nothing.
 
 `PreInvocation` moves the matched pane to thinking/busy without notifying.
 `PostInvocation` and `PostToolUse` remain quiet bookkeeping paths, with tool
@@ -1858,13 +1856,9 @@ errors retained in ingest diagnostics. `Stop` keeps the completion/error notify
 classification. Hook stdout is `{}` for the three non-Stop managed events and
 `{"decision":"stop"}` for Stop, including a shell fallback if ingest fails, so
 the hook cannot force continuation or synthesize a permission decision.
-Official statusline `agent_state` values `thinking`, `working`, and `tool_use`
-map to thinking/busy unless the pane already holds a terminal completion or
-approval state; this prevents a late statusline refresh from regressing `Stop`.
 A new `PreInvocation` resets the pane to thinking for the next generation.
-`idle` is quiet and does not clear an existing completion or approval state.
-`tool_confirmation_pending=true` produces a stable-ID,
-deduped approval-required row; false never produces a notification.
+Antigravity has no official approval-required or mid-turn busy event, so
+projmux reports neither for Antigravity.
 
 The managed JSON is the install source of truth. The command
 `agy -p '/hooks' --output-format json` is a read-only runtime diagnostic for
@@ -1884,15 +1878,8 @@ Antigravity notify metadata uses `agent=antigravity`. Phase 3 session-state
 restore is included: Antigravity ingest stores `conversationId` as pane thread
 metadata for matching and as session-state resume metadata. Restore uses
 `agy --conversation <uuid>` when that id is present and UUID-shaped; otherwise
-session-state preview/doctor render `resume unavailable`. Structured statusline
-`context_window.used_percentage` is persisted with its conversation id as
-private hook/notify diagnostic metadata and is not surfaced as account usage.
-The official `quota` map is persisted independently and surfaces each valid entry as
-`quota/<exact bucket ID>` with independently retained absolute and relative
-reset values. Bucket IDs are never mapped to `5h`/`weekly`, and account quota
-is never inferred from the conversation-local gauge.
-The earlier string percentage form remains a compatibility fallback.
-Transcript contents are not read.
+session-state preview/doctor render `resume unavailable`. projmux records no
+Antigravity usage, context, or quota. Transcript contents are not read.
 
 The canonical `internal agent-hook ingest bell --pane <pane_id>` route is the
 narrow tmux-bell fallback ingest path.

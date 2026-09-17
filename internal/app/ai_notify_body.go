@@ -112,15 +112,6 @@ func formatClaudeTeammateIdleNotifyBody(p claudeHookPayload) aiNotifyBody {
 	}
 }
 
-func formatAntigravityApprovalNotifyBody(p antigravityHookPayload) aiNotifyBody {
-	return aiNotifyBody{
-		Text:     defaultString(joinAINotifyText("Approval needed", p.AgentState), "Approval needed"),
-		Severity: notify.SeverityCritical,
-		Agent:    "antigravity",
-		Category: "approval_required",
-	}
-}
-
 func formatAntigravityStopNotifyBody(p antigravityHookPayload) aiNotifyBody {
 	if antigravityHookHasError(p) {
 		return aiNotifyBody{

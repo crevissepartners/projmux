@@ -135,11 +135,18 @@ func TestAgentCapabilityCatalogMatchesProviderIntegrationAndUsageSurfaces(t *tes
 		}
 	}
 
-	wantUsage := []string{"codex", "claude", "antigravity", "all"}
+	wantUsage := []string{"codex", "claude", "all"}
 	if got := UsageTargets(); !reflect.DeepEqual(got, wantUsage) {
 		t.Fatalf("usage targets = %v, want %v", got, wantUsage)
 	}
-	for _, provider := range AgentProviders() {
+	metadata, _ := Lookup(string(Antigravity))
+	if metadata.UsageSupported || metadata.UsageModel != "" {
+		t.Errorf("antigravity usage metadata = %#v, want unsupported", metadata)
+	}
+	if _, cell, ok := LookupAgentCapability("usage", Antigravity); !ok || cell.Mode != SupportUnsupported || cell.CompletionPrecision != CompletionNone {
+		t.Errorf("antigravity usage capability = %#v, want unsupported", cell)
+	}
+	for _, provider := range []ID{Codex, Claude} {
 		metadata, ok := Lookup(string(provider))
 		if !ok || !metadata.UsageSupported || metadata.UsageModel != string(provider) {
 			t.Errorf("usage target %q metadata = %#v", provider, metadata)

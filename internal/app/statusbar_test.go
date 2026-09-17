@@ -824,7 +824,7 @@ func TestStatusbarDefaultUsageStateFiltersDisabledProviders(t *testing.T) {
 	}
 }
 
-func TestStatusbarDefaultUsageStateSuppressesLegacyAntigravityContext(t *testing.T) {
+func TestStatusbarDefaultUsageStateIgnoresCachedAntigravityRows(t *testing.T) {
 	home := t.TempDir()
 	configHome := filepath.Join(home, "xdg-config")
 	stateHome := filepath.Join(home, "xdg-state")
@@ -841,6 +841,8 @@ func TestStatusbarDefaultUsageStateSuppressesLegacyAntigravityContext(t *testing
 	if err := coreusage.NewStore(filepath.Join(paths.StateDir, "usage")).SaveState(coreusage.State{
 		Snapshots: []coreusage.Snapshot{
 			{Model: "antigravity", Window: coreusage.WindowContext, Pct: 42, UpdatedAt: now},
+			{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "gemini-weekly", Pct: 57, UpdatedAt: now},
+			{Model: "antigravity", Window: coreusage.WindowWeekly, Pct: 58, UpdatedAt: now},
 		},
 	}); err != nil {
 		t.Fatalf("seed usage state: %v", err)
@@ -852,19 +854,21 @@ func TestStatusbarDefaultUsageStateSuppressesLegacyAntigravityContext(t *testing
 	if err != nil {
 		t.Fatalf("defaultUsageState: %v", err)
 	}
-	if len(state.Unsupported) != 0 {
-		t.Fatalf("Unsupported = %#v, want none now that Antigravity usage is supported", state.Unsupported)
+	if len(state.Unsupported) != 1 || state.Unsupported[0].Model != "antigravity" {
+		t.Fatalf("Unsupported = %#v, want Antigravity usage unsupported", state.Unsupported)
 	}
 	if len(state.Snapshots) != 0 {
-		t.Fatalf("Snapshots = %#v, want legacy context suppressed", state.Snapshots)
+		t.Fatalf("Snapshots = %#v, want cached Antigravity rows ignored", state.Snapshots)
 	}
 
 	popup := statusbarUsagePopup(state, now, "/usr/local/bin/projmux")
-	if strings.Contains(popup.Command, "Antigravity") || strings.Contains(popup.Command, "42%") {
-		t.Fatalf("popup command = %q, legacy context row leaked", popup.Command)
+	for _, leaked := range []string{"42%", "57%", "58%", "gemini-weekly"} {
+		if strings.Contains(popup.Command, leaked) {
+			t.Fatalf("popup command = %q, cached Antigravity row leaked (%s)", popup.Command, leaked)
+		}
 	}
-	if toast := statusbarUsageToast(state); toast != "usage: no data" {
-		t.Fatalf("toast = %q, want no account usage data", toast)
+	if toast := statusbarUsageToast(state); toast != "usage: antigravity unsupported" {
+		t.Fatalf("toast = %q, want only the unsupported note", toast)
 	}
 }
 

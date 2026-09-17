@@ -16,7 +16,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
-	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -93,97 +92,6 @@ func TestMarkAIHookPaneSeparatesTransientShellObservationFromOwnedAgentStatus(t 
 	}
 	if !reflect.DeepEqual(registry, registryBeforeConflict) {
 		t.Fatalf("provider-conflict hook changed durable Agent state:\nbefore=%+v\nafter=%+v", registryBeforeConflict, registry)
-	}
-}
-
-func TestPersistAntigravityContextUsage(t *testing.T) {
-	home := t.TempDir()
-	cmd := testAICommand(home)
-	now := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
-	cmd.now = func() time.Time { return now }
-
-	// Numeric context_window remains private diagnostic metadata; it is not an
-	// account-usage snapshot row.
-	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: "42%"})
-
-	baseDir, err := cmd.usageStateDir()
-	if err != nil {
-		t.Fatalf("usageStateDir: %v", err)
-	}
-	snaps, err := antigravityadapter.New(baseDir).Collect(context.Background())
-	if err != nil {
-		t.Fatalf("Collect: %v", err)
-	}
-	if len(snaps) != 0 {
-		t.Fatalf("snapshots = %#v, context must not become account usage", snaps)
-	}
-	readContext := func() antigravityadapter.ContextRecord {
-		t.Helper()
-		data, err := os.ReadFile(filepath.Join(baseDir, antigravityadapter.ContextFileName))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var record antigravityadapter.ContextRecord
-		if err := json.Unmarshal(data, &record); err != nil {
-			t.Fatal(err)
-		}
-		return record
-	}
-	if record := readContext(); record.Pct != 42 || !record.UpdatedAt.Equal(now) {
-		t.Fatalf("context sidecar = %#v, want preserved 42%% diagnostic", record)
-	}
-
-	// Non-numeric / empty values are ignored (clean degrade, no garbage file
-	// churn) — the previously persisted value stays intact.
-	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: ""})
-	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: "n/a"})
-	if record := readContext(); record.Pct != 42 {
-		t.Fatalf("after non-numeric writes context sidecar = %#v, want unchanged 42%%", record)
-	}
-}
-
-func TestPersistAntigravityQuotaUsageKeepsContextAndSurvivesContextOnlyPayload(t *testing.T) {
-	home := t.TempDir()
-	cmd := testAICommand(home)
-	now := time.Date(2026, 8, 12, 3, 0, 0, 0, time.UTC)
-	cmd.now = func() time.Time { return now }
-	reset := now.Add(2 * time.Hour)
-	seconds := int64(7200)
-	cmd.persistAntigravityContextUsage(antigravityHookPayload{
-		ConversationID:           "conversation-local",
-		ContextUsedPercentage:    25,
-		ContextUsedPercentageSet: true,
-	})
-	cmd.persistAntigravityQuotaUsage(antigravityHookPayload{
-		QuotaSet: true,
-		QuotaBuckets: []antigravityadapter.QuotaBucketRecord{{
-			ID: "context", RemainingFraction: 0.75, ResetTime: reset, ResetInSeconds: &seconds,
-		}},
-	})
-	// A later context-only payload must not erase the independent quota file.
-	cmd.persistAntigravityQuotaUsage(antigravityHookPayload{})
-
-	baseDir, err := cmd.usageStateDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	snaps, err := antigravityadapter.New(baseDir).Collect(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snaps) != 1 || snaps[0].Window != "quota" || snaps[0].Bucket != "context" {
-		t.Fatalf("snapshots = %#v, want lossless quota/context row only", snaps)
-	}
-	data, err := os.ReadFile(filepath.Join(baseDir, antigravityadapter.ContextFileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var contextRecord antigravityadapter.ContextRecord
-	if err := json.Unmarshal(data, &contextRecord); err != nil {
-		t.Fatal(err)
-	}
-	if contextRecord.ConversationID != "conversation-local" || contextRecord.Pct != 25 {
-		t.Fatalf("private context sidecar = %#v, want hook diagnostic preserved", contextRecord)
 	}
 }
 
@@ -1583,12 +1491,7 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 		"workspace": {"path": "/repo/projmux"},
 		"transcriptPath": "/tmp/ag.jsonl",
 		"terminationReason": "completed",
-		"fullyIdle": true,
-		"statusline": {
-			"agent_state": "idle",
-			"tool_confirmation_pending": false,
-			"context_window": "42%"
-		}
+		"fullyIdle": true
 	}`), "")
 	if err != nil {
 		t.Fatalf("parseAntigravityHookPayload() error = %v", err)
@@ -1596,16 +1499,8 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 	if payload.EventName != "Stop" || payload.ConversationID != "ag-conv-123" || payload.CWD != "/repo/projmux" || payload.TranscriptPath != "/tmp/ag.jsonl" {
 		t.Fatalf("payload = %+v", payload)
 	}
-	if payload.TerminationReason != "completed" || !payload.FullyIdle || !payload.FullyIdleSet || payload.ToolConfirmationPending || payload.AgentState != "idle" || payload.ContextWindow != "42%" {
+	if payload.TerminationReason != "completed" || !payload.FullyIdle || !payload.FullyIdleSet || payload.ToolConfirmationPending {
 		t.Fatalf("observed fields = %+v", payload)
-	}
-
-	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","tool_confirmation_pending":true}`), "Statusline")
-	if err != nil {
-		t.Fatalf("parseAntigravityHookPayload() statusline-only error = %v", err)
-	}
-	if payload.EventName != "Statusline" || !payload.ToolConfirmationPending {
-		t.Fatalf("statusline payload = %+v, want Statusline approval signal", payload)
 	}
 
 	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","agent_state":"idle","context_window":"38%"}`), "")
@@ -1615,112 +1510,19 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 	if payload.EventName != "Unknown" || payload.ToolConfirmationPending || payload.ToolConfirmationPendingSet {
 		t.Fatalf("statusline-shaped payload = %+v, want Unknown without an explicit event or payload alias", payload)
 	}
-	if metadata := payload.antigravityMetadata(); metadata["tool_confirmation_pending"] != "" {
-		t.Fatalf("metadata = %#v, want absent tool_confirmation_pending when field was absent", metadata)
-	}
-
-	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","toolConfirmationPending":false}`), "Statusline")
-	if err != nil {
-		t.Fatalf("parseAntigravityHookPayload() explicit false statusline error = %v", err)
-	}
-	if payload.EventName != "Statusline" || payload.ToolConfirmationPending || !payload.ToolConfirmationPendingSet {
-		t.Fatalf("explicit false statusline payload = %+v, want Statusline with pending=false", payload)
-	}
-}
-
-func TestParseAntigravityStatusLineV1112OfficialFixture(t *testing.T) {
-	t.Parallel()
-	// Authority: https://antigravity.google/docs/cli/statusline, versioned as
-	// Antigravity CLI v1.1.12 when this fixture was captured.
-	data, err := os.ReadFile(filepath.Join("testdata", "antigravity", "statusline_v1_1_12.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := parseAntigravityHookPayload(data, "Statusline")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.CWD != "/workspace/sanitized-project" || got.ConversationID != "123e4567-e89b-12d3-a456-426614174000" || got.TranscriptPath != "/sanitized/transcript.jsonl" {
-		t.Fatalf("identity = %+v", got)
-	}
-	if got.AgentState != "tool_use" || !got.ToolConfirmationPending || !got.ToolConfirmationPendingSet {
-		t.Fatalf("attention fields = %+v", got)
-	}
-	if !got.ContextUsedPercentageSet || got.ContextUsedPercentage != 14.24 || !got.ContextRemainingPercentSet || got.ContextRemainingPercentage != 85.76 || got.ContextTotalInputTokens != 88244 || got.ContextTotalOutputTokens != 61074 || got.ContextWindowSize != 1048576 || got.ContextCurrentInputTokens != 63382 || got.ContextCurrentOutputTokens != 346 || got.ContextCacheReadTokens != 20857 {
-		t.Fatalf("context fields = %+v", got)
-	}
-	metadata := got.antigravityMetadata()
-	for key, want := range map[string]string{
-		"context_window_used_percentage":   "14.24",
-		"context_window_size":              "1048576",
-		"context_window_input_tokens":      "63382",
-		"context_window_cache_read_tokens": "20857",
-	} {
-		if metadata[key] != want {
-			t.Fatalf("diagnostic metadata[%s] = %q, want %q in %#v", key, metadata[key], want, metadata)
+	metadata := payload.antigravityMetadata()
+	for _, key := range []string{"tool_confirmation_pending", "agent_state", "context_window"} {
+		if metadata[key] != "" {
+			t.Fatalf("metadata = %#v, want no %s: statusLine fields are no longer read", metadata, key)
 		}
 	}
-	if !got.QuotaSet || len(got.QuotaBuckets) != 1 {
-		t.Fatalf("quota fields = %+v", got)
-	}
-	bucket := got.QuotaBuckets[0]
-	if bucket.ID != "gemini-weekly" || bucket.RemainingFraction != 0.9378 || !bucket.ResetTime.Equal(time.Date(2026, 7, 6, 7, 50, 32, 0, time.UTC)) || bucket.ResetInSeconds == nil || *bucket.ResetInSeconds != 560580 {
-		t.Fatalf("quota bucket = %+v", bucket)
-	}
-}
 
-func TestParseAntigravityQuotaBucketsRejectsInvalidAndSortsOpaqueIDs(t *testing.T) {
-	t.Parallel()
-	data := []byte(`{
-		"quota": {
-			"z-new": {"remaining_fraction": 0.25, "reset_time": "2026-08-13T00:00:00Z"},
-			"context": {"remaining_fraction": 1, "reset_time": "2026-08-14T00:00:00Z", "reset_in_seconds": 0},
-			"too-high": {"remaining_fraction": 1.01, "reset_time": "2026-08-13T00:00:00Z"},
-			"negative": {"remaining_fraction": -0.1, "reset_time": "2026-08-13T00:00:00Z"},
-			"disabled": null,
-			"missing": {"reset_time": "2026-08-13T00:00:00Z"},
-			"bad-relative": {"remaining_fraction": 0.5, "reset_in_seconds": -1}
-		}
-	}`)
-	got, err := parseAntigravityHookPayload(data, "Statusline")
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","toolConfirmationPending":false}`), "Stop")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("parseAntigravityHookPayload() explicit false pending error = %v", err)
 	}
-	if !got.QuotaSet || len(got.QuotaBuckets) != 2 {
-		t.Fatalf("quota = set:%v buckets:%#v, want two valid buckets", got.QuotaSet, got.QuotaBuckets)
-	}
-	if got.QuotaBuckets[0].ID != "context" || got.QuotaBuckets[1].ID != "z-new" {
-		t.Fatalf("bucket order = %#v, want exact lexical IDs", got.QuotaBuckets)
-	}
-	if got.QuotaBuckets[0].ResetInSeconds == nil || *got.QuotaBuckets[0].ResetInSeconds != 0 {
-		t.Fatalf("explicit reset_in_seconds zero was not preserved: %#v", got.QuotaBuckets[0])
-	}
-	if got.QuotaBuckets[1].ResetInSeconds != nil {
-		t.Fatalf("absent reset_in_seconds became present: %#v", got.QuotaBuckets[1])
-	}
-}
-
-func TestParseAntigravityQuotaMissingNullAndEmpty(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		payload string
-		set     bool
-	}{
-		{name: "missing", payload: `{}`, set: false},
-		{name: "null", payload: `{"quota":null}`, set: true},
-		{name: "empty", payload: `{"quota":{}}`, set: true},
-		{name: "disabled non-object", payload: `{"quota":"disabled"}`, set: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseAntigravityHookPayload([]byte(tc.payload), "Statusline")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.QuotaSet != tc.set || len(got.QuotaBuckets) != 0 {
-				t.Fatalf("payload %s => set=%v buckets=%#v", tc.payload, got.QuotaSet, got.QuotaBuckets)
-			}
-		})
+	if payload.EventName != "Stop" || payload.ToolConfirmationPending || !payload.ToolConfirmationPendingSet {
+		t.Fatalf("explicit false pending payload = %+v, want Stop with pending=false", payload)
 	}
 }
 
@@ -2186,209 +1988,95 @@ func TestIngestAntigravityStopErrorPushesCritical(t *testing.T) {
 	}
 }
 
-func TestIngestAntigravityStatuslineApprovalPushesCritical(t *testing.T) {
-	home := t.TempDir()
-	store := &stubNotifyStore{}
-	cmd := testAICommand(home)
-	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
-	cmd.stdin = strings.NewReader(`{
-		"conversationId": "ag-conv-123",
-		"cwd": "/repo/projmux",
-		"statusline": {
-			"agent_state": "waiting_for_tool",
-			"tool_confirmation_pending": true
-		}
-	}`)
-	cmd.readCommand = antigravityIngestReadCommand("%7")
-
-	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run ingest antigravity-hook Statusline error = %v", err)
-	}
-	if len(store.pushed) != 1 {
-		t.Fatalf("push count = %d, want 1", len(store.pushed))
-	}
-	got := store.pushed[0]
-	if got.ID != "ai:antigravity:approval:ag-conv-123" || got.Severity != notify.SeverityCritical || got.Metadata["category"] != "approval_required" {
-		t.Fatalf("pushed = %#v", got)
-	}
-	if got.Metadata["agent"] != "antigravity" || got.Metadata["tool_confirmation_pending"] != "true" || got.Metadata["agent_state"] != "waiting_for_tool" {
-		t.Fatalf("metadata = %#v", got.Metadata)
-	}
-}
-
-func TestIngestAntigravityStatuslineConfirmationDedupeAndFalseSilence(t *testing.T) {
-	t.Run("repeated true replaces one queue row", func(t *testing.T) {
-		home := t.TempDir()
-		queue := notify.NewStore(filepath.Join(home, "notify.json"))
-		cmd := testAICommand(home)
-		cmd.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
-		cmd.readCommand = antigravityIngestReadCommand("%7")
-		payload := `{"conversation_id":"123e4567-e89b-12d3-a456-426614174000","cwd":"/repo/projmux","agent_state":"tool_use","tool_confirmation_pending":true}`
-		for range 2 {
-			cmd.stdin = strings.NewReader(payload)
-			if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		entries, err := queue.List()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) != 1 {
-			t.Fatalf("queue entries = %#v, want one replaced approval row", entries)
-		}
-		if got, want := entries[0].ID, "ai:antigravity:approval:123e4567-e89b-12d3-a456-426614174000"; got != want {
-			t.Fatalf("queue ID = %q, want stable %q", got, want)
-		}
-		if entries[0].Severity != notify.SeverityCritical || entries[0].Metadata[notify.MetaCategory] != "approval_required" {
-			t.Fatalf("queue entry = %#v, want critical approval_required", entries[0])
-		}
-	})
-
-	t.Run("repeated false creates no queue row", func(t *testing.T) {
-		home := t.TempDir()
-		queue := notify.NewStore(filepath.Join(home, "notify.json"))
-		cmd := testAICommand(home)
-		cmd.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
-		cmd.readCommand = antigravityIngestReadCommand("%7")
-		payload := `{"conversation_id":"123e4567-e89b-12d3-a456-426614174000","cwd":"/repo/projmux","agent_state":"idle","tool_confirmation_pending":false}`
-		for range 2 {
-			cmd.stdin = strings.NewReader(payload)
-			if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		entries, err := queue.List()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) != 0 {
-			t.Fatalf("queue entries = %#v, want none for repeated false", entries)
-		}
-	})
-}
-
-func TestIngestAntigravityStatuslineWithoutPendingQuietLogsReason(t *testing.T) {
-	home := t.TempDir()
-	store := &stubNotifyStore{}
-	cmd := testAICommand(home)
-	cmd.readFile = os.ReadFile
-	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
-	cmd.stdin = strings.NewReader(`{
-		"conversationId": "ag-conv-123",
-		"cwd": "/repo/projmux",
-		"agent_state": "idle",
-		"context_window": "38%"
-	}`)
-	cmd.readCommand = antigravityIngestReadCommand("%7")
-
-	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run ingest antigravity-hook Statusline quiet error = %v", err)
-	}
-	if len(store.pushed) != 0 {
-		t.Fatalf("push count = %d, want 0: %#v", len(store.pushed), store.pushed)
-	}
-	var out bytes.Buffer
-	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run ingest log --json error = %v", err)
-	}
-	got := out.String()
-	for _, want := range []string{
-		`"source":"antigravity-hook"`,
-		`"event":"Statusline"`,
-		`"result":"quiet"`,
-		`"reason":"statusline agent_state is idle; preserving existing completion or attention state"`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("log output = %q, want %s", got, want)
-		}
-	}
-}
-
-func TestIngestAntigravityManagedStatusLineWritesEmptyStdout(t *testing.T) {
-	home := t.TempDir()
-	cmd := testAICommand(home)
-	cmd.lookupEnv = func(name string) string {
-		switch name {
-		case "HOME":
-			return home
-		case "TMUX_PANE":
-			return "%7"
-		default:
-			return ""
-		}
-	}
+// TestIngestAntigravityLegacyStatuslineEventIsSilentNoOp pins G-6a: a
+// statusLine bridge left behind by an older projmux must exit 0 with empty
+// stdout and change nothing — no tmux reads or writes, no notify, and no file
+// (usage sidecar, ingest log, diagnostics journal) under HOME.
+func TestIngestAntigravityLegacyStatuslineEventIsSilentNoOp(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "antigravity", "statusline_v1_1_12.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd.stdin = bytes.NewReader(data)
-	cmd.readCommand = antigravityIngestReadCommand("%7")
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	if stdout.Len() != 0 {
-		t.Fatalf("statusline stdout = %q, want empty so built-in stacking remains visible", stdout.String())
-	}
-	baseDir, err := cmd.usageStateDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	snaps, err := antigravityadapter.New(baseDir).Collect(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snaps) != 1 || snaps[0].Window != "quota" || snaps[0].Bucket != "gemini-weekly" {
-		t.Fatalf("statusline persisted snapshots = %#v, want exact named quota only", snaps)
-	}
-	data, err = os.ReadFile(filepath.Join(baseDir, antigravityadapter.ContextFileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var contextRecord antigravityadapter.ContextRecord
-	if err := json.Unmarshal(data, &contextRecord); err != nil {
-		t.Fatal(err)
-	}
-	if contextRecord.Pct == 0 {
-		t.Fatalf("managed statusline did not preserve private context metadata: %#v", contextRecord)
-	}
-}
-
-func TestIngestAntigravityStatusLineBusyAndIdleStateMapping(t *testing.T) {
-	for _, agentState := range []string{"thinking", "working", "tool_use"} {
-		t.Run(agentState, func(t *testing.T) {
-			cmd := testAICommand(t.TempDir())
-			cmd.stdin = strings.NewReader(`{"cwd":"/repo/projmux","conversation_id":"ag-conv","agent_state":"` + agentState + `","tool_confirmation_pending":false}`)
-			cmd.readCommand = antigravityIngestReadCommand("%7")
-			if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	approval := []byte(`{"conversation_id":"ag-conv-123","cwd":"/repo/projmux","agent_state":"tool_use","tool_confirmation_pending":true,"context_window":{"used_percentage":40},"quota":{"gemini-weekly":{"remaining_fraction":0.5}}}`)
+	for _, tc := range []struct {
+		name    string
+		event   string
+		payload []byte
+	}{
+		{name: "official fixture", event: "Statusline", payload: data},
+		{name: "approval pending", event: "Statusline", payload: approval},
+		{name: "busy lower-case alias", event: "statusline", payload: []byte(`{"cwd":"/repo/projmux","agent_state":"working"}`)},
+		// The explicit legacy route never parses its payload.
+		{name: "malformed payload", event: "Statusline", payload: []byte(`{`)},
+		{name: "payload event name only", event: "", payload: []byte(`{"hook_event_name":"Statusline","cwd":"/repo/projmux","tool_confirmation_pending":true}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			store := &stubNotifyStore{}
+			cmd := testAICommand(home)
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "HOME":
+					return home
+				case "TMUX_PANE":
+					return "%7"
+				case "XDG_STATE_HOME":
+					return filepath.Join(home, ".local", "state")
+				case "XDG_CONFIG_HOME":
+					return filepath.Join(home, ".config")
+				default:
+					return ""
+				}
+			}
+			cmd.readFile = os.ReadFile
+			cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+			reads := 0
+			baseRead := antigravityIngestReadCommand("%7")
+			cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				reads++
+				return baseRead(ctx, name, args...)
+			}
+			cmd.stdin = bytes.NewReader(tc.payload)
+			args := []string{"ingest", "antigravity-hook"}
+			if tc.event != "" {
+				args = append(args, "--event", tc.event)
+			}
+			var stdout, stderr bytes.Buffer
+			if err := cmd.Run(args, &stdout, &stderr); err != nil {
+				t.Fatalf("Run(%v) error = %v", args, err)
+			}
+			if stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("stdout = %q stderr = %q, want both empty", stdout.String(), stderr.String())
+			}
+			if commands := cmdRecorder(cmd).commands; len(commands) != 0 {
+				t.Fatalf("tmux writes = %#v, want none", commands)
+			}
+			if reads != 0 {
+				t.Fatalf("tmux reads = %d, want none", reads)
+			}
+			if len(store.pushed) != 0 {
+				t.Fatalf("notify pushes = %#v, want none", store.pushed)
+			}
+			var written []string
+			if err := filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if path != home {
+					written = append(written, path)
+				}
+				return nil
+			}); err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []recordedAICommand{
-				{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "thinking"}},
-				{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", attentionStateOption, attentionStateBusy}},
-			} {
-				if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
-					t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
-				}
+			if len(written) != 0 {
+				t.Fatalf("HOME entries after legacy Statusline = %v, want none", written)
 			}
 		})
 	}
-
-	cmd := testAICommand(t.TempDir())
-	cmd.stdin = strings.NewReader(`{"cwd":"/repo/projmux","conversation_id":"ag-conv","agent_state":"idle","tool_confirmation_pending":false}`)
-	cmd.readCommand = antigravityIngestReadCommand("%7")
-	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	for _, command := range cmdRecorder(cmd).commands {
-		if len(command.args) > 5 && command.args[0] == "set-option" && (command.args[4] == aiPaneStateOption || command.args[4] == attentionStateOption) {
-			t.Fatalf("idle statusline overwrote completion/attention state: %#v", command)
-		}
-	}
 }
 
-func TestIngestAntigravityStopThenLateBusyAndIdlePreservesCompletion(t *testing.T) {
+func TestIngestAntigravityLegacyStatuslineAfterStopKeepsCompletion(t *testing.T) {
 	home := t.TempDir()
 	queue := notify.NewStore(filepath.Join(home, "notify.json"))
 	cmd := testAICommand(home)
@@ -2439,52 +2127,28 @@ func TestIngestAntigravityStopThenLateBusyAndIdlePreservesCompletion(t *testing.
 	if aiState != "waiting" {
 		t.Fatalf("state after Stop = %q, want waiting", aiState)
 	}
-	run("Statusline", `{`+identity+`,"agent_state":"tool_use","tool_confirmation_pending":false}`)
+	run("Statusline", `{`+identity+`,"agent_state":"tool_use","tool_confirmation_pending":true}`)
 	run("Statusline", `{`+identity+`,"agent_state":"idle","tool_confirmation_pending":false}`)
 	if aiState != "waiting" {
-		t.Fatalf("state after Stop -> busy -> idle = %q, want completion waiting preserved", aiState)
+		t.Fatalf("state after Stop -> legacy statusline = %q, want completion waiting preserved", aiState)
 	}
 	entries, err := queue.List()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(entries) != 1 || entries[0].Metadata[notify.MetaCategory] != "response_complete" {
-		t.Fatalf("queue entries = %#v, want one response_complete", entries)
+		t.Fatalf("queue entries = %#v, want one response_complete and no approval row", entries)
 	}
 
-	// A real next generation starts with PreInvocation, which resets the pane
-	// to thinking; the following statusline busy update is then accepted.
+	// Only the official PreInvocation hook starts a working state; a legacy
+	// statusline busy update after it writes nothing further.
 	run("PreInvocation", `{`+identity+`}`)
 	if aiState != "thinking" || thinkingWrites != 1 {
 		t.Fatalf("state after new PreInvocation = %q, want thinking", aiState)
 	}
 	run("Statusline", `{`+identity+`,"agent_state":"working","tool_confirmation_pending":false}`)
-	if aiState != "thinking" || thinkingWrites != 2 {
-		t.Fatalf("state after new-generation busy statusline = %q writes=%d, want accepted thinking update", aiState, thinkingWrites)
-	}
-}
-
-func TestPersistAntigravityStructuredContextPrecedesStringFallback(t *testing.T) {
-	home := t.TempDir()
-	cmd := testAICommand(home)
-	now := time.Date(2026, 8, 12, 1, 2, 3, 0, time.UTC)
-	cmd.now = func() time.Time { return now }
-	cmd.persistAntigravityContextUsage(antigravityHookPayload{
-		ConversationID:           "conversation-local",
-		ContextWindow:            "99%",
-		ContextUsedPercentage:    14.24,
-		ContextUsedPercentageSet: true,
-	})
-	baseDir, err := cmd.usageStateDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(baseDir, antigravityadapter.ContextFileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"conversation_id": "conversation-local"`) || !strings.Contains(string(data), `"pct": 14.24`) {
-		t.Fatalf("context sidecar = %s", data)
+	if aiState != "thinking" || thinkingWrites != 1 {
+		t.Fatalf("state after legacy busy statusline = %q writes=%d, want no extra thinking write", aiState, thinkingWrites)
 	}
 }
 

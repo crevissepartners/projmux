@@ -72,7 +72,7 @@ func testReportCommand(t *testing.T) (*diagnosticsCommand, string, string) {
 		return []doctorAINotifyIntegration{{
 			ID: "id-" + reportUUID, Name: reportSecret, ProviderID: "codex", ProviderEnabled: &on,
 			Status: doctorAINotifyStatusConflict, ConfigPath: filepath.Join(home, reportSecret),
-			StatusLinePath: reportProject, ConflictReason: reportRouting, Guidance: reportPrompt,
+			ConflictReason: reportRouting, Guidance: reportPrompt,
 			TestedVersion: reportUUID, InstallCommand: reportArgv, RemoveCommand: reportEnv,
 			DryRunCommand: reportThread,
 		}}

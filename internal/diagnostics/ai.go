@@ -23,11 +23,13 @@ const (
 	AIKindCompact      AIKind = "compact"
 	AIKindSubagent     AIKind = "subagent"
 	AIKindTeammate     AIKind = "teammate"
-	AIKindStatusline   AIKind = "statusline"
-	AIKindInvocation   AIKind = "invocation"
-	AIKindLifecycle    AIKind = "lifecycle"
-	AIKindBell         AIKind = "bell"
-	AIKindUnknown      AIKind = "unknown"
+	// AIKindStatusline is kept only so journal records written before the
+	// Antigravity statusLine bridge was removed still decode. Nothing writes it.
+	AIKindStatusline AIKind = "statusline"
+	AIKindInvocation AIKind = "invocation"
+	AIKindLifecycle  AIKind = "lifecycle"
+	AIKindBell       AIKind = "bell"
+	AIKindUnknown    AIKind = "unknown"
 )
 
 // AIResult is the closed watcher/ingest terminal classification.

@@ -4,10 +4,10 @@
   "package_set_sha256": "d984f18a8eeda6d7095a79262b3797d9ce31425b783105e0b7a52de7f04c63c0",
   "scanners": {
     "gosec": {
-      "finding_count": 143,
-      "fingerprint_count": 112,
-      "finding_identity_sha256": "9372b480f1b02f42a8dbd670afcc7781d90ad761e03f78aeb93fbd9175c62911",
-      "baseline_sha256": "5a3064d5c4dcc97e17db31c333cdcec681108a534a06b051eb20715359b83791"
+      "finding_count": 142,
+      "fingerprint_count": 111,
+      "finding_identity_sha256": "f75f35ba80931a33a29763d1ac520db4fc7615e79c8278fd1570849ab4c683d2",
+      "baseline_sha256": "a44238062f13b5528f93c636fcb9a07f6c7b286739907d67b8bc346f67b40ebe"
     },
     "staticcheck": {
       "finding_count": 14,
