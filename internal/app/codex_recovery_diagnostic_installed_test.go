@@ -456,6 +456,9 @@ func TestCodexDiagnosticProxyProcess(t *testing.T) {
 		var result any
 		switch message.Method {
 		case "initialize":
+			if delay, err := time.ParseDuration(os.Getenv("CODEX_DIAGNOSTIC_INITIALIZE_DELAY")); err == nil {
+				time.Sleep(delay)
+			}
 			userAgent := os.Getenv("CODEX_DIAGNOSTIC_USER_AGENT")
 			if userAgent == "" {
 				userAgent = "codex-cli/" + os.Getenv("CODEX_DIAGNOSTIC_VERSION")

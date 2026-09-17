@@ -165,6 +165,9 @@ func TestProxyProbeHelperProcess(t *testing.T) {
 	}
 	switch scenario {
 	case "healthy", "remote-unsupported":
+		if delay, err := time.ParseDuration(os.Getenv("PROJMUX_CODEX_PROXY_INITIALIZE_DELAY")); err == nil {
+			time.Sleep(delay)
+		}
 		writeTestServerFrame(fmt.Sprintf("{\"id\":%d,\"result\":{\"userAgent\":\"codex-cli/0.149.0\",\"platformFamily\":\"unix\",\"platformOs\":\"linux\"}}", initialize.ID))
 		if _, err := readTestClientFrame(reader); err != nil { // initialized notification
 			os.Exit(3)

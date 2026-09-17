@@ -15,6 +15,26 @@ import (
 
 const DefaultProbeTimeout = 750 * time.Millisecond
 
+// readinessProxyProbeTimeout is the floor for the proxy initialize probe that
+// decides default endpoint readiness. Under CPU contention a healthy,
+// version-matched daemon routinely answers initialize after
+// DefaultProbeTimeout, and a timeout there leaves native actions unknown. The
+// floor only raises this readiness probe: opening a client and every other
+// DefaultProbeTimeout consumer keep their own bound.
+const readinessProxyProbeTimeout = 2 * time.Second
+
+// proxyProbeTimeout keeps a caller budget that is already longer than the
+// floor, so raising the floor never shortens a slower caller's probe.
+func proxyProbeTimeout(callerTimeout time.Duration) time.Duration {
+	return max(callerTimeout, readinessProxyProbeTimeout)
+}
+
+// readinessProbeBudget bounds one full readiness probe: the proxy probe
+// followed by the manager probe, each at its own floor.
+func readinessProbeBudget(callerTimeout time.Duration) time.Duration {
+	return proxyProbeTimeout(callerTimeout) + managerProbeTimeout(callerTimeout)
+}
+
 type commandStream struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
@@ -43,10 +63,11 @@ func (s *commandStream) Close() error {
 // ProbeDefaultProxy performs an initialize-only probe against the existing
 // local app-server control socket through Codex's stdio proxy. It never starts,
 // restarts, configures, logs into, or otherwise mutates the daemon. timeout
-// bounds the proxy probe; the manager probe that follows never gets less than
-// daemonVersionProbeTimeout.
+// is the caller budget for both probes: the proxy probe never gets less than
+// readinessProxyProbeTimeout and the manager probe that follows never gets
+// less than daemonVersionProbeTimeout.
 func ProbeDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool) Health {
-	health := probeProxy(ctx, timeout, projmuxVersion, hookAvailable, exec.LookPath, func(ctx context.Context) *exec.Cmd {
+	health := probeProxy(ctx, proxyProbeTimeout(timeout), projmuxVersion, hookAvailable, exec.LookPath, func(ctx context.Context) *exec.Cmd {
 		return exec.CommandContext(ctx, "codex", "app-server", "proxy")
 	}, defaultDaemonNotRunning)
 	health = withManagerObservation(health, observeDefaultManager(ctx, timeout))

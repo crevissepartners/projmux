@@ -1,0 +1,24 @@
+== slower-than-default-probe-budget
+doctor:
+Codex app-server
+  Source: App Server; availability: available; reason: none; endpoint: stdio-proxy; connection: ready; version: projmux/0.154.0; lifecycle: not-attempted/read-only
+  App-server probe: none; install capability: managed-ready
+  Manager evidence: status running; backend pid; result observed; agreement consistent; manager version 0.154.0
+  Capability guidance: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli
+  Endpoint readiness: ready; running executable: managed; version relation: current; manager ownership: managed; remote control: disabled
+  Versions: CLI 0.154.0; managed 0.154.0; running 0.154.0
+  Native action: ready; refusal: none; interruption risk: none; operator recovery: none
+
+== past-readiness-proxy-bound
+doctor:
+Codex app-server
+  Source: Hook fallback; availability: timeout; reason: timeout; endpoint: stdio-proxy; connection: timed-out; lifecycle: not-attempted/read-only
+  App-server probe: timeout; install capability: managed-ready
+  Failure: {"method":"initialize","rpc_code":null,"cause":"timeout"}
+  Manager evidence: status running; backend pid; result observed; agreement insufficient; manager version 0.154.0
+  Capability guidance: The managed standalone Codex payload was observed. Official Codex CLI capability guidance: https://learn.chatgpt.com/docs/codex/cli
+  Endpoint readiness: timed-out; running executable: managed; version relation: current; manager ownership: managed; remote control: unavailable
+  Versions: CLI 0.154.0; managed 0.154.0; running unknown
+  Native action: unknown; refusal: none; interruption risk: none; operator recovery: none
+  Guidance: Start the shared Codex app server with `codex app-server daemon start`, or run `codex app-server daemon restart` after upgrading Codex, then retry.
+

@@ -14,8 +14,8 @@ import (
 // is slow the way a healthy daemon is under CPU contention. A version-matched
 // answer slower than the proxy budget but inside daemonVersionProbeTimeout is
 // consistent and ready; one past that bound is still a timeout, insufficient
-// evidence, and an ownership-unknown refusal. The proxy probe itself keeps
-// DefaultProbeTimeout.
+// evidence, and an ownership-unknown refusal. A proxy probe that never answers
+// still times out at its own readiness floor and leaves the action unknown.
 func TestDaemonVersionProbeToleratesLoadWithinItsOwnBound(t *testing.T) {
 	helper, err := filepath.Abs(os.Args[0])
 	if err != nil {
@@ -71,10 +71,10 @@ exec "$PROJMUX_CODEX_PROBE_HELPER" -test.run=^TestProxyProbeHelperProcess$ -- "$
 			minElapsed: daemonVersionProbeTimeout, maxElapsed: daemonVersionProbeTimeout + DefaultProbeTimeout + 2*time.Second,
 		},
 		{
-			name: "proxy keeps its own budget", proxy: "timeout", delay: 0,
+			name: "proxy times out at its own floor", proxy: "timeout", delay: 0,
 			result: "observed", agreement: "insufficient", readiness: EndpointTimedOut,
 			action: NativeActionUnknown, refusal: NativeActionRefusalNone, lifecycle: LifecycleNotAttempted,
-			minElapsed: DefaultProbeTimeout, maxElapsed: daemonVersionProbeTimeout,
+			minElapsed: readinessProxyProbeTimeout, maxElapsed: readinessProbeBudget(DefaultProbeTimeout),
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

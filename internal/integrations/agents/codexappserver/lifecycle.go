@@ -211,8 +211,8 @@ func (p lifecyclePolicy) runFlight(parent context.Context, flight *lifecycleFlig
 	readinessTimeout := positiveDuration(p.readinessTimeout, DefaultReadinessTimeout)
 	probeTimeout := positiveDuration(p.probeTimeout, DefaultProbeTimeout)
 	// One probe is the proxy probe followed by the manager probe, so the
-	// re-probe budget carries both before start and readiness get theirs.
-	probeTimeout += managerProbeTimeout(probeTimeout)
+	// re-probe budget carries both floors before start and readiness get theirs.
+	probeTimeout = readinessProbeBudget(probeTimeout)
 	flightCtx, cancel := context.WithTimeout(parent, probeTimeout+startTimeout+readinessTimeout)
 	defer cancel()
 
