@@ -3452,6 +3452,10 @@ Allowed effects:
 projmux web [--addr 127.0.0.1:8787] [--socket PATH|-] [-v]
 ```
 
+Every request on the TCP listener needs the start token, a fresh random value printed once at start in the URL `http://<addr>/?token=<token>`. Opening that URL stores the token in an HttpOnly, SameSite=Strict cookie and redirects to the same address without it; other clients send `Authorization: Bearer <token>`. A request without the token is refused with 401 `unauthorized`.
+
+The unix socket needs no token: its owner-only file mode is its access control.
+
 ## `projmux welcome`
 
 Reprint the shell welcome guide

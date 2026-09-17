@@ -19,9 +19,11 @@ import (
 //     requests are then same-origin to the browser, and only the Host header
 //     still says where they were aimed.
 //
-// guardLoopback refuses both before any handler runs. It is applied to the TCP
-// listener only: a browser cannot reach the unix socket, whose file mode is the
-// access control there.
+// guardLoopback refuses both before any handler runs, ahead of the start token
+// check (requireToken), so a foreign page is refused as foreign whether or not
+// the browser holds the cookie. Both are applied to the TCP listener only: a
+// browser cannot reach the unix socket, whose file mode is the access control
+// there.
 func guardLoopback(port string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !loopbackHost(r.Host, port) {

@@ -18,12 +18,12 @@ One handler is served on two listeners:
 | TCP | `127.0.0.1:8787` (`--addr`) | the browser |
 | unix socket | `<StateDir>/web/api.sock`, mode `0600` (`--socket`) | local programs |
 
-Both reach the same routes with the same checks. The TCP listener binds
-loopback by default. Binding anything else is refused unless `--addr` is given
-explicitly, and even then there is no authentication (see *Out of scope*).
+Both reach the same routes. The TCP listener only binds loopback: any other
+`--addr` is refused, because the API is plain http and its start token would
+cross the network in cleartext.
 
 A local HTTP server is reachable from any web page the operator has open, so
-the TCP listener also enforces these checks:
+the TCP listener enforces these checks, in this order:
 
 - **Host.** The `Host` header must be `127.0.0.1:<port>`, `localhost:<port>`,
   or `[::1]:<port>`. This blocks DNS-rebinding pages.
@@ -32,9 +32,43 @@ the TCP listener also enforces these checks:
 - **Content type.** Every non-`GET` request must be
   `Content-Type: application/json`. HTML forms cannot send that without CORS
   preflight, and the server answers no preflight.
+- **Start token.** Every request, including the event streams, the client
+  page, and its assets, must carry the start token. See *Authentication*.
 
-The unix socket skips the Host and Origin checks. Its file mode is the access
+The unix socket skips all of these checks. Its file mode is the access
 control.
+
+### Authentication
+
+The checks above keep other web sites out, but any local program can connect
+to a loopback port. So `projmux web` generates a start token when it starts:
+32 bytes from `crypto/rand`, unpadded base64url. It exists only in the server
+process and in the one line the server prints at start:
+
+```text
+projmux web: http://127.0.0.1:8787/?token=<token>
+```
+
+A TCP request is admitted when it carries the token in either form:
+
+- the cookie `projmux_web_token_<port>`, which the server sets
+  (`HttpOnly; SameSite=Strict; Path=/`, not `Secure`, since the listener is
+  plain http on loopback). The port is in the name because browsers share
+  cookies across ports on one host.
+- `Authorization: Bearer <token>`, for clients other than a browser.
+
+A `GET` or `HEAD` with `?token=<token>` sets that cookie and answers `303` to
+the same path and query without `token`, so the token leaves the address bar
+and the browser history. The client then uses only relative, same-origin
+`fetch` and `EventSource` URLs, which send the cookie on their own.
+
+A missing or wrong token, including a wrong `?token=`, is `401 unauthorized`
+with the usual error envelope. The comparison is constant-time. The token is
+never logged: request logs (`-v`) record the path only, and a refusal never
+echoes what was sent. A new start makes a new token, so a browser tab from an
+earlier start has to be reopened from the new URL.
+
+The unix socket asks for no token.
 
 ## Process model
 
@@ -101,6 +135,7 @@ The server adds its own codes:
 | --- | --- | --- |
 | `invalid-request` | 400 | malformed body, unknown field value, or empty text |
 | `confirm-required` | 400 | a confirm-gated mutation without `"confirm": true` |
+| `unauthorized` | 401 | a TCP request without the start token, or with a wrong one |
 | `forbidden-origin` | 403 | the Host, Origin, or Content-Type check failed |
 | `not-found` | 404 | no such uid, or the uid is not under the given parent |
 | `name-conflict` | 409 | the name is already used in that scope |
@@ -332,7 +367,7 @@ and any query an older client added (such as `?with=`), is rewritten in place.
 
 ## Out of scope
 
-- Authentication, remote access, and multiple users.
+- Remote access, multiple users, and authentication beyond the start token.
 - A delivery mode that removes the coordination envelope.
 - A resident daemon or a versioned socket protocol beyond this HTTP API. They
   come when there is a second client that needs them.

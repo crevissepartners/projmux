@@ -18,6 +18,9 @@ type Options struct {
 	Addr string
 	// SocketPath is the unix socket. Empty disables the socket.
 	SocketPath string
+	// Token is the start token every TCP request must carry (see NewToken).
+	// Serve refuses to open TCP without one. The socket does not check it.
+	Token string
 	// Ready, when set, is called once both listeners are bound, with the TCP
 	// address actually bound (useful when Addr asks for port 0).
 	Ready func(tcpAddr string)
@@ -29,6 +32,9 @@ type Options struct {
 func Serve(ctx context.Context, backend Backend, opts Options) error {
 	if opts.Addr == "" && opts.SocketPath == "" {
 		return errors.New("web: no listener configured")
+	}
+	if opts.Addr != "" && opts.Token == "" {
+		return errors.New("web: the TCP listener needs a start token")
 	}
 	server := New(backend, opts.Log)
 	handler := server.Handler()
@@ -60,7 +66,7 @@ func Serve(ctx context.Context, backend Backend, opts Options) error {
 			_ = listener.Close()
 			return fmt.Errorf("web: bound address %s: %w", tcpAddr, err)
 		}
-		start(listener, guardLoopback(port, handler))
+		start(listener, guardLoopback(port, requireToken(port, opts.Token, opts.Log, handler)))
 	}
 	if opts.SocketPath != "" {
 		// The socket is created 0600 in an owner-only directory, and a live or

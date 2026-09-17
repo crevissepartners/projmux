@@ -176,6 +176,11 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 			fmt.Fprintf(&b, "  %s\n", alias)
 		}
 	}
+	for _, note := range route.Notes {
+		b.WriteString("\n")
+		b.WriteString(note)
+		b.WriteString("\n")
+	}
 	if len(route.Children) > 0 {
 		width := nameColumnWidth
 		for _, child := range route.Children {

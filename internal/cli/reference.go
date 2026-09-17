@@ -258,6 +258,10 @@ func writeReferenceRoute(b *strings.Builder, path []string, route Route) {
 		}
 		b.WriteString("\n\n")
 	}
+	for _, note := range route.Notes {
+		b.WriteString(note)
+		b.WriteString("\n\n")
+	}
 
 	if len(route.Children) > 0 {
 		writeReferenceChildGroup(b, path, "Subcommands", route.Children, false)

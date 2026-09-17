@@ -389,3 +389,26 @@ func TestRenderHelpForEveryManifestRouteIsNonEmpty(t *testing.T) {
 		}
 	})
 }
+
+// TestWebHelpAndReferenceStateTheStartToken pins route notes: `projmux web`
+// help and the generated reference both say what the TCP listener requires.
+func TestWebHelpAndReferenceStateTheStartToken(t *testing.T) {
+	route, ok := LookupRoute("web")
+	if !ok {
+		t.Fatal("no web route")
+	}
+	var help, reference strings.Builder
+	if err := RenderRouteHelp(&help, []string{"web"}, route); err != nil {
+		t.Fatal(err)
+	}
+	if err := RenderReference(&reference); err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"help": help.String(), "reference": reference.String()} {
+		for _, want := range []string{"/?token=<token>", "Authorization: Bearer <token>", "SameSite=Strict", "unix socket needs no token"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s lacks %q", name, want)
+			}
+		}
+	}
+}

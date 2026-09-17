@@ -12,13 +12,15 @@ const (
 	CodeInvalidRequest  = "invalid-request"
 	CodeConfirmRequired = "confirm-required"
 	CodeForbiddenOrigin = "forbidden-origin"
-	CodeNotFound        = "not-found"
-	CodeNameConflict    = "name-conflict"
-	CodeInvalidName     = "invalid-name"
-	CodeNotLive         = "not-live"
-	CodeUnsupported     = "unsupported"
-	CodeRefused         = "refused"
-	CodeInternal        = "internal"
+	// CodeUnauthorized refuses a TCP request without the start token.
+	CodeUnauthorized = "unauthorized"
+	CodeNotFound     = "not-found"
+	CodeNameConflict = "name-conflict"
+	CodeInvalidName  = "invalid-name"
+	CodeNotLive      = "not-live"
+	CodeUnsupported  = "unsupported"
+	CodeRefused      = "refused"
+	CodeInternal     = "internal"
 	// CodeInProgress refuses a create that repeats one still running.
 	CodeInProgress = "create-in-progress"
 )

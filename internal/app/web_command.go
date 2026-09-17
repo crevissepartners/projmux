@@ -22,6 +22,7 @@ const defaultWebAddr = "127.0.0.1:8787"
 // webCommand runs `projmux web`: the HTTP API and browser client.
 type webCommand struct {
 	serve     func(ctx context.Context, backend web.Backend, opts web.Options) error
+	newToken  func() (string, error)
 	backend   func() web.Backend
 	paths     func() (config.Paths, error)
 	unsetenv  func(string) error
@@ -31,6 +32,7 @@ type webCommand struct {
 func newWebCommand() *webCommand {
 	return &webCommand{
 		serve:     web.Serve,
+		newToken:  web.NewToken,
 		backend:   func() web.Backend { return newWebBackend() },
 		paths:     config.DefaultPathsFromEnv,
 		unsetenv:  os.Unsetenv,
@@ -82,6 +84,17 @@ func (c *webCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
+	// The token exists only in this process and in the one line below that
+	// hands it to the operator.
+	token := ""
+	if *addr != "" {
+		generated, err := c.newToken()
+		if err != nil {
+			return err
+		}
+		token = generated
+	}
+
 	level := slog.LevelInfo
 	if *verbose {
 		level = slog.LevelDebug
@@ -93,10 +106,11 @@ func (c *webCommand) Run(args []string, stdout, stderr io.Writer) error {
 	return c.serve(ctx, c.backend(), web.Options{
 		Addr:       *addr,
 		SocketPath: socketPath,
+		Token:      token,
 		Log:        log,
 		Ready: func(bound string) {
 			if bound != "" {
-				_, _ = fmt.Fprintf(stdout, "projmux web: http://%s\n", bound)
+				_, _ = fmt.Fprintf(stdout, "projmux web: http://%s/?token=%s\n", bound, token)
 			}
 			if socketPath != "" {
 				_, _ = fmt.Fprintf(stdout, "projmux web: unix:%s\n", socketPath)
@@ -105,8 +119,9 @@ func (c *webCommand) Run(args []string, stdout, stderr io.Writer) error {
 	})
 }
 
-// requireLoopback refuses any TCP address that is not loopback. The API has
-// no authentication, so the only thing keeping it private is where it binds.
+// requireLoopback refuses any TCP address that is not loopback. The start
+// token keeps other local programs out, but it travels in cleartext over plain
+// http, so the listener must still never leave the machine.
 func requireLoopback(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -117,7 +132,7 @@ func requireLoopback(addr string) error {
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("web: --addr %q is not a loopback address; the API has no authentication", addr)
+		return fmt.Errorf("web: --addr %q is not a loopback address; the API is plain http and must stay on this machine", addr)
 	}
 	return nil
 }

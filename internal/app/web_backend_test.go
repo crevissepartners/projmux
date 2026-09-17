@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -175,6 +176,53 @@ func TestWebBackendRegistryFailureIsInternal(t *testing.T) {
 	envelope, _ := body["error"].(map[string]any)
 	if code != http.StatusInternalServerError || envelope["code"] != web.CodeInternal {
 		t.Fatalf("GET projects with a broken registry = %d %v", code, body)
+	}
+}
+
+// The TCP URL printed at start carries the start token, which is fresh on
+// every start and is the only place the token is written.
+func TestWebCommandPrintsTheStartTokenURL(t *testing.T) {
+	start := func(args ...string) (web.Options, string) {
+		t.Helper()
+		var got web.Options
+		cmd := newWebCommand()
+		cmd.unsetenv = func(string) error { return nil }
+		cmd.backend = func() web.Backend { backend, _ := webFixtureBackend(t); return backend }
+		cmd.serve = func(_ context.Context, _ web.Backend, opts web.Options) error {
+			got = opts
+			bound := ""
+			if opts.Addr != "" {
+				bound = "127.0.0.1:8787"
+			}
+			opts.Ready(bound)
+			return nil
+		}
+		var stdout, stderr bytes.Buffer
+		if err := cmd.Run(args, &stdout, &stderr); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stderr.String(), got.Token) && got.Token != "" {
+			t.Errorf("stderr carries the token: %q", stderr.String())
+		}
+		return got, stdout.String()
+	}
+
+	first, out := start("--socket", "-", "-v")
+	if want := "projmux web: http://127.0.0.1:8787/?token=" + first.Token + "\n"; out != want {
+		t.Fatalf("stdout = %q, want %q", out, want)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(first.Token)
+	if err != nil || len(raw) != 32 {
+		t.Fatalf("token decodes to %d bytes (%v), want 32", len(raw), err)
+	}
+	second, _ := start("--socket", "-")
+	if second.Token == "" || second.Token == first.Token {
+		t.Fatalf("second start token = %q, want a fresh one", second.Token)
+	}
+	// Without TCP there is nothing to protect with a token.
+	socketOnly, out := start("--addr", "", "--socket", "/tmp/pw/api.sock")
+	if socketOnly.Token != "" || strings.Contains(out, "token") {
+		t.Fatalf("socket-only start: token %q, stdout %q", socketOnly.Token, out)
 	}
 }
 

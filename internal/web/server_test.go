@@ -281,6 +281,7 @@ func TestServeListensOnTCPAndSocket(t *testing.T) {
 		done <- Serve(ctx, &fakeBackend{}, Options{
 			Addr:       "127.0.0.1:0",
 			SocketPath: socket,
+			Token:      "start-token",
 			Ready:      func(addr string) { ready <- addr },
 		})
 	}()
@@ -293,7 +294,12 @@ func TestServeListensOnTCPAndSocket(t *testing.T) {
 		t.Fatal("Serve never became ready")
 	}
 
-	res, err := http.Get("http://" + addr + "/api/v1/version")
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/api/v1/version", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer start-token")
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
