@@ -90,14 +90,16 @@ type diskState struct {
 }
 
 type storeHooks struct {
-	beforeRename func() error
+	beforeHistoryAppend func() error
+	beforeRename        func() error
 }
 
 type Store struct {
-	path        string
-	now         func() time.Time
-	hooks       storeHooks
-	nonblocking bool
+	path            string
+	now             func() time.Time
+	hooks           storeHooks
+	nonblocking     bool
+	historyMaxBytes int
 }
 
 func NewStore(stateDir string) *Store {
@@ -175,7 +177,8 @@ func (s *Store) PutAccepted(envelope coremessage.Envelope, adapter string) (Reco
 			return nil
 		}
 		now := s.clock()
-		state.Records = pruneRecords(state.Records, now)
+		kept, reclaimed := pruneRecords(state.Records, now)
+		state.Records = kept
 		if len(state.Records) >= maxRecords {
 			return ErrCapacity
 		}
@@ -188,7 +191,7 @@ func (s *Store) PutAccepted(envelope coremessage.Envelope, adapter string) (Reco
 		}
 		out = Record{Envelope: envelope, Delivery: delivery, Adapter: adapter}
 		state.Records = append(state.Records, out)
-		if err := s.writeLocked(state); err != nil {
+		if err := s.writeLocked(state, newHistoryRecords(reclaimed, now)); err != nil {
 			return err
 		}
 		created = true
@@ -299,7 +302,7 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 		}
 		out = Record{Envelope: envelope, Delivery: delivery, Adapter: adapterForTarget(envelope.Target)}
 		state.Records = append(state.Records, out)
-		if err := s.writeLocked(state); err != nil {
+		if err := s.writeLocked(state, nil); err != nil {
 			return err
 		}
 		created = true
@@ -329,7 +332,7 @@ func (s *Store) Apply(messageRef string, event coremessage.Event) (Record, bool,
 			next, didChange := coremessage.Reduce(state.Records[i].Delivery, state.Records[i].Envelope, event)
 			if didChange {
 				state.Records[i].Delivery = next
-				if err := s.writeLocked(state); err != nil {
+				if err := s.writeLocked(state, nil); err != nil {
 					return err
 				}
 				changed = true
@@ -363,7 +366,7 @@ func (s *Store) MarkHandoff(messageRef string) (Record, bool, error) {
 			}
 			if !record.Delivery.State.Terminal() && !record.HandoffObserved {
 				record.HandoffObserved = true
-				if err := s.writeLocked(state); err != nil {
+				if err := s.writeLocked(state, nil); err != nil {
 					return err
 				}
 				changed = true
@@ -439,7 +442,7 @@ func (s *Store) Claim(target coremessage.Route, now time.Time) (Record, bool, er
 			break
 		}
 		if changed {
-			return s.writeLocked(state)
+			return s.writeLocked(state, nil)
 		}
 		return nil
 	})
@@ -555,7 +558,7 @@ func validRecord(record Record) bool {
 	}
 }
 
-func (s *Store) writeLocked(state diskState) error {
+func (s *Store) writeLocked(state diskState, history []historyRecord) error {
 	state.Version = storeVersion
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -590,6 +593,11 @@ func (s *Store) writeLocked(state diskState) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	// The history log is durable before the store commits, so a crash in this
+	// window can duplicate a reclaimed record but cannot lose one.
+	if err := s.appendHistoryLocked(history); err != nil {
+		return err
+	}
 	if s.hooks.beforeRename != nil {
 		if err := s.hooks.beforeRename(); err != nil {
 			return err
@@ -600,18 +608,29 @@ func (s *Store) writeLocked(state diskState) error {
 	}
 	committed = true
 	localstate.RepairPrivateFile(s.path)
-	directory, err := os.Open(dir) // #nosec G304 -- withLock validated this exact parent as a private directory before writeLocked.
-	if err == nil {
-		if syncErr := directory.Sync(); syncErr != nil && !errors.Is(syncErr, fs.ErrInvalid) && !errors.Is(syncErr, fs.ErrPermission) {
-			_ = directory.Close()
-			return syncErr
-		}
-		_ = directory.Close()
+	return syncDir(dir)
+}
+
+// syncDir makes a new or renamed directory entry durable. A filesystem that
+// refuses the fsync is reported as a success because the entry is not this
+// process's to repair.
+func syncDir(dir string) error {
+	directory, err := os.Open(dir) // #nosec G304 -- withLock validated this exact parent as a private directory.
+	if err != nil {
+		return nil
 	}
+	if syncErr := directory.Sync(); syncErr != nil && !errors.Is(syncErr, fs.ErrInvalid) && !errors.Is(syncErr, fs.ErrPermission) {
+		_ = directory.Close()
+		return syncErr
+	}
+	_ = directory.Close()
 	return nil
 }
 
-func pruneRecords(records []Record, now time.Time) []Record {
+// pruneRecords returns the records the store keeps and the ones it reclaimed.
+// Reclaiming is not deleting: every returned record is written to the history
+// log before the caller's store write commits.
+func pruneRecords(records []Record, now time.Time) ([]Record, []reclaimedRecord) {
 	// A live original and its attempts form one durable idempotency boundary.
 	// Evicting a delivered/unknown reply while retaining the original would
 	// make a later fresh ref look like the first attempt after store reload.
@@ -627,15 +646,19 @@ func pruneRecords(records []Record, now time.Time) []Record {
 		}
 	}
 	cutoff := now.Add(-terminalRetention)
+	var reclaimed []reclaimedRecord
+	// out aliases records, so each reclaimed record is copied out before the
+	// kept records are compacted over its slot.
 	out := records[:0]
 	for _, record := range records {
 		if !protected[record.Envelope.MessageRef] && record.Delivery.State.Terminal() && !record.Delivery.TerminalAt.IsZero() && record.Delivery.TerminalAt.Before(cutoff) {
+			reclaimed = append(reclaimed, reclaimedRecord{Record: record, Reason: reclaimRetention})
 			continue
 		}
 		out = append(out, record)
 	}
 	if len(out) < maxRecords {
-		return out
+		return out, reclaimed
 	}
 	// At capacity, reclaim the oldest terminal records first. Non-terminal
 	// records are never silently evicted.
@@ -651,7 +674,8 @@ func pruneRecords(records []Record, now time.Time) []Record {
 		if index < 0 {
 			break
 		}
+		reclaimed = append(reclaimed, reclaimedRecord{Record: out[index], Reason: reclaimCapacity})
 		out = append(out[:index], out[index+1:]...)
 	}
-	return out
+	return out, reclaimed
 }

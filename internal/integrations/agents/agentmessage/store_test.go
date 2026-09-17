@@ -88,7 +88,7 @@ func TestStoreRefusesFullNonterminalCapacityWithoutChangingDisk(t *testing.T) {
 		}
 		records[i] = Record{Envelope: envelope, Delivery: delivery, Adapter: "codex-inbox"}
 	}
-	if err := store.withLock(func() error { return store.writeLocked(diskState{Version: storeVersion, Records: records}) }); err != nil {
+	if err := store.withLock(func() error { return store.writeLocked(diskState{Version: storeVersion, Records: records}, nil) }); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(store.Path())
@@ -281,7 +281,7 @@ func TestStoreBoundsRetentionTimeoutAndMalformedRestart(t *testing.T) {
 	}
 	store.hooks = storeHooks{}
 	store.now = func() time.Time { return storeTestNow }
-	if err := store.withLock(func() error { return store.writeLocked(diskState{Version: storeVersion, Records: old}) }); err != nil {
+	if err := store.withLock(func() error { return store.writeLocked(diskState{Version: storeVersion, Records: old}, nil) }); err != nil {
 		t.Fatal(err)
 	}
 	if _, created, err := store.PutAccepted(storeEnvelope(3), "codex-inbox"); err != nil || !created {

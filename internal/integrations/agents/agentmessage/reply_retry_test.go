@@ -145,7 +145,7 @@ func TestStoreExplicitReplyRetryKeepsDeadlineAndExactRoute(t *testing.T) {
 					t.Fatal(err)
 				}
 				state.Records[0].Envelope = original
-				if err := store.writeLocked(state); err != nil {
+				if err := store.writeLocked(state, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
