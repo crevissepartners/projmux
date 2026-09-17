@@ -368,6 +368,27 @@ jobs:
           otool -L dist/npm/@projmux/darwin-x64/bin/projmux | grep -F ApplicationServices.framework
           otool -L dist/npm/@projmux/darwin-arm64/bin/projmux | grep -F ApplicationServices.framework
 
+  # The browser client is built with Node and its output is committed under
+  # internal/web/dist, so `go build` never needs Node. This job rebuilds it and
+  # fails when the committed dist differs from a fresh build of its source.
+  web-check:
+    name: Web client
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: internal/web/_ui/package-lock.json
+
+      - name: Verify committed web client dist
+        run: make web-check
+
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -534,6 +555,7 @@ jobs:
       - race
       - darwin-native
       - npm-pack
+      - web-check
       - integration
       - e2e-linux
       - e2e-suite
@@ -557,6 +579,7 @@ jobs:
             --required race \
             --required darwin-native \
             --required npm-pack \
+            --required web-check \
             --required integration \
             --required e2e-linux \
             --required e2e-suite
