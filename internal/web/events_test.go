@@ -42,7 +42,7 @@ func (b *eventBackend) Changes(ctx context.Context, topic string) (<-chan struct
 	return b.signals, nil
 }
 
-type sseFrame struct{ event, data string }
+type sseFrame struct{ event, data, id string }
 
 func readFrames(t *testing.T, scanner *bufio.Scanner, frames chan<- sseFrame) {
 	t.Helper()
@@ -52,6 +52,8 @@ func readFrames(t *testing.T, scanner *bufio.Scanner, frames chan<- sseFrame) {
 		switch {
 		case strings.HasPrefix(line, "event: "):
 			frame.event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "id: "):
+			frame.id = strings.TrimPrefix(line, "id: ")
 		case strings.HasPrefix(line, "data: "):
 			frame.data = strings.TrimPrefix(line, "data: ")
 		case line == "" && frame.event != "":

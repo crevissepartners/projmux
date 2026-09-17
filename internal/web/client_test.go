@@ -11,12 +11,19 @@ import (
 	"time"
 )
 
+// followerStub hands out queued reads; a nil entry is a read error. Each
+// turn read moves the offset by ten bytes.
 type followerStub struct {
-	mu    sync.Mutex
-	queue [][]any
+	mu     sync.Mutex
+	offset int64
+	queue  [][]any
 }
 
-func (f *followerStub) Offset() int64 { return 42 }
+func (f *followerStub) Offset() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.offset
+}
 
 func (f *followerStub) Next() ([]any, error) {
 	f.mu.Lock()
@@ -29,15 +36,17 @@ func (f *followerStub) Next() ([]any, error) {
 	if next == nil {
 		return nil, errors.New("rotated")
 	}
+	f.offset += int64(10 * len(next))
 	return next, nil
 }
 
 type clientStub struct {
 	fakeBackend
-	follower *followerStub
-	captures []any
-	from     []int64
-	mu       sync.Mutex
+	// followers are per agent; an agent without one has no transcript.
+	followers map[string]*followerStub
+	captures  []any
+	from      []int64
+	mu        sync.Mutex
 }
 
 func (c *clientStub) Messages(context.Context) (any, error) {
@@ -46,11 +55,21 @@ func (c *clientStub) Messages(context.Context) (any, error) {
 func (c *clientStub) Transcript(_ context.Context, agent string, limit int) (any, error) {
 	return map[string]any{"agent": agent, "limit": limit}, nil
 }
-func (c *clientStub) FollowTranscript(_ context.Context, _ string, offset int64) (Follower, error) {
+func (c *clientStub) FollowTranscript(_ context.Context, agent string, offset int64) (Follower, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.from = append(c.from, offset)
-	c.mu.Unlock()
-	return c.follower, nil
+	follower, ok := c.followers[agent]
+	if !ok {
+		return nil, NewError(http.StatusConflict, "no-transcript", "no transcript for "+agent)
+	}
+	follower.mu.Lock()
+	defer follower.mu.Unlock()
+	if offset < 0 {
+		offset = 100 // the end of the file
+	}
+	follower.offset = offset
+	return follower, nil
 }
 func (c *clientStub) Layout(context.Context, string, bool) (any, error) {
 	c.mu.Lock()
@@ -76,34 +95,6 @@ func (c *clientStub) PreviewAgent(context.Context, string, string, CreateAgentRe
 }
 func (c *clientStub) AnswerQuestion(context.Context, string, QuestionAnswer) (any, error) {
 	return map[string]bool{"ok": true}, nil
-}
-
-func TestTranscriptEventsSendEachTurnAndSurviveAReadError(t *testing.T) {
-	stub := &clientStub{follower: &followerStub{queue: [][]any{
-		{map[string]string{"text": "one"}, map[string]string{"text": "two"}},
-		nil, // a read error
-		{map[string]string{"text": "three"}},
-	}}}
-	srv := httptest.NewServer(New(stub, nil).Handler())
-	defer srv.Close()
-	res, err := http.Get(srv.URL + "/api/v1/web/agents/a/transcript/events")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	frames := make(chan sseFrame, 8)
-	go readFrames(t, bufio.NewScanner(res.Body), frames)
-	for _, want := range []sseFrame{ // turn frames carry the follower's offset as their id
-		{"turn", `{"text":"one"}`},
-		{"turn", `{"text":"two"}`},
-		{"error", ""},
-		{"turn", `{"text":"three"}`},
-	} {
-		got := nextFrame(t, frames)
-		if got.event != want.event || (want.data != "" && got.data != want.data) {
-			t.Fatalf("frame = %+v, want %+v", got, want)
-		}
-	}
 }
 
 func TestLayoutEventsSkipRepeatsAndEndWithGone(t *testing.T) {
@@ -156,43 +147,5 @@ func TestClientRoutesNeedAClientBackend(t *testing.T) {
 	body := decode(t, res)
 	if res.StatusCode != 400 || body["error"].(map[string]any)["code"] != CodeInvalidRequest {
 		t.Fatalf("limit 5000 = %d %v", res.StatusCode, body)
-	}
-}
-
-func TestTranscriptEventsResumeFromTheGivenOffset(t *testing.T) {
-	stub := &clientStub{follower: &followerStub{}}
-	srv := httptest.NewServer(New(stub, nil).Handler())
-	defer srv.Close()
-	open := func(query string, lastID string) int {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/web/agents/a/transcript/events"+query, nil)
-		if lastID != "" {
-			req.Header.Set("Last-Event-ID", lastID)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		defer cancel()
-		res, err := http.DefaultClient.Do(req.WithContext(ctx))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer res.Body.Close()
-		return res.StatusCode
-	}
-	open("", "")
-	open("?from=start", "")
-	open("?from=120", "")
-	open("?from=120", "300") // a reconnect resumes where the stream got to
-	if code := open("?from=-4", ""); code != http.StatusBadRequest {
-		t.Errorf("negative offset = %d", code)
-	}
-	stub.mu.Lock()
-	defer stub.mu.Unlock()
-	want := []int64{-1, 0, 120, 300}
-	if len(stub.from) != len(want) {
-		t.Fatalf("offsets = %v, want %v", stub.from, want)
-	}
-	for i := range want {
-		if stub.from[i] != want[i] {
-			t.Fatalf("offsets = %v, want %v", stub.from, want)
-		}
 	}
 }

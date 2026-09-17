@@ -1,7 +1,7 @@
 <script lang="ts">
-  // The conversation. The tail is read once and then followed with server-sent
-  // events from the end of the file, so a reply appears as the provider writes
-  // it and nothing is rendered twice.
+  // The conversation. The tail is read once and then followed from where the
+  // read ended, over the page's one transcript stream, so a reply appears as
+  // the provider writes it and nothing is rendered twice.
   import { onDestroy, untrack } from "svelte";
   import { get, paths } from "../lib/api";
   import { stickToBottom } from "../lib/actions";
@@ -14,6 +14,7 @@
   import Pasted from "./Pasted.svelte";
   import TurnView from "./TurnView.svelte";
   import { PENDING_LATE_MS, pending, settle } from "../lib/pending.svelte";
+  import { followTranscript } from "../lib/transcripts";
 
   interface Props {
     agent: AgentView;
@@ -36,12 +37,12 @@
   let repo = $state<Repository | null>(null);
   let surface = $state<Surface | null>(null);
   let log: HTMLElement | undefined = $state();
-  let source: EventSource | null = null;
   // The slot is rebuilt with {#key}, so this instance can be destroyed while
-  // its read is still out. Nothing may be opened, or write to the parent's
+  // its read is still out. Nothing may follow, or write to the parent's
   // bindings, after that.
   let destroyed = false;
   const reading = new AbortController();
+  let unfollow: (() => void) | null = null;
 
   // A reply can be recorded before the send that caused it returns, so a
   // pending line the transcript already shows is not drawn.
@@ -108,19 +109,13 @@
     loading = false;
     if (note === "no-transcript") return;
     // The stream starts where this read ended, so nothing written in between
-    // is lost; a reconnect resumes from the last frame's id.
-    const events = new EventSource(`${paths.transcript(uid)}/events?from=${offset}`);
-    source = events;
-    events.addEventListener("open", () => {
-      if (!destroyed) stream = "live";
-    });
-    events.addEventListener("error", () => {
-      if (!destroyed) stream = "warn";
-    });
-    events.addEventListener("turn", (event) => {
-      if (destroyed) return;
-      try {
-        const raw = JSON.parse((event as MessageEvent).data) as Turn;
+    // is lost; a reconnect resumes from where the stream got to.
+    unfollow = followTranscript(uid, offset, {
+      state: (state) => {
+        if (!destroyed) stream = state;
+      },
+      turn: (raw) => {
+        if (destroyed) return;
         settle(uid, raw);
         noteModel(raw);
         if (raw.kind === "context") return;
@@ -129,9 +124,7 @@
           turns.push(turn);
           note = "";
         }
-      } catch {
-        /* skip one malformed frame */
-      }
+      },
     });
   }
 
@@ -146,9 +139,9 @@
   onDestroy(() => {
     destroyed = true;
     reading.abort();
+    unfollow?.();
+    unfollow = null;
     clearInterval(clock);
-    source?.close();
-    source = null;
     stream = "";
   });
 

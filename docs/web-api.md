@@ -202,7 +202,7 @@ Registry, so they are kept out of the core surface. They live under
 | --- | --- | --- |
 | GET | `/api/v1/web/i18n` | `{locale, messages}`: the `web.*` catalog for the resolved locale |
 | GET | `/api/v1/web/agents/{agent}/transcript` | `{surface, repository, transcript}`: how the client may write to the agent, `{web, root, rev}` for linking references (GitHub origins only, else null), and the provider transcript flattened to turns (`?limit=`, 1–1000) |
-| GET | `/api/v1/web/agents/{agent}/transcript/events` | SSE `turn` frames from the end of the file (`?from=start` to replay), `error` frames on a failed read |
+| GET | `/api/v1/web/transcripts/events` | one SSE stream for every transcript a page follows; see *Transcript events* |
 | GET | `/api/v1/web/windows/{window}/layout` | pane geometry in cells (`?contents=1` adds each pane's screen) |
 | GET | `/api/v1/web/windows/{window}/layout/events` | SSE `layout` frames, sent on change; `gone` when the window is no longer there |
 | GET | `/api/v1/web/panes/{pane}/screen` | one `capture-pane -e` of the pane, parsed into styled runs |
@@ -217,6 +217,31 @@ Registry, so they are kept out of the core surface. They live under
 | GET | `/api/v1/web/uploads/{name}` | a stored image by its file name, for showing it in the conversation |
 | POST | `/api/v1/web/agents/{agent}/question` | `{toolId, answers:[{picks, other}]}`: answers the Claude agent's pending AskUserQuestion; see *The question exception* |
 | POST | `/api/v1/web/projects/{project}/windows/{window}/agents/preview` | `{argv}`: the exact command a create-agent request with the same body would run; runs nothing |
+
+### Transcript events
+
+`GET /api/v1/web/transcripts/events?stream=<key>:<agent>:<offset>&stream=…`
+follows several agents' transcripts on one connection, so a page's
+connection count does not grow with its agent slots (a browser allows six per
+host over HTTP/1.1). Each `stream` value names a client-chosen key (1–16
+letters, digits, `-`, `_`), the agent, and where to start: a byte offset (the
+`offset` a transcript read returned, so nothing written in between is lost),
+`start`, or `end`. At most 32 streams; a malformed or repeated key is
+`invalid-request`.
+
+| event | payload | sent when |
+| --- | --- | --- |
+| `ready` | `{streams: {key: offset}}` | once, after every transcript was opened |
+| `turn` | `{stream, agent, turn}` | one per appended entry |
+| `transcript-error` | `{stream, agent, error}` | a transcript could not be opened (it is left out of this connection) or a read failed (reported once per failing run; it is still followed) |
+| `transcript-recovered` | `{stream, agent}` | a read succeeded after a failed one |
+
+The `ready` frame and the last `turn` frame of each read carry the id
+`key:offset,key:offset`, every key's resume offset. A reconnecting
+`EventSource` sends it back as `Last-Event-ID`, and each key it names resumes
+from there. The id moves only at the end of a read, so a stream cut inside a
+read sends that read again; a client counts the frames of it it already
+handled and skips them.
 
 A turn is `{role, text, at, kind, thinking, from, messageRef, via, tools,
 task, report, images}`. A background task finishing is one `task` turn with

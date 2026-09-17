@@ -22,9 +22,9 @@ type ClientBackend interface {
 	// and a bounded tail of its conversation.
 	Transcript(ctx context.Context, agent string, limit int) (any, error)
 	// FollowTranscript starts reading the agent's transcript at a byte
-	// offset: the `offset` a Transcript read returned, or the id of the last
-	// frame a reconnecting stream received. A negative offset means the
-	// current end of the file.
+	// offset: the `offset` a Transcript read returned, or the offset a
+	// reconnecting stream's last frame id recorded. A negative offset means
+	// the current end of the file.
 	FollowTranscript(ctx context.Context, agent string, offset int64) (Follower, error)
 	// Layout captures a window's panes where tmux put them.
 	Layout(ctx context.Context, window string, contents bool) (any, error)
@@ -195,38 +195,7 @@ func (s *Server) registerClientRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, body)
 	})
-	mux.HandleFunc("GET /api/v1/web/agents/{agent}/transcript/events", func(w http.ResponseWriter, r *http.Request) {
-		c, ok := s.client(w, r)
-		if !ok {
-			return
-		}
-		// A reconnecting EventSource sends the id of the last frame it got,
-		// which is the offset to resume from; nothing written while it was
-		// away is lost.
-		offset := int64(-1)
-		from := r.Header.Get("Last-Event-ID")
-		if from == "" {
-			from = r.URL.Query().Get("from")
-		}
-		switch from {
-		case "", "end":
-		case "start":
-			offset = 0
-		default:
-			parsed, perr := strconv.ParseInt(from, 10, 64)
-			if perr != nil || parsed < 0 {
-				s.fail(w, r, InvalidRequest("from must be start, end, or a byte offset"))
-				return
-			}
-			offset = parsed
-		}
-		follower, err := c.FollowTranscript(r.Context(), r.PathValue("agent"), offset)
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		s.streamFollower(w, r, follower)
-	})
+	mux.HandleFunc("GET /api/v1/web/transcripts/events", s.handleTranscriptEvents)
 	mux.HandleFunc("GET /api/v1/web/windows/{window}/layout/events", func(w http.ResponseWriter, r *http.Request) {
 		c, ok := s.client(w, r)
 		if !ok {
@@ -261,47 +230,6 @@ func startStream(w http.ResponseWriter) (*sseWriter, bool) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 	return &sseWriter{w: w, flusher: flusher, last: time.Now()}, true
-}
-
-// streamFollower sends one `turn` frame per appended entry. A read error is
-// an `error` frame and the stream keeps following: a provider rewriting its
-// file mid-read is normal.
-func (s *Server) streamFollower(w http.ResponseWriter, r *http.Request, follower Follower) {
-	out, ok := startStream(w)
-	if !ok {
-		s.fail(w, r, NewError(http.StatusInternalServerError, CodeInternal, "streaming is not supported"))
-		return
-	}
-	ticker := time.NewTicker(transcriptPoll)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			items, err := follower.Next()
-			if err != nil {
-				frame, _ := json.Marshal(map[string]*Error{"error": asError(err)})
-				if out.event("error", frame) != nil {
-					return
-				}
-				continue
-			}
-			id := strconv.FormatInt(follower.Offset(), 10)
-			for _, item := range items {
-				frame, err := json.Marshal(item)
-				if err != nil {
-					continue
-				}
-				if out.eventID("turn", id, frame) != nil {
-					return
-				}
-			}
-			if out.keepalive() != nil {
-				return
-			}
-		}
-	}
 }
 
 // streamCapture re-captures on a timer and sends only when the capture
