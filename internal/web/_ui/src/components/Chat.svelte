@@ -37,6 +37,11 @@
   let surface = $state<Surface | null>(null);
   let log: HTMLElement | undefined = $state();
   let source: EventSource | null = null;
+  // The slot is rebuilt with {#key}, so this instance can be destroyed while
+  // its read is still out. Nothing may be opened, or write to the parent's
+  // bindings, after that.
+  let destroyed = false;
+  const reading = new AbortController();
 
   // A reply can be recorded before the send that caused it returns, so a
   // pending line the transcript already shows is not drawn.
@@ -83,7 +88,8 @@
   async function start(uid: string) {
     let offset = -1;
     try {
-      const body = await get<TranscriptView>(paths.transcript(uid));
+      const body = await get<TranscriptView>(paths.transcript(uid), reading.signal);
+      if (destroyed) return;
       offset = body.transcript.offset;
       const all = body.transcript.turns || [];
       all.forEach(noteModel);
@@ -94,6 +100,7 @@
       repo = body.repository || null;
       surface = body.surface;
     } catch (err) {
+      if (destroyed) return;
       error = explain(err);
       loading = false;
       return;
@@ -104,9 +111,14 @@
     // is lost; a reconnect resumes from the last frame's id.
     const events = new EventSource(`${paths.transcript(uid)}/events?from=${offset}`);
     source = events;
-    events.addEventListener("open", () => (stream = "live"));
-    events.addEventListener("error", () => (stream = "warn"));
+    events.addEventListener("open", () => {
+      if (!destroyed) stream = "live";
+    });
+    events.addEventListener("error", () => {
+      if (!destroyed) stream = "warn";
+    });
     events.addEventListener("turn", (event) => {
+      if (destroyed) return;
       try {
         const raw = JSON.parse((event as MessageEvent).data) as Turn;
         settle(uid, raw);
@@ -132,8 +144,11 @@
   const clock = setInterval(() => (now = Date.now()), 5000);
 
   onDestroy(() => {
+    destroyed = true;
+    reading.abort();
     clearInterval(clock);
     source?.close();
+    source = null;
     stream = "";
   });
 

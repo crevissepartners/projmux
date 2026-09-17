@@ -21,8 +21,8 @@ interface Envelope {
   error?: { code?: string; message?: string; status?: number; details?: Record<string, unknown> };
 }
 
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const init: RequestInit = { method, headers: { accept: "application/json" } };
+export async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const init: RequestInit = { method, headers: { accept: "application/json" }, signal };
   if (body instanceof Blob) {
     init.headers = { ...init.headers, "content-type": body.type };
     init.body = body;
@@ -54,7 +54,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   return data as T;
 }
 
-export const get = <T>(path: string) => request<T>("GET", path);
+export const get = <T>(path: string, signal?: AbortSignal) => request<T>("GET", path, undefined, signal);
 export const post = <T>(path: string, body: unknown = {}) => request<T>("POST", path, body);
 export const patch = <T>(path: string, body: unknown) => request<T>("PATCH", path, body);
 export const del = <T>(path: string, body: unknown = {}) => request<T>("DELETE", path, body);
