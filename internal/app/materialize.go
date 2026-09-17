@@ -2377,6 +2377,27 @@ func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, c
 	return id, nil
 }
 
+// retireOwnedPane removes one tmux pane this operation created, guarded by the
+// exact Projmux uid it mirrored onto that pane.
+//
+// It is the same kill-owned action rollback issues, and for the same reason: the
+// only pane this materializer may remove is one it can prove is still the pane
+// it made. The guard re-reads the ownership option immediately before the write,
+// so a pane that tmux renumbered, that a hook moved, or that something else
+// replaced fails the guard instead of being killed. Unlike rollback this runs on
+// the success path, where a failed kill must fail the operation rather than be
+// warned about -- a Window left holding a shell the create promised to remove is
+// not the result the caller was told it would get.
+func (m *materializer) retireOwnedPane(ctx context.Context, paneID, paneUID string) error {
+	action := materializeMutationAction(mutationKillOwned,
+		m.boundMutationTarget(string(runtimePane), paneID, paneUID),
+		"same mirrored ownership uid="+paneUID,
+		"owned created pane is absent",
+		"-t", paneID)
+	_, err := m.runMutation(ctx, action)
+	return err
+}
+
 // equalizeSplitLayout applies the same scoped, best-effort sizing used by the
 // legacy AI split. It intentionally returns no error: layout observation is
 // outside the create transaction's failure and rollback contract.

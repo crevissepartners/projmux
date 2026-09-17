@@ -301,8 +301,8 @@ func requireCanonicalProvider(spelling, raw string) (string, error) {
 			spelling, strings.Join(cli.AgentProviders(), ", ")))
 	}
 	if cli.IsPickerAdapter(provider) {
-		return "", usageError(fmt.Sprintf("%s: %q is an interactive picker, not a provider; choose one of %s for `projmux create agent --provider`",
-			spelling, provider, strings.Join(cli.AgentProviders(), ", ")))
+		return "", usageError(fmt.Sprintf("%s: %q is an interactive picker, not a provider; choose one of %s for `projmux %s --provider`",
+			spelling, provider, strings.Join(cli.AgentProviders(), ", "), spelling))
 	}
 	if provider == aiModeShell {
 		return "", usageError(fmt.Sprintf("%s: a shell surface is a Pane, not an Agent; use `projmux create pane`", spelling))
@@ -312,6 +312,59 @@ func requireCanonicalProvider(spelling, raw string) (string, error) {
 			spelling, provider, strings.Join(cli.AgentProviders(), ", ")))
 	}
 	return provider, nil
+}
+
+// resolveInitialWindowProvider fixes the surface a `create window` opens with.
+//
+// It answers "" for an argv that never spelled --provider, which is the one
+// answer that keeps this route byte-for-byte what it has always been: one shell
+// Pane. Every spelling that did name a value goes through
+// requireCanonicalProvider, so the accepted set, the picker-adapter refusal and
+// the unknown-value refusal are the same words `create agent` prints -- there is
+// one provider enum on this CLI, not one per route.
+//
+// `shell` is the only value this route adds to that enum, and it is not a
+// provider: it names the Pane the Window already makes. Spelling it is how a
+// script says "the default, on purpose" without having to know what the default
+// is, which is what keeps the flag usable from a generated command line. Its
+// answer is deliberately the same "" the omitted flag produces, because the two
+// argvs must not be able to produce two Windows.
+func resolveInitialWindowProvider(spelling string, flags resourceCreateFlags) (string, error) {
+	if !flags.providerSet {
+		return "", nil
+	}
+	if strings.ToLower(strings.TrimSpace(flags.provider)) == aiModeShell {
+		return "", nil
+	}
+	provider, err := requireCanonicalProvider(spelling, flags.provider)
+	if err != nil {
+		return "", err
+	}
+	if err := refuseWindowProviderWithoutNativeLane(spelling, provider, flags); err != nil {
+		return "", err
+	}
+	return provider, nil
+}
+
+// refuseWindowProviderWithoutNativeLane refuses the one Agent shape this route
+// cannot open the way the canonical Agent route opens it.
+//
+// A prompted Codex create is native-required: `create agent` resolves an exact
+// app-server generation, opens a thread on it, and binds that thread to the
+// Agent, and it refuses rather than degrade when that is unavailable. This
+// route has no native lane, so the same argv here would produce a plain
+// interactive Codex Agent with no thread binding -- an Agent `agent turn` and
+// `agent steer` cannot drive. Quietly handing that back is the silent
+// degradation the Codex create contract exists to prevent, so the refusal names
+// the route that has the lane instead. A payload-free Codex create is
+// deliberately plain on both routes and is unaffected.
+func refuseWindowProviderWithoutNativeLane(spelling, provider string, flags resourceCreateFlags) error {
+	if !nativeCodexFreshCreateRequired(provider, flags) {
+		return nil
+	}
+	return usageError(fmt.Sprintf(
+		"%s --provider %s does not accept a payload: a prompted %s Agent needs the native thread binding only `projmux create agent --provider %s --create-window <name> -- <payload>` opens; drop the payload for a plain interactive Agent",
+		spelling, provider, provider, provider))
 }
 
 // agentPaneIntent is the canonical create intent the Projmux split UI produces.

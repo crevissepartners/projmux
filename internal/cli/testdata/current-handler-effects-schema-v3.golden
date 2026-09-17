@@ -3,6 +3,7 @@ scenario=create-project-new route=create project identity=created address=alloca
 scenario=create-project-reuse route=create project identity=reused address=unchanged topology=unchanged desired-state=reused runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 scenario=create-window-offline route=create window identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
 scenario=create-window-parent-live route=create window identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
+scenario=create-window-provider-agent route=create window identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
 scenario=create-pane route=create pane identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
 scenario=create-agent route=create agent identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
 scenario=create-codex route=create codex identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null

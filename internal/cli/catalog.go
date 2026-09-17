@@ -999,7 +999,7 @@ var routes = []Route{
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
-			"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
+			"projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 			"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
@@ -1033,13 +1033,20 @@ var routes = []Route{
 				// owns, and that Pane's uid is stored as the Window's
 				// compatibility shell ref -- the anchor a later `create pane` splits
 				// when no explicit --pane is given.
+				//
+				// `--provider` names what that first Pane is. Omitted, and with
+				// `shell` spelled out loud, it is the shell Pane above. Naming an
+				// Agent provider instead opens that Agent as the Window's only
+				// Pane, in one transaction: a provider that refuses leaves no
+				// Window at all. The saved UI split mode is never consulted --
+				// this route's result is decided by its own argv.
 				Effects:          createResourceEffects(CardinalityExactOne),
 				Name:             "window",
 				Invocation:       InvocationNatural,
-				Summary:          "Create a Window and its initial Pane below one Project; the runtime is materialized detached",
-				CanonicalSummary: "Create a Window with its initial Pane",
+				Summary:          "Create a Window below one Project, opening on a shell Pane or on one Agent; the runtime is materialized detached",
+				CanonicalSummary: "Create a Window opening on a shell Pane or one Agent",
 				Usage: []string{
-					"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
+					"projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 				},
 				Outputs:   receiptOutputModes,
 				Canonical: []string{"create window"},

@@ -2292,9 +2292,17 @@ func TestCreateHelpAdvertisesOnlyImplementedProjections(t *testing.T) {
 		node     string
 		spelling string
 		args     []string
+		// shape is the exact resourceCreateShape the route under test passes to
+		// parseResourceCreateFlags. The probe below registers its flags from
+		// this value rather than from the node name, so a route that gains a
+		// shape flag cannot advertise it in help while the probe still denies
+		// it exists.
+		shape resourceCreateShape
 	}{
-		{node: "window", spelling: canonicalCreateWindow, args: []string{"window", "--project", "beta"}},
-		{node: "pane", spelling: canonicalCreatePane, args: []string{"pane", "--project", "beta", "--window", "main"}},
+		{node: "window", spelling: canonicalCreateWindow, args: []string{"window", "--project", "beta"},
+			shape: resourceCreateShape{initialProvider: true}},
+		{node: "pane", spelling: canonicalCreatePane, args: []string{"pane", "--project", "beta", "--window", "main"},
+			shape: resourceCreateShape{split: true}},
 	} {
 		t.Run(test.node, func(t *testing.T) {
 			t.Parallel()
@@ -2332,7 +2340,10 @@ func TestCreateHelpAdvertisesOnlyImplementedProjections(t *testing.T) {
 			fs := flag.NewFlagSet("probe", flag.ContinueOnError)
 			out := resourceCreateFlags{}
 			fs.Var(&out.projects, "project", "")
-			if test.node == "pane" {
+			if test.shape.initialProvider {
+				fs.String("provider", "", "")
+			}
+			if test.shape.split {
 				fs.Var(&out.windows, "window", "")
 				fs.Var(&out.panes, "pane", "")
 				fs.Var(&out.selectors, "selector", "")

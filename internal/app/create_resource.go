@@ -126,6 +126,13 @@ type resourceCreateShape struct {
 	// so that respelling the provider they already name is rejected with the
 	// shortcut's own message instead of a bare "flag not defined".
 	provider bool
+	// initialProvider registers --provider on its own, with none of the Agent
+	// tuning flags `provider` brings. It is what `create window` needs: that
+	// route names the surface its first Pane opens with and nothing else, so
+	// --model, --effort, --add-dir, --cwd and --interactive-only stay where the
+	// complete Agent route already spells them. The two fields are exclusive --
+	// one flag registered twice is a flag package panic, not a refusal.
+	initialProvider bool
 }
 
 // createScope is the resolved Project/Window/anchor scope of one create.
@@ -382,6 +389,10 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	fs.SetOutput(stderr)
 	fs.Var(&out.projects, "project", "at-most-one Project scope: <name> or uid:<uid>; defaults to the active tmux runtime's managed Project")
 	fs.Var(&out.projects, "p", "at-most-one Project scope: <name> or uid:<uid> (alias of --project)")
+	if shape.initialProvider {
+		fs.StringVar(&out.provider, "provider", "",
+			"surface the Window's first Pane opens with: shell|"+strings.Join(cli.AgentProviders(), "|")+"; omitted means shell")
+	}
 	if shape.provider {
 		fs.BoolVar(&out.dialogueReplyOnly, claudeDialogueReplyOnlyFlag, false, "claude only: one headless activation with an isolated explicit reply tool; qualification required")
 		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
@@ -599,13 +610,49 @@ func (f resourceCreateFlags) explicitTargetAuthority() bool {
 }
 
 // runResourceWindow answers the canonical `create window`.
+//
+// `--provider` names the surface the new Window opens with, and omitting it is
+// the shell Pane this route has always made -- the same allocation, the same
+// materialization, the same result. Naming an Agent provider adds three steps
+// to the *same* transaction: the Agent and its managed Pane are allocated
+// alongside the Window, that Pane is split off the initial shell once the
+// Window is live, and the initial shell is then retired. What commits is
+// therefore a Window holding one Agent Pane and nothing else, and a provider
+// that refuses anywhere in there rolls the whole operation back -- no Window, no
+// Pane. That is the difference from `create agent --create-window`, which
+// commits a Window with a shell beside the Agent and keeps the shell when the
+// Agent fails.
+//
+// The saved launch default is deliberately not consulted. `create window` is a
+// canonical route, and a canonical route whose result depends on a UI setting is
+// not canonical; TestPublicCreateWindowNeverReadsTheSavedLaunchDefault is that
+// boundary's authority.
 func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Writer) error {
 	const spelling = canonicalCreateWindow
 
-	shape := resourceCreateShape{}
+	shape := resourceCreateShape{initialProvider: true}
 	flags, err := parseResourceCreateFlags(spelling, args, stderr, shape)
 	if err != nil {
 		return err
+	}
+	// The initial surface is an argv-only decision, so a misspelled provider and
+	// an interactive picker adapter are both refused before the Settings gate,
+	// the scope derivation, and the transaction -- zero mutations, zero bytes of
+	// stdout.
+	provider, err := resolveInitialWindowProvider(spelling, flags)
+	if err != nil {
+		return err
+	}
+	if provider != "" {
+		if c.agents == nil {
+			return errors.New("create window: the provider launcher is not configured")
+		}
+		// The Settings gate applies to this spelling for the reason it applies
+		// to the canonical Agent route: naming a provider through a different
+		// command does not re-enable one the operator switched off.
+		if err := c.agents.RequireAgentEnabled(provider); err != nil {
+			return err
+		}
 	}
 	mode, err := resolveLifecycleProjection(spelling, flags.output)
 	if err != nil {
@@ -626,6 +673,8 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
 
 	var results []createResult
+	var openedAgent coremetadata.Agent
+	var activationTargets []agentActivationTarget
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -647,6 +696,21 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 			return err
 		}
 
+		var agent agentWork
+		var agentLaunch agentPaneLaunch
+		if provider != "" {
+			// The initial shell Pane is only the anchor the Agent splits off, so
+			// the operator's payload is the Agent's initial task rather than that
+			// Pane's command. The Window and that Pane keep the stored command
+			// allocateWindow already derived from the same payload, which is what
+			// makes the Window's name identical with and without --provider.
+			work.payload = nil
+			if agent, agentLaunch, err = c.allocateWindowAgent(
+				working, mutator, project, provider, work, flags, labels, operationID); err != nil {
+				return err
+			}
+		}
+
 		sessionName, err := c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
 		if err != nil {
 			return err
@@ -654,11 +718,38 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 		if err := c.materializeWindow(ctx, working, mutator, ledger, project, sessionName, &work); err != nil {
 			return err
 		}
+		paneID := work.initialPaneID
+		if provider != "" {
+			if paneID, err = c.openWindowAgentPane(ctx, working, mutator, ledger,
+				provider, work, agent, agentLaunch, flags); err != nil {
+				return err
+			}
+			// Both Panes exist now, which is what lets the shell go: retiring it
+			// leaves the Agent Pane as the Window's anchor with no default shell
+			// at all -- the Agent-only Window shape spec.defaultShellPaneRef has
+			// always admitted as optional.
+			if err := c.retireWindowInitialShell(ctx, working, mutator, work); err != nil {
+				return err
+			}
+			openedAgent = agent.agent
+			if len(flags.payload) > 0 {
+				activationTargets = append(activationTargets, agentActivationTarget{
+					agentUID:   agent.agent.Metadata.UID,
+					agentName:  agent.agent.Metadata.Name,
+					paneUID:    agent.pane.Metadata.UID,
+					paneID:     paneID,
+					generation: agent.activation.Generation,
+				})
+			}
+		}
 		results = append(results, createResult{
-			kind:        coremetadata.KindWindow,
-			uid:         work.window.Metadata.UID,
-			name:        work.window.Metadata.Name,
-			paneID:      work.initialPaneID,
+			kind: coremetadata.KindWindow,
+			uid:  work.window.Metadata.UID,
+			name: work.window.Metadata.Name,
+			// `-o pane-id` is the Window's remaining Pane, which is the Agent's
+			// managed Pane on the provider branch and the initial shell without
+			// it. Either way it is the Pane an operator can address.
+			paneID:      paneID,
 			projectName: project.Metadata.Name,
 			windowName:  work.window.Metadata.Name,
 			windowUID:   work.window.Metadata.UID,
@@ -667,7 +758,156 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
 	}
-	return c.writeResults(stdout, spelling, mode, coremetadata.KindWindow, results)
+	if err := c.confirmAgentActivations(activationTargets); err != nil {
+		return err
+	}
+	receipt := createResultsReceipt(coremetadata.KindWindow, results)
+	if openedAgent.Metadata.UID != "" {
+		// The receipt records what the operation did, and on this branch it
+		// opened an Agent. The Window row alone would report a `create.window`
+		// that produced no Agent at all.
+		receipt.Add(strings.ToLower(string(coremetadata.KindAgent)),
+			openedAgent.Metadata.UID, openedAgent.Metadata.Name, cli.ActionCreated)
+	}
+	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindWindow, results, receipt)
+}
+
+// agentPaneLaunch is the provider launch one `create window --provider`
+// allocated, carried from the metadata phase into the runtime phase.
+//
+// It is built before the first tmux call for the same reason `create agent`
+// builds it there: a missing provider binary is the likeliest failure on this
+// route, and it has to land while the operation still owns nothing.
+type agentPaneLaunch struct {
+	workspace coremetadata.AgentWorkspace
+	title     string
+	argv      []string
+}
+
+// allocateWindowAgent allocates the Agent half of one `create window
+// --provider` in metadata only.
+//
+// It splits no Pane and calls no tmux: every refusal reachable from the
+// operator's argv -- a provider the Settings gate allows but whose binary is
+// absent, an --add-dir outside the Project, an explicit --name already taken --
+// lands here, with the Window still uncommitted and nothing materialized.
+func (c *createCommand) allocateWindowAgent(
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	project coremetadata.Project,
+	provider string,
+	work windowWork,
+	flags resourceCreateFlags,
+	labels map[string]string,
+	operationID string,
+) (agentWork, agentPaneLaunch, error) {
+	resolver := c.resolveWorkspace
+	if resolver == nil {
+		resolver = resolveAgentWorkspace
+	}
+	// This route spells no --cwd and no --add-dir, so the Agent's workspace is
+	// the Project root the Window was created under.
+	workspace, err := resolver(*working, project, provider, "", nil)
+	if err != nil {
+		return agentWork{}, agentPaneLaunch{}, err
+	}
+	title, launchArgv, err := c.planAgentPaneLaunch(provider, workspace, flags)
+	if err != nil {
+		return agentWork{}, agentPaneLaunch{}, err
+	}
+	agent, err := mutator.CreateAgent(working, work.window.Metadata.UID, coremetadata.CreateAgentOptions{
+		// An explicit --name names the Window on this route, so the Agent takes
+		// the generated one and its managed Pane derives from that.
+		Provider:    provider,
+		Labels:      labels,
+		Workspace:   workspace,
+		Activation:  activationStateForPayload(flags.payload),
+		OperationID: operationID,
+	})
+	if err != nil {
+		return agentWork{}, agentPaneLaunch{}, MapMetadataError(err)
+	}
+	pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{
+		Name:   derivedAgentPaneName(agent.Metadata.Name),
+		CWD:    workspace.CWD,
+		Labels: labels,
+	}, operationID)
+	if err != nil {
+		return agentWork{}, agentPaneLaunch{}, MapMetadataError(err)
+	}
+	activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
+	if err != nil {
+		return agentWork{}, agentPaneLaunch{}, err
+	}
+	return agentWork{
+		target:     paneTarget{windowUID: work.window.Metadata.UID, anchorUID: work.initial.Metadata.UID, storedAnchor: true},
+		windowName: work.window.Metadata.Name,
+		agent:      agent,
+		pane:       pane,
+		activation: activation,
+	}, agentPaneLaunch{workspace: workspace, title: title, argv: launchArgv}, nil
+}
+
+// openWindowAgentPane materializes the allocated Agent Pane beside the Window's
+// initial shell and returns its exact tmux pane id.
+//
+// The anchor is the Pane materializeWindow just created, so this is the same
+// split every Agent create performs -- claimed for rollback, mirrored, and given
+// the managed-agent presentation options -- and not a second definition of what
+// opening an Agent means. The layout equalization a split normally ends with is
+// deliberately absent: the peer it would resize against is the shell this
+// operation is about to retire, after which tmux gives the Agent the whole
+// Window on its own.
+func (c *createCommand) openWindowAgentPane(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	ledger *runtimeLedger,
+	provider string,
+	work windowWork,
+	agent agentWork,
+	launch agentPaneLaunch,
+	flags resourceCreateFlags,
+) (string, error) {
+	paneID, err := c.runtime.splitPane(ctx, work.initialPaneID, defaultPlacement, launch.workspace.CWD,
+		c.runtime.supervisedLaunch(ctx, agent.activation, launch.argv))
+	if paneID != "" {
+		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, agent.pane.Metadata.UID, ledger); claimErr != nil {
+			return "", errors.Join(err, claimErr)
+		}
+		if mirrorErr := c.runtime.mirrorPane(ctx, paneID, agent.pane); mirrorErr != nil {
+			return "", errors.Join(err, mirrorErr)
+		}
+		observeActivationRuntime(working, mutator, agent.activation, paneID, c.runtime.warn)
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := c.bindAgentPane(ctx, paneID, provider, launch.workspace.CWD, launch.title, "", flags); err != nil {
+		return "", tmuxError("%s: bind Agent Pane %s presentation metadata: %v", canonicalCreateWindow, paneID, err)
+	}
+	return paneID, nil
+}
+
+// retireWindowInitialShell removes the Pane the Window was created with, in both
+// authorities, once the Agent Pane has taken its place.
+//
+// The Registry row goes first: DeletePane reselects the Window's anchor onto the
+// Agent Pane and empties the optional default shell, and a refusal there leaves
+// the tmux pane alive rather than stranding a Pane the Registry no longer
+// describes. The tmux half then names the exact handle this operation mirrored
+// its own uid onto, which is what stops it from killing a Pane something else
+// put in that Window between the split and this write.
+func (c *createCommand) retireWindowInitialShell(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	work windowWork,
+) error {
+	if err := mutator.DeletePane(working, work.initial.Metadata.UID); err != nil {
+		return MapMetadataError(err)
+	}
+	return c.runtime.retireOwnedPane(ctx, work.initialPaneID, work.initial.Metadata.UID)
 }
 
 // runResourcePane answers the resource-backed `create pane`.

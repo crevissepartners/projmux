@@ -924,7 +924,7 @@ Allowed effects:
 
 ```
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
-projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
+projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
@@ -937,7 +937,7 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux create project`](#projmux-create-project) | Register one exact filesystem path as a Registry Project; no runtime is materialized |
-| [`projmux create window`](#projmux-create-window) | Create a Window and its initial Pane below one Project; the runtime is materialized detached |
+| [`projmux create window`](#projmux-create-window) | Create a Window below one Project, opening on a shell Pane or on one Agent; the runtime is materialized detached |
 | [`projmux create pane`](#projmux-create-pane) | Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor |
 | [`projmux create agent`](#projmux-create-agent) | Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required |
 | [`projmux create notification`](#projmux-create-notification) | Create a pending notification row |
@@ -977,7 +977,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `receipt`
 
 ### `projmux create window`
 
-Create a Window and its initial Pane below one Project; the runtime is materialized detached
+Create a Window below one Project, opening on a shell Pane or on one Agent; the runtime is materialized detached
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -993,7 +993,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
+projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`

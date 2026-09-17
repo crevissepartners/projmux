@@ -30,6 +30,11 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"create-project-reuse", "create project", IdentityReused, AddressUnchanged, TopologyUnchanged, DesiredStateReused, RuntimeUnchanged, FocusUnchanged, CardinalityExactOne, nil},
 		{"create-window-offline", "create window", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusUnchanged, CardinalityExactOne, nil},
 		{"create-window-parent-live", "create window", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusUnchanged, CardinalityExactOne, nil},
+		// `create window --provider` lands on the same tuple on purpose: the
+		// initial shell Pane it retires is one this very operation allocated, so
+		// nothing the operator had before the call is removed or replaced. The
+		// net effect is still exactly one created Window.
+		{"create-window-provider-agent", "create window", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusUnchanged, CardinalityExactOne, nil},
 		{"create-pane", "create pane", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusUnchanged, CardinalityOneOrMore, nil},
 		{"create-agent", "create agent", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusUnchanged, CardinalityOneOrMore, nil},
 		{"create-codex", "create codex", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusUnchanged, CardinalityOneOrMore, nil},
