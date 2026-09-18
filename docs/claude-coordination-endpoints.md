@@ -235,10 +235,10 @@ reader accepts and labels it, but no command or web route creates it yet.
   `replyAction` is empty. The other keys are those of an Agent frame. The
   helper proves only the target current, since there is no source route.
 - **Readers.** The web transcript reader shows operator input as a `user`
-  turn with `via` `projmux-web` and no `from`. A frame below `schemaVersion`
-  3 whose source and target are the same Agent keeps reading as the operator's
-  own `user` turn; from version 3 on, that frame is an Agent writing to itself
-  and reads as a `peer` turn from that Agent. `agent message status` labels
+  turn with `via` `projmux-web` and no `from`. A frame without an origin keeps
+  its existing reading at every `schemaVersion`, 3 included: one whose source
+  and target are the same Agent is the operator's own `user` turn. `agent
+  message status` labels
   operator input `source=operator (web)` in a trailing text column and prints
   an `origin` object and no `source` in JSON; an Agent message's output is
   unchanged. A reclaimed operator record's history line carries `origin` and

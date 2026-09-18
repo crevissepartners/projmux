@@ -312,10 +312,9 @@ dropped.
 `projmux-web` for a message this client sent. A coordination frame whose
 source is operator input (`{"kind":"operator","client":"web"}`) is a `user`
 turn with `via` `projmux-web` and no `from`. A frame whose source and target
-are the same Agent is a `user` turn below frame `schemaVersion` 3 and a `peer`
-turn from that Agent from 3 on. Labels such as "thinking" or
-"clipped" are the client's to localize; the server sends flags and the note
-tokens `empty` and `no-transcript`.
+are the same Agent is a `user` turn at every frame `schemaVersion`. Labels
+such as "thinking" or "clipped" are the client's to localize; the server sends
+flags and the note tokens `empty` and `no-transcript`.
 
 Web routes take a bare uid, because uids are global. Each route resolves the
 uid in the Registry and refuses a target that is not on the app-owned tmux

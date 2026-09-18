@@ -51,11 +51,6 @@ const coordinationKind = "projmux-coordination"
 // definition: the field was added to name the shape they already had.
 const coordinationSchemaVersionDefault = 1
 
-// coordinationOperatorSchemaVersion is the first frame version whose operator
-// input names itself in source. From it on, a self-anchored frame is an Agent
-// writing to itself, no longer the operator's own message.
-const coordinationOperatorSchemaVersion = 3
-
 // Turn.Kind values for coordination frames. A frame is recorded directly as a
 // user turn when the session was idle, or as a queued attachment when it was
 // busy; the client may care which, so the two stay distinct.
@@ -77,22 +72,20 @@ type coordinationFrame struct {
 	// future field can be gated on it, and deliberately not carried out to
 	// Turn: a person reading a transcript has no use for it.
 	schemaVersion int
-	// self is true when a frame older than coordinationOperatorSchemaVersion
-	// has the same Agent as source and target: the old web composer's own
-	// message.
+	// self is true when the frame's source and target are the same Agent.
 	self bool
 	// operator is true when the frame's source is operator input.
 	operator bool
-	// from is the peer, nil for operator input, an old self-anchored frame, or
-	// one with no source.
+	// from is the peer, nil for operator input, a self-anchored frame, or one
+	// with no source.
 	from *Sender
 }
 
 // turn renders the frame as a Turn.
 //
-// Operator input, and an old self-anchored frame, is the operator's own
-// message and reads as a user turn in this session; anything else is a peer
-// turn, whether or not the source was named.
+// Operator input, and a self-anchored frame, is the operator's own message and
+// reads as a user turn in this session; anything else is a peer turn, whether
+// or not the source was named.
 func (f coordinationFrame) turn(at, kind string) Turn {
 	role := "peer"
 	if f.self || f.operator {
@@ -117,15 +110,16 @@ func (f coordinationFrame) turn(at, kind string) Turn {
 // Everything outside the payload is discarded — for a reader the message *is*
 // the payload, and the envelope around it is the same boilerplate every time.
 //
-// A frame whose source is operator input is the person's own message: a user
-// turn through the web client, with no From. Before schemaVersion 3 there was
-// no such source, and a frame whose source and target are the same Agent
-// stood in for it: the web client's composer had to anchor a send on some
-// Agent and anchored it on the target so a person's text was not attributed
-// to an uninvolved third one. Those older frames keep reading as the
-// operator's own. From version 3 on, operator input says so itself, so a
-// self-anchored frame is what it looks like, an Agent writing to itself, and
-// reads as a peer turn from that Agent.
+// A frame whose source is operator input, which names itself from
+// schemaVersion 3 on, is the person's own message: a user turn through the web
+// client, with no From.
+//
+// A frame without that origin whose source and target are the same Agent is
+// not from a peer at all either, at any schemaVersion: it is the web client's
+// own composer, which has to anchor a send on some Agent and anchors it on the
+// target so a person's text is not attributed to an uninvolved third one.
+// Labelling those as coming from a peer made the operator's own messages look
+// like someone else's, so such a frame carries no From.
 //
 // The frame's schemaVersion is read but is never grounds for rejection. A
 // producer newer than this reader can only have added or restated fields; the
@@ -173,8 +167,7 @@ func unwrapCoordination(text string) (coordinationFrame, bool) {
 		return frame, true
 	}
 	source := strings.TrimSpace(envelope.Source.AgentUID)
-	frame.self = frame.schemaVersion < coordinationOperatorSchemaVersion &&
-		source != "" && source == strings.TrimSpace(envelope.Target.AgentUID)
+	frame.self = source != "" && source == strings.TrimSpace(envelope.Target.AgentUID)
 	if !frame.self && source != "" {
 		frame.from = &Sender{
 			AgentUID: source,

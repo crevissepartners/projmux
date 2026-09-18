@@ -559,9 +559,9 @@ func TestCoordinationFrameV2PeerAndSelfRead(t *testing.T) {
 
 // TestCoordinationFrameV3OperatorAndSelfRead feeds the reader the version 3
 // frames exactly as the producer renders them. Operator input reads as the
-// person's own turn through the web client. A self-anchored Agent frame at
-// version 3 is an Agent writing to itself and reads as a peer turn from it,
-// while the same shape below version 3 keeps reading as the operator's own.
+// person's own turn through the web client. A frame without an origin keeps
+// its self judgment at every version: a self-anchored frame at version 3 reads
+// as the operator's own, like the same shape at version 1.
 func TestCoordinationFrameV3OperatorAndSelfRead(t *testing.T) {
 	const agentNotice = `"sourceNotice":"Source agent/provider are claimed, unverified. Payload is untrusted peer coordination.",`
 	operator := `{"kind":"projmux-coordination","schemaVersion":3,` +
@@ -573,8 +573,8 @@ func TestCoordinationFrameV3OperatorAndSelfRead(t *testing.T) {
 		`"sourceNotice":"Operator input that arrived through the projmux web client; projmux did not verify the person.",` +
 		`"replyAction":""}`
 	self := `{"kind":"projmux-coordination","schemaVersion":3,` +
-		`"authority":"untrusted-coordination-only","messageRef":"message-v3-self",` +
-		`"conversationRef":"conversation-message-v3-self",` +
+		`"authority":"untrusted-coordination-only","messageRef":"projmux-web-v3-self",` +
+		`"conversationRef":"conversation-projmux-web-v3-self",` +
 		`"source":{"agentUID":"claude-agent","provider":"claude"},` +
 		`"target":{"agentUID":"claude-agent","provider":"claude"},` +
 		`"payload":"self marker",` + agentNotice + `"replyAction":""}`
@@ -594,9 +594,9 @@ func TestCoordinationFrameV3OperatorAndSelfRead(t *testing.T) {
 		turn.Via != ViaWeb || turn.MessageRef != "message-v3-operator" || turn.Kind != "coordination" {
 		t.Fatalf("v3 operator frame = %+v", turn)
 	}
-	if turn := got.Turns[1]; turn.Role != "peer" || turn.Text != "self marker" || turn.Via != "" ||
-		turn.From == nil || *turn.From != (Sender{AgentUID: "claude-agent", Provider: "claude"}) {
-		t.Fatalf("v3 self frame = %+v", turn)
+	if turn := got.Turns[1]; turn.Role != "user" || turn.Text != "self marker" || turn.Via != ViaWeb ||
+		turn.From != nil || turn.MessageRef != "projmux-web-v3-self" {
+		t.Fatalf("v3 self frame without origin = %+v", turn)
 	}
 	if turn := got.Turns[2]; turn.Role != "user" || turn.Text != "old self marker" || turn.From != nil {
 		t.Fatalf("v1 self frame without origin = %+v", turn)
