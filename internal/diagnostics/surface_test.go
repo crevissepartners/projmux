@@ -104,7 +104,37 @@ func TestSurfaceSitesAreDistinctAndAllowlisted(t *testing.T) {
 			t.Fatalf("site %q is missing from the journal allowlist", site)
 		}
 	}
-	if len(allowedSurfaceSites) != len(sites) {
-		t.Fatalf("allowlist holds %d sites, inventory holds %d", len(allowedSurfaceSites), len(sites))
+	if want := len(sites) + len(recordedOnlySurfaceSites); len(allowedSurfaceSites) != want {
+		t.Fatalf("allowlist holds %d sites, want the %d live sites plus %d recorded-only ones",
+			len(allowedSurfaceSites), len(sites), len(recordedOnlySurfaceSites))
+	}
+}
+
+// TestRecordedOnlySurfaceSitesStayReadableButAreNeverWritten keeps a retired
+// seam's records in the journal a reader can count, and keeps anything live
+// from writing a new one.
+func TestRecordedOnlySurfaceSitesStayReadableButAreNeverWritten(t *testing.T) {
+	now := time.Date(2026, 9, 18, 9, 30, 0, 0, time.UTC)
+	for _, site := range recordedOnlySurfaceSites {
+		t.Run(site, func(t *testing.T) {
+			if validSurfaceSite(SurfaceSite(site)) {
+				t.Fatalf("recorded-only site %q is still in the live inventory", site)
+			}
+			historical := Event{
+				At: now.Format(time.RFC3339Nano), Level: "error", Component: "runtime", Event: surfaceUnshownEvent,
+				Result: "error", Kind: "runtime", RunID: "surface-safe-run", Version: "0.15.3", MuxBackend: "tmux",
+				Source: site,
+			}
+			if _, err := sanitizeEvent(historical, "/private/home"); err != nil {
+				t.Fatalf("historical %q record rejected: %v", site, err)
+			}
+			writer := &recordingEventWriter{}
+			lifecycle := NewLifecycleRecorder(writer, "surface-safe-run", "0.15.3", "tmux")
+			lifecycle.RecordUnshownResult(SurfaceSite(site), now)
+			lifecycle.AI().RecordUnshownResult(SurfaceSite(site), now)
+			if events := writer.snapshot(); len(events) != 0 {
+				t.Fatalf("a retired site was written: %#v", events)
+			}
+		})
 	}
 }

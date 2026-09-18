@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 // lifecycleVerbFixture wires one lifecycle command over the shared resource
@@ -369,5 +370,39 @@ func TestProjectLifecycleMaterializerSharesTheStartupTransaction(t *testing.T) {
 	}
 	if executor.openSessionName != "" {
 		t.Fatal("the detached materializer performed a client handoff")
+	}
+}
+
+// TestProjectLifecycleVerbsNeverReachTheSavedLaunchDefault keeps the saved
+// launch default on the UI's fresh open alone. `start project` and `open
+// project` materialize a Project's current desired state and never replace its
+// identity, so they have no new first Pane to ask about -- even with a
+// provider saved, an exact client in the environment, and a Pane to ask on.
+func TestProjectLifecycleVerbsNeverReachTheSavedLaunchDefault(t *testing.T) {
+	for _, verb := range []projectLifecycleVerb{projectLifecycleStart, projectLifecycleOpen} {
+		t.Run(string(verb), func(t *testing.T) {
+			ai, recorder := launchDefaultAICommand(t, t.TempDir())
+			if err := ai.setMode(aiModeClaude); err != nil {
+				t.Fatalf("setMode(claude) error = %v", err)
+			}
+			cmd, _, executor := lifecycleVerbFixture(t, verb, true, nil)
+			env := map[string]string{
+				"TMUX": "/tmp/tmux-1000/projmux,1,0", "TMUX_PANE": "%7",
+				inttmux.SwitchTargetClientEnv: "/dev/pts/9",
+			}
+			cmd.lookupEnv = func(name string) string { return env[name] }
+			cmd.switcher.lookupEnv = cmd.lookupEnv
+			failOnLaunchDefault(t, cmd.switcher, ai, string(verb)+" project")
+
+			if _, _, err := runRoute(t, cmd, "project", "uid:prj-alpha"); err != nil {
+				t.Fatalf("%s project error = %v", verb, err)
+			}
+			if !executor.authorizeCalled {
+				t.Fatalf("%s project did not reach the Project startup path", verb)
+			}
+			if len(recorder.intents) != 0 || len(recorder.deleted) != 0 {
+				t.Fatalf("%s project reached the canonical routes: intents=%+v deleted=%v", verb, recorder.intents, recorder.deleted)
+			}
+		})
 	}
 }

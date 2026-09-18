@@ -144,19 +144,9 @@ func committedResultDisplaySites() []committedResultSite {
 
 		// --- split funnel: internal/app/launch_default.go ---------------------
 		{
-			File: "launch_default.go", Snippet: "c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitReplace",
-			Kind: committedResultCommitted, Site: diagnostics.SurfaceSiteSplitReplace,
-			Note: "the replacing Agent committed; a failed shell delete or a start notice rides on this line",
-		},
-		{
-			File: "launch_default.go", Snippet: "return c.displaySplitLine(intent.targetClient, line)",
-			Kind: committedResultPreCommit,
-			Note: "the replacing create refused before committing; nothing was created and nothing was removed",
-		},
-		{
 			File: "launch_default.go", Snippet: `displayErr = c.run("tmux", "display-message", "-c", client, "-d", "10000", message)`,
 			Kind: committedResultTransport,
-			Note: "displaySplitLine, the transport both halves of the split funnel share",
+			Note: "displaySplitLine, the transport of the split funnel's committed lines",
 		},
 
 		// --- pane context menu and Window intents: internal/app/tmux.go -------

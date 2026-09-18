@@ -449,18 +449,32 @@ func (c *switchCommand) planProjectFreshStart(sessionName, target string) (proje
 	return plan, nil
 }
 
-// startProjectFresh executes Open fresh: commit the canonical projection,
-// verify it, materialize through the ordinary path, report, then switch client.
+// startProjectFresh executes Open fresh: ask for the first Pane, commit the
+// canonical projection, verify it, materialize through the ordinary path, fill
+// the first Pane with the answer, report, then switch client.
 //
-// Registry authority goes first. A rejected replacement must retain the
+// The question goes first, before any write: the operator answers it on the
+// Pane they pressed the row in while the old Project is still exactly as it
+// was. Registry authority goes next. A rejected replacement must retain the
 // Registry and tmux runtime; Open fresh writes no Project state outside the
-// Registry.
+// Registry. The client handoff stays the last observable action, so the
+// operator is moved onto a Window that already holds what they chose.
 // The mirror decision stays in the one place that owns Project registration.
 func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, target string, opened openedProjectBootstrap, anchor string) error {
 	anchor = strings.TrimSpace(anchor)
 	plan, err := c.planProjectFreshStart(sessionName, target)
 	if err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "preflight", plan.ProjectUID, "", err)
+	}
+	launch := c.chooseFreshLaunchDefault(anchor)
+	if launch.choice.cancelled {
+		// Owner ruling 15 (user decision 4, being re-confirmed): a launch
+		// picker closed without a choice does not stop the open. The first Pane
+		// stays the shell the open commits, and nothing is said -- closing a
+		// picker is not a failure. This is the one place that ruling lives: it
+		// runs before anything is pruned, so the other answer (the open stops
+		// with nothing changed) would be a return here.
+		launch = freshLaunchChoice{}
 	}
 	if c.projectFreshStart != nil {
 		commit, err := c.projectFreshStart.PruneProjectFreshStart(ctx, target, plan)
@@ -494,64 +508,94 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	}, opened); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "topology-materialization", plan.ProjectUID, plan.NewProjectUID, err)
 	}
+	// The answer fills the committed shell Pane while the pressing client is
+	// still where it pressed the row, so it never sees the shell that is about
+	// to go. It cannot fail the open -- see fillFreshLaunchChoice.
+	line := c.fillFreshLaunchChoice(ctx, target, launch)
 	c.reportProjectStartup(plan.ResultMessageLocale(appLocale(c.homeDir, c.lookupEnv), sessionName))
 	if err := c.openProjectSession(ctx, sessionName); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "client-handoff", plan.ProjectUID, plan.NewProjectUID, err)
 	}
-	// The saved launch default runs last, on the other side of the handoff: an
-	// Agent or a picker popup belongs to the Session the operator is now looking
-	// at, and applying it earlier would open it behind a client that had not
-	// been moved yet. It cannot fail the open -- see applyFreshLaunchDefault.
-	c.applyFreshLaunchDefault(ctx, target)
+	// Whatever did not happen is said on the Session the operator is now
+	// looking at, after the handoff that would otherwise paint over it.
+	c.displayFreshLaunchDefaultLine(ctx, launch.client, line)
 	return nil
 }
 
-// applyFreshLaunchDefault opens the saved launch default on the shell Pane of
-// the fresh Project's one Window, exactly as a UI Window create opens it on the
-// Pane its create committed.
+// freshLaunchChoice is the saved launch default a fresh open carries from the
+// question to the fill: the answer, and the exact client that gave it. A blank
+// client is an open no human pressed, which fills nothing and says nothing.
+type freshLaunchChoice struct {
+	client string
+	choice launchChoice
+}
+
+// chooseFreshLaunchDefault asks for the fresh Window's first Pane before the
+// open changes anything, exactly as a UI Window create asks before it commits.
 //
-// Nothing here can fail the open, and nothing here is rolled back. The Session,
-// its Window and its shell Pane are committed by the time this runs; a refusal
-// costs the operator one line and leaves a shell they can work in, which is why
-// this returns nothing and startProjectFresh still answers nil.
-func (c *switchCommand) applyFreshLaunchDefault(ctx context.Context, root string) {
-	if c.launchDefault == nil || c.freshOriginShellPane == nil {
-		return
+// The launch default attaches only to a gesture a human made. The sidebar
+// continuation carries the exact client that pressed the row through
+// withSidebarOpenClientEnv, and it is the client that sees the question and
+// the Window. A detached `start project`, a scripted `open project`, and any
+// other open without that client carry no such gesture, and there a provider
+// mode would open an Agent -- or a picker popup -- on whatever client tmux
+// happens to consider current. So with no exact client nothing is asked, in
+// every mode: the first Pane is the shell and nothing is said. The client is
+// resolved the way launchSidebarOpenContinuation resolves it, so both halves of
+// the same re-exec agree on who pressed the row.
+//
+// The question is asked on the Pane the row was pressed in: the sidebar
+// continuation's exact anchor, or for an in-process open the private producer
+// anchor or $TMUX_PANE, resolved the way every runtime mutation route resolves
+// it.
+func (c *switchCommand) chooseFreshLaunchDefault(anchor string) freshLaunchChoice {
+	if c.launchChoose == nil {
+		return freshLaunchChoice{}
 	}
-	// The launch default attaches only to a gesture a human made. The sidebar
-	// continuation carries the exact client that pressed the row through
-	// withSidebarOpenClientEnv, and it is the client that will see whatever the
-	// default does. A detached `start project`, a scripted `open project`, and
-	// any other open without that client carry no such gesture, and there a
-	// provider mode would open an Agent -- or a picker popup -- on whatever
-	// client tmux happens to consider current. So with no exact client this does
-	// nothing at all, in every mode: no Agent, no picker, no message. The client
-	// is resolved the way launchSidebarOpenContinuation resolves it, so both
-	// halves of the same re-exec agree on who pressed the row.
-	client := firstNonEmpty(
+	client := strings.TrimSpace(firstNonEmpty(
 		c.lookupEnvValue(inttmux.SwitchTargetClientEnv),
 		c.lookupEnvValue(hookTrustPopupTargetClientEnv),
-	)
-	if strings.TrimSpace(client) == "" {
-		return
+	))
+	if client == "" {
+		return freshLaunchChoice{}
+	}
+	pressed, err := resolveRuntimeMutationAnchorPane(c.lookupEnv, anchor)
+	if err != nil {
+		return freshLaunchChoice{client: client, choice: launchChoice{problem: "could not ask for the new Window's first Pane: " + err.Error()}}
+	}
+	return freshLaunchChoice{client: client, choice: c.launchChoose(pressed, client)}
+}
+
+// fillFreshLaunchChoice fills the shell Pane of the fresh Project's one Window
+// with the answer, exactly as a UI Window create fills the Pane its create
+// committed, and returns the one line to show after the handoff, if any.
+//
+// Nothing here can fail the open, and nothing here is rolled back. The Session,
+// its Window and its shell Pane are committed by the time this runs; a question
+// that could not be asked or an answer that could not be filled costs the
+// operator one line and leaves a shell they can work in, which is why
+// startProjectFresh still answers nil. A committed Agent's start notice is
+// deliberately dropped: the open's own result line is the report, so the notice
+// could only arrive as a second, unprompted status line on a Session the
+// operator has just been moved into. The one thing worth interrupting a fresh
+// open for is a failure.
+func (c *switchCommand) fillFreshLaunchChoice(ctx context.Context, root string, launch freshLaunchChoice) string {
+	if launch.client == "" {
+		return ""
+	}
+	if launch.choice.problem != "" {
+		return keptOriginShellLine(launch.choice.problem)
+	}
+	// A shell answer is the Pane the open already committed; there is nothing
+	// to look up and nothing to replace.
+	if strings.TrimSpace(launch.choice.intent.provider) == "" || c.launchApply == nil || c.freshOriginShellPane == nil {
+		return ""
 	}
 	origin, err := c.freshOriginShellPane(ctx, root)
 	if err != nil {
-		c.displayFreshLaunchDefaultLine(ctx, client, keptOriginShellLine(err.Error()))
-		return
+		return keptOriginShellLine(err.Error())
 	}
-	result := c.launchDefault(origin, strings.TrimSpace(client))
-	if result.problem != "" {
-		c.displayFreshLaunchDefaultLine(ctx, client, result.problem)
-		return
-	}
-	// result.picker means the popup has already come and gone on this client and
-	// owns whatever it reported, so nothing is written over it. result.notice --
-	// the split start notice a committed Agent produces -- is deliberately
-	// dropped: the success line it rides on for a Window create was reported
-	// before the handoff here, so the notice could only arrive as a second,
-	// unprompted status line on a Session the operator has just been moved into.
-	// The one thing worth interrupting a fresh open for is a failure.
+	return c.launchApply(origin, launch.client, launch.choice).problem
 }
 
 // displayFreshLaunchDefaultLine shows one bounded line on the exact client that

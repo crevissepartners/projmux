@@ -30,9 +30,6 @@ const (
 	// SurfaceSiteSplitNotice is a committed split whose start notice -- the
 	// requested Pane directory was not used -- could not be shown.
 	SurfaceSiteSplitNotice SurfaceSite = "split.start-notice"
-	// SurfaceSiteSplitReplace is a committed replacing split whose result line
-	// could not be shown.
-	SurfaceSiteSplitReplace SurfaceSite = "split.replace"
 	// SurfaceSitePaneMenuSplit is a committed pane-menu split.
 	SurfaceSitePaneMenuSplit SurfaceSite = "pane-menu.split"
 	// SurfaceSitePaneMenuKill is a committed pane-menu kill, whose summary is
@@ -48,9 +45,18 @@ const (
 const surfaceUnshownEvent = "runtime.surface.unshown"
 
 var surfaceSites = [...]SurfaceSite{
-	SurfaceSiteSplitFocus, SurfaceSiteSplitNotice, SurfaceSiteSplitReplace,
+	SurfaceSiteSplitFocus, SurfaceSiteSplitNotice,
 	SurfaceSitePaneMenuSplit, SurfaceSitePaneMenuKill, SurfaceSiteWindowIntent,
 }
+
+// recordedOnlySurfaceSites are sites a retired seam wrote into existing logs.
+// They are accepted when an old record is read back and never written: the
+// seam that owed the line is gone, so nothing can spell the site any more.
+//
+// "split.replace" was the replacing split picker a fresh Project open used to
+// fill its first Pane after the client handoff. The open now asks before it
+// creates and fills the Pane itself, so that picker mode was removed.
+var recordedOnlySurfaceSites = [...]string{"split.replace"}
 
 // SurfaceSites returns the closed site inventory in stable order. The returned
 // slice is a copy.
@@ -131,10 +137,15 @@ func surfaceUnshownEventFor(runID, version, muxBackend string, site SurfaceSite,
 	}, true
 }
 
+// surfaceSiteSet is the journal allowlist: every live site, plus the retired
+// ones an existing log may still hold.
 func surfaceSiteSet() map[string]struct{} {
-	out := make(map[string]struct{}, len(surfaceSites))
+	out := make(map[string]struct{}, len(surfaceSites)+len(recordedOnlySurfaceSites))
 	for _, site := range surfaceSites {
 		out[string(site)] = struct{}{}
+	}
+	for _, site := range recordedOnlySurfaceSites {
+		out[site] = struct{}{}
 	}
 	return out
 }

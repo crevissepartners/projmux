@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -109,14 +108,13 @@ func isBoundedClientMessage(args []string) bool {
 // committedSplitFunnel wires the split funnel the way a generated producer does:
 // a canonical create seam, the journal recorder production injects, and a runner
 // whose bounded client message refuses.
-func committedSplitFunnel(t *testing.T, created createdPaneRuntime, notice string, createErr error, refuse bool, extraEnv map[string]string) (*aiCommand, *refusingDisplayRunner, *countingJournalWriter) {
+func committedSplitFunnel(t *testing.T, created createdPaneRuntime, notice string, createErr error, refuse bool) (*aiCommand, *refusingDisplayRunner, *countingJournalWriter) {
 	t.Helper()
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	// The exact pressing client is what the generated producer carries, and
 	// createPaneFromIntent reads it at the funnel rather than from the intent.
 	env := map[string]string{"HOME": home, canonicalCreateTargetClientEnv: committedResultClient}
-	maps.Copy(env, extraEnv)
 	cmd.lookupEnv = func(name string) string { return env[name] }
 	writer := &countingJournalWriter{}
 	cmd.operationalDiagnostics = diagnostics.NewLifecycleRecorder(writer, "committed-result-run", "0.15.3", "tmux").AI()
@@ -189,7 +187,7 @@ func TestCommittedSplitReturnsNilWhenItsResultLineCannotBeShown(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cmd, runner, journal := committedSplitFunnel(t, test.created, test.notice, nil, test.refuse, nil)
+			cmd, runner, journal := committedSplitFunnel(t, test.created, test.notice, nil, test.refuse)
 			creator := cmd.panes.(*committedResultCreator)
 
 			err := cmd.createPaneFromIntent(agentPaneIntent{
@@ -230,7 +228,7 @@ func TestCommittedSplitReturnsNilWhenItsResultLineCannotBeShown(t *testing.T) {
 func TestASplitThatNeverCommittedStillReportsItsRefusal(t *testing.T) {
 	t.Parallel()
 
-	cmd, runner, journal := committedSplitFunnel(t, createdPaneRuntime{}, "", errors.New("injected canonical create refusal"), true, nil)
+	cmd, runner, journal := committedSplitFunnel(t, createdPaneRuntime{}, "", errors.New("injected canonical create refusal"), true)
 
 	err := cmd.createPaneFromIntent(agentPaneIntent{
 		producer: canonicalProducerPaneMenu, placement: "right",
@@ -247,54 +245,6 @@ func TestASplitThatNeverCommittedStillReportsItsRefusal(t *testing.T) {
 	}
 	if got := journal.unshownSources(); len(got) != 0 {
 		t.Fatalf("journal unshown sites = %#v, want none: a pre-commit refusal is not an unshown result", got)
-	}
-}
-
-// TestACommittedReplacingSplitKeepsItsAgentWhenTheLineCannotBeShown covers the
-// replace-mode half of the same funnel, where the committed Agent has already
-// taken the origin shell's place.
-func TestACommittedReplacingSplitKeepsItsAgentWhenTheLineCannotBeShown(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name      string
-		createErr error
-		deleteErr error
-		wantErr   bool
-		wantSites []string
-	}{
-		{
-			name:      "the shell Pane could not be removed after the Agent committed",
-			deleteErr: errors.New("injected canonical delete refusal"),
-			wantSites: []string{string(diagnostics.SurfaceSiteSplitReplace)},
-		},
-		{
-			name:      "the replacing create refused and committed nothing",
-			createErr: errors.New("injected canonical create refusal"),
-			wantErr:   true,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			cmd, _, journal := committedSplitFunnel(t, createdPaneRuntime{paneID: "%42"}, "", test.createErr, true,
-				map[string]string{splitReplaceOriginEnv: "1"})
-			cmd.paneDelete = func(string, io.Writer, io.Writer) error { return test.deleteErr }
-
-			err := cmd.createPaneFromIntent(agentPaneIntent{
-				producer: canonicalProducerSavedDefault, provider: aiModeClaude, placement: "right",
-				anchorPaneID: "%41",
-			})
-
-			if test.wantErr {
-				if err == nil {
-					t.Fatal("createPaneFromIntent() error = nil, want the pre-commit refusal")
-				}
-			} else if err != nil {
-				t.Fatalf("createPaneFromIntent() error = %v, want nil: the Agent committed", err)
-			}
-			if got := journal.unshownSources(); !equalStrings(got, test.wantSites) {
-				t.Fatalf("journal unshown sites = %#v, want %#v", got, test.wantSites)
-			}
-		})
 	}
 }
 

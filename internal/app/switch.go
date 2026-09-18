@@ -165,15 +165,18 @@ type switchCommand struct {
 	// reader on this command -- freshOriginShellPane below reads the one Pane a
 	// fresh open committed -- but it remains the only one the picker uses.
 	navigation *registryNavigationCommand
-	// launchDefault applies the saved launch default to the shell Pane a fresh
-	// open committed, exactly as a UI Window create applies it to the Pane its
-	// create committed. It is injected for the same two reasons tmuxCommand
-	// injects it: a test fakes the whole application without an aiCommand, and
-	// the saved mode file stays readable in exactly one place, the aiCommand
-	// behind this func. A nil route is today's behavior -- the plain shell Pane
-	// the topology engine materialized -- which is what every fixture that
-	// exercises only the fresh replacement and the client handoff expects.
-	launchDefault launchDefaultFunc
+	// launchChoose and launchApply are the two halves of the saved launch
+	// default a fresh open reaches, exactly as a UI Window create reaches them:
+	// the answer is decided before anything is pruned, and applied to the shell
+	// Pane the open committed before the pressing client is handed the Session
+	// (window_create_launch_choice.go). They are injected for the same two
+	// reasons tmuxCommand injects them: a test fakes the whole application
+	// without an aiCommand, and the saved mode file stays readable in exactly
+	// one place, the aiCommand behind these funcs. A nil route is the plain
+	// shell Pane the topology engine materialized, which is what every fixture
+	// that exercises only the fresh replacement and the client handoff expects.
+	launchChoose launchChooseFunc
+	launchApply  launchApplyFunc
 	// freshOriginShellPane answers the exact `%N` of the shell Pane a fresh open
 	// committed: the Registry names the Pane, the canonical metadata mirror
 	// turns its uid into a live handle. It is a func field so a unit test can

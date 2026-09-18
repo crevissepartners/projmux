@@ -1,26 +1,22 @@
 package app
 
 import (
-	"bytes"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
-	"strings"
 	"syscall"
 	"testing"
 
-	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
-// window_create_launch_default_test.go covers applyLaunchDefault -- the saved
-// launch default opened on an already-committed shell Pane, which is how a
-// fresh Project open still fills its first Window -- and the replace-origin
-// picker transport that path uses. A generated Window create asks before it
-// commits instead (window_create_launch_choice_test.go).
+// window_create_launch_default_test.go holds the shared fixtures of the saved
+// launch default, the value seam a Window create fills its first Pane through,
+// and the boundary that keeps the public `create window` route away from the
+// saved mode. The ask-then-fill order is covered in
+// window_create_launch_choice_test.go (Window create) and
+// project_startup_fresh_test.go (fresh Project open).
 
 const (
 	launchDefaultOriginPane = "%41"
@@ -64,183 +60,6 @@ func launchDefaultAICommand(t *testing.T, home string) (*aiCommand, *replaceReco
 	return cmd, recorder
 }
 
-// TestApplyLaunchDefaultOpensTheSavedModeOnACommittedShellPane is the condition
-// table of the applied default. Every saved mode is a row, including the unset
-// file, and each row states what reached the canonical routes.
-func TestApplyLaunchDefaultOpensTheSavedModeOnACommittedShellPane(t *testing.T) {
-	for _, tt := range []struct {
-		name       string
-		mode       string
-		unset      bool
-		wantIntent *agentPaneIntent
-		wantDelete bool
-		wantPopup  []string
-	}{
-		{name: "shell", mode: aiModeShell},
-		{
-			name: "claude", mode: aiModeClaude, wantDelete: true,
-			wantIntent: &agentPaneIntent{
-				producer: canonicalProducerSavedDefault, provider: aiModeClaude, placement: "right",
-				anchorPaneID: launchDefaultOriginPane, targetClient: launchDefaultClient,
-			},
-		},
-		{
-			name: "codex", mode: aiModeCodex, wantDelete: true,
-			wantIntent: &agentPaneIntent{
-				producer: canonicalProducerSavedDefault, provider: aiModeCodex, placement: "right",
-				anchorPaneID: launchDefaultOriginPane, targetClient: launchDefaultClient,
-			},
-		},
-		{
-			name: "antigravity", mode: aiModeAntigravity, wantDelete: true,
-			wantIntent: &agentPaneIntent{
-				producer: canonicalProducerSavedDefault, provider: aiModeAntigravity, placement: "right",
-				anchorPaneID: launchDefaultOriginPane, targetClient: launchDefaultClient,
-			},
-		},
-		{
-			name: "selective", mode: aiModeSelective,
-			wantPopup: []string{"internal", "tmux", "popup-toggle", "--client", launchDefaultClient,
-				"--anchor", launchDefaultOriginPane, popupToggleReplaceOriginFlag, "ai-split-picker-right"},
-		},
-		{
-			name: "resume", mode: aiModeResume,
-			wantPopup: []string{"internal", "tmux", "popup-toggle", "--client", launchDefaultClient,
-				"--anchor", launchDefaultOriginPane, popupToggleReplaceOriginFlag, "ai-split-resume-right"},
-		},
-		{
-			name: "unset", unset: true,
-			wantPopup: []string{"internal", "tmux", "popup-toggle", "--client", launchDefaultClient,
-				"--anchor", launchDefaultOriginPane, popupToggleReplaceOriginFlag, "ai-split-picker-right"},
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			home := t.TempDir()
-			cmd, recorder := launchDefaultAICommand(t, home)
-			if !tt.unset {
-				if err := cmd.setMode(tt.mode); err != nil {
-					t.Fatalf("setMode(%s) error = %v", tt.mode, err)
-				}
-			}
-			cmdRecorder(cmd).commands = nil
-
-			result := cmd.applyLaunchDefault(launchDefaultOriginPane, launchDefaultClient)
-
-			if result.problem != "" {
-				t.Fatalf("problem = %q, want none", result.problem)
-			}
-			var wantIntents []agentPaneIntent
-			if tt.wantIntent != nil {
-				wantIntents = []agentPaneIntent{*tt.wantIntent}
-			}
-			if !reflect.DeepEqual(recorder.intents, wantIntents) {
-				t.Fatalf("create intents = %+v, want %+v", recorder.intents, wantIntents)
-			}
-			if tt.wantDelete {
-				if !slices.Equal(recorder.deleted, []string{launchDefaultOriginPane}) {
-					t.Fatalf("deleted Panes = %v, want exactly the new shell %s", recorder.deleted, launchDefaultOriginPane)
-				}
-				if !slices.Equal(recorder.events, []string{"create", "delete"}) {
-					t.Fatalf("route order = %v, want the Agent committed before the shell is deleted", recorder.events)
-				}
-			} else if len(recorder.deleted) != 0 {
-				t.Fatalf("deleted Panes = %v, want none", recorder.deleted)
-			}
-			if tt.wantPopup == nil {
-				if result.picker {
-					t.Fatal("a non-picker mode reported that a picker owns the result")
-				}
-				if len(cmdRecorder(cmd).commands) != 0 {
-					t.Fatalf("commands = %#v, want none; the canonical routes own every mutation",
-						cmdRecorder(cmd).commands)
-				}
-				return
-			}
-			if !result.picker {
-				t.Fatal("a picker mode did not report that the popup owns the result")
-			}
-			if !containsAICommandArgs(cmdRecorder(cmd).commands, "/tmp/projmux", tt.wantPopup) {
-				t.Fatalf("commands = %#v, want the marked popup toggle %v", cmdRecorder(cmd).commands, tt.wantPopup)
-			}
-		})
-	}
-}
-
-// TestApplyLaunchDefaultFailuresKeepTheShellAndSayOneThing is the negative half.
-// None of these roll anything back: the Window and whatever Panes exist when
-// the failure happens stay, and the producer gets exactly one line to show.
-func TestApplyLaunchDefaultFailuresKeepTheShellAndSayOneThing(t *testing.T) {
-	t.Run("provider disabled in Settings", func(t *testing.T) {
-		home := t.TempDir()
-		enableAgents(t, home, config.AIAgentClaude)
-		cmd, recorder := launchDefaultAICommand(t, home)
-		if err := cmd.setMode(aiModeCodex); err != nil {
-			t.Fatalf("setMode(codex) error = %v", err)
-		}
-		cmdRecorder(cmd).commands = nil
-
-		result := cmd.applyLaunchDefault(launchDefaultOriginPane, launchDefaultClient)
-
-		for _, want := range []string{"AI split default codex is disabled", "keeps its shell Pane"} {
-			if !strings.Contains(result.problem, want) {
-				t.Fatalf("problem = %q, want substring %q", result.problem, want)
-			}
-		}
-		if len(recorder.intents) != 0 || len(recorder.deleted) != 0 {
-			t.Fatalf("a disabled provider reached the canonical routes: intents=%+v deleted=%v",
-				recorder.intents, recorder.deleted)
-		}
-		if len(cmdRecorder(cmd).commands) != 0 {
-			t.Fatalf("commands = %#v, want none", cmdRecorder(cmd).commands)
-		}
-	})
-
-	t.Run("Agent create refused", func(t *testing.T) {
-		home := t.TempDir()
-		cmd, recorder := launchDefaultAICommand(t, home)
-		recorder.createErr = errors.New("injected canonical create refusal")
-		if err := cmd.setMode(aiModeClaude); err != nil {
-			t.Fatalf("setMode(claude) error = %v", err)
-		}
-
-		result := cmd.applyLaunchDefault(launchDefaultOriginPane, launchDefaultClient)
-
-		for _, want := range []string{"injected canonical create refusal", "keeps its shell Pane"} {
-			if !strings.Contains(result.problem, want) {
-				t.Fatalf("problem = %q, want substring %q", result.problem, want)
-			}
-		}
-		if len(recorder.deleted) != 0 {
-			t.Fatalf("a refused create still deleted %v", recorder.deleted)
-		}
-	})
-
-	t.Run("shell delete refused", func(t *testing.T) {
-		home := t.TempDir()
-		cmd, recorder := launchDefaultAICommand(t, home)
-		recorder.deleteErr = errors.New("injected canonical delete refusal")
-		if err := cmd.setMode(aiModeClaude); err != nil {
-			t.Fatalf("setMode(claude) error = %v", err)
-		}
-
-		result := cmd.applyLaunchDefault(launchDefaultOriginPane, launchDefaultClient)
-
-		for _, want := range []string{launchDefaultOriginPane, "injected canonical delete refusal", "both Panes stay"} {
-			if !strings.Contains(result.problem, want) {
-				t.Fatalf("problem = %q, want substring %q", result.problem, want)
-			}
-		}
-		if len(recorder.intents) != 1 {
-			t.Fatalf("create intents = %+v, want the one committed Agent", recorder.intents)
-		}
-		for _, banned := range []string{"rolled back", "reverted", "nothing was created"} {
-			if strings.Contains(result.problem, banned) {
-				t.Fatalf("problem = %q, must not claim %q", result.problem, banned)
-			}
-		}
-	})
-}
-
 // TestCanonicalWindowCreateCarriesTheCommittedShellPane runs the real canonical
 // Window create over the fake server and proves the runtime placement it
 // returns names the shell Pane the transaction committed -- the value seam the
@@ -265,107 +84,6 @@ func TestCanonicalWindowCreateCarriesTheCommittedShellPane(t *testing.T) {
 	want := [][2]string{{livePaneWithUID(t, route.tmux, panes[0].Metadata.UID), windowCreatePressingClient}}
 	if !reflect.DeepEqual(origins, want) {
 		t.Fatalf("answer filled into %v, want the committed shell Pane %v", origins, want)
-	}
-}
-
-// replacingPickerAICommand is the split UI running inside a popup a Window
-// producer marked: the origin Pane and the exact client arrive as env, as they
-// always do, plus the replacement marker.
-func replacingPickerAICommand(t *testing.T, marked bool) (*aiCommand, *replaceRecorder) {
-	t.Helper()
-	home := t.TempDir()
-	cmd, recorder := launchDefaultAICommand(t, home)
-	env := map[string]string{
-		"HOME":                         home,
-		"TMUX":                         "/tmp/tmux-1000/projmux,7,0",
-		"TMUX_SPLIT_TARGET_PANE":       launchDefaultOriginPane,
-		canonicalCreateTargetClientEnv: launchDefaultClient,
-	}
-	if marked {
-		env[splitReplaceOriginEnv] = "1"
-	}
-	cmd.lookupEnv = func(key string) string { return env[key] }
-	return cmd, recorder
-}
-
-// TestMarkedPickerSelectionReplacesTheOriginShell is the picker popup's half of
-// the table. The marker is answered at the one funnel -- reached through the
-// selection continuation the popup hands off -- so a provider row replaces the
-// origin shell, the shell row keeps it instead of opening a second one, a
-// cancelled picker changes nothing, and an unmarked popup is today's split with
-// no delete at all.
-func TestMarkedPickerSelectionReplacesTheOriginShell(t *testing.T) {
-	for _, tt := range []struct {
-		name       string
-		marked     bool
-		selection  string
-		wantIntent *agentPaneIntent
-		wantDelete bool
-	}{
-		{
-			name: "marked provider row", marked: true, selection: aiModeClaude, wantDelete: true,
-			wantIntent: &agentPaneIntent{
-				producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right",
-				anchorPaneID: launchDefaultOriginPane, targetClient: launchDefaultClient,
-			},
-		},
-		{name: "marked shell row", marked: true, selection: aiModeShell},
-		{name: "marked cancel", marked: true},
-		{
-			name: "unmarked provider row", selection: aiModeClaude,
-			wantIntent: &agentPaneIntent{
-				producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right",
-				anchorPaneID: launchDefaultOriginPane, targetClient: launchDefaultClient,
-			},
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd, recorder := replacingPickerAICommand(t, tt.marked)
-			stubAIPickerSelection(cmd, tt.selection)
-
-			if err := runSplitPickerThroughContinuation(t, cmd, func() error {
-				return cmd.Run([]string{"picker", "--inside", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
-			}); err != nil {
-				t.Fatalf("picker error = %v", err)
-			}
-			var wantIntents []agentPaneIntent
-			if tt.wantIntent != nil {
-				wantIntents = []agentPaneIntent{*tt.wantIntent}
-			}
-			if !reflect.DeepEqual(recorder.intents, wantIntents) {
-				t.Fatalf("create intents = %+v, want %+v", recorder.intents, wantIntents)
-			}
-			var wantDeleted []string
-			if tt.wantDelete {
-				wantDeleted = []string{launchDefaultOriginPane}
-			}
-			if !slices.Equal(recorder.deleted, wantDeleted) {
-				t.Fatalf("deleted Panes = %v, want %v", recorder.deleted, wantDeleted)
-			}
-		})
-	}
-}
-
-// TestMarkedResumeSelectionReplacesTheOriginShell covers the resume lane of the
-// same funnel: a resume row is an Agent like any other, so it replaces the
-// origin shell too.
-func TestMarkedResumeSelectionReplacesTheOriginShell(t *testing.T) {
-	cmd, recorder := replacingPickerAICommand(t, true)
-
-	if err := runSplitPickerThroughContinuation(t, cmd, func() error {
-		return cmd.runSelectedResumeSession(aiResumeSelection{agent: aiModeClaude, resumeID: "conv-1"}, "right")
-	}); err != nil {
-		t.Fatalf("resume selection error = %v", err)
-	}
-	want := []agentPaneIntent{{
-		producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right",
-		conversationID: "conv-1", anchorPaneID: launchDefaultOriginPane, targetClient: launchDefaultClient,
-	}}
-	if !reflect.DeepEqual(recorder.intents, want) {
-		t.Fatalf("create intents = %+v, want %+v", recorder.intents, want)
-	}
-	if !slices.Equal(recorder.events, []string{"create", "delete"}) {
-		t.Fatalf("route order = %v, want the Agent committed before the shell is deleted", recorder.events)
 	}
 }
 
@@ -408,81 +126,5 @@ func TestPublicCreateWindowNeverReadsTheSavedLaunchDefault(t *testing.T) {
 	}
 	if _, _, live := tmux.pane(livePaneWithUID(t, tmux, panes[0].Metadata.UID)); live == nil {
 		t.Fatalf("the created shell Pane has no live mirror; tmux:\n%s", tmux.state())
-	}
-}
-
-// TestMarkedPopupToggleCarriesTheReplacementIntentAndTheExactClient is the
-// transport half of the marker: `popup-toggle` accepts the private flag only
-// from a producer that named both the Pane it replaces and the client that sees
-// the result, hands the popup the marker beside the origin it already carried,
-// and pins the popup to that exact client.
-func TestMarkedPopupToggleCarriesTheReplacementIntentAndTheExactClient(t *testing.T) {
-	popupContext := tmuxPopupContext{
-		OriginPane: launchDefaultOriginPane, TargetClient: launchDefaultClient,
-		OriginSession: "alpha", ContextDir: "/srv/alpha", ClientWidth: 200, ClientHeight: 50,
-	}
-	for _, tt := range []struct {
-		name   string
-		args   []string
-		marked bool
-	}{
-		{
-			name: "marked split picker", marked: true,
-			args: []string{"--client", launchDefaultClient, "--anchor", launchDefaultOriginPane,
-				popupToggleReplaceOriginFlag, "ai-split-picker-right"},
-		},
-		{
-			name: "marked resume picker", marked: true,
-			args: []string{"--client", launchDefaultClient, "--anchor", launchDefaultOriginPane,
-				popupToggleReplaceOriginFlag, "ai-split-resume-down"},
-		},
-		{
-			name: "unmarked split picker",
-			args: []string{"--client", launchDefaultClient, "--anchor", launchDefaultOriginPane, "ai-split-picker-right"},
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			mode, err := parseTmuxPopupToggleArgs(tt.args, io.Discard)
-			if err != nil {
-				t.Fatalf("parse popup-toggle %v: %v", tt.args, err)
-			}
-			if mode.ReplaceOrigin != tt.marked {
-				t.Fatalf("ReplaceOrigin = %v, want %v", mode.ReplaceOrigin, tt.marked)
-			}
-			command, options, err := buildPopupToggle(mode, "/tmp/projmux", "/tmp/marker", popupContext)
-			if err != nil {
-				t.Fatalf("buildPopupToggle() error = %v", err)
-			}
-			marker := splitReplaceOriginEnv + "='1'"
-			if got := strings.Contains(command, marker); got != tt.marked {
-				t.Fatalf("popup command = %q, want marker %q present = %v", command, marker, tt.marked)
-			}
-			wantClient := ""
-			if tt.marked {
-				wantClient = launchDefaultClient
-			}
-			if options.Client != wantClient {
-				t.Fatalf("popup client = %q, want %q", options.Client, wantClient)
-			}
-			if !strings.Contains(command, "TMUX_SPLIT_TARGET_PANE='"+launchDefaultOriginPane+"'") {
-				t.Fatalf("popup command = %q, want the origin Pane it always carried", command)
-			}
-		})
-	}
-}
-
-// TestPopupToggleRefusesAnUnroutableReplacement keeps the private flag from
-// meaning anything on its own: without the Pane it replaces, without the client
-// that sees the result, or on a popup that opens no split picker, it refuses
-// instead of opening a popup that would delete something unnamed.
-func TestPopupToggleRefusesAnUnroutableReplacement(t *testing.T) {
-	for _, args := range [][]string{
-		{"--client", launchDefaultClient, popupToggleReplaceOriginFlag, "ai-split-picker-right"},
-		{"--anchor", launchDefaultOriginPane, popupToggleReplaceOriginFlag, "ai-split-picker-right"},
-		{"--client", launchDefaultClient, "--anchor", launchDefaultOriginPane, popupToggleReplaceOriginFlag, "sessionizer"},
-	} {
-		if _, err := parseTmuxPopupToggleArgs(args, io.Discard); err == nil {
-			t.Fatalf("popup-toggle accepted %v", args)
-		}
 	}
 }

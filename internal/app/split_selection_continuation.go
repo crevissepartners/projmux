@@ -36,9 +36,8 @@ import (
 var splitSelectionContinuationRoute = []string{"internal", "agent-pane", "launch-selection"}
 
 // The flags the picker writes and the continuation route reads. Each one is a
-// field of agentPaneIntent the picker decided; the origin Pane, client, context
-// directory, and replace marker travel as the same env the popup handed the
-// picker.
+// field of agentPaneIntent the picker decided; the origin Pane, client, and
+// context directory travel as the same env the popup handed the picker.
 const (
 	splitSelectionProducerFlag           = "producer"
 	splitSelectionProviderFlag           = "provider"
@@ -116,7 +115,7 @@ func splitSelectionContinuationArgs(intent agentPaneIntent) []string {
 // splitSelectionContinuationEnv hands the continuation the popup origin exactly
 // as the picker received it -- the origin Pane is written here and read back
 // only by splitOriginPane -- so createPaneFromIntent reads the same origin Pane,
-// client, context directory, and replace marker it would have read here.
+// client, and context directory it would have read here.
 func (c *aiCommand) splitSelectionContinuationEnv(origin string) map[string]string {
 	env := map[string]string{"TMUX_SPLIT_TARGET_PANE": origin}
 	for _, key := range []string{
@@ -127,9 +126,6 @@ func (c *aiCommand) splitSelectionContinuationEnv(origin string) map[string]stri
 		if value := strings.TrimSpace(c.env(key)); value != "" {
 			env[key] = value
 		}
-	}
-	if c.splitReplacesOrigin() {
-		env[splitReplaceOriginEnv] = "1"
 	}
 	return env
 }

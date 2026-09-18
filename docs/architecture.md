@@ -1361,7 +1361,7 @@ Projmux split UI:
   closes a popup only when the process inside it exits, so the picker hands its
   intent to a detached `run-shell -b` continuation on the same server
   (`internal agent-pane launch-selection`, carrying the origin Pane, client,
-  context directory, and replace marker as env) and exits. The continuation
+  and context directory as env) and exits. The continuation
   calls the same create funnel; a success writes nothing and anything else is
   one bounded line on the pressing client. Every selection travels: it is a
   plain value with no live handle left in the picker process.
@@ -1906,12 +1906,11 @@ Resource-first create:
   `select-window`, `select-pane`, or `attach-session`. `focus pane` and
   `-o pane-id` are how a caller ends up in the new pane. One exception: the
   human intent route `internal tmux window-create` (`window.create` key, Window
-  menu New At End) moves exactly the pressing client to the new Window after
-  its create commits, and then applies the saved launch default to that
-  Window's committed shell Pane -- an Agent through the same canonical create
-  funnel a split uses plus a canonical delete of the shell, or a picker popup
-  anchored on it; public `create` stays detached and never reads that saved
-  default.
+  menu New At End) asks for the saved launch default before its create
+  commits, fills the committed shell Pane with the answer -- an Agent through
+  the same canonical create funnel a split uses plus a canonical delete of the
+  shell -- and then moves exactly the pressing client to the new Window; public
+  `create` stays detached and never reads that saved default.
 - **Focus is navigation-only.** `focus project|window|pane` reads live tmux
   inventory and may move an existing client, but has no Registry store and
   issues no session/Window/Pane creation, identity-marker, rename, respawn, or

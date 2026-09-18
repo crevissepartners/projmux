@@ -567,7 +567,7 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 	}
 	switch {
 	case choice.problem != "":
-		return c.finishWindowIntent(pressing, "Create Window", "", "", errors.New(choice.problem))
+		return c.finishWindowIntent(pressing, "Create Window", "", "", errors.New(notCreatedLine(choice.problem)))
 	case choice.cancelled:
 		return nil
 	}
@@ -1096,8 +1096,6 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	fs.SetOutput(stderr)
 	clientKey := fs.String("client", "", "tmux client key used to scope the popup marker")
 	anchorPane := fs.String("anchor", "", "exact tmux Pane that originated the popup")
-	replaceOrigin := fs.Bool(strings.TrimPrefix(popupToggleReplaceOriginFlag, "--"), false,
-		"the picker selection replaces the exact anchor Pane")
 	answerFile := fs.String(strings.TrimPrefix(popupToggleAnswerFlag, "--"), "",
 		"absolute file the picker writes its selection to instead of creating anything")
 	if err := fs.Parse(args); err != nil {
@@ -1114,24 +1112,14 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	if anchor != "" && exactTmuxHandle(anchor, "%") == "" {
 		return tmuxPopupToggleMode{}, errors.New("tmux popup-toggle --anchor requires an exact %N Pane handle")
 	}
-	// Replacing a Pane is only meaningful for the split pickers, and only when
-	// the producer named both the Pane being replaced and the client that sees
-	// the result. Anything else is a producer bug, not a degraded mode.
+	// Answering is the private producer mode of the split pickers: the picker
+	// reports what was chosen and creates nothing. It is only meaningful for
+	// the split pickers, and only when the producer named both the Pane the
+	// key was pressed in and the client that sees the popup. Anything else is a
+	// producer bug, not a degraded mode.
 	splitPicker := strings.HasPrefix(raw, "ai-split-picker-") || strings.HasPrefix(raw, "ai-split-resume-")
-	if *replaceOrigin && (anchor == "" || client == "" || !splitPicker) {
-		return tmuxPopupToggleMode{}, fmt.Errorf(
-			"tmux popup-toggle %s requires --client, --anchor, and an AI split picker mode", popupToggleReplaceOriginFlag)
-	}
-	// Answering is the other private producer mode of the split pickers: the
-	// picker reports what was chosen and creates nothing. It needs the same
-	// exact client and anchor, and it cannot also replace a Pane -- a picker
-	// that answers has no Pane of its own to replace.
 	answer := strings.TrimSpace(*answerFile)
 	if answer != "" {
-		if *replaceOrigin {
-			return tmuxPopupToggleMode{}, fmt.Errorf("tmux popup-toggle %s and %s are exclusive",
-				popupToggleAnswerFlag, popupToggleReplaceOriginFlag)
-		}
 		if anchor == "" || client == "" || !splitPicker {
 			return tmuxPopupToggleMode{}, fmt.Errorf(
 				"tmux popup-toggle %s requires --client, --anchor, and an AI split picker mode", popupToggleAnswerFlag)
@@ -1149,16 +1137,16 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client, AnchorPane: anchor}, nil
 	case "ai-split-picker-right":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client, AnchorPane: anchor,
-			ReplaceOrigin: *replaceOrigin, AnswerFile: answer}, nil
+			AnswerFile: answer}, nil
 	case "ai-split-picker-down":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down", ClientKey: client, AnchorPane: anchor,
-			ReplaceOrigin: *replaceOrigin, AnswerFile: answer}, nil
+			AnswerFile: answer}, nil
 	case "ai-split-resume-right":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "right", ClientKey: client, AnchorPane: anchor,
-			ReplaceOrigin: *replaceOrigin, AnswerFile: answer}, nil
+			AnswerFile: answer}, nil
 	case "ai-split-resume-down":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "down", ClientKey: client, AnchorPane: anchor,
-			ReplaceOrigin: *replaceOrigin, AnswerFile: answer}, nil
+			AnswerFile: answer}, nil
 	default:
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
@@ -1925,14 +1913,10 @@ type tmuxPopupToggleMode struct {
 	Direction  string
 	ClientKey  string
 	AnchorPane string
-	// ReplaceOrigin marks a split picker whose selection takes the anchor
-	// Pane's place. It is private producer evidence, like AnchorPane: the
-	// Window producer that created a shell Pane only to anchor this picker is
-	// the only caller that may state it.
-	ReplaceOrigin bool
 	// AnswerFile puts a split picker in answer mode: the selection is written
-	// to this file and nothing is created. A Window producer states it to ask
-	// before the Window exists (window_create_launch_choice.go).
+	// to this file and nothing is created. It is private producer evidence, like
+	// AnchorPane: a Window producer states it to ask before the Window exists
+	// (window_create_launch_choice.go).
 	AnswerFile string
 }
 
@@ -2085,27 +2069,16 @@ func withHookTrustInlineEnv(options inttmux.PopupOptions) inttmux.PopupOptions {
 	return options
 }
 
-// popupToggleReplaceOriginFlag is the private producer flag of the hidden
-// popup-toggle route. It is not a public CLI spelling: `internal tmux` is the
-// generated-artifact surface, and the only producer allowed to state it is the
-// one that made the Pane it names.
-const popupToggleReplaceOriginFlag = "--replace-origin"
-
 // addSplitProducerEnv hands a split picker popup the producer mode its
-// producer stated -- replace the anchor Pane, or answer without creating. The
-// popup is a separate process, so the mode travels as env beside the origin
-// Pane and client it already carries, and the popup is pinned to the exact
-// client that pressed the key instead of whichever client tmux would resolve
-// for the job.
+// producer stated -- answer without creating. The popup is a separate process,
+// so the mode travels as env beside the origin Pane and client it already
+// carries, and the popup is pinned to the exact client that pressed the key
+// instead of whichever client tmux would resolve for the job.
 func addSplitProducerEnv(env map[string]string, options *inttmux.PopupOptions, mode tmuxPopupToggleMode, ctx tmuxPopupContext) {
-	switch {
-	case mode.AnswerFile != "":
-		env[splitAnswerFileEnv] = mode.AnswerFile
-	case mode.ReplaceOrigin:
-		env[splitReplaceOriginEnv] = "1"
-	default:
+	if mode.AnswerFile == "" {
 		return
 	}
+	env[splitAnswerFileEnv] = mode.AnswerFile
 	options.Client = strings.TrimSpace(ctx.TargetClient)
 }
 

@@ -124,9 +124,6 @@ func TestChooseLaunchDefaultAsksOnlyThePickerModesOnThePressedPane(t *testing.T)
 			if !slices.Equal(popup, want) {
 				t.Fatalf("popup = %v, want %v", popup, want)
 			}
-			if slices.Contains(popup, popupToggleReplaceOriginFlag) {
-				t.Fatalf("popup = %v asks and replaces at once", popup)
-			}
 			if _, err := os.Stat(popup[i+1]); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("answer file %s left behind (stat err %v)", popup[i+1], err)
 			}
@@ -158,9 +155,9 @@ func TestChooseLaunchDefaultReadsEveryPickerAnswer(t *testing.T) {
 		{name: "resume row", answer: encodedAnswer(t, resume), want: launchChoice{intent: resume}},
 		{name: "cancelled picker", want: launchChoice{cancelled: true}},
 		{name: "popup could not open", popupErr: errors.New("injected popup failure"),
-			wantProblem: "could not open the launch picker: injected popup failure; no Window was created"},
+			wantProblem: "could not open the launch picker: injected popup failure"},
 		{name: "malformed answer", answer: []byte("not json"), wantProblem: "could not read the launch picker answer"},
-		{name: "answer with no producer", answer: []byte(`["--provider","claude","right"]`), wantProblem: "no Window was created"},
+		{name: "answer with no producer", answer: []byte(`["--provider","claude","right"]`), wantProblem: "could not read the launch picker answer"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd, recorder, _ := answeringLaunchAICommand(t, aiModeSelective, tt.answer, tt.popupErr)
@@ -168,8 +165,11 @@ func TestChooseLaunchDefaultReadsEveryPickerAnswer(t *testing.T) {
 			got := cmd.chooseLaunchDefault(launchChoicePressedPane, launchDefaultClient)
 
 			if tt.wantProblem != "" {
-				if !strings.Contains(got.problem, tt.wantProblem) || !strings.HasSuffix(got.problem, "no Window was created") {
-					t.Fatalf("problem = %q, want %q ending in the not-created clause", got.problem, tt.wantProblem)
+				// The reason is bare: what it costs is the producer's to say
+				// (a Window create adds notCreatedLine, a fresh open
+				// keptOriginShellLine).
+				if !strings.Contains(got.problem, tt.wantProblem) || strings.Contains(got.problem, "no Window was created") {
+					t.Fatalf("problem = %q, want the bare reason %q", got.problem, tt.wantProblem)
 				}
 				if got.cancelled || got.intent != (agentPaneIntent{}) {
 					t.Fatalf("choice = %+v, want only the problem", got)
@@ -381,14 +381,14 @@ func TestWindowCreateIntentAsksBeforeItCreatesAndFillsBeforeItShows(t *testing.T
 		{name: "cancelled picker creates nothing and says nothing", choice: launchChoice{cancelled: true},
 			wantEvents: []string{ask}},
 		{name: "unaskable question creates nothing and says why",
-			choice:     launchChoice{problem: "could not open the launch picker: injected; no Window was created"},
+			choice:     launchChoice{problem: "could not open the launch picker: injected"},
 			wantEvents: []string{ask},
 			wantLines:  []string{"projmux Create Window failed: could not open the launch picker: injected; no Window was created"}},
 		{name: "shell answer", wantEvents: []string{ask, "commit", "fill"}, wantMoved: true,
 			wantLines: []string{windowCreatedMessage}},
 		{name: "Agent answer", choice: claude, wantEvents: []string{ask, "commit", "fill"}, wantMoved: true,
 			wantLines: []string{windowCreatedMessage}},
-		{name: "notice rides on the created line", choice: claude, applied: launchDefaultResult{notice: "started in /srv/alpha", committed: true},
+		{name: "notice rides on the created line", choice: claude, applied: launchDefaultResult{notice: "started in /srv/alpha"},
 			wantEvents: []string{ask, "commit", "fill"}, wantMoved: true,
 			wantLines: []string{windowCreatedMessage + ": started in /srv/alpha"}},
 		{name: "a failed fill keeps the Window and replaces the line", choice: claude,
@@ -574,8 +574,7 @@ func TestAnswerModePickerNeverCreatesThroughTheFunnel(t *testing.T) {
 
 // TestAnswerModePopupToggleCarriesTheAnswerFileAndTheExactClient is the
 // transport half: popup-toggle hands the answer file to the picker beside the
-// origin it always carried, pins the popup to the exact pressing client, and
-// sets no replacement marker.
+// origin it always carried, and pins the popup to the exact pressing client.
 func TestAnswerModePopupToggleCarriesTheAnswerFileAndTheExactClient(t *testing.T) {
 	popupContext := tmuxPopupContext{
 		OriginPane: launchChoicePressedPane, TargetClient: launchDefaultClient,
@@ -589,8 +588,8 @@ func TestAnswerModePopupToggleCarriesTheAnswerFileAndTheExactClient(t *testing.T
 			if err != nil {
 				t.Fatalf("parse popup-toggle %v: %v", args, err)
 			}
-			if parsed.AnswerFile != "/tmp/projmux-launch-answer-1.json" || parsed.ReplaceOrigin {
-				t.Fatalf("mode = %+v, want the answer file and no replacement", parsed)
+			if parsed.AnswerFile != "/tmp/projmux-launch-answer-1.json" {
+				t.Fatalf("mode = %+v, want the answer file", parsed)
 			}
 			command, options, err := buildPopupToggle(parsed, "/tmp/projmux", "/tmp/marker", popupContext)
 			if err != nil {
@@ -604,9 +603,6 @@ func TestAnswerModePopupToggleCarriesTheAnswerFileAndTheExactClient(t *testing.T
 					t.Fatalf("popup command = %q, want %q", command, want)
 				}
 			}
-			if strings.Contains(command, splitReplaceOriginEnv) {
-				t.Fatalf("popup command = %q, an answering picker replaces nothing", command)
-			}
 			if options.Client != launchDefaultClient {
 				t.Fatalf("popup client = %q, want the exact pressing client", options.Client)
 			}
@@ -616,7 +612,7 @@ func TestAnswerModePopupToggleCarriesTheAnswerFileAndTheExactClient(t *testing.T
 
 // TestPopupToggleRefusesAnUnroutableAnswer keeps the private flag from meaning
 // anything on its own: it needs the pressed Pane, the pressing client, a split
-// picker, and an absolute file, and it cannot be combined with replacing.
+// picker, and an absolute file.
 func TestPopupToggleRefusesAnUnroutableAnswer(t *testing.T) {
 	const answer = "/tmp/projmux-launch-answer-1.json"
 	for _, args := range [][]string{
@@ -624,8 +620,6 @@ func TestPopupToggleRefusesAnUnroutableAnswer(t *testing.T) {
 		{"--anchor", launchChoicePressedPane, popupToggleAnswerFlag, answer, "ai-split-picker-right"},
 		{"--client", launchDefaultClient, "--anchor", launchChoicePressedPane, popupToggleAnswerFlag, answer, "sessionizer"},
 		{"--client", launchDefaultClient, "--anchor", launchChoicePressedPane, popupToggleAnswerFlag, "relative.json", "ai-split-picker-right"},
-		{"--client", launchDefaultClient, "--anchor", launchChoicePressedPane, popupToggleAnswerFlag, answer,
-			popupToggleReplaceOriginFlag, "ai-split-picker-right"},
 	} {
 		if _, err := parseTmuxPopupToggleArgs(args, io.Discard); err == nil {
 			t.Fatalf("popup-toggle accepted %v", args)

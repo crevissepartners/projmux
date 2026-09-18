@@ -16,10 +16,10 @@ registered Project is not asked: it opens fresh, which registers it.
   UID and one new canonical Window/shell UID chain, after a confirmation naming
   the exact old Project UID and its Window/Pane/Agent counts. Declining returns
   to the startup rows and writes nothing. It does not archive or retain the old
-  generation. Its new Window's shell Pane then follows the saved launch default
-  (`tmux-ai-split-mode`), exactly as a Window created from the UI does. The
-  first open of an unregistered root, which resolves to the same fresh start,
-  behaves the same.
+  generation. Its new Window's first Pane follows the saved launch default
+  (`tmux-ai-split-mode`), exactly as a Window created from the UI does: the
+  choice is made before anything is cleared. The first open of an unregistered
+  root, which resolves to the same fresh start, behaves the same.
 
 Esc/cancel returns to Projects; it is not an action row. Picker failure falls
 back to the non-destructive `Continue project` action.
@@ -74,8 +74,23 @@ graphs while changing the Project identity. A rejected commit retains the
 exact old Registry preimage. Repeating `Clear layout and open` replaces identity again;
 each successful result has exactly one Project claiming the root.
 
-The saved launch default is applied only when the open carries the exact client
-that pressed the row, after that client has been moved onto the new Session; an
-open without one -- a detached `start project`, a scripted open -- keeps the
-plain shell Pane and says nothing. A default that cannot be applied costs one
-line on that client and keeps the shell Pane; the Project stays open either way.
+The saved launch default is used only when the open carries the exact client
+that pressed the row. The order is:
+
+1. Ask. A picker mode (`selective`, the unset default, or `resume`) opens its
+   picker on the Pane the row was pressed in, before the old layout is cleared
+   or the new Session exists; a provider mode and `shell` are already the
+   answer and open nothing.
+2. Clear the layout and create the new Session with its one shell Pane.
+3. Fill it: an Agent answer is created in that Window first, and the shell is
+   then removed through the canonical Pane delete.
+4. Move the pressing client onto the finished Session.
+
+The client therefore never sees a shell Pane that is about to be replaced.
+Closing the picker without a choice does not stop the open: the Session opens
+with its shell Pane and nothing is said. An open without the exact client -- a
+detached `start project`, a scripted open -- asks nothing, in every mode, and
+keeps the plain shell Pane. A question that cannot be asked, or an answer that
+cannot be filled in, costs one line on that client after the move and keeps the
+shell Pane; the Project stays open either way. `Continue project` and the
+`start project`/`open project` verbs never use the saved launch default.

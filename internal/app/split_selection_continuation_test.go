@@ -127,7 +127,7 @@ func parseSplitSelectionContinuation(t *testing.T, command string) (map[string]s
 // env prefix: a detached job inherits the server's environment, not the popup's.
 var splitContinuationPopupKeys = []string{
 	"TMUX_SPLIT_TARGET_PANE", runtimeMutationAnchorPaneEnv, canonicalCreateTargetClientEnv,
-	"TMUX_SPLIT_CONTEXT_DIR", splitReplaceOriginEnv,
+	"TMUX_SPLIT_CONTEXT_DIR",
 }
 
 // runSplitPickerThroughContinuation runs one picker action, then replays the
@@ -229,44 +229,30 @@ func TestAPopupHostedPickerSelectionHandsOffAndCreatesNothing(t *testing.T) {
 }
 
 // TestTheSplitSelectionContinuationCarriesTheWholeIntent is the golden of the
-// hand-off: the four split picker popup modes, each with and without the
-// replace-origin marker. The picker's environment is derived from the popup
-// builder itself, so this pins the chain popup env -> continuation end to end.
+// hand-off: the four split picker popup modes. The picker's environment is
+// derived from the popup builder itself, so this pins the chain popup env ->
+// continuation end to end.
 func TestTheSplitSelectionContinuationCarriesTheWholeIntent(t *testing.T) {
 	t.Parallel()
 
 	const (
-		keyShape     = `PROJMUX_POPUP_TARGET_CLIENT='/dev/pts/7' TMUX_SPLIT_CONTEXT_DIR='/work/repo' TMUX_SPLIT_TARGET_PANE='%46' '/tmp/projmux' 'internal' 'agent-pane' 'launch-selection' `
-		replaceShape = `PROJMUX_POPUP_TARGET_CLIENT='/dev/pts/7' PROJMUX_SPLIT_REPLACE_ORIGIN='1' TMUX_SPLIT_CONTEXT_DIR='/work/repo' TMUX_SPLIT_TARGET_PANE='%46' __PROJMUX_RUNTIME_ANCHOR_PANE='%46' '/tmp/projmux' 'internal' 'agent-pane' 'launch-selection' `
-		provider     = `'--producer' 'provider-picker' '--provider' 'claude' `
-		resume       = `'--producer' 'resume-picker' '--provider' 'claude' '--conversation' '11111111-2222-3333-4444-555555555555' '--resume-source' 'claude-transcript' `
+		keyShape = `PROJMUX_POPUP_TARGET_CLIENT='/dev/pts/7' TMUX_SPLIT_CONTEXT_DIR='/work/repo' TMUX_SPLIT_TARGET_PANE='%46' '/tmp/projmux' 'internal' 'agent-pane' 'launch-selection' `
+		provider = `'--producer' 'provider-picker' '--provider' 'claude' `
+		resume   = `'--producer' 'resume-picker' '--provider' 'claude' '--conversation' '11111111-2222-3333-4444-555555555555' '--resume-source' 'claude-transcript' `
 	)
 	for _, test := range []struct {
-		mode    string
-		replace bool
-		want    string
+		mode string
+		want string
 	}{
 		{mode: "ai-split-picker-right", want: keyShape + provider + `'right' || :`},
-		{mode: "ai-split-picker-right", replace: true, want: replaceShape + provider + `'right' || :`},
 		{mode: "ai-split-picker-down", want: keyShape + provider + `'down' || :`},
-		{mode: "ai-split-picker-down", replace: true, want: replaceShape + provider + `'down' || :`},
 		{mode: "ai-split-resume-right", want: keyShape + resume + `'right' || :`},
-		{mode: "ai-split-resume-right", replace: true, want: replaceShape + resume + `'right' || :`},
 		{mode: "ai-split-resume-down", want: keyShape + resume + `'down' || :`},
-		{mode: "ai-split-resume-down", replace: true, want: replaceShape + resume + `'down' || :`},
 	} {
-		name := test.mode
-		if test.replace {
-			name += "/replace-origin"
-		}
-		t.Run(name, func(t *testing.T) {
+		t.Run(test.mode, func(t *testing.T) {
 			t.Parallel()
-			// The key binding opens the picker with --client; the launch
-			// default's replacing producer also names the exact anchor.
+			// The key binding opens the picker with --client.
 			args := []string{"--client", splitContinuationClient}
-			if test.replace {
-				args = append(args, "--anchor", splitContinuationOrigin, popupToggleReplaceOriginFlag)
-			}
 			mode, err := parseTmuxPopupToggleArgs(append(args, test.mode), io.Discard)
 			if err != nil {
 				t.Fatalf("parse popup-toggle %v: %v", args, err)
@@ -309,7 +295,7 @@ func TestTheSplitSelectionContinuationCarriesTheWholeIntent(t *testing.T) {
 // TestTheSplitSelectionContinuationReachesTheOneCreateFunnel replays the
 // dispatched continuation as its own invocation and checks that it reaches the
 // existing funnel once, with the intent the picker decided and the origin the
-// popup named -- and that a replacing popup still takes the replace path.
+// popup named.
 func TestTheSplitSelectionContinuationReachesTheOneCreateFunnel(t *testing.T) {
 	t.Parallel()
 
@@ -366,19 +352,6 @@ func TestTheSplitSelectionContinuationReachesTheOneCreateFunnel(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("replace-origin provider row", func(t *testing.T) {
-		t.Parallel()
-		cmd, recorder := replacingPickerAICommand(t, true)
-		stubAIPickerSelection(cmd, aiModeClaude)
-
-		if err := runSplitPickerThroughContinuation(t, cmd, func() error { return cmd.runAgentPickerSelection("right") }); err != nil {
-			t.Fatalf("continuation error = %v", err)
-		}
-		if !slices.Equal(recorder.events, []string{"create", "delete"}) || !slices.Equal(recorder.deleted, []string{launchDefaultOriginPane}) {
-			t.Fatalf("route order = %v deleted = %v, want the Agent committed and then the origin shell replaced", recorder.events, recorder.deleted)
-		}
-	})
 }
 
 // splitNoticePaneCreator commits a Pane and writes a split start notice, the

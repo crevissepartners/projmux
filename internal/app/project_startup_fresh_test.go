@@ -1385,10 +1385,10 @@ func TestNewSwitchCommandWiresFreshStartAndReportSurface(t *testing.T) {
 	if cmd.freshOriginShellPane == nil {
 		t.Fatal("switcher.freshOriginShellPane = nil, want the Registry origin Pane lookup")
 	}
-	if cmd.launchDefault != nil {
-		t.Fatal("switcher.launchDefault is wired by the application graph, not the constructor")
+	if cmd.launchChoose != nil || cmd.launchApply != nil {
+		t.Fatal("switcher.launchChoose/launchApply are wired by the application graph, not the constructor")
 	}
-	if New().switcher.launchDefault == nil {
+	if app := New(); app.switcher.launchChoose == nil || app.switcher.launchApply == nil {
 		t.Fatal("the application graph left the fresh open with no saved launch default route")
 	}
 }
@@ -1411,9 +1411,11 @@ func (r *projectionMissingSessionRunner) Run(_ context.Context, name string, arg
 }
 
 // The fresh open's launch default: a Project opened through the UI follows the
-// saved mode on the first Pane of the Window it just committed, exactly as a UI
-// Window create does. Everything below is about that one caller -- when it runs
-// at all, which Pane and which client it names, and what a failure costs.
+// saved mode on the first Pane of the Window it commits, exactly as a UI Window
+// create does -- asked before anything is pruned, filled in before the client
+// handoff. Everything below is about that one caller: when it asks at all,
+// what the Registry looks like while it asks, which Pane and which client the
+// answer is filled into, and what a failure costs.
 
 const (
 	// freshLaunchDefaultClient is the exact client that pressed the row. The
@@ -1422,238 +1424,370 @@ const (
 	freshLaunchDefaultClient = "/dev/pts/9"
 	freshLaunchDefaultOrigin = "%31"
 	freshLaunchDefaultRoot   = "/srv/fresh"
+	// freshLaunchPressedPane is the Pane the row was pressed in -- the sidebar
+	// continuation's exact anchor, and the Pane the question is asked on.
+	freshLaunchPressedPane = "%7"
 )
 
-// freshLaunchDefaultSeam records every application of the saved launch default:
-// what it was handed, and how much of the open had already happened when it was
-// called. The second half is the ordering contract -- the client handoff is a
-// completed tmux call by then.
-type freshLaunchDefaultSeam struct {
-	runner  *recordingTmuxRunner
-	applied [][2]string
-	before  []int
-	origins []string
-	result  launchDefaultResult
+// freshAskStarter is the production Registry fresh starter with its prune
+// recorded on the open's timeline.
+type freshAskStarter struct {
+	*registryProjectFreshStarter
+	events *[]string
 }
 
-func (s *freshLaunchDefaultSeam) apply(originPaneID, client string) launchDefaultResult {
-	s.applied = append(s.applied, [2]string{originPaneID, client})
-	s.before = append(s.before, len(s.runner.calls))
-	return s.result
+func (s freshAskStarter) PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) (projectFreshStartCommit, error) {
+	*s.events = append(*s.events, "prune")
+	return s.registryProjectFreshStarter.PruneProjectFreshStart(ctx, root, plan)
 }
 
-func (s *freshLaunchDefaultSeam) resolveOrigin(_ context.Context, root string) (string, error) {
-	s.origins = append(s.origins, root)
-	if root != freshLaunchDefaultRoot {
-		return "", fmt.Errorf("the fresh open resolved its origin Pane for %q", root)
+// freshAskRunner is the app-socket tmux of a fresh open: the exact handoff and
+// the one bounded line are recorded on the open's timeline, and displayErr
+// stands in for a client that could not be shown the line.
+type freshAskRunner struct {
+	events     *[]string
+	lines      []string
+	displayErr error
+}
+
+func (r *freshAskRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	command := args
+	if len(command) >= 2 && (command[0] == "-L" || command[0] == "-S") {
+		command = command[2:]
 	}
-	return freshLaunchDefaultOrigin, nil
+	switch {
+	case len(command) > 0 && command[0] == "switch-client":
+		*r.events = append(*r.events, "open")
+	case len(command) > 0 && command[0] == "display-message":
+		*r.events = append(*r.events, "line")
+		r.lines = append(r.lines, command[len(command)-1])
+		if len(command) < 3 || command[1] != "-c" || command[2] != freshLaunchDefaultClient {
+			return nil, fmt.Errorf("display-message %v is not addressed at the pressing client", command)
+		}
+		return nil, r.displayErr
+	}
+	return nil, nil
 }
 
-// freshLaunchDefaultLines returns the bounded lines a fresh open showed on the
-// pressing client, in order.
-func freshLaunchDefaultLines(runner *recordingTmuxRunner) []string {
-	var lines []string
-	for _, call := range runner.calls {
-		for index, arg := range call.args {
-			if arg == "display-message" {
-				lines = append(lines, call.args[len(call.args)-1])
-				break
-			} else if index > 2 {
-				break
+// freshAskObservation is what the Registry and the client looked like when the
+// question was asked.
+type freshAskObservation struct {
+	anchor, client string
+	// projectUID is the Project the opened root declared at that moment, or
+	// empty for a root the Registry had never heard of.
+	projectUID string
+	writes     int
+	handedOff  bool
+}
+
+// freshAskOpen is one fresh open over the shared resource fixture, with the
+// question, the fill, the prune, the materialization, the report and the
+// handoff all recorded on one timeline.
+type freshAskOpen struct {
+	cmd      *switchCommand
+	store    *fakeResourceStore
+	runner   *freshAskRunner
+	root     string
+	oldUID   string
+	events   []string
+	asks     []freshAskObservation
+	fills    [][2]string
+	filled   []launchChoice
+	choice   launchChoice
+	applied  launchDefaultResult
+	origin   error
+	env      map[string]string
+	sessions *capturingSwitchSessionExecutor
+}
+
+// newFreshAskOpen builds the open. registered picks between the fixture's
+// closed registered Project at /srv/alpha and a root that no Project declares;
+// both are fresh opens, and both must ask the same way.
+func newFreshAskOpen(t *testing.T, registered bool, env map[string]string) *freshAskOpen {
+	t.Helper()
+	open := &freshAskOpen{store: freshStartFixtureStore(t), root: "/srv/unregistered-fresh", env: env}
+	// Registering a root requires an existing directory.
+	open.store.dirs[open.root] = true
+	if registered {
+		open.root, open.oldUID = "/srv/alpha", "prj-alpha"
+	}
+	if _, ok := open.store.registry.ProjectByRoot(open.root); ok != registered {
+		t.Fatalf("fixture root %s registered = %v, want %v", open.root, ok, registered)
+	}
+	open.runner = &freshAskRunner{events: &open.events}
+	open.sessions = &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	open.cmd = &switchCommand{
+		sessions:   open.sessions,
+		tmuxRunner: open.runner,
+		lookupEnv:  func(name string) string { return open.env[name] },
+		projectFreshStart: freshAskStarter{
+			registryProjectFreshStarter: &registryProjectFreshStarter{
+				resources: open.store.store(), runner: &projectionMissingSessionRunner{}, shell: "/bin/zsh",
+			},
+			events: &open.events,
+		},
+		projectTopology: orderedFreshTopology{calls: &open.events},
+		startupNotices:  orderedFreshReporter{calls: &open.events},
+		launchChoose: func(anchor, client string) launchChoice {
+			open.events = append(open.events, "ask")
+			observed := freshAskObservation{anchor: anchor, client: client, writes: open.store.writes,
+				handedOff: slices.Contains(open.events, "open")}
+			if project, ok := open.store.registry.ProjectByRoot(open.root); ok {
+				observed.projectUID = project.Metadata.UID
 			}
+			open.asks = append(open.asks, observed)
+			return open.choice
+		},
+		launchApply: func(originPaneID, client string, choice launchChoice) launchDefaultResult {
+			open.events = append(open.events, "fill")
+			open.fills = append(open.fills, [2]string{originPaneID, client})
+			open.filled = append(open.filled, choice)
+			return open.applied
+		},
+		freshOriginShellPane: func(_ context.Context, root string) (string, error) {
+			if root != open.root {
+				return "", fmt.Errorf("the fresh open resolved its origin Pane for %q", root)
+			}
+			if open.origin != nil {
+				return "", open.origin
+			}
+			return freshLaunchDefaultOrigin, nil
+		},
+	}
+	return open
+}
+
+func (o *freshAskOpen) start(t *testing.T, anchor string) {
+	t.Helper()
+	if err := o.cmd.startProjectFresh(context.Background(), "fresh-session", o.root, openedProjectBootstrap{}, anchor); err != nil {
+		t.Fatalf("startProjectFresh() error = %v, want the open to succeed", err)
+	}
+}
+
+// requireFreshCommitted checks the open itself happened: exactly one Registry
+// commit, a Project at the root whose identity is not the old one.
+func (o *freshAskOpen) requireFreshCommitted(t *testing.T) {
+	t.Helper()
+	if o.store.writes != 1 {
+		t.Fatalf("Registry writes = %d, want the one fresh commit", o.store.writes)
+	}
+	project, ok := o.store.registry.ProjectByRoot(o.root)
+	if !ok || project.Metadata.UID == "" || project.Metadata.UID == o.oldUID {
+		t.Fatalf("Project at %s after the open = %+v (ok=%v), want a new identity replacing %q", o.root, project.Metadata, ok, o.oldUID)
+	}
+}
+
+func freshSidebarEnv() map[string]string {
+	return map[string]string{inttmux.SwitchTargetClientEnv: freshLaunchDefaultClient}
+}
+
+// TestFreshOpenAsksBeforeItPrunesAndFillsBeforeItHandsOff is the condition
+// table of the fresh open's order, run for both kinds of fresh open -- a
+// registered closed Project after its confirmation, and a root no Project
+// declares -- because both reach the same route and must behave the same.
+//
+// Every row asks first, on the pressed Pane with the pressing client, while the
+// old Project is still exactly as it was and nobody has been moved. An Agent
+// answer is filled into the committed shell Pane before the handoff; anything
+// that did not happen is one line after it, and the open itself never fails.
+func TestFreshOpenAsksBeforeItPrunesAndFillsBeforeItHandsOff(t *testing.T) {
+	t.Parallel()
+
+	claude := launchChoice{intent: agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right"}}
+	shell := launchChoice{intent: agentPaneIntent{producer: canonicalProducerProviderPicker, placement: "right"}}
+	var (
+		opened   = []string{"ask", "prune", "materialize", "notice", "open"}
+		filled   = []string{"ask", "prune", "materialize", "fill", "notice", "open"}
+		saidOnce = func(events []string) []string { return append(slices.Clone(events), "line") }
+	)
+	for _, registered := range []bool{true, false} {
+		kind := "unregistered root"
+		if registered {
+			kind = "registered closed Project"
+		}
+		for _, test := range []struct {
+			name       string
+			choice     launchChoice
+			applied    launchDefaultResult
+			origin     error
+			displayErr error
+			wantEvents []string
+			wantFill   bool
+			wantLine   string
+		}{
+			{name: "an Agent answer fills the shell Pane before the handoff", choice: claude,
+				wantEvents: filled, wantFill: true},
+			{name: "a committed Agent's start notice is not repeated after the handoff", choice: claude,
+				applied: launchDefaultResult{notice: "started in /srv/fresh"}, wantEvents: filled, wantFill: true},
+			{name: "a shell answer keeps the committed Pane and says nothing", choice: shell, wantEvents: opened},
+			// Owner ruling 15 (user decision 4, being re-confirmed): a cancelled
+			// picker does not stop the open. This is that ruling's one row.
+			{name: "a cancelled picker opens with the shell and says nothing", choice: launchChoice{cancelled: true},
+				wantEvents: opened},
+			{name: "a question that could not be asked opens with the shell and says so once",
+				choice:     launchChoice{problem: "could not open the launch picker: injected"},
+				wantEvents: saidOnce(opened), wantLine: "could not open the launch picker: injected; the Window keeps its shell Pane"},
+			{name: "a refused fill keeps the Session and says so once", choice: claude,
+				applied:    launchDefaultResult{problem: keptOriginShellLine("projmux could not open the Agent: injected")},
+				wantEvents: saidOnce(filled), wantFill: true,
+				wantLine: "projmux could not open the Agent: injected; the Window keeps its shell Pane"},
+			{name: "an unresolvable shell Pane keeps the Session and says so once", choice: claude,
+				origin:     errors.New("the fresh Window declares 2 shell Panes and 0 Agents"),
+				wantEvents: saidOnce(opened),
+				wantLine:   "the fresh Window declares 2 shell Panes and 0 Agents; the Window keeps its shell Pane"},
+			{name: "a line that cannot be shown does not fail the open", choice: claude,
+				applied:    launchDefaultResult{problem: "injected fill refusal"},
+				displayErr: errors.New("injected display failure"),
+				wantEvents: saidOnce(filled), wantFill: true, wantLine: "injected fill refusal"},
+		} {
+			t.Run(kind+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+				open := newFreshAskOpen(t, registered, freshSidebarEnv())
+				open.choice, open.applied, open.origin = test.choice, test.applied, test.origin
+				open.runner.displayErr = test.displayErr
+
+				open.start(t, freshLaunchPressedPane)
+
+				want := []freshAskObservation{{
+					anchor: freshLaunchPressedPane, client: freshLaunchDefaultClient, projectUID: open.oldUID,
+				}}
+				if !reflect.DeepEqual(open.asks, want) {
+					t.Fatalf("asked %+v, want once on the pressed Pane and pressing client before any write or handoff %+v",
+						open.asks, want)
+				}
+				if !slices.Equal(open.events, test.wantEvents) {
+					t.Fatalf("open order = %v, want %v", open.events, test.wantEvents)
+				}
+				open.requireFreshCommitted(t)
+				var wantFills [][2]string
+				var wantFilled []launchChoice
+				if test.wantFill {
+					wantFills = [][2]string{{freshLaunchDefaultOrigin, freshLaunchDefaultClient}}
+					wantFilled = []launchChoice{test.choice}
+				}
+				if !reflect.DeepEqual(open.fills, wantFills) || !reflect.DeepEqual(open.filled, wantFilled) {
+					t.Fatalf("filled %v with %+v, want %v with %+v", open.fills, open.filled, wantFills, wantFilled)
+				}
+				var wantLines []string
+				if test.wantLine != "" {
+					wantLines = []string{test.wantLine}
+				}
+				if !slices.Equal(open.runner.lines, wantLines) {
+					t.Fatalf("client lines = %q, want %q", open.runner.lines, wantLines)
+				}
+				for _, line := range open.runner.lines {
+					if strings.Contains(line, "no Window was created") {
+						t.Fatalf("line %q claims no Window was created; the fresh open proceeded", line)
+					}
+				}
+				if open.sessions.killSessionName != "" {
+					t.Fatalf("the launch default killed session %q", open.sessions.killSessionName)
+				}
+			})
 		}
 	}
-	return lines
 }
 
-// freshLaunchDefaultCommand builds one fresh open whose Session, Window and
-// shell Pane all commit, carrying the pressing client the sidebar continuation
-// re-executes with. A blank client is the detached open that carries none.
-func freshLaunchDefaultCommand(seam *freshLaunchDefaultSeam, client string) *switchCommand {
-	runner := &recordingTmuxRunner{}
-	seam.runner = runner
-	return &switchCommand{
-		sessions:   &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true},
-		tmuxRunner: runner,
-		lookupEnv: func(name string) string {
-			if name == inttmux.SwitchTargetClientEnv && client != "" {
-				return client
-			}
-			return ""
-		},
-		projectTopology:      &fakeProjectTopologyMaterializer{materialized: true},
-		startupNotices:       &recordingProjectStartupReporter{},
-		launchDefault:        seam.apply,
-		freshOriginShellPane: seam.resolveOrigin,
+// TestFreshOpenWithoutAnExactPressingClientAsksNothing is the product decision,
+// not an oversight: the launch default attaches only to a gesture a human made,
+// and without the exact client that made it there is nowhere to put a
+// question, an Agent, or the line either would report. Every saved mode is
+// driven through the real aiCommand, so the mode really is saved and really
+// does nothing: no question, no popup, no canonical create, no line.
+func TestFreshOpenWithoutAnExactPressingClientAsksNothing(t *testing.T) {
+	for _, mode := range []string{aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeShell, aiModeSelective, aiModeResume, ""} {
+		name := mode
+		if name == "" {
+			name = "unset"
+		}
+		for _, registered := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/registered=%v", name, registered), func(t *testing.T) {
+				ai, recorder := launchDefaultAICommand(t, t.TempDir())
+				if mode != "" {
+					if err := ai.setMode(mode); err != nil {
+						t.Fatalf("setMode(%s) error = %v", mode, err)
+					}
+				}
+				cmdRecorder(ai).commands = nil
+				// The anchor is there; only the client is missing.
+				open := newFreshAskOpen(t, registered, map[string]string{"TMUX_PANE": freshLaunchPressedPane})
+				open.cmd.launchChoose = func(anchor, client string) launchChoice {
+					open.events = append(open.events, "ask")
+					return ai.chooseLaunchDefault(anchor, client)
+				}
+				open.cmd.launchApply = func(originPaneID, client string, choice launchChoice) launchDefaultResult {
+					open.events = append(open.events, "fill")
+					return ai.applyLaunchChoice(originPaneID, client, choice)
+				}
+
+				open.start(t, freshLaunchPressedPane)
+
+				if want := []string{"prune", "materialize", "notice"}; !slices.Equal(open.events, want) {
+					t.Fatalf("open order = %v, want %v with no question and no fill", open.events, want)
+				}
+				if !slices.Equal(open.sessions.calls, []string{"open:fresh-session"}) {
+					t.Fatalf("session executor = %v, want the ordinary handoff", open.sessions.calls)
+				}
+				open.requireFreshCommitted(t)
+				if len(recorder.intents) != 0 || len(recorder.deleted) != 0 {
+					t.Fatalf("a clientless open reached the canonical routes: intents=%+v deleted=%v",
+						recorder.intents, recorder.deleted)
+				}
+				if len(cmdRecorder(ai).commands) != 0 {
+					t.Fatalf("a clientless open ran %#v, want no popup", cmdRecorder(ai).commands)
+				}
+				if len(open.runner.lines) != 0 {
+					t.Fatalf("client lines = %q, want none", open.runner.lines)
+				}
+			})
+		}
 	}
 }
 
-// TestFreshOpenAppliesTheSavedLaunchDefaultToTheCommittedShellPaneAfterTheHandoff
-// is the applied-default table of a fresh open. Every row commits the same
-// Session, Window and shell Pane, hands the same exact `%N` and the same exact
-// client to the one seam, and differs only in what the application reported --
-// which decides the single line the operator is shown, or that there is none.
-func TestFreshOpenAppliesTheSavedLaunchDefaultToTheCommittedShellPaneAfterTheHandoff(t *testing.T) {
+// TestFreshOpenFromTheInProcessPickerNeverWaitsOnAQuestionItCannotShow covers
+// the Project Picker popup route (`switch --ui=popup`), which opens in process:
+// no explicit anchor, the pressed Pane in the private producer anchor, the
+// pressing client in the environment. It is outside the ask-first guarantee --
+// its own popup is still up, so the question may come back empty or fail --
+// but the open must still proceed with a shell first Pane: no failure, no fill.
+func TestFreshOpenFromTheInProcessPickerNeverWaitsOnAQuestionItCannotShow(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name      string
-		result    launchDefaultResult
-		wantLines []string
+		name     string
+		choice   launchChoice
+		wantLine string
 	}{
-		{name: "a shell default keeps the committed Pane and says nothing"},
-		{
-			name:   "a committed Agent's start notice is not repeated after the handoff",
-			result: launchDefaultResult{notice: "started in /srv/fresh"},
-		},
-		{
-			name:      "a refusal is one bounded line on the pressing client",
-			result:    launchDefaultResult{problem: keptOriginShellLine("projmux could not open the Agent: injected")},
-			wantLines: []string{"projmux could not open the Agent: injected; the Window keeps its shell Pane"},
-		},
-		{
-			name:   "a picker popup owns its own feedback",
-			result: launchDefaultResult{picker: true},
-		},
+		{name: "the popup could not show, so the answer is empty", choice: launchChoice{cancelled: true}},
+		{name: "the question failed", choice: launchChoice{problem: "could not open the launch picker: a popup is already open"},
+			wantLine: "could not open the launch picker: a popup is already open; the Window keeps its shell Pane"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			env := freshSidebarEnv()
+			env[runtimeMutationAnchorPaneEnv] = freshLaunchPressedPane
+			env["TMUX_PANE"] = "%99"
+			open := newFreshAskOpen(t, false, env)
+			open.choice = test.choice
 
-			seam := &freshLaunchDefaultSeam{result: test.result}
-			cmd := freshLaunchDefaultCommand(seam, freshLaunchDefaultClient)
+			open.start(t, "")
 
-			if err := cmd.startProjectFresh(context.Background(), "workspace", freshLaunchDefaultRoot,
-				openedProjectBootstrap{}, ""); err != nil {
-				t.Fatalf("startProjectFresh() error = %v", err)
+			if len(open.asks) != 1 || open.asks[0].anchor != freshLaunchPressedPane || open.asks[0].client != freshLaunchDefaultClient {
+				t.Fatalf("asked %+v, want once on the private producer anchor %s", open.asks, freshLaunchPressedPane)
 			}
-			want := [][2]string{{freshLaunchDefaultOrigin, freshLaunchDefaultClient}}
-			if !reflect.DeepEqual(seam.applied, want) {
-				t.Fatalf("launch default applied with %v, want the committed shell Pane and the pressing client %v",
-					seam.applied, want)
+			if !slices.Contains(open.events, "open") {
+				t.Fatalf("open order = %v, want the Session handed to the client", open.events)
 			}
-			if !slices.Equal(seam.origins, []string{freshLaunchDefaultRoot}) {
-				t.Fatalf("origin Pane resolved for %q, want exactly the opened root once", seam.origins)
+			open.requireFreshCommitted(t)
+			if len(open.fills) != 0 {
+				t.Fatalf("filled %v, want the shell the open committed", open.fills)
 			}
-			if !slices.Equal(seam.before, []int{1}) {
-				t.Fatalf("tmux calls before the launch default = %v, want the completed client handoff", seam.before)
+			var wantLines []string
+			if test.wantLine != "" {
+				wantLines = []string{test.wantLine}
 			}
-			if got := seam.runner.calls[0].args; len(got) < 3 || got[2] != "switch-client" {
-				t.Fatalf("first tmux call = %v, want the client handoff", got)
-			}
-			if got := freshLaunchDefaultLines(seam.runner); !slices.Equal(got, test.wantLines) {
-				t.Fatalf("client lines = %v, want %v", got, test.wantLines)
-			}
-		})
-	}
-}
-
-// TestFreshOpenLaunchDefaultFailureKeepsTheOpenAndSaysOneThing is the negative
-// half. A refused application and an origin Pane that cannot be resolved are
-// both failures to apply a default, not failures to open a Project: the
-// Session, its Window and its shell Pane are committed before either can
-// happen, so the open still succeeds and the operator gets exactly one line
-// saying what did not happen on top of them.
-func TestFreshOpenLaunchDefaultFailureKeepsTheOpenAndSaysOneThing(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name string
-		// unresolvable answers the origin lookup with a failure instead of the
-		// committed `%N`, which is the shape check refusing to guess a Pane.
-		unresolvable bool
-		result       launchDefaultResult
-		wantLine     string
-		wantApplied  int
-	}{
-		{
-			name:        "the application is refused",
-			result:      launchDefaultResult{problem: keptOriginShellLine("projmux could not open the Agent: injected")},
-			wantLine:    "projmux could not open the Agent: injected; the Window keeps its shell Pane",
-			wantApplied: 1,
-		},
-		{
-			name:         "the origin Pane cannot be resolved",
-			unresolvable: true,
-			wantLine:     "the fresh open resolved its origin Pane for \"/srv/other\"; the Window keeps its shell Pane",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			seam := &freshLaunchDefaultSeam{result: test.result}
-			cmd := freshLaunchDefaultCommand(seam, freshLaunchDefaultClient)
-			root := freshLaunchDefaultRoot
-			if test.unresolvable {
-				root = "/srv/other"
-			}
-
-			if err := cmd.startProjectFresh(context.Background(), "workspace", root,
-				openedProjectBootstrap{}, ""); err != nil {
-				t.Fatalf("startProjectFresh() error = %v, want the committed open to succeed", err)
-			}
-			executor, ok := cmd.sessions.(*capturingSwitchSessionExecutor)
-			if !ok {
-				t.Fatalf("session executor = %T", cmd.sessions)
-			}
-			if executor.killSessionName != "" {
-				t.Fatalf("the failed launch default killed session %q", executor.killSessionName)
-			}
-			if len(seam.applied) != test.wantApplied {
-				t.Fatalf("launch default applications = %v, want %d", seam.applied, test.wantApplied)
-			}
-			if got := freshLaunchDefaultLines(seam.runner); !slices.Equal(got, []string{test.wantLine}) {
-				t.Fatalf("client lines = %v, want exactly %q", got, test.wantLine)
-			}
-			line := seam.runner.calls[len(seam.runner.calls)-1].args
-			if want := []string{"-L", "projmux", "display-message", "-c", freshLaunchDefaultClient, "-d", "10000"}; !slices.Equal(line[:len(want)], want) {
-				t.Fatalf("display call = %v, want the app socket and the exact pressing client %v", line, want)
-			}
-		})
-	}
-}
-
-// TestFreshOpenWithoutAnExactPressingClientAppliesNoSavedLaunchDefault is the
-// product decision, not an oversight: the launch default attaches only to a
-// gesture a human made, and without the exact client that made it there is
-// nowhere to put an Agent, a picker popup, or the line either of them would
-// report. Both provider and picker saved modes are driven through the real
-// aiCommand behind the seam, so the mode really is read from a saved file and
-// really does nothing: no canonical create, no popup, no message.
-func TestFreshOpenWithoutAnExactPressingClientAppliesNoSavedLaunchDefault(t *testing.T) {
-	for _, mode := range []string{aiModeClaude, aiModeSelective} {
-		t.Run(mode, func(t *testing.T) {
-			ai, recorder := launchDefaultAICommand(t, t.TempDir())
-			if err := ai.setMode(mode); err != nil {
-				t.Fatalf("setMode(%s) error = %v", mode, err)
-			}
-			cmdRecorder(ai).commands = nil
-			seam := &freshLaunchDefaultSeam{}
-			cmd := freshLaunchDefaultCommand(seam, "")
-			cmd.launchDefault = func(originPaneID, client string) launchDefaultResult {
-				seam.apply(originPaneID, client)
-				return ai.applyLaunchDefault(originPaneID, client)
-			}
-
-			if err := cmd.startProjectFresh(context.Background(), "workspace", freshLaunchDefaultRoot,
-				openedProjectBootstrap{}, ""); err != nil {
-				t.Fatalf("startProjectFresh() error = %v", err)
-			}
-			if len(seam.applied) != 0 {
-				t.Fatalf("launch default applied %v without a pressing client", seam.applied)
-			}
-			if len(seam.origins) != 0 {
-				t.Fatalf("the origin Pane was resolved for %q without a pressing client", seam.origins)
-			}
-			if len(recorder.intents) != 0 || len(recorder.deleted) != 0 {
-				t.Fatalf("a clientless open reached the canonical routes: intents=%+v deleted=%v",
-					recorder.intents, recorder.deleted)
-			}
-			if len(cmdRecorder(ai).commands) != 0 {
-				t.Fatalf("a clientless open ran %#v, want no popup", cmdRecorder(ai).commands)
-			}
-			if got := freshLaunchDefaultLines(seam.runner); len(got) != 0 {
-				t.Fatalf("client lines = %v, want none", got)
+			if !slices.Equal(open.runner.lines, wantLines) {
+				t.Fatalf("client lines = %q, want %q", open.runner.lines, wantLines)
 			}
 		})
 	}
@@ -1664,8 +1798,8 @@ func TestFreshOpenWithoutAnExactPressingClientAppliesNoSavedLaunchDefault(t *tes
 // Windows and Panes it already declares -- replacing one of them with an Agent
 // would be destroying stored topology -- and the `start project` verb is
 // detached by construction: it never hands a client anywhere. Both are driven
-// with `claude` saved as the launch default, so the only thing keeping them out
-// is the caller's own gate.
+// with `claude` saved as the launch default and an exact client present, so the
+// only thing keeping them out is the caller's own gate.
 func TestContinueAndDetachedProjectOpensNeverReachTheSavedLaunchDefault(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -1680,19 +1814,14 @@ func TestContinueAndDetachedProjectOpensNeverReachTheSavedLaunchDefault(t *testi
 			if err := ai.setMode(aiModeClaude); err != nil {
 				t.Fatalf("setMode(claude) error = %v", err)
 			}
-			seam := &freshLaunchDefaultSeam{}
-			cmd := freshLaunchDefaultCommand(seam, freshLaunchDefaultClient)
+			open := newFreshAskOpen(t, true, freshSidebarEnv())
+			cmd := open.cmd
 			cmd.projectFreshStart = &startupModeFreshStarter{registered: true}
 			cmd.projectRegistrar = &fakeProjectRegistrar{uid: "proj-existing", name: "workspace", reused: true}
+			topology := &fakeProjectTopologyMaterializer{materialized: true}
+			cmd.projectTopology = topology
 			wireFakeProjectSessionPlan(cmd)
-			cmd.launchDefault = func(originPaneID, client string) launchDefaultResult {
-				t.Fatalf("a Continue open applied the saved launch default to %q on client %q", originPaneID, client)
-				return ai.applyLaunchDefault(originPaneID, client)
-			}
-			cmd.freshOriginShellPane = func(_ context.Context, root string) (string, error) {
-				t.Fatalf("a Continue open resolved a launch-default origin Pane for %q", root)
-				return "", nil
-			}
+			failOnLaunchDefault(t, cmd, ai, "a Continue open")
 
 			if err := cmd.authorizeAndContinueProjectOpenRequest(context.Background(), projectOpenRequest{
 				Target: freshLaunchDefaultRoot, SessionName: "workspace",
@@ -1703,14 +1832,28 @@ func TestContinueAndDetachedProjectOpensNeverReachTheSavedLaunchDefault(t *testi
 			if len(recorder.intents) != 0 {
 				t.Fatalf("a Continue open opened an Agent: %+v", recorder.intents)
 			}
-			topology, ok := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
-			if !ok {
-				t.Fatalf("topology materializer = %T", cmd.projectTopology)
-			}
 			if want := []string{"topology:" + freshLaunchDefaultRoot + ":workspace"}; !slices.Equal(topology.calls, want) {
 				t.Fatalf("topology calls = %q, want %q: the open under test must have happened", topology.calls, want)
 			}
 		})
+	}
+}
+
+// failOnLaunchDefault wires a switcher whose saved launch default fails the
+// test if any half of it is reached.
+func failOnLaunchDefault(t *testing.T, cmd *switchCommand, ai *aiCommand, route string) {
+	t.Helper()
+	cmd.launchChoose = func(anchor, client string) launchChoice {
+		t.Errorf("%s asked for the launch default on %q for client %q", route, anchor, client)
+		return ai.chooseLaunchDefault(anchor, client)
+	}
+	cmd.launchApply = func(originPaneID, client string, choice launchChoice) launchDefaultResult {
+		t.Errorf("%s filled the launch default into %q on client %q", route, originPaneID, client)
+		return ai.applyLaunchChoice(originPaneID, client, choice)
+	}
+	cmd.freshOriginShellPane = func(_ context.Context, root string) (string, error) {
+		t.Errorf("%s resolved a launch-default origin Pane for %q", route, root)
+		return "", nil
 	}
 }
 
