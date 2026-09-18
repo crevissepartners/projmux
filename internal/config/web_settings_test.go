@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -80,10 +81,17 @@ func TestWebSettingsParseRejectsWithFileAndLine(t *testing.T) {
 	for _, tc := range []struct {
 		name, content, want string
 	}{
-		{"unknown key", "[statusbar]\ngit = true\ngti = false\n", `/x/web.toml:3: unknown key "statusbar.gti"`},
-		{"unknown table", "[theme]\npreset = \"forest\"\n", `/x/web.toml:2: unknown key "theme.preset"`},
-		{"top-level key", "git = false\n", `/x/web.toml:1: unknown key "git"`},
-		{"usage master is a table", "[statusbar]\nusage = false\n", `/x/web.toml:2: unknown key "statusbar.usage"`},
+		{"usage master is a table", "[statusbar]\nusage = false\n", `/x/web.toml:2: key "statusbar.usage" overlaps the table [statusbar.usage] this build uses`},
+		{"unknown key in a provider's place", "[statusbar.usage]\ncodex = false\n", `/x/web.toml:2: key "statusbar.usage.codex" overlaps the table [statusbar.usage.codex] this build uses`},
+		{"top-level key in a table's place", "statusbar = false\n", `/x/web.toml:1: key "statusbar" overlaps the table [statusbar] this build uses`},
+		{"unknown table under a known key", "[statusbar.git]\nx = 1\n", `/x/web.toml:2: key "statusbar.git.x" overlaps the key "statusbar.git" this build uses`},
+		{"unknown key then a table under it", "[confirm]\nstop = true\n[confirm.stop]\nx = 1\n", `/x/web.toml:4: key "confirm.stop.x" overlaps the key "confirm.stop" set on line 2`},
+		{"unknown table then a key in its place", "[confirm.stop]\nx = 1\n[confirm]\nstop = true\n", `/x/web.toml:4: key "confirm.stop" overlaps the table [confirm.stop] used on line 2`},
+		{"unknown key with a multi-line string", "[theme]\npreset = \"\"\"forest\"\"\"\n", `/x/web.toml:2: key "theme.preset": multi-line strings are not supported`},
+		{"unknown key with a multi-line literal string", "[theme]\npreset = '''forest\n", `/x/web.toml:2: key "theme.preset": multi-line strings are not supported`},
+		{"unknown key with a missing value", "[theme]\npreset =\n", `/x/web.toml:2: key "theme.preset": missing value`},
+		{"unknown key with only a comment", "[theme]\npreset = # later\n", `/x/web.toml:2: key "theme.preset": missing value`},
+		{"repeated unknown key", "[theme]\npreset = 1\npreset = 2\n", `/x/web.toml:3: key "theme.preset" is already set on line 2`},
 		{"switch given a string", "[statusbar]\ngit = \"off\"\n", `/x/web.toml:2: key "statusbar.git" must be true or false`},
 		{"choice given a bool", "[ai]\nsplit_cwd_from = true\n", `/x/web.toml:2: key "ai.split_cwd_from" must be a string`},
 		{"choice outside its list", "[ai]\nsplit_cwd_from = \"home\"\n", `/x/web.toml:2: key "ai.split_cwd_from" must be one of "project", "pane"`},
@@ -130,13 +138,110 @@ func TestWebSettingsParseAsksTheCallerAboutDynamicKeysOnly(t *testing.T) {
 	if strings.Join(asked, ",") != "statusbar.usage.claude,statusbar.usage.claude.5h" {
 		t.Fatalf("asked = %v", asked)
 	}
-	_, err := ParseWebSettings("/x/web.toml", []byte("[statusbar.usage.claude]\nmonthly = false\n"), known)
-	if err == nil || err.Error() != `/x/web.toml:2: unknown key "statusbar.usage.claude.monthly"` {
-		t.Fatalf("err = %v", err)
+	for _, tc := range []struct {
+		content string
+		want    SkippedWebSetting
+	}{
+		{"[statusbar.usage.claude]\nmonthly = false\n", SkippedWebSetting{Line: 2, Key: "statusbar.usage.claude.monthly"}},
+		{"\n[statusbar.usage.gemini]\nvisible = true\n", SkippedWebSetting{Line: 3, Key: "statusbar.usage.gemini.visible"}},
+	} {
+		settings, err := ParseWebSettings("/x/web.toml", []byte(tc.content), known)
+		if err != nil {
+			t.Fatalf("%q: %v", tc.content, err)
+		}
+		if got := settings.Skipped(); !slices.Equal(got, []SkippedWebSetting{tc.want}) {
+			t.Fatalf("%q: skipped = %v", tc.content, got)
+		}
+		if keys := settings.Keys(); len(keys) != 0 {
+			t.Fatalf("%q: applied %v", tc.content, keys)
+		}
 	}
-	_, err = ParseWebSettings("/x/web.toml", []byte("\n[statusbar.usage.gemini]\nvisible = true\n"), known)
-	if err == nil || err.Error() != `/x/web.toml:3: unknown key "statusbar.usage.gemini.visible"` {
-		t.Fatalf("err = %v", err)
+}
+
+func TestWebSettingsParseSkipsKeysThisBuildDoesNotKnow(t *testing.T) {
+	content := "[statusbar]\ngit = false\n[ai]\nnew_window_mode = \"resume\"\n[confirm]\nstop_agent = true\n"
+	settings, err := ParseWebSettings("/x/web.toml", []byte(content), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := settings.Value("statusbar.git"); !ok || got != "off" {
+		t.Fatalf("statusbar.git = %q %v", got, ok)
+	}
+	want := []SkippedWebSetting{{Line: 4, Key: "ai.new_window_mode"}, {Line: 6, Key: "confirm.stop_agent"}}
+	if got := settings.Skipped(); !slices.Equal(got, want) {
+		t.Fatalf("skipped = %v, want %v", got, want)
+	}
+	if keys := settings.Keys(); !slices.Equal(keys, []string{"statusbar.git"}) {
+		t.Fatalf("keys = %v", keys)
+	}
+	for _, key := range []string{"ai.new_window_mode", "ai.newWindowMode", "confirm.stop_agent", "confirm.stopAgent"} {
+		if _, ok := settings.Value(key); ok {
+			t.Errorf("a skipped entry is a value: %s", key)
+		}
+	}
+
+	// An unknown table and a top-level key are skipped too, and a value
+	// that no web.toml key takes is not checked.
+	content = "git = false\n[theme]\npreset = \"forest\"\nsize = 12 # px\n[statusbar]\ngti = [1, 2]\n"
+	settings, err = ParseWebSettings("/x/web.toml", []byte(content), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []SkippedWebSetting{{Line: 1, Key: "git"}, {Line: 3, Key: "theme.preset"}, {Line: 4, Key: "theme.size"}, {Line: 6, Key: "statusbar.gti"}}
+	if got := settings.Skipped(); !slices.Equal(got, want) {
+		t.Fatalf("skipped = %v, want %v", got, want)
+	}
+	if keys := settings.Keys(); len(keys) != 0 {
+		t.Fatalf("keys = %v", keys)
+	}
+
+	// The returned slice is a copy.
+	got := settings.Skipped()
+	got[0] = SkippedWebSetting{Line: 99, Key: "changed"}
+	if again := settings.Skipped(); !slices.Equal(again, want) {
+		t.Fatalf("mutating Skipped() changed the settings: %v", again)
+	}
+}
+
+func TestWebSettingsParseSkipsDynamicKeysTheCallerDoesNotKnow(t *testing.T) {
+	known := func(key string) bool {
+		return key == "statusbar.usage.codex" || key == "statusbar.usage.codex.5h"
+	}
+	content := "[statusbar.usage.nosuchprovider]\nvisible = false\n[statusbar.usage.codex]\nvisible = true\nmonthly = false\n5h = false\n"
+	settings, err := ParseWebSettings("/x/web.toml", []byte(content), known)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SkippedWebSetting{{Line: 2, Key: "statusbar.usage.nosuchprovider.visible"}, {Line: 5, Key: "statusbar.usage.codex.monthly"}}
+	if got := settings.Skipped(); !slices.Equal(got, want) {
+		t.Fatalf("skipped = %v, want %v", got, want)
+	}
+	if keys := settings.Keys(); !slices.Equal(keys, []string{"statusbar.usage.codex", "statusbar.usage.codex.5h"}) {
+		t.Fatalf("keys = %v", keys)
+	}
+	// The provider table holds a known and a skipped key: one header, the
+	// skipped key after the known ones.
+	rendered := string(RenderWebSettings(settings))
+	wantText := webSettingsFileHeader + `
+[statusbar.usage.codex]
+visible = true
+5h = false
+monthly = false
+
+[statusbar.usage.nosuchprovider]
+visible = false
+`
+	if rendered != wantText {
+		t.Fatalf("render =\n%s\nwant\n%s", rendered, wantText)
+	}
+	for _, again := range []WebSettingKnown{nil, known} {
+		parsed, err := ParseWebSettings("/x/web.toml", []byte(rendered), again)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if twice := string(RenderWebSettings(parsed)); twice != rendered {
+			t.Fatalf("round trip changed the file:\n%s", twice)
+		}
 	}
 }
 
@@ -347,17 +452,209 @@ func TestWebSettingsInterruptedSaveLeavesThePreviousFileWhole(t *testing.T) {
 func TestWebSettingsUpdateNeverOverwritesAFileItCannotParse(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, WebSettingsFileName)
-	broken := []byte("[statusbar]\ngti = false\n")
+	broken := []byte("[statusbar]\ngit = \"off\"\n")
 	if err := os.WriteFile(path, broken, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := UpdateWebSettingsFile(path, nil, func(s *WebSettings) error { return s.Set("statusbar.git", "off") })
-	if err == nil || err.Error() != path+`:2: unknown key "statusbar.gti"` {
+	err := UpdateWebSettingsFile(path, nil, func(s *WebSettings) error { return s.Set("statusbar.clock", "off") })
+	if err == nil || err.Error() != path+`:2: key "statusbar.git" must be true or false` {
 		t.Fatalf("err = %v", err)
 	}
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(after, broken) {
 		t.Fatalf("a broken web.toml was rewritten:\n%s", after)
+	}
+}
+
+func TestWebSettingsUpdateKeepsKeysThisBuildDoesNotKnow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), WebSettingsFileName)
+	content := "[statusbar]\ngit = false\n[ai]\nnew_window_mode = \"resume\"\n[confirm]\nstop_agent = true\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateWebSettingsFile(path, nil, func(s *WebSettings) error { return s.Set("statusbar.clock", "off") }); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(written)
+	want := webSettingsFileHeader + `
+[statusbar]
+git = false
+clock = false
+
+[ai]
+new_window_mode = "resume"
+
+[confirm]
+stop_agent = true
+`
+	if text != want {
+		t.Fatalf("web.toml =\n%s\nwant\n%s", text, want)
+	}
+	for _, header := range []string{"\n[ai]\n", "\n[confirm]\n", "\n[statusbar]\n"} {
+		if n := strings.Count(text, header); n != 1 {
+			t.Errorf("%q appears %d times", header, n)
+		}
+	}
+	for _, line := range []string{"\nnew_window_mode = \"resume\"\n", "\nstop_agent = true\n"} {
+		if !strings.Contains(text, line) {
+			t.Errorf("web.toml lost %q", line)
+		}
+	}
+	settings, err := LoadWebSettingsFile(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := settings.Skipped(); !slices.Equal(got, []SkippedWebSetting{{Line: 10, Key: "ai.new_window_mode"}, {Line: 13, Key: "confirm.stop_agent"}}) {
+		t.Fatalf("skipped = %v", got)
+	}
+	for _, key := range []string{"statusbar.git", "statusbar.clock"} {
+		if got, ok := settings.Value(key); !ok || got != "off" {
+			t.Errorf("%s = %q %v", key, got, ok)
+		}
+	}
+	if again := string(RenderWebSettings(settings)); again != text {
+		t.Fatalf("round trip changed the file:\n%s", again)
+	}
+
+	// A known key set later in a table that held only skipped entries
+	// joins that table's one header.
+	if err := UpdateWebSettingsFile(path, nil, func(s *WebSettings) error { return s.Set("ai.splitCwdFrom", "pane") }); err != nil {
+		t.Fatal(err)
+	}
+	written, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = webSettingsFileHeader + `
+[ai]
+split_cwd_from = "pane"
+new_window_mode = "resume"
+
+[statusbar]
+git = false
+clock = false
+
+[confirm]
+stop_agent = true
+`
+	if string(written) != want {
+		t.Fatalf("web.toml =\n%s\nwant\n%s", written, want)
+	}
+}
+
+func TestWebSettingsUnknownKeyInAKnownTableStaysUnderItsHeader(t *testing.T) {
+	content := "[statusbar]\ngti = false\nclock = true # hand edit\nresources_extra = \"cpu\" # kept\ngit = false\n"
+	settings, err := ParseWebSettings("/x/web.toml", []byte(content), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(RenderWebSettings(settings))
+	want := webSettingsFileHeader + `
+[statusbar]
+git = false
+clock = true
+gti = false
+resources_extra = "cpu" # kept
+`
+	if got != want {
+		t.Fatalf("render =\n%s\nwant\n%s", got, want)
+	}
+	parsed, err := ParseWebSettings("/x/web.toml", []byte(got), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again := string(RenderWebSettings(parsed)); again != got {
+		t.Fatalf("round trip changed the file:\n%s", again)
+	}
+}
+
+func TestWebSettingsSetReplacesASkippedEntryAtTheSameLocation(t *testing.T) {
+	known := func(key string) bool { return key == "statusbar.usage.codex" }
+	content := "[statusbar.usage.codex]\nmonthly = false\n"
+	settings, err := ParseWebSettings("/x/web.toml", []byte(content), known)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := settings.Skipped(); !slices.Equal(got, []SkippedWebSetting{{Line: 2, Key: "statusbar.usage.codex.monthly"}}) {
+		t.Fatalf("skipped = %v", got)
+	}
+	if err := settings.Set("statusbar.usage.codex.monthly", "on"); err != nil {
+		t.Fatal(err)
+	}
+	if got := settings.Skipped(); len(got) != 0 {
+		t.Fatalf("skipped after Set = %v", got)
+	}
+	rendered := string(RenderWebSettings(settings))
+	if n := strings.Count(rendered, "monthly = "); n != 1 || !strings.Contains(rendered, "\nmonthly = true\n") {
+		t.Fatalf("render =\n%s", rendered)
+	}
+	parsed, err := ParseWebSettings("/x/web.toml", []byte(rendered), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Skipped(); len(got) != 0 {
+		t.Fatalf("skipped after re-parse = %v", got)
+	}
+	if got, ok := parsed.Value("statusbar.usage.codex.monthly"); !ok || got != "on" {
+		t.Fatalf("monthly = %q %v", got, ok)
+	}
+}
+
+func TestWebSettingsSkippedTopLevelKeysStayBeforeTheFirstTable(t *testing.T) {
+	// After a header, `git = false` would belong to that table, so a
+	// top-level key is written right after the file header.
+	content := "git = false\nlocale = \"ko\"\n[statusbar]\ngit = false\n[theme]\npreset = \"forest\"\n"
+	settings, err := ParseWebSettings("/x/web.toml", []byte(content), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Set("statusbar.clock", "off"); err != nil {
+		t.Fatal(err)
+	}
+	got := string(RenderWebSettings(settings))
+	want := webSettingsFileHeader + `
+git = false
+locale = "ko"
+
+[statusbar]
+git = false
+clock = false
+
+[theme]
+preset = "forest"
+`
+	if got != want {
+		t.Fatalf("render =\n%s\nwant\n%s", got, want)
+	}
+	parsed, err := ParseWebSettings("/x/web.toml", []byte(got), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, e := range parsed.Skipped() {
+		keys = append(keys, e.Key)
+	}
+	if !slices.Equal(keys, []string{"git", "locale", "theme.preset"}) {
+		t.Fatalf("skipped = %v", parsed.Skipped())
+	}
+	if got := parsed.Keys(); !slices.Equal(got, []string{"statusbar.git", "statusbar.clock"}) {
+		t.Fatalf("keys = %v", got)
+	}
+	if again := string(RenderWebSettings(parsed)); again != got {
+		t.Fatalf("round trip changed the file:\n%s", again)
+	}
+
+	// A file of only top-level keys keeps them after the file header.
+	only, err := ParseWebSettings("/x/web.toml", []byte("git = false\n"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(RenderWebSettings(only)); got != webSettingsFileHeader+"\ngit = false\n" {
+		t.Fatalf("render =\n%s", got)
 	}
 }
 

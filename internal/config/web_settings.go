@@ -94,9 +94,40 @@ func (e *WebSettingsError) Error() string {
 }
 
 // WebSettings is the content of web.toml, keyed by API key with API values
-// ("on"/"off" for a switch).
+// ("on"/"off" for a switch). Entries this build does not know are kept
+// aside, unapplied, so a write can put them back (see Skipped).
 type WebSettings struct {
-	values map[string]string
+	values  map[string]string
+	skipped []webSettingSkipped
+}
+
+// SkippedWebSetting is a web.toml entry this build does not know: a key not
+// in the registry, or a dynamic key the caller did not know. Its value is
+// neither checked nor applied, and a web write keeps it. Key is the dotted
+// TOML path, not an API key.
+type SkippedWebSetting struct {
+	Line int
+	Key  string
+}
+
+// webSettingSkipped is a skipped entry as a write puts it back: raw is the
+// value text after `=`, trimmed.
+type webSettingSkipped struct {
+	line             int
+	table, name, raw string
+}
+
+// Skipped returns the entries this build did not know, in file order.
+func (s WebSettings) Skipped() []SkippedWebSetting {
+	out := make([]SkippedWebSetting, len(s.skipped))
+	for i, e := range s.skipped {
+		key := e.name
+		if e.table != "" {
+			key = e.table + "." + e.name
+		}
+		out[i] = SkippedWebSetting{Line: e.line, Key: key}
+	}
+	return out
 }
 
 // Value returns the web value of key, and whether the web set one.
@@ -144,9 +175,10 @@ func (s WebSettings) Keys() []string {
 
 // Set records a web value for key. It checks the key's shape against the
 // registry and the value against its kind; whether a dynamic key names an
-// existing provider or window is the caller's check.
+// existing provider or window is the caller's check. A skipped entry at the
+// same location is dropped, so the written file holds only the new value.
 func (s *WebSettings) Set(key, value string) error {
-	index, _, _, ok := webSettingLocation(key)
+	index, table, name, ok := webSettingLocation(key)
 	if !ok {
 		return fmt.Errorf("unknown web setting %q", key)
 	}
@@ -168,6 +200,13 @@ func (s *WebSettings) Set(key, value string) error {
 		s.values = map[string]string{}
 	}
 	s.values[key] = value
+	kept := make([]webSettingSkipped, 0, len(s.skipped))
+	for _, e := range s.skipped {
+		if e.table != table || e.name != name {
+			kept = append(kept, e)
+		}
+	}
+	s.skipped = kept
 	return nil
 }
 
@@ -242,9 +281,10 @@ func substituteWebSettingPlaceholders(pattern string, bind map[string]string) st
 	return strings.Join(segments, ".")
 }
 
-// LoadWebSettingsFile reads web.toml. A missing file is an empty layer. A
-// file that does not match the registry is a *WebSettingsError naming the
-// line; nothing in it is used.
+// LoadWebSettingsFile reads web.toml. A missing file is an empty layer. Keys
+// this build does not know are skipped (see ParseWebSettings). A file that
+// cannot be read is a *WebSettingsError naming the line; nothing in it is
+// used.
 func LoadWebSettingsFile(path string, known WebSettingKnown) (WebSettings, error) {
 	if strings.TrimSpace(path) == "" {
 		return WebSettings{}, ErrHomeDirRequired
@@ -265,9 +305,13 @@ func LoadWebSettingsFile(path string, known WebSettingKnown) (WebSettings, error
 //
 // The accepted syntax is a strict TOML subset: blank lines, `#` comments,
 // `[table]` / `[a.b]` headers of bare keys, and `key = "string"`,
-// `key = 'string'` or `key = true|false` with a bare key. Anything else --
-// an unknown key, a value of the wrong kind, a repeated key or table, an
-// array, a dotted or quoted key -- is an error naming the line.
+// `key = 'string'` or `key = true|false` with a bare key. A key the registry
+// does not have, or a dynamic key known rejects, is skipped: its value is not
+// checked or applied, and Skipped lists it. Anything else -- a known key's
+// value of the wrong kind, a repeated key or table, an array of tables, a
+// dotted or quoted key, a missing value or a multi-line string, a skipped key
+// whose path collides with a table or key the registry or the file uses --
+// is an error naming the line.
 func ParseWebSettings(path string, content []byte, known WebSettingKnown) (WebSettings, error) {
 	settings := WebSettings{values: map[string]string{}}
 	fail := func(line int, format string, args ...any) (WebSettings, error) {
@@ -275,6 +319,9 @@ func ParseWebSettings(path string, content []byte, known WebSettingKnown) (WebSe
 	}
 	tables := map[string]bool{}
 	keys := map[string]int{}
+	// The paths skipped entries set as values and use as tables, by line.
+	skippedValues := map[string]int{}
+	skippedTables := map[string]int{}
 	table := ""
 	for i, raw := range strings.Split(string(content), "\n") {
 		n := i + 1
@@ -324,7 +371,30 @@ func ParseWebSettings(path string, content []byte, known WebSettingKnown) (WebSe
 		keys[dotted] = n
 		index, key, ok := webSettingForTOML(table, name)
 		if !ok || (webSettingSpecs[index].dynamic() && known != nil && !known(key)) {
-			return fail(n, "unknown key %q", dotted)
+			raw := strings.TrimSpace(after)
+			if err := checkSkippedTOMLValue(raw); err != nil {
+				return fail(n, "key %q: %v", dotted, err)
+			}
+			if message := webSettingOverlap(table, name); message != "" {
+				return fail(n, "key %q overlaps %s this build uses", dotted, message)
+			}
+			if first, clash := skippedTables[dotted]; clash {
+				return fail(n, "key %q overlaps the table [%s] used on line %d", dotted, dotted, first)
+			}
+			prefixes := webSettingTablePrefixes(table)
+			for _, prefix := range prefixes {
+				if first, clash := skippedValues[prefix]; clash {
+					return fail(n, "key %q overlaps the key %q set on line %d", dotted, prefix, first)
+				}
+			}
+			for _, prefix := range prefixes {
+				if _, seen := skippedTables[prefix]; !seen {
+					skippedTables[prefix] = n
+				}
+			}
+			skippedValues[dotted] = n
+			settings.skipped = append(settings.skipped, webSettingSkipped{line: n, table: table, name: name, raw: raw})
+			continue
 		}
 		value, err := parseTOMLScalar(after)
 		if err != nil {
@@ -351,6 +421,60 @@ func ParseWebSettings(path string, content []byte, known WebSettingKnown) (WebSe
 		}
 	}
 	return settings, nil
+}
+
+// webSettingTablePrefixes lists table and each table above it, outermost
+// first: "a.b" is "a", "a.b". The top level ("") has none.
+func webSettingTablePrefixes(table string) []string {
+	if table == "" {
+		return nil
+	}
+	segments := strings.Split(table, ".")
+	out := make([]string, len(segments))
+	for i := range segments {
+		out[i] = strings.Join(segments[:i+1], ".")
+	}
+	return out
+}
+
+// webSettingOverlap describes how a skipped entry at [table] name collides
+// with the registry, or returns "": its path would be a table the registry
+// uses, or a table it sits in would be a key the registry uses. Writing it
+// back would give a file that is not valid TOML once both are set.
+func webSettingOverlap(table, name string) string {
+	path := []string{name}
+	if table != "" {
+		path = append(strings.Split(table, "."), name)
+	}
+	for _, spec := range webSettingSpecs {
+		specTable := strings.Split(spec.Table, ".")
+		if len(path) <= len(specTable) && matchWebSettingSegments(specTable[:len(path)], path, map[string]string{}) {
+			return "the table [" + strings.Join(path, ".") + "]"
+		}
+	}
+	for _, prefix := range webSettingTablePrefixes(table) {
+		segments := strings.Split(prefix, ".")
+		for _, spec := range webSettingSpecs {
+			pattern := append(strings.Split(spec.Table, "."), spec.Name)
+			if matchWebSettingSegments(pattern, segments, map[string]string{}) {
+				return "the key " + strconv.Quote(prefix)
+			}
+		}
+	}
+	return ""
+}
+
+// checkSkippedTOMLValue checks the raw value of a skipped entry for what a
+// verbatim rewrite would break: a missing value (or only a comment) and a
+// multi-line string. The value itself is not checked.
+func checkSkippedTOMLValue(raw string) error {
+	switch {
+	case raw == "", raw[0] == '#':
+		return errors.New("missing value")
+	case strings.HasPrefix(raw, `"""`), strings.HasPrefix(raw, "'''"):
+		return errors.New("multi-line strings are not supported")
+	}
+	return nil
 }
 
 type tomlScalar struct {
@@ -517,15 +641,35 @@ const webSettingsFileHeader = `# projmux web settings. The web UI writes this fi
 `
 
 // RenderWebSettings is the deterministic web.toml text for s: tables and keys
-// in registry order, dynamic tables and keys by name.
+// in registry order, dynamic tables and keys by name. Skipped entries are
+// written back verbatim: top-level ones before the first table, the rest
+// after the known keys of their table, and tables holding only skipped
+// entries last, in the order the file had them.
 func RenderWebSettings(s WebSettings) []byte {
 	var b strings.Builder
 	b.WriteString(webSettingsFileHeader)
-	table := "\x00"
+	writeSkipped := func(table string) {
+		for _, e := range s.skipped {
+			if e.table == table {
+				b.WriteString(e.name + " = " + e.raw + "\n")
+			}
+		}
+	}
+	// A top-level key after a header would belong to that table.
+	if slices.ContainsFunc(s.skipped, func(e webSettingSkipped) bool { return e.table == "" }) {
+		b.WriteString("\n")
+		writeSkipped("")
+	}
+	written := map[string]bool{"": true}
+	table := ""
 	for _, key := range s.Keys() {
 		index, keyTable, name, _ := webSettingLocation(key)
 		if keyTable != table {
+			if table != "" {
+				writeSkipped(table)
+			}
 			table = keyTable
+			written[table] = true
 			b.WriteString("\n[" + table + "]\n")
 		}
 		value := s.values[key]
@@ -540,6 +684,16 @@ func RenderWebSettings(s WebSettings) []byte {
 			value = encodeTOMLBasicString(value)
 		}
 		b.WriteString(name + " = " + value + "\n")
+	}
+	if table != "" {
+		writeSkipped(table)
+	}
+	for _, e := range s.skipped {
+		if !written[e.table] {
+			written[e.table] = true
+			b.WriteString("\n[" + e.table + "]\n")
+			writeSkipped(e.table)
+		}
 	}
 	return []byte(b.String())
 }
@@ -611,8 +765,9 @@ func SaveWebSettingsFile(path string, s WebSettings) error {
 }
 
 // UpdateWebSettingsFile loads web.toml, applies update, and saves the result.
-// A file that fails to load is returned as the error and left untouched, so a
-// web change never overwrites a hand edit it could not read.
+// Keys this build does not know are written back as they were. A file that
+// fails to load is returned as the error and left untouched, so a web change
+// never overwrites a hand edit it could not read.
 func UpdateWebSettingsFile(path string, known WebSettingKnown, update func(*WebSettings) error) error {
 	settings, err := LoadWebSettingsFile(path, known)
 	if err != nil {

@@ -322,13 +322,41 @@ func TestWebSettingsRefuseAnUnreadableWebTomlWithFileAndLine(t *testing.T) {
 		return text
 	}
 
-	for _, tc := range []struct{ content, want string }{
-		{"[statusbar]\ngit = false\ngti = false\n", paths.WebSettingsFile() + `:3: unknown key "statusbar.gti"`},
-		{"# usage\n[statusbar.usage.nosuchprovider]\nvisible = false\n", paths.WebSettingsFile() + `:3: unknown key "statusbar.usage.nosuchprovider.visible"`},
-		{"[statusbar.usage.codex]\nmonthly = false\n", paths.WebSettingsFile() + `:2: unknown key "statusbar.usage.codex.monthly"`},
-		{"[statusbar]\ngit = \"off\"\n", paths.WebSettingsFile() + `:2: key "statusbar.git" must be true or false`},
+	// Keys this build does not know are skipped: the reads answer, a web
+	// change lands, and the file keeps them. kept is empty for a file that is
+	// refused.
+	for _, tc := range []struct {
+		content, want string
+		kept          []string
+	}{
+		{"[statusbar]\ngit = false\ngti = false\n", "", []string{"\ngti = false\n"}},
+		{"# usage\n[statusbar.usage.nosuchprovider]\nvisible = false\n", "", []string{"\n[statusbar.usage.nosuchprovider]\nvisible = false\n"}},
+		{"[statusbar.usage.codex]\nmonthly = false\n", "", []string{"\n[statusbar.usage.codex]\n", "\nmonthly = false\n"}},
+		{"[statusbar]\ngit = \"off\"\n", paths.WebSettingsFile() + `:2: key "statusbar.git" must be true or false`, nil},
 	} {
 		writeWebLayerFile(t, paths.WebSettingsFile(), tc.content)
+
+		if tc.want == "" {
+			if code, body := send("GET", ""); code != 200 {
+				t.Errorf("GET settings = %d %v, want 200", code, body)
+			}
+			if code, body := webGet(t, handler, "/api/v1/web/statusbar"); code != 200 {
+				t.Errorf("GET statusbar = %d %v, want 200", code, body)
+			}
+			if code, body := send("PATCH", `{"key":"statusbar.clock","value":"off"}`); code != 200 {
+				t.Errorf("PATCH = %d %v, want 200", code, body)
+			}
+			content, _ := os.ReadFile(paths.WebSettingsFile())
+			for _, line := range tc.kept {
+				if !strings.Contains(string(content), line) {
+					t.Errorf("PATCH dropped %q:\n%s", line, content)
+				}
+			}
+			if !strings.Contains(string(content), "\nclock = false\n") {
+				t.Errorf("PATCH did not land:\n%s", content)
+			}
+			continue
+		}
 
 		code, body := send("GET", "")
 		if code != 409 || errorCode(body) != web.CodeRefused || message(body) != tc.want {

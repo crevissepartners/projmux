@@ -135,6 +135,7 @@ Text.Locale	Resolved-locale accessor retained as the test seam that pins the liv
 UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
 ValidateName	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
+WebSettings.Skipped	Public list of the web.toml entries this build skipped (line and dotted key), retained as the reporting surface for a web settings screen; web layer consumer pending.
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.

@@ -1216,19 +1216,27 @@ owner Project's `.projmux/config.toml`, then `web.toml`, then the global
 `config.toml`, then `project`. A Project's own config still beats a web change.
 
 The file is a strict TOML subset: `#` comments, `[table]` headers of bare keys,
-and `key = "string"` or `key = true|false` with bare keys. An unknown key, a
-provider or window the HUD does not have, a value of the wrong kind, a repeated
-key or table, arrays, and dotted or quoted keys are errors that name the file
-and line, for example `~/.config/projmux/web.toml:3: unknown key
-"statusbar.gti"`. While `web.toml` has such an error, the web settings and
-status bar reads answer `409 refused` with that message, a web change is
-refused without rewriting the file, and the web usage HUD reports it instead of
-drawing cells. Nothing in the file is ignored silently.
+and `key = "string"` or `key = true|false` with bare keys. A key this build
+does not know, including a provider or window the HUD does not have, is
+skipped: its value is not checked or applied, and the next web change writes it
+back under the same table. A newer projmux can add keys without an older one
+refusing the file.
+
+A value of the wrong kind for a known key, a repeated key or table, arrays of
+tables, dotted or quoted keys, multi-line strings, a missing value, and an
+unknown key whose path collides with a table or key this build uses (for
+example `[statusbar]` `usage = false`, where `statusbar.usage` is a table) are
+errors that name the file and line, for example
+`~/.config/projmux/web.toml:2: key "statusbar.git" must be true or false`.
+While `web.toml` has such an error, the web settings and status bar reads
+answer `409 refused` with that message, a web change is refused without
+rewriting the file, and the web usage HUD reports it instead of drawing cells.
 
 The web writes the whole file on every change: a 0600 temp file in the same
 directory, fsynced, then renamed over `web.toml`, in a fixed key order. A
-reader sees the previous file or the new one, never a partial write. Comments
-you add by hand are not kept by the next web change.
+reader sees the previous file or the new one, never a partial write. Skipped
+keys are kept, but comments you add by hand on their own lines are not kept by
+the next web change.
 
 Enabled providers (`ai.provider.<id>`), `locale` and `statusbar.resources` are
 central: the web saves them to their central files, as the TUI Settings does,
