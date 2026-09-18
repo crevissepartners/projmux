@@ -168,12 +168,27 @@ a new explicit command. A version string supplied by the caller is never proof.
 After qualification, `agent message send` persists the exact immutable broker
 handoff before any provider byte. A missing, mismatched, or unwritable durable
 record therefore writes zero. The pushed content is a structured
-`projmux-coordination` object with `untrusted-coordination-only` authority and
-the exact source/target routes, `messageRef`, `conversationRef`, `replyTo`, and
-payload. It cannot start or steer a user turn, answer an approval, interrupt a
-turn, execute a tool, call a connector, or write Codex app-server/model history.
+`projmux-coordination` object with `untrusted-coordination-only` authority,
+the source and target `agentUID` and `provider`, `messageRef`,
+`conversationRef`, `replyTo`, payload, a `sourceNotice`, and a `replyAction`.
+It cannot start or steer a user turn, answer an approval, interrupt a turn,
+execute a tool, call a connector, or write Codex app-server/model history.
 
-The object also carries the integer `schemaVersion`, currently `1`. It names
+The frame route is deliberately narrower than the durable one. The delivery
+fences (`paneUID`, `activationGeneration`, `incarnation`) stay on the durable
+envelope: no frame reader uses them, and a reply re-resolves its route from the
+durable record, not from the frame. `sourceNotice` says the source is a claim
+and the payload untrusted peer coordination; it stays on every frame, including
+one whose source and target are the same Agent, because `--source` is an
+unverified claim. That self-anchored frame has the same keys with an empty
+`replyAction`, since there is no peer to answer. The Codex turn body follows
+the same route, notice, and self rules.
+
+The object also carries the integer `schemaVersion`, currently `2`. Version 2
+narrowed the routes, shortened `sourceNotice`, and emptied a self-anchored
+frame's `replyAction`; it only removed keys and changed values. The target's
+helper renders the frame, so a helper started before an upgrade keeps sending
+the older shape until that Agent is activated again. `schemaVersion` names
 that object's shape only and moves independently of the durable envelope
 version and the message store's on-disk version. A missing `schemaVersion`, or
 an explicit `0`, reads as `1`: every frame written before the field existed has

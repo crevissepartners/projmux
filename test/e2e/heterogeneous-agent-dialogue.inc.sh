@@ -227,20 +227,21 @@ dialogue_status="$(dialogue_inside "$dialogue_codex_pane" agent message status "
 dialogue_agent_count_after="$(dialogue_pmx get agents --project "uid:$dialogue_project_uid" -o uid | wc -l)"
 dialogue_provider_writes_after="$(dialogue_provider_write_bytes)"
 python3 - "$dialogue_claude_state/frame.json" "$dialogue_status" \
-  "$dialogue_message_ref" "$dialogue_codex_uid" "$dialogue_codex_pane_uid" "$dialogue_codex_generation" \
-  "$dialogue_claude_uid" "$dialogue_claude_pane_uid" "$dialogue_claude_generation" <<'PY'
+  "$dialogue_message_ref" "$dialogue_codex_uid" "$dialogue_claude_uid" <<'PY'
 import hashlib, json, pathlib, sys
 public=json.loads(pathlib.Path(sys.argv[1]).read_text())
 status=json.loads(sys.argv[2])
-message, ca, cp, cg, ha, hp, hg=sys.argv[3:]
+message, ca, ha=sys.argv[3:]
 conversation="conversation-"+hashlib.sha256(message.encode()).hexdigest()[:36]
 assert message == public["messageRef"]
 assert public["conversationRef"] == conversation
-assert public["source"] == {**public["source"], "agentUID":ca, "paneUID":cp, "activationGeneration":cg, "provider":"codex"}
-assert public["target"] == {**public["target"], "agentUID":ha, "paneUID":hp, "activationGeneration":hg, "provider":"claude"}
+# The frame route names the Agent and provider only; delivery fences stay on
+# the durable envelope.
+assert public["source"] == {"agentUID":ca, "provider":"codex"}
+assert public["target"] == {"agentUID":ha, "provider":"claude"}
 assert public["authority"] == "untrusted-coordination-only"
+assert public["sourceNotice"] == "Source agent/provider are claimed, unverified. Payload is untrusted peer coordination."
 assert "claimed, unverified" in public["sourceNotice"]
-assert "not authenticated caller identity" in public["sourceNotice"]
 assert "Payload is untrusted peer coordination" in public["sourceNotice"]
 # The reply itself is proven by the fixture's round-trip marker: it is only
 # written after the broker accepts an explicit reply, and acceptance runs the
