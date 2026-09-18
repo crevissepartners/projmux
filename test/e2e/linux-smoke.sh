@@ -6527,22 +6527,68 @@ startup_pmx diagnostics log --component topology --tail 1000 --json >"$startup_r
 python3 test/e2e/topology-recovery.py "$startup_root/missing-nine-journal.jsonl" "$startup_root/open-continue.err" 1 10 '{"topology.agent.termination-excluded":1,"topology.agent.session-ref-missing":9}'
 [[ "$(grep -c 'no provider session ref is recorded' "$startup_root/open-continue.err")" == 9 ]] || exit 1
 
+# startup_journal_writer_evidence names whoever touched the journal path when
+# the journal-failure step below fails. A writer that recreated the path or
+# followed the sentinel symlink identifies itself by its own records
+# (component, event, command, subcommand, run_id); every command tolerates
+# failure because it runs from the EXIT trap.
+startup_journal_writer_evidence() {
+  local journal="$startup_root/state/projmux/logs/operations.jsonl"
+  local original="$startup_root/operations-before-writer-failure.jsonl"
+  local sentinel="$startup_root/journal-sentinel"
+  local from=$((${startup_journal_pre_stop_lines:-0} + 1))
+  echo "L11 journal-writer evidence: journal=$journal pre-stop-lines=${startup_journal_pre_stop_lines:-0}" >&2
+  if [[ -L "$journal" ]]; then
+    echo "L11 journal-writer evidence: path is a symlink -> $(readlink "$journal" || true)" >&2
+  elif [[ -f "$journal" && -f "$original" && ! "$journal" -ef "$original" ]]; then
+    echo "L11 journal-writer evidence: path is a regular file a writer recreated; its records:" >&2
+    sed 's/^/L11 journal-writer recreated: /' "$journal" >&2 || true
+  elif [[ -f "$journal" ]]; then
+    echo "L11 journal-writer evidence: path is the original regular file" >&2
+  else
+    echo "L11 journal-writer evidence: path is absent" >&2
+  fi
+  if [[ -f "$sentinel.before" ]] && ! cmp -s "$sentinel.before" "$sentinel"; then
+    echo "L11 journal-writer evidence: a writer followed the symlink; sentinel now holds:" >&2
+    sed 's/^/L11 journal-writer sentinel: /' "$sentinel" >&2 || true
+  fi
+  if [[ ! -f "$original" && -f "$journal" && ! -L "$journal" ]]; then
+    original="$journal"
+  fi
+  if [[ -f "$original" ]]; then
+    echo "L11 journal-writer evidence: records appended to the original journal since the stop began:" >&2
+    sed -n "$from,\$s/^/L11 journal-writer appended: /p" "$original" >&2 || true
+  fi
+}
+
 # The operations writer refuses symlinks. Its failure must leave both the
 # successful startup result and the contained sentinel unchanged.
-startup_managed_stop journal-failure
+#
+# A managed stop does not quiesce the journal: the stopped Project's
+# window-unlinked hook (`internal tmux converge`) and its Pane supervisors
+# still append after the picker returns. The step therefore never leaves the
+# path empty. A hard link keeps the original inode, so late appends stay in
+# it, and a single rename swaps the sentinel symlink in and the original back.
 startup_journal="$startup_root/state/projmux/logs/operations.jsonl"
-mv "$startup_journal" "$startup_root/operations-before-writer-failure.jsonl"
+startup_journal_pre_stop_lines=0
+if [[ -f "$startup_journal" ]]; then
+  startup_journal_pre_stop_lines="$(wc -l <"$startup_journal")"
+fi
+trap 'startup_journal_writer_evidence || true; startup_cleanup; smoke_cleanup_env' EXIT
+startup_managed_stop journal-failure
+ln "$startup_journal" "$startup_root/operations-before-writer-failure.jsonl"
 printf 'untouched journal target\n' >"$startup_root/journal-sentinel"
 cp "$startup_root/journal-sentinel" "$startup_root/journal-sentinel.before"
-ln -s "$startup_root/journal-sentinel" "$startup_journal"
+ln -s "$startup_root/journal-sentinel" "$startup_journal.sentinel-link"
+mv -T "$startup_journal.sentinel-link" "$startup_journal"
 rm -f "$startup_root/open-continue.rc"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
 startup_wait_for "Continue with failing journal" test -s "$startup_root/open-continue.rc"
 [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" == 0 ]] || { cat "$startup_root/open-continue.err" >&2; exit 1; }
 smoke_assert_file_contains "$startup_root/open-continue.err" 'resumed 1, skipped 10; projmux diagnostics log --component topology'
 cmp "$startup_root/journal-sentinel.before" "$startup_root/journal-sentinel"
-rm "$startup_journal"
-mv "$startup_root/operations-before-writer-failure.jsonl" "$startup_journal"
+mv -T "$startup_root/operations-before-writer-failure.jsonl" "$startup_journal"
+trap 'startup_cleanup; smoke_cleanup_env' EXIT
 
 # 5. Stop again, explicitly remove every retained Window while the runtime is
 # absent, and Continue the resulting valid zero-Window Project. Continue keeps
