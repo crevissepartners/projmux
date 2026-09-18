@@ -54,9 +54,12 @@ func reregisterClaudeAgent(t *testing.T, f *claudeCoordinationTestFixture, sessi
 	return route
 }
 
-// reregisteredClaudeAdapter stands in for the helper serving the new
-// registration. Its explicit reply commits through the real durable store,
-// whose reply comparison is exact.
+// reregisteredClaudeAdapter is a stand-in for the helper serving the new
+// registration, not the real helper. Its explicit reply goes straight to the
+// store's exact PutReply comparison. A real re-registered helper still refuses
+// a reply to a message it did not deliver itself, because
+// (*claudeCoordinationHub).commitExplicitReply looks the original up only in
+// its own memory; that path is outside this change.
 type reregisteredClaudeAdapter struct {
 	store    *messagestore.Store
 	statuses int
@@ -90,12 +93,16 @@ func readyLeaseResolver(registryPath string) liveAgentMessageRouteResolver {
 	return liveAgentMessageRouteResolver{registryPath: registryPath, leaseProbe: ready, eligibilityProbe: ready}
 }
 
-// TestAgentMessageSurvivesSameSessionClaudeReregistration: a message written
-// to a Claude target before a same-session SessionStart re-registration (the
-// compact shape) is still current after it, for `agent message status` and
-// for a `--reply-to` answer. A re-registration under another SessionID is a
-// new conversation and stays stale.
-func TestAgentMessageSurvivesSameSessionClaudeReregistration(t *testing.T) {
+// TestAgentMessageStatusAndReplyCorrelationSurviveSameSessionReregistrationWithStandInHelper:
+// a message written to a Claude target before a same-session SessionStart
+// re-registration (the compact shape) stays current after it. Status runs the
+// real reader. The reply leg proves only that the reply envelope's route
+// correlation (the CLI `--reply-to` coremessage.ValidateReply and the store's
+// exact PutReply comparison) accepts it; the helper is a stand-in, and a real
+// re-registered helper still refuses a reply to a message it did not deliver
+// itself (see reregisteredClaudeAdapter). A re-registration under another
+// SessionID is a new conversation and stays stale.
+func TestAgentMessageStatusAndReplyCorrelationSurviveSameSessionReregistrationWithStandInHelper(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		session func(*claudeCoordinationTestFixture) string
