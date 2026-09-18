@@ -1765,6 +1765,9 @@ instead of falling back to another agent. Direct
 Canonical `create agent --provider <p>` launches and the provider shortcuts also
 fail when disabled. If all AI agents are disabled, the selective picker still offers the
 plain `shell` split and shows guidance to re-enable Claude/Codex/Antigravity.
+While at least one agent is enabled, the selective picker also offers a `resume`
+row between the agents and `shell`; it opens the resume session list in the
+same popup.
 For user-level skill, slash-command, editor, or launcher registrations that
 call this contract, see [AI Agent Shortcuts](ai-agent-shortcuts.md).
 

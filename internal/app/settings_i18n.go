@@ -738,6 +738,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"Providers":                          "picker.ai.resume_providers",
 	"Showing latest %d resume sessions.": "picker.ai.resume_showing_latest",
 	"Showing latest %d of %d resume sessions.": "picker.ai.resume_showing_latest_of",
+	"Resume a previous session":                "picker.ai.resume_row",
 	"Loading resume sessions…":                 "picker.ai.resume_loading",
 	"Loading preview…":                         "picker.ai.resume_preview_loading",
 	"preview unavailable":                      "picker.ai.resume_preview_unavailable",

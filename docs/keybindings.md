@@ -249,7 +249,7 @@ The client therefore never sees a shell Pane that is about to be replaced.
 | --- | --- |
 | `shell` | the shell Pane the create made; nothing else runs |
 | `claude`, `codex`, `antigravity` | exactly that Agent Pane, with no picker |
-| `selective` (also the unset default) | whatever the `Alt-7` picker chose: that Agent Pane, or the shell Pane for the shell row |
+| `selective` (also the unset default) | whatever the `Alt-7` picker chose: that Agent Pane, or the shell Pane for the shell row; its `resume` row opens the resume session list in the same popup |
 | `resume` | whatever the resume picker chose, on the same terms |
 
 Cancelling the picker creates nothing: no Window, and the client stays where it

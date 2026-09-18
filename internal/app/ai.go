@@ -1001,6 +1001,12 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 		return c.launchPickerSelection(agentPaneIntent{producer: canonicalProducerProviderPicker, provider: mode, placement: direction})
 	case aiModeShell:
 		return c.launchPickerSelection(agentPaneIntent{producer: canonicalProducerProviderPicker, placement: direction})
+	case aiModeResume:
+		// The resume row is not a launch: it swaps this popup's list for the
+		// resume session list in the same process, the mirror of the resume
+		// picker's `new` row. The popup was opened under the split picker's
+		// toggle mode, so that mode's close keys stay live in the resume list.
+		return c.runResumePickerInPopup(direction, aiSplitPickerPopupMode(direction))
 	default:
 		return nil
 	}
@@ -1176,6 +1182,15 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 }
 
 func (c *aiCommand) runResumePicker(direction string) error {
+	return c.runResumePickerInPopup(direction)
+}
+
+// runResumePickerInPopup is the resume picker hosted by a popup that may have
+// been opened for another picker. The close keys are the resume popup mode's,
+// plus those of every hostModes entry: a resume list reached from the launch
+// picker's resume row still closes on the key that opened the launch picker.
+// With no hostModes the bindings are exactly the resume popup mode's.
+func (c *aiCommand) runResumePickerInPopup(direction string, hostModes ...string) error {
 	contextDir := c.resolveContextDir()
 	homeDir, _ := c.home()
 	depth := resolveAIResumeScanDepth(c.homeDir, c.lookupEnv, contextDir).Depth
@@ -1194,7 +1209,7 @@ func (c *aiCommand) runResumePicker(direction string) error {
 		MoreNotLoaded:         moreNotLoaded,
 		SelectionDetail:       controller.initialDetail(),
 		ExpectKeys:            []string{"enter"},
-		Bindings:              pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
+		Bindings:              c.resumePickerCloseBindings(direction, hostModes...),
 		DeferredUpdate:        controller.update,
 		DeferredUpdateTrigger: controller.events,
 		FocusChanged:          controller.focus,
@@ -1217,6 +1232,17 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	}
 	selection = enrichAIResumeSelectionFromSummaries(selection, controller.snapshotSummaries())
 	return c.runSelectedResumeSession(selection, direction)
+}
+
+// resumePickerCloseBindings is the resume popup mode's close keys, unioned with
+// each host popup mode's, deduplicated in first-seen order.
+func (c *aiCommand) resumePickerCloseBindings(direction string, hostModes ...string) []string {
+	fallback := []string{"esc", "ctrl-c", "ctrl-alt-s"}
+	keys := effectivePickerKeysForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), fallback)
+	for _, mode := range hostModes {
+		keys = append(keys, effectivePickerKeysForPopupToggleMode(c.homeDir, c.lookupEnv, mode, fallback)...)
+	}
+	return pickerCloseBindings(uniqueNonEmptyStrings(keys)...)
 }
 
 type aiResumeSelection struct {
@@ -1895,12 +1921,18 @@ func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 
 func (c *aiCommand) agentRows() []intpickercompat.Entry {
 	enabled := c.enabledAIAgents()
-	rows := make([]intpickercompat.Entry, 0, len(enabled)+3)
+	rows := make([]intpickercompat.Entry, 0, len(enabled)+4)
 	locale := c.locale()
 	for _, provider := range aiprovider.PickerEligible() {
 		if aiEnabledAgentsContains(enabled, config.AIAgentProvider(provider.ID)) {
 			rows = append(rows, c.agentRow(provider, locale))
 		}
+	}
+	// The resume row follows the provider rows whenever there is one. It is a
+	// fixed row: whether any session can be resumed is the resume picker's own
+	// scan, and opening this picker must not start it.
+	if len(rows) > 0 {
+		rows = append(rows, aiResumeAgentRow(locale))
 	}
 	if len(enabled) == 0 {
 		rows = append(rows, intpickercompat.Entry{
@@ -1930,6 +1962,21 @@ func (c *aiCommand) agentRow(provider aiprovider.Metadata, locale i18n.Locale) i
 		Label:     fmt.Sprintf("%-8s %s %s", provider.ID, status, desc),
 		Value:     string(provider.ID),
 		SearchKey: string(provider.ID) + " " + desc,
+	}
+}
+
+// aiResumeAgentRow is the launch picker's entry into the resume session list.
+func aiResumeAgentRow(locale i18n.Locale) intpickercompat.Entry {
+	const english = "Resume a previous session"
+	desc := localizeUIText(locale, english)
+	search := aiModeResume + " " + english
+	if desc != english {
+		search += " " + desc
+	}
+	return intpickercompat.Entry{
+		Label:     fmt.Sprintf("%-8s %s %s", aiModeResume, "\x1b[36m[READY]\x1b[0m", desc),
+		Value:     aiModeResume,
+		SearchKey: search,
 	}
 }
 

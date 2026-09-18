@@ -323,7 +323,7 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	if got := runner.options.Header; got != "" {
 		t.Fatalf("runner header = %q, want direction only in title", got)
 	}
-	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeAntigravity, aiModeShell}; !reflect.DeepEqual(got, want) {
+	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeAntigravity, aiModeResume, aiModeShell}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("runner entry order = %#v, want %#v", got, want)
 	}
 	for _, entry := range runner.options.Entries {
@@ -804,7 +804,7 @@ func TestAIPickerFiltersDisabledAgents(t *testing.T) {
 	if _, err := cmd.runAgentPicker("right"); err != nil {
 		t.Fatalf("runAgentPicker error = %v", err)
 	}
-	if got, want := entryValues(runner.options.Entries), []string{aiModeClaude, aiModeShell}; !reflect.DeepEqual(got, want) {
+	if got, want := entryValues(runner.options.Entries), []string{aiModeClaude, aiModeResume, aiModeShell}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("runner entry order = %#v, want %#v", got, want)
 	}
 	if hasEntryValue(runner.options.Entries, aiModeCodex) {
@@ -820,8 +820,8 @@ func TestAIProviderPickerRowsDeriveFromRegistryAndHideDisabledProviders(t *testi
 	cmd := testAICommand(home)
 
 	rows := cmd.agentRows()
-	if got, want := entryValues(rows), []string{string(aiprovider.Claude), aiModeShell}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("agentRows values = %#v, want enabled registry providers plus shell %#v", got, want)
+	if got, want := entryValues(rows), []string{string(aiprovider.Claude), aiModeResume, aiModeShell}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentRows values = %#v, want enabled registry providers, resume, then shell %#v", got, want)
 	}
 	if hasEntryValue(rows, string(aiprovider.Codex)) {
 		t.Fatalf("agentRows = %#v, want disabled Codex hidden", rows)
