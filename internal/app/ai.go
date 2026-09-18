@@ -2063,9 +2063,8 @@ func aiProviderEnableCommand(provider string) string {
 }
 
 func (c *aiCommand) getMode() string {
-	path := c.configFile()
-	config.NoteFrontRead(config.TmuxAISplitModeFileName, path)
-	content, err := os.ReadFile(path)
+	config.NoteFrontRead(config.TmuxAISplitModeFileName, c.configFile())
+	content, err := os.ReadFile(c.configFile())
 	if err != nil {
 		return aiModeSelective
 	}
