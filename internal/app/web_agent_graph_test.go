@@ -141,8 +141,18 @@ func appendGraphHistory(t *testing.T, stateDir, name, content string) {
 
 func agentGraphBackend(t *testing.T, stateDir string) *webBackend {
 	t.Helper()
+	return agentGraphBackendWith(t, stateDir, nil)
+}
+
+// agentGraphBackendWith lets edit change the fixture Registry before it is
+// installed.
+func agentGraphBackendWith(t *testing.T, stateDir string, edit func(*coremetadata.Registry)) *webBackend {
+	t.Helper()
 	backend, _ := webFixtureBackend(t)
 	registry := agentGraphRegistry(t)
+	if edit != nil {
+		edit(&registry)
+	}
 	backend.loadRegistry = func() (coremetadata.Registry, error) { return registry.Clone(), nil }
 	backend.paths = func() (config.Paths, error) { return config.Paths{StateDir: stateDir}, nil }
 	return backend
@@ -313,7 +323,7 @@ func TestAgentGraphSinceIsTheOldestRetainedMessage(t *testing.T) {
 
 	empty := t.TempDir()
 	rec := webGetRaw(t, agentGraphBackend(t, empty), "/api/v1/projects/prj-alpha/agent-graph")
-	for _, fragment := range []string{`"since":null`, `"edges":[]`, `"skipped":0`, `"omitted":{"pairs":0,"messages":0}`} {
+	for _, fragment := range []string{`"since":null`, `"edges":[]`, `"skipped":0`, `"omitted":{"pairs":0,"messages":0,"created":0}`} {
 		if !strings.Contains(rec, fragment) {
 			t.Fatalf("empty archive body %s lacks %s", rec, fragment)
 		}
@@ -515,5 +525,125 @@ func TestAgentGraphRefusesAMalformedStoreAndSkipsATornLogLine(t *testing.T) {
 	edges := graphEdges(t, body)
 	if body["skipped"] != 1.0 || len(edges) != 1 || edges[0]["aToB"] != 1.0 || edges[0]["bToA"] != 0.0 {
 		t.Fatalf("torn log body = %v, want the whole line read and skipped 1", body)
+	}
+}
+
+// annotateCreator sets child's creator annotation to creator, which may be
+// empty.
+func annotateCreator(t *testing.T, registry *coremetadata.Registry, child, creator string) {
+	t.Helper()
+	for i := range registry.Agents {
+		if registry.Agents[i].Metadata.UID == child {
+			registry.Agents[i].Metadata.Annotations = map[string]string{coremetadata.AnnotationCreatorAgent: creator}
+			return
+		}
+	}
+	t.Fatalf("no agent %s in the fixture", child)
+}
+
+// TestAgentGraphDrawsACreatedEdgeFromEachAnnotatedAgentsCreator covers Task 4
+// acceptance 1: a created edge runs from the annotated creator to the Agent it
+// created when either end is in the Project, carries no counts, pulls an
+// outside end into agents, and does not depend on the message archive.
+func TestAgentGraphDrawsACreatedEdgeFromEachAnnotatedAgentsCreator(t *testing.T) {
+	edit := func(registry *coremetadata.Registry) {
+		// Same Project.
+		annotateCreator(t, registry, "agt-alpha-idle", "agt-alpha-claude")
+		// A creator in another Project.
+		annotateCreator(t, registry, "agt-alpha-codex", "agt-beta-quiet")
+		// Created in another Project by one of this Project's Agents.
+		annotateCreator(t, registry, "agt-gone-codex", "agt-alpha-claude")
+		// The same pair as a conversation edge.
+		annotateCreator(t, registry, "agt-beta-codex", "agt-alpha-claude")
+	}
+	stateDir := t.TempDir()
+	writeAgentGraphFixture(t, stateDir)
+	code, body := getAgentGraph(t, agentGraphBackendWith(t, stateDir, edit), "prj-alpha")
+	if code != http.StatusOK {
+		t.Fatalf("GET agent-graph = %d %v", code, body)
+	}
+	created := []map[string]any{
+		{"kind": "created", "a": "agt-alpha-claude", "b": "agt-alpha-idle"},
+		{"kind": "created", "a": "agt-alpha-claude", "b": "agt-beta-codex"},
+		{"kind": "created", "a": "agt-alpha-claude", "b": "agt-gone-codex"},
+		{"kind": "created", "a": "agt-beta-quiet", "b": "agt-alpha-codex"},
+	}
+	want := []map[string]any{
+		{"kind": "conversation", "a": "agt-alpha-claude", "b": "agt-alpha-codex", "aToB": 1.0, "bToA": 2.0,
+			"lastAcceptedAt": rfc3339(msgClaudeToCodex.at)},
+		created[0],
+		{"kind": "conversation", "a": "agt-alpha-claude", "b": "agt-beta-codex", "aToB": 1.0, "bToA": 1.0,
+			"lastAcceptedAt": rfc3339(msgClaudeToBeta.at)},
+		created[1], created[2], created[3],
+	}
+	got, _ := json.Marshal(graphEdges(t, body))
+	wantJSON, _ := json.Marshal(want)
+	if !bytes.Equal(got, wantJSON) {
+		t.Fatalf("edges = %s\nwant %s", got, wantJSON)
+	}
+	agents, _ := json.Marshal(graphAgents(t, body))
+	wantAgents, _ := json.Marshal(map[string]string{
+		"agt-alpha-claude": "prj-alpha", "agt-alpha-codex": "prj-alpha", "agt-alpha-idle": "prj-alpha",
+		"agt-beta-codex": "prj-beta", "agt-beta-quiet": "prj-beta", "agt-gone-codex": "prj-gone",
+	})
+	if !bytes.Equal(agents, wantAgents) {
+		t.Fatalf("agents = %s\nwant %s", agents, wantAgents)
+	}
+	// As written: a conversation edge keeps its keys and their order, and a
+	// created edge has no counts.
+	raw := webGetRaw(t, agentGraphBackendWith(t, stateDir, edit), "/api/v1/projects/prj-alpha/agent-graph")
+	for _, fragment := range []string{
+		`{"kind":"conversation","a":"agt-alpha-claude","b":"agt-alpha-codex","aToB":1,"bToA":2,"lastAcceptedAt":"` +
+			rfc3339(msgClaudeToCodex.at) + `"}`,
+		`{"kind":"created","a":"agt-alpha-claude","b":"agt-alpha-idle"}`,
+	} {
+		if !strings.Contains(raw, fragment) {
+			t.Fatalf("body %s lacks %s", raw, fragment)
+		}
+	}
+
+	// With nothing retained the created edges are all there is.
+	empty := t.TempDir()
+	_, body = getAgentGraph(t, agentGraphBackendWith(t, empty, edit), "prj-alpha")
+	got, _ = json.Marshal(graphEdges(t, body))
+	wantJSON, _ = json.Marshal(created)
+	if !bytes.Equal(got, wantJSON) || body["since"] != nil {
+		t.Fatalf("empty archive edges = %s since = %v\nwant %s and null", got, body["since"], wantJSON)
+	}
+}
+
+// TestAgentGraphOmitsACreatedEdgeWhoseCreatorIsGone covers Task 4 acceptance
+// 2: a creator missing from the Registry is no edge and is counted for the
+// created Agent's Project only; an empty annotation, no annotation, and an
+// annotation naming the Agent itself make no edge and are counted nowhere.
+func TestAgentGraphOmitsACreatedEdgeWhoseCreatorIsGone(t *testing.T) {
+	edit := func(registry *coremetadata.Registry) {
+		annotateCreator(t, registry, "agt-alpha-codex", "agt-deleted-creator")
+		annotateCreator(t, registry, "agt-alpha-idle", "")
+		annotateCreator(t, registry, "agt-alpha-claude", "agt-alpha-claude")
+		annotateCreator(t, registry, "agt-beta-quiet", "agt-deleted-creator")
+		// agt-beta-codex has no annotation.
+	}
+	stateDir := t.TempDir()
+	writeAgentGraphFixture(t, stateDir)
+	for project, want := range map[string]map[string]any{
+		// The pairs and messages are the conversation fixture's own.
+		"prj-alpha": {"pairs": 1.0, "messages": 2.0, "created": 1.0},
+		"prj-beta":  {"pairs": 0.0, "messages": 0.0, "created": 1.0},
+	} {
+		_, body := getAgentGraph(t, agentGraphBackendWith(t, stateDir, edit), project)
+		got, _ := json.Marshal(body["omitted"])
+		wantJSON, _ := json.Marshal(want)
+		if !bytes.Equal(got, wantJSON) {
+			t.Errorf("%s omitted = %s, want %s", project, got, wantJSON)
+		}
+		for _, edge := range graphEdges(t, body) {
+			if edge["kind"] != "conversation" {
+				t.Errorf("%s edge %v should not be drawn", project, edge)
+			}
+		}
+		if _, listed := graphAgents(t, body)["agt-deleted-creator"]; listed {
+			t.Errorf("%s lists the missing creator", project)
+		}
 	}
 }
