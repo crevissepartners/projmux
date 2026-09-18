@@ -10105,11 +10105,60 @@ menu_new_pane_except() {
   local excluded="$1"
   menu_tmux list-panes -t "$menu_session:0" -F '#{pane_id}' | grep -Fvx "$excluded" | tail -n 1
 }
+# A managed Pane's identity has two halves: the tmux mirror
+# (@projmux_pane_uid) and a Registry row (`get panes -o uid`). Each is judged
+# on its own so a failure names the half that did not hold:
+#   0 both halves hold
+#   1 mirror half false: @projmux_pane_uid is empty
+#   2 Registry half false: no `get panes -o uid` line equals the mirror uid
+#   3 the Registry read itself failed; this is not an identity verdict
+# The Registry output is captured into a variable and matched with a
+# here-string. Piping it into `grep -q` let grep exit at the first match while
+# the producer still had lines to write; the producer then died of SIGPIPE
+# (projmux, a Go binary, exits 141 whether it inherits SIGPIPE ignored or
+# not) and pipefail turned a live Registry row into a false verdict.
+# This runs inside smoke_wait_for, which retries every 50ms and on timeout
+# prints only the command and last_status, and also as a one-shot check. The
+# report goes to stderr only when it differs from the previous one, so the
+# final verdict is always logged just before the caller's failure message
+# without repeating the same report on every attempt.
+menu_identity_last_report=""
 menu_pane_is_managed() {
   local pane="$1"
-  local uid
-  uid="$(menu_tmux show-options -pqv -t "$pane" @projmux_pane_uid 2>/dev/null || true)"
-  [[ -n "$uid" ]] && menu_pmx get panes -o uid | grep -Fxq "$uid"
+  local uid uids report line verdict
+  local mirror_rc=0 registry_rc=0
+  local -a uid_lines=()
+  uid="$(menu_tmux show-options -pqv -t "$pane" @projmux_pane_uid 2>/dev/null)" || mirror_rc=$?
+  uids="$(menu_pmx get panes -o uid)" || registry_rc=$?
+  if [[ -z "$uid" ]]; then
+    verdict=1
+    report="pane-menu identity $pane: mirror half false: @projmux_pane_uid is empty"
+  elif [[ "$registry_rc" != "0" ]]; then
+    verdict=3
+    report="pane-menu identity $pane: Registry read failed: get panes -o uid rc=$registry_rc; this is not an identity verdict"
+  elif grep -Fxq -- "$uid" <<<"$uids"; then
+    menu_identity_last_report=""
+    return 0
+  else
+    verdict=2
+    report="pane-menu identity $pane: Registry half false: no \`get panes -o uid\` line is $uid"
+  fi
+  if [[ -n "$uids" ]]; then
+    mapfile -t uid_lines <<<"$uids"
+  fi
+  report+=$'\n'"  mirror=[$uid] (show-options rc=$mirror_rc)"
+  report+=$'\n'"  get panes -o uid rc=$registry_rc, ${#uid_lines[@]} line(s):"
+  if ((${#uid_lines[@]} == 0)); then
+    report+=$'\n'"    (no output)"
+  fi
+  for line in "${uid_lines[@]}"; do
+    report+=$'\n'"    $line"
+  done
+  if [[ "$report" != "$menu_identity_last_report" ]]; then
+    printf '%s\n' "$report" >&2
+    menu_identity_last_report="$report"
+  fi
+  return "$verdict"
 }
 menu_delete_converged() {
   local uid="$1"
@@ -10864,10 +10913,19 @@ if [[ "$(menu_tmux list-panes -t "$menu_origin_pane" -F '#{pane_id}' | wc -l)" !
   exit 1
 fi
 menu_origin_uid="$(menu_tmux show-options -pqv -t "$menu_origin_pane" @projmux_pane_uid)"
-if [[ -z "$menu_origin_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu_origin_uid"; then
-  echo "the interactive matrix cost the origin Pane its Registry identity" >&2
-  exit 1
-fi
+menu_origin_identity=0
+menu_pane_is_managed "$menu_origin_pane" || menu_origin_identity=$?
+case "$menu_origin_identity" in
+  0) ;;
+  3)
+    echo "could not read the Registry to judge the origin Pane's identity" >&2
+    exit 1
+    ;;
+  *)
+    echo "the interactive matrix cost the origin Pane its Registry identity" >&2
+    exit 1
+    ;;
+esac
 menu_created_window_absent() {
   ! menu_pmx describe window "uid:$menu_created_window_uid" -o json >/dev/null 2>&1 &&
     ! menu_pmx describe pane "uid:$menu_created_pane_uid" -o json >/dev/null 2>&1
