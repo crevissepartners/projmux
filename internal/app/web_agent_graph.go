@@ -13,8 +13,9 @@ import (
 )
 
 // The agent graph reads: which Agents exchanged peer messages, from the live
-// message store and the two retained reclaim-log generations. Both reads take
-// no lock and create no file; the store and the log are only opened for
+// message store and the two retained reclaim-log generations, and which Agent
+// created which, from the Registry's creator annotations. Both message reads
+// take no lock and create no file; the store and the log are only opened for
 // reading. docs/web-api.md ("Agent graph") is the contract.
 
 // peerMessage is one retained message between two different Agents, after the
@@ -113,12 +114,12 @@ func agentProject(registry *coremetadata.Registry, uid string) (string, bool) {
 }
 
 type agentGraph struct {
-	Project string             `json:"project"`
-	Agents  []agentGraphAgent  `json:"agents"`
-	Edges   []conversationEdge `json:"edges"`
-	Omitted omittedCount       `json:"omitted"`
-	Since   *time.Time         `json:"since"`
-	Skipped int                `json:"skipped"`
+	Project string            `json:"project"`
+	Agents  []agentGraphAgent `json:"agents"`
+	Edges   []agentGraphEdge  `json:"edges"`
+	Omitted omittedCount      `json:"omitted"`
+	Since   *time.Time        `json:"since"`
+	Skipped int               `json:"skipped"`
 }
 
 type agentGraphAgent struct {
@@ -126,11 +127,17 @@ type agentGraphAgent struct {
 	ProjectUID string `json:"projectUID"`
 }
 
-// conversationEdge is one unordered pair; A sorts before B.
-type conversationEdge struct {
-	Kind           string    `json:"kind"`
-	A              string    `json:"a"`
-	B              string    `json:"b"`
+// agentGraphEdge is one edge of the graph. A conversation edge is one
+// unordered pair, A sorting before B, and carries its counts; a created edge
+// runs from the creator A to the Agent B it created and carries none.
+type agentGraphEdge struct {
+	Kind string `json:"kind"`
+	A    string `json:"a"`
+	B    string `json:"b"`
+	*conversationCounts
+}
+
+type conversationCounts struct {
 	AToB           int       `json:"aToB"`
 	BToA           int       `json:"bToA"`
 	LastAcceptedAt time.Time `json:"lastAcceptedAt"`
@@ -139,6 +146,7 @@ type conversationEdge struct {
 type omittedCount struct {
 	Pairs    int `json:"pairs"`
 	Messages int `json:"messages"`
+	Created  int `json:"created"`
 }
 
 // AgentGraph answers which Agents of a Project talked, and with whom.
@@ -148,6 +156,12 @@ type omittedCount struct {
 // is never an edge; it is counted in omitted when its other Agent belongs to
 // the Project. A pair of two missing Agents cannot be placed in any Project
 // and is counted nowhere.
+//
+// A created edge runs from the Agent named in another Agent's creator
+// annotation to that Agent, under the same at-least-one-end rule. A creator
+// missing from the Registry is no edge and is counted in omitted when the
+// created Agent belongs to the Project; an annotation naming the Agent itself
+// is no edge and is counted nowhere.
 func (b *webBackend) AgentGraph(_ context.Context, project string) (any, error) {
 	registry, err := b.loadRegistry()
 	if err != nil {
@@ -168,9 +182,9 @@ func (b *webBackend) AgentGraph(_ context.Context, project string) (any, error) 
 		projectUID, known := agentProject(&registry, uid)
 		return endpoint{uid: uid, project: projectUID, known: known}
 	}
-	edges := make(map[[2]string]*conversationEdge)
+	edges := make(map[[2]string]*agentGraphEdge)
 	omittedPairs := make(map[[2]string]bool)
-	graph := agentGraph{Project: project, Agents: []agentGraphAgent{}, Edges: []conversationEdge{}, Since: conv.since, Skipped: conv.skipped}
+	graph := agentGraph{Project: project, Agents: []agentGraphAgent{}, Edges: []agentGraphEdge{}, Since: conv.since, Skipped: conv.skipped}
 	for _, message := range conv.messages {
 		first, second := lookup(message.Source), lookup(message.Target)
 		if second.uid < first.uid {
@@ -188,7 +202,7 @@ func (b *webBackend) AgentGraph(_ context.Context, project string) (any, error) 
 		}
 		edge := edges[key]
 		if edge == nil {
-			edge = &conversationEdge{Kind: "conversation", A: first.uid, B: second.uid}
+			edge = &agentGraphEdge{Kind: "conversation", A: first.uid, B: second.uid, conversationCounts: &conversationCounts{}}
 			edges[key] = edge
 		}
 		if message.Source == first.uid {
@@ -201,6 +215,26 @@ func (b *webBackend) AgentGraph(_ context.Context, project string) (any, error) 
 		}
 	}
 	graph.Omitted.Pairs = len(omittedPairs)
+	for _, edge := range edges {
+		graph.Edges = append(graph.Edges, *edge)
+	}
+
+	for _, child := range registry.Agents {
+		creator := child.Metadata.Annotations[coremetadata.AnnotationCreatorAgent]
+		if creator == "" || creator == child.Metadata.UID {
+			continue
+		}
+		childProject, _ := agentProject(&registry, child.Metadata.UID)
+		creatorProject, known := agentProject(&registry, creator)
+		switch {
+		case !known:
+			if childProject == project {
+				graph.Omitted.Created++
+			}
+		case childProject == project || creatorProject == project:
+			graph.Edges = append(graph.Edges, agentGraphEdge{Kind: "created", A: creator, B: child.Metadata.UID})
+		}
+	}
 
 	listed := make(map[string]bool)
 	for _, agent := range registry.Agents {
@@ -209,8 +243,7 @@ func (b *webBackend) AgentGraph(_ context.Context, project string) (any, error) 
 			graph.Agents = append(graph.Agents, agentGraphAgent{UID: agent.Metadata.UID, ProjectUID: projectUID})
 		}
 	}
-	for _, edge := range edges {
-		graph.Edges = append(graph.Edges, *edge)
+	for _, edge := range graph.Edges {
 		for _, uid := range []string{edge.A, edge.B} {
 			if !listed[uid] {
 				listed[uid] = true
@@ -220,8 +253,8 @@ func (b *webBackend) AgentGraph(_ context.Context, project string) (any, error) 
 		}
 	}
 	slices.SortFunc(graph.Agents, func(x, y agentGraphAgent) int { return cmp.Compare(x.UID, y.UID) })
-	slices.SortFunc(graph.Edges, func(x, y conversationEdge) int {
-		return cmp.Or(cmp.Compare(x.A, y.A), cmp.Compare(x.B, y.B))
+	slices.SortFunc(graph.Edges, func(x, y agentGraphEdge) int {
+		return cmp.Or(cmp.Compare(x.A, y.A), cmp.Compare(x.B, y.B), cmp.Compare(x.Kind, y.Kind))
 	})
 	return graph, nil
 }
