@@ -26,8 +26,9 @@ if [[ "${PROJMUX_E2E_INTENTIONAL_EXIT:-}" == "1" ]]; then
   exit 23
 fi
 
-# Bash reports BASH_LINENO[0] as 0 for a failure raised at the top level of a
-# sourced fixture. This branch forces that exact shape through the real harness
+# The ERR trap records the failing command's own line, so no failure shape
+# reaches it as line 0 any more. The consumer must still degrade a line-0 caller
+# to partial attribution; this branch forces that input through the real harness
 # path so the degraded attribution stays observable end to end.
 if [[ "${PROJMUX_E2E_INTENTIONAL_ZERO_LINE:-}" == "1" ]]; then
   source "$root/test/lib/smoke.sh"

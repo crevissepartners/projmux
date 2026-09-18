@@ -399,8 +399,12 @@ smoke_contract_err() {
   return "$status"
 }
 
+# Inside the ERR trap $LINENO is the failing command's own line. BASH_LINENO[0]
+# is the caller frame's line, which Bash reports as 0 for any top-level failure.
+# Without errtrace, a command failing inside a function under errexit never runs
+# this trap, so that shape records no terminal line rather than a wrong one.
 smoke_contract_install_trap() {
-  trap 'smoke_contract_err "$?" "${BASH_LINENO[0]:-0}"' ERR
+  trap 'smoke_contract_err "$?" "$LINENO"' ERR
 }
 
 smoke_setup_env() {
