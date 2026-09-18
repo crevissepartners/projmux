@@ -363,6 +363,12 @@ func (b *webBackend) agentScope(ctx context.Context, agent string) (project, win
 	if err != nil {
 		return "", "", err
 	}
+	return s.agentScope(agent)
+}
+
+// agentScope resolves the Project and Window an Agent belongs to from this
+// snapshot. agent must be an exact Agent uid.
+func (s webSnapshot) agentScope(agent string) (project, window string, err error) {
 	found, ok := s.registry.Agent(agent)
 	if !ok {
 		return "", "", web.NotFound("no agent " + agent)
@@ -434,6 +440,41 @@ func (b *webBackend) DeletePane(ctx context.Context, project, window, pane strin
 	return map[string]any{"uid": pane, "dryRun": true, "plan": strings.TrimSpace(out),
 		"runningAgents": s.runningAgents(func(agent coremetadata.Agent) bool {
 			return agent.Status.PaneRef == pane || agent.Metadata.UID == paneOwner
+		}),
+	}, nil
+}
+
+// DeleteAgent deletes one Agent, and with it its managed Pane, through the
+// same `delete agent` the CLI runs. The Agent and its scope are resolved from
+// one snapshot by exact uid, so a name, a selector, or an unknown uid is
+// not-found before anything runs, and the dry run's runningAgents comes from
+// the Registry read the delete was checked against.
+func (b *webBackend) DeleteAgent(ctx context.Context, agent string, dryRun bool) (any, error) {
+	s, err := b.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	project, window, err := s.agentScope(agent)
+	if err != nil {
+		return nil, err
+	}
+	argv := []string{"delete", "agent", "uid:" + agent, "--project", "uid:" + project, "--window", "uid:" + window}
+	if dryRun {
+		argv = append(argv, "--dry-run")
+	} else {
+		argv = append(argv, "--yes")
+	}
+	argv = append(argv, "--socket", defaultAppSocket)
+	out, err := b.cli(argv...)
+	if err != nil {
+		return nil, err
+	}
+	if !dryRun {
+		return map[string]any{"uid": agent, "plan": strings.TrimSpace(out)}, nil
+	}
+	return map[string]any{"uid": agent, "dryRun": true, "plan": strings.TrimSpace(out),
+		"runningAgents": s.runningAgents(func(a coremetadata.Agent) bool {
+			return a.Metadata.UID == agent
 		}),
 	}, nil
 }
