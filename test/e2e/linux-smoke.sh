@@ -2829,7 +2829,9 @@ PATH="$create_shim:$PATH" PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent_live cre
   --project "uid:$agent_project_uid_before" -w hi --create-window -o pane-id \
   >"$create_root/explicit-owner-agent.out" 2>"$create_root/explicit-owner-agent.err"
 phase15_agent_pane="$(tr -d '[:space:]' <"$create_root/explicit-owner-agent.out")"
-if [[ ! "$phase15_agent_pane" =~ ^%[0-9]+$ ]] || [[ -s "$create_root/explicit-owner-agent.err" ]]; then
+# The invocation carries the Agent Pane's TMUX_PANE without descending from
+# its process, so the one creator-provenance line is the only admitted stderr.
+if [[ ! "$phase15_agent_pane" =~ ^%[0-9]+$ ]] || ! smoke_create_stderr_is_quiet "$create_root/explicit-owner-agent.err"; then
   echo "exact-Project create codex result is not one quiet %N: $phase15_agent_pane" >&2
   cat "$create_root/explicit-owner-agent.err" >&2 || true
   exit 1

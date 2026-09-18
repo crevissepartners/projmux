@@ -31,8 +31,8 @@ import (
 // extra tmux calls; only when they pass does one `display-message` confirm the
 // Pane on the route's own server, and then one bounded /proc walk.
 
-// Reason tokens printed as `creator not recorded: <token>`. They are a closed,
-// stable vocabulary.
+// Reason tokens, printed as `creator not recorded: <token>` unless
+// creatorSkipIsSilent says otherwise. They are a closed, stable vocabulary.
 const (
 	creatorSkipAnchorInvalid        = "anchor-invalid"
 	creatorSkipPaneUnregistered     = "anchor-pane-unregistered"
@@ -58,6 +58,7 @@ type creatorProvenance struct {
 	paneUID  string
 	// skip is the reason token when an ambient Pane existed but recording was
 	// skipped. Empty with no agentUID means there was nothing to observe.
+	// Only the tokens creatorSkipIsSilent rejects are printed.
 	skip string
 }
 
@@ -89,11 +90,24 @@ func (p creatorProvenance) annotatePane(working *coremetadata.Registry, pane cor
 	return stored.Clone()
 }
 
-// reportSkip prints the one diagnostic line a committed create owes when an
-// ambient Pane existed and the creator was not recorded. It never touches
-// stdout.
+// creatorSkipIsSilent names the skips that print nothing: the ambient Pane
+// never looked like an Agent Pane, so a create run from an ordinary shell or
+// from outside projmux's Registry is not told about a record it was never
+// going to get. Every other skip means a live Agent Pane was the ambient
+// anchor and a later check failed, which is worth one line.
+func creatorSkipIsSilent(skip string) bool {
+	switch skip {
+	case "", creatorSkipAnchorInvalid, creatorSkipPaneUnregistered, creatorSkipCallerNotAgent:
+		return true
+	}
+	return false
+}
+
+// reportSkip prints the one diagnostic line a committed create owes when the
+// ambient Pane was a live Agent Pane and a later check stopped the record. It
+// never touches stdout.
 func (p creatorProvenance) reportSkip(stderr io.Writer) {
-	if p.recorded() || p.skip == "" || stderr == nil {
+	if p.recorded() || creatorSkipIsSilent(p.skip) || stderr == nil {
 		return
 	}
 	_, _ = fmt.Fprintf(stderr, creatorNotRecordedDiagnosticFmt, p.skip)

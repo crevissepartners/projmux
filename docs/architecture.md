@@ -370,9 +370,11 @@ Identity and naming:
   Registry Pane, that Pane round-trips with its owning Agent's
   `status.paneRef`, one `display-message` confirms it on the create's own
   app-owned socket and server pid, and the create process descends from its
-  `#{pane_pid}`. Any failed check writes none of the keys, changes nothing
-  else about the create, and prints one `creator not recorded: <reason>` line
-  on stderr when an ambient `%N` existed. These keys are provenance, not
+  `#{pane_pid}`. Any failed check writes none of the keys and changes nothing
+  else about the create. Stderr gets one `creator not recorded: <reason>` line
+  only when the ambient Pane is a live Agent Pane but a later check fails; an
+  ambient Pane that is malformed, unregistered, or a Window-owned shell is
+  silent. These keys are provenance, not
   authentication, like a message `--source`. An absent key does not mean a
   human created the Agent: UI intent creates (picker, pane menu, `ai split`,
   launch choice), web API creates, and creates a Codex Agent issues (its

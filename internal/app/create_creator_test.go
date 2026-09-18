@@ -250,6 +250,9 @@ func TestCreatorIsNotRecordedWhenAnyCheckFailsAndTheCreateStillSucceeds(t *testi
 		// arrange breaks exactly one check.
 		arrange    func(t *testing.T, fx *creatorFixture)
 		wantStderr string
+		// wantSilentSkip is the internal reason of a skip that prints nothing:
+		// the ambient Pane never looked like a live Agent Pane.
+		wantSilentSkip string
 		// wantQuery is whether the single tmux creator query was reached.
 		wantQuery bool
 	}{
@@ -272,7 +275,7 @@ func TestCreatorIsNotRecordedWhenAnyCheckFailsAndTheCreateStillSucceeds(t *testi
 			arrange: func(_ *testing.T, fx *creatorFixture) {
 				fx.env["TMUX_PANE"] = fx.tmux.addSession("unrelated").windows[0].panes[0].id
 			},
-			wantStderr: "creator not recorded: anchor-pane-unregistered\n",
+			wantSilentSkip: creatorSkipPaneUnregistered,
 		},
 		{
 			name: "two live Panes carry the ambient runtime id",
@@ -295,7 +298,7 @@ func TestCreatorIsNotRecordedWhenAnyCheckFailsAndTheCreateStillSucceeds(t *testi
 				}
 				fx.env["TMUX_PANE"] = strings.TrimSpace(stdout)
 			},
-			wantStderr: "creator not recorded: caller-pane-not-agent\n",
+			wantSilentSkip: creatorSkipCallerNotAgent,
 		},
 		{
 			name: "pane_pid is not in the parent chain (Codex shape)",
@@ -335,6 +338,14 @@ func TestCreatorIsNotRecordedWhenAnyCheckFailsAndTheCreateStillSucceeds(t *testi
 			if stderr != test.wantStderr {
 				t.Fatalf("stderr = %q, want %q", stderr, test.wantStderr)
 			}
+			if test.wantStderr == "" {
+				// A silent skip issues no tmux call, so re-observing is free
+				// and exposes the reason the create kept to itself.
+				working := fx.store.registry.Clone()
+				if got := fx.command.observeCreator(context.Background(), &working); got.recorded() || got.skip != test.wantSilentSkip {
+					t.Fatalf("silent creator observation = %+v, want skip %q", got, test.wantSilentSkip)
+				}
+			}
 			if agents, _ := fx.newAgentsSince(t, before); len(agents) != 1 {
 				t.Fatalf("new Agents = %d, want 1", len(agents))
 			}
@@ -346,6 +357,41 @@ func TestCreatorIsNotRecordedWhenAnyCheckFailsAndTheCreateStillSucceeds(t *testi
 				t.Fatalf("creator tmux queries = %d, want %d", queries, want)
 			}
 		})
+	}
+}
+
+// TestCreatorDiagnosticPrintsOnlyWhenTheAmbientPaneWasALiveAgentPane closes
+// the printed/silent split over the whole token vocabulary.
+func TestCreatorDiagnosticPrintsOnlyWhenTheAmbientPaneWasALiveAgentPane(t *testing.T) {
+	t.Parallel()
+	for skip, printed := range map[string]bool{
+		"":                             false,
+		creatorSkipAnchorInvalid:       false,
+		creatorSkipPaneUnregistered:    false,
+		creatorSkipCallerNotAgent:      false,
+		creatorSkipPaneAmbiguous:       true,
+		creatorSkipPaneRefMismatch:     true,
+		creatorSkipServerUnproven:      true,
+		creatorSkipAnchorQueryFailed:   true,
+		creatorSkipServerMismatch:      true,
+		creatorSkipAnchorPaneMismatch:  true,
+		creatorSkipProcessUnobservable: true,
+		creatorSkipNotPaneDescendant:   true,
+	} {
+		var stderr bytes.Buffer
+		creatorProvenance{skip: skip}.reportSkip(&stderr)
+		want := ""
+		if printed {
+			want = "creator not recorded: " + skip + "\n"
+		}
+		if stderr.String() != want {
+			t.Fatalf("skip %q printed %q, want %q", skip, stderr.String(), want)
+		}
+	}
+	var stderr bytes.Buffer
+	creatorProvenance{agentUID: "agent-x", paneUID: "pane-x"}.reportSkip(&stderr)
+	if stderr.Len() != 0 {
+		t.Fatalf("a recorded creator printed %q", stderr.String())
 	}
 }
 
