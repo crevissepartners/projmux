@@ -169,8 +169,8 @@ func TestUIDsAreNeverMergedHeuristicallyAndOnlyAnExactSavedRootReusesOne(t *test
 	if first.Project.Metadata.UID == second.Project.Metadata.UID {
 		t.Fatal("projects sharing a root basename must not share a uid")
 	}
-	if first.Project.Metadata.Name != first.Project.Metadata.UID || second.Project.Metadata.Name != second.Project.Metadata.UID {
-		t.Fatalf("automatic project names must be exact uids: %+v / %+v", first.Project.Metadata, second.Project.Metadata)
+	if first.Project.Metadata.Name != "projmux" || second.Project.Metadata.Name != second.Project.Metadata.UID {
+		t.Fatalf("automatic project names: first must take the free basename, second its exact uid: %+v / %+v", first.Project.Metadata, second.Project.Metadata)
 	}
 
 	windowsBefore := len(reg.Windows)
@@ -407,7 +407,7 @@ func TestOperationRollbackRemovesOnlyTheResourcesThisOperationCreated(t *testing
 func TestDeleteReleasesNameReservationsAndNewResourcesUseFreshUIDNames(t *testing.T) {
 	t.Parallel()
 
-	roots := dirSet{"/src/a": true, "/src/b": true}
+	roots := dirSet{"/src/a": true, "/other/a": true}
 	m := testMutator(roots)
 	reg := NewRegistry()
 
@@ -430,12 +430,14 @@ func TestDeleteReleasesNameReservationsAndNewResourcesUseFreshUIDNames(t *testin
 		t.Fatalf("registry invalid after delete: %v", err)
 	}
 
-	if _, err := registerFixture(m, &reg, "/src/b"); err != nil {
-		t.Fatalf("register b: %v", err)
+	// Same basename, different root: the deleted Project's released basename
+	// reservation is free again, so the new Project takes it.
+	if _, err := registerFixture(m, &reg, "/other/a"); err != nil {
+		t.Fatalf("register other a: %v", err)
 	}
-	replacement, _ := reg.ProjectByRoot("/src/b")
-	if replacement.Metadata.Name != replacement.Metadata.UID {
-		t.Fatalf("name = %q, want exact uid %q", replacement.Metadata.Name, replacement.Metadata.UID)
+	replacement, _ := reg.ProjectByRoot("/other/a")
+	if replacement.Metadata.Name != "a" {
+		t.Fatalf("name = %q, want the released root basename %q", replacement.Metadata.Name, "a")
 	}
 	if replacement.Metadata.UID == uid {
 		t.Fatal("a new project must never reuse a deleted uid")

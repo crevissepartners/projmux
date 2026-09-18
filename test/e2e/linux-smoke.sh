@@ -1257,8 +1257,9 @@ fi
 pmx create project --root "$create_root/legacy/alpha" --name alpha >"$create_root/register-alpha.out"
 smoke_assert_file_contains "$create_root/register-alpha.out" "project/alpha created"
 # beta is deliberately registered without --name: it is this fixture's single
-# witness for the schema v4 automatic name, which is the exact created uid
-# rather than any semantic stem. Its uid is then read back through the read-only
+# witness for the automatic Project name, which is the root basename (`beta`;
+# no other Project here holds that name) rather than the uid or any numbered
+# stem. Its uid is then read back through the read-only
 # plural projection, selected by beta's exact root -- alpha is registered too,
 # so listing order is not an identity -- rather than by re-issuing the create
 # and leaning on reuse semantics a later Phase owns.
@@ -1274,11 +1275,11 @@ smoke_require_uid "automatic-name beta Project" project "$create_beta_uid"
 pmx describe project "uid:$create_beta_uid" -o json >"$create_root/beta-bootstrap.json"
 smoke_assert_file_contains "$create_root/beta-bootstrap.json" "\"root\": \"$create_root/work/beta\""
 create_beta_name="$(pmx describe project "uid:$create_beta_uid" -o name | tr -d '[:space:]')"
-if [[ "$create_beta_name" != "$create_beta_uid" ]]; then
-  echo "automatic Project name = '$create_beta_name', want the exact uid '$create_beta_uid'" >&2
+if [[ "$create_beta_name" != "beta" ]]; then
+  echo "automatic Project name = '$create_beta_name', want the root basename 'beta'" >&2
   exit 1
 fi
-smoke_assert_file_contains "$create_root/register-beta.out" "project/$create_beta_uid created"
+smoke_assert_file_contains "$create_root/register-beta.out" "project/beta created"
 if [[ ! -f "$create_registry" ]]; then
   echo "the explicit Project bootstrap did not write the registry" >&2
   exit 1
@@ -7254,12 +7255,13 @@ if [[ "$fopen_mirrored_uid" != "$fopen_project_uid" ]]; then
   exit 1
 fi
 # `@projmux_project_name` and `@projmux_project_uid` stay two separate mirrored
-# fields, so each one keeps its own assertion. Under schema v4 an implicitly
-# registered Project carries the automatic name, which is the exact Project uid,
-# so the two values coincide here -- collapsing them into a single check would
-# let a dropped mirror hide behind the surviving one.
-if [[ "$fopen_mirrored_name" != "$fopen_project_uid" ]]; then
-  echo "first open session project name = '$fopen_mirrored_name', want the exact automatic name '$fopen_project_uid'" >&2
+# fields, so each one keeps its own assertion. An implicitly registered Project
+# is named after its root directory (`gamma`; no other Project holds that name
+# here), so the name mirror must carry the basename, not the uid.
+fopen_project_basename="${fopen_project##*/}"
+if [[ "$fopen_mirrored_name" != "$fopen_project_basename" ]] || \
+  [[ "$fopen_mirrored_name" == "$fopen_project_uid" ]]; then
+  echo "first open session project name = '$fopen_mirrored_name', want the root basename automatic name '$fopen_project_basename'" >&2
   exit 1
 fi
 if [[ "$fopen_mirrored_path" != "$fopen_project" ]]; then
@@ -7306,11 +7308,10 @@ if ! printf '%s\n' "$fopen_pane_uids" | grep -Fqx "$fopen_live_pane_uid"; then
   exit 1
 fi
 
-# The three mirror assertions above cannot tell `@projmux_project_name` and
-# `@projmux_project_uid` apart by value: under schema v4 an automatic name *is*
-# the uid, so a mirror that wrote the uid into the name slot -- or read the wrong
-# field composing the mirror -- would still pass. Making the two fields diverge
-# is what discriminates them. An explicit rename moves the Project's address;
+# The root-basename automatic name already makes `@projmux_project_name` and
+# `@projmux_project_uid` differ by value, but only for a name the open wrote
+# once. Renaming keeps them diverging and proves the name mirror follows every
+# address change. An explicit rename moves the Project's address;
 # the name mirror must follow it while identity, root, and the session name stay
 # exactly where they were. It runs on the inherited absolute socket because that
 # is the only route with an immediate live projection, and `rename project` is a

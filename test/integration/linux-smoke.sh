@@ -2952,14 +2952,15 @@ if [[ -e "$discovery_registry" ]]; then
   exit 1
 fi
 
-# One explicit bootstrap registers one exact path.
+# One explicit bootstrap registers one exact path. With no --name, the Project
+# is named after its root basename (`app`).
 pmx_discovery create project --root "$discovery_scan/app" >"$PROJMUX_SMOKE_WORKDIR/discovery-register.out"
 discovery_project_uid="$(pmx_discovery get projects -o uid)"
 if [[ "$(printf '%s\n' "$discovery_project_uid" | wc -l)" != "1" ]]; then
   echo "explicit registration produced more than one Project: $discovery_project_uid" >&2
   exit 1
 fi
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" "project/$discovery_project_uid created"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" "project/app created"
 pmx_discovery get projects -o json >"$PROJMUX_SMOKE_WORKDIR/discovery-projects-registered.json"
 for unregistered in scratch sibling; do
   if grep -q "$discovery_scan/$unregistered" "$PROJMUX_SMOKE_WORKDIR/discovery-projects-registered.json"; then
@@ -2977,7 +2978,7 @@ done
 # nothing was the exact defect the operation receipt closes.
 discovery_registry_fingerprint="$(stat -c '%i %s %y' "$discovery_registry")"
 pmx_discovery create project --root "$discovery_scan/app" >"$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out" "project/$discovery_project_uid reused"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out" "project/app reused"
 smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out" "created"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" \
   "receipt operation=create.project identity=created address=allocated topology=established desired-state=created runtime=unchanged focus=unchanged projects=1 windows=1 panes=1 agents=0"

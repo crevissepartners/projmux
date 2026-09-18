@@ -97,7 +97,9 @@ type RegisterProjectOptions struct {
 	// Root is the absolute project root. It must already exist.
 	Root string
 	// Name is an explicit --name. A collision fails with ErrNameConflict and
-	// zero mutations; it never receives an implicit suffix.
+	// zero mutations; it never receives an implicit suffix. Empty names a new
+	// Project after its root basename, or its exact UID when that basename is
+	// empty or already reserved by another Project.
 	Name        string
 	Labels      map[string]string
 	Annotations map[string]string
@@ -163,7 +165,14 @@ func (m Mutator) RegisterProject(reg *Registry, opts RegisterProjectOptions) (Re
 func (m Mutator) registerProjectTx(txn *Transaction, reg *Registry, root string, now time.Time, opts RegisterProjectOptions) (RegisterProjectResult, error) {
 	const op = "register project"
 
-	projectUID, name, err := m.mintAndReserveName(reg, op, "", KindProject, opts.Name)
+	// A new Project with no explicit name is named after its root directory
+	// when that basename is usable and free; otherwise it keeps the exact-UID
+	// automatic name. The basename is reserved exactly like an explicit name.
+	requested := opts.Name
+	if requested == "" {
+		requested = reg.automaticProjectName(root)
+	}
+	projectUID, name, err := m.mintAndReserveName(reg, op, "", KindProject, requested)
 	if err != nil {
 		return RegisterProjectResult{}, err
 	}

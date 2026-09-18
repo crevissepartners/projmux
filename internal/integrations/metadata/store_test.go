@@ -876,7 +876,7 @@ func TestUpdateWritesNothingWhenTheOperationFails(t *testing.T) {
 	_, err := store.Update(func(reg *coremetadata.Registry) error {
 		_, err := m.RegisterProject(reg, coremetadata.RegisterProjectOptions{
 			Root:         "/src/other",
-			Name:         "project-01",
+			Name:         "projmux", // the seed Project's root-basename name
 			DefaultShell: "/bin/zsh",
 			OperationID:  "op-collide",
 		})
@@ -925,8 +925,8 @@ func TestRegisteredProjectPersistsTheOfflineTopologyAndFinalWindowRefs(t *testin
 		t.Fatalf("reloaded registry is invalid: %v", err)
 	}
 	for _, project := range reloaded.Projects {
-		if project.Metadata.Name != project.Metadata.UID {
-			t.Fatalf("automatic Project name = %q, want exact uid %q", project.Metadata.Name, project.Metadata.UID)
+		if project.Metadata.Name != "projmux" {
+			t.Fatalf("automatic Project name = %q, want root basename %q", project.Metadata.Name, "projmux")
 		}
 	}
 	for _, window := range reloaded.Windows {

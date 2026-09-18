@@ -335,6 +335,21 @@ Identity and naming:
   or numeric suffix allocator. An explicit `--name` keeps its original spelling
   after validation; explicit create and rename collisions fail with exit code 2
   and zero Registry, tmux, or provider writes.
+- A newly registered Project is the one exception. `create project` without
+  `--name`, and every implicit registration (first open of a directory,
+  `projmux shell`, Open fresh), name the Project after its root directory: the
+  root basename run through the same sanitizer as any name seed (`my repo`
+  becomes `my-repo`). If that basename sanitizes to nothing (the filesystem
+  root) or another Project already holds it, the Project falls back to the
+  exact-UID rule above -- never a numbered variant, never a `project`
+  placeholder. Legacy/orphan import and every Window, Pane, Agent, and
+  ControlSession keep exact-UID automatic names, and no stored name is ever
+  rewritten.
+- Open fresh replaces the Project and carries its name over only when that
+  name is not shaped like a minted Project UID (`proj-` plus a full canonical
+  UID payload). An operator-chosen name such as `proj-front` survives; a
+  UID-shaped name -- the old exact-UID automatic name, or one copied from a
+  predecessor -- is dropped so the replacement is named after its root.
 - `create agent` supplies an **explicit** name for the Pane its Agent owns:
   `<agent-name>-pane`, derived from the Agent's own name. That used to be a
   documented follow-up `rename pane` a launcher had to remember, so a caller
