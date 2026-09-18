@@ -305,11 +305,11 @@ func ParseWebSettings(path string, content []byte, known WebSettingKnown) (WebSe
 			tables[name], table = true, name
 			continue
 		}
-		eq := strings.IndexByte(line, '=')
-		if eq < 0 {
+		before, after, ok := strings.Cut(line, "=")
+		if !ok {
 			return fail(n, "expected key = value")
 		}
-		name := strings.TrimSpace(line[:eq])
+		name := strings.TrimSpace(before)
 		if !isTOMLBareKey(name) {
 			return fail(n, "key %q must be a bare key under a [table] header", name)
 		}
@@ -325,7 +325,7 @@ func ParseWebSettings(path string, content []byte, known WebSettingKnown) (WebSe
 		if !ok || (webSettingSpecs[index].dynamic() && known != nil && !known(key)) {
 			return fail(n, "unknown key %q", dotted)
 		}
-		value, err := parseTOMLScalar(line[eq+1:])
+		value, err := parseTOMLScalar(after)
 		if err != nil {
 			return fail(n, "key %q: %v", dotted, err)
 		}
