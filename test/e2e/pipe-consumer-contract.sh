@@ -21,6 +21,12 @@
 # physical line that holds the consumer command word, not the logical line
 # start. `| grep -q` is out of scope and is not reported.
 #
+# The SIGPIPE controls run in a child with SIGPIPE restored to its default: CI
+# runners can start jobs with SIGPIPE ignored, which bash cannot undo, and then
+# `seq | head` fails with a write error (rc=1) instead of the 141 the e2e
+# containers see. The inherited disposition is measured too, to show the drain
+# form is safe either way.
+#
 # Usage: test/e2e/pipe-consumer-contract.sh [file]
 set -euo pipefail
 
@@ -157,25 +163,42 @@ if [[ "$actual_selftest" != "$expected_selftest" ]]; then
   exit 1
 fi
 
-# SIGPIPE controls under pipefail: the old form must fail with 141 and the
-# adopted forms must not.
+# with_default_sigpipe CMD... runs CMD with SIGPIPE restored to SIG_DFL.
+with_default_sigpipe() {
+  python3 -c 'import os, signal, sys; signal.signal(signal.SIGPIPE, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
+}
+
+# SIGPIPE controls under pipefail. With the default disposition the old form
+# must fail with 141 and the drain must not. With the inherited disposition the
+# old form fails either way (141, or 1 when SIGPIPE is ignored) and the drain
+# must still succeed.
 big="$contract_root/big.json"
 seq 100000 | sed 's/.*/  "paneRef": "pane-&",/' >"$big"
 head_rc=0
-(set -o pipefail && seq 100000 | head -n 1 >/dev/null) || head_rc=$?
+with_default_sigpipe bash -c 'set -o pipefail; seq 100000 | head -n 1 >/dev/null' || head_rc=$?
 drain_rc=0
-(set -o pipefail && seq 100000 | sed -n 1p >/dev/null) || drain_rc=$?
+with_default_sigpipe bash -c 'set -o pipefail; seq 100000 | sed -n 1p >/dev/null' || drain_rc=$?
+inherited_head_rc=0
+(set -o pipefail && seq 100000 2>/dev/null | head -n 1 >/dev/null) || inherited_head_rc=$?
+inherited_drain_rc=0
+(set -o pipefail && seq 100000 | sed -n 1p >/dev/null) || inherited_drain_rc=$?
 self_stop_rc=0
 self_stop_out="$(sed -n '/.*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$big")" || self_stop_rc=$?
-echo "control: seq 100000 | head -n 1 rc=$head_rc (want 141)"
-echo "control: seq 100000 | sed -n 1p rc=$drain_rc (want 0)"
+echo "control (default SIGPIPE): seq 100000 | head -n 1 rc=$head_rc (want 141)"
+echo "control (default SIGPIPE): seq 100000 | sed -n 1p rc=$drain_rc (want 0)"
+echo "control (inherited SIGPIPE): seq 100000 | head -n 1 rc=$inherited_head_rc (want non-zero)"
+echo "control (inherited SIGPIPE): seq 100000 | sed -n 1p rc=$inherited_drain_rc (want 0)"
 echo "control: self-stopping sed on 100000-line file rc=$self_stop_rc out=$self_stop_out (want 0, pane-1)"
 if [[ "$head_rc" != "141" ]]; then
   echo "pipe-consumer-contract: control 'seq 100000 | head -n 1' returned rc=$head_rc, not 141; SIGPIPE may be ignored in this environment, so the controls prove nothing" >&2
   exit 1
 fi
-if [[ "$drain_rc" != "0" || "$self_stop_rc" != "0" || "$self_stop_out" != "pane-1" ]]; then
-  echo "pipe-consumer-contract: adopted forms failed: drain rc=$drain_rc self-stop rc=$self_stop_rc out=$self_stop_out" >&2
+if [[ "$inherited_head_rc" == "0" ]]; then
+  echo "pipe-consumer-contract: control 'seq 100000 | head -n 1' under the inherited SIGPIPE disposition returned rc=0; pipefail is not reporting the producer failure" >&2
+  exit 1
+fi
+if [[ "$drain_rc" != "0" || "$inherited_drain_rc" != "0" || "$self_stop_rc" != "0" || "$self_stop_out" != "pane-1" ]]; then
+  echo "pipe-consumer-contract: adopted forms failed: drain rc=$drain_rc inherited drain rc=$inherited_drain_rc self-stop rc=$self_stop_rc out=$self_stop_out" >&2
   exit 1
 fi
 
@@ -185,4 +208,4 @@ if [[ -n "$findings" ]]; then
   echo "FAIL pipe-consumer-contract: $display has $(printf '%s\n' "$findings" | wc -l) early-exit pipe consumer(s); drain them (sed -n 1p, awk found flag) or let a file reader stop itself with sed q and no pipe in front" >&2
   exit 1
 fi
-echo "PASS pipe-consumer-contract: $display has 0 early-exit pipe consumers; control head rc=$head_rc, drain rc=$drain_rc, self-stop rc=$self_stop_rc"
+echo "PASS pipe-consumer-contract: $display has 0 early-exit pipe consumers; control head rc=$head_rc, drain rc=$drain_rc (default SIGPIPE); inherited head rc=$inherited_head_rc, drain rc=$inherited_drain_rc; self-stop rc=$self_stop_rc"
