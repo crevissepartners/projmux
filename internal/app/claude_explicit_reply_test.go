@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -21,6 +22,9 @@ import (
 type durableReplyTestBroker struct {
 	store   *messagestore.Store
 	current bool
+	// registryPath is the Registry that proves a helper current before it may
+	// read an original it did not deliver. Empty means no such proof.
+	registryPath string
 }
 
 func (b *durableReplyTestBroker) Current(coremessage.Envelope) bool { return b.current }
@@ -40,6 +44,12 @@ func (b *durableReplyTestBroker) CommitReply(original, reply coremessage.Envelop
 }
 func (b *durableReplyTestBroker) ReplyStatus(ref string) (messagestore.Record, bool, error) {
 	return b.store.Reply(ref)
+}
+
+// StoredOriginal runs the live broker's Registry fence; without a
+// registryPath it has no proof and refuses every stored original.
+func (b *durableReplyTestBroker) StoredOriginal(ref string, helper coremetadata.AgentRouteRef) (messagestore.Record, bool, error) {
+	return readRegistryCurrentOriginal(b.registryPath, b.store, ref, helper)
 }
 
 type replyFrameWriter struct {

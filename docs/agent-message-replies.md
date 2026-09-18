@@ -36,6 +36,16 @@ projmux agent message send uid:<original-source-agent> --reply-to <original-requ
 Operator input from the web client has no Agent route to reverse, so a reply
 to it is refused with `explicit-reply-operator-origin` and stores nothing.
 
+Within the same provider session, a reply also commits after the Claude lease
+helper was replaced, for example by compact. The new helper did not push the
+original, so it reads the original from the durable store and judges it by the
+same checks. It reads the store only while its own route is the Registry's
+current authority for the Agent; a replaced or unregistered helper reads and
+writes nothing. `broker-reply-original-not-found` means the original is in
+neither the helper nor the store. `invalid-explicit-reply-correlation` means the
+reply's route or conversation does not match the original, or the helper is not
+the current one.
+
 A same-ref call returns the original immutable receipt and never pushes again.
 Changing its payload is refused with the earlier ref and cause. A fresh ref
 allows one new attempt only when every previous attempt is known-zero. Failed

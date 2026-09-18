@@ -152,11 +152,22 @@ type claudeCoordinationResponse struct {
 	AutoResend       bool                         `json:"autoResend"`
 }
 
-type claudeCoordinationMessage struct {
-	envelope      claudeCoordinationEnvelope
-	delivery      agentdelivery.Delivery
+// claudeReplyReservation is this helper's in-memory hold on one original's
+// explicit reply: reserved while a durable commit is in flight or its outcome
+// is unknown, and the reply ref it last committed or attempted. The hub keeps
+// it on a message it pushed, and in storeReplies for an original it read from
+// the durable store instead, such as one its predecessor delivered before
+// compact replaced it. storeReplies stays apart from messages, which holds
+// only what this helper pushed.
+type claudeReplyReservation struct {
 	replyReserved bool
 	replyRef      string
+}
+
+type claudeCoordinationMessage struct {
+	envelope claudeCoordinationEnvelope
+	delivery agentdelivery.Delivery
+	claudeReplyReservation
 }
 
 type claudeCoordinationHub struct {
@@ -164,6 +175,7 @@ type claudeCoordinationHub struct {
 	mu                    sync.Mutex
 	now                   func() time.Time
 	messages              map[string]*claudeCoordinationMessage
+	storeReplies          map[string]*claudeReplyReservation
 	boundary              uint64
 	closed                bool
 	qualification         *claudeQualificationState

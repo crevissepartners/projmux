@@ -12,6 +12,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // The public CLI caller must descend from the exact registered provider birth.
@@ -102,9 +103,66 @@ func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envel
 	return created, err
 }
 
+// errClaudeHelperNotCurrent refuses a durable original to a helper the
+// Registry does not name as the Agent's current authority.
+var errClaudeHelperNotCurrent = errors.New("claude helper is not the Registry's current authority")
+
+// claudeStoredOriginalReader is the optional broker lookup of an original this
+// helper did not push. A broker without it gives the helper its own pushed
+// messages only.
+type claudeStoredOriginalReader interface {
+	StoredOriginal(ref string, helper coremetadata.AgentRouteRef) (messagestore.Record, bool, error)
+}
+
+// readRegistryCurrentOriginal is the one fence in front of the durable store
+// for an original the helper did not push. The store is read only when the
+// helper's own route is the Registry's current authority for its Agent: a
+// replaced helper, lease process, registration, or provider process is refused
+// before any read. The record is returned whatever its delivery state; the hub
+// judges it exactly as it judges a message it pushed.
+func readRegistryCurrentOriginal(registryPath string, store *messagestore.Store, ref string,
+	helper coremetadata.AgentRouteRef,
+) (messagestore.Record, bool, error) {
+	if _, ok := helper.Authority().(coremetadata.ClaudeAuthorityRef); !ok || registryPath == "" || store == nil {
+		return messagestore.Record{}, false, errClaudeHelperNotCurrent
+	}
+	registry, err := intmetadata.NewStore(registryPath).LoadDegradedReadOnly()
+	if err != nil {
+		return messagestore.Record{}, false, errClaudeHelperNotCurrent
+	}
+	current, reason := coremetadata.ResolveAgentRoute(registry, helper.AgentUID)
+	if reason != "" || !current.Same(helper) {
+		return messagestore.Record{}, false, errClaudeHelperNotCurrent
+	}
+	return store.Get(ref)
+}
+
+// StoredOriginal reads through the reply-commit store view, so contention is
+// refused at once rather than waited on.
+func (b *liveClaudeDialogueBroker) StoredOriginal(ref string, helper coremetadata.AgentRouteRef) (messagestore.Record, bool, error) {
+	if b == nil {
+		return messagestore.Record{}, false, errClaudeHelperNotCurrent
+	}
+	return readRegistryCurrentOriginal(b.registryPath, b.store, ref, helper)
+}
+
+// explicitReplyOriginal is the original an explicit reply answers, from
+// whichever source held it, with the reservation this helper keeps for it.
+type explicitReplyOriginal struct {
+	envelope    *coremessage.Envelope
+	deadline    time.Time
+	delivered   bool
+	reservation *claudeReplyReservation
+}
+
 // commitExplicitReply selects the broker's original request by ref, never by
 // payload, Stop text, arrival order, or number of outstanding messages. A human
 // turn does not invalidate an otherwise current explicit reply.
+//
+// The original is the message this helper pushed or, when it pushed none by
+// that ref, the durable record a predecessor delivered in the same provider
+// session (compact replaces the lease helper). Only a Registry-current helper
+// may read the store; both sources are then judged by the same checks.
 func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	source coremetadata.AgentRouteRef, broker claudeDialogueBroker,
 ) claudeCoordinationResponse {
@@ -122,24 +180,64 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 		if response.ReplyRef == "" {
 			if message := h.messages[reply.ReplyTo]; message != nil {
 				response.ReplyRef = message.replyRef
+			} else if reservation := h.storeReplies[reply.ReplyTo]; reservation != nil {
+				response.ReplyRef = reservation.replyRef
 			}
 		}
 		return response
 	}
 	h.expireQualificationLocked(h.now())
-	message := h.messages[reply.ReplyTo]
-	if message != nil && message.envelope.BrokerEnvelope != nil && message.envelope.BrokerEnvelope.Operator() {
-		return refuse(coremessage.ReasonExplicitReplyOperatorOrigin)
+	if message := h.messages[reply.ReplyTo]; message != nil {
+		return h.judgeExplicitReplyLocked(reply, source, broker, refuse, explicitReplyOriginal{
+			envelope: message.envelope.BrokerEnvelope, deadline: message.envelope.Deadline,
+			delivered: message.delivery.State == agentdelivery.StateDelivered, reservation: &message.claudeReplyReservation})
 	}
-	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil ||
-		message.delivery.State != agentdelivery.StateDelivered ||
-		!messageRouteAccepts(source, reply.Source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
+	lookup, ok := broker.(claudeStoredOriginalReader)
+	if !ok {
 		return refuse("invalid-explicit-reply-correlation")
 	}
-	if !message.envelope.Deadline.After(h.now()) || !reply.Deadline.After(h.now()) {
+	// Read again on every miss; only the reservation below outlives the call.
+	record, found, err := lookup.StoredOriginal(reply.ReplyTo, source)
+	switch {
+	case errors.Is(err, messagestore.ErrBusy):
+		return refuse("broker-reply-store-busy")
+	case errors.Is(err, messagestore.ErrMalformedStore):
+		return refuse("broker-reply-store-malformed")
+	case err != nil:
+		return refuse("invalid-explicit-reply-correlation")
+	case !found:
+		return refuse("broker-reply-original-not-found")
+	}
+	if h.storeReplies == nil {
+		h.storeReplies = make(map[string]*claudeReplyReservation)
+	}
+	reservation := h.storeReplies[reply.ReplyTo]
+	if reservation == nil {
+		reservation = &claudeReplyReservation{}
+		h.storeReplies[reply.ReplyTo] = reservation
+	}
+	return h.judgeExplicitReplyLocked(reply, source, broker, refuse, explicitReplyOriginal{
+		envelope: &record.Envelope, deadline: record.Envelope.Deadline,
+		delivered: record.Delivery.State == coremessage.StateDelivered, reservation: reservation})
+}
+
+// judgeExplicitReplyLocked admits and commits a reply to original. It is the
+// one judgement for a pushed original and a stored one, so both refuse with the
+// same tokens in the same order.
+func (h *claudeCoordinationHub) judgeExplicitReplyLocked(reply coremessage.Envelope, source coremetadata.AgentRouteRef,
+	broker claudeDialogueBroker, refuse func(string) claudeCoordinationResponse, original explicitReplyOriginal,
+) claudeCoordinationResponse {
+	if original.envelope != nil && original.envelope.Operator() {
+		return refuse(coremessage.ReasonExplicitReplyOperatorOrigin)
+	}
+	if h.closed || broker == nil || original.envelope == nil || !original.delivered ||
+		!messageRouteAccepts(source, reply.Source) || coremessage.ValidateReply(*original.envelope, reply) != nil {
+		return refuse("invalid-explicit-reply-correlation")
+	}
+	if !original.deadline.After(h.now()) || !reply.Deadline.After(h.now()) {
 		return refuse("explicit-reply-deadline-expired")
 	}
-	if reply.Deadline.After(message.envelope.Deadline) {
+	if reply.Deadline.After(original.deadline) {
 		return refuse("explicit-reply-deadline-extended")
 	}
 	// A reply is a qualification answer only when it answers the pending
@@ -150,7 +248,8 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	if qualification && (!state.frameComplete || reply.Payload != state.marker) {
 		return refuse("qualification-challenge-only")
 	}
-	if message.replyReserved {
+	reservation := original.reservation
+	if reservation.replyReserved {
 		return refuse("broker-reply-outcome-unknown")
 	}
 	if !broker.Current(reply) {
@@ -158,12 +257,12 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	}
 	// Reserve before the durable call. A failed/ambiguous commit is never
 	// retried automatically, including by a later unrelated Stop.
-	message.replyReserved = true
-	created, err := broker.CommitReply(*message.envelope.BrokerEnvelope, reply)
+	reservation.replyReserved = true
+	created, err := broker.CommitReply(*original.envelope, reply)
 	if err != nil {
 		var conflict *messagestore.ReplyConflictError
 		if errors.As(err, &conflict) {
-			message.replyReserved = false // A refusal made no durable change.
+			reservation.replyReserved = false // A refusal made no durable change.
 			response := refuse(conflict.Reason)
 			if conflict.Previous.Envelope.MessageRef != "" {
 				response.ReplyRef, response.ReplyDelivery = conflict.Previous.Envelope.MessageRef, &conflict.Previous.Delivery
@@ -183,15 +282,15 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 			{coremessage.ErrInvalidEnvelope, "invalid-explicit-reply-correlation"},
 		} {
 			if errors.Is(err, rejection.err) {
-				message.replyReserved = false
+				reservation.replyReserved = false
 				return refuse(rejection.reason)
 			}
 		}
-		message.replyRef = reply.MessageRef
+		reservation.replyRef = reply.MessageRef
 		return refuse("broker-reply-outcome-unknown")
 	}
-	message.replyReserved = false
-	message.replyRef = reply.MessageRef
+	reservation.replyReserved = false
+	reservation.replyRef = reply.MessageRef
 	if qualification {
 		h.qualification.state = "qualified"
 		h.qualification.reason = "exact-public-init-and-explicit-reply"
