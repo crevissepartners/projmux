@@ -17,6 +17,13 @@ import type { Turn } from "./types";
 
 export type StreamState = "live" | "warn";
 
+/**
+ * The context key a read-only transcript sets, so nothing under it offers to
+ * write to the agent: no composer, and a pending question is shown but not
+ * answerable.
+ */
+export const READ_ONLY = Symbol("transcript-read-only");
+
 export interface TranscriptHandlers {
   turn: (turn: Turn) => void;
   state: (state: StreamState) => void;

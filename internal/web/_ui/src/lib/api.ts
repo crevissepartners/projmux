@@ -83,6 +83,8 @@ export const paths = {
   agentPreview: (project: string, window: string) =>
     `/api/v1/web/projects/${seg(project)}/windows/${seg(window)}/agents/preview`,
   agent: (agent: string) => `/api/v1/agents/${seg(agent)}`,
+  agentGraph: (project: string) => `/api/v1/projects/${seg(project)}/agent-graph`,
+  peerMessages: (agent: string, peer: string) => `/api/v1/agents/${seg(agent)}/peers/${seg(peer)}/messages`,
   notificationAck: (id: string) => `/api/v1/notifications/${seg(id)}/ack`,
   transcript: (agent: string) => `/api/v1/web/agents/${seg(agent)}/transcript`,
   transcriptEvents: "/api/v1/web/transcripts/events",
