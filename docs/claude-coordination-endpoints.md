@@ -269,8 +269,11 @@ The final source check also asks the existing Codex broker to verify the exact
 runtime, connection and binding lease. This read-only IPC observation binds
 nothing and sends no provider request. An older broker that does not support
 this observation refuses coordination; it is never restarted implicitly.
-Helper store lock contention fails immediately. Concurrent official hooks
-invalidate reply correlation without waiting for another hook to finish.
+Helper store lock contention fails a reply commit immediately, before any
+durable write. The handoff and delivery records wait up to two seconds for the
+lock first, so a brief holder cannot report a delivered message as failed.
+Concurrent official hooks invalidate reply correlation without waiting for
+another hook to finish.
 
 The live harness begins with the benign `Reply READY.` control. The later broker
 payload contains its own exact acknowledgement request; the initial user turn

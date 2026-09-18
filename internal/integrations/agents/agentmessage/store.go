@@ -32,6 +32,11 @@ const (
 	maxRecords         = 256
 	maxStoreBytes      = 2 << 20
 	terminalRetention  = 24 * time.Hour
+	// defaultLockWait bounds how long the broker view queues behind another
+	// holder. A holder keeps the lock for a couple of fsyncs, and message
+	// deadlines are minutes, so this absorbs contention without blocking.
+	defaultLockWait   = 2 * time.Second
+	lockRetryInterval = 2 * time.Millisecond
 )
 
 var (
@@ -92,6 +97,7 @@ type diskState struct {
 type storeHooks struct {
 	beforeHistoryAppend func() error
 	beforeRename        func() error
+	afterLock           func()
 }
 
 type Store struct {
@@ -99,6 +105,7 @@ type Store struct {
 	now             func() time.Time
 	hooks           storeHooks
 	nonblocking     bool
+	lockWait        time.Duration
 	historyMaxBytes int
 }
 
@@ -106,12 +113,21 @@ func NewStore(stateDir string) *Store {
 	return NewStoreAt(filepath.Join(stateDir, storeDirName, storeFileName))
 }
 
-// NewNonblockingStore is the bounded helper/Stop-hook view of the same
-// durable inbox. Lock contention refuses immediately; no delayed writer may
-// outlive its hook and later commit a reply with obsolete correlation.
+// NewNonblockingStore is the helper's reply-commit view of the same durable
+// inbox. Lock contention refuses immediately, before any durable write, so no
+// delayed writer may land after its caller gave up with obsolete correlation.
 func NewNonblockingStore(stateDir string) *Store {
 	store := NewStore(stateDir)
 	store.nonblocking = true
+	return store
+}
+
+// NewBoundedWaitStore is the broker view of the same durable inbox. Lock
+// contention waits up to a short bound and only then refuses, so one holder
+// does not turn a delivered message into a failed receipt.
+func NewBoundedWaitStore(stateDir string) *Store {
+	store := NewStore(stateDir)
+	store.lockWait = defaultLockWait
 	return store
 }
 
@@ -388,6 +404,76 @@ func (s *Store) MarkHandoff(messageRef string) (Record, bool, error) {
 	return out, changed, err
 }
 
+// MarkHandoffMatching is MarkHandoff for a caller holding the envelope. It
+// verifies the stored attempt is the same retry on adapter and records the
+// handoff under one lock, so no other writer lands between check and write.
+// A missing or different attempt is coremessage.ErrInvalidEnvelope.
+func (s *Store) MarkHandoffMatching(envelope coremessage.Envelope, adapter string) (Record, bool, error) {
+	var out Record
+	var changed bool
+	err := s.withLock(func() error {
+		state, err := s.loadLocked()
+		if err != nil {
+			return err
+		}
+		record, err := matchingRecord(&state, envelope, adapter)
+		if err != nil {
+			return err
+		}
+		if !record.Delivery.State.Terminal() && !record.HandoffObserved {
+			record.HandoffObserved = true
+			if err := s.writeLocked(state, nil); err != nil {
+				return err
+			}
+			changed = true
+		}
+		out = *record
+		return nil
+	})
+	return out, changed, err
+}
+
+// ApplyMatching is Apply for a caller holding the envelope, with the same
+// single-lock check as MarkHandoffMatching.
+func (s *Store) ApplyMatching(envelope coremessage.Envelope, adapter string, event coremessage.Event) (Record, bool, error) {
+	var out Record
+	var changed bool
+	err := s.withLock(func() error {
+		state, err := s.loadLocked()
+		if err != nil {
+			return err
+		}
+		record, err := matchingRecord(&state, envelope, adapter)
+		if err != nil {
+			return err
+		}
+		if next, didChange := coremessage.Reduce(record.Delivery, record.Envelope, event); didChange {
+			record.Delivery = next
+			if err := s.writeLocked(state, nil); err != nil {
+				return err
+			}
+			changed = true
+		}
+		out = *record
+		return nil
+	})
+	return out, changed, err
+}
+
+func matchingRecord(state *diskState, envelope coremessage.Envelope, adapter string) (*Record, error) {
+	for i := range state.Records {
+		record := &state.Records[i]
+		if record.Envelope.MessageRef != envelope.MessageRef {
+			continue
+		}
+		if record.Adapter != adapter || !record.Envelope.SameRetry(envelope) {
+			return nil, coremessage.ErrInvalidEnvelope
+		}
+		return record, nil
+	}
+	return nil, coremessage.ErrInvalidEnvelope
+}
+
 // Status expires an unclaimed pre-handoff record at its broker deadline. A
 // terminal record is returned unchanged, and payload remains available only to
 // the private caller which decides its public projection.
@@ -489,17 +575,39 @@ func (s *Store) withLock(fn func() error) error {
 	}
 	defer lock.Close()
 	operation := unix.LOCK_EX
-	if s.nonblocking {
+	if s.nonblocking || s.lockWait > 0 {
 		operation |= unix.LOCK_NB
 	}
-	if err := unix.Flock(int(lock.Fd()), operation); err != nil {
-		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+	if err := s.flock(int(lock.Fd()), operation); err != nil {
+		if lockBusy(err) {
 			return ErrBusy
 		}
 		return err
 	}
 	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN) //nolint:errcheck -- releasing an owned advisory lock.
+	if s.hooks.afterLock != nil {
+		s.hooks.afterLock()
+	}
 	return fn()
+}
+
+// flock retries a non-blocking attempt until the view's bound. The deadline
+// uses the monotonic wall clock, never the injectable record clock.
+func (s *Store) flock(fd, operation int) error {
+	err := unix.Flock(fd, operation)
+	if s.nonblocking || s.lockWait <= 0 {
+		return err
+	}
+	deadline := time.Now().Add(s.lockWait)
+	for lockBusy(err) && time.Now().Before(deadline) {
+		time.Sleep(lockRetryInterval)
+		err = unix.Flock(fd, operation)
+	}
+	return err
+}
+
+func lockBusy(err error) bool {
+	return errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN)
 }
 
 func (s *Store) loadLocked() (diskState, error) {

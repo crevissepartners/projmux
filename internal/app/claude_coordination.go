@@ -244,9 +244,16 @@ type claudeDialogueBroker interface {
 	CommitReply(coremessage.Envelope, coremessage.Envelope) (bool, error)
 }
 
+// liveClaudeDialogueBroker holds two views of the same inbox. A reply commit
+// refuses contention at once: that refusal precedes any durable write, so it
+// is true and safe to retry, and waiting could land the commit after the
+// caller gave up. The push records wait briefly instead: MarkDelivered runs
+// after the provider write, so losing it would report a delivered message as
+// failed.
 type liveClaudeDialogueBroker struct {
 	registryPath string
 	store        *messagestore.Store
+	pushStore    *messagestore.Store
 }
 
 func newLiveClaudeDialogueBroker(registryPath string) (*liveClaudeDialogueBroker, error) {
@@ -255,7 +262,8 @@ func newLiveClaudeDialogueBroker(registryPath string) (*liveClaudeDialogueBroker
 	if registryPath == "" || intmetadata.PathFor(stateDir) != clean {
 		return nil, errors.New("agent message registry path is not canonical")
 	}
-	return &liveClaudeDialogueBroker{registryPath: clean, store: messagestore.NewNonblockingStore(stateDir)}, nil
+	return &liveClaudeDialogueBroker{registryPath: clean, store: messagestore.NewNonblockingStore(stateDir),
+		pushStore: messagestore.NewBoundedWaitStore(stateDir)}, nil
 }
 
 // Current proves both ends again at the helper boundary. Target socket and
@@ -322,14 +330,7 @@ func (b *liveClaudeDialogueBroker) MarkHandoff(envelope coremessage.Envelope) er
 	if !b.Current(envelope) {
 		return coremessage.ErrInvalidEnvelope
 	}
-	record, found, err := b.store.Get(envelope.MessageRef)
-	if err != nil || !found || !record.Envelope.SameRetry(envelope) || record.Adapter != "claude-coordination" {
-		if err != nil {
-			return err
-		}
-		return coremessage.ErrInvalidEnvelope
-	}
-	_, _, err = b.store.MarkHandoff(envelope.MessageRef)
+	_, _, err := b.pushStore.MarkHandoffMatching(envelope, "claude-coordination")
 	return err
 }
 
@@ -337,14 +338,7 @@ func (b *liveClaudeDialogueBroker) MarkDelivered(envelope coremessage.Envelope, 
 	if envelope.Validate() != nil {
 		return coremessage.ErrInvalidEnvelope
 	}
-	stored, found, err := b.store.Get(envelope.MessageRef)
-	if err != nil {
-		return err
-	}
-	if !found || stored.Adapter != "claude-coordination" || !stored.Envelope.SameRetry(envelope) {
-		return coremessage.ErrInvalidEnvelope
-	}
-	record, _, err := b.store.Apply(envelope.MessageRef, coremessage.Event{Kind: coremessage.EventDeliver,
+	record, _, err := b.pushStore.ApplyMatching(envelope, "claude-coordination", coremessage.Event{Kind: coremessage.EventDeliver,
 		MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: observedAt.UTC()})
 	if err != nil {
 		return err
