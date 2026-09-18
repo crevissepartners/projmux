@@ -211,6 +211,7 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 		// server, so no identity proved before this point may be reused.
 		command.runtime.invalidateRouteIdentity("route-bind")
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
+		command.reconciler.shareRouteIdentityScope(command.runtime)
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
 		command.runtime.sessions = client

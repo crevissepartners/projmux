@@ -1924,10 +1924,22 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 	}
 
 	_, err = c.store.update(func(working *coremetadata.Registry) error {
-		if _, err := guard(ctx, working.Clone(), c.store.mutator(), operationID); err != nil {
+		preflight, err := guard(ctx, working.Clone(), c.store.mutator(), operationID)
+		if err != nil {
 			return err
 		}
-		if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, guard); err != nil {
+		// The first reconcile pass asks the same guards the same question about
+		// the same Registry before any write of ours: it reuses the preflight
+		// answer while no guarded write has run since. The second pass follows
+		// the create's own writes and always asks tmux again.
+		preflightWrites := c.runtime.guardedWrites
+		firstPass := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
+			if c.runtime.guardedWrites == preflightWrites {
+				return preflight, nil
+			}
+			return guard(ctx, working, mutator, operationID)
+		}
+		if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, firstPass); err != nil {
 			return err
 		}
 		if err := op(ctx, working, c.store.mutator(), operationID, ledger); err != nil {
@@ -1945,13 +1957,21 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 		// the whole operation back instead of committing on stale evidence.
 		return c.runtime.reproveReusedRouteIdentity(ctx)
 	})
-	c.runtime.closeRouteIdentityCache()
 	if err != nil {
+		// Rollback runs after the scope is closed, so every guard of the
+		// unwind -- and of the lease clear after it -- proves identity in full.
+		c.runtime.closeRouteIdentityCache()
 		c.runtime.rollback(ctx, ledger)
 		c.runtime.clearCreateOperations(ctx, ledger)
 		return MapMetadataError(err)
 	}
+	// On success the lease clear is the transaction's last guarded write and
+	// runs inside the scope: its guards may reuse the commit re-proof (or the
+	// post-effect proof of the previous guarded write), which no write of ours
+	// has followed. Its own guarded-write seam drops that proof after the
+	// write, so the post-effect observation proves identity again.
 	c.runtime.clearCreateOperations(ctx, ledger)
+	c.runtime.closeRouteIdentityCache()
 	return nil
 }
 

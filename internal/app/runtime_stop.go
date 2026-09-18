@@ -442,6 +442,23 @@ func guardResolvedRuntimeMutationRouteWithMarkerPolicy(
 	allowMissingLogicalMarker bool,
 	identity *runtimeRouteIdentityCache,
 ) error {
+	return guardResolvedRuntimeMutationRouteObserved(ctx, runner, route, allowMissingLogicalMarker, identity, "")
+}
+
+// guardResolvedRuntimeMutationRouteObserved is the resolved-route guard for a
+// caller that has just read #{socket_path} through the exact physical socket
+// this route names, with no tmux call in between. The proof then takes that
+// value instead of issuing the same read a second time; every other component
+// (server generation, app marker, logical marker) is still read here. An empty
+// observedSocket reads the socket path itself, exactly as the plain guard does.
+func guardResolvedRuntimeMutationRouteObserved(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	route runtimeMutationRoute,
+	allowMissingLogicalMarker bool,
+	identity *runtimeRouteIdentityCache,
+	observedSocket string,
+) error {
 	if runner == nil || route.target.Flag() == "" || route.target.Value == "" {
 		return errors.New("runtime mutation route is not exact")
 	}
@@ -450,7 +467,7 @@ func guardResolvedRuntimeMutationRouteWithMarkerPolicy(
 	if cacheable && identity.reuse(key) {
 		return nil
 	}
-	if err := proveResolvedRuntimeMutationRoute(ctx, runner, route, allowMissingLogicalMarker); err != nil {
+	if err := proveResolvedRuntimeMutationRouteObserved(ctx, runner, route, allowMissingLogicalMarker, observedSocket); err != nil {
 		identity.invalidate("resolved-route-probe-error")
 		return err
 	}
@@ -460,7 +477,7 @@ func guardResolvedRuntimeMutationRouteWithMarkerPolicy(
 	return nil
 }
 
-func proveResolvedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, allowMissingLogicalMarker bool) error {
+func proveResolvedRuntimeMutationRouteObserved(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, allowMissingLogicalMarker bool, observedSocket string) error {
 	// Once a physical socket has been observed, it is the execution authority.
 	// Re-resolving the logical alias here would let an alias replacement make a
 	// pre-observation report the effect from the wrong server.
@@ -469,11 +486,14 @@ func proveResolvedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRu
 		probeTarget = tmuxTransport{Kind: tmuxSocketPath, Value: filepath.Clean(route.expectedSocketPath), Source: tmuxSocketPathSource}
 	}
 	routed := explicitTmuxRunner{runner: runner, target: probeTarget}
-	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
-	if err != nil {
-		return fmt.Errorf("reobserve planned runtime socket: %w", err)
+	if observedSocket == "" || route.expectedSocketPath == "" {
+		out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+		if err != nil {
+			return fmt.Errorf("reobserve planned runtime socket: %w", err)
+		}
+		observedSocket = string(out)
 	}
-	observed := filepath.Clean(strings.TrimSpace(string(out)))
+	observed := filepath.Clean(strings.TrimSpace(observedSocket))
 	if route.expectedSocketPath != "" && observed != filepath.Clean(route.expectedSocketPath) {
 		return fmt.Errorf("runtime socket drifted: observed %q, planned %q", observed, filepath.Clean(route.expectedSocketPath))
 	}

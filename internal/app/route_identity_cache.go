@@ -18,6 +18,12 @@ import (
 // run: the first guard for a given tuple always executes the full read set, and
 // only an exactly equal tuple may reuse it afterwards. The cache is per process,
 // per transaction, per exact route target, and it is never persisted.
+//
+// Every writer that reuses it writes through materializer.guardedWriteSteps,
+// which drops every proof after each Apply and Undo: the materializer's own
+// plans, and the typed metadata mirror when it runs inside the transaction
+// (runtimeMutationMetadataMirror.scope). So no guarded write relies on a proof
+// older than the previous guarded write, whoever made it.
 const (
 	// routeIdentityScopeExactRoute is the materializer's own
 	// reobserve/guard proof (guardExactRouteOwnership with a logical marker

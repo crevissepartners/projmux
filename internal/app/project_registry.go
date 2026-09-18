@@ -59,6 +59,21 @@ type registryReconciler struct {
 	// observeLegacy reads one live session's pre-v2 naming state together with
 	// the tmux ids the migration must mirror its allocated uids onto.
 	observeLegacy func(ctx context.Context, session string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error)
+	// observeServer, when set, reads every live session's legacy state and the
+	// mirrored-uid inventories in one server-wide snapshot per pass. The
+	// production observeLegacy answers from that snapshot, and the pre-pass
+	// runtime observation reads it, so an unrelated open session costs no tmux
+	// query of its own. Nil keeps the per-session and per-inventory reads.
+	observeServer func(ctx context.Context) (intmetadata.ServerSnapshot, error)
+	// inPass is true only while reconcileGuarded runs; passSnapshot is taken
+	// and kept only then. It is taken before the pass writes anything and
+	// dropped when the pass ends.
+	inPass       bool
+	passSnapshot *intmetadata.ServerSnapshot
+	// passSnapshotWrites is the shared guarded-write count when passSnapshot
+	// was taken; passSnapshotCounted is false when there is no shared counter.
+	passSnapshotWrites  uint64
+	passSnapshotCounted bool
 	// mirror writes allocated identity back onto live tmux objects.
 	mirror intmetadata.Mirror
 	// Runtime identity writes enter the shared printable mutation executor.
@@ -66,6 +81,9 @@ type registryReconciler struct {
 	mirrorProject func(context.Context, string, coremetadata.Project) error
 	mirrorWindow  func(context.Context, string, coremetadata.Window) error
 	mirrorPane    func(context.Context, string, string, coremetadata.Pane) error
+	// typedMirror is the production executor behind the three mirror writers,
+	// kept so a transaction owner can share its route identity scope with it.
+	typedMirror *runtimeMutationMetadataMirror
 	// shell is the configured shell path; its basename seeds default Window and
 	// Pane names.
 	shell string
@@ -120,10 +138,9 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 			}
 			return discoverProjectRoots(home, os.Getenv)
 		},
-		liveSessions:  sessions.ExistingSessions,
-		observeLegacy: mirror.ObserveLegacySessionTargets,
-		mirror:        mirror,
-		shell:         configuredShell(os.Getenv),
+		liveSessions: sessions.ExistingSessions,
+		mirror:       mirror,
+		shell:        configuredShell(os.Getenv),
 		// Every production caller is an automatic/default recovery path unless
 		// it explicitly opts into the approved D3 matcher. D2 import therefore
 		// starts closed even for create-time convergence.
@@ -145,13 +162,89 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 		reconciler.mirrorPane = func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
 			return mirror.MirrorPane(ctx, target, pane)
 		}
+		reconciler.observeLegacy = mirror.ObserveLegacySessionTargets
 	} else {
-		typed := runtimeMutationMetadataMirror{runner: runner, route: route}
-		reconciler.mirrorProject = typed.MirrorProject
-		reconciler.mirrorWindow = typed.MirrorWindow
-		reconciler.mirrorPane = typed.MirrorPane
+		reconciler.useTypedMirror(runtimeMutationMetadataMirror{runner: runner, route: route})
+		reconciler.observeServer = mirror.ObserveServer
+		reconciler.observeLegacy = func(ctx context.Context, session string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+			if snapshot := reconciler.passServerSnapshot(ctx); snapshot != nil {
+				if legacy, targets, ok := snapshot.LegacySessionTargets(session); ok {
+					return legacy, targets, nil
+				}
+			}
+			return mirror.ObserveLegacySessionTargets(ctx, session)
+		}
 	}
 	return reconciler
+}
+
+// passServerSnapshot returns this pass's server snapshot, taking it on first
+// use. It is nil when the reconciler has no server-wide observer or the
+// snapshot failed; callers then read per session exactly as before.
+//
+// The snapshot answers every read of one pass that would otherwise repeat the
+// same server state before anything was written: the pre-pass runtime
+// observation and each live session's legacy observation. Writes of the pass
+// go through the typed mirror, whose guards re-read their exact targets before
+// writing, so no write is authorized by the snapshot alone.
+func (r *registryReconciler) passServerSnapshot(ctx context.Context) *intmetadata.ServerSnapshot {
+	if r.observeServer == nil || !r.inPass {
+		return nil
+	}
+	if r.passSnapshot == nil {
+		writes, counted := r.sharedGuardedWrites()
+		snapshot, err := r.observeServer(ctx)
+		if err != nil {
+			return nil
+		}
+		r.passSnapshot = &snapshot
+		r.passSnapshotWrites, r.passSnapshotCounted = writes, counted
+	}
+	return r.passSnapshot
+}
+
+// sharedGuardedWrites is the guarded-write count of the transaction scope the
+// typed mirror writes through. Every tmux write this reconciler issues goes
+// through that mirror, so an unchanged count means this pass wrote nothing.
+func (r *registryReconciler) sharedGuardedWrites() (uint64, bool) {
+	if r.typedMirror == nil || r.typedMirror.scope == nil {
+		return 0, false
+	}
+	return r.typedMirror.scope.guardedWrites, true
+}
+
+// unwrittenPassSnapshot returns this pass's snapshot only when it provably
+// still describes the server as far as this process is concerned: it was
+// taken under a shared guarded-write counter and no guarded write of ours has
+// run since. Otherwise it is nil and the caller reads tmux.
+func (r *registryReconciler) unwrittenPassSnapshot() *intmetadata.ServerSnapshot {
+	if r.passSnapshot == nil || !r.passSnapshotCounted {
+		return nil
+	}
+	if writes, counted := r.sharedGuardedWrites(); !counted || writes != r.passSnapshotWrites {
+		return nil
+	}
+	return r.passSnapshot
+}
+
+func (r *registryReconciler) useTypedMirror(typed runtimeMutationMetadataMirror) {
+	r.typedMirror = &typed
+	r.mirrorProject = typed.MirrorProject
+	r.mirrorWindow = typed.MirrorWindow
+	r.mirrorPane = typed.MirrorPane
+}
+
+// shareRouteIdentityScope makes the typed mirror writers run inside scope's
+// runtime-mutation transactions: their route guards reuse scope's open identity
+// cache, and their writes pass through scope's guarded-write seam. A reconciler
+// with injected (non-typed) writers is left unchanged.
+func (r *registryReconciler) shareRouteIdentityScope(scope *materializer) {
+	if r == nil || r.typedMirror == nil {
+		return
+	}
+	typed := *r.typedMirror
+	typed.scope = scope
+	r.useTypedMirror(typed)
 }
 
 // initializeRefusalBookkeeping preserves the constructor invariant for test and
@@ -289,6 +382,10 @@ func (r *registryReconciler) reconcileGuarded(
 	guard createPreReconcile,
 ) error {
 	r.initializeRefusalBookkeeping()
+	// One server snapshot per pass, never carried across passes: the second
+	// pass of a create runs after the create's own writes.
+	r.inPass, r.passSnapshot = true, nil
+	defer func() { r.inPass, r.passSnapshot = false, nil }()
 	live, err := r.liveSessions(ctx)
 	if err != nil {
 		return err
@@ -310,7 +407,11 @@ func (r *registryReconciler) reconcileGuarded(
 	// tmux object -- so adoption can decline to steal one. It is read before
 	// anything in this pass writes, which is what makes "already bound" mean
 	// "bound before we got here".
-	runtime := observeRuntime(ctx, r.mirror)
+	var inventory liveRuntimeInventory = r.mirror
+	if snapshot := r.passServerSnapshot(ctx); snapshot != nil {
+		inventory = snapshot
+	}
+	runtime := observeRuntime(ctx, inventory)
 	binder := coremetadata.NewBindingMatcher(runtime)
 	if r.refuseForeign {
 		binder = coremetadata.NewRepairBindingMatcher(runtime)
@@ -340,7 +441,7 @@ func (r *registryReconciler) reconcileGuarded(
 	// imported and stamp a MissingRuntime condition on a Window that is plainly
 	// there -- and, now that binding reapply exists, on a Window this very pass
 	// just reattached.
-	r.observeRuntime(ctx, working, mutator)
+	r.observeRuntime(ctx, working, mutator, r.unwrittenPassSnapshot())
 	return nil
 }
 
@@ -367,12 +468,21 @@ func (r *registryReconciler) reconcileGuarded(
 // extends to an absent server. Rewriting the registry from an inventory we
 // could not read would condition every Window and offline every managed Agent
 // on a machine whose tmux server simply is not up.
-func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator) {
-	panes, paneErr := r.mirror.LivePaneUIDs(ctx)
+//
+// unwritten, when non-nil, is this pass's pre-pass server snapshot, handed in
+// only when no write of ours has run since it was taken. It then answers both
+// inventories: re-reading them would repeat the same server-wide queries with
+// no write in between.
+func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, unwritten *intmetadata.ServerSnapshot) {
+	var inventory liveRuntimeInventory = r.mirror
+	if unwritten != nil {
+		inventory = unwritten
+	}
+	panes, paneErr := inventory.LivePaneUIDs(ctx)
 	if paneErr == nil {
 		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, lifecycleDirtyEvent{}))
 	}
-	windows, windowErr := r.mirror.LiveWindowUIDs(ctx)
+	windows, windowErr := inventory.LiveWindowUIDs(ctx)
 	if paneErr != nil || windowErr != nil {
 		return
 	}

@@ -282,6 +282,50 @@ type materializer struct {
 	// afterGuardedWrite is a test seam that runs after every guarded Apply this
 	// materializer executes. Production leaves it nil.
 	afterGuardedWrite func()
+	// identityMemo is open only while one identity-write plan runs (see
+	// scopeIdentityObservations). It is nil everywhere else.
+	identityMemo *identityObservationMemo
+	// guardedWrites counts every Apply and Undo that passed through
+	// guardedWriteSteps. A reader that observed tmux when the count was n knows
+	// no guarded write of ours followed while it is still n.
+	guardedWrites uint64
+}
+
+// identityObservationMemo keeps, for one identity-write plan, the latest
+// $/@/% identity-bundle observation of each target that no write of ours has
+// followed. Every guarded Apply/Undo empties it (guardedWriteSteps), so an
+// entry is never older than the previous guarded write.
+//
+// A bind or an effect reobservation may answer from any entry. A guard -- the
+// read that brackets a write -- reads tmux unless the entry was itself read by
+// a guard after the latest write: the first guard after a write always reads,
+// and the further guards of the same all-guards-before-first-write batch
+// repeat that read with no write in between, so they reuse it.
+type identityObservationMemo struct {
+	entries map[string]identityObservationEntry
+}
+
+type identityObservationEntry struct {
+	observation materializeIdentityObservation
+	guarded     bool
+}
+
+// scopeIdentityObservations opens the memo for one identity-write plan and
+// returns its close. A nested call keeps the outer scope.
+func (m *materializer) scopeIdentityObservations() func() {
+	if m == nil || m.identityMemo != nil {
+		return func() {}
+	}
+	m.identityMemo = &identityObservationMemo{entries: map[string]identityObservationEntry{}}
+	return func() { m.identityMemo = nil }
+}
+
+// forgetIdentityObservations empties the memo after a guarded write.
+func (m *materializer) forgetIdentityObservations() {
+	if m == nil || m.identityMemo == nil {
+		return
+	}
+	clear(m.identityMemo.entries)
 }
 
 // guardedWriteSteps is the materializer's guarded-write seam: every materializer
@@ -297,7 +341,9 @@ func (m *materializer) guardedWriteSteps(steps []runtimeMutationStep) []runtimeM
 		if apply := guarded[i].Apply; apply != nil {
 			guarded[i].Apply = func(ctx context.Context) error {
 				err := apply(ctx)
+				m.guardedWrites++
 				m.invalidateRouteIdentity("guarded-write")
+				m.forgetIdentityObservations()
 				if m.afterGuardedWrite != nil {
 					m.afterGuardedWrite()
 				}
@@ -307,7 +353,9 @@ func (m *materializer) guardedWriteSteps(steps []runtimeMutationStep) []runtimeM
 		if undo := guarded[i].Undo; undo != nil {
 			guarded[i].Undo = func(ctx context.Context) error {
 				err := undo(ctx)
+				m.guardedWrites++
 				m.invalidateRouteIdentity("guarded-write")
+				m.forgetIdentityObservations()
 				return err
 			}
 		}
@@ -579,8 +627,14 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 		return err
 	}
 	probe := m.runner
+	// physicalObservation is true only when the #{socket_path} read below goes
+	// through the exact absolute -S socket the resolved-route proof would read
+	// it through. Only then may that proof take this value instead of reading it
+	// again (see guardResolvedRuntimeMutationRouteObserved).
+	physicalObservation := false
 	if m.expectedSocketPath != "" {
 		probe = m.mutationRunner(plannedRuntimeMutation{Target: runtimeMutationTarget{PhysicalSocket: m.expectedSocketPath}})
+		physicalObservation = filepath.IsAbs(m.expectedSocketPath)
 	}
 	observedOut, observeErr := probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if observeErr != nil {
@@ -621,6 +675,9 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 		// Re-resolving the route rebinds the server generation this materializer
 		// speaks for, so every earlier proof is void.
 		m.invalidateRouteIdentity("route-re-resolution")
+		// The re-resolution issued its own reads after the socket observation
+		// above, so that observation no longer stands in for the nested proof.
+		physicalObservation = false
 		m.target = bound.target
 		target = bound.target
 		m.socketName = bound.socketName
@@ -638,10 +695,17 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 			}
 			return nil
 		}
-		return guardResolvedRuntimeMutationRouteWithIdentity(ctx, m.baseRunner(), runtimeMutationRoute{
+		// The socket path this proof needs was read above, through the same exact
+		// physical socket, with no tmux call in between; the nested proof reads
+		// the server generation and both markers.
+		reuseObserved := ""
+		if physicalObservation {
+			reuseObserved = observed
+		}
+		return guardResolvedRuntimeMutationRouteObserved(ctx, m.baseRunner(), runtimeMutationRoute{
 			target: target, expectedSocketPath: m.expectedSocketPath,
 			socketName: m.logicalSocketName(target), authority: m.routeAuthority,
-		}, m.routeIdentity)
+		}, false, m.routeIdentity, reuseObserved)
 	}
 	if requireLogical {
 		if err := guardRuntimeMutationServerOwnership(ctx, probe, target); err != nil {
@@ -1047,8 +1111,29 @@ func (m *materializer) readMaterializeIdentityObservation(ctx context.Context, k
 	}
 }
 
+// identityObservation reads one target's identity bundle through the memo of
+// the open identity-write plan, if any. forGuard marks the read that brackets a
+// write; see identityObservationMemo.
+func (m *materializer) identityObservation(ctx context.Context, kind, target string, forGuard bool) (materializeIdentityObservation, error) {
+	key := kind + "\x00" + target
+	if memo := m.identityMemo; memo != nil {
+		if entry, ok := memo.entries[key]; ok && (!forGuard || entry.guarded) {
+			return entry.observation, nil
+		}
+	}
+	observation, err := m.readMaterializeIdentityObservation(ctx, kind, target)
+	if memo := m.identityMemo; memo != nil {
+		if err != nil {
+			delete(memo.entries, key)
+		} else {
+			memo.entries[key] = identityObservationEntry{observation: observation, guarded: forGuard}
+		}
+	}
+	return observation, err
+}
+
 func (m *materializer) bindMaterializeIdentityTarget(ctx context.Context, kind, id, uid string) (runtimeMutationTarget, error) {
-	observation, err := m.readMaterializeIdentityObservation(ctx, kind, id)
+	observation, err := m.identityObservation(ctx, kind, id, false)
 	if err != nil {
 		return runtimeMutationTarget{}, err
 	}
@@ -1061,7 +1146,7 @@ func (m *materializer) bindMaterializeIdentityTarget(ctx context.Context, kind, 
 }
 
 func (m *materializer) observeMaterializeIdentityTarget(ctx context.Context, target runtimeMutationTarget) (bool, error) {
-	observation, err := m.readMaterializeIdentityObservation(ctx, target.Kind, target.ID)
+	observation, err := m.identityObservation(ctx, target.Kind, target.ID, false)
 	if err != nil {
 		return false, err
 	}
@@ -1078,7 +1163,7 @@ func (m *materializer) observeMaterializeIdentityTarget(ctx context.Context, tar
 }
 
 func (m *materializer) guardMaterializeIdentityTarget(ctx context.Context, target runtimeMutationTarget, allowBlankUID bool) error {
-	observation, err := m.readMaterializeIdentityObservation(ctx, target.Kind, target.ID)
+	observation, err := m.identityObservation(ctx, target.Kind, target.ID, true)
 	if err != nil {
 		return err
 	}
@@ -1759,6 +1844,8 @@ func (m *materializer) claimRuntimeUID(ctx context.Context, kind runtimeObjectKi
 		args = append(args, "-p")
 	}
 	args = append(args, "-t", target, "-q", ownershipOption, uid)
+	closeObservations := m.scopeIdentityObservations()
+	defer closeObservations()
 	stable, err := m.bindMaterializeIdentityTarget(ctx, string(kind), target, uid)
 	if err != nil {
 		return false, err
@@ -1838,6 +1925,7 @@ func (m *materializer) mirrorProject(ctx context.Context, target string, project
 }
 
 func (m *materializer) runIdentityWrites(ctx context.Context, kind, target, uid string, writes []identityPlanWrite) error {
+	defer m.scopeIdentityObservations()()
 	stable, err := m.bindMaterializeIdentityTarget(ctx, kind, target, uid)
 	if err != nil {
 		return err
@@ -1936,6 +2024,10 @@ func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtim
 		return
 	}
 	var steps []runtimeMutationStep
+	// wrote turns true at the plan's first Apply. Until then, the lease read
+	// below is the latest observation of each session's environment and no
+	// write of ours has followed it; see Reobserve.
+	wrote := false
 	for _, sessionName := range ledger.markedSessionIDs {
 		exists, err := m.sessions.SessionExists(ctx, sessionName)
 		if err != nil || !exists {
@@ -1958,7 +2050,18 @@ func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtim
 			steps = append(steps, runtimeMutationStep{
 				Action:           action,
 				TargetRouteGuard: m.targetRouteGuard(action),
-				Reobserve:        func(ctx context.Context) (bool, error) { return m.observeMutationEffect(ctx, action) },
+				Reobserve: func(ctx context.Context) (bool, error) {
+					if !wrote {
+						// The lease read above found this exact environment
+						// carrying our marker, and nothing of ours has written
+						// since: the effect (lease absent) is known pending. The
+						// answer never declares an effect present, so it cannot
+						// skip a write; the Guard below reads tmux again right
+						// before the write.
+						return false, nil
+					}
+					return m.observeMutationEffect(ctx, action)
+				},
 				Guard: func(ctx context.Context) error {
 					if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
 						return err
@@ -1974,6 +2077,7 @@ func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtim
 					return nil
 				},
 				Apply: func(ctx context.Context) error {
+					wrote = true
 					_, err := runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)
 					return err
 				},
@@ -2095,6 +2199,11 @@ func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd strin
 		args...)
 	action.Command = slices.Clone(command)
 	var rawOutput []byte
+	// observedAfter is the inventory the post-effect observer read after the
+	// write. Nothing of ours writes between that observation and the
+	// attribution below, so the attribution reuses it instead of reading the
+	// same two server-wide inventories again.
+	var observedAfter *[2]runtimeOwners
 	createErr := m.runMaterializeMutation(ctx, action, func() error {
 		currentWindows, currentPanes, err := m.runtimeOwners(ctx)
 		if err != nil {
@@ -2115,13 +2224,21 @@ func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd strin
 		}
 		afterWindows, afterPanes, err := m.runtimeOwners(ctx)
 		if err != nil {
+			observedAfter = nil
 			return false, err
 		}
+		observedAfter = &[2]runtimeOwners{afterWindows, afterPanes}
 		_, err = attributeCreatedWindow(output, sessionID, beforeWindows, beforePanes, afterWindows, afterPanes)
 		return err == nil, err
 	})
 	output := strings.TrimSpace(string(rawOutput))
-	afterWindows, afterPanes, inventoryErr := m.runtimeOwners(ctx)
+	var afterWindows, afterPanes runtimeOwners
+	var inventoryErr error
+	if observedAfter != nil {
+		afterWindows, afterPanes = observedAfter[0], observedAfter[1]
+	} else {
+		afterWindows, afterPanes, inventoryErr = m.runtimeOwners(ctx)
+	}
 	if inventoryErr != nil {
 		m.warnCompositeWindowResult(output)
 		inventoryFailure := tmuxError("inventory tmux runtime after window create: %v", inventoryErr)
