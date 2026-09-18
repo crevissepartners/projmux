@@ -96,6 +96,45 @@ func graphHistoryLine(t *testing.T, m graphMessage) string {
 	return string(line) + "\n"
 }
 
+// graphNarrowHistoryLine renders one reclaim-log line in the shape the writer
+// writes now: agentmessage's historyLine, keys in its order, routes narrowed
+// to agentUID and provider, no deadline, and outcomeUnknown absent because it
+// is false. encodeHistoryLine is unexported, so the struct mirrors it here.
+// graphHistoryLine is the full-route shape lines were written in before.
+func graphNarrowHistoryLine(t *testing.T, m graphMessage) string {
+	t.Helper()
+	type route struct {
+		AgentUID string `json:"agentUID"`
+		Provider string `json:"provider"`
+	}
+	line, err := json.Marshal(struct {
+		SchemaVersion   int               `json:"schemaVersion"`
+		EvictedAt       time.Time         `json:"evictedAt"`
+		Reason          string            `json:"reason"`
+		Adapter         string            `json:"adapter"`
+		MessageRef      string            `json:"messageRef"`
+		ConversationRef string            `json:"conversationRef"`
+		State           coremessage.State `json:"state"`
+		DeliveryReason  string            `json:"deliveryReason"`
+		HandoffObserved bool              `json:"handoffObserved"`
+		AcceptedAt      time.Time         `json:"acceptedAt"`
+		TerminalAt      time.Time         `json:"terminalAt"`
+		PayloadBytes    int               `json:"payloadBytes"`
+		Source          route             `json:"source"`
+		Target          route             `json:"target"`
+	}{
+		SchemaVersion: 1, EvictedAt: m.at.Add(48 * time.Hour), Reason: "retention", Adapter: "codex-inbox",
+		MessageRef: m.ref, ConversationRef: "conversation-" + m.ref, State: coremessage.StateDelivered,
+		DeliveryReason: "graph-test", AcceptedAt: m.at, TerminalAt: m.at.Add(time.Second),
+		PayloadBytes: len(graphPayload(m.ref)),
+		Source:       route{AgentUID: m.source, Provider: "claude"}, Target: route{AgentUID: m.target, Provider: "codex"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(line) + "\n"
+}
+
 func graphStorePath(stateDir string) string {
 	return filepath.Join(stateDir, "agent-messages", "messages.json")
 }
@@ -645,5 +684,82 @@ func TestAgentGraphOmitsACreatedEdgeWhoseCreatorIsGone(t *testing.T) {
 		if _, listed := graphAgents(t, body)["agt-deleted-creator"]; listed {
 			t.Errorf("%s lists the missing creator", project)
 		}
+	}
+}
+
+// TestAgentGraphReadsBothHistoryLineShapes pins that a log holding full-route
+// lines written before routes were narrowed and narrow lines the writer writes
+// now counts both toward one pair: its edge counts, lastAcceptedAt and since
+// come from either shape, a narrow line repeating a stored message counts
+// once, and the peers route lists a narrow line without its body.
+func TestAgentGraphReadsBothHistoryLineShapes(t *testing.T) {
+	stateDir := t.TempDir()
+	narrowNewest := graphMessage{"m-narrow-claude-codex", "agt-alpha-claude", "agt-alpha-codex", agentGraphT0.Add(8 * time.Hour)}
+	narrowOldest := graphMessage{"m-narrow-oldest", "agt-alpha-claude", "agt-alpha-codex", agentGraphT0.Add(-2 * time.Hour)}
+	for _, line := range []string{graphNarrowHistoryLine(t, narrowNewest), graphNarrowHistoryLine(t, narrowOldest)} {
+		for _, key := range []string{`"deadline"`, `"paneUID"`, `"activationGeneration"`, `"incarnation"`, `"outcomeUnknown"`} {
+			if strings.Contains(line, key) {
+				t.Fatalf("narrow line carries %s: %s", key, line)
+			}
+		}
+	}
+	if old := graphHistoryLine(t, msgLoggedToClaude); !strings.Contains(old, `"deadline"`) || !strings.Contains(old, `"paneUID"`) {
+		t.Fatalf("full-route line lost its route or deadline: %s", old)
+	}
+	writeGraphStore(t, stateDir, graphRecord(t, msgCodexToClaude))
+	appendGraphHistory(t, stateDir, "history.jsonl", graphHistoryLine(t, msgLoggedToClaude)+
+		graphNarrowHistoryLine(t, narrowNewest)+graphNarrowHistoryLine(t, msgCodexToClaude))
+	appendGraphHistory(t, stateDir, "history.jsonl.1", graphNarrowHistoryLine(t, narrowOldest))
+
+	code, body := getAgentGraph(t, agentGraphBackend(t, stateDir), "prj-alpha")
+	if code != http.StatusOK {
+		t.Fatalf("GET agent-graph = %d %v", code, body)
+	}
+	// claude -> codex: the two narrow lines. codex -> claude: the store and the
+	// full-route line; the narrow copy of the stored message counts once.
+	want := []map[string]any{
+		{"kind": "conversation", "a": "agt-alpha-claude", "b": "agt-alpha-codex", "aToB": 2.0, "bToA": 2.0,
+			"lastAcceptedAt": rfc3339(narrowNewest.at)},
+	}
+	got, _ := json.Marshal(graphEdges(t, body))
+	wantJSON, _ := json.Marshal(want)
+	if !bytes.Equal(got, wantJSON) {
+		t.Fatalf("edges = %s\nwant %s", got, wantJSON)
+	}
+	if body["since"] != rfc3339(narrowOldest.at) || body["skipped"] != 0.0 {
+		t.Fatalf("since = %v skipped = %v, want %s and 0", body["since"], body["skipped"], rfc3339(narrowOldest.at))
+	}
+
+	code, body = webGet(t, web.New(agentGraphBackend(t, stateDir), nil).Handler(),
+		"/api/v1/agents/agt-alpha-codex/peers/agt-alpha-claude/messages")
+	if code != http.StatusOK {
+		t.Fatalf("GET peer messages = %d %v", code, body)
+	}
+	raw, _ := body["messages"].([]any)
+	type item struct {
+		ref, direction, source, target, state, acceptedAt string
+		retained, payloadPresent                          bool
+		payloadBytes                                      float64
+	}
+	var items []item
+	for _, entry := range raw {
+		message := entry.(map[string]any)
+		_, present := message["payload"]
+		items = append(items, item{message["messageRef"].(string), message["direction"].(string),
+			message["source"].(string), message["target"].(string), message["state"].(string),
+			message["acceptedAt"].(string), message["bodyRetained"].(bool), present, message["payloadBytes"].(float64)})
+	}
+	wantItem := func(m graphMessage, direction string, retained bool) item {
+		return item{m.ref, direction, m.source, m.target, string(coremessage.StateDelivered), rfc3339(m.at),
+			retained, retained, float64(len(graphPayload(m.ref)))}
+	}
+	wantItems := []item{
+		wantItem(narrowOldest, "incoming", false),
+		wantItem(msgLoggedToClaude, "outgoing", false),
+		wantItem(msgCodexToClaude, "outgoing", true),
+		wantItem(narrowNewest, "incoming", false),
+	}
+	if !slices.Equal(items, wantItems) {
+		t.Fatalf("messages = %+v\nwant %+v", items, wantItems)
 	}
 }

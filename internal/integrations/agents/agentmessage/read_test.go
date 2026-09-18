@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -33,16 +34,40 @@ func writeStoreFile(t *testing.T, stateDir string, records []Record) string {
 	return path
 }
 
-// historyLines renders records as the writer renders reclaimed ones.
-func historyLines(t *testing.T, records ...Record) string {
-	t.Helper()
+// retentionReclaimed is records as pruneRecords hands them over when they
+// outlived terminalRetention.
+func retentionReclaimed(records []Record) []reclaimedRecord {
 	reclaimed := make([]reclaimedRecord, 0, len(records))
 	for _, record := range records {
 		reclaimed = append(reclaimed, reclaimedRecord{Record: record, Reason: reclaimRetention})
 	}
+	return reclaimed
+}
+
+// historyLines renders records in the full-route shape: every route key and
+// the deadline, as lines were written before routes were narrowed. Such lines
+// stay on disk until rotation replaces them.
+func historyLines(t *testing.T, records ...Record) string {
+	t.Helper()
 	var buf strings.Builder
-	for _, line := range newHistoryRecords(reclaimed, storeTestNow) {
+	for _, line := range newHistoryRecords(retentionReclaimed(records), storeTestNow) {
 		data, err := json.Marshal(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+	return buf.String()
+}
+
+// currentHistoryLines renders records as the writer renders reclaimed ones
+// now, through encodeHistoryLine.
+func currentHistoryLines(t *testing.T, records ...Record) string {
+	t.Helper()
+	var buf strings.Builder
+	for _, line := range newHistoryRecords(retentionReclaimed(records), storeTestNow) {
+		data, err := encodeHistoryLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -271,5 +296,115 @@ func TestReadArchiveKeepsRetainedLinesWhenHistoryRotatesBetweenReads(t *testing.
 	// store was read.
 	if got := archiveRecordRefs(archive); !slices.Equal(got, []string{stale.Envelope.MessageRef}) {
 		t.Fatalf("store refs = %v", got)
+	}
+}
+
+// TestReadArchiveReadsBothHistoryLineShapes pins that one generation holding a
+// full-route line written before routes were narrowed and lines the writer
+// writes now reads every field a reader uses from each. The operator line has
+// an origin and no source.
+func TestReadArchiveReadsBothHistoryLineShapes(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	old := historyTerminalRecord(1, storeTestNow.Add(-2*time.Hour))
+	current := historyTerminalRecord(2, storeTestNow.Add(-time.Hour))
+	current.Envelope.ReplyTo = old.Envelope.MessageRef
+	operatorEnvelope := operatorStoreEnvelope("message-operator", storeTestNow.Add(-30*time.Minute))
+	operator := Record{Envelope: operatorEnvelope, Adapter: "claude-coordination",
+		Delivery: terminalDelivery(operatorEnvelope, coremessage.Event{Kind: coremessage.EventDeliver,
+			ObservedAt: operatorEnvelope.AcceptedAt.Add(time.Second)})}
+	oldLine := historyLines(t, old)
+	newLines := currentHistoryLines(t, current, operator)
+
+	// The fixture has to stay two shapes: the old line carries every route key
+	// and the deadline, the new ones only agentUID and provider and no
+	// deadline, which then decodes as zero.
+	decode := func(line string) (map[string]json.RawMessage, historyRecord) {
+		t.Helper()
+		var keys map[string]json.RawMessage
+		var record historyRecord
+		if err := json.Unmarshal([]byte(line), &keys); err != nil {
+			t.Fatalf("decode %s: %v", line, err)
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("decode %s: %v", line, err)
+		}
+		return keys, record
+	}
+	routeKeys := func(raw json.RawMessage) []string {
+		t.Helper()
+		var route map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &route); err != nil {
+			t.Fatalf("decode route %s: %v", raw, err)
+		}
+		keys := make([]string, 0, len(route))
+		for key := range route {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		return keys
+	}
+	narrowKeys := []string{"agentUID", "provider"}
+	oldKeys, oldRecord := decode(strings.TrimSuffix(oldLine, "\n"))
+	if _, ok := oldKeys["deadline"]; !ok || oldRecord.Deadline.IsZero() || oldRecord.Source.PaneUID == "" ||
+		slices.Equal(routeKeys(oldKeys["target"]), narrowKeys) {
+		t.Fatalf("old fixture line is not the full-route shape: %s", oldLine)
+	}
+	lines := strings.Split(strings.TrimSuffix(newLines, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("new lines = %q, want two", lines)
+	}
+	for i, line := range lines {
+		keys, record := decode(line)
+		_, deadline := keys["deadline"]
+		_, outcomeUnknown := keys["outcomeUnknown"]
+		if deadline || outcomeUnknown || !record.Deadline.IsZero() || strings.Contains(line, `"paneUID"`) ||
+			strings.Contains(line, `"activationGeneration"`) || strings.Contains(line, `"incarnation"`) ||
+			!slices.Equal(routeKeys(keys["target"]), narrowKeys) {
+			t.Fatalf("new line %d is not the narrow shape: %s", i, line)
+		}
+		if _, source := keys["source"]; source == (i == 1) {
+			t.Fatalf("new line %d source presence is wrong: %s", i, line)
+		}
+		if i == 0 && !slices.Equal(routeKeys(keys["source"]), narrowKeys) {
+			t.Fatalf("new line source is not narrowed: %s", line)
+		}
+	}
+	writeHistoryFile(t, stateDir, historyFileName, oldLine+newLines)
+
+	archive, err := ReadArchive(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archive.Skipped != 0 || len(archive.Records) != 0 {
+		t.Fatalf("archive = %+v, want no skipped line and no store", archive)
+	}
+	if got := archiveHistoryRefs(archive); !slices.Equal(got, []string{old.Envelope.MessageRef,
+		current.Envelope.MessageRef, operator.Envelope.MessageRef}) {
+		t.Fatalf("history refs = %v, want the file's order", got)
+	}
+	narrow := func(route coremessage.Route) coremessage.Route {
+		return coremessage.Route{AgentUID: route.AgentUID, Provider: route.Provider}
+	}
+	for i, want := range []struct {
+		record         Record
+		source, target coremessage.Route
+	}{
+		{old, old.Envelope.Source, old.Envelope.Target},
+		{current, narrow(current.Envelope.Source), narrow(current.Envelope.Target)},
+		{operator, coremessage.Route{}, narrow(operator.Envelope.Target)},
+	} {
+		entry, envelope := archive.History[i], want.record.Envelope
+		if entry.SchemaVersion != historySchemaVersion || entry.MessageRef != envelope.MessageRef ||
+			entry.ConversationRef != envelope.ConversationRef || entry.ReplyTo != envelope.ReplyTo ||
+			entry.State != want.record.Delivery.State || !entry.AcceptedAt.Equal(envelope.AcceptedAt) ||
+			entry.PayloadBytes != len(envelope.Payload) || entry.Source != want.source || entry.Target != want.target {
+			t.Fatalf("entry %d = %+v, want %s with source %+v and target %+v", i, entry, envelope.MessageRef,
+				want.source, want.target)
+		}
+	}
+	if second := archive.History[1]; second.ReplyTo != old.Envelope.MessageRef ||
+		second.Source.AgentUID != "agent-source" || second.Target.Provider != "codex" {
+		t.Fatalf("new line lost its edge: %+v", second)
 	}
 }
