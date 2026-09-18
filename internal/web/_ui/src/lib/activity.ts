@@ -1,7 +1,7 @@
 // What an agent is doing, as its provider hooks report it. `idle` and an
 // unknown state are the resting state and show nothing.
 
-import type { PaneView, Located } from "./tree";
+import type { AgentView, PaneView, Located } from "./tree";
 
 export type Tone = "busy" | "wait" | "alert" | "done";
 
@@ -13,7 +13,12 @@ const tones: Record<string, Tone> = {
 };
 
 export function activityOf(pane: PaneView | null | undefined): { kind: string; tone: Tone } | null {
-  const agent = pane?.agent;
+  return agentActivityOf(pane?.agent);
+}
+
+// The same reading for an Agent that is drawn without its pane, as an Agent
+// card is.
+export function agentActivityOf(agent: AgentView | null | undefined): { kind: string; tone: Tone } | null {
   if (!agent || agent.phase !== "Running") return null;
   const tone = tones[agent.activity];
   return tone ? { kind: agent.activity, tone } : null;
