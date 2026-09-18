@@ -72,6 +72,7 @@ func TestWebMutationsRefuseABareRequest(t *testing.T) {
 		{"DELETE", webWindowAlpha + "/panes/pan-alpha-log"},
 		{"DELETE", "/api/v1/agents/agt-alpha-codex"},
 		{"POST", "/api/v1/agents/agt-beta-codex/resume"},
+		{"POST", "/api/v1/projects/prj-alpha/stop"},
 	} {
 		for _, body := range []string{``, `{}`, `{"confirm":false}`} {
 			code, reply := webSend(t, handler, tc.method, tc.path, body)
@@ -94,6 +95,8 @@ func TestWebMutationsRefuseUnknownBodyFields(t *testing.T) {
 		{"DELETE", webWindowAlpha + "/panes/pan-alpha-log", `{"confirm":true,"pane":"pan-beta-zsh"}`},
 		{"DELETE", "/api/v1/agents/agt-alpha-codex", `{"confirm":true,"agent":"agt-beta-codex"}`},
 		{"DELETE", "/api/v1/agents/agt-alpha-codex?dryRun=true", `{"window":"win-beta-main"}`},
+		{"POST", "/api/v1/projects/prj-alpha/stop", `{"confirm":true,"window":"x"}`},
+		{"POST", "/api/v1/projects/prj-alpha/stop?dryRun=true", `{"project":"prj-beta"}`},
 		{"PATCH", webWindowAlpha, `{"name":"x","uid":"win-beta-main"}`},
 		{"POST", "/api/v1/agents/agt-alpha-codex/messages", `{"body":"hi","source":"uid:agt-alpha-codex","target":"x"}`},
 		{"POST", webWindowAlpha + "/agents", `{"provider":"claude","confirm":true}{"x":1}`},
@@ -122,6 +125,8 @@ func TestWebMutationsRefuseAChildOfAnotherParent(t *testing.T) {
 		{"POST", "/api/v1/agents/agt-missing/resume", `{"confirm":true}`},
 		{"DELETE", "/api/v1/agents/agt-missing", `{"confirm":true}`},
 		{"DELETE", "/api/v1/agents/agt-missing?dryRun=true", ``},
+		{"POST", "/api/v1/projects/prj-missing/stop", `{"confirm":true}`},
+		{"POST", "/api/v1/projects/prj-missing/stop?dryRun=true", ``},
 		{"POST", "/api/v1/agents/agt-alpha-codex/messages", `{"body":"hi","source":"uid:agt-missing"}`},
 	} {
 		code, reply := webSend(t, handler, tc.method, tc.path, tc.body)
@@ -198,6 +203,10 @@ func TestWebMutationsRunTheirOwnArgv(t *testing.T) {
 		{
 			"resume", "POST", "/api/v1/agents/agt-beta-codex/resume", `{"confirm":true}`, "",
 			[]string{"agent resume uid:agt-beta-codex --project uid:prj-beta --window uid:win-beta-main"},
+		},
+		{
+			"stop project", "POST", "/api/v1/projects/prj-alpha/stop", `{"confirm":true}`, "",
+			[]string{"stop project uid:prj-alpha"},
 		},
 		{
 			"start a codex turn", "POST", "/api/v1/agents/agt-alpha-codex/turns", `{"text":"hi"}`, "",
@@ -304,6 +313,112 @@ func TestWebDeleteDryRunNamesTheRunningAgents(t *testing.T) {
 	}
 	if _, ok := body["runningAgents"]; ok {
 		t.Errorf("a real delete carries runningAgents: %v", body)
+	}
+}
+
+// A Project stop dry run runs nothing, because `stop project` has none, and
+// names the Running Agents of the Project's Windows from the same Registry
+// read; a stop without dryRun needs confirm.
+func TestWebStopProjectDryRunRunsNothing(t *testing.T) {
+	codex := []any{map[string]any{"uid": "agt-alpha-codex", "name": "codex"}}
+	cases := []struct {
+		name, project string
+		offline       bool
+		want          []any
+	}{
+		{"a project with a running agent", "prj-alpha", false, codex},
+		{"a project whose agents are not running", "prj-alpha", true, []any{}},
+		{"a project whose agent is offline", "prj-beta", false, []any{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend, _ := webFixtureBackend(t)
+			if tc.offline {
+				registry, err := backend.loadRegistry()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range registry.Agents {
+					registry.Agents[i].Status.Phase = coremetadata.PhaseOffline
+				}
+				backend.loadRegistry = func() (coremetadata.Registry, error) { return registry.Clone(), nil }
+			}
+			recorder := &webCLIRecorder{}
+			backend.runCLI = recorder.run
+			for _, body := range []string{``, `{}`, `{"confirm":false}`} {
+				code, reply := webSend(t, web.New(backend, nil).Handler(), "POST", "/api/v1/projects/"+tc.project+"/stop?dryRun=true", body)
+				if code != http.StatusOK {
+					t.Fatalf("dry run %q = %d %v", body, code, reply)
+				}
+				wantPlan := "stop project uid:" + tc.project + ": ends the Project's tmux session; the Project, its Windows and Agents stay registered"
+				if reply["uid"] != tc.project || reply["dryRun"] != true || reply["plan"] != wantPlan {
+					t.Errorf("dry run body = %v, want uid, dryRun and the fixed plan", reply)
+				}
+				if got := fmt.Sprint(reply["runningAgents"]); got != fmt.Sprint(tc.want) || reply["runningAgents"] == nil {
+					t.Errorf("runningAgents = %v, want %v", reply["runningAgents"], tc.want)
+				}
+			}
+			if len(recorder.calls) != 0 {
+				t.Fatalf("a stop dry run ran %q", recorder.calls)
+			}
+		})
+	}
+}
+
+// The project path segment is an exact Project uid. A name or a selector
+// spelling is not-found and nothing runs; a confirmed stop runs one
+// `stop project` and returns its receipt line as the plan.
+func TestWebStopProjectTakesOnlyAnExactProjectUID(t *testing.T) {
+	handler, recorder := webMutationHarness(t)
+	for _, path := range []string{"/api/v1/projects/prj-alpha/stop", "/api/v1/projects/prj-alpha/stop?dryRun=false"} {
+		if code, reply := webSend(t, handler, "POST", path, `{}`); code != http.StatusBadRequest || errorCode(reply) != web.CodeConfirmRequired {
+			t.Errorf("POST %s = %d %v, want confirm-required", path, code, reply)
+		}
+	}
+	for _, ref := range []string{"alpha", "uid:prj-alpha", "project%2Falpha", "win-alpha-main", "PRJ-ALPHA"} {
+		for _, suffix := range []string{"", "?dryRun=true"} {
+			path := "/api/v1/projects/" + ref + "/stop" + suffix
+			if code, reply := webSend(t, handler, "POST", path, `{"confirm":true}`); code != http.StatusNotFound || errorCode(reply) != web.CodeNotFound {
+				t.Errorf("POST %s = %d %v, want not-found", path, code, reply)
+			}
+		}
+	}
+	if len(recorder.calls) != 0 {
+		t.Fatalf("a refused stop ran: %v", recorder.calls)
+	}
+
+	recorder.reply = func([]string) (string, error) { return "stop.project project/alpha runtime=stopped\n", nil }
+	code, body := webSend(t, handler, "POST", "/api/v1/projects/prj-alpha/stop", `{"confirm":true}`)
+	if code != http.StatusOK || body["uid"] != "prj-alpha" || body["plan"] != "stop.project project/alpha runtime=stopped" {
+		t.Fatalf("confirmed stop = %d %v", code, body)
+	}
+	for _, key := range []string{"runningAgents", "dryRun"} {
+		if _, ok := body[key]; ok {
+			t.Errorf("a real stop carries %s: %v", key, body)
+		}
+	}
+	if len(recorder.calls) != 1 || recorder.calls[0] != "stop project uid:prj-alpha" {
+		t.Fatalf("calls = %q, want one exact-uid stop project", recorder.calls)
+	}
+}
+
+// A Project with no live session is the CLI's usage refusal, which the web
+// error mapping makes invalid-request; it is never a success.
+func TestWebStopProjectOfANonLiveProjectIsRefused(t *testing.T) {
+	handler, recorder := webMutationHarness(t)
+	recorder.reply = func([]string) (string, error) {
+		return "", webCLIError(usageError("stop project: project/beta has no live persistent session; nothing was changed"), "")
+	}
+	code, body := webSend(t, handler, "POST", "/api/v1/projects/prj-beta/stop", `{"confirm":true}`)
+	if code != http.StatusBadRequest || errorCode(body) != web.CodeInvalidRequest {
+		t.Fatalf("stop of a non-live project = %d %v, want 400 invalid-request", code, body)
+	}
+	message, _ := body["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(message, "no live persistent session") {
+		t.Errorf("refusal message = %q, want the CLI's text", message)
+	}
+	if len(recorder.calls) != 1 || recorder.calls[0] != "stop project uid:prj-beta" {
+		t.Fatalf("calls = %q", recorder.calls)
 	}
 }
 
@@ -477,6 +592,7 @@ func TestWebCLIErrorKeepsRefusalTokens(t *testing.T) {
 		{fmt.Errorf("rename: %w", coremetadata.ErrNameConflict), 409, web.CodeNameConflict},
 		{fmt.Errorf("get: %w", coremetadata.ErrNotFound), 404, web.CodeNotFound},
 		{usageError("bad flag"), 400, web.CodeInvalidRequest},
+		{usageError("stop project: project/alpha has no live persistent session; nothing was changed"), 400, web.CodeInvalidRequest},
 		{errors.New("cascade plan changed; nothing was deleted"), 409, web.CodeRefused},
 	}
 	for _, tc := range cases {
