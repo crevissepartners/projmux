@@ -698,6 +698,9 @@ func TestDoctorAINotifyDiagnosticsProviderMetadataShowsDisabledProviders(t *test
 		if !strings.Contains(diagnostic.Guidance, "provider disabled") || !strings.Contains(diagnostic.Guidance, "explicit diagnostics") {
 			t.Fatalf("%s Guidance = %q, want disabled-provider diagnostic policy", tc.id, diagnostic.Guidance)
 		}
+		if want := "projmux config providers --enable " + tc.provider; !strings.Contains(diagnostic.Guidance, want) || strings.Contains(diagnostic.Guidance, "Settings > AI Settings") {
+			t.Fatalf("%s Guidance = %q, want %q and no Settings path", tc.id, diagnostic.Guidance, want)
+		}
 	}
 }
 

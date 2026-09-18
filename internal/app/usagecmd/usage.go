@@ -199,7 +199,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	writeUsageUnsupportedNotes(stdout, unsupported)
 	if !explicitModel && len(modelScope) == 0 {
 		if len(unsupported) == 0 {
-			fmt.Fprintln(stdout, "no AI usage providers enabled; enable Claude or Codex in Settings > AI Settings > Enabled agents")
+			fmt.Fprintln(stdout, "no AI usage providers enabled; enable Claude or Codex with: projmux config providers --enable claude (or --enable codex)")
 		}
 		return nil
 	}

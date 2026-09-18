@@ -194,14 +194,18 @@ func (s *projectStartupNoticeSink) Recovery(message string) {
 	s.Report(message)
 }
 
+// reportTopologyRecovery puts the committed recovery totals on w. The startup
+// notice sink is the Project startup screen's tee (tmux display-message plus
+// process stderr) and keeps the operator's locale. A plain writer is a public
+// route's own stderr -- `reconcile resources --materialize-project` -- so that
+// copy is en-US and reads no locale.
 func reportTopologyRecovery(w io.Writer, result diagnostics.LifecycleResult, counts diagnostics.TopologyCounts) {
-	message := topologyRecoverySummary(settingsLocale(), result, counts)
 	if sink, ok := w.(interface{ Recovery(string) }); ok {
-		sink.Recovery(message)
+		sink.Recovery(topologyRecoverySummary(settingsLocale(), result, counts))
 		return
 	}
 	if w != nil {
-		_, _ = fmt.Fprintln(w, message)
+		_, _ = fmt.Fprintln(w, topologyRecoverySummary(i18n.FallbackLocale, result, counts))
 	}
 }
 

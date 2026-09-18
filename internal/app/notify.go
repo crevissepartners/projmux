@@ -270,11 +270,14 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	locale := c.locale()
 	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	if *ui == "sidebar" {
-		return c.runSidebar(store, severities, sources, *limit, stdout, stderr, c.notifyOriginClient(*clientTTY), locale)
+		return c.runSidebar(store, severities, sources, *limit, stdout, stderr, c.notifyOriginClient(*clientTTY), c.locale())
 	}
+	// The table, --live, and --json forms are public `get notifications`
+	// output, so they are en-US and read no locale. Only the interactive
+	// sidebar above, a TUI surface, follows the operator's locale.
+	locale := i18n.FallbackLocale
 
 	entries, err := store.List()
 	if err != nil {

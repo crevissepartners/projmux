@@ -38,13 +38,15 @@ those folders exist:
 
 It does not assume a canonical repo root.
 
-Use Settings > Project Picker for the normal interactive flow:
+Use `Settings > Global > Projects` for the normal interactive flow:
 
-- `Project Root` sets, changes, or clears the saved primary root.
-- `+ Add Workdir...` appends one directory to the saved workdirs list.
-- `Workdirs` reviews and removes saved workdirs.
+- `Primary discovery root` sets, changes, or clears the saved primary root.
+- `Additional discovery roots > Add path` appends one directory to the saved
+  workdirs list.
+- `Additional discovery roots` reviews saved workdirs; each root's
+  `Remove discovery root` removes it.
 
-`Add Workdir > Type path manually...` skips the filesystem scan and is useful
+`Add path > Type path manually...` skips the filesystem scan and is useful
 for large mounts, WSL paths, NFS paths, or temporary project roots.
 
 The saved workdir file is:
@@ -56,7 +58,7 @@ The saved workdir file is:
 It stores one absolute path per line. Lines beginning with `#` are comments.
 The file is read only when no env root list is set.
 
-Workdirs are a **scan source and nothing else**. Adding a root, and scanning one,
+Saved workdirs are a **scan source and nothing else**. Adding a root, and scanning one,
 never registers a Registry Project: a discovered child is an unregistered
 candidate until `projmux create project --root <path>` or opening it once from the
 Projects sidebar registers that exact path. See
@@ -235,7 +237,7 @@ popup action with no built-in shortcut. Every configured alias renders the
 canonical client-scoped body
 `projmux internal tmux popup-toggle --client #{client_tty} resource-inspector`; pressing
 the same alias again closes only that client's popup. It remains available on
-Linux/tmux even when the Labs live-resource status segment is off.
+Linux/tmux even when the `Status Bar > Resources` live-resource segment is off.
 
 The Settings writer is deterministic and rewrites the supported saved subset
 only. If the existing file has parse errors or unknown action IDs, Settings
@@ -564,6 +566,19 @@ with `--cwd-from pane`, and as one client message for a split started from the
 UI. A split is never refused for this reason. `--cwd` on `create agent` still
 names the Agent working directory outright and ignores this setting.
 
+## Enabled AI Providers
+
+Disabled providers are a central policy, stored in
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-enabled-agents`, that the CLI
+honors as well as the UI: `create agent`, `create window --provider`, and
+`agent resume` refuse a disabled provider, and the refusal names the command
+that re-enables it.
+`projmux config providers` lists every provider as `<id> enabled` or
+`<id> disabled`; `projmux config providers --enable <id>` and
+`--disable <id>` change one through the same writer as
+`Settings > Global > AI > Enabled providers`. A missing file means every
+provider is enabled; disabling every provider persists as none enabled.
+
 ## AI Resume Picker
 
 The Agent resume picker lists the most recent
@@ -573,7 +588,7 @@ the defaults are 30 rows and depth 0 (the current directory only).
 
 Preferred interactive path:
 
-- `Settings > AI Settings > Resume picker`
+- `Settings > Global > AI > Agent Resume Picker` (`Picker limit`, `Scan depth`)
 
 Config paths (global and project both honored):
 
@@ -744,7 +759,7 @@ export PROJMUX_PROJDIR="/main/repos:/srv/work/repos"
 On Linux and macOS the separator is `:`. On Windows-style paths the separator
 is `;`.
 
-## tmux Project Root Option
+## tmux Primary Discovery Root Option
 
 The switch command also reads this tmux option:
 
@@ -806,7 +821,8 @@ seconds window. Resolution priority is:
    `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-notify-dedupe-seconds`
 3. default `120`
 
-Settings exposes this at `Settings > Notifications > AI notification dedupe`.
+Settings exposes this at
+`Settings > Global > Notifications > Desktop delivery > Dedupe window`.
 The value is stored as integer seconds and applies only to AI desktop
 notification dispatch. The tmux bell fallback keeps its fixed 5 second
 dedupe window.
@@ -891,7 +907,7 @@ Settings press through the new row writes `desktop-notify-mode`, mirrors the
 new value into `@projmux_desktop_notify_mode` when tmux is live, and leaves the
 legacy key unused. No eager rewrite of tmux state.
 
-Toggle from Settings > Notifications > `Desktop notifications`. The
+Choose it from `Settings > Global > Notifications > Desktop delivery > Delivery mode`. The
 Settings info row labels the effective source as `env`, `env (legacy)`,
 `setting`, `setting (legacy)`, or `default` so users see which rung of
 the cascade pinned the value. `projmux config apply` regenerates the live tmux
@@ -986,7 +1002,7 @@ The retired closed-Project startup setting's file under
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/` is not read, and `config apply`
 removes it; see [Upgrading](upgrading.md#closed-project-startup-setting-removed).
 
-Interactive `projmux quit` offers only `Quit projmux` and `Cancel`. Neither it
+Interactive `projmux quit` offers only the quit row and `Cancel`. Neither it
 nor `quit --yes` / `quit --force` saves Project state.
 
 ## Decoration Mode

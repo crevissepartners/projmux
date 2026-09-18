@@ -3,11 +3,12 @@ package app
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
 // configSubcommands lists the public config-domain routes, in help order.
-var configSubcommands = []string{"edit", "render", "apply"}
+var configSubcommands = []string{"edit", "providers", "render", "apply"}
 
 // configRenderArtifacts lists the two generated artifacts `config render` can
 // print, in help order.
@@ -32,6 +33,10 @@ var configRenderArtifacts = []string{"standalone", "app"}
 //	projmux config render app         ==  projmux internal tmux print-app-config
 //	projmux config apply              ==  projmux internal tmux apply
 //	projmux config edit               ->  AI settings handler
+//
+// `config providers` is the one route here that is not a forwarder: it lists
+// and changes the enabled-providers policy directly, through the same writer
+// the Settings "Enabled providers" toggle uses (see config_providers.go).
 //
 // The artifact is a positional token, not a flag. That is what keeps this node
 // the same dumb forwarder every other namespace in the tree is: dispatch reads
@@ -60,10 +65,15 @@ var configRenderArtifacts = []string{"standalone", "app"}
 type configCommand struct {
 	tmux rawArgvCommand
 	ai   rawArgvCommand
+
+	// homeDir and lookupEnv locate the enabled-providers policy file for
+	// `config providers`. Nil falls back to the process environment.
+	homeDir   func() (string, error)
+	lookupEnv func(string) string
 }
 
 func newConfigCommand() *configCommand {
-	return &configCommand{}
+	return &configCommand{homeDir: os.UserHomeDir, lookupEnv: os.Getenv}
 }
 
 // Run dispatches one `config <subcommand>` invocation.
@@ -75,6 +85,8 @@ func (c *configCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "edit":
 		return forwardRawArgv(c.ai, "config edit", "ai", []string{"settings"}, rest, stdout, stderr)
+	case "providers":
+		return c.runProviders(rest, stdout, stderr)
 	case "render":
 		return c.runRender(rest, stdout, stderr)
 	case "apply":

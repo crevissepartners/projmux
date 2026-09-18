@@ -90,7 +90,10 @@ func newResourceCommand() *resourceCommand {
 }
 
 func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
-	text := resourceText{locale: appLocale(c.homeDir, c.lookupEnv)}
+	// The usage text is non-interactive public route output, so it is en-US
+	// and reads no locale. Only the interactive inspector below, a TUI
+	// surface, resolves the operator's locale.
+	text := resourceText{locale: i18n.FallbackLocale}
 	if hasHelpArg(args) {
 		printResourcesUsage(stdout, text)
 		return nil
@@ -117,7 +120,7 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 	lifecycle.start()
 	defer lifecycle.close()
 
-	view := newResourceViewState(c.currentTime, text.locale)
+	view := newResourceViewState(c.currentTime, appLocale(c.homeDir, c.lookupEnv))
 	for {
 		options := c.pickerOptions(view, lifecycle)
 		result, err := c.picker.Run(options)

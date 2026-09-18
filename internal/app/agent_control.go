@@ -590,7 +590,7 @@ func (c *agentCommand) selectPendingApproval(pending []agentPendingApproval, req
 	if len(entries) == 0 {
 		return agentPendingApproval{}, errors.New("all pending request ids are ambiguous; Open Codex")
 	}
-	reviewLabel := c.agentActionText(agentActionReviewApproval)
+	reviewLabel := c.agentActionPickerText(agentActionReviewApproval)
 	result, err := runNativePickerOption(os.UserHomeDir, os.Getenv, c.controlPicker, intpickercompat.Options{UI: switchUIPopup, Entries: entries, Title: reviewLabel, Prompt: reviewLabel + " > ", DisableSearch: false})
 	if err != nil {
 		return agentPendingApproval{}, err
@@ -607,8 +607,8 @@ func (c *agentCommand) selectApprovalDecision(p agentPendingApproval, stderr io.
 	for _, decision := range p.Decisions {
 		entries = append(entries, intpickercompat.Entry{Label: approvalDecisionLabelLocale(appLocale(os.UserHomeDir, os.Getenv), p, decision), Value: "decision:" + string(decision)})
 	}
-	entries = append(entries, intpickercompat.Entry{Label: c.agentActionText(agentActionOpenCodex) + " — focus exact Agent; send no response", Value: "open"})
-	reviewLabel := c.agentActionText(agentActionReviewApproval)
+	entries = append(entries, intpickercompat.Entry{Label: c.agentActionPickerText(agentActionOpenCodex) + " — focus exact Agent; send no response", Value: "open"})
+	reviewLabel := c.agentActionPickerText(agentActionReviewApproval)
 	result, err := runNativePickerOption(os.UserHomeDir, os.Getenv, c.controlPicker, intpickercompat.Options{UI: switchUIPopup, Entries: entries, Title: reviewLabel, Prompt: reviewLabel + " > ", DisableSearch: true})
 	if err != nil {
 		return "", false, err
@@ -718,7 +718,17 @@ func boundRenderedText(value string, limit int) string {
 	return string(runes[:limit-len(suffix)]) + string(suffix)
 }
 
+// agentActionText is an Agent control action's name as public `agent` route
+// stdout and errors print it. It is en-US and reads no locale: public route
+// output is a machine- and script-facing contract, and the D5 boundary keeps
+// it byte-identical whatever PROJMUX_LOCALE or the saved UI locale says.
 func (c *agentCommand) agentActionText(fallback string) string {
+	return fallback
+}
+
+// agentActionPickerText is the same action name on the interactive approval
+// picker, a TUI surface that keeps translation.
+func (c *agentCommand) agentActionPickerText(fallback string) string {
 	key := map[string]i18n.Key{
 		agentActionSendTurn: i18n.KeyAgentControlSendTurn, agentActionSteerTurn: i18n.KeyAgentControlSteerTurn,
 		agentActionInterruptTurn: i18n.KeyAgentControlInterruptTurn, agentActionReviewApproval: i18n.KeyAgentControlReviewApproval,

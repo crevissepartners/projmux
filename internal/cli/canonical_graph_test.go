@@ -15,7 +15,9 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when the `persona` noun group was added: `persona
+// The baseline last moved when `config providers` joined the config domain as
+// the CLI door onto the enabled-providers policy, adding its row. Before that,
+// it moved when the `persona` noun group was added: `persona
 // list|show|edit|set|delete` are new rows for the persona files a Claude Agent
 // can be created with. Before that, it moved when `create window` gained its
 // initial-provider flag: the route's canonical summary stopped promising an
@@ -49,7 +51,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "fb28f7b0ccc2317b9e3ded1f14a3e4ed1a3cc9c4127d944bf1b34ba35f617912"
+	const want = "16b3edd4bfcd260f55446d993095b57e48350a2d652503a040b74ee2188b3a02"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

@@ -234,7 +234,7 @@ func TestPublicConfigRouteReachesEditBothRenderTargetsAndApply(t *testing.T) {
 	if config.Hidden || config.Disposition != DispositionCanonical {
 		t.Fatalf("config hidden=%v disposition=%q, want a public canonical node", config.Hidden, config.Disposition)
 	}
-	const wantSummary = "Edit AI split-mode settings; render or apply generated tmux configuration"
+	const wantSummary = "Edit AI split-mode and enabled-provider settings; render or apply generated tmux configuration"
 	if config.Summary != wantSummary {
 		t.Fatalf("config summary = %q, want %q", config.Summary, wantSummary)
 	}
@@ -242,8 +242,8 @@ func TestPublicConfigRouteReachesEditBothRenderTargetsAndApply(t *testing.T) {
 	for _, child := range config.Children {
 		children = append(children, child.Name)
 	}
-	if !reflect.DeepEqual(children, []string{"edit", "render", "apply"}) {
-		t.Fatalf("config children = %v, want [edit render apply]", children)
+	if !reflect.DeepEqual(children, []string{"edit", "providers", "render", "apply"}) {
+		t.Fatalf("config children = %v, want [edit providers render apply]", children)
 	}
 
 	render, ok := findChild(config, "render")
@@ -263,6 +263,7 @@ func TestPublicConfigRouteReachesEditBothRenderTargetsAndApply(t *testing.T) {
 	for _, spelling := range [][]string{
 		{"config"},
 		{"config", "edit"},
+		{"config", "providers"},
 		{"config", "render"},
 		{"config", "render", "standalone"},
 		{"config", "render", "app"},

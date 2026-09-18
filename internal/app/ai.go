@@ -2023,17 +2023,26 @@ func aiModeProvider(mode string) (config.AIAgentProvider, bool) {
 	return config.AIAgentProvider(provider.ID), true
 }
 
+// disabledAIAgentLaunchMessage is the enabled-providers refusal. Every variant
+// names the one command that lists and changes that policy, `projmux config
+// providers`, rather than a Settings path: the refusal reaches CLI stderr, and
+// a sentence an operator can act on from the same shell is the CLI's own door.
+// The sentence is en-US and reads no locale, like every public route's output.
 func disabledAIAgentLaunchMessage(mode string, path aiSplitLaunchPath) string {
+	enable := aiProviderEnableCommand(mode)
 	switch path {
 	case aiSplitLaunchDefault:
-		return fmt.Sprintf("AI split default %s is disabled in Settings > AI Settings > Enabled agents; choose another default or use --agent shell", mode)
-	case aiSplitLaunchPicker:
-		return fmt.Sprintf("AI agent %s is disabled in Settings > AI Settings > Enabled agents", mode)
-	case aiSplitLaunchCanonical:
-		return fmt.Sprintf("AI agent %s is disabled in Settings > AI Settings > Enabled agents; enable it there before creating an Agent", mode)
+		return fmt.Sprintf("AI split default %s is disabled; choose another default, use --agent shell, or enable it with: %s", mode, enable)
+	case aiSplitLaunchPicker, aiSplitLaunchCanonical:
+		return fmt.Sprintf("AI agent %s is disabled; enable it with: %s", mode, enable)
 	default:
-		return fmt.Sprintf("AI agent %s is disabled in Settings > AI Settings > Enabled agents; enable it or pass --force-agent for this direct launch", mode)
+		return fmt.Sprintf("AI agent %s is disabled; pass --force-agent for this direct launch, or enable it with: %s", mode, enable)
 	}
+}
+
+// aiProviderEnableCommand is the exact command that enables one provider.
+func aiProviderEnableCommand(provider string) string {
+	return "projmux config providers --enable " + strings.TrimSpace(provider)
 }
 
 func (c *aiCommand) getMode() string {

@@ -1218,10 +1218,17 @@ func TestUsageAllWithNoEnabledAgentsSkipsCollectAndShowsFallback(t *testing.T) {
 		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "no AI usage providers enabled") {
-		t.Fatalf("missing no-enabled-agents fallback: %q", out)
+	// The fallback names the CLI command that re-enables a provider, never a
+	// Settings path, so an operator can act on it from the same shell.
+	const fallback = "no AI usage providers enabled; enable Claude or Codex with: projmux config providers --enable claude (or --enable codex)\n"
+	if !strings.Contains(out, fallback) {
+		t.Fatalf("missing no-enabled-agents fallback %q: %q", fallback, out)
 	}
-	if strings.Contains(out, "claude") || strings.Contains(out, "codex") {
+	if !strings.Contains(out, "projmux config providers --enable claude") || strings.Contains(out, "Settings > AI Settings") {
+		t.Fatalf("fallback = %q, want the config providers command and no Settings path", out)
+	}
+	// The fallback itself names both providers; the leak check is about rows.
+	if rows := strings.Replace(out, fallback, "", 1); strings.Contains(rows, "claude") || strings.Contains(rows, "codex") {
 		t.Fatalf("disabled cached rows leaked with no enabled agents: %q", out)
 	}
 	if claudeAd.collectCalls != 0 || codexAd.collectCalls != 0 {

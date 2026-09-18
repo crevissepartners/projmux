@@ -227,7 +227,7 @@ func withProviderDiagnosticMetadata(diag doctorAINotifyIntegration, provider aip
 	diag.ProviderID = string(provider.ID)
 	diag.ProviderEnabled = &on
 	if !on {
-		diag.Guidance = appendDiagnosticGuidance(diag.Guidance, "provider disabled in Settings > AI Settings > Enabled agents; explicit diagnostics still show existing hook state")
+		diag.Guidance = appendDiagnosticGuidance(diag.Guidance, "provider disabled; enable it with: "+aiProviderEnableCommand(string(provider.ID))+"; explicit diagnostics still show existing hook state")
 	}
 	return diag
 }

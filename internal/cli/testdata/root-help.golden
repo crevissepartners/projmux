@@ -4,7 +4,7 @@ Commands:
   agent     Manage Agent state, messages, waits, capabilities, integrations, and account usage
   attention View and manage live tmux pane attention state
   attach    Enter a Project runtime from outside tmux
-  config    Edit AI split-mode settings; render or apply generated tmux configuration
+  config    Edit AI split-mode and enabled-provider settings; render or apply generated tmux configuration
   create    Create Projmux resources
   delete    Delete Projmux resources with an explicit cascade plan
   describe  Describe one Projmux resource

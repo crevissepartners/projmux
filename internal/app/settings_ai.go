@@ -613,33 +613,18 @@ func (c *settingsCommand) currentAIEnabledAgents() []config.AIAgentProvider {
 	return aiEnabledAgents(c.homeDir, c.lookupEnv)
 }
 
+// toggleAIEnabledAgent flips one provider through the shared policy writer,
+// the same one `config providers --enable|--disable` uses.
 func (c *settingsCommand) toggleAIEnabledAgent(provider string) error {
-	normalized := config.NormalizeAIEnabledAgents([]string{provider})
-	if len(normalized) != 1 {
-		return fmt.Errorf("unknown AI agent provider: %s", provider)
-	}
-	target := normalized[0]
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	target, err := knownAIProvider(provider)
 	if err != nil {
 		return err
 	}
-	current, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
+	_, current, err := readAIEnabledAgentsPolicy(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}
-	enabled := map[config.AIAgentProvider]bool{}
-	for _, agent := range current {
-		enabled[agent] = true
-	}
-	enabled[target] = !enabled[target]
-
-	next := make([]config.AIAgentProvider, 0, len(config.DefaultAIEnabledAgents))
-	for _, agent := range config.KnownAIAgentProviders() {
-		if enabled[agent] {
-			next = append(next, agent)
-		}
-	}
-	return config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), next)
+	return setAIEnabledAgent(c.homeDir, c.lookupEnv, target, !aiEnabledAgentsContains(current, target))
 }
 
 func (c *settingsCommand) aiEnabledAgentsSummary() string {

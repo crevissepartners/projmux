@@ -170,7 +170,7 @@ func (f *fakeResumeLauncher) RequireAgentEnabled(provider string) error {
 	defer f.mu.Unlock()
 	f.gated = append(f.gated, provider)
 	if f.disabled[provider] {
-		return errors.New("AI agent " + provider + " is disabled in Settings > AI Settings > Enabled agents")
+		return errors.New(disabledAIAgentLaunchMessage(provider, aiSplitLaunchCanonical))
 	}
 	return nil
 }
@@ -609,7 +609,7 @@ func TestAgentResumeFailuresStartNoConversationAtAll(t *testing.T) {
 				launcher.disabled["codex"] = true
 			},
 			args: []string{"resume", "codex", "--project", "beta"},
-			want: "is disabled in Settings",
+			want: "AI agent codex is disabled; enable it with: projmux config providers --enable codex",
 		},
 		{
 			name: "a Running Agent is refused exactly as before",

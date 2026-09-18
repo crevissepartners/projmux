@@ -916,18 +916,25 @@ var routes = []Route{
 		// the hidden `tmux` / `internal tmux` routes, which are unchanged and
 		// undeprecated. The summaries below name the exact artifact each route
 		// touches so the public surface cannot be read as covering them.
+		//
+		// `providers` is the CLI door onto the enabled-providers policy that
+		// `create agent`, `create window`, and `agent resume` enforce; their
+		// disabled-provider refusal names it. It shares the Settings toggle's
+		// writer, and like `edit` it rewrites a saved setting rather than any
+		// resource, so it declares the same unchanged effects.
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "config",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 21,
-		Summary:        "Edit AI split-mode settings; render or apply generated tmux configuration",
+		Summary:        "Edit AI split-mode and enabled-provider settings; render or apply generated tmux configuration",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux config edit [--get|--set <mode>]",
+			"projmux config providers [--enable <id>|--disable <id>]",
 			"projmux config render standalone|app [--bin <path>]",
 			"projmux config apply [--bin <path>] [--config <path>] [--socket <name>]",
 		},
-		Canonical: []string{"config edit", "config render", "config apply"},
+		Canonical: []string{"config edit", "config providers", "config render", "config apply"},
 		Children: []Route{
 			{
 				Effects:    unchangedEffects(CardinalityUnchanged),
@@ -936,6 +943,19 @@ var routes = []Route{
 				Summary:    "Edit the AI split-mode configuration",
 				Usage:      []string{"projmux config edit [--get|--set <mode>]"},
 				Canonical:  []string{"config edit"},
+			},
+			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
+				Name:             "providers",
+				Invocation:       InvocationNatural,
+				Summary:          "List AI providers as enabled or disabled; --enable or --disable changes one",
+				CanonicalSummary: "List or change the enabled AI providers",
+				Usage: []string{
+					"projmux config providers",
+					"projmux config providers --enable <id>",
+					"projmux config providers --disable <id>",
+				},
+				Canonical: []string{"config providers"},
 			},
 			{
 				Effects:          unchangedEffects(CardinalityUnchanged),

@@ -169,7 +169,7 @@ func (f *fakeAgentLauncher) RequireAgentEnabled(provider string) error {
 		// The legacy handler returns a plain error here, so the canonical route
 		// has to as well: the classification, and therefore the exit code, is
 		// what the contract fixes, not the wording.
-		return errors.New("AI agent " + provider + " is disabled in Settings > AI Settings > Enabled agents")
+		return errors.New(disabledAIAgentLaunchMessage(provider, aiSplitLaunchCanonical))
 	}
 	return nil
 }
@@ -1651,7 +1651,8 @@ func TestConcurrentAgentCreatesConvergeOnOneEnsuredWindow(t *testing.T) {
 // TestADisabledProviderIsRefusedOnTheCanonicalRouteToo pins the Settings gate.
 //
 // `--force-agent` is a legacy compatibility flag and is not promoted here, so a
-// disabled provider has exactly one remedy: enable it in Settings.
+// disabled provider has exactly one remedy: enable it, and the refusal names the
+// command that does, `projmux config providers --enable <id>`.
 func TestADisabledProviderIsRefusedOnTheCanonicalRouteToo(t *testing.T) {
 	t.Parallel()
 
@@ -1671,8 +1672,8 @@ func TestADisabledProviderIsRefusedOnTheCanonicalRouteToo(t *testing.T) {
 	if IsUsageError(err) {
 		t.Fatalf("the disabled-provider refusal changed classification: %v", err)
 	}
-	if !strings.Contains(err.Error(), "disabled in Settings") {
-		t.Fatalf("error = %q", err)
+	if want := "projmux config providers --enable codex"; !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "Settings > AI Settings") {
+		t.Fatalf("error = %q, want it to name %q and no Settings path", err, want)
 	}
 	if stdout != "" || store.snapshot() != before || len(tmux.calls) != 0 {
 		t.Fatalf("a disabled provider mutated something: stdout=%q tmux calls=%d", stdout, len(tmux.calls))

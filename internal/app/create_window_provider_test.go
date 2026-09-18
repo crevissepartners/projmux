@@ -505,8 +505,10 @@ func TestCreateWindowProviderHonoursTheEnabledAgentsGate(t *testing.T) {
 	if err == nil {
 		t.Fatal("a disabled provider was launched")
 	}
-	if !strings.Contains(err.Error(), "claude is disabled") {
-		t.Fatalf("refusal = %q, want the Settings gate's wording", err)
+	if !strings.Contains(err.Error(), "claude is disabled") ||
+		!strings.Contains(err.Error(), "projmux config providers --enable claude") ||
+		strings.Contains(err.Error(), "Settings > AI Settings") {
+		t.Fatalf("refusal = %q, want the gate's wording naming `projmux config providers --enable claude`", err)
 	}
 	if store.writes != 0 || tmux.windowCount() != 0 || len(launcher.plans) != 0 {
 		t.Fatalf("a disabled provider wrote something: registry writes=%d tmux windows=%d plans=%+v",
