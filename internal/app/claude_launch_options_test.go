@@ -49,7 +49,7 @@ func TestClaudeLaunchOptionsPrecedeTheWorkspaceArguments(t *testing.T) {
 	t.Parallel()
 	cmd := agentLaunchArgvTestCommand(t)
 	workspace := coremetadata.AgentWorkspace{CWD: "/work/owner", AdditionalWritableRoots: []string{"/work/extra"}}
-	_, argv, err := cmd.PlanAgentLaunchWithOptions(aiModeClaude, workspace, []string{"do the thing"}, "sonnet", "low")
+	_, argv, err := cmd.PlanAgentLaunchWithOptions(aiModeClaude, workspace, []string{"do the thing"}, "sonnet", "low", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestClaudeLaunchOptionsPrecedeTheWorkspaceArguments(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("argv tail = %q, want %q", got, want)
 	}
-	if _, _, err := cmd.PlanAgentLaunchWithOptions(aiModeCodex, workspace, nil, "x", ""); err == nil {
+	if _, _, err := cmd.PlanAgentLaunchWithOptions(aiModeCodex, workspace, nil, "x", "", ""); err == nil {
 		t.Fatal("codex accepted Claude launch options")
 	}
 }

@@ -15,10 +15,12 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `create window` gained its initial-provider
-// flag: the route's canonical summary stopped promising an initial Pane and
-// started naming the two surfaces it can open on, a shell Pane or one Agent.
-// Before that, it moved when the private Codex app-server generation routes
+// The baseline last moved when the `persona` noun group was added: `persona
+// list|show|edit|set|delete` are new rows for the persona files a Claude Agent
+// can be created with. Before that, it moved when `create window` gained its
+// initial-provider flag: the route's canonical summary stopped promising an
+// initial Pane and started naming the two surfaces it can open on, a shell
+// Pane or one Agent. Before that, it moved when the private Codex app-server generation routes
 // were removed: the five `agent app-server upgrade` rows and the four `agent
 // app-server handover` rows lost their rows with the generation pool they
 // operated. Before that, it moved when the Project snapshot routes were removed:
@@ -47,7 +49,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "5ae1c66c399ca9039cdf2a92ba94d70362a213cc5abdcd991c3d1e123f8b6797"
+	const want = "fb28f7b0ccc2317b9e3ded1f14a3e4ed1a3cc9c4127d944bf1b34ba35f617912"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

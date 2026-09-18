@@ -113,6 +113,7 @@ type App struct {
 	focus       *focusCommand
 	get         *getCommand
 	hook        *hookCommand
+	persona     *personaCommand
 	internal    *internalCommand
 	rebind      *rebindCommand
 	reconcile   *resourceReconcileCommand
@@ -371,6 +372,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		focus:              focusCmd,
 		get:                getCmd,
 		hook:               newHookCommand(),
+		persona:            newPersonaCommand(),
 		internal:           internalCmd,
 		rebind:             newRebindCommand(),
 		reconcile:          reconcileCmd,
@@ -502,6 +504,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		// can emit one namespace instead of eight top-level tokens.
 		"internal":     internal,
 		"notification": a.notification,
+		"persona":      a.persona,
 		"pin": legacyRouteGate{
 			name: "pin", target: a.pin, allowedFirst: []string{"project"},
 			replacement: func([]string) string { return "`projmux pin project ...`" },

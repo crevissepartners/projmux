@@ -1708,6 +1708,26 @@ plain Agent on purpose; it is Codex-only and equivalent on `create agent
 multi-operand payloads, `agent resume`, Claude, and Antigravity are unaffected.
 See [Codex Native-Required Create Migration](codex-native-required-migration.md).
 
+A Claude Agent can be given a persona: `create agent --provider claude
+--persona <name>` (and `create claude --persona <name>`) appends the stored
+persona to the new session's system prompt through Claude's
+`--append-system-prompt-file`; it never replaces the system prompt, so Claude
+Code's own tool instructions stay. Personas are files in
+`<config dir>/personas/<name>.md` (by default `~/.config/projmux/personas/`),
+at most 64 KiB each, managed with `projmux persona list|show|edit|set|delete`
+(`edit` opens `$EDITOR`, then `$VISUAL`; `set <name> --file <path>` or `-` is
+the non-interactive write). A persona is applied at create time only: the
+create copies the content to a content-addressed snapshot
+`<state dir>/personas/sha256-<hex>.md`, passes only that path on the Claude
+command line, and records `projmux.io/persona` and `projmux.io/persona-digest`
+on the Agent, so editing or deleting the persona file later does not change an
+Agent that already started. Resume does not pass the snapshot again yet; that
+comes in a later change. `--persona` is Claude-only: another
+provider, or `--dialogue-reply-only`, refuses with `persona-provider-unsupported`,
+and a missing, oversized, or badly named persona refuses with
+`persona-not-found`, `persona-too-large`, or `persona-name-invalid`, all with
+zero Registry, tmux, and snapshot writes.
+
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`
 and `projmux create pane --placement right -o pane-id` each print exactly the

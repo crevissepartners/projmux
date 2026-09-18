@@ -156,6 +156,9 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err := requireClaudeLaunchOptions(spelling, provider, flags); err != nil {
 		return err
 	}
+	if err := requireClaudePersona(spelling, provider, flags); err != nil {
+		return err
+	}
 	if err := requireClaudeDialogueMode(provider, flags.dialogueReplyOnly, flags.payload); err != nil {
 		return err
 	}
@@ -199,6 +202,11 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	scope, err := c.resolveCreateScope(spelling, flags, shape)
 	if err != nil {
 		return err
+	}
+	if flags.persona != "" {
+		if flags.personaLaunch, err = c.preparePersonaLaunch(spelling, flags.persona); err != nil {
+			return err
+		}
 	}
 	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
 
@@ -327,7 +335,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,
-				Annotations: creator.annotations(),
+				Annotations: flags.personaLaunch.withAnnotations(creator.annotations()),
 				Workspace:   workspace,
 				Activation:  activationStateForPayload(flags.payload),
 				OperationID: operationID,
@@ -671,12 +679,13 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 		return launcher.PlanClaudeDialogueLaunch(workspace, conversation)
 	}
 	if conversation == "" {
-		if flags.model != "" || flags.effort != "" {
+		personaFile := flags.personaLaunch.snapshot.Path
+		if flags.model != "" || flags.effort != "" || personaFile != "" {
 			launcher, ok := c.agents.(claudeOptionsAgentLauncher)
 			if !ok {
 				return "", nil, errors.New("create agent: the Claude model launcher is not configured")
 			}
-			return launcher.PlanAgentLaunchWithOptions(provider, workspace, flags.payload, flags.model, flags.effort)
+			return launcher.PlanAgentLaunchWithOptions(provider, workspace, flags.payload, flags.model, flags.effort, personaFile)
 		}
 		if provider == aiModeCodex && len(flags.payload) == 0 {
 			// A payload-free Codex create always takes the plain lane.
