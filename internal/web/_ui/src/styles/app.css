@@ -1804,3 +1804,203 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
 .set-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
 .set-toggle.saving { cursor: progress; }
 .set-note { margin: var(--s3) 0 0; font-size: 11px; color: var(--muted); }
+
+/* agent graph: a Project's first tab -------------------------------------- */
+
+.tab.graph-tab { gap: 5px; }
+.graph-tab-mark { color: var(--muted); font-size: 11px; }
+.tab.graph-tab[aria-selected="true"] .graph-tab-mark { color: var(--accent); }
+
+.graph-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.graph-view > .empty { padding: 15px 17px; }
+.graph-banner { padding: 15px 17px; }
+.graph-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+}
+.graph-canvas { position: relative; }
+
+/* An area is a Project: this one, or an outside one its Agents talked to. */
+.graph-area {
+  position: absolute;
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--raised) 35%, transparent);
+}
+.graph-area.home { border-style: solid; background: color-mix(in oklab, var(--sunken) 60%, transparent); }
+.graph-area-label {
+  position: absolute;
+  top: 5px;
+  left: 12px;
+  right: 12px;
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-area.home .graph-area-label { color: var(--ink); }
+
+/* Lines sit under the cards; only their strokes take the pointer, and the
+   wide transparent one is the part that does. */
+.graph-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.graph-edge { cursor: pointer; pointer-events: stroke; outline: none; }
+.graph-edge path { fill: none; }
+.graph-edge .hit { stroke: transparent; stroke-width: 14px; }
+.graph-edge .line {
+  stroke: color-mix(in oklab, var(--provenance) 55%, var(--rule));
+  stroke-width: 1.6px;
+  transition: stroke var(--ease), stroke-width var(--ease);
+}
+.graph-edge.lit .line { stroke: var(--provenance); stroke-width: 2.2px; }
+.graph-edge:hover .line,
+.graph-edge:focus-visible .line { stroke: var(--accent); stroke-width: 2.6px; }
+
+.graph-card {
+  --pane: var(--muted);
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--pane);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--bevel), 0 4px 12px var(--cast);
+  transition: border-color var(--ease), background var(--ease);
+}
+.graph-card:hover { background: var(--active); border-color: color-mix(in oklab, var(--pane) 60%, var(--rule)); border-left-color: var(--pane); }
+.graph-card[data-provider="claude"] { --pane: var(--h-success); }
+.graph-card[data-provider="codex"] { --pane: var(--h-warning); }
+.graph-card[data-provider="antigravity"] { --pane: var(--h-violet); }
+/* An offline Agent is red at a glance, whatever its provider. */
+.graph-card[data-online="offline"] {
+  --pane: var(--critical);
+  border-color: color-mix(in oklab, var(--critical) 55%, transparent);
+  background: color-mix(in oklab, var(--critical) 8%, var(--raised));
+}
+.graph-card-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-card-name.dim { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
+.graph-card-badges,
+.layer-badges { display: flex; gap: 4px; min-width: 0; overflow: hidden; }
+.graph-card-meta { font-size: 10.5px; color: var(--muted); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tag.role { color: var(--provenance); border-color: color-mix(in srgb, var(--provenance) 45%, transparent); }
+.tag.unknown { color: var(--muted); border-color: var(--rule); background: var(--sunken); }
+.tag.gone.soft { border-style: dashed; }
+.tag.work.w-idle { color: var(--muted); }
+.tag.work.w-busy { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.tag.work.w-wait { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.tag.work.w-alert { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, transparent); }
+.tag.work.w-done { color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, transparent); }
+.tag.work.stale { opacity: 0.5; border-style: dashed; }
+
+.graph-foot {
+  flex: none;
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+  padding: var(--s2) var(--s4);
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--rule);
+  background: var(--base);
+}
+.graph-foot .warn { color: var(--warning); }
+
+/* the Agent layer: a transcript or a pair's messages, over the page ------- */
+
+.layer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--well) 72%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 16px;
+}
+.layer {
+  width: min(900px, 100%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 48px color-mix(in srgb, #000 55%, transparent);
+  overflow: hidden;
+  outline: none;
+}
+.layer-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+.layer-title { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: var(--s1) var(--s3); }
+.layer-title .layer-sub { flex-basis: 100%; }
+.layer-kind { font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--muted); }
+.layer-name { font-weight: 600; color: var(--ink-strong); overflow-wrap: anywhere; }
+.layer-name.dim { color: var(--muted); font-family: var(--mono); font-weight: 400; }
+.layer-arrow { color: var(--provenance); }
+.layer-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.layer-close {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.layer-close:hover { color: var(--critical); background: var(--sunken); }
+.layer-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: var(--s4); overflow-y: auto; }
+.layer-body .chat-area { flex: 1; min-height: 0; display: flex; }
+
+.peer-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); }
+.peer-msg {
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--provenance);
+  border-radius: var(--radius);
+  background: var(--sunken);
+  padding: var(--s2) var(--s4);
+}
+.peer-msg.incoming { border-left-color: var(--accent); }
+.peer-msg-head { display: flex; align-items: center; gap: var(--s3); font-size: 11px; color: var(--muted); }
+.peer-dir { color: var(--ink); font-weight: 550; }
+.peer-msg-head .flag { color: var(--muted); }
+.peer-msg-head .when { margin-left: auto; font-family: var(--mono); }
+.tag.peer-state.delivered { color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, transparent); }
+.tag.peer-state.refused,
+.tag.peer-state.failed { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, transparent); }
+.tag.peer-state.held,
+.tag.peer-state.accepted { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+/* A body is the text one Agent sent another, shown as that text. */
+.peer-body {
+  margin-top: var(--s1);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+.peer-body.gone { font-family: var(--ui); font-size: 11px; font-style: italic; color: var(--muted); }

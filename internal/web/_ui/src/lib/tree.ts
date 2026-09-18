@@ -22,6 +22,16 @@ export interface AgentView {
   cwd: string;
 }
 
+/**
+ * Every Agent the graph has, whether or not a pane holds it, with what a card
+ * names it by: its `role` label, its live status, and its Project.
+ */
+export interface AgentRecord extends AgentView {
+  role: string;
+  status: LiveStatus;
+  projectUID: string;
+}
+
 export interface PaneView {
   uid: string;
   name: string;
@@ -64,11 +74,13 @@ export interface ProjectView {
 
 export interface Tree {
   projects: ProjectView[];
+  /** Every Agent, in the graph's order. */
+  agents: AgentRecord[];
   hostMode: string;
   unavailable: string[];
 }
 
-export const emptyTree: Tree = { projects: [], hostMode: "", unavailable: [] };
+export const emptyTree: Tree = { projects: [], agents: [], hostMode: "", unavailable: [] };
 
 function agentView(agent: Agent, windowUID: string, paneUID: string): AgentView {
   return {
@@ -90,9 +102,16 @@ const lower = (text: string) => text.toLowerCase();
 export function buildTree(graph: Graph): Tree {
   const agentsByUID = new Map<string, AgentView>();
   const agentsByWindow = new Map<string, AgentView[]>();
+  const agents: AgentRecord[] = [];
   for (const node of graph.agents || []) {
     const view = agentView(node.agent, node.windowUID || "", node.paneUID || node.agent.status.paneRef || "");
     agentsByUID.set(view.uid, view);
+    agents.push({
+      ...view,
+      role: node.agent.metadata.labels?.role || "",
+      status: node.status,
+      projectUID: node.projectUID || "",
+    });
     const list = agentsByWindow.get(view.windowUID) || [];
     list.push(view);
     agentsByWindow.set(view.windowUID, list);
@@ -184,6 +203,7 @@ export function buildTree(graph: Graph): Tree {
 
   return {
     projects,
+    agents,
     hostMode: graph.hostMode,
     unavailable: (graph.unavailable || []).map((u) => `${u.scope}: ${u.reason}`),
   };
@@ -281,4 +301,32 @@ export function paneLabel(pane: PaneView): { name: string; dim: boolean } {
   if (agent) return { name: providerText(agent.provider), dim: true };
   if (pane.named) return { name: pane.name, dim: false };
   return { name: providerText("shell"), dim: true };
+}
+
+/**
+ * An Agent's display name by uid, from its record when the graph has one. An
+ * Agent nobody named reads as its provider; one the graph does not have at
+ * all can only be shown by its uid.
+ */
+export function agentTitle(record: AgentRecord | null | undefined, uid: string): { name: string; dim: boolean } {
+  if (!record) return { name: uid, dim: true };
+  if (record.name && record.name !== record.uid) return { name: record.name, dim: false };
+  return { name: providerText(record.provider) || uid, dim: true };
+}
+
+/**
+ * Whether a card may say an Agent is online. `missing-root` is offline too;
+ * `unknown`, and an Agent the graph does not have, say only that nobody can
+ * tell, never that it is offline.
+ */
+export function onlineOf(record: AgentRecord | null | undefined): "online" | "offline" | "unknown" {
+  switch (record?.status) {
+    case "live":
+      return "online";
+    case "offline":
+    case "missing-root":
+      return "offline";
+    default:
+      return "unknown";
+  }
 }

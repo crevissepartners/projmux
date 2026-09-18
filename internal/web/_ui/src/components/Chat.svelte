@@ -2,7 +2,7 @@
   // The conversation. The tail is read once and then followed from where the
   // read ended, over the page's one transcript stream, so a reply appears as
   // the provider writes it and nothing is rendered twice.
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, setContext, untrack } from "svelte";
   import { get, paths } from "../lib/api";
   import { stickToBottom } from "../lib/actions";
   import { explain, providerText } from "../lib/errors";
@@ -14,7 +14,7 @@
   import Pasted from "./Pasted.svelte";
   import TurnView from "./TurnView.svelte";
   import { PENDING_LATE_MS, pending, settle } from "../lib/pending.svelte";
-  import { followTranscript } from "../lib/transcripts";
+  import { followTranscript, READ_ONLY } from "../lib/transcripts";
 
   interface Props {
     agent: AgentView;
@@ -22,8 +22,11 @@
     stream?: "" | "live" | "warn";
     /** The model and effort the provider last recorded running with. */
     model?: { model: string; effort: string } | null;
+    /** Show the conversation only: no composer, no answering a question. */
+    readonly?: boolean;
   }
-  let { agent, paneUID, stream = $bindable(""), model = $bindable(null) }: Props = $props();
+  let { agent, paneUID, stream = $bindable(""), model = $bindable(null), readonly = false }: Props = $props();
+  setContext(READ_ONLY, untrack(() => readonly));
 
   function noteModel(turn: Turn) {
     if (turn.model) model = { model: turn.model, effort: turn.effort || "" };
@@ -186,7 +189,7 @@
   </div>
 </div>
 <div class="slot-foot">
-  {#if surface}
+  {#if surface && !readonly}
     <Composer {agent} {paneUID} {surface} onSent={toEnd} />
   {/if}
 </div>

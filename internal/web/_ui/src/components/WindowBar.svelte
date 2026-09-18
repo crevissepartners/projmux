@@ -3,7 +3,7 @@
   import { closeWindow, createWindow, renameWindow } from "../lib/commands";
   import { launchDefault } from "../lib/launch.svelte";
   import { t } from "../lib/i18n.svelte";
-  import { go } from "../lib/router.svelte";
+  import { go, route } from "../lib/router.svelte";
   import { slotRef, type ProjectView, type WindowView } from "../lib/tree";
   import { setToggle, ui } from "../lib/ui.svelte";
   import InlineName from "./InlineName.svelte";
@@ -32,6 +32,20 @@
     {#if !project}
       <span class="empty">{t("web.windows.pick_project")}</span>
     {:else}
+      <!-- The Project's own tab comes first and cannot be closed: its Agents
+           and who talked to whom. -->
+      <div
+        class="tab graph-tab"
+        role="tab"
+        tabindex="0"
+        aria-selected={route.sel.project === project.uid && !route.sel.window}
+        title={t("web.graph.tab_title")}
+        onclick={() => go({ project: project.uid })}
+        onkeydown={(e) => e.key === "Enter" && go({ project: project.uid })}
+      >
+        <span class="graph-tab-mark" aria-hidden="true">◇</span>
+        <span>{t("web.graph.tab")}</span>
+      </div>
       {#each project.windows as win, index (win.uid)}
         {@const named = !!win.name && win.name !== win.uid}
         <div

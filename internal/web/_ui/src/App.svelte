@@ -14,6 +14,7 @@
   import NotifySidebar from "./components/NotifySidebar.svelte";
   import Overview from "./components/Overview.svelte";
   import PaneSplit from "./components/PaneSplit.svelte";
+  import ProjectGraph from "./components/ProjectGraph.svelte";
   import ProjectSidebar from "./components/ProjectSidebar.svelte";
   import LaunchPicker from "./components/LaunchPicker.svelte";
   import ResumePicker from "./components/ResumePicker.svelte";
@@ -301,6 +302,11 @@
       <PaneSplit {project} {win} panes={drawn} focused={pane?.uid ?? null} />
     {:else if win}
       <div class="content" id="detail"><WindowRecord {win} /></div>
+    {:else if route.sel.project && !route.sel.window}
+      <!-- A Project's own address is its first tab, the Agent graph. -->
+      {#key route.sel.project}
+        <ProjectGraph projectUID={route.sel.project} {project} />
+      {/key}
     {:else}
       <div class="content" id="detail"><Overview {project} /></div>
     {/if}

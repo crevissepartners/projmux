@@ -6,9 +6,11 @@
   // one place the web client puts keys into a pane. Free text on a
   // multi-select question was never measured and is left to the terminal,
   // which the card opens in one click.
+  import { getContext } from "svelte";
   import { ApiError, paths, post } from "../lib/api";
   import { explain } from "../lib/errors";
   import { t } from "../lib/i18n.svelte";
+  import { READ_ONLY } from "../lib/transcripts";
   import OpenInTerminal from "./OpenInTerminal.svelte";
 
   interface Option {
@@ -31,6 +33,9 @@
   }
   let { questions, result, paneUID, agentUID, toolID }: Props = $props();
   const list = $derived(questions as Question[]);
+  // A read-only transcript shows the question and its options, not the
+  // controls that answer it.
+  const readonly = getContext<boolean>(READ_ONLY) === true;
 
   let picks = $state<number[][]>([]);
   let others = $state<string[]>([]);
@@ -101,7 +106,7 @@
           <input
             type={q.multiSelect ? "checkbox" : "radio"}
             name="{toolID}-{qi}"
-            disabled={!!result || sent}
+            disabled={!!result || sent || readonly}
             checked={(picks[qi] || []).includes(oi)}
             onchange={() => toggle(qi, oi, !!q.multiSelect)}
           />
@@ -112,7 +117,7 @@
           {#if option.preview}<pre class="ask-preview">{option.preview}</pre>{/if}
         </label>
       {/each}
-      {#if !result && !sent}
+      {#if !result && !sent && !readonly}
         <input
           class="ask-other"
           placeholder={q.multiSelect ? t("web.chat.other_multi") : t("web.chat.other")}
@@ -125,7 +130,7 @@
   {/each}
   {#if result}
     <pre class="ask-result">{result}</pre>
-  {:else if !sent}
+  {:else if !sent && !readonly}
     <div class="ask-foot">
       <button type="button" class="send" disabled={!ready || sending} onclick={answer}>
         {sending ? t("web.chat.answering") : t("web.chat.answer")}

@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { byAttention } from "../lib/activity";
   import { t } from "../lib/i18n.svelte";
   import { go, route } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
-  import { livePanes, slotRef, type ProjectView } from "../lib/tree";
+  import type { ProjectView } from "../lib/tree";
   import { listKeys, resizable } from "../lib/actions";
 
   interface Props {
@@ -13,18 +12,11 @@
   let { list = $bindable(), onEscape }: Props = $props();
 
   /**
-   * Opening a Project lands where the work is: the pane that most needs
-   * attention, else its first live window. A Project with nothing running
-   * shows its overview; starting a session is left to the explicit ＋.
+   * Opening a Project lands on its first tab, the Agent graph: which Agents
+   * it has and who talked to whom. A Window is one tab away.
    */
   function open(project: ProjectView) {
-    const ranked = livePanes(live.tree, project).sort(byAttention);
-    if (ranked.length) {
-      go({ project: project.uid, window: ranked[0].win.uid, pane: slotRef(ranked[0].pane) });
-      return;
-    }
-    const first = project.windows.find((w) => !w.unbound && w.runtimeId);
-    go({ project: project.uid, window: first?.uid ?? null });
+    go({ project: project.uid });
   }
 </script>
 
