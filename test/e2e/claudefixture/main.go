@@ -51,6 +51,9 @@ type providerFrame struct {
 	} `json:"message"`
 }
 
+// coordinationContent is the frame content L20 receives. Source is a map on
+// purpose: an Agent frame names {agentUID, provider} and an operator-input
+// frame (schemaVersion 3) names {kind, client}.
 type coordinationContent struct {
 	Kind string `json:"kind"`
 	// SchemaVersion has to be declared even though the fixture does not read

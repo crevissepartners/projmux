@@ -3,6 +3,8 @@ package transcript
 import (
 	"encoding/json"
 	"strings"
+
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 )
 
 // WebRefPrefix marks a coordination message the web client sent. It rides in
@@ -12,7 +14,7 @@ import (
 const WebRefPrefix = "projmux-web-"
 
 // ViaWeb is the Turn.Via value for a message whose messageRef carries
-// WebRefPrefix.
+// WebRefPrefix, and for operator input from the web client.
 const ViaWeb = "projmux-web"
 
 // coordinationEnvelope is the projmux peer-coordination frame that arrives in
@@ -28,9 +30,14 @@ type coordinationEnvelope struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	MessageRef    string `json:"messageRef"`
 	Payload       string `json:"payload"`
-	Source        struct {
+	// Source is an Agent route, or from schemaVersion 3 on the operator origin
+	// {kind, client}. Both shapes decode into the one struct: the key sets
+	// are disjoint, so whichever is absent stays empty.
+	Source struct {
 		AgentUID string `json:"agentUID"`
 		Provider string `json:"provider"`
+		Kind     string `json:"kind"`
+		Client   string `json:"client"`
 	} `json:"source"`
 	Target struct {
 		AgentUID string `json:"agentUID"`
@@ -43,6 +50,11 @@ const coordinationKind = "projmux-coordination"
 // with an explicit 0, is read as. Frames predating the field are version 1 by
 // definition: the field was added to name the shape they already had.
 const coordinationSchemaVersionDefault = 1
+
+// coordinationOperatorSchemaVersion is the first frame version whose operator
+// input names itself in source. From it on, a self-anchored frame is an Agent
+// writing to itself, no longer the operator's own message.
+const coordinationOperatorSchemaVersion = 3
 
 // Turn.Kind values for coordination frames. A frame is recorded directly as a
 // user turn when the session was idle, or as a queued attachment when it was
@@ -65,20 +77,25 @@ type coordinationFrame struct {
 	// future field can be gated on it, and deliberately not carried out to
 	// Turn: a person reading a transcript has no use for it.
 	schemaVersion int
-	// self is true when the frame's source and target are the same Agent.
+	// self is true when a frame older than coordinationOperatorSchemaVersion
+	// has the same Agent as source and target: the old web composer's own
+	// message.
 	self bool
-	// from is the peer, nil for a self-anchored frame or one with no source.
+	// operator is true when the frame's source is operator input.
+	operator bool
+	// from is the peer, nil for operator input, an old self-anchored frame, or
+	// one with no source.
 	from *Sender
 }
 
 // turn renders the frame as a Turn.
 //
-// A self-anchored frame is the operator's own message and reads as a user
-// turn in this session; anything else is a peer turn, whether or not the
-// source was named.
+// Operator input, and an old self-anchored frame, is the operator's own
+// message and reads as a user turn in this session; anything else is a peer
+// turn, whether or not the source was named.
 func (f coordinationFrame) turn(at, kind string) Turn {
 	role := "peer"
-	if f.self {
+	if f.self || f.operator {
 		role = "user"
 	}
 	return Turn{
@@ -100,12 +117,15 @@ func (f coordinationFrame) turn(at, kind string) Turn {
 // Everything outside the payload is discarded — for a reader the message *is*
 // the payload, and the envelope around it is the same boilerplate every time.
 //
-// A frame whose source and target are the same Agent is not from a peer at
-// all: it is the web client's own composer, which has to anchor a send on some
-// Agent and anchors it on the target so a person's text is not attributed to
-// an uninvolved third one. Labelling those as coming from a peer made the
-// operator's own messages look like someone else's, so such a frame carries
-// no From.
+// A frame whose source is operator input is the person's own message: a user
+// turn through the web client, with no From. Before schemaVersion 3 there was
+// no such source, and a frame whose source and target are the same Agent
+// stood in for it: the web client's composer had to anchor a send on some
+// Agent and anchored it on the target so a person's text was not attributed
+// to an uninvolved third one. Those older frames keep reading as the
+// operator's own. From version 3 on, operator input says so itself, so a
+// self-anchored frame is what it looks like, an Agent writing to itself, and
+// reads as a peer turn from that Agent.
 //
 // The frame's schemaVersion is read but is never grounds for rejection. A
 // producer newer than this reader can only have added or restated fields; the
@@ -148,8 +168,13 @@ func unwrapCoordination(text string) (coordinationFrame, bool) {
 		frame.via = ViaWeb
 	}
 
+	if coremessage.IsOperatorOrigin(strings.TrimSpace(envelope.Source.Kind), strings.TrimSpace(envelope.Source.Client)) {
+		frame.operator, frame.via = true, ViaWeb
+		return frame, true
+	}
 	source := strings.TrimSpace(envelope.Source.AgentUID)
-	frame.self = source != "" && source == strings.TrimSpace(envelope.Target.AgentUID)
+	frame.self = frame.schemaVersion < coordinationOperatorSchemaVersion &&
+		source != "" && source == strings.TrimSpace(envelope.Target.AgentUID)
 	if !frame.self && source != "" {
 		frame.from = &Sender{
 			AgentUID: source,

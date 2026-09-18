@@ -20,9 +20,32 @@ const (
 	MaxTTL          = 24 * time.Hour
 )
 
+// Origin kinds and clients a durable envelope can name. They are exported
+// because the web transcript reader meets them as strings inside a frame and
+// must judge them with IsOperatorOrigin rather than a copy of the rule.
+const (
+	OriginKindOperator = "operator"
+	OriginClientWeb    = "web"
+)
+
+// Stable reason tokens for the two refusals only an operator-origin envelope
+// can produce. Callers print them; tests and scripts match them.
+const (
+	ReasonExplicitReplyOperatorOrigin   = "explicit-reply-operator-origin"
+	ReasonOperatorOriginTargetNotClaude = "operator-origin-target-not-claude"
+)
+
 var (
 	ErrInvalidEnvelope = errors.New("invalid Agent message envelope")
 	ErrRetryMismatch   = errors.New("agent message retry does not match the immutable envelope")
+	// ErrOperatorOriginReply refuses a reply whose original is operator input:
+	// the operator has no Agent route to answer on. It wraps
+	// ErrInvalidEnvelope so existing refusal handling still applies.
+	ErrOperatorOriginReply = fmt.Errorf("%w: %s", ErrInvalidEnvelope, ReasonExplicitReplyOperatorOrigin)
+	// ErrOperatorOriginTargetNotClaude refuses operator input for any target
+	// but Claude. Codex already takes web input as a native user turn, so the
+	// envelope path is Claude's alone.
+	ErrOperatorOriginTargetNotClaude = fmt.Errorf("%w: %s", ErrInvalidEnvelope, ReasonOperatorOriginTargetNotClaude)
 )
 
 type Authority struct {
@@ -33,6 +56,46 @@ type Authority struct {
 
 func PeerAuthority() Authority {
 	return Authority{Kind: "peer", Trust: "untrusted", Permission: "coordination-only"}
+}
+
+// OperatorAuthority is the authority of operator input. It is
+// coordination-only like a peer's: a person typing through a projmux client is
+// not verified, so the envelope must not carry PrincipalHuman's turn or config
+// permissions.
+func OperatorAuthority() Authority {
+	return Authority{Kind: "operator", Trust: "untrusted", Permission: "coordination-only"}
+}
+
+// Origin names who put a message on the broker when that is not an Agent.
+// Every Agent message leaves it zero: the zero origin is the Agent origin and
+// is omitted from the wire, and there is no explicit agent encoding, so an
+// Agent envelope serializes byte for byte as it did before the field existed.
+// Readers that predate it reject an envelope that carries one, which is the
+// intended outcome for them.
+type Origin struct {
+	Kind   string `json:"kind"`
+	Client string `json:"client"`
+}
+
+// OperatorWebOrigin is the origin of operator input from the projmux web
+// client. Only the web sender may construct one; an audit test pins the
+// callers.
+func OperatorWebOrigin() Origin {
+	return Origin{Kind: OriginKindOperator, Client: OriginClientWeb}
+}
+
+// IsOperatorOrigin is the one judgement of "this is operator input". The
+// envelope, the Claude frame renderer, the transcript reader, status, and the
+// history log all ask it, so no reader can label a message operator input
+// that another reader would not.
+func IsOperatorOrigin(kind, client string) bool {
+	return kind == OriginKindOperator && client == OriginClientWeb
+}
+
+// Operator reports whether o is the operator origin. The zero origin is an
+// Agent.
+func (o Origin) Operator() bool {
+	return IsOperatorOrigin(o.Kind, o.Client)
 }
 
 // Route is the only durable address in a message. Provider authority and its
@@ -57,12 +120,17 @@ func (r Route) Same(other Route) bool {
 	return r.Valid() && r == other
 }
 
+// Envelope is the durable coordination message. Origin and Source are
+// exclusive: an Agent message has a valid Source and no Origin, and operator
+// input has an Origin and the zero Source. Both are omitted when empty, so an
+// Agent envelope keeps its exact pre-Origin bytes.
 type Envelope struct {
 	Version         int       `json:"version"`
 	MessageRef      string    `json:"messageRef"`
 	ConversationRef string    `json:"conversationRef"`
 	ReplyTo         string    `json:"replyTo,omitempty"`
-	Source          Route     `json:"source"`
+	Origin          Origin    `json:"origin,omitzero"`
+	Source          Route     `json:"source,omitzero"`
 	Target          Route     `json:"target"`
 	Authority       Authority `json:"authority"`
 	Payload         string    `json:"payload"`
@@ -70,14 +138,43 @@ type Envelope struct {
 	Deadline        time.Time `json:"deadline"`
 }
 
+// Operator reports whether the envelope is operator input.
+func (e Envelope) Operator() bool {
+	return e.Origin.Operator()
+}
+
+// Validate keeps the Agent rule unchanged when Origin is absent. Operator
+// input has no source route, targets Claude only, carries OperatorAuthority,
+// and is never a reply. A mixed shape is refused either way.
 func (e Envelope) Validate() error {
 	if e.Version != Version || !ValidRef(e.MessageRef) || !ValidRef(e.ConversationRef) ||
-		(e.ReplyTo != "" && !ValidRef(e.ReplyTo)) || !e.Source.Valid() || !e.Target.Valid() ||
-		e.Authority != PeerAuthority() || !validPayload(e.Payload) || e.AcceptedAt.IsZero() || e.Deadline.IsZero() ||
+		(e.ReplyTo != "" && !ValidRef(e.ReplyTo)) || !e.Target.Valid() ||
+		!validPayload(e.Payload) || e.AcceptedAt.IsZero() || e.Deadline.IsZero() ||
 		!e.Deadline.After(e.AcceptedAt) || e.Deadline.Sub(e.AcceptedAt) > MaxTTL {
 		return ErrInvalidEnvelope
 	}
+	if e.Origin == (Origin{}) {
+		if !e.Source.Valid() || e.Authority != PeerAuthority() {
+			return ErrInvalidEnvelope
+		}
+		return nil
+	}
+	if !e.Origin.Operator() || e.Source != (Route{}) || e.ReplyTo != "" || e.Authority != OperatorAuthority() {
+		return ErrInvalidEnvelope
+	}
+	if e.Target.Provider != "claude" {
+		return ErrOperatorOriginTargetNotClaude
+	}
 	return nil
+}
+
+// sameSender compares who sent two envelopes: the same valid Agent route, or
+// the same operator origin with no route on either.
+func (e Envelope) sameSender(other Envelope) bool {
+	if e.Origin == (Origin{}) || other.Origin == (Origin{}) {
+		return e.Origin == other.Origin && e.Source.Same(other.Source)
+	}
+	return e.Origin.Operator() && e.Origin == other.Origin && e.Source == (Route{}) && other.Source == (Route{})
 }
 
 // SameRetry compares every caller-controlled immutable field plus the original
@@ -87,17 +184,21 @@ func (e Envelope) Validate() error {
 func (e Envelope) SameRetry(candidate Envelope) bool {
 	return e.Version == candidate.Version && e.MessageRef == candidate.MessageRef &&
 		e.ConversationRef == candidate.ConversationRef && e.ReplyTo == candidate.ReplyTo &&
-		e.Source.Same(candidate.Source) && e.Target.Same(candidate.Target) &&
+		e.sameSender(candidate) && e.Target.Same(candidate.Target) &&
 		e.Authority == candidate.Authority && e.Payload == candidate.Payload &&
 		e.Deadline.Sub(e.AcceptedAt) == candidate.Deadline.Sub(candidate.AcceptedAt)
 }
 
 // ValidateReply proves broker correlation rather than trusting a native reply
 // address or caller-authored source. The new message must reverse the original
-// route exactly and remain in its conversation.
+// route exactly and remain in its conversation. Operator input has no route to
+// reverse, so a reply to it is ErrOperatorOriginReply.
 func ValidateReply(original, reply Envelope) error {
 	if err := original.Validate(); err != nil {
 		return err
+	}
+	if original.Operator() {
+		return ErrOperatorOriginReply
 	}
 	if err := reply.Validate(); err != nil {
 		return err

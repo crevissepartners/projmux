@@ -172,6 +172,9 @@ func TestAuthorityMatrixIsExhaustiveAndPeerNeverEscalates(t *testing.T) {
 		PrincipalPeer: {
 			ActionCoordinationSend: true, ActionCoordinationRead: true, ActionCoordinationReply: true,
 		},
+		// Operator input is unverified: it sends coordination and inherits none
+		// of PrincipalHuman's turn, config, or reply permissions.
+		PrincipalOperator:         {ActionCoordinationSend: true},
 		PrincipalProviderRuntime:  {ActionToolOrConnector: true, ActionModelHistoryWrite: true},
 		PrincipalApprovalReviewer: {ActionApprovalReview: true},
 	}

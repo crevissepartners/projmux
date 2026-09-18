@@ -2,6 +2,10 @@
 // The store is private to the same-user host and contains only the public v2
 // envelope: provider locators, credentials, thread IDs, and session secrets are
 // never part of its model.
+//
+// On-disk versions: 1 is the legacy unqualified-route store, migrated on read.
+// 2 holds Agent messages only. 3 is the first version that may hold an
+// operator-origin envelope; it differs from 2 by nothing else.
 package agentmessage
 
 import (
@@ -38,6 +42,10 @@ const (
 	defaultLockWait   = 2 * time.Second
 	lockRetryInterval = 2 * time.Millisecond
 )
+
+// operatorStoreVersion is written only while at least one record is operator
+// input; see storeVersionFor.
+const operatorStoreVersion = 3
 
 var (
 	ErrCapacity       = errors.New("agent message store is at capacity")
@@ -271,6 +279,11 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 			return ErrNotFound
 		}
 		original := state.Records[originalIndex]
+		// Operator input has no Agent route to answer on. The refusal precedes
+		// every other check so its cause is the one reported.
+		if original.Envelope.Operator() {
+			return &ReplyConflictError{Reason: coremessage.ReasonExplicitReplyOperatorOrigin}
+		}
 		candidate := replyEnvelope(original.Envelope, messageRef, payload, source, target, acceptedAt, deadline)
 		var previous Record
 		for i := range state.Records {
@@ -624,8 +637,18 @@ func (s *Store) loadLocked() (diskState, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var state diskState
-	if decoder.Decode(&state) != nil || (state.Version != storeVersion && state.Version != legacyStoreVersion) || len(state.Records) > maxRecords {
+	if decoder.Decode(&state) != nil || (state.Version != storeVersion && state.Version != legacyStoreVersion &&
+		state.Version != operatorStoreVersion) || len(state.Records) > maxRecords {
 		return diskState{}, ErrMalformedStore
+	}
+	// An origin exists only from version 3 on. Finding one in an older file
+	// means a writer that did not follow storeVersionFor, not a record to keep.
+	if state.Version != operatorStoreVersion {
+		for _, record := range state.Records {
+			if record.Envelope.Origin != (coremessage.Origin{}) {
+				return diskState{}, ErrMalformedStore
+			}
+		}
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
@@ -675,8 +698,24 @@ func validRecord(record Record) bool {
 	}
 }
 
+// storeVersionFor is the store write rule: version 3 only while at least one
+// record is operator input, and version 2 otherwise, including once the last
+// operator record is reclaimed. A helper from an older build still shares this
+// file and refuses any version but 1 and 2 and any unknown field, and an Agent
+// record serializes exactly as it did in version 2. So a store holding only
+// Agent messages stays readable by that helper, and rolling back to a build
+// that knows only version 2 stays safe until operator input is written.
+func storeVersionFor(records []Record) int {
+	for _, record := range records {
+		if record.Envelope.Operator() {
+			return operatorStoreVersion
+		}
+	}
+	return storeVersion
+}
+
 func (s *Store) writeLocked(state diskState, history []historyRecord) error {
-	state.Version = storeVersion
+	state.Version = storeVersionFor(state.Records)
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err

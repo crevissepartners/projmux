@@ -86,6 +86,7 @@ NewWithRoot	Rollout-root injection constructor retained as the only seam that pi
 NextPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 NextWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
+OperatorWebOrigin	The operator-origin constructor is the one sanctioned way to build operator input; no product path calls it until the web sender lands, and TestNoProductPathBuildsAnOperatorOrigin pins that its callers are only the listed producers.
 Parse	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
 PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.

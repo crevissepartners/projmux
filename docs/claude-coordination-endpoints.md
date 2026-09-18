@@ -184,9 +184,11 @@ unverified claim. That self-anchored frame has the same keys with an empty
 `replyAction`, since there is no peer to answer. The Codex turn body follows
 the same route, notice, and self rules.
 
-The object also carries the integer `schemaVersion`, currently `2`. Version 2
+The object also carries the integer `schemaVersion`, currently `3`. Version 2
 narrowed the routes, shortened `sourceNotice`, and emptied a self-anchored
-frame's `replyAction`; it only removed keys and changed values. The target's
+frame's `replyAction`; it only removed keys and changed values. Version 3 added
+the operator-input frame described below; an Agent frame at version 3 is the
+version 2 frame with only that number changed. The target's
 helper renders the frame, so a helper started before an upgrade keeps sending
 the older shape until that Agent is activated again. `schemaVersion` names
 that object's shape only and moves independently of the durable envelope
@@ -197,6 +199,57 @@ and still surfaces the message; an unknown version is never a drop and never an
 error, because a peer message that silently disappears is worse than one read
 by a slightly stale reader. The append-only eviction history log record uses
 the same field name, the same default, and the same higher-version rule.
+
+### Operator input
+
+A durable envelope can also carry operator input: text a person wrote through
+the projmux web client, which is not an Agent. It is represented, and every
+reader accepts and labels it, but no command or web route creates it yet.
+
+- **Envelope.** Operator input carries `"origin":{"kind":"operator","client":"web"}`
+  and no `source` key; its authority is
+  `{"kind":"operator","trust":"untrusted","permission":"coordination-only"}`,
+  which grants none of the turn, steer, or config permissions a person at the
+  terminal has. Its target must be a Claude Agent (refused otherwise with
+  `operator-origin-target-not-claude`), and it is never a reply. An Agent
+  message has no `origin` key at all: an absent origin is the Agent origin,
+  there is no explicit `"kind":"agent"` encoding, and an Agent envelope's bytes
+  are unchanged. A mixed shape (an origin with any source field, or no origin
+  and no valid source route) is invalid. The durable envelope `version` stays
+  `2`.
+- **Replies.** Operator input has no Agent route to reverse, so a reply to it
+  is refused with `explicit-reply-operator-origin`, whether it comes from
+  `agent message send --reply-to`, the Claude reply tool, or the store.
+- **Store.** The message store's on-disk version is `3` only while at least one
+  stored record is operator input; otherwise every write is version `2`,
+  including the first write after the last operator record is reclaimed. A
+  version `1` or `2` file that contains an `origin` is malformed. A Claude
+  helper started from an older build shares the store file and refuses any
+  version but `1` and `2` and any unknown field, and an activation keeps its
+  helper across an install, so this rule keeps a store of Agent messages
+  readable by those helpers, and keeps a rollback to such a build safe until
+  operator input is written.
+- **Frame.** The operator frame's `source` is `{"kind":"operator","client":"web"}`
+  in place of an Agent route, `sourceNotice` is "Operator input that arrived
+  through the projmux web client; projmux did not verify the person.", and
+  `replyAction` is empty. The other keys are those of an Agent frame. The
+  helper proves only the target current, since there is no source route.
+- **Readers.** The web transcript reader shows operator input as a `user`
+  turn with `via` `projmux-web` and no `from`. A frame below `schemaVersion`
+  3 whose source and target are the same Agent keeps reading as the operator's
+  own `user` turn; from version 3 on, that frame is an Agent writing to itself
+  and reads as a `peer` turn from that Agent. `agent message status` labels
+  operator input `source=operator (web)` in a trailing text column and prints
+  an `origin` object and no `source` in JSON; an Agent message's output is
+  unchanged. A reclaimed operator record's history line carries `origin` and
+  no `source`.
+
+Why operator input needs a durable envelope at all: a Claude session has no
+path for user-turn input other than typing into its terminal, and projmux
+forbids sending keys on the Agent input path. The coordination push is the
+only channel that reaches a Claude session without keys, so operator input
+travels as an envelope and is labelled for what it is. Codex needs none of
+this: it already takes web input as a native user turn.
 
 Reply egress uses only documented official `Stop.last_assistant_message` plus
 one delivered Projmux-owned pending record at the same boundary. Push ingress

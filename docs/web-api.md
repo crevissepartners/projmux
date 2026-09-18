@@ -309,7 +309,11 @@ tokens}` and no text; a subagent's final report is a `report` turn whose
 text is the report without its delivery frame; system reminders are
 dropped.
 `from` is set only for a peer coordination message, and `via` is
-`projmux-web` for a message this client sent. Labels such as "thinking" or
+`projmux-web` for a message this client sent. A coordination frame whose
+source is operator input (`{"kind":"operator","client":"web"}`) is a `user`
+turn with `via` `projmux-web` and no `from`. A frame whose source and target
+are the same Agent is a `user` turn below frame `schemaVersion` 3 and a `peer`
+turn from that Agent from 3 on. Labels such as "thinking" or
 "clipped" are the client's to localize; the server sends flags and the note
 tokens `empty` and `no-transcript`.
 
