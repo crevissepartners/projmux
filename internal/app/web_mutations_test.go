@@ -70,6 +70,7 @@ func TestWebMutationsRefuseABareRequest(t *testing.T) {
 		{"POST", webWindowAlpha + "/agents"},
 		{"DELETE", webWindowAlpha},
 		{"DELETE", webWindowAlpha + "/panes/pan-alpha-log"},
+		{"DELETE", "/api/v1/agents/agt-alpha-codex"},
 		{"POST", "/api/v1/agents/agt-beta-codex/resume"},
 	} {
 		for _, body := range []string{``, `{}`, `{"confirm":false}`} {
@@ -91,6 +92,8 @@ func TestWebMutationsRefuseUnknownBodyFields(t *testing.T) {
 		{"POST", webWindowAlpha + "/agents", `{"provider":"claude","confirm":true,"window":"win-beta-main"}`},
 		{"POST", webWindowAlpha + "/agents", `{"provider":"claude","confirm":true,"placement":"down"}`},
 		{"DELETE", webWindowAlpha + "/panes/pan-alpha-log", `{"confirm":true,"pane":"pan-beta-zsh"}`},
+		{"DELETE", "/api/v1/agents/agt-alpha-codex", `{"confirm":true,"agent":"agt-beta-codex"}`},
+		{"DELETE", "/api/v1/agents/agt-alpha-codex?dryRun=true", `{"window":"win-beta-main"}`},
 		{"PATCH", webWindowAlpha, `{"name":"x","uid":"win-beta-main"}`},
 		{"POST", "/api/v1/agents/agt-alpha-codex/messages", `{"body":"hi","source":"uid:agt-alpha-codex","target":"x"}`},
 		{"POST", webWindowAlpha + "/agents", `{"provider":"claude","confirm":true}{"x":1}`},
@@ -117,6 +120,8 @@ func TestWebMutationsRefuseAChildOfAnotherParent(t *testing.T) {
 		{"POST", webWindowAlpha + "/panes/pan-beta-zsh/focus", `{}`},
 		{"POST", "/api/v1/projects/prj-missing/windows", `{"confirm":true}`},
 		{"POST", "/api/v1/agents/agt-missing/resume", `{"confirm":true}`},
+		{"DELETE", "/api/v1/agents/agt-missing", `{"confirm":true}`},
+		{"DELETE", "/api/v1/agents/agt-missing?dryRun=true", ``},
 		{"POST", "/api/v1/agents/agt-alpha-codex/messages", `{"body":"hi","source":"uid:agt-missing"}`},
 	} {
 		code, reply := webSend(t, handler, tc.method, tc.path, tc.body)
@@ -179,6 +184,18 @@ func TestWebMutationsRunTheirOwnArgv(t *testing.T) {
 			[]string{"rename agent uid:agt-alpha-codex --name n --project uid:prj-alpha --window uid:win-alpha-main"},
 		},
 		{
+			"delete agent", "DELETE", "/api/v1/agents/agt-alpha-codex", `{"confirm":true}`, "",
+			[]string{"delete agent uid:agt-alpha-codex --project uid:prj-alpha --window uid:win-alpha-main --yes --socket projmux"},
+		},
+		{
+			"delete agent dry run needs no confirm", "DELETE", "/api/v1/agents/agt-alpha-codex?dryRun=true", ``, "",
+			[]string{"delete agent uid:agt-alpha-codex --project uid:prj-alpha --window uid:win-alpha-main --dry-run --socket projmux"},
+		},
+		{
+			"delete an agent in another project", "DELETE", "/api/v1/agents/agt-beta-codex", `{"confirm":true}`, "",
+			[]string{"delete agent uid:agt-beta-codex --project uid:prj-beta --window uid:win-beta-main --yes --socket projmux"},
+		},
+		{
 			"resume", "POST", "/api/v1/agents/agt-beta-codex/resume", `{"confirm":true}`, "",
 			[]string{"agent resume uid:agt-beta-codex --project uid:prj-beta --window uid:win-beta-main"},
 		},
@@ -235,6 +252,9 @@ func TestWebDeleteDryRunNamesTheRunningAgents(t *testing.T) {
 		{"a window whose agent is offline", "/api/v1/projects/prj-beta/windows/win-beta-main", false, []any{}},
 		{"the pane of an agent that is not running", webWindowAlpha + "/panes/pan-alpha-codex", true, []any{}},
 		{"a window whose agent is not running", webWindowAlpha, true, []any{}},
+		{"the agent itself", "/api/v1/agents/agt-alpha-codex", false, codex},
+		{"an agent that is not running", "/api/v1/agents/agt-alpha-codex", true, []any{}},
+		{"an offline agent", "/api/v1/agents/agt-beta-codex", false, []any{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -284,6 +304,57 @@ func TestWebDeleteDryRunNamesTheRunningAgents(t *testing.T) {
 	}
 	if _, ok := body["runningAgents"]; ok {
 		t.Errorf("a real delete carries runningAgents: %v", body)
+	}
+}
+
+// The agent path segment is an exact Agent uid, the same one the graph
+// carries. A selector spelling, an Agent name, or another kind's uid is not an
+// Agent uid in the Registry, so it is not-found and nothing runs; a confirmed
+// delete runs one `delete agent` and its result carries no Agent list.
+func TestWebDeleteAgentTakesOnlyAnExactAgentUID(t *testing.T) {
+	handler, recorder := webMutationHarness(t)
+	for _, path := range []string{"/api/v1/agents/agt-alpha-codex", "/api/v1/agents/agt-alpha-codex?dryRun=false"} {
+		for _, body := range []string{``, `{}`, `{"confirm":false}`} {
+			if code, reply := webSend(t, handler, "DELETE", path, body); code != http.StatusBadRequest || errorCode(reply) != web.CodeConfirmRequired {
+				t.Errorf("DELETE %s %q = %d %v, want confirm-required", path, body, code, reply)
+			}
+		}
+	}
+	for _, ref := range []string{
+		"uid:agt-alpha-codex",
+		"codex",
+		"agent%2Fcodex",
+		"pan-alpha-codex",
+		"win-alpha-main",
+		"prj-alpha",
+		"AGT-ALPHA-CODEX",
+	} {
+		for _, suffix := range []string{"", "?dryRun=true"} {
+			path := "/api/v1/agents/" + ref + suffix
+			if code, reply := webSend(t, handler, "DELETE", path, `{"confirm":true}`); code != http.StatusNotFound || errorCode(reply) != web.CodeNotFound {
+				t.Errorf("DELETE %s = %d %v, want not-found", path, code, reply)
+			}
+		}
+	}
+	for _, path := range []string{"/api/v1/agents/", "/api/v1/agents"} {
+		if code, reply := webSend(t, handler, "DELETE", path, `{"confirm":true}`); code < 300 {
+			t.Errorf("DELETE %s = %d %v, want a refusal", path, code, reply)
+		}
+	}
+	if len(recorder.calls) != 0 {
+		t.Fatalf("a refused agent delete ran: %v", recorder.calls)
+	}
+
+	recorder.reply = func([]string) (string, error) { return "deleted\n", nil }
+	code, body := webSend(t, handler, "DELETE", "/api/v1/agents/agt-alpha-codex", `{"confirm":true}`)
+	if code != http.StatusOK || body["uid"] != "agt-alpha-codex" || body["plan"] != "deleted" {
+		t.Fatalf("confirmed agent delete = %d %v", code, body)
+	}
+	if _, ok := body["runningAgents"]; ok {
+		t.Errorf("a real delete carries runningAgents: %v", body)
+	}
+	if len(recorder.calls) != 1 || !strings.HasPrefix(recorder.calls[0], "delete agent uid:agt-alpha-codex ") {
+		t.Fatalf("calls = %q, want one exact-uid delete agent", recorder.calls)
 	}
 }
 
