@@ -212,6 +212,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	prompt, nativePromptExact := nativePrompt(flags.payload)
 	nativeCreate := nativeCodexFreshCreateRequired(provider, flags)
 	var nativeRoute codexNativeEndpointRoute
+	var creator creatorProvenance
 	if nativeCreate {
 		if !nativePromptExact {
 			return nativeCreatePreparationRefusal(spelling, &codexNativeRouteError{Reason: "unsupported-create-shape"})
@@ -311,7 +312,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 
 		// Metadata phase. Every Agent and every managed Pane is allocated before
 		// the first tmux call, so an explicit --name that collides in the target
-		// root refuses with zero runtime objects created.
+		// root refuses with zero runtime objects created. The creator is
+		// observed once, before the first allocation, for the whole fan-out.
+		creator = c.observeCreator(ctx, working)
 		agents := make([]agentWork, 0, len(plan.targets))
 		for _, target := range plan.targets {
 			window, ok := working.Window(target.windowUID)
@@ -324,6 +327,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,
+				Annotations: creator.annotations(),
 				Workspace:   workspace,
 				Activation:  activationStateForPayload(flags.payload),
 				OperationID: operationID,
@@ -339,6 +343,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if err != nil {
 				return MapMetadataError(err)
 			}
+			pane = creator.annotatePane(working, pane)
 			activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
 			if err != nil {
 				return err
@@ -506,6 +511,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	if err := c.confirmAgentActivations(activationTargets); err != nil {
 		return err
 	}
+	creator.reportSkip(stderr)
 	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindAgent, results,
 		createPlannedReceipt(coremetadata.KindAgent, results, selectedWindowUIDs))
 }

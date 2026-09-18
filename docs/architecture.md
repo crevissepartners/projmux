@@ -359,6 +359,25 @@ Identity and naming:
   context may duplicate and is never a selector, reservation, ownerRef, or
   durable identity input. `metadata.labels` remains key/value classification;
   `metadata.annotations` remains non-identifying metadata such as an AI topic.
+- Creator provenance: when an explicit `create agent` (every spelling,
+  `--create-window`, and each Agent of a fan-out) or `create window --provider`
+  runs inside an Agent's managed Pane, the new Agent and its managed Pane carry
+  `projmux.io/creator-agent` (the creator Agent's bare UID),
+  `projmux.io/creator-pane` (that Agent's managed Pane's bare UID), and
+  `projmux.io/creator-basis: pane-chain`, written in the same transaction that
+  commits the Agent. They are recorded only when the unmasked ambient
+  `%N` (`__PROJMUX_RUNTIME_ANCHOR_PANE`, then `TMUX_PANE`) is exactly one live
+  Registry Pane, that Pane round-trips with its owning Agent's
+  `status.paneRef`, one `display-message` confirms it on the create's own
+  app-owned socket and server pid, and the create process descends from its
+  `#{pane_pid}`. Any failed check writes none of the keys, changes nothing
+  else about the create, and prints one `creator not recorded: <reason>` line
+  on stderr when an ambient `%N` existed. These keys are provenance, not
+  authentication, like a message `--source`. An absent key does not mean a
+  human created the Agent: UI intent creates (picker, pane menu, `ai split`,
+  launch choice), web API creates, and creates a Codex Agent issues (its
+  commands run under the app-server, not below the Pane's process) leave them
+  empty, and nothing backfills older Agents.
 
 Root lifecycle:
 

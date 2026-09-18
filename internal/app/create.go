@@ -128,6 +128,11 @@ type createCommand struct {
 	// reads. A nil homeDir skips the global tier.
 	homeDir   func() (string, error)
 	lookupEnv func(string) string
+	// processAncestors walks this process's parent chain for the creator
+	// provenance check (create_creator.go). Nil skips that observation
+	// silently: fixtures that build the command directly, and the web API,
+	// which runs creates in-process on another caller's behalf.
+	processAncestors func() ([]int, error)
 	// bindWindowRuntime records the exact last-positive tmux owner pair for a
 	// canonical Window create. Nil selects Mutator.ObserveWindowRuntimeBinding;
 	// the seam exists so transaction/ledger rollback can be exercised at this
@@ -187,6 +192,7 @@ func newCreateCommand() *createCommand {
 		resolveWorkspace: resolveAgentWorkspace,
 		homeDir:          os.UserHomeDir,
 		lookupEnv:        os.Getenv,
+		processAncestors: processAncestry,
 	}
 	bind := func(ctx context.Context, explicit bool) error {
 		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, os.Getenv, command.routeAnchor, explicit)

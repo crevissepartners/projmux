@@ -673,6 +673,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	var results []createResult
 	var openedAgent coremetadata.Agent
 	var activationTargets []agentActivationTarget
+	var creator creatorProvenance
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -703,8 +704,9 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 			// allocateWindow already derived from the same payload, which is what
 			// makes the Window's name identical with and without --provider.
 			work.payload = nil
+			creator = c.observeCreator(ctx, working)
 			if agent, agentLaunch, err = c.allocateWindowAgent(
-				working, mutator, project, provider, work, flags, labels, operationID); err != nil {
+				working, mutator, project, provider, work, flags, labels, creator, operationID); err != nil {
 				return err
 			}
 		}
@@ -759,6 +761,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	if err := c.confirmAgentActivations(activationTargets); err != nil {
 		return err
 	}
+	creator.reportSkip(stderr)
 	receipt := createResultsReceipt(coremetadata.KindWindow, results)
 	if openedAgent.Metadata.UID != "" {
 		// The receipt records what the operation did, and on this branch it
@@ -797,6 +800,7 @@ func (c *createCommand) allocateWindowAgent(
 	work windowWork,
 	flags resourceCreateFlags,
 	labels map[string]string,
+	creator creatorProvenance,
 	operationID string,
 ) (agentWork, agentPaneLaunch, error) {
 	resolver := c.resolveWorkspace
@@ -818,6 +822,7 @@ func (c *createCommand) allocateWindowAgent(
 		// the generated one and its managed Pane derives from that.
 		Provider:    provider,
 		Labels:      labels,
+		Annotations: creator.annotations(),
 		Workspace:   workspace,
 		Activation:  activationStateForPayload(flags.payload),
 		OperationID: operationID,
@@ -833,6 +838,7 @@ func (c *createCommand) allocateWindowAgent(
 	if err != nil {
 		return agentWork{}, agentPaneLaunch{}, MapMetadataError(err)
 	}
+	pane = creator.annotatePane(working, pane)
 	activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
 	if err != nil {
 		return agentWork{}, agentPaneLaunch{}, err

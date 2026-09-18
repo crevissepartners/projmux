@@ -455,12 +455,82 @@ func TestExactProjectWindowAgentCreateIsByteEquivalentAcrossAmbientPaneContainme
 		if err != nil {
 			t.Fatal(err)
 		}
-		return stdout + "\x00" + store.snapshot() + "\x00" + route.target.Label() + "\x00" + string(calls)
+		return stdout + "\x00" + annotatedSnapshot(store, true) + "\x00" + route.target.Label() + "\x00" + string(calls)
 	}
 	current := run(t, "current")
 	for _, anchor := range []string{"unrelated", "stale"} {
 		if got := run(t, anchor); got != current {
 			t.Fatalf("same-Window exact create changed with %s private anchor:\ncurrent=%q\ngot=%q", anchor, current, got)
+		}
+	}
+
+	// An Agent-Pane private anchor is the one containment that may change the
+	// stored result, and only by the three creator keys on the new Agent and
+	// its Pane. The same fixture is run with the creator observation off (the
+	// behavior before it existed) and on; everything else -- stdout, the route,
+	// every other Registry byte, and every tmux call but the single creator
+	// query -- is identical.
+	agentAnchor := func(t *testing.T, observe bool) (string, string) {
+		t.Helper()
+		store, tmux := aliveAlphaRuntime(t)
+		tmux.socketName = "phase2-exact-create"
+		tmux.socketPath = "/tmp/fake-tmux/phase2-exact-create"
+		unrelated := tmux.addSession("unrelated-owner").windows[0].panes[0].id
+		command, _ := newTestAgentCreateCommand(t, store, tmux)
+		env := map[string]string{"TMUX": tmux.socketPath + "," + tmux.serverPID + ",23", "TMUX_PANE": unrelated}
+		lookup := func(key string) string { return env[key] }
+		route := bindTestCreateRuntimeRoute(command, tmux, lookup)
+		seeded, stderr, err := runRoute(t, command,
+			"agent", "--provider", "claude", "--project", "uid:prj-alpha",
+			"--window", "uid:win-alpha-main", "--name", "creator", "-o", "pane-id")
+		creatorID := strings.TrimSpace(seeded)
+		_, _, live := tmux.pane(creatorID)
+		if err != nil || stderr != "" || live == nil {
+			t.Fatalf("seed creator Agent: stdout=%q stderr=%q err=%v", seeded, stderr, err)
+		}
+		live.pid = "7001"
+		env[runtimeMutationAnchorPaneEnv] = creatorID
+		if observe {
+			command.lookupEnv = lookup
+			command.processAncestors = func() ([]int, error) { return []int{90001, 7001}, nil }
+		}
+		stdout, stderr, err := runRoute(t, command,
+			"agent", "--provider", "claude", "--project", "uid:prj-alpha",
+			"--window", "uid:win-alpha-main", "-o", "pane-id")
+		if err != nil || stderr != "" {
+			t.Fatalf("Agent-Pane private anchor (observe=%t): stdout=%q stderr=%q err=%v", observe, stdout, stderr, err)
+		}
+		if route.authority == nil || route.authority.PaneID != "" {
+			t.Fatalf("explicit route authority = %#v, want no ambient Pane containment", route.authority)
+		}
+		recorded := tmux.calls
+		if observe {
+			recorded = withoutOneCreatorQuery(t, recorded, creatorID)
+		}
+		calls, err := json.Marshal(recorded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stdout + "\x00" + annotatedSnapshot(store, true) + "\x00" + route.target.Label() + "\x00" + string(calls),
+			annotatedSnapshot(store, false)
+	}
+	unobserved, unobservedFull := agentAnchor(t, false)
+	observed, observedFull := agentAnchor(t, true)
+	if observed != unobserved {
+		t.Fatalf("Agent-Pane anchor changed more than the creator keys:\nunobserved=%q\nobserved=%q", unobserved, observed)
+	}
+	var added []string
+	for line := range strings.SplitSeq(observedFull, "\n") {
+		if !strings.Contains(unobservedFull, line+"\n") {
+			added = append(added, line)
+		}
+	}
+	if len(added) != 6 {
+		t.Fatalf("observed create added %d annotation lines, want the three creator keys on the Agent and its Pane: %q", len(added), added)
+	}
+	for _, line := range added {
+		if !strings.Contains(line, " projmux.io/creator-") {
+			t.Fatalf("observed create added a non-creator line %q", line)
 		}
 	}
 }

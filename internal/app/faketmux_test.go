@@ -130,6 +130,8 @@ type fakeTmuxPane struct {
 	top     int
 	width   int
 	height  int
+	// pid is what `#{pane_pid}` answers. Empty unless a test states it.
+	pid string
 }
 
 func newFakeTmuxPane(id string) *fakeTmuxPane {
@@ -1010,6 +1012,8 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, window.opts[token])
 		case token == "pane_id" && pane != nil:
 			out = append(out, pane.id)
+		case token == "pane_pid" && pane != nil:
+			out = append(out, pane.pid)
 		case token == "pane_title" && pane != nil:
 			out = append(out, pane.title)
 		case token == "pane_index" && window != nil && pane != nil:
