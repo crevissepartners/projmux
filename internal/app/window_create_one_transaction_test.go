@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"maps"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -339,5 +341,177 @@ func TestWindowCreateFromAnAgentPaneNeverRecordsTheCreator(t *testing.T) {
 	agents, _ := fx.newAgentsSince(t, before)
 	if len(agents) != 1 || !maps.Equal(creatorKeysOf(agents[0].Metadata), coremetadata.CreatorAnnotations(fx.creatorAgent, fx.creatorPane)) {
 		t.Fatalf("explicit control create did not record the creator: %+v", agents)
+	}
+}
+
+// quietPreflightLauncher is a provider launcher with the quiet preflight the
+// production AI command has. Its ambient Settings gate fails the test: the UI
+// new Window must never reach it, because it shows a second, client-less line.
+type quietPreflightLauncher struct {
+	*fakeAgentLauncher
+	t        *testing.T
+	disabled map[string]bool
+	missing  map[string]bool
+}
+
+func (l *quietPreflightLauncher) RequireAgentEnabled(provider string) error {
+	l.t.Errorf("the Window producer ran the ambient Settings gate for %s", provider)
+	return nil
+}
+
+func (l *quietPreflightLauncher) QuietAgentDisabledMessage(provider string) (string, bool) {
+	if l.disabled[provider] {
+		return disabledAIAgentLaunchMessage(provider, aiSplitLaunchCanonical), true
+	}
+	return "", false
+}
+
+func (l *quietPreflightLauncher) QuietMissingAgentRunnerMessage(provider string) (string, bool) {
+	if l.missing[provider] {
+		return "selected runner is not installed: " + provider, true
+	}
+	return "", false
+}
+
+// TestWindowCreateQuietRefusalSaysExactlyOneLineOnThePressingClient is the
+// one-line half of acceptance 3 for the refusals a launcher reports ambiently
+// elsewhere: a provider Settings has switched off and a provider whose binary is
+// not installed are each refused before any transaction or tmux mutation, and
+// the pressing client reads exactly one line -- addressed to it -- with nothing
+// shown ambiently.
+func TestWindowCreateQuietRefusalSaysExactlyOneLineOnThePressingClient(t *testing.T) {
+	claude := agentPaneIntent{producer: canonicalProducerSavedDefault, provider: aiModeClaude, placement: "right"}
+	for _, tt := range []struct {
+		name     string
+		answer   agentPaneIntent
+		disabled bool
+		missing  bool
+		reason   string
+	}{
+		{name: "provider disabled in Settings", answer: claude, disabled: true,
+			reason: disabledAIAgentLaunchMessage(aiModeClaude, aiSplitLaunchCanonical)},
+		{name: "provider runner not installed", answer: claude, missing: true,
+			reason: "selected runner is not installed: claude"},
+		{name: "resumed session whose runner is not installed", missing: true,
+			answer: agentPaneIntent{producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right",
+				conversationID: "claude-picker-session"},
+			reason: "selected runner is not installed: claude"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			route := answeredWindowCreateRoute(t, false, tt.answer)
+			launcher := &quietPreflightLauncher{fakeAgentLauncher: route.create.agents.(*fakeAgentLauncher), t: t,
+				disabled: map[string]bool{aiModeClaude: tt.disabled}, missing: map[string]bool{aiModeClaude: tt.missing}}
+			route.create.agents = launcher
+			registryBefore, runtimeBefore := route.store.snapshot(), route.tmux.state()
+			transactions := route.store.transactions
+
+			if err := route.run(); err != nil {
+				t.Fatalf("displayed refusal escaped as an exit code: %v", err)
+			}
+			if route.store.transactions != transactions || route.store.writes != 0 {
+				t.Fatalf("refusal opened %d transaction(s) and %d write(s)", route.store.transactions-transactions, route.store.writes)
+			}
+			displays := 0
+			for _, call := range route.tmux.calls {
+				argv := tmuxCommandArgv(call)
+				if len(argv) == 0 || argv[0] != "display-message" {
+					t.Fatalf("refusal reached tmux beyond its one line: %v", call)
+				}
+				displays++
+				if len(argv) < 3 || argv[1] != "-c" || argv[2] != windowCreatePressingClient {
+					t.Fatalf("refusal line shown ambiently, not on the pressing client: %v", argv)
+				}
+			}
+			if displays != 1 {
+				t.Fatalf("display-message calls = %d, want exactly one", displays)
+			}
+			if plans := len(launcher.plans) + len(route.create.resumes.(*fakeResumeLauncher).plans); plans != 0 {
+				t.Fatalf("refused answer still built %d launch(es)", plans)
+			}
+			route.assertNothingCreated(t, registryBefore, runtimeBefore, tt.reason)
+		})
+	}
+
+	t.Run("a Codex app-server resume is not asked for the CLI runner", func(t *testing.T) {
+		const id = "019f0000-0000-7000-8000-000000000044"
+		endpoint := nativeTestRoute("generation-window-runner", coremetadata.CodexGenerationCurrent)
+		route := answeredWindowCreateRoute(t, false, agentPaneIntent{
+			producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
+			conversationID: id, resumeSource: aisessions.SourceCodexAppServer,
+			resumeEndpoint: endpoint.Endpoint, resumeGenerationState: coremetadata.CodexGenerationCurrent,
+		})
+		route.create.agents = &quietPreflightLauncher{fakeAgentLauncher: route.create.agents.(*fakeAgentLauncher), t: t,
+			missing: map[string]bool{aiModeCodex: true}}
+		route.create.codexNative = &fakeNativeThreadController{resolvedRoute: endpoint, resumeBinding: codexappserver.ThreadBinding{ThreadID: id}}
+		route.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+		before := route.windowUIDs()
+
+		if err := route.run(); err != nil {
+			t.Fatalf("window-create route: %v", err)
+		}
+		route.createdAgentOnlyWindow(t, before)
+	})
+}
+
+// TestAICommandQuietLaunchPreflightShowsNothing pins the production half of
+// the quiet preflight: the AI command answers the Settings gate and the runner
+// lookup with the same sentences its ambient refusals use, and runs no tmux
+// command to do it.
+func TestAICommandQuietLaunchPreflightShowsNothing(t *testing.T) {
+	home := t.TempDir()
+	enableAgents(t, home, "codex")
+	cmd := testAICommand(home)
+	var preflight quietAgentLaunchPreflight = cmd
+
+	if message, disabled := preflight.QuietAgentDisabledMessage(aiModeClaude); !disabled ||
+		message != disabledAIAgentLaunchMessage(aiModeClaude, aiSplitLaunchCanonical) {
+		t.Fatalf("disabled claude = %q, %v; want the canonical Settings sentence", message, disabled)
+	}
+	if message, disabled := preflight.QuietAgentDisabledMessage(aiModeCodex); disabled {
+		t.Fatalf("enabled codex refused: %q", message)
+	}
+	if message, missing := preflight.QuietMissingAgentRunnerMessage(aiModeCodex); !missing ||
+		message != cmd.missingAgentRunnerMessage(aiModeCodex) {
+		t.Fatalf("missing codex runner = %q, %v; want %q", message, missing, cmd.missingAgentRunnerMessage(aiModeCodex))
+	}
+	bin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if message, missing := preflight.QuietMissingAgentRunnerMessage(aiModeCodex); missing {
+		t.Fatalf("installed codex runner refused: %q", message)
+	}
+	if recorded := cmdRecorder(cmd); len(recorded.commands) != 0 {
+		t.Fatalf("quiet preflight ran commands %+v, want none", recorded.commands)
+	}
+}
+
+// TestApplicationGraphWiresTheWindowProducerLauncher is the production wiring
+// the unit routes above inject for themselves: the tmux command the real
+// application graph builds reaches a Window producer with the provider
+// launcher wired. A disabled provider is the probe -- it is refused by the wired
+// launcher's quiet Settings gate before anything is resolved, whereas an
+// unwired producer refuses every Agent answer as "not configured".
+func TestApplicationGraphWiresTheWindowProducerLauncher(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	enableAgents(t, home, "codex")
+	answer := windowCreateIntent{anchorPaneID: "%1", targetClient: windowCreatePressingClient,
+		answer: agentPaneIntent{producer: canonicalProducerSavedDefault, provider: aiModeClaude, placement: "right"}}
+
+	_, err := NewWithLifecycleDiagnostics(nil).tmux.windowCreate(answer, ioDiscard{}, ioDiscard{})
+	if err == nil || strings.Contains(err.Error(), "provider launcher is not configured") ||
+		err.Error() != disabledAIAgentLaunchMessage(aiModeClaude, aiSplitLaunchCanonical) {
+		t.Fatalf("application Window producer error = %v, want the wired launcher's Settings refusal", err)
+	}
+
+	// Control: the unwired default refuses the same answer as not configured.
+	_, err = newTmuxCommand().windowCreate(answer, ioDiscard{}, ioDiscard{})
+	if err == nil || !strings.Contains(err.Error(), "provider launcher is not configured") {
+		t.Fatalf("default Window producer error = %v, want the unwired-launcher refusal", err)
 	}
 }

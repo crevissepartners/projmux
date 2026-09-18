@@ -149,6 +149,10 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 			return newCreateCommand().createFromIntent(intent, stdout, stderr)
 		},
 		paneMenuDelete: deletePaneThroughCanonicalRoute,
+		// The default Window producer has no provider launcher, so it commits
+		// shell answers only and refuses an Agent answer with zero mutations
+		// ("the provider launcher is not configured"). The application graph
+		// replaces it with the wired create command (app.go).
 		windowCreate: func(intent windowCreateIntent, stdout, stderr io.Writer) (createdWindowRuntime, error) {
 			return newCreateCommand().createWindowFromIntent(intent, stdout, stderr)
 		},

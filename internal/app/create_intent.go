@@ -131,11 +131,28 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		if c.agents == nil {
 			return createdWindowRuntime{}, errors.New("create agent: the provider launcher is not configured")
 		}
-		if err := c.agents.RequireAgentEnabled(canonical); err != nil {
+		// The quiet gate when the launcher has one: this route shows its own
+		// one line on the pressing client, and the launcher's ambient message
+		// would be a second.
+		preflight, quiet := c.agents.(quietAgentLaunchPreflight)
+		if quiet {
+			if message, disabled := preflight.QuietAgentDisabledMessage(canonical); disabled {
+				return createdWindowRuntime{}, errors.New(message)
+			}
+		} else if err := c.agents.RequireAgentEnabled(canonical); err != nil {
 			return createdWindowRuntime{}, err
 		}
 		if answerFlags, err = intentAgentFlags(intent.answer, argv, conversation, stderr); err != nil {
 			return createdWindowRuntime{}, err
+		}
+		// A missing provider binary is the likeliest refusal, and the planner
+		// would find it only inside the transaction, after new-window and with
+		// an ambient message of its own. The native Codex lanes launch the
+		// app-server's TUI executable instead, so they are not asked.
+		if quiet && !intentAgentUsesNativeLane(canonical, answerFlags) {
+			if message, missing := preflight.QuietMissingAgentRunnerMessage(canonical); missing {
+				return createdWindowRuntime{}, errors.New(message)
+			}
 		}
 		provider = canonical
 	}
@@ -755,8 +772,7 @@ func (c *createCommand) prepareIntentAgent(provider string, flags resourceCreate
 	plan.nativeLauncher, nativeLaunchCapable = c.resumes.(codexNativeAgentLauncher)
 	plan.nativeLifecycle, plan.nativeLifecycleCapable = c.resumes.(codexNativeLifecycleStarter)
 	plan.freshNativeCreate = nativeCodexFreshCreateRequired(provider, flags)
-	plan.nativeCatalogResume = provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
-		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexAppServer
+	plan.nativeCatalogResume = nativeCodexCatalogResumeRequired(provider, flags)
 	rolloutResume := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
 		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexRollout
 	if provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" && !plan.nativeCatalogResume && !rolloutResume {
@@ -1007,6 +1023,19 @@ func (c *createCommand) openIntentAgent(
 		return intentAgentOpened{}, tmuxError("%s: clear compatibility topic projections on Pane %s: %v", canonicalCreateAgent, paneID, err)
 	}
 	return opened, nil
+}
+
+// nativeCodexCatalogResumeRequired reports a resume of a thread the Codex
+// app-server catalog owns, which resumes on the native lane.
+func nativeCodexCatalogResumeRequired(provider string, flags resourceCreateFlags) bool {
+	return provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
+		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexAppServer
+}
+
+// intentAgentUsesNativeLane reports an Agent answer that launches through the
+// Codex app-server lane rather than the provider binary the planner looks up.
+func intentAgentUsesNativeLane(provider string, flags resourceCreateFlags) bool {
+	return nativeCodexFreshCreateRequired(provider, flags) || nativeCodexCatalogResumeRequired(provider, flags)
 }
 
 // startLifecycleObserver starts the Codex native lifecycle observer of a

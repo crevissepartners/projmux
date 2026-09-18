@@ -289,6 +289,11 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// from the UI is a Registry resource on the same terms as one an operator
 	// asked for by name.
 	ai.panes = createCmd
+	// The UI new Window commits the operator's answer -- an Agent included --
+	// in its own one transaction, so it needs the same wired launcher, resume
+	// launcher and Codex native controller the split reaches through ai.panes.
+	// newTmuxCommand's default producer has none and refuses every Agent answer.
+	tmuxCmd.windowCreate = createCmd.createWindowFromIntent
 	agentCmd := newAgentCommand()
 	agentCmd.ai = ai
 	agentCmd.usage = usageCmd

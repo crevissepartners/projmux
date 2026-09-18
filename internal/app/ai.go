@@ -2015,6 +2015,23 @@ func (c *aiCommand) aiAgentDisabledLaunchMessage(mode string, path aiSplitLaunch
 	return disabledAIAgentLaunchMessage(mode, path), true
 }
 
+// QuietAgentDisabledMessage is the canonical Settings gate RequireAgentEnabled
+// runs, minus its ambient message (quietAgentLaunchPreflight).
+func (c *aiCommand) QuietAgentDisabledMessage(provider string) (string, bool) {
+	return c.aiAgentDisabledLaunchMessage(provider, aiSplitLaunchCanonical)
+}
+
+// QuietMissingAgentRunnerMessage is the runner lookup PlanAgentLaunch and
+// PlanAgentResume make, minus the ambient message agentExecArgv shows
+// (quietAgentLaunchPreflight).
+func (c *aiCommand) QuietMissingAgentRunnerMessage(provider string) (string, bool) {
+	mode := normalizeAIMode(provider)
+	if c.findAgentBinary(mode) != "" {
+		return "", false
+	}
+	return c.missingAgentRunnerMessage(mode), true
+}
+
 func aiModeProvider(mode string) (config.AIAgentProvider, bool) {
 	provider, ok := aiprovider.Lookup(normalizeAIMode(mode))
 	if !ok || !provider.SettingsVisible {

@@ -52,6 +52,18 @@ type agentLauncher interface {
 	AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
 }
 
+// quietAgentLaunchPreflight is the Settings gate and the provider runner check
+// without the ambient tmux message the launcher's own refusals show
+// (RequireAgentEnabled, and the runner lookup behind PlanAgentLaunch). A
+// producer that owns the one line its client reads -- the UI new Window --
+// asks here before it writes anything, so a refusal is reported exactly once,
+// on that client. Each method returns the refusal sentence and true, or "" and
+// false when the launch may proceed.
+type quietAgentLaunchPreflight interface {
+	QuietAgentDisabledMessage(provider string) (string, bool)
+	QuietMissingAgentRunnerMessage(provider string) (string, bool)
+}
+
 type claudeOptionsAgentLauncher interface {
 	PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error)
 }
