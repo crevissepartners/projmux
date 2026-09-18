@@ -32,7 +32,7 @@ var internalAgentHookSubcommands = []string{"ingest", "watch-title"}
 // internalAgentPaneSubcommands are generated-config launch bridges. They keep
 // the saved default and interactive picker behavior available to tmux without
 // restoring the retired public `ai` namespace.
-var internalAgentPaneSubcommands = []string{"launch-default", "launch-provider", "launch-shell", "picker"}
+var internalAgentPaneSubcommands = []string{"launch-default", "launch-provider", "launch-shell", "picker", "launch-selection"}
 
 // internalCommand owns the hidden `internal` namespace: the plumbing invoked by
 // generated tmux config, tmux hooks, popup payloads, and provider hook commands
@@ -156,6 +156,8 @@ func (c *internalCommand) runAgentPane(args []string, stdout, stderr io.Writer) 
 		return forwardRawArgv(c.ai, "internal agent-pane launch-shell", "ai", []string{"launch-shell"}, args[1:], stdout, stderr)
 	case "picker":
 		return forwardRawArgv(c.ai, "internal agent-pane picker", "ai", []string{"picker"}, args[1:], stdout, stderr)
+	case "launch-selection":
+		return forwardRawArgv(c.ai, "internal agent-pane launch-selection", "ai", []string{"launch-selection"}, args[1:], stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("internal agent-pane %s is not available; this release implements: %s",
 			args[0], strings.Join(internalAgentPaneSubcommands, ", ")))

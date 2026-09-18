@@ -875,15 +875,19 @@ func TestHomePopupOriginSplitResumeDefaultAndShellUseCanonicalCreate(t *testing.
 	}{
 		{
 			name: "provider picker",
-			run: func(_ *testing.T, ai *aiCommand, _ string) error {
+			run: func(t *testing.T, ai *aiCommand, _ string) error {
 				stubAIPickerSelection(ai, aiModeCodex)
-				return ai.runAgentPickerSelection("right")
+				return runSplitPickerThroughContinuation(t, ai, func() error { return ai.runAgentPickerSelection("right") })
 			},
 		},
 		{
 			name: "resume picker",
-			run: func(_ *testing.T, ai *aiCommand, _ string) error {
-				return ai.createResumedAgentPaneWithSource(canonicalProducerResumePicker, aiModeCodex, "down", "thread-home", aisessions.SourceCodexRollout)
+			run: func(t *testing.T, ai *aiCommand, _ string) error {
+				return runSplitPickerThroughContinuation(t, ai, func() error {
+					return ai.runSelectedResumeSession(aiResumeSelection{
+						agent: aiModeCodex, resumeID: "thread-home", source: aisessions.SourceCodexRollout,
+					}, "down")
+				})
 			},
 		},
 		{
@@ -1411,7 +1415,8 @@ func splitFocusAICommand(t *testing.T, fx canonicalRootFixture, client string) *
 
 // splitFocusRoutes are the six UI split paths of the focus contract. The
 // resume picker's `new` row is runAgentPickerSelection itself (ai.go), so the
-// AI picker row covers it.
+// AI picker row covers it. Both picker rows run their popup's selection
+// continuation, which is where their create now happens.
 var splitFocusRoutes = []splitFocusRoute{
 	{name: "launch-default key", run: func(t *testing.T, fx canonicalRootFixture, client string) error {
 		ai := splitFocusAICommand(t, fx, client)
@@ -1429,13 +1434,15 @@ var splitFocusRoutes = []splitFocusRoute{
 	{name: "AI picker selection", run: func(t *testing.T, fx canonicalRootFixture, client string) error {
 		ai := splitFocusAICommand(t, fx, client)
 		stubAIPickerSelection(ai, aiModeClaude)
-		return ai.runAgentPickerSelection("down")
+		return runSplitPickerThroughContinuation(t, ai, func() error { return ai.runAgentPickerSelection("down") })
 	}},
 	{name: "resume picker selection", run: func(t *testing.T, fx canonicalRootFixture, client string) error {
 		ai := splitFocusAICommand(t, fx, client)
-		return ai.runSelectedResumeSession(aiResumeSelection{
-			agent: aiModeClaude, resumeID: "11111111-2222-4333-8444-555555555555",
-		}, "right")
+		return runSplitPickerThroughContinuation(t, ai, func() error {
+			return ai.runSelectedResumeSession(aiResumeSelection{
+				agent: aiModeClaude, resumeID: "11111111-2222-4333-8444-555555555555",
+			}, "right")
+		})
 	}},
 	{name: "pane menu split", menu: true, run: func(t *testing.T, fx canonicalRootFixture, client string) error {
 		menu := &tmuxCommand{runner: fx.tmux, paneMenuCreate: fx.create.createFromIntent}

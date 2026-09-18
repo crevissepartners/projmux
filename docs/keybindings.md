@@ -218,6 +218,16 @@ is kept and that client sees one line:
 `Created Pane, but projmux could not focus it: <reason>`. The public
 `projmux create pane` and `create agent` commands never change focus.
 
+A selection in the `Alt-7` picker or the resume picker closes its popup at
+once. The picker hands the selection to a detached job on the same tmux server
+and exits, and that job runs the same create the picker used to run while the
+popup stayed up as an empty frame. The new Pane therefore appears a moment
+after the popup closes. A successful split still shows nothing else; a refused
+create, a failed focus, or a split start notice reaches the client that pressed
+the key as one line. Codex advanced launch is the one exception: its model and
+effort choice is bound to the Codex connection the picker process opened, so
+that selection still creates the Pane before its popup closes.
+
 ### The new Window's first Pane
 
 `window.create` (v0 id `new-window`) and the Window menu's New At End create the

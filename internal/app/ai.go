@@ -236,6 +236,8 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runDirectShell(args[1:], stderr)
 	case "picker":
 		return c.runPicker(args[1:], stderr)
+	case "launch-selection":
+		return c.runLaunchSelection(args[1:], stderr)
 	case "settings":
 		return c.runSettings(args[1:], stdout, stderr)
 	case "status":
@@ -1014,23 +1016,29 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 			return nil
 		}
 		defer c.discardCodexCapabilitySession(selection.Epoch)
+		// The one action that still commits inside the popup: the selection is
+		// bound to the app-server connection this process opened, and the create
+		// route takes that live session out of this process
+		// (split_selection_continuation.go).
 		return c.createCodexCapabilityAgentPane(canonicalProducerProviderPicker, direction, selection)
 	}
 
+	// Every other action hands its intent to launchPickerSelection, which closes
+	// a popup-hosted picker at once and runs the create after it.
 	mode := normalizeAIMode(selected)
 	switch mode {
 	case aiModeCodex:
 		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
 			return err
 		}
-		return c.createAgentPane(canonicalProducerProviderPicker, mode, direction)
+		return c.launchPickerSelection(agentPaneIntent{producer: canonicalProducerProviderPicker, provider: mode, placement: direction})
 	case aiModeClaude, aiModeAntigravity:
 		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
 			return err
 		}
-		return c.createAgentPane(canonicalProducerProviderPicker, mode, direction)
+		return c.launchPickerSelection(agentPaneIntent{producer: canonicalProducerProviderPicker, provider: mode, placement: direction})
 	case aiModeShell:
-		return c.createShellPane(canonicalProducerProviderPicker, direction)
+		return c.launchPickerSelection(agentPaneIntent{producer: canonicalProducerProviderPicker, placement: direction})
 	default:
 		return nil
 	}
@@ -1228,22 +1236,6 @@ func (c *aiCommand) createCodexCapabilityAgentPane(producer canonicalCreateProdu
 // rather than a provider named "shell".
 func (c *aiCommand) createShellPane(producer canonicalCreateProducer, direction string) error {
 	return c.createPaneFromIntent(agentPaneIntent{producer: producer, placement: direction})
-}
-
-// createResumedAgentPane keeps source-free callers on the historical intent.
-func (c *aiCommand) createResumedAgentPane(producer canonicalCreateProducer, mode, direction, conversationID string) error {
-	return c.createResumedAgentPaneWithSource(producer, mode, direction, conversationID, "")
-}
-
-func (c *aiCommand) createResumedAgentPaneWithSource(producer canonicalCreateProducer, mode, direction, conversationID, source string) error {
-	return c.createResumedAgentPaneWithNativeRoute(producer, mode, direction, conversationID, source, coremetadata.CodexEndpointRef{}, "")
-}
-
-func (c *aiCommand) createResumedAgentPaneWithNativeRoute(producer canonicalCreateProducer, mode, direction, conversationID, source string, endpoint coremetadata.CodexEndpointRef, state coremetadata.CodexGenerationState) error {
-	return c.createPaneFromIntent(agentPaneIntent{
-		producer: producer, provider: mode, placement: direction, conversationID: conversationID, resumeSource: source,
-		resumeEndpoint: endpoint, resumeGenerationState: state,
-	})
 }
 
 // createPaneFromIntent is the one call from the split UI into create.
@@ -2003,10 +1995,13 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 		_ = c.displayMessage(refusal.Error())
 		return refusal
 	}
-	if strings.TrimSpace(selection.source) == "" {
-		return c.createResumedAgentPane(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1])
+	intent := agentPaneIntent{
+		producer: canonicalProducerResumePicker, provider: mode, placement: direction, conversationID: resumeArgv[len(resumeArgv)-1],
 	}
-	return c.createResumedAgentPaneWithNativeRoute(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1], selection.source, selection.endpoint, selection.state)
+	if strings.TrimSpace(selection.source) != "" {
+		intent.resumeSource, intent.resumeEndpoint, intent.resumeGenerationState = selection.source, selection.endpoint, selection.state
+	}
+	return c.launchPickerSelection(intent)
 }
 
 func resumeArgsForAgent(mode, resumeID string) ([]string, error) {

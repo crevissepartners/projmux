@@ -2039,6 +2039,7 @@ var routes = []Route{
 				Children: []Route{
 					{Effects: agentPaneLaunchEffects(false), Name: "launch-default", Invocation: InvocationExplicit, Summary: "Launch the saved default target in a new Pane", Canonical: []string{"internal agent-pane"}},
 					{Effects: agentPaneLaunchEffects(true), Name: "picker", Invocation: InvocationExplicit, Summary: "Run the Agent launch or resume picker inside its popup", Canonical: []string{"internal agent-pane"}},
+					{Effects: agentPaneLaunchEffects(true), Name: "launch-selection", Invocation: InvocationExplicit, Summary: "Create the Pane a split picker selected, after its popup closed", Canonical: []string{"internal agent-pane"}},
 				},
 			},
 			{

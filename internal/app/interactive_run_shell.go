@@ -63,6 +63,7 @@ func interactiveRunShellRoutes() []interactiveRunShellRoute {
 		{ID: interactiveRouteAgentPaneLaunch, Prefix: []string{"internal", "agent-pane", "launch-default"}, Label: "create Pane"},
 		{ID: interactiveRouteAgentPaneLaunch, Prefix: []string{"internal", "agent-pane", "launch-provider"}, Label: "create Pane"},
 		{ID: interactiveRouteAgentPaneLaunch, Prefix: []string{"internal", "agent-pane", "launch-shell"}, Label: "create Pane"},
+		{ID: interactiveRouteAgentPaneLaunch, Prefix: []string{"internal", "agent-pane", "launch-selection"}, Label: "create Pane"},
 		{ID: interactiveRouteStatusbarClick, Prefix: []string{"internal", "statusbar", "click"}, Label: "status bar action"},
 		{ID: interactiveRouteStatusbarUsageRefresh, Prefix: []string{"internal", "statusbar", "usage-refresh"}, Label: "usage refresh"},
 		{ID: interactiveRouteProjectOpen, Prefix: []string{"switch", "open"}, Label: "open current Project"},

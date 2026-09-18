@@ -380,11 +380,12 @@ func replacingPickerAICommand(t *testing.T, marked bool) (*aiCommand, *replaceRe
 	return cmd, recorder
 }
 
-// TestMarkedPickerSelectionReplacesTheOriginShell is the picker process's half
-// of the table. The marker is answered at the one funnel, so a provider row
-// replaces the origin shell, the shell row keeps it instead of opening a second
-// one, a cancelled picker changes nothing, and an unmarked popup is today's
-// split with no delete at all.
+// TestMarkedPickerSelectionReplacesTheOriginShell is the picker popup's half of
+// the table. The marker is answered at the one funnel -- reached through the
+// selection continuation the popup hands off -- so a provider row replaces the
+// origin shell, the shell row keeps it instead of opening a second one, a
+// cancelled picker changes nothing, and an unmarked popup is today's split with
+// no delete at all.
 func TestMarkedPickerSelectionReplacesTheOriginShell(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
@@ -414,7 +415,9 @@ func TestMarkedPickerSelectionReplacesTheOriginShell(t *testing.T) {
 			cmd, recorder := replacingPickerAICommand(t, tt.marked)
 			stubAIPickerSelection(cmd, tt.selection)
 
-			if err := cmd.Run([]string{"picker", "--inside", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			if err := runSplitPickerThroughContinuation(t, cmd, func() error {
+				return cmd.Run([]string{"picker", "--inside", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+			}); err != nil {
 				t.Fatalf("picker error = %v", err)
 			}
 			var wantIntents []agentPaneIntent
@@ -441,7 +444,9 @@ func TestMarkedPickerSelectionReplacesTheOriginShell(t *testing.T) {
 func TestMarkedResumeSelectionReplacesTheOriginShell(t *testing.T) {
 	cmd, recorder := replacingPickerAICommand(t, true)
 
-	if err := cmd.createResumedAgentPane(canonicalProducerResumePicker, aiModeClaude, "right", "conv-1"); err != nil {
+	if err := runSplitPickerThroughContinuation(t, cmd, func() error {
+		return cmd.runSelectedResumeSession(aiResumeSelection{agent: aiModeClaude, resumeID: "conv-1"}, "right")
+	}); err != nil {
 		t.Fatalf("resume selection error = %v", err)
 	}
 	want := []agentPaneIntent{{

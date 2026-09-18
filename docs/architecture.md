@@ -1357,6 +1357,15 @@ Projmux split UI:
   The provider and shell branches render the exact argv an operator would type,
   so a UI action and a typed command cannot disagree about what `--placement
   down` means.
+- A split picker running in a popup does not call that route itself. tmux
+  closes a popup only when the process inside it exits, so the picker hands its
+  intent to a detached `run-shell -b` continuation on the same server
+  (`internal agent-pane launch-selection`, carrying the origin Pane, client,
+  context directory, and replace marker as env) and exits. The continuation
+  calls the same create funnel; a success writes nothing and anything else is
+  one bounded line on the pressing client. Codex advanced launch stays in the
+  picker process, because its capability selection is bound to that process's
+  app-server connection.
 - Only the materializer runs `split-window`. Before this convergence the saved
   default and both pickers descended into a legacy split that called tmux
   directly, so a pane opened from the UI was a runtime object the Registry had

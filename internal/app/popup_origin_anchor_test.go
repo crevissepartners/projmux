@@ -224,13 +224,18 @@ func TestEveryPopupSplitActionCarriesTheOriginPane(t *testing.T) {
 		{
 			name: "resume row",
 			run: func(c *aiCommand) error {
-				return c.createResumedAgentPane(canonicalProducerResumePicker, aiModeClaude, "right", "conv-7")
+				return c.Run([]string{"launch-selection", "--producer", "resume-picker", "--provider", "claude", "--conversation", "conv-7", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
 			},
 			want: agentPaneIntent{producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right", conversationID: "conv-7"},
 		},
 		{
-			name: "the resume picker's new row",
-			run:  func(c *aiCommand) error { return c.runAgentPickerSelection("right") },
+			// A popup-hosted picker row (including the resume picker's new row)
+			// reaches create through the selection continuation, which runs in
+			// the origin env the picker handed it.
+			name: "the picker selection's continuation",
+			run: func(c *aiCommand) error {
+				return c.Run([]string{"launch-selection", "--producer", "provider-picker", "--provider", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+			},
 			want: agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeCodex, placement: "right"},
 		},
 	} {
@@ -293,8 +298,9 @@ func TestTheOriginPaneIsNotAGlobalScope(t *testing.T) {
 
 	const key = `"TMUX_SPLIT_TARGET_PANE"`
 	// tmux.go writes it into the two split-picker popup modes; ai.go writes it
-	// into openPicker's inline popup and reads it back in splitOriginPane.
-	allowed := map[string]int{"tmux.go": 2, "ai.go": 2}
+	// into openPicker's inline popup and reads it back in splitOriginPane; the
+	// selection continuation writes it once to hand the same origin on.
+	allowed := map[string]int{"tmux.go": 2, "ai.go": 2, "split_selection_continuation.go": 1}
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read package dir: %v", err)

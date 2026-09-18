@@ -11017,6 +11017,24 @@ p12_assert_managed_create() {
   p12_last_pane_uid="$pane_uid"
 }
 
+# The split pickers hand a selection to a detached `run-shell -b` continuation
+# on this server and exit at once -- that exit is what closes their popup -- so
+# the create lands after the picker process returns. Wait for it, bounded.
+p12_await_picker_create() {
+  local label="$1"
+  local want_panes="$2"
+  local want_agents="$3"
+  local i
+  for ((i = 0; i < 300; i++)); do
+    if [[ "$(p12_pane_count)" == "$want_panes" && "$(p12_agent_count)" == "$want_agents" ]]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "$label continuation did not land its create within 30s" >&2
+  exit 1
+}
+
 # Provider picker: filter to Claude, then select that production provider from
 # the stable filtered pair. The resulting process is a harmless run-local shim.
 p12_before_panes="$(p12_pane_count)"
@@ -11024,6 +11042,7 @@ p12_before_agents="$(p12_agent_count)"
 # The fuzzy matcher also exposes Codex advanced for this query (its descriptive
 # text is a subsequence match); Claude is the stable second filtered row.
 printf 'Claude\n2\n' | p12_popup internal agent-pane picker --inside right >"$p12_root/provider-picker.out"
+p12_await_picker_create "Home provider picker" "$((p12_before_panes + 1))" "$((p12_before_agents + 1))"
 p12_assert_managed_create "Home provider picker" "$p12_before_panes" "$p12_before_agents" 1
 p12_provider_uid="$p12_last_pane_uid"
 
@@ -11037,8 +11056,13 @@ printf '%s\n' \
 p12_before_panes="$(p12_pane_count)"
 p12_before_agents="$(p12_agent_count)"
 printf '2\n' | p12_popup internal agent-pane picker --inside --resume down >"$p12_root/resume-picker.out"
+p12_await_picker_create "Home resume picker" "$((p12_before_panes + 1))" "$((p12_before_agents + 1))"
 p12_assert_managed_create "Home resume picker" "$p12_before_panes" "$p12_before_agents" 1
 p12_resume_uid="$p12_last_pane_uid"
+for ((p12_i = 0; p12_i < 300; p12_i++)); do
+  grep -Fq "resume $p12_resume_id" "$p12_agent_argv" 2>/dev/null && break
+  sleep 0.1
+done
 smoke_assert_file_contains "$p12_agent_argv" "resume $p12_resume_id"
 
 # Saved default and direct shell use the same exact popup origin but exercise

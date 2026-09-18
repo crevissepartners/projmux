@@ -66,6 +66,8 @@ func TestInteractiveRunShellGuardCoversEveryLedgeredRouteAndNothingElse(t *testi
 			guarded: true, want: interactiveRoutePopupToggle, client: "/dev/pts/3"},
 		{name: "direct split", argv: []string{"internal", "agent-pane", "launch-default", "right"}, env: "/dev/pts/9",
 			guarded: true, want: interactiveRouteAgentPaneLaunch, client: "/dev/pts/9"},
+		{name: "split selection continuation", argv: []string{"internal", "agent-pane", "launch-selection", "--producer", "provider-picker", "--provider", "claude", "right"},
+			env: "/dev/pts/9", guarded: true, want: interactiveRouteAgentPaneLaunch, client: "/dev/pts/9"},
 		{name: "status click", argv: []string{"internal", "statusbar", "click", "notify", "--client", "/dev/pts/3"},
 			guarded: true, want: interactiveRouteStatusbarClick, client: "/dev/pts/3"},
 		{name: "usage refresh", argv: []string{"internal", "statusbar", "usage-refresh", "--client", "/dev/pts/3"},

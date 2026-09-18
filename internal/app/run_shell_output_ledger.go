@@ -271,6 +271,12 @@ func runShellOutputLedger() []runShellProducer {
 			Note: "detached continuation; sidebar-open reopens the picker with its own actionable error, so the job is kept successful with `|| :`",
 		},
 		{
+			ID: "runtime.split-selection-continuation", Surface: runShellSurfaceRuntime,
+			Match: "'agent-pane' 'launch-selection'", Channel: runShellChannelExactClientMessage,
+			Background: true, ExitGuarded: true, Route: interactiveRouteAgentPaneLaunch,
+			Note: "detached continuation of a split picker selection so the popup closes at once; the create funnel reports a non-success line to the exact client, the guard converges anything else there, and `|| :` keeps the job successful",
+		},
+		{
 			ID: "runtime.sidebar-trust-reopen", Surface: runShellSurfaceRuntime,
 			Match: "popup-toggle", Channel: runShellChannelIntentionalUI,
 			Background: true,
@@ -339,6 +345,7 @@ func runShellSourceSites() []runShellSourceSite {
 		{File: "tmux.go", Snippet: `"run-shell " + tmuxConfigQuote(bin+" internal tmux pane-menu`},
 		{File: "tmux.go", Snippet: `"run-shell " + tmuxConfigQuote(env+tmuxShellQuote(bin)+" "+route)`},
 		{File: "switch.go", Snippet: `"tmux", "run-shell", "-b", command`},
+		{File: "split_selection_continuation.go", Snippet: `"tmux", "run-shell", "-b", command`},
 		{File: "quit.go", Snippet: "exit 73"},
 	}
 }
