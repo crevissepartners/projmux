@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 182 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 185 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -119,6 +119,8 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref>
 projmux agent approval review <agent-ref> [--request <normalized-id>]
@@ -139,6 +141,7 @@ Subcommands:
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor |
+| [`projmux agent persona`](#projmux-agent-persona) | Attach or detach a persona on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent turn`](#projmux-agent-turn) | Send, steer, or interrupt one exact native Codex turn |
 | [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval |
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
@@ -148,7 +151,7 @@ Subcommands:
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent persona attach`, `projmux agent persona detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`
 
 ### `projmux agent status`
 
@@ -213,6 +216,83 @@ Allowed effects:
 ```
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
+
+### `projmux agent persona`
+
+Attach or detach a persona on one exact Claude Agent and resume it on the same conversation
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux agent persona attach`](#projmux-agent-persona-attach) | Give one exact Claude Agent a persona and restart it on the same conversation |
+| [`projmux agent persona detach`](#projmux-agent-persona-detach) | Take the persona off one exact Claude Agent and restart it on the same conversation |
+
+Canonical spelling: `projmux agent persona attach`, `projmux agent persona detach`
+
+#### `projmux agent persona attach`
+
+Give one exact Claude Agent a persona and restart it on the same conversation
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged|reused`
+- `address=unchanged`
+- `topology=unchanged|replaced`
+- `desired-state=unchanged|replaced`
+- `runtime=unchanged|materialized`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+```
+
+Output modes (`-o`): `json`
+
+#### `projmux agent persona detach`
+
+Take the persona off one exact Claude Agent and restart it on the same conversation
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged|reused`
+- `address=unchanged`
+- `topology=unchanged|replaced`
+- `desired-state=unchanged|replaced`
+- `runtime=unchanged|materialized`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+```
+
+Output modes (`-o`): `json`
 
 ### `projmux agent turn`
 

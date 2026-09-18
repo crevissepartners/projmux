@@ -83,6 +83,21 @@ func codexOnly(precision CompletionPrecision) []AgentCapabilityCell {
 	return out
 }
 
+// claudeOnly marks Claude supported with mode and every other provider an
+// explicit unsupported cell.
+func claudeOnly(mode AgentSupportMode, precision CompletionPrecision) []AgentCapabilityCell {
+	out := make([]AgentCapabilityCell, 0, len(providerOrder))
+	for _, provider := range AgentProviders() {
+		cell := AgentCapabilityCell{Provider: provider, Mode: SupportUnsupported, CompletionPrecision: CompletionNone}
+		if provider == Claude {
+			cell.Mode = mode
+			cell.CompletionPrecision = precision
+		}
+		out = append(out, cell)
+	}
+	return out
+}
+
 // usageAdapters marks only registry providers with a usage adapter as
 // supported; the rest are explicit unsupported cells.
 func usageAdapters(precision CompletionPrecision) []AgentCapabilityCell {
@@ -122,6 +137,8 @@ var agentActions = []AgentAction{
 	{ID: "topic.set", Group: "topic", Route: "agent topic", Callable: true, Cells: cells(SupportGenericRegistry, CompletionRegistryCommit)},
 	{ID: "topic.clear", Group: "topic", Route: "agent topic", Callable: true, Cells: cells(SupportGenericRegistry, CompletionRegistryCommit)},
 	{ID: "resume", Group: "resume", Route: "agent resume", Callable: true, Cells: cells(SupportProviderResume, CompletionProviderLaunch)},
+	{ID: "persona.attach", Group: "persona", Route: "agent persona attach", Callable: true, Cells: claudeOnly(SupportProviderResume, CompletionProviderLaunch)},
+	{ID: "persona.detach", Group: "persona", Route: "agent persona detach", Callable: true, Cells: claudeOnly(SupportProviderResume, CompletionProviderLaunch)},
 	{ID: "turn.start", Group: "turn", Route: "agent turn start", Callable: true, Cells: codexOnly(CompletionExactTurn)},
 	{ID: "turn.steer", Group: "turn", Route: "agent turn steer", Callable: true, Cells: codexOnly(CompletionExactTurn)},
 	{ID: "turn.interrupt", Group: "turn", Route: "agent turn interrupt", Callable: true, Cells: codexOnly(CompletionExactTurn)},

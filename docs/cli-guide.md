@@ -1716,7 +1716,7 @@ Code's own tool instructions stay. Personas are files in
 `<config dir>/personas/<name>.md` (by default `~/.config/projmux/personas/`),
 at most 64 KiB each, managed with `projmux persona list|show|edit|set|delete`
 (`edit` opens `$EDITOR`, then `$VISUAL`; `set <name> --file <path>` or `-` is
-the non-interactive write). A persona is fixed at create time: the create
+the non-interactive write). A persona's content is fixed when it is given: the create
 copies the content to a content-addressed snapshot
 `<state dir>/personas/sha256-<hex>.md`, passes only that path on the Claude
 command line, and records `projmux.io/persona` and `projmux.io/persona-digest`
@@ -1730,6 +1730,37 @@ provider, or `--dialogue-reply-only`, refuses with `persona-provider-unsupported
 and a missing, oversized, or badly named persona refuses with
 `persona-not-found`, `persona-too-large`, or `persona-name-invalid`, all with
 zero Registry, tmux, and snapshot writes.
+
+An existing Claude Agent can take on a persona later, or drop it:
+`projmux agent persona attach <agent-ref> <persona>` and
+`projmux agent persona detach <agent-ref>` (both with `[--project <ref>]
+[--window <ref>] [--yes] [--dry-run] [-o json]`). The Agent keeps its uid and
+its provider conversation. A Running Agent's managed Pane is closed through
+`delete pane`, which leaves it Offline, and the Agent is resumed through the
+same rebind `agent resume` uses, on a new managed Pane; an Offline or Failed
+Agent is only resumed. Before that the command writes the snapshot and records
+`projmux.io/persona`, `projmux.io/persona-digest`, and
+`projmux.io/system-prompt-snapshot=off` in one Registry change (detach removes
+the first two). The last key is sticky and makes every later resume of that
+Agent pass `--system-prompt-snapshot off`: Claude records the system prompt of
+a conversation's first request and replays that record on resume, so without
+it a persona attached after the conversation started would be ignored on the
+next resume. A Running Agent whose interaction is not `idle` or
+`response_complete` -- `unknown` included -- is refused with
+`persona-agent-busy` unless `--yes` confirms cutting its turn, and `--dry-run`
+(`-o json` for scripts) reports the target, its interaction, the current and
+new persona, and whether that confirmation is required without changing
+anything. The Agent owning the Pane the command runs in is refused with
+`persona-self-target`; an Agent with no stored conversation is refused with
+`persona-no-conversation`. Attaching the persona an Agent already runs with,
+same name and same content digest, reports `unchanged` and restarts nothing;
+after the persona file is edited the digest differs and the attach restarts
+with the new snapshot. Outside tmux the stop needs `--socket <name>` or
+`--socket-path <absolute>`, exactly as `delete pane` does. Refusals leave no
+snapshot, Registry, or Pane change. If the resume fails after the stop, the
+Agent stays Offline with its new annotations and stderr prints the
+`projmux agent resume uid:<agent> --project uid:<project> --window uid:<window>`
+command that finishes the job with the persona.
 
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`

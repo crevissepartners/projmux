@@ -3,6 +3,9 @@ route=agent identity=unchanged address=unchanged topology=unchanged desired-stat
 route=agent status identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent topic identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent resume identity=reused|created address=unchanged|allocated topology=unchanged|established desired-state=unchanged|created runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
+route=agent persona identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=agent persona attach identity=unchanged|reused address=unchanged topology=unchanged|replaced desired-state=unchanged|replaced runtime=unchanged|materialized focus=unchanged cardinality=exact-one domain-effect=null
+route=agent persona detach identity=unchanged|reused address=unchanged topology=unchanged|replaced desired-state=unchanged|replaced runtime=unchanged|materialized focus=unchanged cardinality=exact-one domain-effect=null
 route=agent turn identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent turn start identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent turn steer identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null

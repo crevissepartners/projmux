@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -83,6 +84,15 @@ type agentCommand struct {
 	// frame pre-check render. Nil means os.Executable.
 	messageExecutable func() (string, error)
 	focus             rawArgvCommand
+	// paneDelete is the `delete` route. `agent persona` closes a Running
+	// Agent's managed Pane through it rather than through a tmux call of its
+	// own, so the stop is the same one `delete pane` performs.
+	paneDelete rawArgvCommand
+	// personaStore opens the persona store; nil resolves the default paths.
+	personaStore func() (persona.Store, error)
+	// lookupEnv reads the ambient tmux Pane that `agent persona` refuses to
+	// restart from, and the inherited $TMUX its stop routes through.
+	lookupEnv func(string) string
 }
 
 func newAgentCommand() *agentCommand {
@@ -108,6 +118,7 @@ func newAgentCommand() *agentCommand {
 		messageSleep:   waitAgentMessagePoll,
 		messageNewRef:  newCoordinationRef,
 		messageClaude:  liveAgentMessageClaudeAdapter{},
+		lookupEnv:      os.Getenv,
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		command.messagePaths = defaultAgentMessagePaths(paths)
@@ -144,6 +155,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.usage, "agent usage", "usage", nil, rest, stdout, stderr)
 	case "resume":
 		return c.runResume(rest, stdout, stderr)
+	case "persona":
+		return c.runPersona(rest, stdout, stderr)
 	case "turn":
 		return c.runTurn(rest, stdout, stderr)
 	case "approval":
@@ -228,13 +241,26 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if err := requireClaudeDialogueMode(agent.Spec.Provider, *dialogueReplyOnly, nil); err != nil {
 		return err
 	}
-	plan, err := planAgentResume(spelling, registry, agent)
+	plan, err := c.prepareResume(spelling, registry, agent)
 	if err != nil {
 		return err
 	}
+	plan.dialogueReplyOnly = *dialogueReplyOnly
+	return c.rebind.rebind(spelling, plan, stdout, stderr)
+}
+
+// prepareResume fixes one rebind of agent from the read-only registry: the
+// resume plan and the Agent's effective workspace. It reads nothing but
+// registry and writes nothing, so `agent persona` can run it against a
+// predicted registry before it changes anything.
+func (c *agentCommand) prepareResume(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent) (agentResumePlan, error) {
+	plan, err := planAgentResume(spelling, registry, agent)
+	if err != nil {
+		return agentResumePlan{}, err
+	}
 	project, ok := registry.Project(plan.projectUID)
 	if !ok {
-		return fmt.Errorf("%s: owning Project %q disappeared", spelling, plan.projectUID)
+		return agentResumePlan{}, fmt.Errorf("%s: owning Project %q disappeared", spelling, plan.projectUID)
 	}
 	resolver := c.resolveWorkspace
 	if resolver == nil {
@@ -242,10 +268,9 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	}
 	plan.workspace, err = resolver(spelling, registry, *project, plan.provider, plan.workspace.CWD, plan.workspace.AdditionalWritableRoots)
 	if err != nil {
-		return err
+		return agentResumePlan{}, err
 	}
-	plan.dialogueReplyOnly = *dialogueReplyOnly
-	return c.rebind.rebind(spelling, plan, stdout, stderr)
+	return plan, nil
 }
 
 // requireResumablePhase enforces the Agent lifecycle gate of resume.

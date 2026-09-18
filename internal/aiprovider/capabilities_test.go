@@ -45,15 +45,15 @@ func TestAgentCapabilityCatalogIsClosedCartesianMatrix(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 18 {
-		t.Fatalf("action count = %d, want 18", len(seen))
+	if len(seen) != 20 {
+		t.Fatalf("action count = %d, want 20", len(seen))
 	}
 }
 
 func TestAgentCapabilityCatalogPinsCurrentGroupsAndDeferredVocabulary(t *testing.T) {
 	t.Parallel()
 
-	wantGroups := []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "message", "wait"}
+	wantGroups := []string{"status", "topic", "resume", "persona", "turn", "approval", "review", "integrate", "usage", "message", "wait"}
 	if got := AgentGroups(); !reflect.DeepEqual(got, wantGroups) {
 		t.Fatalf("groups = %v, want %v", got, wantGroups)
 	}

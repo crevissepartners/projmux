@@ -188,6 +188,22 @@ func resumeAgentEffects() *AllowedEffects {
 	)
 }
 
+// personaAgentEffects is `agent persona attach|detach`: the Agent keeps its
+// identity and name, its managed Pane is replaced when it was Running, its
+// persona annotations are replaced, and its provider runtime is stopped and
+// materialized again. An `unchanged` run and a dry run change nothing.
+func personaAgentEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged, IdentityReused},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged, TopologyReplaced},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateReplaced},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityExactOne},
+	)
+}
+
 func renameResourceEffects() *AllowedEffects {
 	return allowedEffects(
 		[]IdentityEffect{IdentityUnchanged},
@@ -761,6 +777,8 @@ var routes = []Route{
 			"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]",
 			"projmux agent topic set <text> [<agent-ref>] [--agent <ref>]",
 			"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
+			"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
+			"projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent turn start|steer <agent-ref> -- <text>",
 			"projmux agent turn interrupt <agent-ref>",
 			"projmux agent approval review <agent-ref> [--request <normalized-id>]",
@@ -773,7 +791,7 @@ var routes = []Route{
 			"projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json",
 			"projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent message send", "agent message status", "agent message qualify", "agent wait"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent persona attach", "agent persona detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent message send", "agent message status", "agent message qualify", "agent wait"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -791,6 +809,22 @@ var routes = []Route{
 				CanonicalSummary: "Rebind an Offline or Failed Agent to a new managed Pane",
 				Usage:            []string{"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."},
 				Canonical:        []string{"agent resume"},
+			},
+			{
+				// Attach and detach are `delete pane` on a Running Agent's
+				// managed Pane followed by the `agent resume` rebind, with the
+				// persona annotations changed in between. The Agent keeps its
+				// uid and its provider conversation.
+				Effects:    unchangedEffects(CardinalityExactOne),
+				Name:       "persona",
+				Invocation: InvocationExplicit,
+				Summary:    "Attach or detach a persona on one exact Claude Agent and resume it on the same conversation",
+				Usage:      []string{"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]", "projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
+				Canonical:  []string{"agent persona attach", "agent persona detach"},
+				Children: []Route{
+					{Effects: personaAgentEffects(), Name: "attach", Invocation: InvocationExplicit, Summary: "Give one exact Claude Agent a persona and restart it on the same conversation", Usage: []string{"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"}, Canonical: []string{"agent persona attach"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: personaAgentEffects(), Name: "detach", Invocation: InvocationExplicit, Summary: "Take the persona off one exact Claude Agent and restart it on the same conversation", Usage: []string{"projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"}, Canonical: []string{"agent persona detach"}, Outputs: []OutputMode{OutputModeJSON}},
+				},
 			},
 			{
 				Effects:    unchangedEffects(CardinalityExactOne),

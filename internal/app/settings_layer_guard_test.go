@@ -64,6 +64,8 @@ var settingsLayerGuardArgv = [][]string{
 	{"agent", "status", "get", "alpha-agent"},
 	{"agent", "topic", "get", "alpha-agent"},
 	{"agent", "resume", "alpha-agent"},
+	{"agent", "persona", "attach", "alpha-agent", "reviewer", "--dry-run", "-o", "json"},
+	{"agent", "persona", "detach", "alpha-agent", "--dry-run", "-o", "json"},
 	{"agent", "turn", "start", "alpha-agent", "--", "hello"},
 	{"agent", "approval", "review", "alpha-agent"},
 	{"agent", "review", "alpha-agent"},

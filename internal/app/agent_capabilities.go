@@ -252,6 +252,13 @@ func exactAgentActionEligibility(registry coremetadata.Registry, agent coremetad
 		if agent.Status.SessionRef == nil || agent.Status.SessionRef.Provider != agent.Spec.Provider || agent.Status.SessionRef.ConversationID() == "" {
 			return false, "provider conversation identity is unavailable"
 		}
+	case "persona.attach", "persona.detach":
+		if agent.Status.Phase != coremetadata.PhaseRunning && !slicesContainsAgentPhase(resumableAgentPhases, agent.Status.Phase) {
+			return false, "requires a Running, Offline, or Failed Agent"
+		}
+		if agent.Status.SessionRef == nil || agent.Status.SessionRef.ConversationID() == "" {
+			return false, "provider conversation identity is unavailable"
+		}
 	case "review":
 		if reason := exactCodexReviewRegistryReason(registry, agent); reason != "" {
 			return false, reason

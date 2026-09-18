@@ -89,16 +89,41 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 // guessing.
 var exactTransportRoots = []string{"reconcile", "get", "runtime", "delete"}
 
+// exactTransportRoutes are single routes outside those roots that accept the
+// same exact-server flags. `agent persona attach|detach` stops a Running Agent
+// by running `delete pane` on its managed Pane, and passes --socket and
+// --socket-path through unchanged, so it needs exactly the flags `delete`
+// needs outside tmux and no other routing rule.
+var exactTransportRoutes = []string{"agent persona"}
+
+// exactTransportUsage reports whether one usage line spells an exact
+// transport route, which a parent namespace's usage list repeats.
+func exactTransportUsage(usage string) bool {
+	return slices.ContainsFunc(exactTransportRoutes, func(route string) bool {
+		return strings.HasPrefix(usage, "projmux "+route+" ")
+	})
+}
+
+func exactTransportRoute(path []string) bool {
+	if len(path) > 0 && slices.Contains(exactTransportRoots, path[0]) {
+		return true
+	}
+	spelling := strings.Join(path, " ")
+	return slices.ContainsFunc(exactTransportRoutes, func(route string) bool {
+		return spelling == route || strings.HasPrefix(spelling, route+" ")
+	})
+}
+
 func TestManagedBindingConvergenceStaysHiddenBehindPublicResourceRepair(t *testing.T) {
 	t.Parallel()
 
 	walkRoutes(Routes(), func(path []string, route Route) {
-		publicRepair := len(path) > 0 && slices.Contains(exactTransportRoots, path[0])
+		publicRepair := exactTransportRoute(path)
 		if route.Name == "converge" || slices.Contains(route.Usage, "--socket-path") && !publicRepair {
 			t.Fatalf("binding convergence leaked into command catalog at %q: %#v", strings.Join(path, " "), route)
 		}
 		for _, usage := range route.Usage {
-			if strings.Contains(usage, "converge") || strings.Contains(usage, "--socket-path") && !publicRepair {
+			if strings.Contains(usage, "converge") || strings.Contains(usage, "--socket-path") && !publicRepair && !exactTransportUsage(usage) {
 				t.Fatalf("binding convergence leaked into command catalog usage at %q: %q", strings.Join(path, " "), usage)
 			}
 		}
