@@ -352,6 +352,25 @@ func TestAgentMessageReleaseOrderReblockExpiryAndStale(t *testing.T) {
 			t.Fatalf("removed = %+v, want stale/target-removed", got)
 		}
 	})
+	t.Run("handoff observed is never pushed again", func(t *testing.T) {
+		f := newHoldFixture(t)
+		f.setInteraction(t, coremetadata.InteractionInProgress)
+		f.putHeld(t, "message-release-handoff", f.now.Add(-2*time.Minute), f.now.Add(5*time.Minute))
+		if _, _, err := f.store.MarkHandoff("message-release-handoff"); err != nil {
+			t.Fatal(err)
+		}
+		f.putHeld(t, "message-release-after-handoff", f.now.Add(-time.Minute), f.now.Add(5*time.Minute))
+		if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.delivery(t, "message-release-handoff"); got.State != coremessage.StateFailed ||
+			got.Reason != "provider-handoff-outcome-unknown" || !got.OutcomeUnknown {
+			t.Fatalf("handoff-observed = %+v, want failed/provider-handoff-outcome-unknown with outcomeUnknown", got)
+		}
+		if want := []string{"message-release-after-handoff"}; !slices.Equal(f.adapter.submits, want) {
+			t.Fatalf("release pushed %v, want only %v", f.adapter.submits, want)
+		}
+	})
 	t.Run("busy probe leaves held", func(t *testing.T) {
 		f := newHoldFixture(t)
 		f.setInteraction(t, coremetadata.InteractionInProgress)

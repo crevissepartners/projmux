@@ -258,6 +258,13 @@ func (c *agentCommand) releaseHeldMessage(record messagestore.Record) (bool, err
 		_, _, err := c.messageStore.Apply(ref, c.staleMessageEvent(record, "target-activation-stale"))
 		return false, err
 	}
+	if record.HandoffObserved {
+		// A helper may already have written this frame. A push now could write
+		// it twice, and automatic resend is never allowed.
+		_, _, err := c.messageStore.Apply(ref,
+			c.publicMessageEvent(record, coremessage.EventFail, "provider-handoff-outcome-unknown", true))
+		return false, err
+	}
 	now := c.messageClock()
 	if !now.Before(record.Envelope.Deadline) {
 		_, _, err := c.messageStore.Status(ref, now)
