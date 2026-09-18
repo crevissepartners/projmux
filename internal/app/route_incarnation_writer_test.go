@@ -56,10 +56,10 @@ func reregisterClaudeAgent(t *testing.T, f *claudeCoordinationTestFixture, sessi
 
 // reregisteredClaudeAdapter is a stand-in for the helper serving the new
 // registration, not the real helper. Its explicit reply goes straight to the
-// store's exact PutReply comparison. A real re-registered helper still refuses
-// a reply to a message it did not deliver itself, because
-// (*claudeCoordinationHub).commitExplicitReply looks the original up only in
-// its own memory; that path is outside this change.
+// store's exact PutReply comparison. The real current helper, after a
+// same-session re-registration, reads an original it did not deliver from the
+// durable store (readRegistryCurrentOriginal) and commits through the same
+// correlation; this test does not exercise that path.
 type reregisteredClaudeAdapter struct {
 	store    *messagestore.Store
 	statuses int
@@ -98,10 +98,11 @@ func readyLeaseResolver(registryPath string) liveAgentMessageRouteResolver {
 // re-registration (the compact shape) stays current after it. Status runs the
 // real reader. The reply leg proves only that the reply envelope's route
 // correlation (the CLI `--reply-to` coremessage.ValidateReply and the store's
-// exact PutReply comparison) accepts it; the helper is a stand-in, and a real
-// re-registered helper still refuses a reply to a message it did not deliver
-// itself (see reregisteredClaudeAdapter). A re-registration under another
-// SessionID is a new conversation and stays stale.
+// exact PutReply comparison) accepts it. The helper is a stand-in whose reply
+// goes straight to PutReply; the real current helper's durable-store read of
+// an original it did not deliver is not exercised here (see
+// reregisteredClaudeAdapter). A re-registration under another SessionID is a
+// new conversation and stays stale.
 func TestAgentMessageStatusAndReplyCorrelationSurviveSameSessionReregistrationWithStandInHelper(t *testing.T) {
 	for _, test := range []struct {
 		name    string
