@@ -44,6 +44,16 @@ if [[ -n "${PROJMUX_TERMINAL_LINE_CASE:-}" ]]; then
     func-internal)
       fail_inside # terminal-line: func-internal
       ;;
+    sourced-top)
+      # The L20 shape: the contract began here, then a sourced file fails at its
+      # own top level. The record names this file, so the line must be the
+      # `source` call in this file, not a line of the sourced one.
+      sourced="$(dirname "$PROJMUX_E2E_ARTIFACTS")/sourced-top.inc.sh"
+      # shellcheck disable=SC2016
+      printf '%s\n' 'true' 'value="$(false)"' >"$sourced"
+      # shellcheck source=/dev/null
+      source "$sourced" # terminal-line: sourced-top
+      ;;
   esac
   exit 99
 fi
@@ -128,6 +138,7 @@ check_case top-pipe terminal
 check_case top-return terminal
 check_case exit terminal
 check_case func-internal none
+check_case sourced-top terminal
 
 if [[ "$failed" != "0" ]]; then
   echo "FAIL terminal-line-contract ($failed of $cases cases)" >&2

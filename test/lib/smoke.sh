@@ -378,11 +378,23 @@ smoke_contract_pass() {
 smoke_contract_err() {
   local status="$1"
   local line="$2"
-  local had_errexit=0
+  local had_errexit=0 frame
   case "$-" in
     *e*) had_errexit=1 ;;
   esac
   set +e
+  # Keep the line inside the file the contract records as its source. Frame i's
+  # caller file is BASH_SOURCE[i+1] and its line there is BASH_LINENO[i], so a
+  # failure at the top level of a file sourced after smoke_contract_begin is
+  # reported at that file's `source` call in the recorded file.
+  if [[ -n "$SMOKE_CONTRACT_ID" ]]; then
+    for ((frame = 0; frame + 1 < ${#BASH_SOURCE[@]}; frame++)); do
+      if [[ "${BASH_SOURCE[frame + 1]#"$smoke_root/"}" == "$SMOKE_CONTRACT_SOURCE" ]]; then
+        line="${BASH_LINENO[frame]}"
+        break
+      fi
+    done
+  fi
   # ERR traps also run for deliberately observed non-zero commands while the
   # caller has `set +e`.  Those commands are part of the assertion protocol,
   # not terminal failures.  In particular, never re-enable errexit behind the
@@ -401,8 +413,10 @@ smoke_contract_err() {
 
 # Inside the ERR trap $LINENO is the failing command's own line. BASH_LINENO[0]
 # is the caller frame's line, which Bash reports as 0 for any top-level failure.
-# Without errtrace, a command failing inside a function under errexit never runs
-# this trap, so that shape records no terminal line rather than a wrong one.
+# smoke_contract_err then maps the line into the recorded `source` file, so the
+# terminal line is always a line of that file. Without errtrace, a command
+# failing inside a function under errexit never runs this trap, so that shape
+# records no terminal line rather than a wrong one.
 smoke_contract_install_trap() {
   trap 'smoke_contract_err "$?" "$LINENO"' ERR
 }
