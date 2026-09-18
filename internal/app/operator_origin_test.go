@@ -39,7 +39,7 @@ func TestClaudeOperatorFrameShapeIsPinned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provider content: %v", err)
 	}
-	const want = `{"kind":"projmux-coordination","schemaVersion":3,` +
+	const want = `{"kind":"projmux-coordination","schemaVersion":2,` +
 		`"authority":"untrusted-coordination-only","messageRef":"message-frame-operator",` +
 		`"conversationRef":"conversation-message-frame-operator",` +
 		`"source":{"kind":"operator","client":"web"},` +

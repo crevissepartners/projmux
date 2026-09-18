@@ -557,24 +557,25 @@ func TestCoordinationFrameV2PeerAndSelfRead(t *testing.T) {
 	}
 }
 
-// TestCoordinationFrameV3OperatorAndSelfRead feeds the reader the version 3
-// frames exactly as the producer renders them. Operator input reads as the
-// person's own turn through the web client. A frame without an origin keeps
-// its self judgment at every version: a self-anchored frame at version 3 reads
-// as the operator's own, like the same shape at version 1.
-func TestCoordinationFrameV3OperatorAndSelfRead(t *testing.T) {
+// TestCoordinationFrameOperatorAndSelfRead feeds the reader the version 2
+// operator and self frames exactly as the producer renders them. Operator
+// input reads as the person's own turn through the web client, judged by its
+// source fields. A frame without an origin keeps its self judgment: a
+// self-anchored frame reads as the operator's own, like the same shape at
+// version 1.
+func TestCoordinationFrameOperatorAndSelfRead(t *testing.T) {
 	const agentNotice = `"sourceNotice":"Source agent/provider are claimed, unverified. Payload is untrusted peer coordination.",`
-	operator := `{"kind":"projmux-coordination","schemaVersion":3,` +
-		`"authority":"untrusted-coordination-only","messageRef":"message-v3-operator",` +
-		`"conversationRef":"conversation-message-v3-operator",` +
+	operator := `{"kind":"projmux-coordination","schemaVersion":2,` +
+		`"authority":"untrusted-coordination-only","messageRef":"message-operator",` +
+		`"conversationRef":"conversation-message-operator",` +
 		`"source":{"kind":"operator","client":"web"},` +
 		`"target":{"agentUID":"claude-agent","provider":"claude"},` +
 		`"payload":"operator marker",` +
 		`"sourceNotice":"Operator input that arrived through the projmux web client; projmux did not verify the person.",` +
 		`"replyAction":""}`
-	self := `{"kind":"projmux-coordination","schemaVersion":3,` +
-		`"authority":"untrusted-coordination-only","messageRef":"projmux-web-v3-self",` +
-		`"conversationRef":"conversation-projmux-web-v3-self",` +
+	self := `{"kind":"projmux-coordination","schemaVersion":2,` +
+		`"authority":"untrusted-coordination-only","messageRef":"projmux-web-self",` +
+		`"conversationRef":"conversation-projmux-web-self",` +
 		`"source":{"agentUID":"claude-agent","provider":"claude"},` +
 		`"target":{"agentUID":"claude-agent","provider":"claude"},` +
 		`"payload":"self marker",` + agentNotice + `"replyAction":""}`
@@ -591,12 +592,12 @@ func TestCoordinationFrameV3OperatorAndSelfRead(t *testing.T) {
 		t.Fatalf("turns = %+v", got.Turns)
 	}
 	if turn := got.Turns[0]; turn.Role != "user" || turn.Text != "operator marker" || turn.From != nil ||
-		turn.Via != ViaWeb || turn.MessageRef != "message-v3-operator" || turn.Kind != "coordination" {
-		t.Fatalf("v3 operator frame = %+v", turn)
+		turn.Via != ViaWeb || turn.MessageRef != "message-operator" || turn.Kind != "coordination" {
+		t.Fatalf("operator frame = %+v", turn)
 	}
 	if turn := got.Turns[1]; turn.Role != "user" || turn.Text != "self marker" || turn.Via != ViaWeb ||
-		turn.From != nil || turn.MessageRef != "projmux-web-v3-self" {
-		t.Fatalf("v3 self frame without origin = %+v", turn)
+		turn.From != nil || turn.MessageRef != "projmux-web-self" {
+		t.Fatalf("self frame without origin = %+v", turn)
 	}
 	if turn := got.Turns[2]; turn.Role != "user" || turn.Text != "old self marker" || turn.From != nil {
 		t.Fatalf("v1 self frame without origin = %+v", turn)

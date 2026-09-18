@@ -18,14 +18,12 @@ import (
 // decode.
 //
 // Version 2 narrowed source and target to agentUID and provider, shortened
-// sourceNotice, and left replyAction empty on a self-anchored frame.
-//
-// Version 3 added the operator-input source variant only: source is
-// {kind, client} instead of an Agent route, sourceNotice is
-// coordinationOperatorSourceNotice, and replyAction is empty. Agent frames,
-// self-anchored ones included, are unchanged from version 2 but for this
-// number.
-const coordinationFrameSchemaVersion = 3
+// sourceNotice, and left replyAction empty on a self-anchored frame. It also
+// added the operator-input variant: source is {kind, client} instead of an
+// Agent route, sourceNotice is coordinationOperatorSourceNotice, and
+// replyAction is empty. A reader tells that variant apart by its source
+// fields, never by this number.
+const coordinationFrameSchemaVersion = 2
 
 type claudeProviderCoordinationContent struct {
 	Kind            string                 `json:"kind"`

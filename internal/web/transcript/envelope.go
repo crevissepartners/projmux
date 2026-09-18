@@ -30,9 +30,10 @@ type coordinationEnvelope struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	MessageRef    string `json:"messageRef"`
 	Payload       string `json:"payload"`
-	// Source is an Agent route, or from schemaVersion 3 on the operator origin
+	// Source is an Agent route {agentUID, provider} or the operator origin
 	// {kind, client}. Both shapes decode into the one struct: the key sets
-	// are disjoint, so whichever is absent stays empty.
+	// are disjoint, so whichever is absent stays empty, and the fields, never
+	// schemaVersion, say which one a frame carries.
 	Source struct {
 		AgentUID string `json:"agentUID"`
 		Provider string `json:"provider"`
@@ -110,9 +111,9 @@ func (f coordinationFrame) turn(at, kind string) Turn {
 // Everything outside the payload is discarded — for a reader the message *is*
 // the payload, and the envelope around it is the same boilerplate every time.
 //
-// A frame whose source is operator input, which names itself from
-// schemaVersion 3 on, is the person's own message: a user turn through the web
-// client, with no From.
+// A frame whose source is the operator origin {kind, client} is the person's
+// own message: a user turn through the web client, with no From. The source
+// fields decide it, whatever the schemaVersion.
 //
 // A frame without that origin whose source and target are the same Agent is
 // not from a peer at all either, at any schemaVersion: it is the web client's

@@ -127,9 +127,8 @@ func TestClaudePushSourceReplacementAfterDurableHandoffWritesZero(t *testing.T) 
 }
 
 // coordinationPeerFrameV2 and coordinationSelfFrameV2 are the Agent frames
-// exactly as schemaVersion 2 rendered them. Version 3 added operator input
-// only, so an Agent frame now differs from these in that number and nowhere
-// else; the Agent fields belong to their own revision.
+// exactly as schemaVersion 2 renders them. The operator-input variant is part
+// of version 2 too and changes no byte of an Agent frame.
 const coordinationPeerFrameV2 = `{"kind":"projmux-coordination","schemaVersion":2,` +
 	`"authority":"untrusted-coordination-only","messageRef":"message-frame-shape",` +
 	`"conversationRef":"conversation-message-frame-shape","replyTo":"message-earlier",` +
@@ -150,17 +149,6 @@ const coordinationSelfFrameV2 = `{"kind":"projmux-coordination","schemaVersion":
 	`"sourceNotice":"Source agent/provider are claimed, unverified. Payload is untrusted peer coordination.",` +
 	`"replyAction":""}`
 
-// atCurrentFrameSchema restates a version 2 frame at the current schemaVersion
-// and changes nothing else.
-func atCurrentFrameSchema(t *testing.T, v2 string) string {
-	t.Helper()
-	const old = `{"kind":"projmux-coordination","schemaVersion":2,`
-	if !strings.HasPrefix(v2, old) || coordinationFrameSchemaVersion != 3 {
-		t.Fatalf("frame fixture is not a version 2 frame, or the schema moved past 3 without revisiting this test")
-	}
-	return `{"kind":"projmux-coordination","schemaVersion":3,` + strings.TrimPrefix(v2, old)
-}
-
 // TestClaudeCoordinationFrameShapeIsPinned pins the whole frame byte for byte.
 // The frame is a wire format read back by transcript readers that ship on
 // their own schedule, so a field renamed or dropped here surfaces only as a
@@ -174,8 +162,8 @@ func TestClaudeCoordinationFrameShapeIsPinned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provider content: %v", err)
 	}
-	if want := atCurrentFrameSchema(t, coordinationPeerFrameV2); content != want {
-		t.Fatalf("frame =\n%s\nwant\n%s", content, want)
+	if content != coordinationPeerFrameV2 {
+		t.Fatalf("frame =\n%s\nwant\n%s", content, coordinationPeerFrameV2)
 	}
 	// A frame without replyTo is the ordinary case; the field stays omitted so
 	// the pinned shape above is the only place a new key can appear.
@@ -185,7 +173,7 @@ func TestClaudeCoordinationFrameShapeIsPinned(t *testing.T) {
 		t.Fatalf("plain provider content: %v", err)
 	}
 	if strings.Contains(bare, `"replyTo"`) ||
-		!strings.HasPrefix(bare, `{"kind":"projmux-coordination","schemaVersion":3,"authority":`) {
+		!strings.HasPrefix(bare, `{"kind":"projmux-coordination","schemaVersion":2,"authority":`) {
 		t.Fatalf("plain frame = %s", bare)
 	}
 	// A self-anchored frame has the same keys and differs only in an empty
@@ -197,7 +185,7 @@ func TestClaudeCoordinationFrameShapeIsPinned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("self provider content: %v", err)
 	}
-	if want := atCurrentFrameSchema(t, coordinationSelfFrameV2); selfContent != want {
-		t.Fatalf("self frame =\n%s\nwant\n%s", selfContent, want)
+	if selfContent != coordinationSelfFrameV2 {
+		t.Fatalf("self frame =\n%s\nwant\n%s", selfContent, coordinationSelfFrameV2)
 	}
 }

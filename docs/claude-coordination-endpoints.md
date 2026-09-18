@@ -184,11 +184,11 @@ unverified claim. That self-anchored frame has the same keys with an empty
 `replyAction`, since there is no peer to answer. The Codex turn body follows
 the same route, notice, and self rules.
 
-The object also carries the integer `schemaVersion`, currently `3`. Version 2
+The object also carries the integer `schemaVersion`, currently `2`. Version 2
 narrowed the routes, shortened `sourceNotice`, and emptied a self-anchored
-frame's `replyAction`; it only removed keys and changed values. Version 3 added
-the operator-input frame described below; an Agent frame at version 3 is the
-version 2 frame with only that number changed. The target's
+frame's `replyAction`; for an Agent frame it only removed keys and changed
+values. Version 2 also has the operator-input variant described below, which
+a reader tells apart by its `source` fields, not by the version. The target's
 helper renders the frame, so a helper started before an upgrade keeps sending
 the older shape until that Agent is activated again. `schemaVersion` names
 that object's shape only and moves independently of the durable envelope
@@ -235,11 +235,10 @@ reader accepts and labels it, but no command or web route creates it yet.
   `replyAction` is empty. The other keys are those of an Agent frame. The
   helper proves only the target current, since there is no source route.
 - **Readers.** The web transcript reader shows operator input as a `user`
-  turn with `via` `projmux-web` and no `from`. A frame without an origin keeps
-  its existing reading at every `schemaVersion`, 3 included: one whose source
-  and target are the same Agent is the operator's own `user` turn. `agent
-  message status` labels
-  operator input `source=operator (web)` in a trailing text column and prints
+  turn with `via` `projmux-web` and no `from`, judged by the `source` fields
+  alone. A frame without an origin keeps its existing reading: one whose
+  source and target are the same Agent is the operator's own `user` turn.
+  `agent message status` labels operator input `source=operator (web)` in a trailing text column and prints
   an `origin` object and no `source` in JSON; an Agent message's output is
   unchanged. A reclaimed operator record's history line carries `origin` and
   no `source`.

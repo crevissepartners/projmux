@@ -202,22 +202,22 @@ func TestFixtureSourceSpellsNoCorpusSideFrameVocabulary(t *testing.T) {
 }
 
 // TestCoordinationContentDecodesEveryFrameShape feeds the fixture's strict
-// decoder each frame shape the producer renders at schemaVersion 3. The
+// decoder each frame shape the producer renders at schemaVersion 2. The
 // fixture rejects unknown fields, so a producer key it does not declare would
 // stop L20 at its first frame; operator input is decoded here although no e2e
 // scenario sends it yet.
 func TestCoordinationContentDecodesEveryFrameShape(t *testing.T) {
 	const tail = `"payload":"marker","sourceNotice":"notice","replyAction":""}`
 	for name, frame := range map[string]string{
-		"peer": `{"kind":"projmux-coordination","schemaVersion":3,"authority":"untrusted-coordination-only",` +
+		"peer": `{"kind":"projmux-coordination","schemaVersion":2,"authority":"untrusted-coordination-only",` +
 			`"messageRef":"message-peer","conversationRef":"conversation-peer","replyTo":"message-earlier",` +
 			`"source":{"agentUID":"codex-agent","provider":"codex"},"target":{"agentUID":"claude-agent","provider":"claude"},` + tail,
-		"operator": `{"kind":"projmux-coordination","schemaVersion":3,"authority":"untrusted-coordination-only",` +
+		"operator": `{"kind":"projmux-coordination","schemaVersion":2,"authority":"untrusted-coordination-only",` +
 			`"messageRef":"message-operator","conversationRef":"conversation-operator",` +
 			`"source":{"kind":"operator","client":"web"},"target":{"agentUID":"claude-agent","provider":"claude"},` + tail,
 	} {
 		var content coordinationContent
-		if err := decodeExact([]byte(frame), &content); err != nil || content.SchemaVersion != 3 || content.MessageRef == "" {
+		if err := decodeExact([]byte(frame), &content); err != nil || content.SchemaVersion != 2 || content.MessageRef == "" {
 			t.Fatalf("%s frame did not decode: %+v %v", name, content, err)
 		}
 		if name == "operator" && (content.Source["kind"] != "operator" || content.Source["client"] != "web" || content.Source["agentUID"] != "") {
