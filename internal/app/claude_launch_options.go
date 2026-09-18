@@ -2,9 +2,13 @@ package app
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/persona"
 )
 
 // claudeModelAliases are the aliases `claude --help` names for --model; a
@@ -43,7 +47,10 @@ func requireClaudeLaunchOptions(spelling, provider string, flags resourceCreateF
 	return nil
 }
 
-func claudeLaunchOptionArgs(model, effort string) []string {
+// claudeLaunchOptionArgs spells the Claude launch options. personaFile is the
+// persona snapshot path: only the path reaches argv, never the content, so the
+// persona does not show in `ps`.
+func claudeLaunchOptionArgs(model, effort, personaFile string) []string {
 	var args []string
 	if model != "" {
 		args = append(args, "--model", model)
@@ -51,5 +58,79 @@ func claudeLaunchOptionArgs(model, effort string) []string {
 	if effort != "" {
 		args = append(args, "--effort", effort)
 	}
+	if personaFile != "" {
+		args = append(args, "--append-system-prompt-file", personaFile)
+	}
 	return args
+}
+
+// personaLaunch is the persona one Agent create starts with: the stored name,
+// and the snapshot the provider is given. The zero value means no persona.
+type personaLaunch struct {
+	name     string
+	snapshot persona.Snapshot
+}
+
+// withAnnotations adds the two keys that link the new Agent to its persona to
+// base, the Agent annotations the create already records (the creator keys).
+// Without a persona it returns base itself, so a create without --persona
+// stores exactly what it stored before the flag existed -- nil included.
+// Otherwise it returns a new map and never writes into base.
+func (p personaLaunch) withAnnotations(base map[string]string) map[string]string {
+	if p.name == "" {
+		return base
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = make(map[string]string, 2)
+	}
+	out[coremetadata.AnnotationAgentPersona] = p.name
+	out[coremetadata.AnnotationAgentPersonaDigest] = p.snapshot.Digest
+	return out
+}
+
+// requireClaudePersona refuses --persona where it would be ignored: another
+// provider, or the reply-only activation, which has its own fixed launch. Like
+// requireClaudeLaunchOptions it is an argv-only refusal, so it lands before the
+// persona file is read and before any snapshot is written.
+func requireClaudePersona(spelling, provider string, flags resourceCreateFlags) error {
+	if flags.persona == "" {
+		return nil
+	}
+	if provider != aiModeClaude {
+		return usageError(fmt.Sprintf("%s --persona applies only to --provider %s (%s); nothing was created",
+			spelling, aiModeClaude, persona.ReasonProviderUnsupported))
+	}
+	if flags.dialogueReplyOnly {
+		return usageError(fmt.Sprintf("%s --persona cannot be combined with --%s (%s); nothing was created",
+			spelling, claudeDialogueReplyOnlyFlag, persona.ReasonProviderUnsupported))
+	}
+	return nil
+}
+
+// preparePersonaLaunch resolves the named persona and writes its snapshot.
+//
+// It runs after every argv-only refusal and after scope resolution, and before
+// the create transaction opens: a persona that is missing, too large, or badly
+// named refuses with its reason token while nothing exists, and a snapshot
+// that cannot be written refuses the same way. A later failure can leave the
+// snapshot behind, which is harmless: it is content addressed.
+func (c *createCommand) preparePersonaLaunch(spelling, name string) (personaLaunch, error) {
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return personaLaunch{}, fmt.Errorf("%s --persona: %w; nothing was created", spelling, err)
+	}
+	store := persona.NewDefaultStore(paths)
+	loaded, err := store.Load(name)
+	if err != nil {
+		if persona.ReasonOf(err) != "" {
+			return personaLaunch{}, usageError(fmt.Sprintf("%s --persona: %v; nothing was created", spelling, err))
+		}
+		return personaLaunch{}, fmt.Errorf("%s --persona: %w; nothing was created", spelling, err)
+	}
+	snapshot, err := store.WriteSnapshot(loaded.Content)
+	if err != nil {
+		return personaLaunch{}, fmt.Errorf("%s --persona: %w; nothing was created", spelling, err)
+	}
+	return personaLaunch{name: loaded.Name, snapshot: snapshot}, nil
 }

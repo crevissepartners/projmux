@@ -15,6 +15,7 @@ hook hidden=false disableFlagParsing=true args=true children=0
 internal hidden=true disableFlagParsing=true args=true children=0
 notification hidden=false disableFlagParsing=true args=true children=0
 open hidden=false disableFlagParsing=true args=true children=0
+persona hidden=false disableFlagParsing=true args=true children=0
 pin hidden=false disableFlagParsing=true args=true children=0
 prune hidden=false disableFlagParsing=true args=true children=0
 quit hidden=false disableFlagParsing=true args=true children=0
