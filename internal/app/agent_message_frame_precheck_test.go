@@ -169,10 +169,11 @@ func (f *precheckFixture) assertMutationZero(t *testing.T, ref string) {
 // precheckExpected renders independently of the sender: the helper's content
 // renderer for the fixed phrase and every given executable, then a separate
 // frame serialization with a 48-byte token. The larger frame and content win.
+// Like the pre-check, a self-anchored envelope is sized in the peer shape.
 func precheckExpected(t *testing.T, envelope coremessage.Envelope, executables ...string) (frameBytes, contentBytes int) {
 	t.Helper()
 	for _, executable := range append([]string{precheckPhrase}, executables...) {
-		content, err := providerCoordinationContent(claudeCoordinationEnvelope{BrokerEnvelope: &envelope}, executable)
+		content, err := renderProviderCoordinationContent(claudeCoordinationEnvelope{BrokerEnvelope: &envelope}, executable, true)
 		if err != nil {
 			t.Fatal("coordination content unavailable")
 		}
@@ -359,7 +360,7 @@ func TestAgentMessageSendFramePrecheckUsesLongerExecutableAndAssumedTokenLength(
 	if ownFrame, ownContent := precheckExpected(t, envelope, own); (&agentCommand{}).claudeSendFrameRenderMust(t, f.route, envelope) != (claudeSendRender{ownFrame, ownContent}) {
 		t.Fatal("unset seam does not render this process's own executable")
 	}
-	content, err := providerCoordinationContent(claudeCoordinationEnvelope{BrokerEnvelope: &envelope}, long)
+	content, err := renderProviderCoordinationContent(claudeCoordinationEnvelope{BrokerEnvelope: &envelope}, long, true)
 	if err != nil {
 		t.Fatal(err)
 	}

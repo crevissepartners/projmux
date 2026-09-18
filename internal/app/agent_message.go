@@ -273,6 +273,12 @@ type claudeSendRender struct{ frameBytes, contentBytes int }
 // the helper's own content and frame builders. The executable slot is rendered
 // both as this sender's executable and as the fixed phrase, and the larger
 // frame and content are kept.
+//
+// A self-anchored frame is sized in the peer shape, replyAction included,
+// although the helper sends it with an empty one. The pre-check covers the
+// helper's private IPC envelope size check (valid()) only while the measured
+// frame is at least that envelope, which carries the full durable route; the
+// v2 self frame without replyAction can fall below it.
 func (c *agentCommand) claudeSendFrameRender(route coremetadata.AgentRouteRef, envelope coremessage.Envelope) (claudeSendRender, error) {
 	target, _ := claudeTargetForRoute(route)
 	private := claudePrivateCoordinationEnvelope(target, envelope)
@@ -287,7 +293,7 @@ func (c *agentCommand) claudeSendFrameRender(route coremetadata.AgentRouteRef, e
 	token := strings.Repeat("0", claudeSendAssumedTokenBytes)
 	var render claudeSendRender
 	for _, candidate := range executables {
-		content, err := providerCoordinationContent(private, candidate)
+		content, err := renderProviderCoordinationContent(private, candidate, true)
 		if err != nil {
 			return claudeSendRender{}, err
 		}
