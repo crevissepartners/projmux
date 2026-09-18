@@ -30,11 +30,13 @@ WEB_UI_DIR ?= internal/web/_ui
 WEB_DIST_DIR ?= internal/web/dist
 NPM ?= npm
 
-.PHONY: fmt fmt-check mod-tidy-check fix build install npm-pack docs web-build web-check test smoke-assert-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check mod-tidy-check fix build install npm-pack docs web-build web-check test smoke-assert-contract build-vcs-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build -o $(PROJMUX_BIN) ./cmd/projmux
+	@vcs_flag="$$(scripts/build-vcs-flag.sh)" && \
+	  echo "$(GO) build $${vcs_flag:+$$vcs_flag }-o $(PROJMUX_BIN) ./cmd/projmux" && \
+	  $(GO) build $$vcs_flag -o $(PROJMUX_BIN) ./cmd/projmux
 	@echo ">> built $(PROJMUX_BIN)"
 
 install: build
@@ -135,11 +137,14 @@ deadcode: deadcode-contract
 deadcode-contract:
 	python3 -m unittest discover -s test -p 'deadcode_baseline_test.py'
 
-test: deadcode-contract release-contract ci-contract smoke-assert-contract e2e-admission-contract e2e-pipe-contract
+test: deadcode-contract release-contract ci-contract smoke-assert-contract build-vcs-contract e2e-admission-contract e2e-pipe-contract
 	$(GO) test ./...
 
 smoke-assert-contract:
 	bash test/smoke-assert-contract.sh
+
+build-vcs-contract:
+	bash test/build-vcs-contract.sh
 
 release-contract:
 	python3 -m unittest discover -s test -p 'release_workflow_contract_test.py'

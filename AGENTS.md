@@ -81,6 +81,7 @@ See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/rep
 - Any rebase invalidates earlier local gate evidence. Rerun the full local sequence for the rebased head, and start its CI after the fast gates.
 - `make install` atomically replaces `$(go env GOPATH)/bin/projmux` and runs `projmux config apply`.
 - Never run `make install` before the merge and `git pull --ff-only`. Pre-merge state has not cleared CI and may not match `main`.
+- In a linked worktree, `go build` stamps the enclosing checkout's `vcs.revision` (Go only treats a `.git` directory as a repository root), so `make build` there stamps no revision and says why. Prove a build's provenance with the binary's sha256 and the merge commit, not `vcs.revision`; a worktree build without `vcs.revision` is expected.
 - After merge, retire the merged checkout/worktree with your local tooling if you used one.
 
 Migration discipline:
