@@ -177,7 +177,7 @@ All core routes are under `/api/v1`.
 | GET | `/api/v1/graph` | — | one Registry read plus one tmux observation: every Project, Window, Pane and Agent with live status |
 | GET | `/api/v1/projects` | `get projects -o json` | `ProjectList` |
 | GET | `/api/v1/projects/{project}` | `get project uid:…` | |
-| GET | `/api/v1/projects/{project}/agent-graph` | — | which Agents exchanged peer messages, for this Project's Agents (see *Agent graph*) |
+| GET | `/api/v1/projects/{project}/agent-graph` | — | which Agents exchanged peer messages and which Agent created which, for this Project's Agents (see *Agent graph*) |
 | GET | `/api/v1/projects/{project}/windows` | `get windows -p uid:…` | `WindowList` |
 | POST | `/api/v1/projects/{project}/windows` | `create window` | body `{name?, agent?: {provider, payload?}, focus?, confirm}`; `agent` also starts that provider in the new Window |
 | GET | `/api/v1/projects/{project}/windows/{window}` | `get window` | |
@@ -233,39 +233,50 @@ different operations.
 
 ### Agent graph
 
-`GET /api/v1/projects/{project}/agent-graph` answers which Agents talked:
+`GET /api/v1/projects/{project}/agent-graph` answers which Agents talked, and
+which Agent created which:
 
 ```json
 { "project": "proj-…",
   "agents": [ { "uid": "agent-…", "projectUID": "proj-…" } ],
   "edges": [ { "kind": "conversation", "a": "agent-…", "b": "agent-…",
-               "aToB": 3, "bToA": 1, "lastAcceptedAt": "…" } ],
-  "omitted": { "pairs": 1, "messages": 2 },
+               "aToB": 3, "bToA": 1, "lastAcceptedAt": "…" },
+             { "kind": "created", "a": "agent-…", "b": "agent-…" } ],
+  "omitted": { "pairs": 1, "messages": 2, "created": 0 },
   "since": "…",
   "skipped": 0 }
 ```
 
-Both reads are built from the retained record: the live message store and the
-two generations of its reclaim log (`history.jsonl`, then `history.jsonl.1`).
-The rules:
+The messages of both reads are built from the retained record: the live
+message store and the two generations of its reclaim log (`history.jsonl`,
+then `history.jsonl.1`). The rules:
 
 - A `conversation` edge exists when the retained record holds at least one
   message between two different Agents that are both in the Registry, and at
   least one of them belongs to this Project. There is one edge per pair: `a`
   sorts before `b`, `aToB` and `bToA` count the messages each way, and
-  `lastAcceptedAt` is the newest. Edges are sorted by `a`, then `b`.
+  `lastAcceptedAt` is the newest.
+- A `created` edge runs from the Agent named in another Agent's
+  `projmux.io/creator-agent` annotation (`a`) to that Agent (`b`), when the
+  creator is in the Registry and at least one of the two belongs to this
+  Project. It carries no counts. An Agent without the annotation has no
+  `created` edge; absence does not mean a person created it. An annotation
+  naming the Agent itself makes no edge.
+- Edges are sorted by `a`, then `b`, then `kind`.
 - A message in both the store and the log (same `messageRef`) is counted once.
 - A message from an Agent to itself, or with no Agent at one end, is counted
   nowhere: not in an edge, not in `omitted`, not in `since`.
 - `agents` lists every Agent of this Project, including one with no edge, and
-  every Agent of another Project that has an edge with one of them, each with
-  its own `projectUID` (empty for an Agent whose Window has no Project). It is
-  sorted by `uid`.
+  every Agent of another Project that has an edge of either kind with one of
+  them, each with its own `projectUID` (empty for an Agent whose Window has no
+  Project). It is sorted by `uid`.
 - `omitted` counts the pairs, and their messages, that have an Agent missing
   from the Registry and an Agent of this Project. A pair of two missing Agents
-  belongs to no Project and is not counted.
+  belongs to no Project and is not counted. `created` counts this Project's
+  Agents whose annotated creator is missing from the Registry.
 - `since` is the oldest `acceptedAt` among all messages read, across every
-  Project; `null` when nothing is retained, and `edges` is then `[]`.
+  Project; `null` when nothing is retained, and there is then no
+  `conversation` edge.
 - `skipped` counts log lines that could not be read as a record, such as a
   torn last line. A store that cannot be read or does not validate is an
   error, not an empty graph.
