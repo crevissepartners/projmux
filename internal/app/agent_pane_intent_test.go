@@ -707,8 +707,8 @@ func (r *recordingAgentLauncher) AwaitAgentActivation(context.Context, tmuxComma
 	return false, "", nil
 }
 
-func (r *recordingAgentLauncher) PlanAgentResume(string, coremetadata.AgentWorkspace, string) (string, []string, error) {
-	return "", nil, errors.New("resume launch reached")
+func (r *recordingAgentLauncher) PlanAgentResume(string, coremetadata.AgentWorkspace, string, map[string]string) (agentResumeLaunch, error) {
+	return agentResumeLaunch{}, errors.New("resume launch reached")
 }
 
 // TestAISplitFocusConditionTable is C-2 acceptance 1-3 at the AI split funnel,

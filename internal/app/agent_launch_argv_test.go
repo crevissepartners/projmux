@@ -348,11 +348,11 @@ func TestPlanAgentLaunchAndResumeShareOneProviderGrammar(t *testing.T) {
 	// root option. A terminator here would make the resume id an operand.
 	t.Run("claude resume shares the grammar and adds no terminator", func(t *testing.T) {
 		t.Parallel()
-		_, argv, err := cmd.PlanAgentResume(aiModeClaude, workspace, "11111111-2222-3333-4444-555555555555")
+		launch, err := cmd.PlanAgentResume(aiModeClaude, workspace, "11111111-2222-3333-4444-555555555555", nil)
 		if err != nil {
 			t.Fatalf("PlanAgentResume: %v", err)
 		}
-		gotArgs := execArgvTail(t, argv, aiModeClaude)
+		gotArgs := execArgvTail(t, launch.argv, aiModeClaude)
 		want := []string{"--add-dir", "/work/extra-a", "/work/extra-b", "--resume", "11111111-2222-3333-4444-555555555555"}
 		if !slices.Equal(gotArgs, want) {
 			t.Fatalf("claude resume exec argv tail = %q, want %q", gotArgs, want)

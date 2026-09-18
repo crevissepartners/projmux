@@ -61,6 +61,10 @@ const (
 	ReasonNotFound            = "persona-not-found"
 	ReasonTooLarge            = "persona-too-large"
 	ReasonProviderUnsupported = "persona-provider-unsupported"
+	// ReasonUnavailable is not a refusal: a resume whose recorded snapshot
+	// cannot be handed to the provider proceeds without the persona and
+	// discloses this token.
+	ReasonUnavailable = "persona-unavailable"
 )
 
 // Error is a persona refusal. Reason is one of the Reason* tokens.
@@ -351,6 +355,45 @@ func (s Store) SnapshotPath(digest string) (string, error) {
 		return "", fmt.Errorf("persona digest %q is not %s<64 lowercase hex>", digest, DigestPrefix)
 	}
 	return filepath.Join(s.snapshotDir, snapshotPrefix+hexDigest+FileExt), nil
+}
+
+// RecordedSnapshotPath returns the snapshot a recorded digest names, and only
+// when that snapshot is a regular file directly inside the snapshot directory.
+// It is how a resume finds the bytes an Agent started with from the digest the
+// Agent recorded; the current persona file is never consulted, so editing or
+// deleting it cannot change what a resumed Agent gets.
+//
+// Every failure is persona-unavailable: no recorded digest, a malformed one, a
+// missing snapshot, or a path that is not a regular file (a symlink included).
+// The cost is one stat. The content is deliberately not re-hashed: a snapshot
+// edited by hand is outside what this package guarantees.
+func (s Store) RecordedSnapshotPath(digest string) (string, error) {
+	if digest == "" {
+		return "", &Error{Reason: ReasonUnavailable, Detail: "has no recorded digest"}
+	}
+	path, err := s.SnapshotPath(digest)
+	if err != nil {
+		return "", &Error{Reason: ReasonUnavailable, Detail: "has an unusable recorded digest: " + err.Error()}
+	}
+	root, err := os.OpenRoot(s.snapshotDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", &Error{Reason: ReasonUnavailable, Detail: "has no snapshot at " + path}
+	}
+	if err != nil {
+		return "", &Error{Reason: ReasonUnavailable, Detail: "snapshot is unreadable: " + err.Error()}
+	}
+	defer root.Close()
+	info, err := root.Lstat(filepath.Base(path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", &Error{Reason: ReasonUnavailable, Detail: "has no snapshot at " + path}
+	}
+	if err != nil {
+		return "", &Error{Reason: ReasonUnavailable, Detail: "snapshot is unreadable: " + err.Error()}
+	}
+	if !info.Mode().IsRegular() {
+		return "", &Error{Reason: ReasonUnavailable, Detail: "snapshot is not a regular file at " + path}
+	}
+	return path, nil
 }
 
 // WriteSnapshot stores content under its digest and returns the snapshot. It

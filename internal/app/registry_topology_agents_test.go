@@ -60,12 +60,12 @@ func (f *fakeTopologyAgentLauncher) PlanAgentLaunch(provider string, workspace c
 	return provider, []string{"/opt/" + provider, "--cwd", workspace.CWD}, nil
 }
 
-func (f *fakeTopologyAgentLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
+func (f *fakeTopologyAgentLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, _ map[string]string) (agentResumeLaunch, error) {
 	f.resumes = append(f.resumes, provider+":"+conversationID)
 	if err := f.resumeErr[provider]; err != nil {
-		return "", nil, err
+		return agentResumeLaunch{}, err
 	}
-	return provider, []string{"/opt/" + provider, "--cwd", workspace.CWD, "--resume", conversationID}, nil
+	return agentResumeLaunch{title: provider, argv: []string{"/opt/" + provider, "--cwd", workspace.CWD, "--resume", conversationID}}, nil
 }
 
 func (f *fakeTopologyAgentLauncher) BindAgentPaneOnRoute(_ context.Context, _ tmuxCommandRunner, binding agentPaneBinding) error {

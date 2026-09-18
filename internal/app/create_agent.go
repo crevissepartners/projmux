@@ -696,7 +696,10 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 	if c.resumes == nil {
 		return "", nil, errors.New("create agent: the provider resume launcher is not configured")
 	}
-	return c.resumes.PlanAgentResume(provider, workspace, conversation)
+	// The split-UI resume picker does not re-pass a persona: it hands the seam
+	// no annotations, so its argv is what it always was.
+	launch, err := c.resumes.PlanAgentResume(provider, workspace, conversation, nil)
+	return launch.title, launch.argv, err
 }
 
 // bindAgentPane applies the managed-agent pane options.

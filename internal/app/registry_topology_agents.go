@@ -27,8 +27,8 @@ type topologyAgentLauncher interface {
 	// payload: reopening a Project is not the moment to re-send an initial task.
 	PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error)
 	// PlanAgentResume builds the provider resume argv for one stored
-	// conversation id.
-	PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (title string, argv []string, err error)
+	// conversation id, from the Agent's annotations passed through unread.
+	PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 
@@ -377,13 +377,18 @@ func planTopologyAgentReplay(
 	workspace.CWD = cwd
 
 	work := registryTopologyAgentPlan{agent: agent, provider: decision.provider, cwd: cwd}
-	title, argv, err := launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID)
+	launch, err := launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID, agent.Metadata.Annotations)
 	if err != nil {
 		plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
 			decision.provider, decision.conversationID, err))
 		return registryTopologyAgentPlan{}, false
 	}
-	work.conversationID, work.title, work.argv = decision.conversationID, title, argv
+	// A persona that cannot be re-passed is disclosed, not skipped: the Agent
+	// is still restored, only without its persona.
+	if notice := launch.personaNotice(label); notice != "" {
+		plan.notices = append(plan.notices, notice)
+	}
+	work.conversationID, work.title, work.argv = decision.conversationID, launch.title, launch.argv
 	return work, true
 }
 

@@ -1716,13 +1716,16 @@ Code's own tool instructions stay. Personas are files in
 `<config dir>/personas/<name>.md` (by default `~/.config/projmux/personas/`),
 at most 64 KiB each, managed with `projmux persona list|show|edit|set|delete`
 (`edit` opens `$EDITOR`, then `$VISUAL`; `set <name> --file <path>` or `-` is
-the non-interactive write). A persona is applied at create time only: the
-create copies the content to a content-addressed snapshot
+the non-interactive write). A persona is fixed at create time: the create
+copies the content to a content-addressed snapshot
 `<state dir>/personas/sha256-<hex>.md`, passes only that path on the Claude
 command line, and records `projmux.io/persona` and `projmux.io/persona-digest`
-on the Agent, so editing or deleting the persona file later does not change an
-Agent that already started. Resume does not pass the snapshot again yet; that
-comes in a later change. `--persona` is Claude-only: another
+on the Agent. `agent resume` and Continue/topology replay pass that same
+snapshot again, found from the recorded digest and never from the persona file,
+so editing or deleting the persona file later never changes an existing Agent.
+If the snapshot is gone, the resume still proceeds without the persona and
+discloses one `persona-unavailable` line (on stderr for `agent resume`, among
+the replay notices for Continue). `--persona` is Claude-only: another
 provider, or `--dialogue-reply-only`, refuses with `persona-provider-unsupported`,
 and a missing, oversized, or badly named persona refuses with
 `persona-not-found`, `persona-too-large`, or `persona-name-invalid`, all with

@@ -34,8 +34,8 @@ func (realTmuxNameHandoffLauncher) PlanAgentLaunch(string, coremetadata.AgentWor
 	return "", nil, errors.New("the name handoff test only resumes conversations")
 }
 
-func (realTmuxNameHandoffLauncher) PlanAgentResume(provider string, _ coremetadata.AgentWorkspace, _ string) (string, []string, error) {
-	return provider, []string{"tail", "-f", "/dev/null"}, nil
+func (realTmuxNameHandoffLauncher) PlanAgentResume(provider string, _ coremetadata.AgentWorkspace, _ string, _ map[string]string) (agentResumeLaunch, error) {
+	return agentResumeLaunch{title: provider, argv: []string{"tail", "-f", "/dev/null"}}, nil
 }
 
 func (realTmuxNameHandoffLauncher) BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error {

@@ -419,3 +419,70 @@ func TestPersonaReadsStayInsideTheirDirectory(t *testing.T) {
 		t.Fatalf("snapshot after WriteSnapshot = %v, %v; want a regular file", info, err)
 	}
 }
+
+// TestRecordedSnapshotPathFindsOnlyARegularSnapshot pins the resume lookup: a
+// recorded digest yields the snapshot path only while that snapshot is a
+// regular file inside the snapshot directory, and every other outcome is
+// persona-unavailable.
+func TestRecordedSnapshotPathFindsOnlyARegularSnapshot(t *testing.T) {
+	t.Parallel()
+	store, _, stateDir := newTestStore(t)
+
+	// A missing snapshot directory is the same outcome as a missing file.
+	absent := Digest([]byte("never snapshotted"))
+	_, err := store.RecordedSnapshotPath(absent)
+	assertReason(t, err, ReasonUnavailable)
+
+	snapshot, err := store.WriteSnapshot([]byte("you review Go code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.RecordedSnapshotPath(snapshot.Digest)
+	if err != nil {
+		t.Fatalf("RecordedSnapshotPath(present) = %v", err)
+	}
+	if got != snapshot.Path {
+		t.Fatalf("RecordedSnapshotPath = %q, want %q", got, snapshot.Path)
+	}
+
+	_, err = store.RecordedSnapshotPath(absent)
+	assertReason(t, err, ReasonUnavailable)
+
+	for _, digest := range []string{"", "sha256:../../etc/passwd", strings.TrimPrefix(snapshot.Digest, DigestPrefix)} {
+		_, err := store.RecordedSnapshotPath(digest)
+		assertReason(t, err, ReasonUnavailable)
+	}
+
+	// A symlink leaving the snapshot directory is not a snapshot, even when
+	// its target holds exactly the recorded content.
+	outsideContent := []byte("outside the snapshot directory")
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(outside, outsideContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linked, err := store.SnapshotPath(Digest(outsideContent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, linked); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.RecordedSnapshotPath(Digest(outsideContent))
+	assertReason(t, err, ReasonUnavailable)
+
+	// A directory under the snapshot name is not a snapshot either.
+	dirContent := []byte("a directory, not a file")
+	dirPath, err := store.SnapshotPath(Digest(dirContent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dirPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.RecordedSnapshotPath(Digest(dirContent))
+	assertReason(t, err, ReasonUnavailable)
+
+	if filepath.Dir(snapshot.Path) != filepath.Join(stateDir, DirName) {
+		t.Fatalf("snapshot %q is not under the state snapshot directory", snapshot.Path)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
@@ -31,8 +32,10 @@ type agentResumeLauncher interface {
 	// PlanAgentResume builds the provider's *resume* launch for one stored
 	// conversation id. It creates nothing, so every failure it can report --
 	// a malformed conversation id, an unknown provider, a missing provider
-	// binary -- costs zero mutations and zero tmux objects.
-	PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (title string, argv []string, err error)
+	// binary -- costs zero mutations and zero tmux objects. annotations are the
+	// resumed Agent's own metadata annotations, passed through unread: the
+	// seam alone decides what they mean for the launch (the persona).
+	PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 
@@ -40,6 +43,27 @@ type agentResumeLauncher interface {
 // methods below live here rather than beside PlanAgentLaunch so this Phase adds
 // the resume seam without editing the file that owns the create seam.
 var _ agentResumeLauncher = (*aiCommand)(nil)
+
+// agentResumeLaunch is one planned resume launch.
+type agentResumeLaunch struct {
+	title string
+	argv  []string
+	// personaUnavailable is set when the Agent records a persona this launch
+	// could not re-pass. It never fails the resume: the Agent comes back
+	// without its persona and the consumer discloses personaNotice.
+	personaUnavailable *persona.Error
+}
+
+// personaNotice is the one-line disclosure of a persona the resume could not
+// re-pass, or "" when there is nothing to disclose. label names the Agent the
+// way the consumer's neighbouring notices do.
+func (l agentResumeLaunch) personaNotice(label string) string {
+	if l.personaUnavailable == nil {
+		return ""
+	}
+	return fmt.Sprintf("projmux: agent/%s resumed without its persona %s (%s): %s",
+		label, l.personaUnavailable.Name, l.personaUnavailable.Reason, l.personaUnavailable.Detail)
+}
 
 // PlanAgentResume builds the provider resume launch for one stored conversation.
 //
@@ -51,18 +75,22 @@ var _ agentResumeLauncher = (*aiCommand)(nil)
 // picker does (ai.go's runSelectedResumeSession), and it is precisely what this
 // route must not do, because a resume that silently starts a new conversation
 // loses the operator's context without telling them.
-func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
+//
+// A Claude Agent created with a persona is resumed with the same start-time
+// snapshot, found from its persona-digest annotation and never from the
+// current persona file. A snapshot that is gone does not stop the resume.
+func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error) {
 	mode := normalizeAIMode(provider)
 	resumeArgv, err := resumeArgsForAgent(mode, conversationID)
 	if err != nil {
-		return "", nil, err
+		return agentResumeLaunch{}, err
 	}
 	agentBin := c.findAgentBinary(mode)
 	if agentBin == "" {
 		// No displayMessage here: this route is detached and non-interactive, so
 		// the diagnostic belongs on the error the caller propagates rather than
 		// in a tmux status line the operator may not be looking at.
-		return "", nil, errors.New(c.missingAgentRunnerMessage(mode))
+		return agentResumeLaunch{}, errors.New(c.missingAgentRunnerMessage(mode))
 	}
 	resumeArgv[0] = agentBin
 	// The workspace half of the argv comes from the same provider grammar the
@@ -75,14 +103,48 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 		AdditionalWritableRoots: workspace.AdditionalWritableRoots,
 	}, nil)
 	if err != nil {
-		return "", nil, err
+		return agentResumeLaunch{}, err
+	}
+	// The persona goes where create puts it, before the workspace arguments,
+	// so Claude's variadic --add-dir cannot take it.
+	personaFile, personaUnavailable := c.resumePersonaSnapshot(mode, annotations)
+	if personaFile != "" {
+		workspaceArgs = append(claudeLaunchOptionArgs("", "", personaFile), workspaceArgs...)
 	}
 	resumeArgv = append(resumeArgv[:1], append(workspaceArgs, resumeArgv[1:]...)...)
 	plan, err := c.planAgentLaunch(mode, workspace.CWD, nil, resumeArgv, filepath.Dir(agentBin))
 	if err != nil {
-		return "", nil, err
+		return agentResumeLaunch{}, err
 	}
-	return plan.title, plan.commandArgs, nil
+	return agentResumeLaunch{title: plan.title, argv: plan.commandArgs, personaUnavailable: personaUnavailable}, nil
+}
+
+// resumePersonaSnapshot returns the persona snapshot a resumed Agent started
+// with, or why it cannot be re-passed. An Agent without a persona annotation
+// costs nothing; one with it costs the annotation read and one stat.
+func (c *aiCommand) resumePersonaSnapshot(mode string, annotations map[string]string) (string, *persona.Error) {
+	name := annotations[coremetadata.AnnotationAgentPersona]
+	if name == "" {
+		return "", nil
+	}
+	if mode != aiModeClaude {
+		return "", &persona.Error{Reason: persona.ReasonUnavailable, Name: name,
+			Detail: "is not re-passed: a persona applies only to --provider " + aiModeClaude}
+	}
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return "", &persona.Error{Reason: persona.ReasonUnavailable, Name: name, Detail: "snapshot cannot be located: " + err.Error()}
+	}
+	path, err := persona.NewDefaultStore(paths).RecordedSnapshotPath(annotations[coremetadata.AnnotationAgentPersonaDigest])
+	if err != nil {
+		var unavailable *persona.Error
+		if !errors.As(err, &unavailable) {
+			unavailable = &persona.Error{Reason: persona.ReasonUnavailable, Detail: err.Error()}
+		}
+		unavailable.Name = name
+		return "", unavailable
+	}
+	return path, nil
 }
 
 func (c *aiCommand) BindResumedAgentPaneOnRoute(
@@ -128,6 +190,8 @@ type agentResumePlan struct {
 	// shared names the other Agents that record the same conversation, in uid
 	// order. It is disclosed, never decisive: see planAgentResume.
 	shared []string
+	// annotations are the Agent's own, handed to the resume seam unread.
+	annotations map[string]string
 }
 
 // planAgentResume fixes one rebind from the read-only registry.
@@ -268,6 +332,7 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 		windowUID:      window.Metadata.UID,
 		anchorUID:      anchorUID,
 		shared:         sharedConversationAgents(registry, agent.Metadata.UID, ref),
+		annotations:    agent.Metadata.Annotations,
 	}, nil
 }
 
@@ -346,6 +411,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var nativeRoute codexNativeEndpointRoute
 	var title string
 	var launchArgv []string
+	var personaNotice string
 	var err error
 	if plan.provider == aiModeCodex {
 		nativeCtx, cancel := prepareNativeContext(context.Background())
@@ -366,7 +432,9 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			}
 			title, launchArgv, err = launcher.PlanClaudeDialogueLaunch(workspace, plan.conversationID)
 		} else {
-			title, launchArgv, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID)
+			var launch agentResumeLaunch
+			launch, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID, plan.annotations)
+			title, launchArgv, personaNotice = launch.title, launch.argv, launch.personaNotice(plan.agentName)
 		}
 	}
 	if err != nil {
@@ -556,6 +624,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	if nameReason != "" {
 		// A lost disclosure must not turn a committed resume into a failure.
 		fmt.Fprintln(stderr, agentPaneNameNotice(plan.agentName, nameReason))
+	}
+	if personaNotice != "" {
+		// The Agent is back without its persona; like the name notice, a lost
+		// disclosure must not turn a committed resume into a failure.
+		fmt.Fprintln(stderr, personaNotice)
 	}
 
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)

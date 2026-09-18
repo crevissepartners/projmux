@@ -84,12 +84,12 @@ type exactArgvResumeLauncher struct {
 	argv    [][]string
 }
 
-func (l *exactArgvResumeLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
-	title, argv, err := l.planner.PlanAgentResume(provider, workspace, conversationID)
+func (l *exactArgvResumeLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error) {
+	launch, err := l.planner.PlanAgentResume(provider, workspace, conversationID, annotations)
 	if err == nil {
-		l.argv = append(l.argv, slices.Clone(argv))
+		l.argv = append(l.argv, slices.Clone(launch.argv))
 	}
-	return title, argv, err
+	return launch, err
 }
 
 // pinnedResumeTestLauncher gives a test explicit native endpoint authority
@@ -105,8 +105,8 @@ func (l *pinnedResumeTestLauncher) RequireAgentEnabled(provider string) error {
 	return l.base.RequireAgentEnabled(provider)
 }
 
-func (l *pinnedResumeTestLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
-	return l.base.PlanAgentResume(provider, workspace, conversationID)
+func (l *pinnedResumeTestLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error) {
+	return l.base.PlanAgentResume(provider, workspace, conversationID, annotations)
 }
 
 func (l *pinnedResumeTestLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
@@ -175,12 +175,12 @@ func (f *fakeResumeLauncher) RequireAgentEnabled(provider string) error {
 	return nil
 }
 
-func (f *fakeResumeLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
+func (f *fakeResumeLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, _ map[string]string) (agentResumeLaunch, error) {
 	contextDir := workspace.CWD
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.planErr != nil {
-		return "", nil, f.planErr
+		return agentResumeLaunch{}, f.planErr
 	}
 	f.plans = append(f.plans, fakeResumeRequest{
 		provider:       provider,
@@ -191,7 +191,7 @@ func (f *fakeResumeLauncher) PlanAgentResume(provider string, workspace coremeta
 	// The shape mirrors the real seam: a shell wrapper whose exec tail is the
 	// provider's own resume argv, so the conversation id is observable in the
 	// argv the split actually receives.
-	return provider + ":resume", []string{"sh", "-lc", "exec " + provider + " resume " + conversationID}, nil
+	return agentResumeLaunch{title: provider + ":resume", argv: []string{"sh", "-lc", "exec " + provider + " resume " + conversationID}}, nil
 }
 
 func (f *fakeResumeLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
@@ -798,10 +798,10 @@ func TestAgentResumeNeverBuildsAFreshStartLaunch(t *testing.T) {
 	if !ok {
 		t.Fatal("the resume launch seam has no resume launch builder")
 	}
-	// (provider, contextDir, conversationID): the conversation is a required
-	// input, so an argv cannot be built without one.
-	if got := method.Type.NumIn(); got != 3 {
-		t.Fatalf("PlanAgentResume takes %d inputs, want 3 including the conversation id", got)
+	// (provider, workspace, conversationID, annotations): the conversation is a
+	// required input, so an argv cannot be built without one.
+	if got := method.Type.NumIn(); got != 4 {
+		t.Fatalf("PlanAgentResume takes %d inputs, want 4 including the conversation id", got)
 	}
 
 	rebinder := reflect.TypeFor[agentRebinder]()
@@ -1223,12 +1223,12 @@ func TestTheRealResumeSeamRefusesAnUnusableConversationBeforeTouchingTheProvider
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			title, argv, err := c.PlanAgentResume(test.provider, coremetadata.AgentWorkspace{CWD: "/srv/beta"}, test.conversationID)
+			launch, err := c.PlanAgentResume(test.provider, coremetadata.AgentWorkspace{CWD: "/srv/beta"}, test.conversationID, nil)
 			if err == nil {
-				t.Fatalf("PlanAgentResume returned title=%q argv=%v, want an error", title, argv)
+				t.Fatalf("PlanAgentResume returned title=%q argv=%v, want an error", launch.title, launch.argv)
 			}
-			if title != "" || argv != nil {
-				t.Fatalf("a failed resume plan still produced title=%q argv=%v", title, argv)
+			if launch.title != "" || launch.argv != nil {
+				t.Fatalf("a failed resume plan still produced title=%q argv=%v", launch.title, launch.argv)
 			}
 		})
 	}
