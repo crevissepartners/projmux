@@ -128,6 +128,11 @@ type createCommand struct {
 	// reads. A nil homeDir skips the global tier.
 	homeDir   func() (string, error)
 	lookupEnv func(string) string
+	// processAncestors walks this process's parent chain for the creator
+	// provenance check (create_creator.go). Nil skips that observation
+	// silently: fixtures that build the command directly, and the web API,
+	// which runs creates in-process on another caller's behalf.
+	processAncestors func() ([]int, error)
 	// bindWindowRuntime records the exact last-positive tmux owner pair for a
 	// canonical Window create. Nil selects Mutator.ObserveWindowRuntimeBinding;
 	// the seam exists so transaction/ledger rollback can be exercised at this
@@ -159,7 +164,13 @@ func (c *createCommand) observeWindowRuntimeBinding(
 }
 
 func newCreateCommand() *createCommand {
-	runner := inttmux.ExecRunner{}
+	return newCreateCommandOn(inttmux.ExecRunner{}, os.Getenv)
+}
+
+// newCreateCommandOn is newCreateCommand over an injected tmux runner and
+// environment. Production passes the exec runner and os.Getenv; a test passes an
+// in-memory server so it exercises the exact production route bind.
+func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string) *createCommand {
 	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 	routed := explicitTmuxRunner{runner: runner, target: target}
 	client := defaultTmuxClientWithRunner(routed)
@@ -175,21 +186,22 @@ func newCreateCommand() *createCommand {
 			target:     target,
 			warn:       os.Stderr,
 			executable: os.Executable,
-			lookupEnv:  os.Getenv,
+			lookupEnv:  lookupEnv,
 		},
 		activeTarget:     defaultActiveTargetLookup(),
 		anchorTarget:     defaultAnchoredActiveTargetLookup,
-		shell:            configuredShell(os.Getenv),
+		shell:            configuredShell(lookupEnv),
 		sessionNameFor:   namer.SessionName,
 		newOperationID:   newCreateOperationID,
 		now:              time.Now,
 		newGeneration:    coremetadata.NewGeneration,
 		resolveWorkspace: resolveAgentWorkspace,
 		homeDir:          os.UserHomeDir,
-		lookupEnv:        os.Getenv,
+		lookupEnv:        lookupEnv,
+		processAncestors: processAncestry,
 	}
 	bind := func(ctx context.Context, explicit bool) error {
-		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, os.Getenv, command.routeAnchor, explicit)
+		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, lookupEnv, command.routeAnchor, explicit)
 		if err != nil {
 			return err
 		}
@@ -199,6 +211,7 @@ func newCreateCommand() *createCommand {
 		// server, so no identity proved before this point may be reused.
 		command.runtime.invalidateRouteIdentity("route-bind")
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
+		command.reconciler.shareRouteIdentityScope(command.runtime)
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
 		command.runtime.sessions = client

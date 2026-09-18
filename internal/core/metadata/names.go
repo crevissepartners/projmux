@@ -16,11 +16,9 @@ const maxNameLength = 128
 // collision discards the candidate; it never creates a numeric name suffix.
 const maxUIDNameAttempts = 100
 
-// Legacy/context fallbacks. Neither participates in automatic Registry naming.
-const (
-	FallbackProjectNameBase = "project"
-	FallbackWindowNameBase  = "window"
-)
+// FallbackWindowNameBase is a display-context fallback. It never participates
+// in automatic Registry naming.
+const FallbackWindowNameBase = "window"
 
 // ValidateName rejects names that cannot serve as a stable, unambiguous query
 // key. Case is preserved: `Projmux` and `projmux` are distinct names.
@@ -105,18 +103,34 @@ func SanitizeNameBase(seed string) string {
 	return out
 }
 
-// ProjectNameBase derives the historical path-based Project lookup spelling.
-// It is used only to recognize a previously registered root when old callers
-// provide that spelling; automatic Registry names are always exact UIDs.
+// ProjectNameBase returns the automatic name RegisterProject prefers for a new
+// Project at root: the sanitized basename of the cleaned root. It returns ""
+// when the basename sanitizes to nothing (for example the filesystem root), in
+// which case registration keeps the exact-UID name. The same definition answers
+// "which unregistered root would this Project name belong to" lookups, so
+// lookup and registration cannot disagree.
 func ProjectNameBase(root string) string {
 	root = cleanRoot(root)
-	if root == "" || root == string(filepath.Separator) {
-		return FallbackProjectNameBase
+	if root == "" {
+		return ""
 	}
-	if base := SanitizeNameBase(filepath.Base(root)); base != "" {
-		return base
+	return SanitizeNameBase(filepath.Base(root))
+}
+
+// automaticProjectName returns the root-basename name a new Project at root
+// takes when the operator gave none, or "" when the exact-UID rule applies:
+// the basename sanitizes to nothing, or another Project already reserves it.
+// A taken basename never becomes a numeric-suffixed or searched variant; it
+// falls back to the exact UID instead.
+func (r *Registry) automaticProjectName(root string) string {
+	name := ProjectNameBase(root)
+	if name == "" || ValidateName(name) != nil {
+		return ""
 	}
-	return FallbackProjectNameBase
+	if _, taken := r.nameOwner("", KindProject, name); taken {
+		return ""
+	}
+	return name
 }
 
 // NormalizeProvider maps a provider spelling onto its registered id
@@ -221,6 +235,10 @@ func (r *Registry) reserveExplicitName(op, ownerUID string, kind Kind, name, uid
 // Automatic addresses are the exact full UID. A colliding unpublished UID/name
 // candidate is discarded and reminted at most 100 times; no sibling scan,
 // semantic base, prefix truncation, or integer suffix participates.
+//
+// RegisterProject resolves its root-basename preference (automaticProjectName)
+// before calling here and passes it as the requested name; every other caller,
+// including legacy Project import, keeps the exact-UID rule.
 func (m Mutator) mintAndReserveName(reg *Registry, op, ownerUID string, kind Kind, explicit string) (string, string, error) {
 	if explicit != "" {
 		if err := ValidateName(explicit); err != nil {

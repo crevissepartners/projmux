@@ -151,7 +151,10 @@ func TestTypedMetadataMirrorProjectRefusesForeignRoleAndPrewriteDrift(t *testing
 		{name: "non-Project role", mutate: func(r *metadataMirrorPlanRunner) { r.projectUID = ""; r.role = "control" }, want: "non-Project role"},
 		{name: "tuple drift", mutate: func(r *metadataMirrorPlanRunner) {
 			r.projectUID = ""
-			r.driftProjectTupleAt = 4
+			// Read 1 is the initial observation; the pre-write effect
+			// reobservations answer from it (no write of ours has followed),
+			// so read 2 is the first Guard's, the read that brackets the write.
+			r.driftProjectTupleAt = 2
 			r.driftProjectName = "foreign-name"
 		}, want: "tuple drifted before write"},
 	} {

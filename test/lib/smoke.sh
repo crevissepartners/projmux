@@ -737,6 +737,18 @@ smoke_assert_file_contains() {
   fi
 }
 
+# smoke_create_stderr_is_quiet succeeds when an explicit create's stderr is
+# empty or is exactly one creator-provenance diagnostic line. A create whose
+# ambient Pane is a live Agent Pane it does not descend from (a harness
+# invoking the binary with that Pane's env) legitimately prints
+# `creator not recorded: <token>`; anything else on stderr is still noise.
+smoke_create_stderr_is_quiet() {
+  local path="$1"
+  [[ -s "$path" ]] || return 0
+  [[ "$(wc -l <"$path" | tr -d '[:space:]')" == "1" ]] &&
+    grep -Eqx 'creator not recorded: [a-z-]+' "$path"
+}
+
 smoke_assert_output_contains() {
   local output="$1"
   local needle="$2"

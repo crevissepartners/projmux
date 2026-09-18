@@ -1022,7 +1022,11 @@ func PlanProjectFreshReplacement(registry Registry, projectUID string, opts Regi
 		return plan, err
 	}
 	opts.Root = project.Spec.Root
-	if strings.TrimSpace(opts.Name) == "" {
+	// An operator-chosen name survives Fresh. A UID-shaped name -- the old
+	// exact-UID automatic name, or one copied from another Project's UID -- is
+	// not inherited: the replacement gets a fresh automatic name (its root
+	// basename, now that DeleteProject released the old reservation).
+	if strings.TrimSpace(opts.Name) == "" && !isProjectUIDShaped(project.Metadata.Name) {
 		opts.Name = project.Metadata.Name
 	}
 	if opts.Labels == nil {

@@ -58,3 +58,20 @@ func UIDKind(uid string) (Kind, bool) {
 	}
 	return "", false
 }
+
+// isProjectUIDShaped reports whether name has exactly the shape NewUID mints
+// for a Project: the `proj-` prefix followed by the canonical lowercase
+// encoding of uidEntropyBytes random bytes. It is a shape test, not an
+// ownership test -- it matches any Project's UID, live or deleted -- and a
+// prefix alone is not enough: `proj-front` is an ordinary name.
+func isProjectUIDShaped(name string) bool {
+	payload, ok := strings.CutPrefix(name, uidPrefixes[KindProject]+"-")
+	if !ok || len(payload) != uidEncoding.EncodedLen(uidEntropyBytes) {
+		return false
+	}
+	raw, err := uidEncoding.DecodeString(strings.ToUpper(payload))
+	if err != nil || len(raw) != uidEntropyBytes {
+		return false
+	}
+	return strings.ToLower(uidEncoding.EncodeToString(raw)) == payload
+}
