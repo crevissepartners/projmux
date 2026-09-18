@@ -27,8 +27,14 @@ type recordingProjectStartupReporter struct {
 	messages []string
 }
 
-func (r *recordingProjectStartupReporter) Report(message string) {
-	r.messages = append(r.messages, message)
+func (r *recordingProjectStartupReporter) Report(text projectStartupText) {
+	r.messages = append(r.messages, text(i18n.FallbackLocale))
+}
+
+// projectStartupLiteral is a startup message with no catalog text: every locale
+// renders the same bytes.
+func projectStartupLiteral(message string) projectStartupText {
+	return func(i18n.Locale) string { return message }
 }
 
 type orderedFreshStarter struct{ calls *[]string }
@@ -78,7 +84,7 @@ func (s orderedFreshSessions) OpenSession(context.Context, string) error {
 
 type orderedFreshReporter struct{ calls *[]string }
 
-func (r orderedFreshReporter) Report(string) { *r.calls = append(*r.calls, "notice") }
+func (r orderedFreshReporter) Report(projectStartupText) { *r.calls = append(*r.calls, "notice") }
 
 func TestOpenFreshFinalClientHandoffIsLast(t *testing.T) {
 	t.Parallel()
@@ -1337,7 +1343,7 @@ func TestProjectStartupNoticeSinkTeesStderrAndDisplayMessage(t *testing.T) {
 		t.Fatalf("an empty flush emitted a message: %#v", runner.calls)
 	}
 
-	sink.Report("projmux: started alpha fresh")
+	sink.Report(projectStartupLiteral("projmux: started alpha fresh"))
 	if len(runner.calls) != 2 || !strings.Contains(runner.calls[1][2], "started alpha fresh") {
 		t.Fatalf("Report() argv = %#v", runner.calls)
 	}
@@ -1352,7 +1358,7 @@ func TestProjectStartupNoticeSinkTeesStderrAndDisplayMessage(t *testing.T) {
 	off := newProjectStartupNoticeSink(offRunner)
 	off.mirror = &offMirror
 	off.lookupEnv = func(string) string { return "" }
-	off.Report("projmux: started alpha fresh")
+	off.Report(projectStartupLiteral("projmux: started alpha fresh"))
 	if len(offRunner.calls) != 0 {
 		t.Fatalf("a clientless process emitted display-message: %#v", offRunner.calls)
 	}

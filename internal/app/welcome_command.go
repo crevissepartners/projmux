@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -59,7 +60,10 @@ func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPopup(*force)
 	}
 	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
-	return writeShellWelcome(stdout, strings.TrimSpace(version.String()), status, hasStatus, false, false, false, welcomeWidthFromEnv(c.lookupEnv), appLocale(c.homeDir, c.lookupEnv))
+	// `welcome` without --popup prints to stdout: public route output, so it is
+	// en-US and reads no locale. The popup below and the `shell` banner are TUI
+	// surfaces and keep translating.
+	return writeShellWelcome(stdout, strings.TrimSpace(version.String()), status, hasStatus, false, false, false, welcomeWidthFromEnv(c.lookupEnv), i18n.FallbackLocale)
 }
 
 func printWelcomeUsage(w io.Writer) {

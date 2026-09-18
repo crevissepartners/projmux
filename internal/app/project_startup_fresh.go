@@ -116,8 +116,19 @@ func (p projectFreshStartPlan) ResultMessageLocale(locale i18n.Locale, sessionNa
 	if strings.TrimSpace(newUID) == "" {
 		newUID = absentProjectLifecycleUID
 	}
-	format := localizeUIText(locale, "projmux: opened %s fresh; old Project UID %s -> new Project UID %s; stage=materialized")
-	return fmt.Sprintf(format, sessionName, oldUID, newUID)
+	return fmt.Sprintf(localizeUIText(locale, projectFreshResultTemplate), sessionName, oldUID, newUID)
+}
+
+// projectFreshResultTemplate is the en-US catalog template of the fresh-open
+// result; the catalog keys its translations by this literal.
+const projectFreshResultTemplate = "projmux: opened %s fresh; old Project UID %s -> new Project UID %s; stage=materialized"
+
+// ResultText is the fresh-open result as a per-locale rendering of one catalog
+// template, for the startup notice sink to render once per surface.
+func (p projectFreshStartPlan) ResultText(sessionName string) projectStartupText {
+	return func(locale i18n.Locale) string {
+		return p.ResultMessageLocale(locale, sessionName)
+	}
 }
 
 // switchProjectFreshStarter is the Open fresh projection seam.
@@ -512,7 +523,7 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	// still where it pressed the row, so it never sees the shell that is about
 	// to go. It cannot fail the open -- see fillFreshLaunchChoice.
 	line := c.fillFreshLaunchChoice(ctx, target, launch)
-	c.reportProjectStartup(plan.ResultMessageLocale(appLocale(c.homeDir, c.lookupEnv), sessionName))
+	c.reportProjectStartup(plan.ResultText(sessionName))
 	if err := c.openProjectSession(ctx, sessionName); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "client-handoff", plan.ProjectUID, plan.NewProjectUID, err)
 	}
@@ -740,16 +751,17 @@ func (c *switchCommand) verifyProjectFreshStartPruned(target string) error {
 // reportProjectStartup routes one operator-facing startup line to the shared
 // report surface. See projectStartupNoticeSink for why that surface is a
 // stderr/display-message tee.
-func (c *switchCommand) reportProjectStartup(message string) {
+func (c *switchCommand) reportProjectStartup(text projectStartupText) {
 	if c.startupNotices == nil {
 		return
 	}
-	c.startupNotices.Report(message)
+	c.startupNotices.Report(text)
 }
 
 // projectStartupReporter is the operator-facing report seam of the startup
 // flow. It exists so a test can observe exactly what the operator is told
-// without a tmux server.
+// without a tmux server. A report is a projectStartupText so each surface can
+// render it in its own locale.
 type projectStartupReporter interface {
-	Report(message string)
+	Report(text projectStartupText)
 }

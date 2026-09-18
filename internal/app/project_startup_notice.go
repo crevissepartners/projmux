@@ -46,6 +46,15 @@ const projectStartupNoticeMax = 220
 // Writes are buffered and emitted once by Flush rather than per line, because
 // consecutive display-message calls overwrite one another: three unresumed
 // Agents emitted separately would show the operator exactly one of them.
+//
+// The two halves are two surfaces with two locale rules. The stderr mirror is
+// route output -- a `2>` redirect, a script, the e2e smoke -- so it is en-US on
+// every route, `switch` included, and never reads the locale. The
+// display-message line is a tmux surface the operator reads, so it keeps the
+// operator's locale. A localized message therefore reaches the sink as a
+// projectStartupText, not a pre-rendered string, and the sink renders it once
+// per surface. The per-Agent lines that arrive through Write carry no catalog
+// text, so they are the same bytes on both halves.
 type projectStartupNoticeSink struct {
 	runner tmuxCommandRunner
 	mirror io.Writer
@@ -55,10 +64,20 @@ type projectStartupNoticeSink struct {
 	// startup disclosure onto whatever unrelated session happens to be attached
 	// there. No client means no display half; stderr still carries every line.
 	lookupEnv func(string) string
+	// displayLocale resolves the operator's locale for the display half only.
+	// Nil means the app locale of this process (settingsLocale).
+	displayLocale func() i18n.Locale
 
 	mu  sync.Mutex
 	buf bytes.Buffer
 }
+
+// projectStartupText renders one startup message in a locale. It is the unit a
+// localized startup report travels as: rendering is deferred to the sink, which
+// asks for the en-US rendering for the stderr mirror and the operator's
+// rendering for display-message, both from the one catalog template the
+// function closes over.
+type projectStartupText func(i18n.Locale) string
 
 // newProjectStartupNoticeSink builds the production surface: stderr plus the
 // operator's current tmux client.
@@ -101,27 +120,41 @@ func (s *projectStartupNoticeSink) Flush() {
 }
 
 // Report emits one message that was never written to the buffer, mirroring it to
-// stderr first so the durable record and the transient line always agree.
-func (s *projectStartupNoticeSink) Report(message string) {
-	if s == nil {
+// stderr first. The durable record and the transient line are rendered from the
+// same message template, so they always say the same thing: the stderr copy in
+// en-US, the display-message copy in the operator's locale.
+func (s *projectStartupNoticeSink) Report(text projectStartupText) {
+	if s == nil || text == nil {
 		return
 	}
-	message = strings.TrimSpace(message)
-	if message == "" {
+	durable := strings.TrimSpace(text(i18n.FallbackLocale))
+	if durable == "" {
 		return
 	}
 	if s.mirror != nil {
-		_, _ = io.WriteString(s.mirror, message+"\n")
+		_, _ = io.WriteString(s.mirror, durable+"\n")
 	}
-	s.display(message)
+	if !s.hasDisplayClient() {
+		return
+	}
+	s.display(text(s.operatorLocale()))
+}
+
+// operatorLocale is the locale of the display half.
+func (s *projectStartupNoticeSink) operatorLocale() i18n.Locale {
+	if s.displayLocale != nil {
+		return s.displayLocale()
+	}
+	return settingsLocale()
+}
+
+func (s *projectStartupNoticeSink) hasDisplayClient() bool {
+	return s.runner != nil && s.lookupEnv != nil && strings.TrimSpace(s.lookupEnv("TMUX")) != ""
 }
 
 func (s *projectStartupNoticeSink) display(text string) {
 	message := projectStartupNoticeMessage(text)
-	if message == "" || s.runner == nil {
-		return
-	}
-	if s.lookupEnv == nil || strings.TrimSpace(s.lookupEnv("TMUX")) == "" {
+	if message == "" || !s.hasDisplayClient() {
 		return
 	}
 	_, _ = s.runner.Run(context.Background(), "tmux", "display-message", message)
@@ -184,35 +217,49 @@ func flushProjectStartupNotices(w io.Writer) {
 
 // Recovery replaces the buffered per-Agent popup text with committed totals.
 // Write has already mirrored every detailed notice to stderr.
-func (s *projectStartupNoticeSink) Recovery(message string) {
+func (s *projectStartupNoticeSink) Recovery(text projectStartupText) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	s.buf.Reset()
 	s.mu.Unlock()
-	s.Report(message)
+	s.Report(text)
 }
 
 // reportTopologyRecovery puts the committed recovery totals on w. The startup
-// notice sink is the Project startup screen's tee (tmux display-message plus
-// process stderr) and keeps the operator's locale. A plain writer is a public
-// route's own stderr -- `reconcile resources --materialize-project` -- so that
-// copy is en-US and reads no locale.
+// notice sink renders them per surface (en-US stderr, operator-locale
+// display-message). A plain writer is a public route's own stderr --
+// `reconcile resources --materialize-project` -- so it gets the en-US copy.
+// Either way stderr reads no locale.
 func reportTopologyRecovery(w io.Writer, result diagnostics.LifecycleResult, counts diagnostics.TopologyCounts) {
-	if sink, ok := w.(interface{ Recovery(string) }); ok {
-		sink.Recovery(topologyRecoverySummary(settingsLocale(), result, counts))
+	text := topologyRecoveryText(result, counts)
+	if sink, ok := w.(interface{ Recovery(projectStartupText) }); ok {
+		sink.Recovery(text)
 		return
 	}
 	if w != nil {
-		_, _ = fmt.Fprintln(w, topologyRecoverySummary(i18n.FallbackLocale, result, counts))
+		_, _ = fmt.Fprintln(w, text(i18n.FallbackLocale))
 	}
 }
 
-func topologyRecoverySummary(locale i18n.Locale, result diagnostics.LifecycleResult, counts diagnostics.TopologyCounts) string {
-	text := "Continue: resumed %d, skipped %d; %s"
-	if result == diagnostics.LifecycleError {
-		text = "Continue failed: resumed %d, skipped %d; %s"
+// topologyRecoveryText is the recovery summary as a per-locale rendering of one
+// catalog template.
+func topologyRecoveryText(result diagnostics.LifecycleResult, counts diagnostics.TopologyCounts) projectStartupText {
+	return func(locale i18n.Locale) string {
+		return topologyRecoverySummary(locale, result, counts)
 	}
-	return projectStartupNoticeMessage(fmt.Sprintf(settingsCatalogTextLocale(locale, text), counts.Resumed, counts.Skipped, "projmux diagnostics log --component topology"))
+}
+
+// topologyRecoveryTemplate is the en-US catalog template of the summary; the
+// catalog keys its translations by this literal.
+func topologyRecoveryTemplate(result diagnostics.LifecycleResult) string {
+	if result == diagnostics.LifecycleError {
+		return "Continue failed: resumed %d, skipped %d; %s"
+	}
+	return "Continue: resumed %d, skipped %d; %s"
+}
+
+func topologyRecoverySummary(locale i18n.Locale, result diagnostics.LifecycleResult, counts diagnostics.TopologyCounts) string {
+	return projectStartupNoticeMessage(fmt.Sprintf(settingsCatalogTextLocale(locale, topologyRecoveryTemplate(result)), counts.Resumed, counts.Skipped, "projmux diagnostics log --component topology"))
 }

@@ -765,7 +765,7 @@ func (c *switchCommand) materializeProjectTopology(ctx context.Context, request 
 		result = diagnostics.LifecycleError
 	}
 	c.diagnostics.Topology().Record(started, result, diagnostics.TopologyCounts{})
-	c.reportProjectStartup(topologyRecoverySummary(settingsLocale(), result, diagnostics.TopologyCounts{}))
+	c.reportProjectStartup(topologyRecoveryText(result, diagnostics.TopologyCounts{}))
 	return err
 }
 
