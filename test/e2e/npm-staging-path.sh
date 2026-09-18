@@ -68,7 +68,7 @@ echo ">> PASS: config canonicalized retire path -> $canonical_bin (no '$retire_s
 
 # Extract the exact projmux path the config will invoke from a hook line, so the
 # survival check asserts against what actually got baked in (not an assumption).
-baked="$(grep -oE "[^ '\"]*/node_modules/[^ '\"]*/bin/projmux" "$cfg" | head -n1 || true)"
+baked="$(grep -oE "[^ '\"]*/node_modules/[^ '\"]*/bin/projmux" "$cfg" | sed -n 1p || true)"
 [ -n "$baked" ] || { echo "FAIL: no projmux node_modules path found in generated config" >&2; exit 1; }
 echo ">> baked config binary path: $baked"
 

@@ -402,7 +402,7 @@ if [[ "$lifecycle_agent_path" != "$lifecycle_socket_path" ]] ||
   echo "native lifecycle create escaped the exact standalone managed chain: $lifecycle_agent_receipt" >&2
   exit 1
 fi
-lifecycle_generation="$(lifecycle_pmx describe pane "uid:$lifecycle_pane_uid" | awk '$1 == "BindingGeneration:" { print $2; exit }')"
+lifecycle_generation="$(lifecycle_pmx describe pane "uid:$lifecycle_pane_uid" | awk '$1 == "BindingGeneration:" && !found { print $2; found = 1 }')"
 lifecycle_agent_uid="$(lifecycle_pmx get agents --project "uid:$lifecycle_project_uid" --window "uid:$lifecycle_window_uid" -o uid)"
 if [[ -z "$lifecycle_pane_uid" || -z "$lifecycle_generation" || -z "$lifecycle_agent_uid" ]]; then
 	echo "native lifecycle fixture could not resolve exact Pane/generation identity" >&2
@@ -419,7 +419,7 @@ if [[ ! "$lifecycle_sibling_pane" =~ ^%[0-9]+$ || "$lifecycle_sibling_pane" == "
   exit 1
 fi
 lifecycle_sibling_pane_uid="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_pane_uid)"
-lifecycle_sibling_generation="$(lifecycle_pmx describe pane "uid:$lifecycle_sibling_pane_uid" | awk '$1 == "BindingGeneration:" { print $2; exit }')"
+lifecycle_sibling_generation="$(lifecycle_pmx describe pane "uid:$lifecycle_sibling_pane_uid" | awk '$1 == "BindingGeneration:" && !found { print $2; found = 1 }')"
 lifecycle_sibling_agent_uid="$(lifecycle_pmx get agents --project "uid:$lifecycle_project_uid" --window "uid:$lifecycle_window_uid" -o uid | grep -Fvx "$lifecycle_agent_uid")"
 if [[ -z "$lifecycle_sibling_pane_uid" || -z "$lifecycle_sibling_generation" || -z "$lifecycle_sibling_agent_uid" ]] ||
   [[ "$(printf '%s\n' "$lifecycle_sibling_agent_uid" | wc -l | tr -d '[:space:]')" != "1" ]] ||
@@ -545,8 +545,8 @@ assert_lifecycle_sibling_semantics() {
   local stage="$1" pane_uid thread_id generation pane_ref source reason state badge
   pane_uid="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_pane_uid 2>/dev/null || true)"
   thread_id="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_ai_thread_id 2>/dev/null || true)"
-  generation="$(lifecycle_pmx describe pane "uid:$lifecycle_sibling_pane_uid" | awk '$1 == "BindingGeneration:" { print $2; exit }')"
-  pane_ref="$(lifecycle_pmx describe agent "uid:$lifecycle_sibling_agent_uid" | awk '$1 == "PaneRef:" { print $2; exit }')"
+  generation="$(lifecycle_pmx describe pane "uid:$lifecycle_sibling_pane_uid" | awk '$1 == "BindingGeneration:" && !found { print $2; found = 1 }')"
+  pane_ref="$(lifecycle_pmx describe agent "uid:$lifecycle_sibling_agent_uid" | awk '$1 == "PaneRef:" && !found { print $2; found = 1 }')"
   source="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_codex_authority 2>/dev/null || true)"
   reason="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_codex_authority_reason 2>/dev/null || true)"
   state="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_ai_state 2>/dev/null || true)"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Pipe consumer contract for the e2e smoke script.
+# Pipe consumer contract for every test shell script.
 #
-# linux-smoke.sh runs under `set -euo pipefail`. A pipe consumer that exits
+# The e2e, integration, and install smokes run under `set -euo pipefail`, and
+# the helpers they source inherit it. A pipe consumer that exits
 # before reading all of its input lets the producer die with SIGPIPE (rc=141)
 # on its next write, and pipefail plus `set -e` turns that into a smoke abort.
 # Consumers must drain (`sed -n 1p`, awk with a `found` flag) and a file reader
@@ -27,12 +28,18 @@
 # containers see. The inherited disposition is measured too, to show the drain
 # form is safe either way.
 #
-# Usage: test/e2e/pipe-consumer-contract.sh [file]
+# With no arguments the scan covers every `*.sh` file under test/, so a new
+# script or sourced helper is covered without being registered here. The guard
+# itself is the one exclusion: its detector self-test heredoc and SIGPIPE
+# controls hold the forbidden forms on purpose. Discovery fails closed: an
+# empty set, or one without the two linux-smoke.sh scripts, is an error rather
+# than a silent pass.
+#
+# Usage: test/e2e/pipe-consumer-contract.sh [file...]
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-target="${1:-$root/test/e2e/linux-smoke.sh}"
-display="${target#"$root"/}"
+self_display="test/e2e/pipe-consumer-contract.sh"
 contract_root="$(mktemp -d)"
 trap 'rm -rf "$contract_root"' EXIT
 
@@ -202,10 +209,56 @@ if [[ "$drain_rc" != "0" || "$inherited_drain_rc" != "0" || "$self_stop_rc" != "
   exit 1
 fi
 
-findings="$(scan "$target" "$display")"
+targets=()
+if [[ $# -gt 0 ]]; then
+  targets=("$@")
+else
+  while IFS= read -r candidate; do
+    if [[ "${candidate#"$root"/}" != "$self_display" ]]; then
+      targets+=("$candidate")
+    fi
+  done < <(find "$root/test" -type f -name '*.sh' | LC_ALL=C sort)
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    echo "pipe-consumer-contract: discovered no *.sh files under $root/test; refusing to pass an empty scan" >&2
+    exit 1
+  fi
+  for required in test/e2e/linux-smoke.sh test/integration/linux-smoke.sh; do
+    required_found=0
+    for target in "${targets[@]}"; do
+      if [[ "${target#"$root"/}" == "$required" ]]; then
+        required_found=1
+      fi
+    done
+    if [[ "$required_found" != "1" ]]; then
+      echo "pipe-consumer-contract: discovery under $root/test did not find $required; refusing to pass a scan that misses it" >&2
+      exit 1
+    fi
+  done
+fi
+
+findings=""
+finding_files=0
+for target in "${targets[@]}"; do
+  display="${target#"$root"/}"
+  if [[ ! -f "$target" ]]; then
+    echo "pipe-consumer-contract: $display is not a file" >&2
+    exit 1
+  fi
+  file_findings="$(scan "$target" "$display")"
+  if [[ -n "$file_findings" ]]; then
+    findings+="$file_findings"$'\n'
+    finding_files=$((finding_files + 1))
+  fi
+done
+file_count=${#targets[@]}
+file_noun="files have"
+if [[ "$file_count" -eq 1 ]]; then
+  file_noun="file has"
+fi
 if [[ -n "$findings" ]]; then
-  printf '%s\n' "$findings"
-  echo "FAIL pipe-consumer-contract: $display has $(printf '%s\n' "$findings" | wc -l) early-exit pipe consumer(s); drain them (sed -n 1p, awk found flag) or let a file reader stop itself with sed q and no pipe in front" >&2
+  printf '%s' "$findings"
+  finding_count=$(($(printf '%s' "$findings" | wc -l)))
+  echo "FAIL pipe-consumer-contract: $finding_count early-exit pipe consumer(s) in $finding_files of $file_count scanned file(s); drain them (sed -n 1p, awk found flag) or let a file reader stop itself with sed q and no pipe in front" >&2
   exit 1
 fi
-echo "PASS pipe-consumer-contract: $display has 0 early-exit pipe consumers; control head rc=$head_rc, drain rc=$drain_rc (default SIGPIPE); inherited head rc=$inherited_head_rc, drain rc=$inherited_drain_rc; self-stop rc=$self_stop_rc"
+echo "PASS pipe-consumer-contract: $file_count $file_noun 0 early-exit pipe consumers; control head rc=$head_rc, drain rc=$drain_rc (default SIGPIPE); inherited head rc=$inherited_head_rc, drain rc=$inherited_drain_rc; self-stop rc=$self_stop_rc"

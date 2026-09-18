@@ -147,7 +147,7 @@ continue_uid="$(run_projmux create project --root "$continue_root" --name contin
 run_projmux create window --project "uid:$continue_uid" --name continue-w2 >/dev/null
 run_projmux create pane --project "uid:$continue_uid" --primary-window >/dev/null
 continue_session="$(run_projmux describe project "uid:$continue_uid" -o json |
-  awk '/"session": \{/ { inside = 1 } inside && /"name":/ { sub(/.*"name": "/, ""); sub(/".*/, ""); print; exit }')"
+  awk '/"session": \{/ { inside = 1 } inside && /"name":/ && !found { sub(/.*"name": "/, ""); sub(/".*/, ""); print; found = 1 }')"
 [[ -n "$continue_session" ]] || fail "the Continue fixture Project projects no session name"
 windows_live="$(iso_tmux list-windows -t "=$continue_session" -F '#{@projmux_window_uid}' | sort)"
 panes_live="$(iso_tmux list-panes -s -t "=$continue_session" -F '#{@projmux_pane_uid}' | sort)"

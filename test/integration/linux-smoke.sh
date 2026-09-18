@@ -1246,7 +1246,7 @@ env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" -C attach-session 
 control_pid=$!
 control_client=""
 for _ in $(seq 1 500); do
-  control_client="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-clients -F '#{client_name}' 2>/dev/null | head -n 1 || true)"
+  control_client="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p || true)"
   [[ -n "$control_client" ]] && break
   sleep 0.02
 done
@@ -1294,7 +1294,7 @@ session_state_project_uid="$(env -u TMUX -u TMUX_PANE PATH="$lifecycle_path" PRO
   "$bin" create project --root "$session_state_root" -o uid)"
 "$bin" describe project "uid:$session_state_project_uid" -o json >"$PROJMUX_SMOKE_WORKDIR/session-state-project.json"
 session_state_name="$(sed -n '/"session": {/,/}/ s/.*"name": "\([^"]*\)".*/\1/p' \
-  "$PROJMUX_SMOKE_WORKDIR/session-state-project.json" | head -n 1)"
+  "$PROJMUX_SMOKE_WORKDIR/session-state-project.json" | sed -n 1p)"
 if [[ -z "$session_state_name" ]]; then
   echo "registered Session State Project has no declared session" >&2
   exit 1
@@ -1582,7 +1582,7 @@ lifecycle_project_uid="$(run_inside_lifecycle describe project lifecycle-verbs -
 # The persistent session name is the Project's own projection of it, which is
 # exactly what the lifecycle verbs resolve internally.
 lifecycle_session="$(run_inside_lifecycle describe project "uid:$lifecycle_project_uid" -o json \
-  | awk '/"session": \{/ { inside = 1 } inside && /"name":/ { sub(/.*"name": "/, ""); sub(/".*/, ""); print; exit }')"
+  | awk '/"session": \{/ { inside = 1 } inside && /"name":/ && !found { sub(/.*"name": "/, ""); sub(/".*/, ""); print; found = 1 }')"
 if [[ -z "$lifecycle_project_uid" || -z "$lifecycle_session" ]]; then
   echo "lifecycle verbs fixture resolved project=$lifecycle_project_uid session=$lifecycle_session" >&2
   exit 1
@@ -3013,7 +3013,7 @@ env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR
   "$bin" create window --project "uid:$discovery_project_uid" >"$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out" 'window/'
 pmx_discovery describe project "uid:$discovery_project_uid" -o json >"$PROJMUX_SMOKE_WORKDIR/discovery-project-after-window.json"
-discovery_primary_window_uid="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$PROJMUX_SMOKE_WORKDIR/discovery-project-after-window.json" | head -n 1)"
+discovery_primary_window_uid="$(sed -n '/.*"primaryWindowRef": "\([^"]*\)".*/{s//\1/p;q;}' "$PROJMUX_SMOKE_WORKDIR/discovery-project-after-window.json")"
 pmx_discovery get windows --project "uid:$discovery_project_uid" -o uid >"$PROJMUX_SMOKE_WORKDIR/discovery-windows-after-create.uid"
 if [[ -z "$discovery_primary_window_uid" ]] ||
   ! grep -Fxq "$discovery_primary_window_uid" "$PROJMUX_SMOKE_WORKDIR/discovery-windows-after-create.uid" ||
@@ -3462,7 +3462,7 @@ termination_receipt_field() {
   termination_pmx describe pane "uid:$1" -o json \
     | sed -n '/"lastTermination"/,$p' \
     | sed -n "s/^[[:space:]]*\"$2\": \(.*\)$/\1/p" \
-    | head -n 1 \
+    | sed -n 1p \
     | sed 's/,$//; s/^"//; s/"$//'
 }
 
@@ -3470,14 +3470,14 @@ termination_activation_generation() {
   termination_pmx describe pane "uid:$1" -o json \
     | sed -n '/"activation"/,/^[[:space:]]*}/p' \
     | sed -n 's/^[[:space:]]*"generation": "\([^"]*\)".*/\1/p' \
-    | head -n 1
+    | sed -n 1p
 }
 
 termination_activation_runtime_id() {
   termination_pmx describe pane "uid:$1" -o json \
     | sed -n '/"activation"/,/^[[:space:]]*}/p' \
     | sed -n 's/^[[:space:]]*"runtimeID": "\([^"]*\)".*/\1/p' \
-    | head -n 1
+    | sed -n 1p
 }
 
 # A pane-exited hook and the supervisor prewrite begin from the same process
@@ -3665,18 +3665,16 @@ termination_agent_json() {
 termination_agent_field() {
   sed -n '/"lastTermination"/,$p' "$termination_root/agent.json" \
     | sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" \
-    | head -n 1 \
+    | sed -n 1p \
     | sed 's/,$//; s/^"//; s/"$//'
 }
 
 termination_agent_pane_ref() {
-  sed -n 's/^[[:space:]]*"paneRef": "\([^"]*\)".*/\1/p' "$termination_root/agent.json" \
-    | head -n 1
+  sed -n '/^[[:space:]]*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$termination_root/agent.json"
 }
 
 termination_agent_phase() {
-  sed -n 's/^[[:space:]]*"phase": "\([^"]*\)".*/\1/p' "$termination_root/agent.json" \
-    | head -n 1
+  sed -n '/^[[:space:]]*"phase": "\([^"]*\)".*/{s//\1/p;q;}' "$termination_root/agent.json"
 }
 
 termination_provider_case() {
@@ -3737,7 +3735,7 @@ termination_provider_case() {
   fi
   termination_pmx describe window "uid:$termination_main_window_uid" -o json \
     >"$termination_root/provider-$provider-window.before.json"
-  window_name_before="$(sed -n 's/^[[:space:]]*"name": "\([^"]*\)".*/\1/p' "$termination_root/provider-$provider-window.before.json" | head -n 1)"
+  window_name_before="$(sed -n '/^[[:space:]]*"name": "\([^"]*\)".*/{s//\1/p;q;}' "$termination_root/provider-$provider-window.before.json")"
   runtime_window_name_before="$(termination_tmux display-message -p -t "$termination_anchor_pane_id" '#{window_name}')"
   pane_set_before="$termination_root/provider-$provider-panes.before"
   pane_set_after="$termination_root/provider-$provider-panes.after"
@@ -3778,8 +3776,8 @@ termination_provider_case() {
     fi
     termination_pmx describe window "uid:$termination_main_window_uid" -o json \
       >"$termination_root/provider-$provider-window.json"
-    window_name="$(sed -n 's/^[[:space:]]*"name": "\([^"]*\)".*/\1/p' "$termination_root/provider-$provider-window.json" | head -n 1)"
-    anchor_ref="$(sed -n 's/^[[:space:]]*"anchorPaneRef": "\([^"]*\)".*/\1/p' "$termination_root/provider-$provider-window.json" | head -n 1)"
+    window_name="$(sed -n '/^[[:space:]]*"name": "\([^"]*\)".*/{s//\1/p;q;}' "$termination_root/provider-$provider-window.json")"
+    anchor_ref="$(sed -n '/^[[:space:]]*"anchorPaneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$termination_root/provider-$provider-window.json")"
     runtime_window_name="$(termination_tmux display-message -p -t "$termination_anchor_pane_id" '#{window_name}')"
     if [[ "$window_name" != "$window_name_before" || "$runtime_window_name" != "$runtime_window_name_before" ||
       "$anchor_ref" != "$termination_anchor_pane_uid" ]] ||
@@ -4066,7 +4064,7 @@ echo ">> termination teardown journal kill-window window=$termination_killwin_wi
 # that the Registry recorded the exact live handle it landed on.
 termination_pane_uid="$(termination_pmx_inside create pane --project evidence --all-windows -o uid -- sleep 600)"
 termination_pane_id="$(termination_tmux list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' \
-  | awk -v uid="$termination_pane_uid" '$1 == uid { print $2; exit }')"
+  | awk -v uid="$termination_pane_uid" '$1 == uid && !found { print $2; found = 1 }')"
 if [[ -z "$termination_pane_id" ]]; then
   echo "the long-lived termination Pane has no exact live binding" >&2
   exit 1
@@ -4361,15 +4359,14 @@ exitrec_doc() {
 }
 
 exitrec_field() {
-  sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" "$exitrec_root/doc.json" \
-    | head -n 1 \
+  sed -n "/^[[:space:]]*\"$1\": \(.*\)$/{s//\1/p;q;}" "$exitrec_root/doc.json" \
     | sed 's/,$//; s/^"//; s/"$//'
 }
 
 exitrec_termination_field() {
   sed -n '/"lastTermination"/,$p' "$exitrec_root/doc.json" \
     | sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" \
-    | head -n 1 \
+    | sed -n 1p \
     | sed 's/,$//; s/^"//; s/"$//'
 }
 
@@ -4455,7 +4452,7 @@ exitrec_preexisting_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec
 exitrec_doc agent "$exitrec_preexisting_agent"
 exitrec_preexisting_pane="$(exitrec_field paneRef)"
 exitrec_preexisting_runtime="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_id}' \
-  | awk -F '|' -v pane="$exitrec_preexisting_pane" '$1 == pane { print $2; exit }')"
+  | awk -F '|' -v pane="$exitrec_preexisting_pane" '$1 == pane && !found { print $2; found = 1 }')"
 exitrec_preexisting_pid="$(exitrec_tmux "$exitrec_socket" display-message -p -t "$exitrec_preexisting_runtime" -F '#{pane_pid}')"
 if [[ -z "$exitrec_preexisting_agent" || -z "$exitrec_preexisting_pane" ||
   ! "$exitrec_preexisting_runtime" =~ ^%[0-9]+$ || ! "$exitrec_preexisting_pid" =~ ^[1-9][0-9]*$ ]]; then
@@ -4529,7 +4526,7 @@ exitrec_doc agent "$exitrec_exhausted_agent"
 exitrec_exhausted_name="$(exitrec_field name)"
 exitrec_exhausted_pane="$(exitrec_field paneRef)"
 exitrec_exhausted_runtime="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_id}' \
-  | awk -F '|' -v pane="$exitrec_exhausted_pane" '$1 == pane { print $2; exit }')"
+  | awk -F '|' -v pane="$exitrec_exhausted_pane" '$1 == pane && !found { print $2; found = 1 }')"
 if [[ -z "$exitrec_exhausted_agent" || -z "$exitrec_exhausted_pane" ||
   ! "$exitrec_exhausted_runtime" =~ ^%[0-9]+$ ]]; then
   echo "exhausted startup fixture could not resolve the exact Agent/Pane/runtime chain" >&2
@@ -4808,7 +4805,7 @@ exitrec_external_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_se
 exitrec_doc agent "$exitrec_external_agent"
 exitrec_external_pane="$(exitrec_field paneRef)"
 exitrec_external_pane_id="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' \
-  | awk -v uid="$exitrec_external_pane" '$1 == uid { print $2; exit }')"
+  | awk -v uid="$exitrec_external_pane" '$1 == uid && !found { print $2; found = 1 }')"
 if [[ -z "$exitrec_external_pane_id" ]]; then
   echo "the externally killed Agent Pane has no exact live binding" >&2
   exit 1
@@ -4865,7 +4862,7 @@ exitrec_sigkill_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_ser
 exitrec_doc agent "$exitrec_sigkill_agent"
 exitrec_sigkill_pane="$(exitrec_field paneRef)"
 exitrec_sigkill_pid="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid} #{pane_pid}' \
-  | awk -v uid="$exitrec_sigkill_pane" '$1 == uid { print $2; exit }')"
+  | awk -v uid="$exitrec_sigkill_pane" '$1 == uid && !found { print $2; found = 1 }')"
 if [[ -z "$exitrec_sigkill_pid" ]]; then
   echo "the supervised Agent Pane reported no pane pid" >&2
   exit 1
@@ -5151,7 +5148,7 @@ exitrec_restart_case standalone "$exitrec_standalone_socket" "$exitrec_standalon
 # read nor written, and its identical metadata must not have decided any outcome
 # above.
 exitrec_sibling_tmux set-option -t sibling -q @projmux_project_path "$exitrec_root/work/evidence"
-exitrec_sibling_pane_id="$(exitrec_sibling_tmux list-panes -a -F '#{pane_id}' | head -n 1)"
+exitrec_sibling_pane_id="$(exitrec_sibling_tmux list-panes -a -F '#{pane_id}' | sed -n 1p)"
 exitrec_sibling_tmux set-option -p -t "$exitrec_sibling_pane_id" -q @projmux_pane_uid "$exitrec_shell_pane"
 exitrec_sibling_before="$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id} #{@projmux_pane_uid}')"
 exitrec_reconcile app-owned
