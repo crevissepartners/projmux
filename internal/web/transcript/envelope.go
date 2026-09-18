@@ -3,6 +3,8 @@ package transcript
 import (
 	"encoding/json"
 	"strings"
+
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 )
 
 // WebRefPrefix marks a coordination message the web client sent. It rides in
@@ -12,7 +14,7 @@ import (
 const WebRefPrefix = "projmux-web-"
 
 // ViaWeb is the Turn.Via value for a message whose messageRef carries
-// WebRefPrefix.
+// WebRefPrefix, and for operator input from the web client.
 const ViaWeb = "projmux-web"
 
 // coordinationEnvelope is the projmux peer-coordination frame that arrives in
@@ -28,9 +30,15 @@ type coordinationEnvelope struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	MessageRef    string `json:"messageRef"`
 	Payload       string `json:"payload"`
-	Source        struct {
+	// Source is an Agent route {agentUID, provider} or the operator origin
+	// {kind, client}. Both shapes decode into the one struct: the key sets
+	// are disjoint, so whichever is absent stays empty, and the fields, never
+	// schemaVersion, say which one a frame carries.
+	Source struct {
 		AgentUID string `json:"agentUID"`
 		Provider string `json:"provider"`
+		Kind     string `json:"kind"`
+		Client   string `json:"client"`
 	} `json:"source"`
 	Target struct {
 		AgentUID string `json:"agentUID"`
@@ -67,18 +75,21 @@ type coordinationFrame struct {
 	schemaVersion int
 	// self is true when the frame's source and target are the same Agent.
 	self bool
-	// from is the peer, nil for a self-anchored frame or one with no source.
+	// operator is true when the frame's source is operator input.
+	operator bool
+	// from is the peer, nil for operator input, a self-anchored frame, or one
+	// with no source.
 	from *Sender
 }
 
 // turn renders the frame as a Turn.
 //
-// A self-anchored frame is the operator's own message and reads as a user
-// turn in this session; anything else is a peer turn, whether or not the
-// source was named.
+// Operator input, and a self-anchored frame, is the operator's own message and
+// reads as a user turn in this session; anything else is a peer turn, whether
+// or not the source was named.
 func (f coordinationFrame) turn(at, kind string) Turn {
 	role := "peer"
-	if f.self {
+	if f.self || f.operator {
 		role = "user"
 	}
 	return Turn{
@@ -100,12 +111,16 @@ func (f coordinationFrame) turn(at, kind string) Turn {
 // Everything outside the payload is discarded — for a reader the message *is*
 // the payload, and the envelope around it is the same boilerplate every time.
 //
-// A frame whose source and target are the same Agent is not from a peer at
-// all: it is the web client's own composer, which has to anchor a send on some
-// Agent and anchors it on the target so a person's text is not attributed to
-// an uninvolved third one. Labelling those as coming from a peer made the
-// operator's own messages look like someone else's, so such a frame carries
-// no From.
+// A frame whose source is the operator origin {kind, client} is the person's
+// own message: a user turn through the web client, with no From. The source
+// fields decide it, whatever the schemaVersion.
+//
+// A frame without that origin whose source and target are the same Agent is
+// not from a peer at all either, at any schemaVersion: it is the web client's
+// own composer, which has to anchor a send on some Agent and anchors it on the
+// target so a person's text is not attributed to an uninvolved third one.
+// Labelling those as coming from a peer made the operator's own messages look
+// like someone else's, so such a frame carries no From.
 //
 // The frame's schemaVersion is read but is never grounds for rejection. A
 // producer newer than this reader can only have added or restated fields; the
@@ -148,6 +163,10 @@ func unwrapCoordination(text string) (coordinationFrame, bool) {
 		frame.via = ViaWeb
 	}
 
+	if coremessage.IsOperatorOrigin(strings.TrimSpace(envelope.Source.Kind), strings.TrimSpace(envelope.Source.Client)) {
+		frame.operator, frame.via = true, ViaWeb
+		return frame, true
+	}
 	source := strings.TrimSpace(envelope.Source.AgentUID)
 	frame.self = source != "" && source == strings.TrimSpace(envelope.Target.AgentUID)
 	if !frame.self && source != "" {

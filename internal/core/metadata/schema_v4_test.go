@@ -192,7 +192,15 @@ func TestEveryAutomaticallyCreatedResourceKindUsesItsExactFullUID(t *testing.T) 
 	}, "/bin/zsh", "control", nil); err != nil {
 		t.Fatal(err)
 	}
+	// A registered Project is the one exception: it is named after its root
+	// basename (`root` here). Every other kind keeps its exact full UID.
+	if project := reg.Projects[0]; project.Metadata.Name != "root" {
+		t.Fatalf("automatic Project name for uid %q = %q, want the root basename %q", project.Metadata.UID, project.Metadata.Name, "root")
+	}
 	for _, meta := range allResourceMeta(reg) {
+		if meta.UID == registered.Project.Metadata.UID {
+			continue
+		}
 		if meta.Name != meta.UID {
 			t.Fatalf("automatic name for uid %q = %q, want the exact full uid", meta.UID, meta.Name)
 		}

@@ -259,7 +259,7 @@ func ambiguousClaudeDelivery(messageRef string) agentdelivery.Delivery {
 // carries. Submit sends it and the send pre-check renders it.
 func claudePrivateCoordinationEnvelope(target claudeCoordinationTarget, envelope coremessage.Envelope) claudeCoordinationEnvelope {
 	return claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: envelope.MessageRef, Target: target,
-		Source:   claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"},
+		Source:   claudeCoordinationSourceOf(envelope.Authority),
 		Deadline: envelope.Deadline, BrokerEnvelope: &envelope}
 }
 
@@ -323,12 +323,16 @@ func claudeSendFrameBytes(token, content string) (int, error) {
 	return 0, err
 }
 
+// agentMessageReceipt follows the envelope's Origin and Source rule: an Agent
+// message's receipt has a source and no origin, byte for byte as before, and
+// operator input's has an origin and no source.
 type agentMessageReceipt struct {
 	Version         int                  `json:"version"`
 	MessageRef      string               `json:"messageRef"`
 	ConversationRef string               `json:"conversationRef"`
 	ReplyTo         string               `json:"replyTo,omitempty"`
-	Source          coremessage.Route    `json:"source"`
+	Origin          coremessage.Origin   `json:"origin,omitzero"`
+	Source          coremessage.Route    `json:"source,omitzero"`
 	Target          coremessage.Route    `json:"target"`
 	Delivery        coremessage.Delivery `json:"delivery"`
 	Deadline        time.Time            `json:"deadline"`
@@ -337,7 +341,7 @@ type agentMessageReceipt struct {
 func receiptFor(record messagestore.Record) agentMessageReceipt {
 	return agentMessageReceipt{Version: record.Envelope.Version, MessageRef: record.Envelope.MessageRef,
 		ConversationRef: record.Envelope.ConversationRef, ReplyTo: record.Envelope.ReplyTo,
-		Source: record.Envelope.Source, Target: record.Envelope.Target, Delivery: record.Delivery,
+		Origin: record.Envelope.Origin, Source: record.Envelope.Source, Target: record.Envelope.Target, Delivery: record.Delivery,
 		Deadline: record.Envelope.Deadline}
 }
 
@@ -394,6 +398,13 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	}
 	if !coremessage.Authorize(coremessage.PrincipalPeer, authorityAction) {
 		return fmt.Errorf("%s: peer authority does not permit %s", spelling, authorityAction)
+	}
+	// Operator input has no Agent route to answer on. The refusal comes before
+	// route resolution so its reason is the one reported, whatever the target.
+	if replyTo != "" {
+		if original, found, err := c.messageStore.Get(replyTo); err == nil && found && original.Envelope.Operator() {
+			return fmt.Errorf("%s: %w", spelling, c.replyCorrelationRefusal(replyTo, coremessage.ReasonExplicitReplyOperatorOrigin))
+		}
 	}
 	registry, err := c.readMessageRegistry()
 	if err != nil {
@@ -1074,14 +1085,26 @@ func writeAgentMessageReceipt(stdout io.Writer, receipt agentMessageReceipt, asJ
 
 // writeAgentMessageReceiptText writes the text receipt. claudeContentBytes is
 // the sender's rendered Claude push content size, or 0 when it is not known.
+// An Agent message's text is unchanged; operator input gains one trailing
+// source column, since it has no Agent a reader could otherwise look up.
 func writeAgentMessageReceiptText(stdout io.Writer, receipt agentMessageReceipt, claudeContentBytes int) error {
+	source := ""
+	if receipt.Origin.Operator() {
+		source = "\tsource=" + agentMessageOriginLabel(receipt.Origin)
+	}
 	if agentMessageUndelivered(receipt.Delivery) {
-		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", receipt.MessageRef, receipt.Delivery.State,
-			receipt.Delivery.Reason, agentMessageReceiptFailureAction(receipt, claudeContentBytes))
+		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s%s\n", receipt.MessageRef, receipt.Delivery.State,
+			receipt.Delivery.Reason, agentMessageReceiptFailureAction(receipt, claudeContentBytes), source)
 		return err
 	}
-	_, err := fmt.Fprintf(stdout, "%s\t%s\n", receipt.MessageRef, receipt.Delivery.State)
+	_, err := fmt.Fprintf(stdout, "%s\t%s%s\n", receipt.MessageRef, receipt.Delivery.State, source)
 	return err
+}
+
+// agentMessageOriginLabel names a non-Agent origin for a person: "operator
+// (web)".
+func agentMessageOriginLabel(origin coremessage.Origin) string {
+	return origin.Kind + " (" + origin.Client + ")"
 }
 
 func adapterForReplyReceipt(receipt agentMessageReceipt) string {

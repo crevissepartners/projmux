@@ -38,7 +38,7 @@ func (b *webBackend) cli(argv ...string) (string, error) {
 	if b.runCLI != nil {
 		return b.runCLI(argv)
 	}
-	handler, ok := NewWithLifecycleDiagnostics(nil).routeHandlers()[argv[0]]
+	handler, ok := webCLIApp().routeHandlers()[argv[0]]
 	if !ok {
 		return "", fmt.Errorf("web: no handler for %q", argv[0])
 	}
@@ -48,6 +48,15 @@ func (b *webBackend) cli(argv ...string) (string, error) {
 		return stdout.String(), webCLIError(err, stderr.String())
 	}
 	return stdout.String(), nil
+}
+
+// webCLIApp is the in-process app a web mutation runs on. A create it runs
+// inherits the web server's environment and parent chain, which say nothing
+// about who asked, so creator provenance is withdrawn.
+func webCLIApp() *App {
+	app := NewWithLifecycleDiagnostics(nil)
+	app.create.withoutCreatorProvenance()
+	return app
 }
 
 // webCLIError classifies a handler's error into the API's envelope.

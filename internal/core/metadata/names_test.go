@@ -8,11 +8,14 @@ import (
 	"testing"
 )
 
-func TestProjectNameBaseRemainsOnlyForHistoricalRootLookup(t *testing.T) {
+func TestProjectNameBaseIsTheSanitizedRootBasenameOrEmpty(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ name, root, want string }{
 		{name: "basename", root: "/home/user/src/Projmux", want: "Projmux"},
-		{name: "filesystem root", root: "/", want: "project"},
+		{name: "trailing separator is cleaned", root: "/home/user/src/projmux/", want: "projmux"},
+		{name: "unsupported runes collapse", root: "/home/user/my repo:v2", want: "my-repo-v2"},
+		{name: "filesystem root has no base", root: "/", want: ""},
+		{name: "empty root has no base", root: "", want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

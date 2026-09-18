@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -702,75 +704,185 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 	if err != nil {
 		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: read session project path: %w", err)
 	}
-	legacy := coremetadata.LegacySession{
-		Session: sessionName,
-		Root:    strings.TrimSpace(string(rootOut)),
-	}
-	var targets LegacyTargets
+	observed := newLegacyObservation(sessionName, string(rootOut))
 
-	windowsOut, err := m.run(ctx, "list-windows", "-t", sessionName, "-F", tmuxFormat(
-		"#{window_index}",
-		"#{window_name}",
-		"#{"+tmuxopts.AutomaticRenameWindow+"}",
-		"#{session_id}",
-		"#{window_id}",
-		"#{"+tmuxopts.WindowUID+"}",
-	))
+	windowsOut, err := m.run(ctx, "list-windows", "-t", sessionName, "-F", tmuxFormat(legacyWindowFields...))
 	if err != nil {
 		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session windows: %w", err)
 	}
-	indexOrder := map[string]int{}
 	// tmux lists windows in window_index ascending order, which is the ordinal
 	// the adoption rule pairs against.
-	for _, fields := range parseRows(string(windowsOut), 6) {
-		indexOrder[fields[0]] = len(legacy.Windows)
-		legacy.Windows = append(legacy.Windows, coremetadata.LegacyWindow{
-			Name:             fields[1],
-			AutomaticRename:  TmuxTruthyOption(fields[2]),
-			RuntimeSessionID: fields[3], RuntimeID: fields[4],
-			UID: strings.TrimSpace(fields[5]),
-		})
-		targets.Windows = append(targets.Windows, fields[4])
-		targets.Panes = append(targets.Panes, nil)
+	for _, fields := range parseRows(string(windowsOut), len(legacyWindowFields)) {
+		observed.addWindow(fields)
 	}
 
-	panesOut, err := m.run(ctx, "list-panes", "-s", "-t", sessionName, "-F", tmuxFormat(
+	panesOut, err := m.run(ctx, "list-panes", "-s", "-t", sessionName, "-F", tmuxFormat(legacyPaneFields...))
+	if err != nil {
+		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session panes: %w", err)
+	}
+	for _, fields := range parseRows(string(panesOut), len(legacyPaneFields)) {
+		observed.addPane(fields)
+	}
+	return observed.legacy, observed.targets, nil
+}
+
+// legacyWindowFields and legacyPaneFields are the per-object reads of one
+// legacy observation. ObserveLegacySessionTargets reads them for one session;
+// ObserveServer reads the same fields for every session at once, prefixed with
+// #{session_name}, so both produce the same LegacySession for a session.
+var (
+	legacyWindowFields = []string{
 		"#{window_index}",
-		"#{"+tmuxopts.PaneName+"}",
-		"#{"+tmuxopts.AgentProviderPane+"}",
-		"#{"+tmuxopts.AgentLaunchAuthorshipPane+"}",
-		"#{"+tmuxopts.AgentTopicPane+"}",
+		"#{window_name}",
+		"#{" + tmuxopts.AutomaticRenameWindow + "}",
+		"#{session_id}",
+		"#{window_id}",
+		"#{" + tmuxopts.WindowUID + "}",
+	}
+	legacyPaneFields = []string{
+		"#{window_index}",
+		"#{" + tmuxopts.PaneName + "}",
+		"#{" + tmuxopts.AgentProviderPane + "}",
+		"#{" + tmuxopts.AgentLaunchAuthorshipPane + "}",
+		"#{" + tmuxopts.AgentTopicPane + "}",
 		"#{pane_current_command}",
 		"#{pane_title}",
 		"#{pane_current_path}",
 		"#{pane_id}",
-		"#{"+tmuxopts.PaneUID+"}",
-		"#{"+tmuxopts.AgentSessionIDPane+"}",
-		"#{"+tmuxopts.AgentThreadIDPane+"}",
-	))
+		"#{" + tmuxopts.PaneUID + "}",
+		"#{" + tmuxopts.AgentSessionIDPane + "}",
+		"#{" + tmuxopts.AgentThreadIDPane + "}",
+	}
+)
+
+// legacyObservation accumulates one session's legacy rows in tmux order.
+type legacyObservation struct {
+	legacy     coremetadata.LegacySession
+	targets    LegacyTargets
+	indexOrder map[string]int
+}
+
+func newLegacyObservation(sessionName, root string) *legacyObservation {
+	return &legacyObservation{
+		legacy:     coremetadata.LegacySession{Session: sessionName, Root: strings.TrimSpace(root)},
+		indexOrder: map[string]int{},
+	}
+}
+
+// addWindow appends one legacyWindowFields row.
+func (o *legacyObservation) addWindow(fields []string) {
+	o.indexOrder[fields[0]] = len(o.legacy.Windows)
+	o.legacy.Windows = append(o.legacy.Windows, coremetadata.LegacyWindow{
+		Name:             fields[1],
+		AutomaticRename:  TmuxTruthyOption(fields[2]),
+		RuntimeSessionID: fields[3], RuntimeID: fields[4],
+		UID: strings.TrimSpace(fields[5]),
+	})
+	o.targets.Windows = append(o.targets.Windows, fields[4])
+	o.targets.Panes = append(o.targets.Panes, nil)
+}
+
+// addPane appends one legacyPaneFields row under the window it names.
+func (o *legacyObservation) addPane(fields []string) {
+	position, ok := o.indexOrder[fields[0]]
+	if !ok {
+		return
+	}
+	o.legacy.Windows[position].Panes = append(o.legacy.Windows[position].Panes, coremetadata.LegacyPane{
+		Label:            fields[1],
+		Provider:         fields[2],
+		LaunchAuthorship: strings.TrimSpace(fields[3]),
+		Topic:            fields[4],
+		Command:          fields[5],
+		Title:            fields[6],
+		CWD:              fields[7],
+		UID:              strings.TrimSpace(fields[9]),
+		SessionID:        strings.TrimSpace(fields[10]),
+		ThreadID:         strings.TrimSpace(fields[11]),
+	})
+	o.targets.Panes[position] = append(o.targets.Panes[position], fields[8])
+}
+
+// ServerSnapshot is one read of every live session's legacy naming state and of
+// the server-wide mirrored Window and Pane uid inventories, taken with three
+// server-wide tmux queries instead of three queries per session plus two
+// inventory queries. It performs no writes, and it is a snapshot: a caller that
+// writes to tmux after taking it must observe again rather than trust it.
+type ServerSnapshot struct {
+	sessions map[string]*legacyObservation
+	windows  map[string]bool
+	panes    map[string]bool
+}
+
+// ObserveServer takes one ServerSnapshot. Any failed query fails the whole
+// snapshot; the caller then falls back to its per-session and per-inventory
+// reads, so a partial server-wide read is never mistaken for an empty one.
+func (m Mirror) ObserveServer(ctx context.Context) (ServerSnapshot, error) {
+	sessionsOut, err := m.run(ctx, "list-sessions", "-F", tmuxFormat("#{session_name}", "#{"+tmuxopts.ProjectPathSession+"}"))
 	if err != nil {
-		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session panes: %w", err)
+		return ServerSnapshot{}, fmt.Errorf("metadata: list sessions: %w", err)
 	}
-	for _, fields := range parseRows(string(panesOut), 12) {
-		position, ok := indexOrder[fields[0]]
-		if !ok {
-			continue
+	windowsOut, err := m.run(ctx, "list-windows", "-a", "-F", tmuxFormat(append([]string{"#{session_name}"}, legacyWindowFields...)...))
+	if err != nil {
+		return ServerSnapshot{}, fmt.Errorf("metadata: list windows: %w", err)
+	}
+	panesOut, err := m.run(ctx, "list-panes", "-a", "-F", tmuxFormat(append([]string{"#{session_name}"}, legacyPaneFields...)...))
+	if err != nil {
+		return ServerSnapshot{}, fmt.Errorf("metadata: list panes: %w", err)
+	}
+	snapshot := ServerSnapshot{sessions: map[string]*legacyObservation{}, windows: map[string]bool{}, panes: map[string]bool{}}
+	for _, fields := range parseRows(string(sessionsOut), 2) {
+		snapshot.sessions[fields[0]] = newLegacyObservation(fields[0], fields[1])
+	}
+	// list-windows -a and list-panes -a walk sessions, then windows in
+	// window_index order, then panes in pane order: per session they are the
+	// rows `list-windows -t` and `list-panes -s -t` return.
+	for _, fields := range parseRows(string(windowsOut), 1+len(legacyWindowFields)) {
+		if uid := fields[1+5]; uid != "" {
+			snapshot.windows[uid] = true
 		}
-		legacy.Windows[position].Panes = append(legacy.Windows[position].Panes, coremetadata.LegacyPane{
-			Label:            fields[1],
-			Provider:         fields[2],
-			LaunchAuthorship: strings.TrimSpace(fields[3]),
-			Topic:            fields[4],
-			Command:          fields[5],
-			Title:            fields[6],
-			CWD:              fields[7],
-			UID:              strings.TrimSpace(fields[9]),
-			SessionID:        strings.TrimSpace(fields[10]),
-			ThreadID:         strings.TrimSpace(fields[11]),
-		})
-		targets.Panes[position] = append(targets.Panes[position], fields[8])
+		if observed := snapshot.sessions[fields[0]]; observed != nil {
+			observed.addWindow(fields[1:])
+		}
 	}
-	return legacy, targets, nil
+	for _, fields := range parseRows(string(panesOut), 1+len(legacyPaneFields)) {
+		if uid := fields[1+9]; uid != "" {
+			snapshot.panes[uid] = true
+		}
+		if observed := snapshot.sessions[fields[0]]; observed != nil {
+			observed.addPane(fields[1:])
+		}
+	}
+	return snapshot, nil
+}
+
+// LegacySessionTargets is ObserveLegacySessionTargets answered from the
+// snapshot. ok is false for a session the snapshot did not see.
+func (s ServerSnapshot) LegacySessionTargets(sessionName string) (coremetadata.LegacySession, LegacyTargets, bool) {
+	observed := s.sessions[sessionName]
+	if observed == nil {
+		return coremetadata.LegacySession{}, LegacyTargets{}, false
+	}
+	legacy := observed.legacy
+	legacy.Windows = slices.Clone(legacy.Windows)
+	for i := range legacy.Windows {
+		legacy.Windows[i].Panes = slices.Clone(legacy.Windows[i].Panes)
+	}
+	targets := LegacyTargets{Windows: slices.Clone(observed.targets.Windows), Panes: make([][]string, len(observed.targets.Panes))}
+	for i, row := range observed.targets.Panes {
+		targets.Panes[i] = slices.Clone(row)
+	}
+	return legacy, targets, true
+}
+
+// LiveWindowUIDs is Mirror.LiveWindowUIDs answered from the snapshot.
+func (s ServerSnapshot) LiveWindowUIDs(context.Context) (map[string]bool, error) {
+	return maps.Clone(s.windows), nil
+}
+
+// LivePaneUIDs is Mirror.LivePaneUIDs answered from the snapshot.
+func (s ServerSnapshot) LivePaneUIDs(context.Context) (map[string]bool, error) {
+	return maps.Clone(s.panes), nil
 }
 
 // TmuxTruthyOption reads a tmux boolean option value.

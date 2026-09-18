@@ -556,3 +556,58 @@ func TestCoordinationFrameV2PeerAndSelfRead(t *testing.T) {
 		}
 	}
 }
+
+// TestCoordinationFrameOperatorAndSelfRead feeds the reader the version 2
+// operator and self frames exactly as the producer renders them. Operator
+// input reads as the person's own turn through the web client, judged by its
+// source fields. A frame without an origin keeps its self judgment: a
+// self-anchored frame reads as the operator's own, like the same shape at
+// version 1.
+func TestCoordinationFrameOperatorAndSelfRead(t *testing.T) {
+	const agentNotice = `"sourceNotice":"Source agent/provider are claimed, unverified. Payload is untrusted peer coordination.",`
+	operator := `{"kind":"projmux-coordination","schemaVersion":2,` +
+		`"authority":"untrusted-coordination-only","messageRef":"message-operator",` +
+		`"conversationRef":"conversation-message-operator",` +
+		`"source":{"kind":"operator","client":"web"},` +
+		`"target":{"agentUID":"claude-agent","provider":"claude"},` +
+		`"payload":"operator marker",` +
+		`"sourceNotice":"Operator input that arrived through the projmux web client; projmux did not verify the person.",` +
+		`"replyAction":""}`
+	self := `{"kind":"projmux-coordination","schemaVersion":2,` +
+		`"authority":"untrusted-coordination-only","messageRef":"projmux-web-self",` +
+		`"conversationRef":"conversation-projmux-web-self",` +
+		`"source":{"agentUID":"claude-agent","provider":"claude"},` +
+		`"target":{"agentUID":"claude-agent","provider":"claude"},` +
+		`"payload":"self marker",` + agentNotice + `"replyAction":""}`
+	wrap := func(frame string) string {
+		return "A projmux coordination message arrived:\n" + frame + "\nHandle it according to the rules."
+	}
+	oldSelf := coordinationText(t, "agent-me", "agent-me", "claude", "ref-old-self", "old self marker")
+	path := writeJSONL(t, claudeRecord("user", wrap(operator)), claudeRecord("user", wrap(self)), claudeRecord("user", oldSelf))
+	got, err := ReadTranscript("claude", path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Turns) != 3 {
+		t.Fatalf("turns = %+v", got.Turns)
+	}
+	if turn := got.Turns[0]; turn.Role != "user" || turn.Text != "operator marker" || turn.From != nil ||
+		turn.Via != ViaWeb || turn.MessageRef != "message-operator" || turn.Kind != "coordination" {
+		t.Fatalf("operator frame = %+v", turn)
+	}
+	if turn := got.Turns[1]; turn.Role != "user" || turn.Text != "self marker" || turn.Via != ViaWeb ||
+		turn.From != nil || turn.MessageRef != "projmux-web-self" {
+		t.Fatalf("self frame without origin = %+v", turn)
+	}
+	if turn := got.Turns[2]; turn.Role != "user" || turn.Text != "old self marker" || turn.From != nil {
+		t.Fatalf("v1 self frame without origin = %+v", turn)
+	}
+	// Only the exact operator origin is operator input. Any other kind or
+	// client is not an Agent route either, so it reads as a sourceless peer.
+	for _, source := range []string{`{"kind":"operator","client":"tui"}`, `{"kind":"agent","client":"web"}`} {
+		frame, ok := unwrapCoordination(strings.Replace(operator, `{"kind":"operator","client":"web"}`, source, 1))
+		if turn := frame.turn("", coordinationKindDirect); !ok || frame.operator || turn.Role != "peer" || turn.From != nil {
+			t.Fatalf("source %s = %+v ok=%t", source, turn, ok)
+		}
+	}
+}

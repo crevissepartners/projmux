@@ -18,7 +18,11 @@ import (
 // decode.
 //
 // Version 2 narrowed source and target to agentUID and provider, shortened
-// sourceNotice, and left replyAction empty on a self-anchored frame.
+// sourceNotice, and left replyAction empty on a self-anchored frame. It also
+// added the operator-input variant: source is {kind, client} instead of an
+// Agent route, sourceNotice is coordinationOperatorSourceNotice, and
+// replyAction is empty. A reader tells that variant apart by its source
+// fields, never by this number.
 const coordinationFrameSchemaVersion = 2
 
 type claudeProviderCoordinationContent struct {
@@ -28,7 +32,7 @@ type claudeProviderCoordinationContent struct {
 	MessageRef      string                 `json:"messageRef"`
 	ConversationRef string                 `json:"conversationRef"`
 	ReplyTo         string                 `json:"replyTo,omitempty"`
-	Source          coordinationFrameRoute `json:"source"`
+	Source          any                    `json:"source"` // coordinationFrameRoute or coordinationFrameOrigin
 	Target          coordinationFrameRoute `json:"target"`
 	Payload         string                 `json:"payload"`
 	SourceNotice    string                 `json:"sourceNotice"`
@@ -59,14 +63,21 @@ func renderProviderCoordinationContent(envelope claudeCoordinationEnvelope, exec
 	if !sizeAsPeer {
 		replyAction = coordinationReplyAction(broker.Source, broker.Target, replyAction)
 	}
+	var source any = coordinationFrameRouteOf(broker.Source)
+	sourceNotice := coordinationSourceNotice
+	// Operator input has no Agent to answer, in the sent frame or the sized one.
+	if broker.Operator() {
+		source = coordinationFrameOrigin{Kind: broker.Origin.Kind, Client: broker.Origin.Client}
+		sourceNotice, replyAction = coordinationOperatorSourceNotice, ""
+	}
 	content, err := json.Marshal(claudeProviderCoordinationContent{
 		Kind: "projmux-coordination", SchemaVersion: coordinationFrameSchemaVersion,
 		Authority:  "untrusted-coordination-only",
 		MessageRef: broker.MessageRef, ConversationRef: broker.ConversationRef, ReplyTo: broker.ReplyTo,
-		Source:       coordinationFrameRouteOf(broker.Source),
+		Source:       source,
 		Target:       coordinationFrameRouteOf(broker.Target),
 		Payload:      broker.Payload,
-		SourceNotice: coordinationSourceNotice,
+		SourceNotice: sourceNotice,
 		ReplyAction:  replyAction,
 	})
 	// Content size is not judged here. The serialized auth+user frame is the

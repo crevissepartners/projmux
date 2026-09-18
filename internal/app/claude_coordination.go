@@ -84,10 +84,20 @@ type claudeCoordinationEnvelope struct {
 	BrokerEnvelope *coremessage.Envelope    `json:"brokerEnvelope,omitempty"`
 }
 
+// claudeCoordinationSourceOf is the private envelope's source for a durable
+// authority. The private source restates the durable authority so the helper
+// can refuse a pair that disagrees; a peer message's is unchanged.
+func claudeCoordinationSourceOf(authority coremessage.Authority) claudeCoordinationSource {
+	return claudeCoordinationSource{Kind: authority.Kind, Trust: authority.Trust, Authority: authority.Permission}
+}
+
 func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.AgentRouteRef) bool {
+	authority := coremessage.PeerAuthority()
+	if e.BrokerEnvelope != nil && e.BrokerEnvelope.Operator() {
+		authority = coremessage.OperatorAuthority()
+	}
 	if e.Version != claudeCoordinationVersion || !validCoordinationRef(e.MessageRef) || !e.Target.matches(route) ||
-		e.Source.Kind != "peer" || e.Source.Trust != "untrusted" || e.Source.Authority != "coordination-only" ||
-		e.Deadline.IsZero() {
+		e.Source != claudeCoordinationSourceOf(authority) || e.Deadline.IsZero() {
 		return false
 	}
 	if e.BrokerEnvelope != nil {
@@ -96,7 +106,7 @@ func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.Agen
 			!broker.Deadline.Equal(e.Deadline) || broker.Target.AgentUID != e.Target.AgentUID ||
 			broker.Target.PaneUID != e.Target.PaneUID || broker.Target.ActivationGeneration != e.Target.Generation ||
 			broker.Target.Provider != e.Target.Provider || broker.Target.Incarnation != route.Incarnation() ||
-			broker.Authority != coremessage.PeerAuthority() {
+			broker.Authority != authority {
 			return false
 		}
 	} else if e.Payload == "" {
@@ -269,7 +279,8 @@ func newLiveClaudeDialogueBroker(registryPath string) (*liveClaudeDialogueBroker
 // Current proves both ends again at the helper boundary. Target socket and
 // process incarnation are additionally checked by the provider poster. Claude
 // sources must still own their live registration lease; Codex consumes its
-// existing composite Registry authority without an app-server write.
+// existing composite Registry authority without an app-server write. Operator
+// input has no source route, so only its target is proved.
 func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 	if b == nil || envelope.Validate() != nil {
 		return false
@@ -278,7 +289,11 @@ func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 	if err != nil {
 		return false
 	}
-	for _, expected := range []coremessage.Route{envelope.Source, envelope.Target} {
+	routes := []coremessage.Route{envelope.Source, envelope.Target}
+	if envelope.Operator() {
+		routes = routes[1:]
+	}
+	for _, expected := range routes {
 		route, reason := coremetadata.ResolveAgentRoute(registry, expected.AgentUID)
 		if reason != "" || publicMessageRoute(route) != expected {
 			return false

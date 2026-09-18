@@ -128,6 +128,9 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	}
 	h.expireQualificationLocked(h.now())
 	message := h.messages[reply.ReplyTo]
+	if message != nil && message.envelope.BrokerEnvelope != nil && message.envelope.BrokerEnvelope.Operator() {
+		return refuse(coremessage.ReasonExplicitReplyOperatorOrigin)
+	}
 	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil ||
 		message.delivery.State != agentdelivery.StateDelivered ||
 		reply.Source != publicMessageRoute(source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {

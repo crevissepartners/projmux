@@ -60,8 +60,12 @@ type historyRecord struct {
 	Deadline        time.Time         `json:"deadline"`
 	TerminalAt      time.Time         `json:"terminalAt"`
 	PayloadBytes    int               `json:"payloadBytes"`
-	Source          coremessage.Route `json:"source"`
-	Target          coremessage.Route `json:"target"`
+	// Origin and Source follow the envelope: an Agent line has a source and
+	// no origin, byte for byte as before; an operator line has an origin and
+	// no source.
+	Origin coremessage.Origin `json:"origin,omitzero"`
+	Source coremessage.Route  `json:"source,omitzero"`
+	Target coremessage.Route  `json:"target"`
 }
 
 func newHistoryRecords(reclaimed []reclaimedRecord, evictedAt time.Time) []historyRecord {
@@ -86,6 +90,7 @@ func newHistoryRecords(reclaimed []reclaimedRecord, evictedAt time.Time) []histo
 			Deadline:        item.Record.Envelope.Deadline,
 			TerminalAt:      item.Record.Delivery.TerminalAt,
 			PayloadBytes:    len(item.Record.Envelope.Payload),
+			Origin:          item.Record.Envelope.Origin,
 			Source:          item.Record.Envelope.Source,
 			Target:          item.Record.Envelope.Target,
 		})

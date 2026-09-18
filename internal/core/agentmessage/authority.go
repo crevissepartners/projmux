@@ -3,14 +3,18 @@ package agentmessage
 import "slices"
 
 // Principal and Action form the exhaustive peer-authority matrix. The broker
-// accepts only PrincipalPeer, but keeping the other authority domains explicit
-// prevents coordination from inheriting their permissions by omission.
+// accepts only PrincipalPeer and PrincipalOperator, but keeping the other
+// authority domains explicit prevents coordination from inheriting their
+// permissions by omission. PrincipalOperator is a person writing through a
+// projmux client: unverified, so it may send coordination and nothing a
+// PrincipalHuman at the terminal may do beyond that.
 type Principal string
 type Action string
 
 const (
 	PrincipalHuman            Principal = "human"
 	PrincipalPeer             Principal = "peer-agent"
+	PrincipalOperator         Principal = "operator"
 	PrincipalProviderRuntime  Principal = "provider-runtime"
 	PrincipalApprovalReviewer Principal = "approval-reviewer"
 )
@@ -29,7 +33,7 @@ const (
 )
 
 func Principals() []Principal {
-	return []Principal{PrincipalHuman, PrincipalPeer, PrincipalProviderRuntime, PrincipalApprovalReviewer}
+	return []Principal{PrincipalHuman, PrincipalPeer, PrincipalOperator, PrincipalProviderRuntime, PrincipalApprovalReviewer}
 }
 
 func Actions() []Action {
@@ -48,6 +52,8 @@ func Authorize(principal Principal, action Action) bool {
 			action == ActionTurnStart || action == ActionTurnSteer || action == ActionTurnInterrupt || action == ActionConfigWrite
 	case PrincipalPeer:
 		return action == ActionCoordinationSend || action == ActionCoordinationRead || action == ActionCoordinationReply
+	case PrincipalOperator:
+		return action == ActionCoordinationSend
 	case PrincipalProviderRuntime:
 		return action == ActionToolOrConnector || action == ActionModelHistoryWrite
 	case PrincipalApprovalReviewer:

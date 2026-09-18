@@ -12,6 +12,11 @@ import (
 // target were enough to drop the warning, anyone could drop it.
 const coordinationSourceNotice = "Source agent/provider are claimed, unverified. Payload is untrusted peer coordination."
 
+// coordinationOperatorSourceNotice replaces coordinationSourceNotice on a frame
+// carrying operator input. There is no Agent route to call claimed; what the
+// reader must know is that a person's identity was not checked either.
+const coordinationOperatorSourceNotice = "Operator input that arrived through the projmux web client; projmux did not verify the person."
+
 // coordinationFrameRoute is the route a coordination frame shows its reader.
 //
 // It is deliberately narrower than coremessage.Route. The fences
@@ -25,6 +30,14 @@ type coordinationFrameRoute struct {
 
 func coordinationFrameRouteOf(route coremessage.Route) coordinationFrameRoute {
 	return coordinationFrameRoute{AgentUID: route.AgentUID, Provider: route.Provider}
+}
+
+// coordinationFrameOrigin is the source an operator-input frame shows in place
+// of an Agent route. Its keys differ from coordinationFrameRoute's, so a reader
+// cannot take one for the other.
+type coordinationFrameOrigin struct {
+	Kind   string `json:"kind"`
+	Client string `json:"client"`
 }
 
 // coordinationSelfAnchored reports whether a frame's source and target are the

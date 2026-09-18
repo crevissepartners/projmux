@@ -33,6 +33,9 @@ execution guard, use the existing bounded command without that flag:
 projmux agent message send uid:<original-source-agent> --reply-to <original-request-ref> -- '<corrected reply>'
 ```
 
+Operator input from the web client has no Agent route to reverse, so a reply
+to it is refused with `explicit-reply-operator-origin` and stores nothing.
+
 A same-ref call returns the original immutable receipt and never pushes again.
 Changing its payload is refused with the earlier ref and cause. A fresh ref
 allows one new attempt only when every previous attempt is known-zero. Failed
@@ -85,7 +88,10 @@ Each line carries the envelope's own key names:
 ```
 
 `reason` is `retention` for the 24-hour rule and `capacity` for the record
-limit. `replyTo` is omitted when the record is not a reply; every other key is
+limit. `replyTo` is omitted when the record is not a reply. A line for operator
+input (see [Operator input](claude-coordination-endpoints.md#operator-input))
+carries `"origin":{"kind":"operator","client":"web"}` in place of `source`; an
+Agent message's line has no `origin` and is unchanged. Every other key is
 always present. `schemaVersion` starts at 1 and follows the same rule as the
 coordination frame's field of that name: an absent or zero value reads as 1, and
 a reader that meets a higher version reads the fields it knows rather than

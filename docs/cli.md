@@ -973,6 +973,10 @@ Allowed effects:
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 ```
 
+Without `--name` a new Project is named after its root directory, sanitized into a valid name (`my repo` becomes `my-repo`). When that basename is empty (the filesystem root) or another Project already holds it, the Project is named by its exact uid instead; no numbered variant is ever invented.
+
+An explicit `--name` that another Project holds exits 2 with no Registry write. A root that is already registered reuses its Project; an explicit `--name` there must match the stored name.
+
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `receipt`
 
 ### `projmux create window`
