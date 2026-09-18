@@ -217,7 +217,7 @@ if [[ "$app_flag" != "1" ]]; then
   exit 1
 fi
 
-pane_id="$(tmux list-panes -t e2e-alpha:0 -F '#{pane_id}' | head -n 1)"
+pane_id="$(tmux list-panes -t e2e-alpha:0 -F '#{pane_id}' | sed -n 1p)"
 tmux set-option -p -t "$pane_id" @projmux_ai_agent codex
 tmux set-option -p -t "$pane_id" @projmux_ai_topic "docker e2e"
 tmux set-option -p -t "$pane_id" @projmux_attention_state reply
@@ -309,8 +309,8 @@ SMOKE_WAIT_DIAGNOSTIC_LOG="$recorder_log"
 
 recorder_client=""
 smoke_wait_for "attached recorder tmux client" sh -c \
-  "test -n \"\$(tmux -L '$recorder_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-recorder_client="$(tmux -L "$recorder_socket" list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(tmux -L '$recorder_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+recorder_client="$(tmux -L "$recorder_socket" list-clients -F '#{client_name}' | sed -n 1p)"
 
 # Reuse this attached client and FIFO for the canonical rename-pane-label
 # command-prompt contract.
@@ -2280,7 +2280,7 @@ agent_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
 agent_window_uid_before="$(ctx show-options -wqv -t "$agent_window_before" @projmux_window_uid)"
 agent_host_pane_uid_before="$(ctx show-options -pqv -t "$agent_pane_before" @projmux_pane_uid)"
 agent_project_uid_before="$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)"
-agent_primary_pane_uid="$(pmx_agent describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
+agent_primary_pane_uid="$(pmx_agent describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' | sed -n 1p)"
 if [[ ! "$agent_session_before" =~ ^\$[0-9]+$ ]] ||
   [[ ! "$agent_window_before" =~ ^@[0-9]+$ ]] ||
   [[ ! "$agent_pane_before" =~ ^%[0-9]+$ ]] ||
@@ -2360,14 +2360,14 @@ create_two_clients_attached() {
   [[ "$(ctx list-clients -F '#{client_name}' | wc -l)" -ge 2 ]]
 }
 smoke_wait_until 10 "two isolated tmux clients to attach" create_two_clients_attached
-mapfile -t exact_clients < <(ctx list-clients -F '#{client_name}' | head -n 2)
+mapfile -t exact_clients < <(ctx list-clients -F '#{client_name}' | sed -n 1,2p)
 if [[ "${#exact_clients[@]}" != "2" ]]; then
   echo "outside exact create did not establish two isolated clients" >&2
   exit 1
 fi
 ctx switch-client -c "${exact_clients[0]}" -t "$agent_window_before"
 ctx switch-client -c "${exact_clients[1]}" -t legacy-alpha:review
-exact_review_pane="$(ctx list-panes -t legacy-alpha:review -F '#{pane_id}' | head -n 1)"
+exact_review_pane="$(ctx list-panes -t legacy-alpha:review -F '#{pane_id}' | sed -n 1p)"
 ctx select-pane -T exact-host-sentinel -t "$agent_pane_before"
 ctx select-pane -T exact-review-sentinel -t "$exact_review_pane"
 exact_siblings_before="$({
@@ -2606,7 +2606,7 @@ cmp "$create_root/compact-kind.registry.before" "$create_registry"
 # 14. Phase 6 Agent authority runs on the inherited absolute socket only. The
 #     foreign socket deliberately carries matching title-like text and semantic
 #     options; no selector or mirror may infer identity from them or touch it.
-agent_uid="$(pmx_agent get agents --project alpha -o uid | head -n 1)"
+agent_uid="$(pmx_agent get agents --project alpha -o uid | sed -n 1p)"
 agent_pane_uid="$(ctx display-message -p -t "$agent_pane" '#{@projmux_pane_uid}')"
 if [[ -z "$agent_uid" || -z "$agent_pane_uid" ]]; then
   echo "Phase 6 e2e could not resolve Agent/Pane uid" >&2
@@ -2706,7 +2706,7 @@ smoke_assert_file_contains "$create_root/agent-resume.out" "resumed"
 # This read runs from the revalidated managed host Pane rather than the killed
 # Agent Pane. The explicit Project keeps the singular Agent reference scoped to
 # the same durable Registry root while its replacement Pane is materialized.
-resumed_pane_uid="$(pmx_agent_live describe agent "uid:$agent_uid" -p alpha -o json | sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
+resumed_pane_uid="$(pmx_agent_live describe agent "uid:$agent_uid" -p alpha -o json | sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' | sed -n 1p)"
 ctx list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}' |
   awk -F '[|]' -v uid="$resumed_pane_uid" '$4 == uid { print }' >"$create_root/agent-resume.matches"
 if [[ -z "$resumed_pane_uid" ]] || [[ "$(wc -l <"$create_root/agent-resume.matches")" != "1" ]]; then
@@ -3003,7 +3003,7 @@ fi
 # follow-up after the create matrix because config apply installs asynchronous
 # hooks that the transaction-boundary fixtures above deliberately omit.
 canonical_shell_uid="$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)"
-canonical_default_shell_uid="$(pmx describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
+canonical_default_shell_uid="$(pmx describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' | sed -n 1p)"
 if [[ -z "$canonical_shell_uid" || "$canonical_default_shell_uid" != "$canonical_shell_uid" ]]; then
   echo "canonical shell marker fixture is not the exact default shell: pane=$canonical_shell_uid default=$canonical_default_shell_uid" >&2
   exit 1
@@ -6132,8 +6132,8 @@ startup_client_is_on() {
 }
 
 startup_wait_for "attached startup tmux client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-startup_client="$(startup_tmux list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+startup_client="$(startup_tmux list-clients -F '#{client_name}' | sed -n 1p)"
 startup_driver_pane="$(startup_tmux display-message -p -c "$startup_client" '#{pane_id}')"
 
 # A registered closed Project always gets the startup screen: the saved `off`
@@ -6279,7 +6279,7 @@ PATH="$startup_root/shim:$PATH" startup_create_pmx agent resume \
   >"$startup_root/explicit-agent-resume.out"
 startup_wait_for "explicit Agent resume after external HUP" grep -Fq "resume startup-thread" "$startup_agent_argv"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-explicit-resume.json"
-startup_explicit_resume_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-explicit-resume.json" | head -n 1)"
+startup_explicit_resume_pane_uid="$(sed -n '/.*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/agent-after-explicit-resume.json")"
 if [[ -z "$startup_explicit_resume_pane_uid" ]] ||
   ! startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | grep -Fqx "$startup_explicit_resume_pane_uid" ||
   ! grep -Fq '"phase": "Running"' "$startup_root/agent-after-explicit-resume.json" ||
@@ -6343,7 +6343,7 @@ fi
 startup_wait_for "reopen exact Agent resume argv" sh -c \
   "test \"\$(grep -c 'resume startup-thread' '$startup_agent_argv')\" -ge 3"
 
-startup_create_anchor_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_owner_kind}' | awk -F '|' '$2 == "Window" { print $1; exit }')"
+startup_create_anchor_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_owner_kind}' | awk -F '|' '$2 == "Window" && !found { print $1; found = 1 }')"
 startup_clean_exit="$startup_root/clean-a.exit"
 startup_clean_argv="$startup_root/clean-a-argv.log"
 : >"$startup_clean_argv"
@@ -6359,9 +6359,9 @@ chmod 0755 "$startup_root/shim/codex"
 startup_clean_agent_uid="$(PATH="$startup_root/shim:$PATH" startup_create_pmx create agent --provider codex --interactive-only \
   --name clean-a --project "uid:$startup_project_uid" --window review -o uid)"
 startup_live_pmx describe agent "uid:$startup_clean_agent_uid" -o json >"$startup_root/clean-a-before-exit.json"
-startup_clean_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/clean-a-before-exit.json" | head -n 1)"
+startup_clean_pane_uid="$(sed -n '/.*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/clean-a-before-exit.json")"
 startup_clean_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_uid}' |
-  awk -F '|' -v uid="$startup_clean_pane_uid" '$2 == uid { print $1; exit }')"
+  awk -F '|' -v uid="$startup_clean_pane_uid" '$2 == uid && !found { print $1; found = 1 }')"
 if [[ -z "$startup_clean_agent_uid" || -z "$startup_clean_pane_uid" || ! "$startup_clean_pane" =~ ^%[0-9]+$ ]]; then
   echo "clean A fixture lacks exact Agent/Pane/runtime identity" >&2
   exit 1
@@ -6421,7 +6421,7 @@ startup_managed_stop() {
 startup_retained_window_uids="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
 startup_retained_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-before-project-stop.json"
-startup_stop_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-before-project-stop.json" | head -n 1)"
+startup_stop_pane_uid="$(sed -n '/.*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/agent-before-project-stop.json")"
 if [[ -z "$startup_stop_pane_uid" ]]; then
   echo "managed Project stop fixture has no current Agent Pane" >&2
   exit 1
@@ -6467,7 +6467,7 @@ startup_retained_continue_pane_uids="$(startup_pmx get panes --project "uid:$sta
 startup_missing_retained_shell_panes="$(comm -23 <(printf '%s\n' "$startup_shell_pane_uids") <(printf '%s\n' "$startup_retained_continue_pane_uids"))"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-retained-continue.json"
 startup_live_pmx describe agent "uid:$startup_clean_agent_uid" -o json >"$startup_root/clean-a-after-retained-continue.json"
-startup_retained_agent_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-retained-continue.json" | head -n 1)"
+startup_retained_agent_pane_uid="$(sed -n '/.*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/agent-after-retained-continue.json")"
 if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)" != "$startup_retained_window_uids" ]] ||
   [[ -n "$startup_missing_retained_shell_panes" ]] || [[ -z "$startup_retained_agent_pane_uid" ]] ||
@@ -6502,7 +6502,7 @@ if [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" != "0" ]]; then
   exit 1
 fi
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-repeated-continue.json"
-startup_interrupted_pane_after_repeat="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-repeated-continue.json" | head -n 1)"
+startup_interrupted_pane_after_repeat="$(sed -n '/.*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/agent-after-repeated-continue.json")"
 if [[ "$(wc -l <"$startup_agent_argv")" != "$startup_agent_launches_after_first_continue" ]] ||
   [[ "$(wc -l <"$startup_clean_argv")" != "$startup_clean_launches_before_continue" ]] ||
   [[ "$startup_interrupted_pane_after_repeat" != "$startup_interrupted_pane_after_first_continue" ]]; then
@@ -6608,9 +6608,9 @@ if [[ -z "$startup_project_uid_after" ]] || [[ "$startup_project_uid_after" == "
   exit 1
 fi
 startup_pmx describe project "uid:$startup_project_uid_after" -o json >"$startup_root/project.after-fresh.json"
-startup_primary_window_after="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.after-fresh.json" | head -n 1)"
+startup_primary_window_after="$(sed -n '/.*"primaryWindowRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/project.after-fresh.json")"
 startup_pmx describe window "uid:$startup_primary_window_after" --project "uid:$startup_project_uid_after" -o json >"$startup_root/window.after-fresh.json"
-startup_primary_pane_after="$(sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.after-fresh.json" | head -n 1)"
+startup_primary_pane_after="$(sed -n '/.*"defaultShellPaneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/window.after-fresh.json")"
 if [[ -z "$startup_primary_window_after" ]] || [[ -z "$startup_primary_pane_after" ]] ||
   [[ "$startup_primary_window_after" == "$startup_primary_window_before" ]] ||
   [[ "$startup_primary_pane_after" == "$startup_primary_pane_before" ]]; then
@@ -6954,8 +6954,8 @@ startup_sel_client_is_on() {
 }
 
 startup_wait_for "attached mode-selection tmux client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_sel_root/tmux' tmux -L '$startup_sel_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-startup_sel_client="$(startup_sel_tmux list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_sel_root/tmux' tmux -L '$startup_sel_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+startup_sel_client="$(startup_sel_tmux list-clients -F '#{client_name}' | sed -n 1p)"
 startup_sel_driver_pane="$(startup_sel_tmux display-message -p -c "$startup_sel_client" '#{pane_id}')"
 
 startup_sel_tmux send-keys -t "$startup_sel_driver_pane" "bash '$startup_sel_root/open-selected.sh' '$startup_sel_project' '$startup_sel_session' '$startup_sel_client' '$startup_sel_driver_pane'" Enter
@@ -7193,8 +7193,8 @@ fopen_wait_for() {
 }
 
 fopen_wait_for "attached first-open tmux client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$fopen_root/tmux' tmux -L '$fopen_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-fopen_client="$(fopen_tmux list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$fopen_root/tmux' tmux -L '$fopen_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+fopen_client="$(fopen_tmux list-clients -F '#{client_name}' | sed -n 1p)"
 fopen_driver_pane="$(fopen_tmux display-message -p -c "$fopen_client" '#{pane_id}')"
 fopen_driver_receipt="$(
   fopen_tmux display-message -p -t "$fopen_driver_pane" \
@@ -7627,8 +7627,8 @@ rtd_wait_for() {
 }
 
 rtd_wait_for "attached runtime diagnostics client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$rtd_root/tmux' tmux -L '$rtd_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-rtd_client="$(rtd_tmux list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$rtd_root/tmux' tmux -L '$rtd_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+rtd_client="$(rtd_tmux list-clients -F '#{client_name}' | sed -n 1p)"
 
 rtd_popup_offset="$(stat -c %s "$rtd_client_log")"
 rtd_tmux display-popup -c "$rtd_client" -T "Runtime E2E" -w 72 -h 24 -E \
@@ -7883,8 +7883,8 @@ nav_wait_for() {
 }
 
 nav_wait_for "attached registry navigation client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/t' tmux -L '$nav_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-nav_client="$(nav_tmux list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/t' tmux -L '$nav_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+nav_client="$(nav_tmux list-clients -F '#{client_name}' | sed -n 1p)"
 nav_client_is_on_driver() {
   [[ "$(nav_tmux display-message -p -c "$nav_client" '#{session_name}' 2>/dev/null || true)" == "$nav_driver" ]]
 }
@@ -8342,7 +8342,7 @@ rtv_other_before="$(rtv_other_tmux show-options -gqv @projmux_rtv_sentinel):$(rt
 # The list pane is the managed Pane of the third Project. Rendering the sidebar
 # into it with `respawn-pane` keeps that exact Pane and its mirrored uid, so the
 # observation the sidebar takes of its own host stays complete and managed.
-rtv_list_pane="$(rtv_tmux list-panes -t "=$rtv_list_session" -F '#{pane_id}' | head -n 1)"
+rtv_list_pane="$(rtv_tmux list-panes -t "=$rtv_list_session" -F '#{pane_id}' | sed -n 1p)"
 rtv_render_list() {
   rtv_tmux respawn-pane -k -t "$rtv_list_pane" "$rtv_sidebar_command"
 }
@@ -8419,8 +8419,8 @@ rtv_wait_for_client() {
 }
 
 rtv_wait_for_client "attached Alt-1 Runtime visibility client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$rtv_root/t' tmux -L '$rtv_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-rtv_client="$(rtv_tmux list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$rtv_root/t' tmux -L '$rtv_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+rtv_client="$(rtv_tmux list-clients -F '#{client_name}' | sed -n 1p)"
 rtv_client_is_on_driver() {
   [[ "$(rtv_tmux display-message -p -c "$rtv_client" '#{session_name}' 2>/dev/null || true)" == "$rtv_driver" ]]
 }
@@ -8664,8 +8664,8 @@ disc_wait_for() {
 }
 
 disc_wait_for "attached discovery tmux client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$disc_root/tmux' tmux -L '$disc_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-disc_client="$(disc_tmux list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$disc_root/tmux' tmux -L '$disc_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+disc_client="$(disc_tmux list-clients -F '#{client_name}' | sed -n 1p)"
 disc_driver_pane="$(disc_tmux display-message -p -c "$disc_client" '#{pane_id}')"
 
 disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' '$disc_root/work/app' bootstrap" Enter
@@ -9036,14 +9036,14 @@ exitrec_doc() {
 }
 
 exitrec_field() {
-  sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" "$exitrec_root/doc.json" \
-    | head -n 1 | sed 's/,$//; s/^"//; s/"$//'
+  sed -n "/^[[:space:]]*\"$1\": \(.*\)$/{s//\1/p;q;}" "$exitrec_root/doc.json" \
+    | sed 's/,$//; s/^"//; s/"$//'
 }
 
 exitrec_termination_field() {
-  sed -n '/"lastTermination"/,$p' "$exitrec_root/doc.json" \
-    | sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" \
-    | head -n 1 | sed 's/,$//; s/^"//; s/"$//'
+  sed -n "/\"lastTermination\"/,\${/^[[:space:]]*\"$1\": \(.*\)$/{s//\1/p;q;}}" \
+    "$exitrec_root/doc.json" \
+    | sed 's/,$//; s/^"//; s/"$//'
 }
 
 # The hook is backgrounded by the generated config, so the convergence it drives
@@ -9390,14 +9390,14 @@ exitrec_beta_window_uid="$(exitrec_tmux show-options -wqv -t work-beta:main @pro
 exitrec_beta_sibling_window_uid="$(exitrec_live_pmx create window \
   --project "uid:$exitrec_beta_project_uid" --name sibling -o uid -- sleep 600)"
 exitrec_beta_window_runtime="$(exitrec_tmux list-windows -a -F '#{@projmux_window_uid} #{window_id}' |
-  awk -v uid="$exitrec_beta_window_uid" '$1 == uid { print $2; exit }')"
+  awk -v uid="$exitrec_beta_window_uid" '$1 == uid && !found { print $2; found = 1 }')"
 exitrec_beta_sibling_window_runtime="$(exitrec_tmux list-windows -a -F '#{@projmux_window_uid} #{window_id}' |
-  awk -v uid="$exitrec_beta_sibling_window_uid" '$1 == uid { print $2; exit }')"
+  awk -v uid="$exitrec_beta_sibling_window_uid" '$1 == uid && !found { print $2; found = 1 }')"
 exitrec_beta_initial_runtime="$(exitrec_tmux list-panes -a -F '#{@projmux_window_uid} #{pane_id}' |
-  awk -v uid="$exitrec_beta_window_uid" '$1 == uid { print $2; exit }')"
+  awk -v uid="$exitrec_beta_window_uid" '$1 == uid && !found { print $2; found = 1 }')"
 exitrec_beta_initial_pane_uid="$(exitrec_tmux show-options -pqv -t "$exitrec_beta_initial_runtime" @projmux_pane_uid)"
 exitrec_beta_sibling_runtime="$(exitrec_tmux list-panes -a -F '#{@projmux_window_uid} #{pane_id}' |
-  awk -v uid="$exitrec_beta_sibling_window_uid" '$1 == uid { print $2; exit }')"
+  awk -v uid="$exitrec_beta_sibling_window_uid" '$1 == uid && !found { print $2; found = 1 }')"
 exitrec_beta_sibling_pane_uid="$(exitrec_tmux show-options -pqv -t "$exitrec_beta_sibling_runtime" @projmux_pane_uid)"
 exitrec_beta_session="$(exitrec_tmux display-message -p -t "$exitrec_beta_initial_runtime" '#{session_name}')"
 if [[ -z "$exitrec_beta_window_uid" || -z "$exitrec_beta_sibling_window_uid" ||
@@ -9441,8 +9441,8 @@ fi
 exitrec_beta_windows_after_target="$(exitrec_pmx get windows --project "uid:$exitrec_beta_project_uid" -o uid \
   2>"$exitrec_root/beta-windows-after-target.err")"
 exitrec_beta_primary_after_target="$(sed -n \
-  's/^[[:space:]]*"primaryWindowRef": "\([^"]*\)".*/\1/p' \
-  "$exitrec_root/beta-after-target-close.json" | head -n 1)"
+  '/^[[:space:]]*"primaryWindowRef": "\([^"]*\)".*/{s//\1/p;q;}' \
+  "$exitrec_root/beta-after-target-close.json")"
 exitrec_beta_sibling_runtime_uid="$(exitrec_tmux show-options -wqv \
   -t "$exitrec_beta_sibling_runtime" @projmux_window_uid 2>"$exitrec_root/beta-sibling-runtime.err" || true)"
 if [[ "$exitrec_beta_windows_after_target" != "$exitrec_beta_sibling_window_uid" ||
@@ -10027,8 +10027,8 @@ TERM=xterm-256color script -qefc \
   "$menu_client_log" <"$menu_client_input" >/dev/null 2>&1 &
 menu_client_pid=$!
 smoke_wait_for "attached pane-menu tmux client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$menu_root/tmux' tmux -L '$menu_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
-menu_client="$(menu_tmux list-clients -F '#{client_name}' | head -n 1)"
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$menu_root/tmux' tmux -L '$menu_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
+menu_client="$(menu_tmux list-clients -F '#{client_name}' | sed -n 1p)"
 menu_tmux switch-client -c "$menu_client" -t "$menu_origin_pane"
 if [[ "$(menu_tmux display-message -p -c "$menu_client" '#{pane_id}')" != "$menu_origin_pane" ]] ||
   [[ "$(menu_tmux display-message -p -c "$menu_client" '#{socket_path}')" != "$menu_socket_path" ]]; then
@@ -10962,7 +10962,7 @@ esac
 
 p12_tmux set-option -gq @projmux_app 1
 p12_pmx config apply --bin "$bin" --config "$p12_config" --socket "$p12_socket" >"$p12_root/apply.out"
-p12_control_uid="$(sed -n '/"controlSessions"/,/"windows"/ s/.*"uid": "\([^"]*\)".*/\1/p' "$p12_registry" | head -n 1)"
+p12_control_uid="$(sed -n '/"controlSessions"/,/"windows"/{/.*"uid": "\([^"]*\)".*/{s//\1/p;q;}}' "$p12_registry")"
 p12_window_uid="$(p12_tmux show-options -wqv -t "$p12_origin_pane" @projmux_window_uid)"
 p12_origin_uid="$(p12_tmux show-options -pqv -t "$p12_origin_pane" @projmux_pane_uid)"
 if [[ -z "$p12_control_uid" || -z "$p12_window_uid" || -z "$p12_origin_uid" ]] ||
@@ -11251,8 +11251,8 @@ p12_control_window_absent() {
     ! p12_pmx describe pane "uid:$p12_shell_uid" -o json >/dev/null 2>&1
 }
 smoke_wait_for "Phase 1 ControlSession Window descendant cascade" p12_control_window_absent
-p12_control_after_uid="$(sed -n '/"controlSessions"/,/"windows"/ s/.*"uid": "\([^"]*\)".*/\1/p' \
-  "$p12_registry" | head -n 1)"
+p12_control_after_uid="$(sed -n '/"controlSessions"/,/"windows"/{/.*"uid": "\([^"]*\)".*/{s//\1/p;q;}}' \
+  "$p12_registry")"
 for p12_control_agent_uid in $p12_control_agent_uids; do
   if p12_pmx describe agent "uid:$p12_control_agent_uid" -o json >/dev/null 2>&1; then
     echo "Phase 1 ControlSession Window retained owned Agent $p12_control_agent_uid" >&2
