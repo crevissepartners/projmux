@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -105,23 +104,25 @@ func (c *aiCommand) askLaunchPicker(anchor, client, mode string) launchChoice {
 	if err != nil {
 		return launchChoice{problem: notCreatedLine("could not resolve the projmux binary: " + err.Error())}
 	}
+	// The answer file stays open for the whole question and is read back
+	// through this handle, never re-opened by path: the picker truncates and
+	// writes the same file, and nothing that replaces the path afterwards can
+	// be read as an answer.
 	answer, err := os.CreateTemp("", "projmux-launch-answer-*.json")
 	if err != nil {
 		return launchChoice{problem: notCreatedLine("could not prepare the launch picker: " + err.Error())}
 	}
-	answerPath := answer.Name()
-	defer os.Remove(answerPath)
-	chmodErr := answer.Chmod(0o600)
-	closeErr := answer.Close()
-	if err := errors.Join(chmodErr, closeErr); err != nil {
+	defer os.Remove(answer.Name())
+	defer answer.Close()
+	if err := answer.Chmod(0o600); err != nil {
 		return launchChoice{problem: notCreatedLine("could not prepare the launch picker: " + err.Error())}
 	}
 	args := []string{"internal", "tmux", "popup-toggle", "--client", client, "--anchor", anchor,
-		popupToggleAnswerFlag, answerPath, mode}
+		popupToggleAnswerFlag, answer.Name(), mode}
 	if err := c.run(binaryPath, args...); err != nil && !isNoSelectionExit(err) {
 		return launchChoice{problem: notCreatedLine("could not open the launch picker: " + err.Error())}
 	}
-	raw, err := os.ReadFile(answerPath)
+	raw, err := readAnswerFromStart(answer)
 	if err != nil {
 		return launchChoice{problem: notCreatedLine("could not read the launch picker answer: " + err.Error())}
 	}
@@ -161,6 +162,15 @@ func (c *aiCommand) applyLaunchChoice(originPaneID, client string, choice launch
 	}
 	intent.anchorPaneID, intent.targetClient = origin, client
 	return c.replaceOriginShellWithAgent(intent)
+}
+
+// readAnswerFromStart reads the whole answer through the handle the producer
+// kept open.
+func readAnswerFromStart(answer *os.File) ([]byte, error) {
+	if _, err := answer.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(answer)
 }
 
 // notCreatedLine appends what did not happen to a reason the question could not

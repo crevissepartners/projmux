@@ -2743,3 +2743,26 @@ func TestCodexProviderPickerRowGolden(t *testing.T) {
 		}
 	}
 }
+
+// TestProviderPickerClaudeQueryFiltersToTheClaudeRowFirst pins what the e2e
+// control-root scenario relies on when it types "Claude" into the provider
+// picker and takes the first filtered row: through the picker's own fuzzy
+// filter, that query reaches the Claude row first.
+func TestProviderPickerClaudeQueryFiltersToTheClaudeRowFirst(t *testing.T) {
+	t.Parallel()
+	cmd := testAICommand(t.TempDir())
+	var items []intpicker.Item
+	for _, entry := range cmd.agentRows() {
+		items = append(items, intpicker.Item{
+			Label: entry.Label, Title: entry.Label, Value: entry.Value, SearchText: entry.SearchKey, SearchOnly: entry.SearchOnly,
+		})
+	}
+	got := intpicker.FilterItems(items, "Claude")
+	var values []string
+	for _, item := range got {
+		values = append(values, item.Value)
+	}
+	if len(values) == 0 || values[0] != aiModeClaude {
+		t.Fatalf("rows filtered by %q = %v, want the Claude row first", "Claude", values)
+	}
+}

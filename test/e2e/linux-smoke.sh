@@ -11039,9 +11039,9 @@ p12_await_picker_create() {
 # the stable filtered pair. The resulting process is a harmless run-local shim.
 p12_before_panes="$(p12_pane_count)"
 p12_before_agents="$(p12_agent_count)"
-# The fuzzy matcher also exposes Codex advanced for this query (its descriptive
-# text is a subsequence match); Claude is the stable second filtered row.
-printf 'Claude\n2\n' | p12_popup internal agent-pane picker --inside right >"$p12_root/provider-picker.out"
+# Claude is the first row this query filters to (pinned by
+# TestProviderPickerClaudeQueryFiltersToTheClaudeRowFirst).
+printf 'Claude\n1\n' | p12_popup internal agent-pane picker --inside right >"$p12_root/provider-picker.out"
 p12_await_picker_create "Home provider picker" "$((p12_before_panes + 1))" "$((p12_before_agents + 1))"
 p12_assert_managed_create "Home provider picker" "$p12_before_panes" "$p12_before_agents" 1
 p12_provider_uid="$p12_last_pane_uid"
