@@ -135,7 +135,7 @@
           {@const title = agentTitle(rec, target.uid)}
           <span class="layer-kind">{t("web.layer.transcript")}</span>
           <span class="layer-name" class:dim={title.dim} title={target.uid}>{title.name}</span>
-          <span class="layer-badges"><AgentBadges record={rec} /></span>
+          <span class="layer-badges" data-provider={rec?.provider}><AgentBadges record={rec} /></span>
           {#if rec}
             <span class="layer-sub"
               >{[providerText(rec.provider), rec.phase ? phaseText(rec.phase) : ""].filter(Boolean).join(" · ")}</span
