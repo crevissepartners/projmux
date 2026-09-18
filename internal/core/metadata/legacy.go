@@ -500,7 +500,25 @@ const AnnotationAgentTopic = "projmux.io/agent-topic"
 // the exact content its provider session started with. Both are written only
 // by the create transaction that launched the provider with that content, and
 // never on the Pane.
+//
+// `agent persona attach|detach` is the one other writer: it changes both keys on
+// an existing Agent together with AnnotationAgentSystemPromptSnapshot, in one
+// mutation, before it relaunches that Agent's provider session.
 const (
 	AnnotationAgentPersona       = "projmux.io/persona"
 	AnnotationAgentPersonaDigest = "projmux.io/persona-digest"
 )
+
+// AnnotationAgentSystemPromptSnapshot records how a resumed Claude session
+// treats its system prompt. The only value is SystemPromptSnapshotOff, which
+// makes every resume pass `--system-prompt-snapshot off`. Claude records the
+// first request's system prompt and replays that record on resume, so a
+// persona attached after the conversation started would otherwise be ignored.
+// The key is sticky: attach and detach write it and nothing removes it,
+// because the recorded prompt predates the attach and can never be trusted
+// again for that conversation.
+const AnnotationAgentSystemPromptSnapshot = "projmux.io/system-prompt-snapshot"
+
+// SystemPromptSnapshotOff is the one value AnnotationAgentSystemPromptSnapshot
+// carries.
+const SystemPromptSnapshotOff = "off"

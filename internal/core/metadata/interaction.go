@@ -84,6 +84,66 @@ func (m Mutator) SetAgentTopic(reg *Registry, agentUID, topic string) (Agent, er
 	return agent.Clone(), nil
 }
 
+// AgentPersonaAnnotations is the persona state of one existing Agent: the
+// persona name and digest (both set or both empty) and the system prompt
+// snapshot mode ("" or SystemPromptSnapshotOff). An empty field removes its
+// annotation.
+type AgentPersonaAnnotations struct {
+	Persona              string
+	PersonaDigest        string
+	SystemPromptSnapshot string
+}
+
+// PersonaAnnotationsOf reads the persona state an Agent records.
+func PersonaAnnotationsOf(agent Agent) AgentPersonaAnnotations {
+	return AgentPersonaAnnotations{
+		Persona:              agent.Metadata.Annotations[AnnotationAgentPersona],
+		PersonaDigest:        agent.Metadata.Annotations[AnnotationAgentPersonaDigest],
+		SystemPromptSnapshot: agent.Metadata.Annotations[AnnotationAgentSystemPromptSnapshot],
+	}
+}
+
+// SetAgentPersona replaces the persona annotations of one existing Agent in a
+// single mutation: the persona name, its digest, and the system prompt snapshot
+// mode are written together or not at all, so no reader ever sees a persona
+// without its digest or a new persona without the snapshot mode that makes a
+// resume honor it. Every other annotation is left as it was.
+func (m Mutator) SetAgentPersona(reg *Registry, agentUID string, want AgentPersonaAnnotations) (Agent, error) {
+	const op = "set agent persona"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	name := strings.TrimSpace(want.Persona)
+	digest := strings.TrimSpace(want.PersonaDigest)
+	snapshot := strings.TrimSpace(want.SystemPromptSnapshot)
+	if (name == "") != (digest == "") {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "persona %q and digest %q must be set or cleared together", name, digest)
+	}
+	if snapshot != "" && snapshot != SystemPromptSnapshotOff {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "unsupported system prompt snapshot mode %q", snapshot)
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	for key, value := range map[string]string{
+		AnnotationAgentPersona:              name,
+		AnnotationAgentPersonaDigest:        digest,
+		AnnotationAgentSystemPromptSnapshot: snapshot,
+	} {
+		if value == "" {
+			delete(agent.Metadata.Annotations, key)
+		} else {
+			agent.Metadata.Annotations[key] = value
+		}
+	}
+	if len(agent.Metadata.Annotations) == 0 {
+		agent.Metadata.Annotations = nil
+	}
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // SetAgentActivation records bounded launch acknowledgement metadata.
 func (m Mutator) SetAgentActivation(reg *Registry, agentUID string, state AgentActivationState, source, reason string) (Agent, error) {
 	const op = "set agent activation"
