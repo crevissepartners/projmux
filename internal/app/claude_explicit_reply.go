@@ -133,7 +133,7 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	}
 	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil ||
 		message.delivery.State != agentdelivery.StateDelivered ||
-		reply.Source != publicMessageRoute(source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
+		!messageRouteAccepts(source, reply.Source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
 		return refuse("invalid-explicit-reply-correlation")
 	}
 	if !message.envelope.Deadline.After(h.now()) || !reply.Deadline.After(h.now()) {

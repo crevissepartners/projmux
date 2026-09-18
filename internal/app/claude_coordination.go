@@ -105,7 +105,7 @@ func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.Agen
 		if broker.Validate() != nil || e.Payload != "" || broker.MessageRef != e.MessageRef ||
 			!broker.Deadline.Equal(e.Deadline) || broker.Target.AgentUID != e.Target.AgentUID ||
 			broker.Target.PaneUID != e.Target.PaneUID || broker.Target.ActivationGeneration != e.Target.Generation ||
-			broker.Target.Provider != e.Target.Provider || broker.Target.Incarnation != route.Incarnation() ||
+			broker.Target.Provider != e.Target.Provider || !route.AcceptsIncarnation(broker.Target.Incarnation) ||
 			broker.Authority != authority {
 			return false
 		}
@@ -295,7 +295,7 @@ func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 	}
 	for _, expected := range routes {
 		route, reason := coremetadata.ResolveAgentRoute(registry, expected.AgentUID)
-		if reason != "" || publicMessageRoute(route) != expected {
+		if reason != "" || !messageRouteAccepts(route, expected) {
 			return false
 		}
 		if authority, ok := route.Authority().(coremetadata.CodexRouteAuthority); ok {

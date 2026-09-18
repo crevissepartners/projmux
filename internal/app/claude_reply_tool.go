@@ -277,7 +277,7 @@ func (h *claudeCoordinationHub) permitsExplicitTool(argv []string, route coremet
 		return false
 	}
 	original := message.envelope.BrokerEnvelope
-	if original.Operator() || original.Target != publicMessageRoute(route) || argv[4] != "uid:"+original.Source.AgentUID || !broker.Current(*original) {
+	if original.Operator() || !messageRouteAccepts(route, original.Target) || argv[4] != "uid:"+original.Source.AgentUID || !broker.Current(*original) {
 		return false
 	}
 	if h.qualifiedVersion != claudeFrozenFrameProviderVersion {

@@ -471,6 +471,16 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			return fmt.Errorf("%s: reply correlation failed: %w", spelling, getErr)
 		}
 		envelope.ConversationRef = original.Envelope.ConversationRef
+		// The store compares a reply's routes to the original's exactly and has
+		// no authority to read either incarnation value. Answer in the shape the
+		// original used whenever the current route accepts it; otherwise keep
+		// the current value so correlation is still refused below.
+		if sourceRoute.AcceptsIncarnation(original.Envelope.Target.Incarnation) {
+			envelope.Source.Incarnation = original.Envelope.Target.Incarnation
+		}
+		if targetRoute.AcceptsIncarnation(original.Envelope.Source.Incarnation) {
+			envelope.Target.Incarnation = original.Envelope.Source.Incarnation
+		}
 		if envelope.Deadline.After(original.Envelope.Deadline) {
 			envelope.Deadline = original.Envelope.Deadline
 		}
@@ -849,7 +859,7 @@ func (c *agentCommand) runMessageStatus(args []string, stdout, stderr io.Writer)
 			record, _, err = c.messageStore.Apply(record.Envelope.MessageRef, c.staleMessageEvent(record, "target-removed"))
 		} else if capabilityErr := requireAgentMessageCapability("message.status", *target); capabilityErr != nil {
 			return capabilityErr
-		} else if route, routeErr := c.resolveMessageRoute(registry, *target); routeErr != nil || publicMessageRoute(route) != record.Envelope.Target {
+		} else if route, routeErr := c.resolveMessageRoute(registry, *target); routeErr != nil || !messageRouteAccepts(route, record.Envelope.Target) {
 			record, _, err = c.messageStore.Apply(record.Envelope.MessageRef, c.staleMessageEvent(record, "target-activation-stale"))
 		} else if record.Adapter == "claude-coordination" {
 			private, statusErr := c.messageClaude.Status(context.Background(), c.messagePaths.registryPath, route, record.Envelope.MessageRef)
@@ -1015,6 +1025,15 @@ func publicMessageRoute(route coremetadata.AgentRouteRef) coremessage.Route {
 	}
 	return coremessage.Route{AgentUID: route.AgentUID, PaneUID: route.PaneUID,
 		ActivationGeneration: route.Generation, Provider: provider, Incarnation: route.Incarnation()}
+}
+
+// messageRouteAccepts reads a stored route against the current one. Every
+// field but the incarnation must equal publicMessageRoute exactly; the
+// incarnation is read by the metadata predicate, which accepts either value.
+func messageRouteAccepts(route coremetadata.AgentRouteRef, stored coremessage.Route) bool {
+	expected := publicMessageRoute(route)
+	expected.Incarnation = stored.Incarnation
+	return expected == stored && route.AcceptsIncarnation(stored.Incarnation)
 }
 
 func (c *agentCommand) publicMessageEvent(record messagestore.Record, kind coremessage.EventKind, reason string, unknown bool) coremessage.Event {

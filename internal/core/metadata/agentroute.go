@@ -58,6 +58,41 @@ func (r AgentRouteRef) Incarnation() string {
 	return fmt.Sprintf("route-%x", digest[:18])
 }
 
+// SessionIncarnation is the session-scoped route incarnation: a digest of the
+// Claude SessionID alone, or one fixed value for every Codex route. It uses a
+// separate material domain, so it never equals a full Incarnation digest.
+func (r AgentRouteRef) SessionIncarnation() string {
+	if r.authority == nil {
+		return ""
+	}
+	var material string
+	switch authority := r.authority.(type) {
+	case CodexRouteAuthority:
+		if authority.ThreadID == "" || !authority.Authority.Valid() {
+			return ""
+		}
+		material = "codex-session"
+	case ClaudeAuthorityRef:
+		if !authority.Valid() {
+			return ""
+		}
+		material = "claude-session\x00" + authority.SessionID
+	default:
+		return ""
+	}
+	digest := sha256.Sum256([]byte(material))
+	return fmt.Sprintf("route-%x", digest[:18])
+}
+
+// AcceptsIncarnation is the one reader-side test of a stored incarnation. It
+// accepts the full digest and the session-scoped value so every reader can
+// read the session value before any writer emits it; writers switch later.
+// A replaced helper or provider process is refused by the authority fences,
+// not by this value.
+func (r AgentRouteRef) AcceptsIncarnation(value string) bool {
+	return value != "" && (value == r.Incarnation() || value == r.SessionIncarnation())
+}
+
 func (r AgentRouteRef) Same(other AgentRouteRef) bool {
 	return r.AgentUID != "" && r.PaneUID != "" && r.Generation != "" && r.authority != nil &&
 		r.AgentUID == other.AgentUID && r.PaneUID == other.PaneUID && r.Generation == other.Generation &&

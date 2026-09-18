@@ -46,7 +46,7 @@ func (e claudeQualificationEvidence) valid(now time.Time, route coremetadata.Age
 	return ok && e.Version == claudeQualificationEvidenceVersion &&
 		e.ClaudeCodeVersion == claudeFrozenFrameProviderVersion && e.SessionID == authority.SessionID &&
 		e.AgentUID == route.AgentUID && e.PaneUID == route.PaneUID && e.ActivationGeneration == route.Generation &&
-		e.RouteIncarnation == route.Incarnation() && e.ProviderProcess == authority.Process &&
+		route.AcceptsIncarnation(e.RouteIncarnation) && e.ProviderProcess == authority.Process &&
 		e.RegistrationGeneration == authority.RegistrationGeneration && e.HelperProcess == authority.LeaseProcess &&
 		e.Tools != nil && len(e.Tools) == 0 && e.MCPServers != nil && len(e.MCPServers) == 0 &&
 		e.Plugins != nil && len(e.Plugins) == 0 && e.PluginInitCount == 0 && e.PreMarkerToolUse == 0 &&
