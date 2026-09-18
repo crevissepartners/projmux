@@ -47,6 +47,7 @@ type Backend interface {
 	CreatePane(ctx context.Context, project, window string, req CreatePaneRequest) (any, error)
 	RenameAgent(ctx context.Context, agent, name string) (any, error)
 	ResumeAgent(ctx context.Context, agent string) (any, error)
+	DeleteAgent(ctx context.Context, agent string, dryRun bool) (any, error)
 	Capabilities(ctx context.Context, agent string) (any, error)
 	StartTurn(ctx context.Context, agent, text string) (any, error)
 	SteerTurn(ctx context.Context, agent, text string) (any, error)
@@ -232,6 +233,17 @@ func (s *Server) Handler() http.Handler {
 			return nil, err
 		}
 		return s.backend.RenameAgent(r.Context(), agent(r), name)
+	})
+	write("DELETE /api/v1/agents/{agent}", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		dryRun := r.URL.Query().Get("dryRun") == "true"
+		var req confirmRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		if !dryRun && !req.Confirm {
+			return nil, confirmRequired("deleting an agent")
+		}
+		return s.backend.DeleteAgent(r.Context(), agent(r), dryRun)
 	})
 	write("POST /api/v1/agents/{agent}/resume", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var req confirmRequest

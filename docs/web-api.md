@@ -193,6 +193,7 @@ All core routes are under `/api/v1`.
 | POST | `/api/v1/projects/{project}/windows/{window}/agents` | `create agent` | body `{provider, anchorPane?, cwdFrom?, payload?, confirm}`; `anchorPane` must be a pane uid in this Window |
 | GET | `/api/v1/agents/{agent}` | `get agent` | agent uids are global, so this route is flat |
 | PATCH | `/api/v1/agents/{agent}` | `rename agent` | body `{name}` |
+| DELETE | `/api/v1/agents/{agent}` | `delete agent --yes` | body `{confirm}`; `?dryRun=true` (`delete agent --dry-run`) as for a window; also deletes the Agent's managed Pane; `{agent}` must be an exact Agent uid (a name or `uid:…` is not-found) |
 | POST | `/api/v1/agents/{agent}/resume` | `agent resume` | body `{confirm}` |
 | GET | `/api/v1/agents/{agent}/capabilities` | `agent capabilities uid:…` | |
 | GET | `/api/v1/agents/{agent}/peers/{peer}/messages` | — | the retained messages between two Agents, both ways (see *Agent graph*) |
@@ -217,11 +218,13 @@ A delete with `?dryRun=true` answers:
 `runningAgents` is never absent and is `[]` when nothing runs. It lists the
 Agents whose stored phase is `Running` (the phase the graph carries) and that
 the delete would stop: for a Pane, the Agent whose `status.paneRef` is that
-Pane or that owns it; for a Window, every Agent the Window owns. It comes from
+Pane or that owns it; for a Window, every Agent the Window owns; for an Agent,
+that Agent itself when its phase is `Running`. It comes from
 the same Registry read the delete is checked against. A delete without
 `dryRun` returns `{uid, plan}` as before.
 
-The client closes a Pane or a Window this way: it asks for the dry run first.
+The client closes a Pane, a Window, or an Agent this way: it asks for the dry
+run first.
 When `runningAgents` is empty it sends the confirmed delete at once, so closing
 stays one click. Otherwise it shows one confirmation naming those Agents and
 deletes only when the operator accepts; a cancel deletes nothing and reports
