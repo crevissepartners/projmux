@@ -436,3 +436,81 @@ func TestLiveWindowSessionCountsIncludesUnmirroredWindows(t *testing.T) {
 		t.Fatalf("LiveWindowSessionCounts = %v, want %v", counts, want)
 	}
 }
+
+// TestObserveServerAnswersEachSessionLikeItsOwnLegacyObservation pins the
+// server-wide snapshot to the per-session observation it replaces: three
+// queries for the whole server, the same LegacySession and targets for every
+// session, and the same mirrored-uid inventories.
+func TestObserveServerAnswersEachSessionLikeItsOwnLegacyObservation(t *testing.T) {
+	t.Parallel()
+
+	sep := escapedFieldSep
+	row := func(fields ...string) string { return strings.Join(fields, sep) + "\n" }
+	windows := map[string]string{
+		"projmux": row("0", "editor", "off", "$1", "@4", "win-editor") + row("1", "zsh", "on", "$1", "@5", ""),
+		"other":   row("0", "main", "off", "$2", "@6", "win-other"),
+	}
+	panes := map[string]string{
+		"projmux": row("0", "nvim", "", "", "", "nvim", "src/main.go", "/src/projmux", "%1", "pan-nvim", "", "") +
+			row("0", "", "codex", "1", "refactor naming", "codex", "codex", "/src/projmux", "%2", "", "sess-9", "thread-9") +
+			row("1", "", "", "", "", "zsh", "~/src/projmux", "/src/projmux", "%3", "", "", ""),
+		"other": row("0", "shell", "", "", "", "zsh", "", "/src/other", "%7", "pan-other", "", ""),
+	}
+	roots := map[string]string{"projmux": "/src/projmux", "other": ""}
+
+	serverWide := func(byName map[string]string) string {
+		var b strings.Builder
+		for _, name := range []string{"other", "projmux"} {
+			for line := range strings.SplitSeq(strings.TrimSuffix(byName[name], "\n"), "\n") {
+				b.WriteString(name + sep + line + "\n")
+			}
+		}
+		return b.String()
+	}
+	server := &fakeRunner{outputs: map[string]string{
+		"list-sessions": row("other", roots["other"]) + row("projmux", roots["projmux"]),
+		"list-windows":  serverWide(windows),
+		"list-panes":    serverWide(panes),
+	}}
+	snapshot, err := NewMirror(server).ObserveServer(context.Background())
+	if err != nil {
+		t.Fatalf("observe server: %v", err)
+	}
+	if len(server.calls) != 3 {
+		t.Fatalf("server snapshot issued %d tmux calls, want 3: %q", len(server.calls), server.calls)
+	}
+	for _, name := range []string{"projmux", "other"} {
+		single := &fakeRunner{outputs: map[string]string{
+			"@projmux_project_path": roots[name] + "\n",
+			"list-windows":          windows[name],
+			"list-panes":            panes[name],
+		}}
+		wantLegacy, wantTargets, err := NewMirror(single).ObserveLegacySessionTargets(context.Background(), name)
+		if err != nil {
+			t.Fatalf("observe %s: %v", name, err)
+		}
+		gotLegacy, gotTargets, ok := snapshot.LegacySessionTargets(name)
+		if !ok || !reflect.DeepEqual(gotLegacy, wantLegacy) || !reflect.DeepEqual(gotTargets, wantTargets) {
+			t.Fatalf("snapshot of %s = %+v %+v (ok=%v), want %+v %+v", name, gotLegacy, gotTargets, ok, wantLegacy, wantTargets)
+		}
+	}
+	if _, _, ok := snapshot.LegacySessionTargets("absent"); ok {
+		t.Fatal("snapshot answered for a session it never saw")
+	}
+	windowUIDs, _ := snapshot.LiveWindowUIDs(context.Background())
+	paneUIDs, _ := snapshot.LivePaneUIDs(context.Background())
+	if !reflect.DeepEqual(windowUIDs, map[string]bool{"win-editor": true, "win-other": true}) ||
+		!reflect.DeepEqual(paneUIDs, map[string]bool{"pan-nvim": true, "pan-other": true}) {
+		t.Fatalf("snapshot inventories = %v %v", windowUIDs, paneUIDs)
+	}
+	for _, call := range server.calls {
+		if strings.Contains(call, "set-option") || strings.Contains(call, "rename-window") {
+			t.Fatalf("server snapshot must not write: %q", call)
+		}
+	}
+
+	failing := &fakeRunner{err: errors.New("no server")}
+	if _, err := NewMirror(failing).ObserveServer(context.Background()); err == nil {
+		t.Fatal("a failed server-wide query produced a snapshot")
+	}
+}

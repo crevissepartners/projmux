@@ -139,8 +139,8 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	if err != nil {
 		t.Fatalf("register error = %v (stderr %q)", err, stderr)
 	}
-	if !strings.HasPrefix(stdout, "project/proj-") || !strings.Contains(stdout, " created\n") {
-		t.Fatalf("stdout = %q, want one exact-UID automatic Project name", stdout)
+	if !strings.HasPrefix(stdout, "project/alpha created\n") {
+		t.Fatalf("stdout = %q, want the root-basename automatic Project name", stdout)
 	}
 
 	info, err := os.Stat(fixture.registryPath())
@@ -177,8 +177,8 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 			t.Fatalf("project %s bootstrap Window has no resolvable default shell ref", project.Metadata.Name)
 		}
 	}
-	if len(names) != 1 || names[0] != registry.Projects[0].Metadata.UID {
-		t.Fatalf("registered projects = %v, want only the exact Project uid; a discovered sibling must stay unregistered", names)
+	if len(names) != 1 || names[0] != "alpha" {
+		t.Fatalf("registered projects = %v, want only the root-basename Project alpha; a discovered sibling must stay unregistered", names)
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("the written registry does not validate: %v", err)
@@ -190,7 +190,7 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	// The two results deliberately differ in exactly one way: the repeat says
 	// `reused` where the first said `created`, and its receipt says
 	// identity=reused with address, topology, and desired state unchanged. Both
-	// name the same Project uid and the same bootstrap Window and Pane counts,
+	// name the same Project and the same bootstrap Window and Pane counts,
 	// which is what makes "the same graph" observable rather than assumed.
 	before, err := os.ReadFile(fixture.registryPath())
 	if err != nil {
@@ -200,8 +200,7 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	if err != nil {
 		t.Fatalf("repeat register error = %v", err)
 	}
-	projectUID := registry.Projects[0].Metadata.UID
-	wantRepeat := "project/" + projectUID + " reused\n" +
+	wantRepeat := "project/" + registry.Projects[0].Metadata.Name + " reused\n" +
 		"receipt operation=create.project identity=reused address=unchanged topology=unchanged " +
 		"desired-state=reused runtime=unchanged focus=unchanged projects=1 windows=1 panes=1 agents=0\n"
 	if repeatOut != wantRepeat {

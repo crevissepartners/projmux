@@ -335,6 +335,21 @@ Identity and naming:
   or numeric suffix allocator. An explicit `--name` keeps its original spelling
   after validation; explicit create and rename collisions fail with exit code 2
   and zero Registry, tmux, or provider writes.
+- A newly registered Project is the one exception. `create project` without
+  `--name`, and every implicit registration (first open of a directory,
+  `projmux shell`, Open fresh), name the Project after its root directory: the
+  root basename run through the same sanitizer as any name seed (`my repo`
+  becomes `my-repo`). If that basename sanitizes to nothing (the filesystem
+  root) or another Project already holds it, the Project falls back to the
+  exact-UID rule above -- never a numbered variant, never a `project`
+  placeholder. Legacy/orphan import and every Window, Pane, Agent, and
+  ControlSession keep exact-UID automatic names, and no stored name is ever
+  rewritten.
+- Open fresh replaces the Project and carries its name over only when that
+  name is not shaped like a minted Project UID (`proj-` plus a full canonical
+  UID payload). An operator-chosen name such as `proj-front` survives; a
+  UID-shaped name -- the old exact-UID automatic name, or one copied from a
+  predecessor -- is dropped so the replacement is named after its root.
 - `create agent` supplies an **explicit** name for the Pane its Agent owns:
   `<agent-name>-pane`, derived from the Agent's own name. That used to be a
   documented follow-up `rename pane` a launcher had to remember, so a caller
@@ -359,6 +374,27 @@ Identity and naming:
   context may duplicate and is never a selector, reservation, ownerRef, or
   durable identity input. `metadata.labels` remains key/value classification;
   `metadata.annotations` remains non-identifying metadata such as an AI topic.
+- Creator provenance: when an explicit `create agent` (every spelling,
+  `--create-window`, and each Agent of a fan-out) or `create window --provider`
+  runs inside an Agent's managed Pane, the new Agent and its managed Pane carry
+  `projmux.io/creator-agent` (the creator Agent's bare UID),
+  `projmux.io/creator-pane` (that Agent's managed Pane's bare UID), and
+  `projmux.io/creator-basis: pane-chain`, written in the same transaction that
+  commits the Agent. They are recorded only when the unmasked ambient
+  `%N` (`__PROJMUX_RUNTIME_ANCHOR_PANE`, then `TMUX_PANE`) is exactly one live
+  Registry Pane, that Pane round-trips with its owning Agent's
+  `status.paneRef`, one `display-message` confirms it on the create's own
+  app-owned socket and server pid, and the create process descends from its
+  `#{pane_pid}`. Any failed check writes none of the keys and changes nothing
+  else about the create. Stderr gets one `creator not recorded: <reason>` line
+  only when the ambient Pane is a live Agent Pane but a later check fails; an
+  ambient Pane that is malformed, unregistered, or a Window-owned shell is
+  silent. These keys are provenance, not
+  authentication, like a message `--source`. An absent key does not mean a
+  human created the Agent: UI intent creates (picker, pane menu, `ai split`,
+  launch choice), web API creates, and creates a Codex Agent issues (its
+  commands run under the app-server, not below the Pane's process) leave them
+  empty, and nothing backfills older Agents.
 
 Root lifecycle:
 

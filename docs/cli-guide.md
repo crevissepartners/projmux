@@ -1317,6 +1317,15 @@ removal in this release.
 The reference for a Project can be `uid:<uid>`, a bare `metadata.name`, or the
 absolute root path the Project claims.
 
+A Project registered without `--name` -- by `create project`, by opening an
+unregistered directory, or by `Clear layout and open` -- is named after its root
+directory, sanitized into a valid name (`~/src/my repo` becomes `my-repo`). If
+that basename sanitizes to nothing or another Project already holds it, the new
+Project is named by its exact uid instead; a numbered variant is never invented.
+`Clear layout and open` keeps an operator-chosen name, but not a name shaped
+like a Project uid. Windows, Panes, and Agents keep their exact-uid automatic
+names.
+
 ### Operation receipts
 
 Every create, rename, delete, and Project lifecycle route reports what it did
