@@ -177,6 +177,7 @@ All core routes are under `/api/v1`.
 | GET | `/api/v1/graph` | — | one Registry read plus one tmux observation: every Project, Window, Pane and Agent with live status |
 | GET | `/api/v1/projects` | `get projects -o json` | `ProjectList` |
 | GET | `/api/v1/projects/{project}` | `get project uid:…` | |
+| POST | `/api/v1/projects/{project}/stop` | `stop project` | body `{confirm}`; `?dryRun=true` runs nothing and returns the plan and `runningAgents` (see *Delete dry runs*); the Project stays registered, only its tmux session ends |
 | GET | `/api/v1/projects/{project}/agent-graph` | — | which Agents exchanged peer messages and which Agent created which, for this Project's Agents (see *Agent graph*) |
 | GET | `/api/v1/projects/{project}/windows` | `get windows -p uid:…` | `WindowList` |
 | POST | `/api/v1/projects/{project}/windows` | `create window` | body `{name?, agent?: {provider, payload?}, focus?, confirm}`; `agent` also starts that provider in the new Window |
@@ -222,6 +223,10 @@ Pane or that owns it; for a Window, every Agent the Window owns; for an Agent,
 that Agent itself when its phase is `Running`. It comes from
 the same Registry read the delete is checked against. A delete without
 `dryRun` returns `{uid, plan}` as before.
+
+A Project stop dry run has the same shape. Its `runningAgents` are the
+`Running` Agents of the Project's Windows, and its `plan` is fixed text,
+because `stop project` has no dry run.
 
 The client closes a Pane, a Window, or an Agent this way: it asks for the dry
 run first.

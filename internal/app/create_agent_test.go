@@ -135,6 +135,8 @@ type fakeLaunchRequest struct {
 	payload   []string
 	model     string
 	effort    string
+	// personaFile is the persona snapshot path the launch was given.
+	personaFile string
 }
 
 type fakeBoundPane struct {
@@ -190,13 +192,20 @@ func (f *fakeAgentLauncher) PlanAgentLaunch(provider string, workspace coremetad
 	return provider + ":launch", argv, nil
 }
 
-func (f *fakeAgentLauncher) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort string) (string, []string, error) {
+func (f *fakeAgentLauncher) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (string, []string, error) {
 	title, argv, err := f.PlanAgentLaunch(provider, workspace, payload)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err == nil {
 		f.plans[len(f.plans)-1].model = model
 		f.plans[len(f.plans)-1].effort = effort
+		f.plans[len(f.plans)-1].personaFile = personaFile
+		if personaFile != "" {
+			// Spell the persona option the way the real launcher does, so the
+			// supervised split argv carries exactly what a provider would see.
+			argv = append(argv[:2:2], strings.Replace(argv[2], "exec "+provider,
+				"exec "+provider+" --append-system-prompt-file "+personaFile, 1))
+		}
 	}
 	return title, argv, err
 }
@@ -1746,6 +1755,7 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			fs.Bool("interactive-only", false, "")
 			fs.String("model", "", "")
 			fs.String("effort", "", "")
+			fs.String("persona", "", "")
 			fs.String("name", "", "")
 			fs.Var(&out.labels, "label", "")
 			fs.String("output", "", "")

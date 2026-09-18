@@ -53,7 +53,7 @@ type agentLauncher interface {
 }
 
 type claudeOptionsAgentLauncher interface {
-	PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort string) (title string, argv []string, err error)
+	PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error)
 }
 
 // createCommand implements the canonical `create` verb.

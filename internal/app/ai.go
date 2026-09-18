@@ -2179,17 +2179,18 @@ func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.Agen
 }
 
 // PlanAgentLaunchWithOptions is PlanAgentLaunch for a Claude Agent created
-// with --model or --effort. The options go before the workspace arguments, so
-// Claude's variadic --add-dir cannot take them.
-func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort string) (title string, argv []string, err error) {
+// with --model, --effort, or --persona (personaFile is the persona snapshot
+// path). The options go before the workspace arguments, so Claude's variadic
+// --add-dir cannot take them.
+func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error) {
 	if normalizeAIMode(provider) != aiModeClaude {
-		return "", nil, fmt.Errorf("provider %q does not accept --model or --effort", provider)
+		return "", nil, fmt.Errorf("provider %q does not accept --model, --effort, or --persona", provider)
 	}
 	extra, err := providerLaunchArgs(provider, workspace, payload)
 	if err != nil {
 		return "", nil, err
 	}
-	extra = append(claudeLaunchOptionArgs(model, effort), extra...)
+	extra = append(claudeLaunchOptionArgs(model, effort, personaFile), extra...)
 	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
 	if err != nil {
 		return "", nil, err

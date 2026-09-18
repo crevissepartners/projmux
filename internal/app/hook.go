@@ -457,11 +457,18 @@ func (c *hookCommand) readInlineLine(event, current string, stdout io.Writer) (s
 	return value, true, nil
 }
 
-func (c *hookCommand) openInEditor(path string, stdout, stderr io.Writer) error {
-	editor := strings.TrimSpace(c.lookupEnv("EDITOR"))
+// editorFromEnv is the editor command a file-editing route opens: $EDITOR,
+// then $VISUAL. Empty means neither is set.
+func editorFromEnv(lookupEnv func(string) string) string {
+	editor := strings.TrimSpace(lookupEnv("EDITOR"))
 	if editor == "" {
-		editor = strings.TrimSpace(c.lookupEnv("VISUAL"))
+		editor = strings.TrimSpace(lookupEnv("VISUAL"))
 	}
+	return editor
+}
+
+func (c *hookCommand) openInEditor(path string, stdout, stderr io.Writer) error {
+	editor := editorFromEnv(c.lookupEnv)
 	if editor == "" {
 		return errors.New("$EDITOR and $VISUAL are unset; cannot open editor")
 	}

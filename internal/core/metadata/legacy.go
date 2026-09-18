@@ -494,3 +494,13 @@ func (m Mutator) ImportOrphanPane(reg *Registry, windowUID string, observed Lega
 // AnnotationAgentTopic is the non-identifying annotation that carries an AI
 // topic. Topics are never a name or a selector input.
 const AnnotationAgentTopic = "projmux.io/agent-topic"
+
+// AnnotationAgentPersona and AnnotationAgentPersonaDigest link an Agent to the
+// persona it was created with: the persona name and the sha256:<hex> digest of
+// the exact content its provider session started with. Both are written only
+// by the create transaction that launched the provider with that content, and
+// never on the Pane.
+const (
+	AnnotationAgentPersona       = "projmux.io/persona"
+	AnnotationAgentPersonaDigest = "projmux.io/persona-digest"
+)
