@@ -37,6 +37,9 @@ type Backend interface {
 	AgentGraph(ctx context.Context, project string) (any, error)
 	PeerMessages(ctx context.Context, agent, peer string) (any, error)
 
+	// StopProject ends the Project's tmux session the way `stop project` does;
+	// the Project, its Windows and Agents stay registered.
+	StopProject(ctx context.Context, project string, dryRun bool) (any, error)
 	CreateWindow(ctx context.Context, project string, req CreateWindowRequest) (any, error)
 	RenameWindow(ctx context.Context, project, window, name string) (any, error)
 	DeleteWindow(ctx context.Context, project, window string, dryRun bool) (any, error)
@@ -155,6 +158,17 @@ func (s *Server) Handler() http.Handler {
 	pane := func(r *http.Request) string { return r.PathValue("pane") }
 	agent := func(r *http.Request) string { return r.PathValue("agent") }
 
+	write("POST /api/v1/projects/{project}/stop", http.StatusOK, func(w http.ResponseWriter, r *http.Request) (any, error) {
+		dryRun := r.URL.Query().Get("dryRun") == "true"
+		var req confirmRequest
+		if err := decodeBody(w, r, &req); err != nil {
+			return nil, err
+		}
+		if !dryRun && !req.Confirm {
+			return nil, confirmRequired("stopping a project")
+		}
+		return s.backend.StopProject(r.Context(), project(r), dryRun)
+	})
 	write("POST /api/v1/projects/{project}/windows", http.StatusCreated, func(w http.ResponseWriter, r *http.Request) (any, error) {
 		var req CreateWindowRequest
 		if err := decodeBody(w, r, &req); err != nil {
