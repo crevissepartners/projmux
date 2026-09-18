@@ -64,6 +64,22 @@ func claudeLaunchOptionArgs(model, effort, personaFile string) []string {
 	return args
 }
 
+// claudeSystemPromptSnapshotFlag is Claude's switch for the system prompt it
+// records on a conversation's first request and replays on every resume.
+const claudeSystemPromptSnapshotFlag = "--system-prompt-snapshot"
+
+// claudeResumeSnapshotArgs spells the system prompt snapshot mode a resumed
+// Agent records. Only a Claude Agent annotated with
+// coremetadata.SystemPromptSnapshotOff gets an argument; any other Agent, and
+// any other provider carrying the annotation, gets none, so its resume argv
+// stays byte-identical to the one it had before the annotation existed.
+func claudeResumeSnapshotArgs(mode string, annotations map[string]string) []string {
+	if mode != aiModeClaude || annotations[coremetadata.AnnotationAgentSystemPromptSnapshot] != coremetadata.SystemPromptSnapshotOff {
+		return nil
+	}
+	return []string{claudeSystemPromptSnapshotFlag, coremetadata.SystemPromptSnapshotOff}
+}
+
 // personaLaunch is the persona one Agent create starts with: the stored name,
 // and the snapshot the provider is given. The zero value means no persona.
 type personaLaunch struct {

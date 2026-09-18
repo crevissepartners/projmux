@@ -79,6 +79,13 @@ func (l agentResumeLaunch) personaNotice(label string) string {
 // A Claude Agent created with a persona is resumed with the same start-time
 // snapshot, found from its persona-digest annotation and never from the
 // current persona file. A snapshot that is gone does not stop the resume.
+//
+// A Claude Agent whose persona was attached or detached after its
+// conversation started also records the system prompt snapshot mode `off`,
+// and every resume of it passes `--system-prompt-snapshot off` so Claude
+// rebuilds the system prompt instead of replaying the one it recorded before
+// the attach. An Agent without that annotation gets exactly the argv it got
+// before the annotation existed.
 func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error) {
 	mode := normalizeAIMode(provider)
 	resumeArgv, err := resumeArgsForAgent(mode, conversationID)
@@ -106,10 +113,12 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 		return agentResumeLaunch{}, err
 	}
 	// The persona goes where create puts it, before the workspace arguments,
-	// so Claude's variadic --add-dir cannot take it.
+	// so Claude's variadic --add-dir cannot take it. The system prompt
+	// snapshot mode an attached persona recorded goes right after it, for the
+	// same reason.
 	personaFile, personaUnavailable := c.resumePersonaSnapshot(mode, annotations)
-	if personaFile != "" {
-		workspaceArgs = append(claudeLaunchOptionArgs("", "", personaFile), workspaceArgs...)
+	if prefix := append(claudeLaunchOptionArgs("", "", personaFile), claudeResumeSnapshotArgs(mode, annotations)...); len(prefix) > 0 {
+		workspaceArgs = append(prefix, workspaceArgs...)
 	}
 	resumeArgv = append(resumeArgv[:1], append(workspaceArgs, resumeArgv[1:]...)...)
 	plan, err := c.planAgentLaunch(mode, workspace.CWD, nil, resumeArgv, filepath.Dir(agentBin))
