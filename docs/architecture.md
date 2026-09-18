@@ -1689,7 +1689,7 @@ Explicit Registry topology materialization:
   the Window from it, and then replays the anchor Agent while preserving the
   Agent Pane uid. The default shell is bootstrap, not a replacement anchor. A
   successful repeat is a Registry-write-free and topology-write-free no-op.
-- `Recreate Project` replaces the exact same-root Project graph, after an
+- `Clear layout and open` replaces the exact same-root Project graph, after an
   explicit confirmation, in one Registry
   commit. It always allocates a new Project UID plus one new canonical Window
   and direct shell UID, whether the old Project retained Windows or had zero.

@@ -52,6 +52,33 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### Closed Project startup setting removed
+
+The closed-Project startup screen is now shown for every registered Project
+that has no running session, and it is never shown for a folder that is not a
+registered Project -- Enter registers and opens that folder in one step.
+With nothing left to choose, the setting that turned the screen off is gone.
+
+- Settings > Projects > Project Sidebar > Closed Project startup is removed.
+  Project Sidebar keeps its Runtime diagnostics choice.
+- `~/.config/projmux/sidebar-startup-picker` is no longer read. The first
+  `projmux config apply` after upgrading (which `make install` and
+  `projmux update apply` also run) removes it and prints one
+  `reclaimed retired closed-Project startup setting: removed 1 file` line.
+  Only a regular file with that name is removed; a failure is reported and
+  never fails the apply, and later applies print nothing.
+- **A saved `off` is not migrated.** If you had turned the screen off, a
+  registered closed Project shows it again. Its default row is Continue
+  project, so Enter opens the Project the way `off` did.
+- The second row is renamed from **Recreate Project** to
+  **Clear layout and open** (ko-KR: **구성 비우고 새로 열기**). It clears only
+  the Project's saved Window and Agent layout; the folder, its files,
+  `.projmux/config.toml`, and trust stay. Its confirmation screen uses the same
+  name, and its cancel row is **Keep the saved layout**. What the row does is
+  unchanged.
+- `switch sidebar-open --mode fresh` keeps its token, so a sidebar started by
+  an older client still reaches the renamed row's action.
+
 ### Antigravity statusLine support removed
 
 projmux no longer installs, reads, or judges the Antigravity `statusLine` in
@@ -123,9 +150,13 @@ still call `projmux internal tmux autosave-session-state`; that route stays and
 exits 0 without writing anything.
 
 Closed Projects start from the Registry: **Continue project** materializes the
-Project's stored Windows and Panes, and **Recreate Project** replaces them with
-a fresh graph. Settings > Projects > Project Sidebar > Closed Project startup
-and its `sidebar-startup-picker` file are unchanged. Settings no longer saves a
+Project's stored Windows and Panes, and **Recreate Project** (since renamed
+**Clear layout and open**) replaces them with a fresh graph.
+Settings > Projects > Project Sidebar > Closed Project startup and its
+`sidebar-startup-picker` file were unchanged by that release; a later release
+removed them
+([Closed Project startup setting removed](#closed-project-startup-setting-removed)).
+Settings no longer saves a
 named layout from a live session into `<project>/.projmux/layouts`, and no
 current surface opens those files.
 

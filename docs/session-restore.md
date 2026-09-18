@@ -3,13 +3,16 @@
 A closed Project starts from its Registry desired state. projmux keeps no other
 saved Project state: the Registry (`registry.json`) is the only input.
 
-A closed Project has exactly two actions:
+A registered closed Project has exactly two actions. A root that is not a
+registered Project is not asked: it opens fresh, which registers it.
 
 - `Continue project` opens the current Registry desired state with the ordinary
   materializer. A retained graph keeps its Project, Window, Pane, and Agent
   UIDs. A zero-Window Project keeps its Project UID and atomically receives one
   new canonical Window and shell UID before materialization.
-- `Recreate Project` atomically replaces the same-root graph with a new Project
+- `Clear layout and open` clears the Project's saved Window and Agent layout
+  and opens it again; the folder, its files, `.projmux/config.toml`, and trust
+  stay. It atomically replaces the same-root graph with a new Project
   UID and one new canonical Window/shell UID chain, after a confirmation naming
   the exact old Project UID and its Window/Pane/Agent counts. Declining returns
   to the startup rows and writes nothing. It does not archive or retain the old
@@ -23,8 +26,8 @@ back to the non-destructive `Continue project` action.
 
 `Continue project` needs a registered Project. On a root that is not a
 registered Project it refuses with zero Registry writes and points to
-`Recreate Project` (`continue project unavailable: <root> is not a registered
-Project; choose Recreate Project`). It never falls back to Fresh on its own.
+`Clear layout and open` (`continue project unavailable: <root> is not a registered
+Project; choose Clear layout and open`). It never falls back to Fresh on its own.
 
 projmux does not save Project state on its own at quit or on a timer.
 `projmux quit` offers only `Quit projmux` and `Cancel`. The hidden `internal tmux autosave-session-state`
@@ -66,9 +69,9 @@ errors. Dry-run writes no execution event; failed or rolled-back execution
 records an error with zero committed counts. Journal and display failures are
 best effort and never change the topology result.
 
-`Recreate Project` preserves the root, Git/worktrees, trust decision, and all unrelated Registry
+`Clear layout and open` preserves the root, Git/worktrees, trust decision, and all unrelated Registry
 graphs while changing the Project identity. A rejected commit retains the
-exact old Registry preimage. Repeating `Recreate Project` replaces identity again;
+exact old Registry preimage. Repeating `Clear layout and open` replaces identity again;
 each successful result has exactly one Project claiming the root.
 
 The saved launch default is applied only when the open carries the exact client

@@ -384,17 +384,19 @@ func TestClosedProjectStartupRefusesForeignSessionProjection(t *testing.T) {
 	}
 }
 
-// TestSwitchClosedProjectOpenWithPickerOffMaterializesThenMovesClient is
-// acceptance 1 at the switch boundary: with the startup picker off, the default
-// closed-Project open materializes the Registry topology and only then opens the
-// session; it never falls back to a bare EnsureSession.
-func TestSwitchClosedProjectOpenWithPickerOffMaterializesThenMovesClient(t *testing.T) {
+// TestSwitchClosedProjectOpenContinueMaterializesThenMovesClient is acceptance
+// 1 at the switch boundary: the startup screen's default Continue row
+// materializes the Registry topology and only then opens the session; it never
+// falls back to a bare EnsureSession.
+func TestSwitchClosedProjectOpenContinueMaterializesThenMovesClient(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	disableSidebarStartupPickerForTest(t, home)
 	topology := &fakeProjectTopologyMaterializer{materialized: true}
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	_, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueTopology}},
+	})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
@@ -405,6 +407,7 @@ func TestSwitchClosedProjectOpenWithPickerOffMaterializesThenMovesClient(t *test
 			}
 			return ""
 		},
+		nativePicker:    native,
 		projectTopology: topology,
 	}
 
@@ -423,8 +426,8 @@ func TestSwitchClosedProjectOpenWithPickerOffMaterializesThenMovesClient(t *test
 }
 
 // TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine is acceptance 2's
-// positive half: the picker's `Project topology` row is the same activation the
-// explicit picker-off automatic path performs.
+// positive half: the startup screen's Continue row is the same materializing
+// activation every other closed-Project Continue performs.
 func TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine(t *testing.T) {
 	t.Parallel()
 

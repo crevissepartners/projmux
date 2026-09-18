@@ -72,7 +72,7 @@ Templates and naming conventions are in
 
 - Live per-project, per-window, and per-pane CPU/RSS in the
   [Resource Inspector](docs/resource-attribution.md).
-- Registry-based Continue project and Recreate Project in
+- Registry-based Continue project and Clear layout and open in
   [Project Startup](docs/session-restore.md).
 - Search roots, keybindings, and updates in Settings.
 

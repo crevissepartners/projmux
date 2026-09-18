@@ -5804,7 +5804,7 @@ mkdir -p \
   "$startup_root/bin"
 chmod 0700 "$startup_root/runtime" "$startup_root/tmux"
 startup_project="$startup_root/work/alpha"
-# The `Recreate Project` legs below open a Project fresh on an exact client, and
+# The `Clear layout and open` legs below open a Project fresh on an exact client, and
 # a fresh open now applies the saved launch default to the new Window's first
 # Pane. Pin it to `shell` so these legs keep counting the canonical shell the
 # open committed instead of the picker popup an unset default opens.
@@ -5894,7 +5894,7 @@ echo \$? >"$startup_root/open-\$2.rc"
 STARTUP_OPEN_SCRIPT
 chmod 0755 "$startup_root/open-project.sh"
 
-# The `Recreate Project` row is the one startup action that replaces identity.
+# The `Clear layout and open` row is the one startup action that replaces identity.
 # Its picker selection is confirmed; this drives the same detached continuation
 # the sidebar launches once that confirmation is past, so the replacement itself
 # is exercised on its own rather than through the picker transport.
@@ -6133,11 +6133,20 @@ startup_wait_for "attached startup tmux client" sh -c \
 startup_client="$(startup_tmux list-clients -F '#{client_name}' | head -n 1)"
 startup_driver_pane="$(startup_tmux display-message -p -c "$startup_client" '#{pane_id}')"
 
-# Steps 1-6 exercise automatic closed-Project startup and direct hidden-mode
-# execution, so pin that fixture to the compatible explicit-off behavior. The
-# native no-file default is exercised separately in step 7.
-mkdir -p "$startup_root/config/projmux"
-printf 'off\n' >"$startup_root/config/projmux/sidebar-startup-picker"
+# A registered closed Project always gets the startup screen: the saved `off`
+# that used to skip it was retired with its setting. Steps 1-6 are about what
+# Continue does, so each takes the screen's default row -- Continue project,
+# which is what `off` chose -- and then asserts its own subject unchanged.
+startup_startup_screen_is_shown() {
+  local screen
+  screen="$(startup_tmux capture-pane -p -t "$startup_driver_pane" 2>/dev/null)" || return 1
+  [[ "$screen" == *"Start project"* ]]
+}
+startup_take_default_startup_row() {
+  local description="$1"
+  startup_wait_for "$description startup screen" startup_startup_screen_is_shown
+  startup_tmux send-keys -t "$startup_driver_pane" Enter
+}
 
 # 1. The Project is closed. Opening it must materialize the whole declared shell
 # topology under the stored uids and only then move the client. This raw external
@@ -6149,6 +6158,7 @@ if startup_tmux has-session -t "$startup_session" 2>/dev/null; then
   exit 1
 fi
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-project.sh' '$startup_project' topology" Enter
+startup_take_default_startup_row "closed Project Continue open"
 startup_wait_for "closed Project Continue open" test -s "$startup_root/open-topology.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-topology.rc")" != "0" ]]; then
   echo "closed Project Continue open failed" >&2
@@ -6285,6 +6295,7 @@ startup_wait_for "client back on the driver session" sh -c \
 startup_tmux kill-session -t "$startup_session"
 mv "$startup_project" "$startup_project-withdrawn"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-project.sh' '$startup_project' refused" Enter
+startup_take_default_startup_row "refused closed Project open"
 startup_wait_for "refused closed Project open" test -s "$startup_root/open-refused.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-refused.rc")" == "0" ]]; then
   echo "a missing Project root did not fail the closed Project open" >&2
@@ -6308,6 +6319,7 @@ mv "$startup_project-withdrawn" "$startup_project"
 # clean A in the Continue eligibility pair below.
 rm -f "$startup_root/open-reopened.rc"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-project.sh' '$startup_project' reopened" Enter
+startup_take_default_startup_row "closed Project reopen after refusal"
 startup_wait_for "closed Project reopen after refusal" test -s "$startup_root/open-reopened.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-reopened.rc")" != "0" ]]; then
   echo "closed Project reopen after refusal failed" >&2
@@ -6579,16 +6591,16 @@ startup_primary_pane_before="$startup_zero_window_continue_pane_uid"
 : >"$startup_agent_argv"
 startup_managed_stop retained-fresh
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
-startup_wait_for "Recreate Project continuation" test -s "$startup_root/open-new.rc"
+startup_wait_for "Clear layout and open continuation" test -s "$startup_root/open-new.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   cat "$startup_root/open-new.err" >&2 || true
   exit 1
 fi
-startup_wait_for "Recreate Project explicit client handoff" startup_client_is_on "$startup_session"
+startup_wait_for "Clear layout and open explicit client handoff" startup_client_is_on "$startup_session"
 startup_project_uid_after="$(startup_pmx get projects -o uid)"
 if [[ -z "$startup_project_uid_after" ]] || [[ "$startup_project_uid_after" == "$startup_project_uid_before_fresh" ]] ||
   [[ "$(printf '%s\n' "$startup_project_uid_after" | grep -c .)" != "1" ]]; then
-  echo "Recreate Project did not mint exactly one same-root Project identity" >&2
+  echo "Clear layout and open did not mint exactly one same-root Project identity" >&2
   startup_pmx get projects -o uid >&2 || true
   exit 1
 fi
@@ -6599,13 +6611,13 @@ startup_primary_pane_after="$(sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\
 if [[ -z "$startup_primary_window_after" ]] || [[ -z "$startup_primary_pane_after" ]] ||
   [[ "$startup_primary_window_after" == "$startup_primary_window_before" ]] ||
   [[ "$startup_primary_pane_after" == "$startup_primary_pane_before" ]]; then
-  echo "Recreate Project did not mint a new canonical Window/shell identity" >&2
+  echo "Clear layout and open did not mint a new canonical Window/shell identity" >&2
   exit 1
 fi
 if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid_after" -o uid | grep -c .)" != "1" ]] ||
   [[ "$(startup_pmx get panes --project "uid:$startup_project_uid_after" -o uid | grep -c .)" != "1" ]] ||
   [[ "$(startup_pmx get agents --project "uid:$startup_project_uid_after" -o uid 2>/dev/null | grep -c . || true)" != "0" ]]; then
-  echo "Recreate Project did not create exactly one canonical shell" >&2
+  echo "Clear layout and open did not create exactly one canonical shell" >&2
   exit 1
 fi
 startup_runtime_project_uid="$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)"
@@ -6614,11 +6626,11 @@ startup_runtime_pane_uid="$(startup_tmux list-panes -s -t "$startup_session" -F 
 if [[ "$startup_runtime_project_uid" != "$startup_project_uid_after" ]] ||
   [[ "$startup_runtime_window_uid" != "$startup_primary_window_after" ]] ||
   [[ "$startup_runtime_pane_uid" != "$startup_primary_pane_after" ]]; then
-  echo "Recreate Project runtime identity does not match the new canonical Registry shell: project=$startup_runtime_project_uid/$startup_project_uid_after window=$startup_runtime_window_uid/$startup_primary_window_after pane=$startup_runtime_pane_uid/$startup_primary_pane_after" >&2
+  echo "Clear layout and open runtime identity does not match the new canonical Registry shell: project=$startup_runtime_project_uid/$startup_project_uid_after window=$startup_runtime_window_uid/$startup_primary_window_after pane=$startup_runtime_pane_uid/$startup_primary_pane_after" >&2
   exit 1
 fi
 if [[ -s "$startup_agent_argv" ]]; then
-  echo "Recreate Project launched a removed Agent" >&2
+  echo "Clear layout and open launched a removed Agent" >&2
   cat "$startup_agent_argv" >&2 || true
   exit 1
 fi
@@ -6636,7 +6648,6 @@ startup_fresh_continue_project_uid="$startup_project_uid_after"
 startup_fresh_continue_window_uids="$(startup_pmx get windows --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
 startup_fresh_continue_pane_uids="$(startup_pmx get panes --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
 startup_fresh_anchor="$(startup_tmux display-message -p -t "$startup_session" '#{pane_id}')"
-rm -f "$startup_root/config/projmux/sidebar-startup-picker"
 startup_sidebar_log="$startup_root/fresh-stop-sidebar.log"
 startup_sidebar_input="$startup_root/fresh-stop-sidebar.in"
 mkfifo "$startup_sidebar_input"
@@ -6669,23 +6680,19 @@ startup_start_picker_log_offset="$(stat -c %s "$startup_sidebar_log")"
 printf '\r' >&5
 startup_wait_for "Fresh sidebar Start project screen" sh -c \
   "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Start project'"
-startup_wait_for "Fresh sidebar no-file Continue action" sh -c \
+startup_wait_for "Fresh sidebar Continue action" sh -c \
   "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Continue project'"
-startup_wait_for "Fresh sidebar no-file Recreate Project action" sh -c \
-  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Recreate Project'"
-startup_no_file_picker_slice="$(tail -c +$((startup_start_picker_log_offset + 1)) "$startup_sidebar_log")"
-if [[ "$(printf '%s' "$startup_no_file_picker_slice" | grep -aoF 'Continue project' | wc -l)" -ne 1 ]] ||
-  [[ "$(printf '%s' "$startup_no_file_picker_slice" | grep -aoF 'Recreate Project' | wc -l)" -ne 1 ]]; then
-  echo "no-file startup picker did not render exactly the two expected action rows once" >&2
+startup_wait_for "Fresh sidebar Clear layout and open action" sh -c \
+  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Clear layout and open'"
+startup_picker_slice="$(tail -c +$((startup_start_picker_log_offset + 1)) "$startup_sidebar_log")"
+if [[ "$(printf '%s' "$startup_picker_slice" | grep -aoF 'Continue project' | wc -l)" -ne 1 ]] ||
+  [[ "$(printf '%s' "$startup_picker_slice" | grep -aoF 'Clear layout and open' | wc -l)" -ne 1 ]]; then
+  echo "startup screen did not render exactly the two expected action rows once" >&2
   exit 1
 fi
 printf '\033' >&5
 startup_wait_for "Fresh sidebar startup Esc returns to Projects" sh -c \
   "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Projects'"
-if [[ -e "$startup_root/config/projmux/sidebar-startup-picker" ]]; then
-  echo "no-file startup picker cancel created a preference file" >&2
-  exit 1
-fi
 if startup_fresh_sidebar_terminal; then
   echo "Fresh sidebar exited instead of returning to Projects after startup Esc" >&2
   exit 1
@@ -6737,10 +6744,6 @@ startup_fresh_continue_graph_converged() {
     [[ "$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)" == "$startup_fresh_continue_project_uid" ]]
 }
 startup_wait_for "Fresh sidebar Ctrl-X -> Continue exact UID graph convergence" startup_fresh_continue_graph_converged
-if [[ -e "$startup_root/config/projmux/sidebar-startup-picker" ]]; then
-  echo "no-file startup picker selection created a preference file" >&2
-  exit 1
-fi
 
 # 8. Make the fresh Project zero-Window, then Fresh once more. This second
 # replacement proves the zero-Window input has the same always-new Project,
@@ -6757,12 +6760,12 @@ if [[ -n "$(startup_pmx get windows --project "uid:$startup_project_uid_before_r
 fi
 rm -f "$startup_root/open-new.rc"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
-startup_wait_for "repeat Recreate Project continuation" test -s "$startup_root/open-new.rc"
+startup_wait_for "repeat Clear layout and open continuation" test -s "$startup_root/open-new.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   cat "$startup_root/open-new.err" >&2 || true
   exit 1
 fi
-startup_wait_for "repeat Recreate Project explicit client handoff" startup_client_is_on "$startup_session"
+startup_wait_for "repeat Clear layout and open explicit client handoff" startup_client_is_on "$startup_session"
 startup_repeat_fresh_project_uid="$(startup_pmx get projects -o uid)"
 startup_repeat_fresh_window_uid="$(startup_pmx get windows --project "uid:$startup_repeat_fresh_project_uid" -o uid)"
 startup_repeat_fresh_pane_uid="$(startup_pmx get panes --project "uid:$startup_repeat_fresh_project_uid" -o uid)"
@@ -6772,7 +6775,7 @@ if [[ -z "$startup_repeat_fresh_project_uid" ]] || [[ "$(printf '%s\n' "$startup
   [[ "$startup_repeat_fresh_window_uid" == "$startup_window_uid_before_repeat_fresh" ]] ||
   [[ -z "$startup_repeat_fresh_pane_uid" ]] || [[ "$(printf '%s\n' "$startup_repeat_fresh_pane_uid" | grep -c .)" != "1" ]] ||
   [[ "$startup_repeat_fresh_pane_uid" == "$startup_pane_uid_before_repeat_fresh" ]]; then
-  echo "repeat Recreate Project did not replace the zero-Window Project with one new canonical UID chain" >&2
+  echo "repeat Clear layout and open did not replace the zero-Window Project with one new canonical UID chain" >&2
   exit 1
 fi
 
@@ -6792,7 +6795,7 @@ fi
 #
 # That arriving token used to be trusted verbatim, so the open reached
 # ContinueProject and was refused (today's refusal reads `... is not a
-# registered Project; choose Recreate Project`). Forwarded here against an unregistered root in an empty Registry
+# registered Project; choose Clear layout and open`). Forwarded here against an unregistered root in an empty Registry
 # with an explicit saved `off`, the continuation must re-decide it as `fresh`,
 # mint the Project, and move the client into its session. This pins the saved-off
 # compatibility path now that the missing-file default shows both actions.
@@ -6926,18 +6929,10 @@ fi
 startup_sel_tmux set-option -gq @projmux_app 1
 startup_sel_pmx internal tmux apply --bin "$bin" --config "$startup_sel_root/config/projmux/tmux.conf" --socket "$startup_sel_socket" >"$startup_sel_root/apply.out"
 
-# The remaining two preconditions: no Project claims anything, and the startup
-# picker carries the explicit saved `off` compatibility value.
+# The remaining precondition: no Project claims anything.
 if [[ -n "$(startup_sel_pmx get projects -o uid 2>/dev/null || true)" ]]; then
   echo "mode-selection fixture started with a registered Project" >&2
   startup_sel_pmx get projects -o uid >&2 || true
-  exit 1
-fi
-mkdir -p "$startup_sel_root/config/projmux"
-printf 'off\n' >"$startup_sel_root/config/projmux/sidebar-startup-picker"
-startup_sel_picker_mtime="$(stat -c %y "$startup_sel_root/config/projmux/sidebar-startup-picker")"
-if [[ "$(cat "$startup_sel_root/config/projmux/sidebar-startup-picker")" != "off" ]]; then
-  echo "mode-selection fixture did not persist the exact explicit-off value" >&2
   exit 1
 fi
 
@@ -6961,9 +6956,9 @@ startup_sel_client="$(startup_sel_tmux list-clients -F '#{client_name}' | head -
 startup_sel_driver_pane="$(startup_sel_tmux display-message -p -c "$startup_sel_client" '#{pane_id}')"
 
 startup_sel_tmux send-keys -t "$startup_sel_driver_pane" "bash '$startup_sel_root/open-selected.sh' '$startup_sel_project' '$startup_sel_session' '$startup_sel_client' '$startup_sel_driver_pane'" Enter
-startup_wait_for "picker-off sidebar continuation on an unregistered root" test -s "$startup_sel_root/open-selected.rc"
+startup_wait_for "sidebar continuation on an unregistered root" test -s "$startup_sel_root/open-selected.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_sel_root/open-selected.rc")" != "0" ]]; then
-  echo "picker-off sidebar continuation refused an unregistered root" >&2
+  echo "sidebar continuation refused an unregistered root" >&2
   cat "$startup_sel_root/open-selected.err" >&2 || true
   exit 1
 fi
@@ -6983,11 +6978,6 @@ startup_sel_pmx describe project "uid:$startup_sel_project_uid" -o json >"$start
 smoke_assert_file_contains "$startup_sel_root/project.after-selection.json" "\"root\": \"$startup_sel_project\""
 if ! startup_sel_tmux has-session -t "$startup_sel_session" 2>/dev/null; then
   echo "the re-decided mode did not open the Project session" >&2
-  exit 1
-fi
-if [[ "$(cat "$startup_sel_root/config/projmux/sidebar-startup-picker")" != "off" ]] ||
-  [[ "$(stat -c %y "$startup_sel_root/config/projmux/sidebar-startup-picker")" != "$startup_sel_picker_mtime" ]]; then
-  echo "explicit-off startup changed saved preference bytes or mtime" >&2
   exit 1
 fi
 
@@ -7053,10 +7043,6 @@ mkdir -p \
   "$fopen_root/bin"
 chmod 0700 "$fopen_root/runtime" "$fopen_root/tmux"
 fopen_project="$fopen_root/work/gamma"
-# L12 exercises the legacy automatic first-open contract from a non-interactive
-# Pane command; keep that fixture on the explicit saved-off compatibility path.
-mkdir -p "$fopen_root/config/projmux"
-printf 'off\n' >"$fopen_root/config/projmux/sidebar-startup-picker"
 
 fopen_shell="$fopen_root/shim/persistent-shell"
 cat >"$fopen_shell" <<'FOPEN_SHELL_STUB'
@@ -7400,6 +7386,15 @@ fopen_runtime_before="$(
   fopen_tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}'
 )"
 fopen_tmux send-keys -t "$fopen_driver_pane" "bash '$fopen_root/open-project.sh' '$fopen_root/home' home" Enter
+# Home is not an unregistered Project, so it keeps the startup screen; its
+# default row is Continue, the answer the retired saved `off` used to give.
+fopen_startup_screen_is_shown() {
+  local screen
+  screen="$(fopen_tmux capture-pane -p -t "$fopen_driver_pane" 2>/dev/null)" || return 1
+  [[ "$screen" == *"Start project"* ]]
+}
+fopen_wait_for "open of Home startup screen" fopen_startup_screen_is_shown
+fopen_tmux send-keys -t "$fopen_driver_pane" Enter
 fopen_wait_for "open of Home" test -s "$fopen_root/open-home.rc"
 if [[ "$(tr -d '[:space:]' <"$fopen_root/open-home.rc")" == "0" ]]; then
   echo "opening undeclared Home unexpectedly succeeded" >&2
@@ -8536,10 +8531,6 @@ chmod 0700 "$disc_root/runtime" "$disc_root/tmux"
 disc_registry="$disc_root/state/projmux/metadata/registry.json"
 SMOKE_CONTRACT_TERMINAL_STATE_PATH="$disc_registry"
 disc_pins="$disc_root/config/projmux/pins"
-# L16 likewise opens an unregistered discovery candidate non-interactively and
-# expects the automatic unregistered-Fresh/registered-Continue split.
-mkdir -p "$disc_root/config/projmux"
-printf 'off\n' >"$disc_root/config/projmux/sidebar-startup-picker"
 disc_real_tmux="$(command -v tmux)"
 SMOKE_L16_TMUX_FUNCTION=disc_tmux
 
@@ -8731,6 +8722,14 @@ SMOKE_L16_CHILD_PID_PATH="$disc_root/open-home.pid"
 SMOKE_L16_OUT_PATH="$disc_root/open-home.out"
 SMOKE_L16_ERR_PATH="$disc_root/open-home.err"
 disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' '$disc_root/home' home" Enter
+# Home keeps the startup screen; take its default Continue row.
+disc_startup_screen_is_shown() {
+  local screen
+  screen="$(disc_tmux capture-pane -p -t "$disc_driver_pane" 2>/dev/null)" || return 1
+  [[ "$screen" == *"Start project"* ]]
+}
+disc_wait_for "Home open startup screen" disc_startup_screen_is_shown
+disc_tmux send-keys -t "$disc_driver_pane" Enter
 disc_wait_for "Home open" test -s "$disc_root/open-home.rc"
 if [[ "$(tr -d '[:space:]' <"$disc_root/open-home.rc")" == "0" ]]; then
   echo "opening undeclared Home unexpectedly succeeded" >&2

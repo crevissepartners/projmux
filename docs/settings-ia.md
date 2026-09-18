@@ -58,7 +58,7 @@ step, never a silent no-op.
     Project`, which forwards to the canonical `create project --root` route for
     that one exact path, and `Unpin candidate`, which removes the preference and
     leaves the directory alone. Nothing here adopts a path automatically.
-  - `Project Sidebar [View]` — holds the two Projects sidebar policies:
+  - `Project Sidebar [View]` — holds the Projects sidebar policy:
     `Runtime diagnostics [Choice]` chooses `When needed` (the read-time default
     with nothing saved) or `Always` for the sidebar's Runtime row. `When needed`
     keeps the row for a refused runtime class or for an observation that could
@@ -68,22 +68,17 @@ step, never a silent no-op.
     Recent Windows links are unchanged, and `projmux runtime diagnostics` and
     `get runtime` never read it. An unrecognized saved value applies the default
     without writing and shows an invalid source.
-    `Closed Project startup` shows exactly two actions when no preference file
-    exists and reports `Continue project / Recreate Project - default` (`이어서 열기 /
-    Project 다시 만들기 - 기본값` in ko-KR). Saved `on` keeps those choices and reports
-    `Continue project / Recreate Project - on - saved`. Saved `off` reports
-    `Continue project - off - saved`, skips the picker, and retains the
-    registered-Continue/unregistered-Fresh automatic
-    adjudication. Reading the row or opening/cancelling the picker never writes
-    the default or changes saved preference bytes/mtime.
+    The closed-Project startup screen has no setting: a registered closed
+    Project always gets it, and a root that is not a registered Project never
+    does. Its two rows are `Continue project` and `Clear layout and open`
+    (`이어서 열기` / `구성 비우고 새로 열기` in ko-KR).
     `Continue project` materializes the Project's current Registry desired state
-    and then moves the client. `Recreate Project` confirms the exact old Project
+    and then moves the client. `Clear layout and open` confirms the exact old Project
     UID and per-kind counts before writing anything,
     atomically replaces the old Project graph with a new Project UID and a new
     canonical Window/shell UID pair, and leaves exactly one same-root claimant
     before ordinary materialization. Esc returns to Projects. Neither action
-    deletes or rewrites root, Git, or worktree data. The saved file
-    keeps its `sidebar-startup-picker` spelling.
+    deletes or rewrites the folder, its files, Git, worktree data, or trust.
 - **AI** — `AI` is a product category, never an addressable resource.
   - `Default launch target [Choice]` — an Agent Provider, a Shell Pane, or
     choose-at-launch. It is a keybinding/picker preference and does not weaken

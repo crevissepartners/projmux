@@ -1123,22 +1123,15 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 		SearchKey: "candidate pins unregistered path register project",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar, settingsGlyphOpen, settingsColorType, c.projectSidebarSummary()),
+		// The View's only remaining choice names the row. The closed-Project
+		// startup choice it used to summarize was retired with its saved file:
+		// every registered closed Project shows the startup screen, so there is
+		// nothing left to pick.
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar, settingsGlyphOpen, settingsColorType, "Runtime diagnostics"),
 		Value:     settingsProjectsSidebar,
-		SearchKey: "project sidebar closed project startup continue recreate topology runtime diagnostics",
+		SearchKey: "project sidebar runtime diagnostics",
 	})
 	return entries
-}
-
-// projectSidebarSummary reports the closed-Project startup policy. The saved
-// file and its `sidebar-startup-picker` spelling are unchanged; only the
-// destination and the wording move.
-func (c *settingsCommand) projectSidebarSummary() string {
-	startup := c.currentSidebarStartupPicker()
-	if startup.Mode.Enabled() {
-		return "closed Project startup: show Continue project and Recreate Project"
-	}
-	return "closed Project startup: Continue project"
 }
 
 // runProjectSidebarSection is the Projects > Project Sidebar view.
@@ -1165,10 +1158,6 @@ func (c *settingsCommand) runProjectSidebarSection(stdout, stderr io.Writer) err
 			return nil
 		case settingsNoopValue:
 			continue
-		case settingsSidebarStartupPickerDetail:
-			if err := c.runSidebarStartupPickerDetail(stdout, stderr); err != nil {
-				return err
-			}
 		case settingsRuntimeDiagnosticsVisibilityDetail:
 			if err := c.runProjectSidebarRuntimeDiagnosticsDetail(stdout, stderr); err != nil {
 				return err
@@ -1181,17 +1170,9 @@ func (c *settingsCommand) runProjectSidebarSection(stdout, stderr io.Writer) err
 
 func (c *settingsCommand) projectSidebarEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
-	startup := c.currentSidebarStartupPicker()
-	choice := settingsCatalogTextLocale(locale, sidebarStartupChoiceLabel(startup.Mode))
-	source := settingsCatalogTextLocale(locale, sidebarStartupSourceLabel(startup))
 	runtime := currentRuntimeDiagnosticsVisibility(c.homeDir, c.lookupEnv)
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
-		{
-			Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar+".closed-startup", settingsGlyphOpen, settingsColorType, choice+" - "+source),
-			Value:     settingsSidebarStartupPickerDetail,
-			SearchKey: "closed project startup continue open fresh sidebar startup picker",
-		},
 		{
 			Label: settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar+".runtime-diagnostics", settingsGlyphOpen, settingsColorType,
 				runtimeDiagnosticsVisibilityChoiceLabel(runtime.Mode)+" - "+runtime.Source()),

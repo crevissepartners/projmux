@@ -349,8 +349,8 @@ func TestContinueProjectUnregisteredRootRefusesWithoutReadingSnapshots(t *testin
 	if !errors.As(err, &staged) || staged.action != coremetadata.ProjectLifecycleContinue || staged.stage != "state-table" {
 		t.Fatalf("ContinueProject() error = %#v, want typed state-table Continue refusal", err)
 	}
-	if !strings.Contains(err.Error(), "choose Recreate Project") || !strings.Contains(err.Error(), "is not a registered Project") {
-		t.Fatalf("ContinueProject() error = %q, want Recreate Project guidance", err)
+	if !strings.Contains(err.Error(), "choose Clear layout and open") || !strings.Contains(err.Error(), "is not a registered Project") {
+		t.Fatalf("ContinueProject() error = %q, want Clear layout and open guidance", err)
 	}
 	// The temp root itself may spell the test name; only the message matters.
 	if strings.Contains(strings.ToLower(strings.ReplaceAll(err.Error(), continued, "<root>")), "snapshot") {

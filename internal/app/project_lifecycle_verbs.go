@@ -231,7 +231,7 @@ func (c *projectLifecycleCommand) receipt(
 
 // materialize brings the Project's current desired topology up through the one
 // shared startup transaction. `continue` is the only mode used: these verbs
-// never replace identity, which is what `Recreate Project` owns.
+// never replace identity, which is what `Clear layout and open` owns.
 func (c *projectLifecycleCommand) materialize(ctx context.Context, root, sessionName string, detached bool) error {
 	return c.switcher.authorizeAndContinueProjectOpenRequest(ctx, projectOpenRequest{
 		Target:      root,

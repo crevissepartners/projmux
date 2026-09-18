@@ -777,17 +777,16 @@ client only after it converges; a refusal, a failed preflight, or a rolled-back
 partial leaves the client where it was and reports the exact stage. The
 activation is pinned to the session the open targets, so a Project whose
 Registry projects a different session name is refused instead of populating a
-session the open never reaches. With no saved `sidebar-startup-picker`
-preference, the closed-Project startup screen has exactly two neutral actions;
-the missing-file default is read-only and does not create a config file. Saved
-`on` retains that explicit choice, while saved `off` skips the screen and keeps
-the registered-Continue/unregistered-Fresh automatic decision. `Continue
+session the open never reaches. A registered closed Project always gets the
+startup screen, which has exactly two neutral actions; a root that is not a
+registered Project never gets it and opens fresh. There is no setting that
+skips the screen. `Continue
 project` materializes current Registry desired state with the same Project UID.
 A retained graph keeps descendant UIDs; a
 zero-Window Project atomically receives a new canonical Window/shell UID chain.
 A root that is not a registered Project cannot be continued: Continue is an
-explicit zero-write refusal that points to `Recreate Project`, with no Fresh
-fallback. `Recreate Project` is the one startup row that replaces identity, and it asks
+explicit zero-write refusal that points to `Clear layout and open`, with no Fresh
+fallback. `Clear layout and open` is the one startup row that replaces identity, and it asks
 before it does. Choosing it opens a confirmation naming the exact old Project
 UID and its Window/Pane/Agent counts; declining returns to the startup rows
 with zero Registry writes, and an unreadable confirmation declines rather than
@@ -2238,13 +2237,13 @@ human configuration work should prefer `config render` and `config apply`.
   generated config. The generated app config uses absolute `$SHELL` as the
   tmux default shell when set, otherwise `/bin/sh`. `shell` starts or attaches
   the app session directly after resolving the target app session name and
-  startup directory. With no saved startup preference, Alt-1 sidebar project
-  open defaults to a two-action picker containing exactly `Continue project`
-  and `Recreate Project`; Esc returns to Projects without writing config. Saved `on`
-  keeps that picker, while saved `off` skips it and preserves the existing
-  automatic registered-Continue/unregistered-Fresh decision. `Continue
+  startup directory. Alt-1 sidebar open of a registered closed Project shows a
+  two-action picker containing exactly `Continue project` and
+  `Clear layout and open`; Esc returns to Projects without writing config. A
+  root that is not a registered Project skips the picker and opens fresh.
+  `Continue
   project` on a root that is not a registered Project, including a deleted one,
-  refuses with zero Registry writes and points to `Recreate Project`. `Recreate Project` confirms the
+  refuses with zero Registry writes and points to `Clear layout and open`. `Clear layout and open` confirms the
   exact old Project UID and its counts, then atomically replaces the Project
   with a new Project/Window/shell UID chain and one same-root claimant. A
   declined confirmation returns to the startup rows and writes nothing.

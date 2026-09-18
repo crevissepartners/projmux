@@ -1493,6 +1493,8 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	// The retired private Codex generation pool left its own files behind, and
 	// reclaims them on the same step and under the same rules.
 	c.reclaimRetiredCodexGenerationFiles(stdout)
+	// So did the retired closed-Project startup setting.
+	c.reclaimRetiredSidebarStartupFile(stdout)
 
 	resolved := ""
 	var err error

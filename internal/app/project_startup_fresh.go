@@ -26,24 +26,24 @@ const (
 
 	// projectStartupNewLabel is the exact user-facing row name.
 	//
-	// It says `Recreate Project` rather than the historical `Open fresh` because
-	// the row is the one action on the startup screen that replaces identity,
-	// and "open" is the word every other Project entry point uses for the
-	// actions that deliberately do not. `Continue project` opens, `open project`
-	// opens, `attach project` opens; only this one mints a new Project UID and
-	// releases the old graph's addresses, and the label is where an operator
-	// finds that out.
-	projectStartupNewLabel = "Recreate Project"
+	// It names what the row clears rather than what it mints. `Recreate
+	// Project`, the name it shipped with, described the internal identity
+	// replacement, and an operator read "recreate" as an offer to delete the
+	// folder and build it again -- which is the one thing this row never does.
+	// The layout is the only thing it removes, so the label says so.
+	projectStartupNewLabel = "Clear layout and open"
 
-	// projectStartupNewDescription names the replacement rather than the open.
-	projectStartupNewDescription = "replace this Project identity with a new Project, Window, and shell"
+	// projectStartupNewDescription says what is cleared and what survives,
+	// because the folder is what an operator is afraid of losing here.
+	projectStartupNewDescription = "clear the saved Window and Agent layout and open again; the folder, its files, .projmux/config.toml, and trust stay"
 
 	// projectStartupRecreateConfirmLabel is the confirmation row that authorizes
-	// the replacement.
-	projectStartupRecreateConfirmLabel = "Recreate Project"
+	// the clear. It repeats the row name so the approval names the same action
+	// the startup screen offered.
+	projectStartupRecreateConfirmLabel = "Clear layout and open"
 
 	// projectStartupRecreateCancelLabel returns to the startup screen.
-	projectStartupRecreateCancelLabel = "Keep this Project"
+	projectStartupRecreateCancelLabel = "Keep the saved layout"
 
 	// projectStartupRecreateConfirmValue is the picker/transport spelling of the
 	// approval. It is deliberately different from projectStartupValueNew so a
@@ -175,7 +175,7 @@ func (s *registryProjectFreshStarter) ProjectRegistered(root string) (bool, erro
 // reused exactly; a zero-Window Project receives one new canonical Window and
 // shell atomically before runtime materialization. A root that is not a
 // registered Project has no identity to continue: the call refuses with zero
-// Registry writes and points to Recreate Project. Nothing outside the Registry
+// Registry writes and points to Clear layout and open. Nothing outside the Registry
 // is read here.
 func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, _ string) (openedProjectBootstrap, error) {
 	if s == nil || s.resources == nil {
@@ -245,7 +245,7 @@ func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, _
 			fmt.Errorf("unregistered Continue did not fail closed: %+v", decision))
 	}
 	return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", "", "",
-		fmt.Errorf("continue project unavailable: %s is not a registered Project; choose Recreate Project", root))
+		fmt.Errorf("continue project unavailable: %s is not a registered Project; choose Clear layout and open", root))
 }
 
 // PlanProjectFreshStart resolves the exact prune for one Project root.

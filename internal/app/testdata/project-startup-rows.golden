@@ -1,5 +1,5 @@
 ui=project-startup
 header=Start project
 footer=Enter: open  |  Esc: projects
-row[0]=continue|continue|Continue project|keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain
-row[1]=fresh|fresh|Recreate Project|replace this Project identity with a new Project, Window, and shell
+row[0]=continue|continue|Continue project|keep this Project identity; open the Windows, shell Panes, and Agents the Registry declares, or create a new Window and shell when none remain
+row[1]=fresh|fresh|Clear layout and open|clear the saved Window and Agent layout and open again; the folder, its files, .projmux/config.toml, and trust stay

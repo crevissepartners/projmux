@@ -101,18 +101,18 @@ func TestPhase15StartupFreshAndProjectionStringsHaveKoreanCatalogEntries(t *test
 	ko := i18n.Locale("ko-KR")
 	fallbacks := []string{
 		"Continue project",
-		"Recreate Project",
-		"replace this Project identity with a new Project, Window, and shell",
+		"Clear layout and open",
+		"clear the saved Window and Agent layout and open again; the folder, its files, .projmux/config.toml, and trust stay",
 		"projmux: opened %s fresh; old Project UID %s -> new Project UID %s; stage=materialized",
-		"Continue project / Recreate Project",
-		"keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain",
+		"keep this Project identity; open the Windows, shell Panes, and Agents the Registry declares, or create a new Window and shell when none remain",
 		"Enter: open  |  Esc: projects",
 		"Enter: discard and start  |  Esc: cancel",
 		"Cancel",
 		"keep the saved state; nothing is deleted",
-		"closed Project startup: show Continue project and Recreate Project",
-		"closed Project startup: Continue project",
-		"show Continue project and Recreate Project for a closed Project",
+		"Clear layout and open > ",
+		"Keep the saved layout",
+		"keep the saved layout and return to the startup screen",
+		"clear the saved Window and Agent layout; the folder and its files stay",
 	}
 	for _, fallback := range fallbacks {
 		if got := localizeUIText(ko, fallback); got == fallback {

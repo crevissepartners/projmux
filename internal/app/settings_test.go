@@ -725,7 +725,6 @@ func settingsKoreanStaticRowSamples() []string {
 		settingsLabelInfoLocale(locale, "Action ID", "SettingsToggle", ""),
 		settingsLabelInfoLocale(locale, "Terminal", "Ghostty", "supported mappings: projmux setup terminal ghostty"),
 		settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Add key", "press desired key"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Closed Project startup", "Use Project topology - default"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Welcome", "revisit the shell quickstart guide"),
 		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Quit Projmux", "stops the app-owned runtime and its socket"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Updates", "current v0.0.0, latest v0.0.0"),
@@ -1334,9 +1333,6 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	mkdirAll(t, ctx.Path)
 	assertCataloguedEntries("project hooks", cmd.projectHookEntries(ctx))
 	assertCataloguedEntries("project trust", cmd.projectTrustEntries(ctx))
-
-	sidebarStartup := sidebarStartupPickerEffective{Mode: config.SidebarStartupPickerOff, Source: "default"}
-	assertCataloguedEntries("sidebar startup picker detail", cmd.sidebarStartupPickerEntries(sidebarStartup))
 
 	diagnostic := doctorAINotifyIntegration{
 		ID:             "codex-hooks",
@@ -3524,193 +3520,6 @@ func TestSettingsNotificationsAIDedupeRowsAndCustomWrite(t *testing.T) {
 	}
 	if got, want := stdout.String(), "AI notification dedupe: 75s\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
-	}
-}
-
-func TestSidebarStartupDefaultPolicyIsSharedReadOnlyAndLocaleStable(t *testing.T) {
-	t.Parallel()
-
-	var golden strings.Builder
-	for _, locale := range []string{"en-US", "ko-KR"} {
-		for _, test := range []struct {
-			name       string
-			saved      *config.SidebarStartupPicker
-			wantMode   config.SidebarStartupPicker
-			wantSource string
-		}{
-			{name: "no-file", wantMode: config.SidebarStartupPickerOn, wantSource: "default"},
-			{name: "saved-on", saved: togglePtr(config.SidebarStartupPickerOn), wantMode: config.SidebarStartupPickerOn, wantSource: "saved"},
-			{name: "saved-off", saved: togglePtr(config.SidebarStartupPickerOff), wantMode: config.SidebarStartupPickerOff, wantSource: "saved"},
-		} {
-			home := t.TempDir()
-			configHome := filepath.Join(home, "config")
-			paths, err := config.Homes{HomeDir: home, ConfigHome: configHome}.Paths()
-			if err != nil {
-				t.Fatal(err)
-			}
-			path := paths.SidebarStartupPickerFile()
-			var before []byte
-			var beforeInfo os.FileInfo
-			if test.saved != nil {
-				if err := config.SaveSidebarStartupPickerFile(path, *test.saved); err != nil {
-					t.Fatal(err)
-				}
-				stamp := time.Unix(1_700_000_000, 0)
-				if err := os.Chtimes(path, stamp, stamp); err != nil {
-					t.Fatal(err)
-				}
-				before, err = os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				beforeInfo, err = os.Stat(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			lookupEnv := func(name string) string {
-				switch name {
-				case "XDG_CONFIG_HOME":
-					return configHome
-				case "LC_ALL":
-					return locale
-				default:
-					return ""
-				}
-			}
-			cmd := &settingsCommand{
-				homeDir:   func() (string, error) { return home, nil },
-				lookupEnv: lookupEnv,
-			}
-			effective := cmd.currentSidebarStartupPicker()
-			if effective.Mode != test.wantMode || effective.Source != test.wantSource {
-				t.Fatalf("%s/%s Settings effective = %+v, want %s/%s", locale, test.name, effective, test.wantMode, test.wantSource)
-			}
-			if got := sidebarStartupPickerEnabled(cmd.homeDir, lookupEnv); got != test.wantMode.Enabled() {
-				t.Fatalf("%s/%s runtime enabled = %t, want %t", locale, test.name, got, test.wantMode.Enabled())
-			}
-
-			var row intpickercompat.Entry
-			for _, entry := range cmd.projectSidebarEntries() {
-				if entry.Value == settingsSidebarStartupPickerDetail {
-					row = entry
-					break
-				}
-			}
-			if row.Value == "" {
-				t.Fatalf("%s/%s Project Sidebar has no startup row", locale, test.name)
-			}
-			fmt.Fprintf(&golden, "locale=%s state=%s\nrow=%s\n", locale, test.name, stripANSI(row.Label))
-			for _, entry := range cmd.sidebarStartupPickerEntries(effective) {
-				if entry.Value == settingsNoopValue || strings.HasPrefix(entry.Value, settingsActionPrefixSidebarStartup) {
-					fmt.Fprintf(&golden, "detail=%s value=%s\n", stripANSI(entry.Label), entry.Value)
-				}
-			}
-			golden.WriteString("\n")
-
-			if test.saved == nil {
-				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("%s/%s default observation created %s: %v", locale, test.name, path, err)
-				}
-				continue
-			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			afterInfo, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(after, before) || !afterInfo.ModTime().Equal(beforeInfo.ModTime()) {
-				t.Fatalf("%s/%s observation changed saved preference: bytes %q -> %q, mtime %s -> %s",
-					locale, test.name, before, after, beforeInfo.ModTime(), afterInfo.ModTime())
-			}
-		}
-	}
-
-	want, err := os.ReadFile(filepath.Join("testdata", "sidebar-startup-settings.golden"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimRight(golden.String(), "\n"); got != strings.TrimRight(string(want), "\n") {
-		t.Fatalf("sidebar startup Settings golden mismatch:\ngot:\n%swant:\n%s", got, want)
-	}
-}
-
-func togglePtr(value config.SidebarStartupPicker) *config.SidebarStartupPicker {
-	return &value
-}
-
-func TestSettingsSidebarStartupPickerDetailPersistsExistingFile(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	var calls int
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			if got, want := options.UI, "settings-projects-sidebar"; got != want {
-				t.Fatalf("project sidebar UI = %q, want %q", got, want)
-			}
-			if !hasEntryValue(options.Entries, settingsSidebarStartupPickerDetail) {
-				t.Fatalf("project sidebar entries = %#v, want the closed Project startup row", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSidebarStartupPickerDetail}, nil
-		case 2:
-			if got, want := options.UI, "settings-sidebar-startup-picker"; got != want {
-				t.Fatalf("closed Project startup detail UI = %q, want %q", got, want)
-			}
-			if got, want := options.Title, "Projects - Closed Project startup"; got != want {
-				t.Fatalf("closed Project startup detail title = %q, want %q", got, want)
-			}
-			if got, want := options.Prompt, "Settings > Projects > Project Sidebar > Closed Project startup > "; got != want {
-				t.Fatalf("closed Project startup detail prompt = %q, want %q", got, want)
-			}
-			if strings.Contains(options.Title, "Labs") || strings.Contains(options.Prompt, "Labs") {
-				t.Fatalf("sidebar startup detail chrome = title %q prompt %q, want no Labs path", options.Title, options.Prompt)
-			}
-			if !hasEntryValue(options.Entries, settingsActionPrefixSidebarStartup+"on") ||
-				!hasEntryValue(options.Entries, settingsActionPrefixSidebarStartup+"off") {
-				t.Fatalf("sidebar startup detail entries = %#v, want on/off mutation rows", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSidebarStartup + "on"}, nil
-		case 3:
-			if !hasEntryLabelContaining(options.Entries, "Continue project / Recreate Project") {
-				t.Fatalf("closed Project startup entries after save = %#v, want the two-action state", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		default:
-			t.Fatalf("unexpected picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd := &settingsCommand{
-		nativePicker: nativePickerFromCompatRunner(runner),
-		homeDir:      func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_CONFIG_HOME" {
-				return filepath.Join(home, "config")
-			}
-			return ""
-		},
-	}
-
-	if err := cmd.runProjectSidebarSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runProjectSidebarSection() error = %v", err)
-	}
-	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := config.LoadSidebarStartupPickerFile(paths.SidebarStartupPickerFile()); err != nil || got != config.SidebarStartupPickerOn {
-		t.Fatalf("sidebar startup picker file = %q, %v; want on, nil", got, err)
-	}
-	if got := filepath.Base(paths.SidebarStartupPickerFile()); got != config.SidebarStartupPickerFileName {
-		t.Fatalf("sidebar startup picker file name = %q, want %q", got, config.SidebarStartupPickerFileName)
 	}
 }
 
@@ -6105,7 +5914,6 @@ func TestSettingsMutationFeedbackInventoryExcludesViewerFlows(t *testing.T) {
 		settingsActionPrefixDesktopNotifyMode + "notify",
 		settingsActionPrefixProjdir + "clear",
 		settingsActionPrefixStatusbar + "notify:emoji",
-		settingsActionPrefixSidebarStartup + "on",
 		settingsActionPrefixWorkdir + "remove:/tmp/example",
 	} {
 		if _, ok := settingsMutationLabel(value); !ok {
@@ -6116,7 +5924,6 @@ func TestSettingsMutationFeedbackInventoryExcludesViewerFlows(t *testing.T) {
 		settingsWelcomeShow,
 		settingsQuitOpen,
 		settingsActionPrefixHookView + "global:send-noti",
-		settingsSidebarStartupPickerDetail,
 		settingsKeybindingsDiagnostic,
 		settingsKeybindingsProbe,
 	} {

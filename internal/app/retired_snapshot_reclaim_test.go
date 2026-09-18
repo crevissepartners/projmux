@@ -147,7 +147,6 @@ func TestConfigApplyReclaimRemovesTargetsAndKeepsUnexpectedEntries(t *testing.T)
 
 	// Files the reclamation must never touch.
 	untouched := []string{
-		filepath.Join(f.configDir, "sidebar-startup-picker"),
 		filepath.Join(f.configDir, "config.toml"),
 		filepath.Join(f.stateDir, "registry.json"),
 		filepath.Join(f.stateDir, "usage", "snapshots.json"),
@@ -220,11 +219,15 @@ func TestConfigApplyReclaimSecondRunIsQuietNoOp(t *testing.T) {
 	reclaimWrite(t, filepath.Join(sessions, "alpha.json"), "{}")
 	reclaimWrite(t, filepath.Join(f.configDir, "sessionstate-autosave"), "on\n")
 	reclaimWrite(t, filepath.Join(f.configDir, "sessionstate-projects", "one", "autosave"), "on\n")
-	reclaimWrite(t, filepath.Join(f.configDir, "sidebar-startup-picker"), "off\n")
+	reclaimWrite(t, filepath.Join(f.configDir, retiredClosedStartupFileName), "off\n")
 
 	first := f.apply(t, "--no-reload")
-	// alpha.json, autosave, one/autosave; the emptied dirs are not counted.
+	// alpha.json, autosave, one/autosave; the emptied dirs are not counted. The
+	// retired startup setting's file is reclaimed by its own step, not here.
 	assertSingleReclaimLine(t, first, reclaimLinePrefix+"removed 3 files")
+	if reclaimExists(t, filepath.Join(f.configDir, retiredClosedStartupFileName)) {
+		t.Fatal("the retired closed-Project startup file survived the first apply")
+	}
 
 	before := reclaimTree(t, f.home)
 	second := f.apply(t, "--no-reload")
@@ -241,7 +244,7 @@ func TestConfigApplyReclaimSecondRunIsQuietNoOp(t *testing.T) {
 
 func TestConfigApplyReclaimWithNothingToReclaimPrintsNothing(t *testing.T) {
 	f := newReclaimFixture(t)
-	reclaimWrite(t, filepath.Join(f.configDir, "sidebar-startup-picker"), "on\n")
+	reclaimWrite(t, filepath.Join(f.configDir, "unrelated-note"), "keep\n")
 	reclaimWrite(t, filepath.Join(f.stateDir, "registry.json"), "{}")
 	before := reclaimTree(t, filepath.Join(f.home, ".config"))
 	stateBefore := reclaimTree(t, filepath.Join(f.home, ".local"))

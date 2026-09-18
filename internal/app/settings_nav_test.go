@@ -1005,7 +1005,6 @@ func TestSettingsDisplayLabelsKeepMachineIdentifiers(t *testing.T) {
 
 	// Config and runtime spellings are unchanged behind the renamed rows.
 	for _, pair := range []struct{ label, value string }{
-		{"Closed Project startup", settingsActionPrefixSidebarStartup + "on"},
 		{"Project automation policy", settingsActionPrefixHooks + "off"},
 		{"Resources", settingsActionPrefixLiveResources + "on"},
 		{"Status Bar", settingsActionPrefixStatusbar + "git:symbol"},
@@ -1016,7 +1015,7 @@ func TestSettingsDisplayLabelsKeepMachineIdentifiers(t *testing.T) {
 			t.Fatalf("%s row lost its compatibility action spelling %q", pair.label, pair.value)
 		}
 	}
-	for _, prefix := range []string{"sidebar-startup:", "project-hooks:", "live-resources:", "statusbar-decoration:", "workdir:", "projdir:", "switch:", "keymap:", "theme:"} {
+	for _, prefix := range []string{"project-hooks:", "live-resources:", "statusbar-decoration:", "workdir:", "projdir:", "switch:", "keymap:", "theme:"} {
 		if _, ok := settingsEntryMetaForValue(prefix + "contract-fixture"); !ok {
 			t.Fatalf("compatibility action prefix %q lost its owner contract", prefix)
 		}

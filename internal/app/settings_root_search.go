@@ -477,8 +477,6 @@ func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootRe
 
 	switch node.ID {
 	// Projects -------------------------------------------------------------
-	case settingsNavProjectsSidebar + ".closed-startup":
-		return settingsSidebarStartupPickerDetail, true
 	case settingsNavProjectsSidebar + ".runtime-diagnostics":
 		return settingsRuntimeDiagnosticsVisibilityDetail, true
 	case settingsNavProjectsPins + ".pin-current":

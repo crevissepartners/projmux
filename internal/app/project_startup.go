@@ -28,12 +28,15 @@ const (
 
 	projectStartupValueTopology = "continue"
 
-	// projectTopologyStartupDescription is the one description shared by the
-	// startup picker row and the Settings choice, so the two cannot drift. It
-	// names Agents because the row restores them: a saved Agent comes back into
-	// its own Pane and, when the Registry recorded a provider session ref, into
-	// the conversation it already had.
-	projectTopologyStartupDescription = "keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain"
+	// projectTopologyStartupDescription is the startup screen's Continue row.
+	//
+	// It deliberately avoids "restore saved", which the row shipped with: there
+	// is no snapshot to restore from. The Registry holds the Project's declared
+	// Windows, shell Panes and Agents, and this row materializes that declared
+	// state. It still names Agents, because an Agent does come back into its own
+	// Pane and, when the Registry recorded a provider session ref, into the
+	// conversation it already had.
+	projectTopologyStartupDescription = "keep this Project identity; open the Windows, shell Panes, and Agents the Registry declares, or create a new Window and shell when none remain"
 )
 
 var errProjectStartupBack = errors.New("project startup back")
@@ -133,10 +136,7 @@ func (c *switchCommand) resolveProjectStartupMode(sessionName, target string) (p
 	if adjudicated.Kind != projectStartupKindTopology {
 		return adjudicated, nil
 	}
-	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
-		return c.pickProjectStartupMode(sessionName, target), nil
-	}
-	return adjudicated, nil
+	return c.pickProjectStartupMode(sessionName, target), nil
 }
 
 // defaultProjectStartupMode is the single adjudication of the startup mode a
@@ -408,29 +408,29 @@ func (c *switchCommand) confirmProjectRecreate(target string) bool {
 	return strings.TrimSpace(result.Value) == projectStartupRecreateConfirmValue
 }
 
-// projectRecreateConfirmOptions renders the replacement the operator is about
-// to approve. The exact old Project UID and the per-kind counts are the whole
-// content: an approval that does not say what is being replaced is not one.
+// projectRecreateConfirmOptions renders the clear the operator is about to
+// approve. The exact old Project UID and the per-kind counts are the whole
+// content: an approval that does not say what is being cleared is not one.
 func projectRecreateConfirmOptions(plan projectFreshStartPlan) intpickercompat.Options {
 	locale := settingsLocale()
 	detail := plan.ProjectUID + " — " + plan.Counts()
 	return intpickercompat.Options{
 		UI:     "project-recreate-confirm",
-		Prompt: settingsCatalogText("Recreate Project > "),
-		Header: settingsCatalogText("Recreate Project"),
+		Prompt: settingsCatalogText("Clear layout and open > "),
+		Header: settingsCatalogText("Clear layout and open"),
 		Footer: "Enter: confirm  |  Esc: back",
 		Entries: []intpickercompat.Entry{
 			{
 				Label: settingsLabel(settingsGlyphInfo, settingsColorInfo,
 					localizeUIText(locale, projectStartupRecreateCancelLabel),
-					localizeUIText(locale, "keep this Project identity and return to the startup screen")),
+					localizeUIText(locale, "keep the saved layout and return to the startup screen")),
 				Value:     "",
 				SearchKey: localizeUIText(locale, projectStartupRecreateCancelLabel),
 			},
 			{
 				Label: settingsLabel(settingsGlyphOpen, settingsColorType,
 					localizeUIText(locale, projectStartupRecreateConfirmLabel),
-					localizeUIText(locale, "replace this Project identity; the old graph is removed")+" ("+detail+")"),
+					localizeUIText(locale, "clear the saved Window and Agent layout; the folder and its files stay")+" ("+detail+")"),
 				Value:     projectStartupRecreateConfirmValue,
 				SearchKey: localizeUIText(locale, projectStartupRecreateConfirmLabel),
 			},

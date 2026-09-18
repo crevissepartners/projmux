@@ -33,7 +33,7 @@ unknown-command contract.
 | direct `pin list|add|remove|toggle|clear` | `pin project ...` |
 | `prune ephemeral` | `runtime prune` |
 | `prune session-state ...` | None. Project snapshots were removed; `registry.json` is the only saved Project state |
-| `session-state status|save|delete|restore|preview|popup` | None. The interim `create|get|delete|restore|prune snapshot` replacements were removed with Project snapshots; Continue project and Recreate Project start closed Projects from the Registry |
+| `session-state status|save|delete|restore|preview|popup` | None. The interim `create|get|delete|restore|prune snapshot` replacements were removed with Project snapshots; Continue project and Clear layout and open start closed Projects from the Registry |
 | direct `tag list|toggle|clear`, `tag project ...` | `runtime tag ...` |
 
 The surviving mixed-root commands are exactly `attach project`, `focus

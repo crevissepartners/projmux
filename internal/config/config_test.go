@@ -108,15 +108,6 @@ func TestPathsStatusbarDecorationFile(t *testing.T) {
 	}
 }
 
-func TestPathsSidebarStartupPickerFile(t *testing.T) {
-	t.Parallel()
-
-	paths := Paths{ConfigDir: "/tmp/config/projmux", StateDir: "/tmp/state/projmux"}
-	if got, want := paths.SidebarStartupPickerFile(), filepath.Join(paths.ConfigDir, "sidebar-startup-picker"); got != want {
-		t.Fatalf("SidebarStartupPickerFile() = %q, want %q", got, want)
-	}
-}
-
 func TestPathsNotificationFiles(t *testing.T) {
 	t.Parallel()
 
@@ -455,56 +446,6 @@ func assertAIEnabledAgents(t *testing.T, got, want []AIAgentProvider) {
 		if got[i] != want[i] {
 			t.Fatalf("AI enabled agents = %#v, want %#v", got, want)
 		}
-	}
-}
-
-func TestSidebarStartupPickerRoundtrip(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join(t.TempDir(), "config", SidebarStartupPickerFileName)
-	if got, err := LoadSidebarStartupPickerFile(path); err != nil || got != SidebarStartupPickerOn {
-		t.Fatalf("LoadSidebarStartupPickerFile(missing) = %q, %v; want %q, nil", got, err, SidebarStartupPickerOn)
-	}
-
-	if err := SaveSidebarStartupPickerFile(path, SidebarStartupPickerOff); err != nil {
-		t.Fatalf("SaveSidebarStartupPickerFile() error = %v", err)
-	}
-	got, err := LoadSidebarStartupPickerFile(path)
-	if err != nil {
-		t.Fatalf("LoadSidebarStartupPickerFile() error = %v", err)
-	}
-	if got != SidebarStartupPickerOff {
-		t.Fatalf("LoadSidebarStartupPickerFile() = %q, want %q", got, SidebarStartupPickerOff)
-	}
-}
-
-func TestSidebarStartupPickerDropsBooleanAliases(t *testing.T) {
-	t.Parallel()
-
-	// "false" was a legacy boolean-ish alias; it is dropped and absorbs into
-	// the default (On).
-	path := filepath.Join(t.TempDir(), SidebarStartupPickerFileName)
-	if err := os.WriteFile(path, []byte("false\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := LoadSidebarStartupPickerFile(path)
-	if err != nil {
-		t.Fatalf("LoadSidebarStartupPickerFile() error = %v", err)
-	}
-	if got != SidebarStartupPickerOn {
-		t.Fatalf("LoadSidebarStartupPickerFile(false) = %q, want %q", got, SidebarStartupPickerOn)
-	}
-
-	// The canonical "off" value still resolves to Off.
-	if err := os.WriteFile(path, []byte("off\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err = LoadSidebarStartupPickerFile(path)
-	if err != nil {
-		t.Fatalf("LoadSidebarStartupPickerFile() error = %v", err)
-	}
-	if got != SidebarStartupPickerOff {
-		t.Fatalf("LoadSidebarStartupPickerFile(off) = %q, want %q", got, SidebarStartupPickerOff)
 	}
 }
 

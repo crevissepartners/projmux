@@ -1272,7 +1272,7 @@ func TestSwitchProjectOpenStartupPickerHasExactlyTwoActions(t *testing.T) {
 		t.Fatalf("startup rows = %d, want %d: %#v", got, want, startupOptions.Entries)
 	}
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Continue project")
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Recreate Project")
+	requireSwitchEntryLabel(t, startupOptions.Entries, "Clear layout and open")
 	requireSwitchEntryValueOrder(t, startupOptions.Entries, []string{
 		projectStartupValueTopology,
 		projectStartupValueNew,
@@ -1348,13 +1348,6 @@ func TestSwitchSidebarProjectStartupEscReturnsToProjectsWithoutHandoff(t *testin
 	if executor.ensureSessionName != "" || executor.openSessionName != "" || executor.authorizeCalled {
 		t.Fatalf("Esc should not create/open/authorize: %#v", executor)
 	}
-	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(paths.SidebarStartupPickerFile()); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Esc created the default preference file: %v", err)
-	}
 }
 
 func TestProjectStartupPickerFailureFallsBackToContinue(t *testing.T) {
@@ -1426,46 +1419,10 @@ func TestSwitchProjectOpenExistingSessionSkipsStartupPicker(t *testing.T) {
 	}
 }
 
-func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	disableSidebarStartupPickerForTest(t, home)
-	var pickerCalled bool
-	executor := &capturingSwitchSessionExecutor{}
-	_, native := scriptedPicker(t, []pickerStep{
-		{observe: func(intpickercompat.Options) { pickerCalled = true }},
-	})
-	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_CONFIG_HOME" {
-				return filepath.Join(home, "config")
-			}
-			return ""
-		},
-		nativePicker: native,
-	}
-	wireFakeProjectSessionPlan(cmd)
-
-	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
-	}
-	if pickerCalled {
-		t.Fatal("startup picker was called when disabled")
-	}
-	if executor.ensureSessionName != "workspace" || executor.openSessionName != "workspace" {
-		t.Fatalf("sessions = ensure %q open %q, want empty create and open", executor.ensureSessionName, executor.openSessionName)
-	}
-}
-
 func TestSwitchProjectOpenTrustDenyAfterStartupSelectionAbortsWithoutSession(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
 	_, native := scriptedPicker(t, []pickerStep{
@@ -1502,12 +1459,16 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionAbortsWithoutSession(t *
 	}
 }
 
-func TestSwitchProjectOpenStartupPickerOffStillChecksTrustBeforeCreate(t *testing.T) {
+// The startup screen's Continue row still passes the trust gate before any
+// session is created.
+func TestSwitchProjectOpenContinueChecksTrustBeforeCreate(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	disableSidebarStartupPickerForTest(t, home)
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	_, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueTopology}},
+	})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
@@ -1518,6 +1479,7 @@ func TestSwitchProjectOpenStartupPickerOffStillChecksTrustBeforeCreate(t *testin
 			}
 			return ""
 		},
+		nativePicker: native,
 	}
 	wireFakeProjectSessionPlan(cmd)
 
@@ -1599,9 +1561,6 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	}
 	if err := os.WriteFile(paths.PinFile(), []byte(fixture.path("pins/app")+"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
-	}
-	if err := config.SaveSidebarStartupPickerFile(paths.SidebarStartupPickerFile(), config.SidebarStartupPickerOff); err != nil {
-		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
 	}
 	t.Chdir(fixture.path("managed/work-a/nested"))
 
@@ -3047,7 +3006,6 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	disableSidebarStartupPickerForTest(t, home)
 	var gotRunnerOptions []intpickercompat.Options
 	store := newStubPinStore()
 	executor := &capturingSwitchSessionExecutor{}
@@ -3056,6 +3014,9 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	_, native := scriptedPicker(t, []pickerStep{
 		{observe: observe, reply: intpickercompat.Result{Key: switchPinExpectKey, Value: "/tmp/app"}},
 		{observe: observe, reply: intpickercompat.Result{Value: "/tmp/app"}},
+		// This fixture wires no registration reader, so the open reaches the
+		// closed-Project startup screen; its default row continues.
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueTopology}},
 	})
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
@@ -3773,30 +3734,6 @@ func equalEntries(got, want []intpickercompat.Entry) bool {
 		}
 	}
 	return true
-}
-
-func enableSidebarStartupPickerForTest(t *testing.T, home string) {
-	t.Helper()
-
-	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
-	if err != nil {
-		t.Fatalf("Paths() error = %v", err)
-	}
-	if err := config.SaveSidebarStartupPickerFile(paths.SidebarStartupPickerFile(), config.SidebarStartupPickerOn); err != nil {
-		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
-	}
-}
-
-func disableSidebarStartupPickerForTest(t *testing.T, home string) {
-	t.Helper()
-
-	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
-	if err != nil {
-		t.Fatalf("Paths() error = %v", err)
-	}
-	if err := config.SaveSidebarStartupPickerFile(paths.SidebarStartupPickerFile(), config.SidebarStartupPickerOff); err != nil {
-		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
-	}
 }
 
 type switchFixtureFS struct {

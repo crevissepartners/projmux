@@ -973,17 +973,16 @@ directories once they are empty. Any other entry there is kept, and listed
 by the apply that removes the files.
 `PROJMUX_SESSIONSTATE_AUTOSAVE` is still ignored without a warning.
 
-With no saved preference, Project open from the Alt-1 sidebar shows a native
-`Start project` step with exactly `Continue project` and `Recreate Project`.
-Settings > Projects > Project Sidebar > Closed Project startup reports this as
-`Continue project / Recreate Project - default`. A saved `on` keeps the same explicit
-choice and reports `Continue project / Recreate Project - on - saved`. A saved `off`
-reports `Continue project - off - saved` and skips the picker: a registered root
-continues, while an unregistered root follows the existing Fresh adjudication.
+Opening a registered closed Project from the Alt-1 sidebar shows a native
+`Start project` step with exactly `Continue project` and
+`Clear layout and open`. A root that is not a registered Project skips that
+step and opens fresh, which registers it. There is no setting that skips the
+step for a registered Project.
 An explicit `Continue project` on a root that is not a registered Project
-refuses with zero writes and points to `Recreate Project`.
-Resolving or cancelling the missing-file default never creates the preference
-file or changes saved bytes or mtime. `Recreate Project` confirms first, then atomically replaces the old Project graph
+refuses with zero writes and points to `Clear layout and open`.
+`Clear layout and open` clears only the saved Window and Agent layout: the
+folder, its files, `.projmux/config.toml`, and trust stay. It confirms first,
+then atomically replaces the old Project graph
 with a new Project UID and a new canonical Window/shell UID pair. Exactly one
 same-root Project claimant remains. The root directory,
 Git/worktree data, and the trust decision remain unchanged. Esc returns to
@@ -1002,10 +1001,9 @@ derives the default app session identity and startup directory from the
 current project context when available; otherwise it uses the `home` target
 and home directory.
 
-The closed-Project startup preference lives in
-`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`. It accepts
-the existing `on` and `off` bytes; absence is a read-only effective
-`on - default`, not a migration or an implicit write.
+The retired closed-Project startup setting's file under
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/` is not read, and `config apply`
+removes it; see [Upgrading](upgrading.md#closed-project-startup-setting-removed).
 
 Interactive `projmux quit` offers only `Quit projmux` and `Cancel`. Neither it
 nor `quit --yes` / `quit --force` saves Project state.

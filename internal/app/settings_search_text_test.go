@@ -96,7 +96,6 @@ func settingsSearchFixedNode(id string) func(string) string {
 // prefix is shared with mutations) but whose owning loop only opens a View or
 // chooser. Each is scoped to the UI that renders it.
 var settingsSearchViewOpeners = []settingsSearchViewOpener{
-	{"settings-projects-sidebar", settingsSearchExact(settingsSidebarStartupPickerDetail), settingsSearchFixedNode(settingsNavProjectsSidebar + ".closed-startup")},
 	{"settings-projects-sidebar", settingsSearchExact(settingsRuntimeDiagnosticsVisibilityDetail), settingsSearchFixedNode(settingsNavProjectsSidebar + ".runtime-diagnostics")},
 	{"settings-notifications-desktop", settingsSearchExact(settingsActionPrefixDesktopNotifyMode + "choose"), settingsSearchFixedNode(settingsNavNotifyDesktop + ".mode")},
 	{"settings-theme-global", settingsSearchExact(themeAction("preset")), settingsSearchFixedNode(settingsNavAppearanceTheme + ".preset")},

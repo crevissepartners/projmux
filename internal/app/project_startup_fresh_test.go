@@ -179,14 +179,14 @@ func TestProjectStartupRowTable(t *testing.T) {
 			name:            "continue project",
 			candidate:       topologyProjectStartupCandidate(),
 			wantName:        "Continue project",
-			wantDescription: "keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain",
+			wantDescription: "keep this Project identity; open the Windows, shell Panes, and Agents the Registry declares, or create a new Window and shell when none remain",
 			wantValue:       "continue",
 		},
 		{
 			name:            "open fresh",
 			candidate:       newProjectStartupCandidate(),
-			wantName:        "Recreate Project",
-			wantDescription: "replace this Project identity with a new Project, Window, and shell",
+			wantName:        "Clear layout and open",
+			wantDescription: "clear the saved Window and Agent layout and open again; the folder, its files, .projmux/config.toml, and trust stay",
 			wantValue:       "fresh",
 		},
 	}
@@ -215,7 +215,7 @@ func TestProjectStartupKoreanLocaleRendersExactTwoRowsAndFreshConfirmation(t *te
 		topologyProjectStartupCandidate(locale),
 		newProjectStartupCandidate(locale),
 	}
-	if got, want := []string{candidates[0].Label, candidates[1].Label}, []string{"이어서 열기", "Project 다시 만들기"}; !slices.Equal(got, want) {
+	if got, want := []string{candidates[0].Label, candidates[1].Label}, []string{"이어서 열기", "구성 비우고 새로 열기"}; !slices.Equal(got, want) {
 		t.Fatalf("Korean startup row labels = %q, want %q", got, want)
 	}
 	options := projectStartupPickerOptions(candidates)
@@ -230,7 +230,7 @@ func TestProjectStartupKoreanLocaleRendersExactTwoRowsAndFreshConfirmation(t *te
 	if len(options.Entries) != 2 {
 		t.Fatalf("Korean startup rows = %d, want exactly 2", len(options.Entries))
 	}
-	for index, want := range []string{"이어서 열기", "Project 다시 만들기"} {
+	for index, want := range []string{"이어서 열기", "구성 비우고 새로 열기"} {
 		if !strings.Contains(options.Entries[index].Label, want) {
 			t.Fatalf("Korean startup row %d = %q, want %q", index, options.Entries[index].Label, want)
 		}
@@ -276,7 +276,7 @@ func TestProjectStartupNewRowValuePaths(t *testing.T) {
 
 // TestContinueUnregisteredRootIsZeroWriteRecreateRefusalWithoutHandoff pins the
 // unregistered-root Continue cell at the seam: a typed state-table refusal that
-// names Recreate Project, no Registry transaction, and no topology
+// names Clear layout and open, no Registry transaction, and no topology
 // materialization or runtime open afterwards.
 func TestContinueUnregisteredRootIsZeroWriteRecreateRefusalWithoutHandoff(t *testing.T) {
 	t.Parallel()
@@ -287,7 +287,7 @@ func TestContinueUnregisteredRootIsZeroWriteRecreateRefusalWithoutHandoff(t *tes
 	starter := &registryProjectFreshStarter{resources: store.store(), shell: "/bin/zsh"}
 
 	_, err := starter.ContinueProject(context.Background(), root, "continued")
-	want := "continue project unavailable: " + root + " is not a registered Project; choose Recreate Project"
+	want := "continue project unavailable: " + root + " is not a registered Project; choose Clear layout and open"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Continue error = %v, want %q", err, want)
 	}
@@ -673,7 +673,6 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 ) {
 	t.Helper()
 	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
 	snapshotPath := writeLegacyProjectSnapshotFile(t, filepath.Join(home, "state", "projmux", "sessions"), "alpha", "/tmp/workspace")
 
 	store := freshStartFixtureStore(t)

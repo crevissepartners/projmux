@@ -1272,13 +1272,15 @@ run_inside_lifecycle() {
     "$bin" "$@"
 }
 
-# The lifecycle fixture below predates the interactive closed-Project startup
-# surface: its three `switch open` calls exercise automatic create/continue and
-# injected-create-failure outcomes from a non-interactive process. Preserve that
-# exact contract with the explicit saved-off compatibility mode; no-file picker
-# behavior is covered by the dedicated unit table and L11 native E2E.
-mkdir -p "$XDG_CONFIG_HOME/projmux"
-printf 'off\n' >"$XDG_CONFIG_HOME/projmux/sidebar-startup-picker"
+# The lifecycle fixture below exercises create/continue and injected-create
+# failure outcomes from a non-interactive process. Its two unregistered roots
+# open fresh with no startup screen. The registered Session State Project does
+# get the screen -- every registered closed Project does -- so that one open
+# answers it through the native picker's scripted line mode: the tty fallback is
+# off, stdin is not a terminal, and `1` selects the first row, Continue project.
+# That is deterministic with or without a controlling terminal; an interactive
+# screen here would render locally and not at all in CI. The screen itself is
+# covered by the unit table and the L11 native E2E.
 
 # Registered Project lifecycle uses the same run-unique socket and isolated XDG
 # root. Register and materialize one exact Project, prove the retained autosave
@@ -1297,7 +1299,8 @@ if [[ -z "$session_state_name" ]]; then
   echo "registered Session State Project has no declared session" >&2
   exit 1
 fi
-run_inside_lifecycle switch open "$session_state_root" >"$PROJMUX_SMOKE_WORKDIR/session-state-open.out"
+PROJMUX_NATIVE_TTY_FALLBACK=0 PROJMUX_NATIVE_LINE_MODE=1 \
+  run_inside_lifecycle switch open "$session_state_root" >"$PROJMUX_SMOKE_WORKDIR/session-state-open.out" <<<'1'
 # Bind the follow-up mutations to the exact handoff receipt rather than
 # rediscovering a Pane from a session name after the asynchronous clean-exit
 # controller has started observing the host. The control client is the stable

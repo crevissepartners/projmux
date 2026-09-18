@@ -524,9 +524,11 @@ func TestProjectSidebarOffersTheRuntimeDiagnosticsChoice(t *testing.T) {
 	for _, entry := range command.projectSidebarEntries() {
 		values = append(values, entry.Value)
 	}
-	want := []string{settingsBackValue, settingsSidebarStartupPickerDetail, settingsRuntimeDiagnosticsVisibilityDetail}
+	// The retired closed-Project startup choice left Runtime diagnostics as the
+	// View's only choice.
+	want := []string{settingsBackValue, settingsRuntimeDiagnosticsVisibilityDetail}
 	if !reflect.DeepEqual(values, want) {
-		t.Fatalf("Project Sidebar rows = %#v, want the Runtime diagnostics choice beside the startup choice %#v", values, want)
+		t.Fatalf("Project Sidebar rows = %#v, want only the Runtime diagnostics choice %#v", values, want)
 	}
 	rendered := strings.Join(entryLabels(command.projectSidebarEntries()), "\n")
 	if !strings.Contains(rendered, "When needed") || !strings.Contains(rendered, "default") {

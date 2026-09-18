@@ -147,7 +147,6 @@ var settingsDynamicEntryCatalog = []struct {
 	{settingsActionPrefixWorkdirItem, settingsNavProjectsExtraRoots + ".item", settingsNavigationMeta("Additional discovery roots", "settings.text.additional_discovery_roots", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixPinItem, settingsNavProjectsPins + ".item", settingsNavigationMeta("Pinned Projects", "settings.text.pinned_projects", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixCandidatePinItem, settingsNavProjectsCandidates + ".item", settingsNavigationMeta("Candidate Pins", "settings.text.candidate_pins", settingsAxisGlobal, settingsOwnerProjectPicker)},
-	{settingsActionPrefixSidebarStartup, "", settingsActionMeta("Closed Project startup", "settings.text.closed_project_startup", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixRuntimeDiagnostics, "", settingsActionMeta("Runtime diagnostics", "picker.runtime.title", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixHookAdd, "", settingsActionMeta("Hook maker - add", "settings.text.hooks", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixHookEdit, "", settingsActionMeta("Hook maker - edit", "settings.text.hooks", settingsAxisBoth, settingsOwnerHooks)},
@@ -242,14 +241,13 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 		switch value {
 		case settingsProjectAdd, settingsProjectPins, settingsProjectCandidatePins,
 			settingsProjectRootManage, settingsWorkdirAdd,
-			settingsWorkdirList, settingsProjectsSidebar, settingsSidebarStartupPickerDetail,
+			settingsWorkdirList, settingsProjectsSidebar,
 			settingsRuntimeDiagnosticsVisibilityDetail:
 			return true
 		}
 		return strings.HasPrefix(value, settingsActionPrefixWorkdirItem) ||
 			strings.HasPrefix(value, settingsActionPrefixPinItem) ||
 			strings.HasPrefix(value, settingsActionPrefixCandidatePinItem) ||
-			strings.HasPrefix(value, settingsActionPrefixSidebarStartup) ||
 			strings.HasPrefix(value, settingsActionPrefixRuntimeDiagnostics)
 	case settingsOwnerAI:
 		return value == settingsAIDefaultMode || value == settingsAIEnabledAgents ||
@@ -366,17 +364,12 @@ const (
 	settingsActionPrefixCandidatePinItem   = "candidate-pin-item:"
 	settingsActionPrefixHookEvent          = "hook-event:"
 	// settingsActionPrefixRuntimeDiagnostics owns the Projects sidebar
-	// Runtime diagnostics visibility choice. It is its own spelling rather
-	// than a `sidebar-startup:` reuse because the two preferences are
-	// independent sidebar presentation policies.
+	// Runtime diagnostics visibility choice.
 	settingsActionPrefixRuntimeDiagnostics = "runtime-diagnostics:"
 	// settingsActionPrefixRootResult owns the global Settings-root search
 	// results. The suffix is the catalog node ID of the target row plus, for a
 	// code-enumerated template, its instance chain.
-	settingsActionPrefixRootResult = "root-result:"
-	// settingsActionPrefixSidebarStartup owns the Projects sidebar
-	// Closed Project startup choice.
-	settingsActionPrefixSidebarStartup         = "sidebar-startup:"
+	settingsActionPrefixRootResult             = "root-result:"
 	settingsActionPrefixLocale                 = "locale:"
 	settingsActionPrefixWelcome                = "welcome:"
 	settingsActionPrefixTrust                  = "trust:"
