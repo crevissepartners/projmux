@@ -27,6 +27,18 @@
     <kbd>Alt-1</kbd>
   </h2>
   <ul class="list" bind:this={list} use:listKeys={onEscape}>
+    <!-- Home is `/`: every Project's Agents, before any one Project. -->
+    <li class="home-item">
+      <button
+        type="button"
+        class="row"
+        aria-current={route.sel.project || route.short ? undefined : "true"}
+        onclick={() => go({})}
+      >
+        <div class="title"><span class="name">{t("web.home.title")}</span></div>
+        <div class="sub">{t("web.home.sub")}</div>
+      </button>
+    </li>
     {#each live.tree.projects as project (project.uid)}
       <li>
         <button

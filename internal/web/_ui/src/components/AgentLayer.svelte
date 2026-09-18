@@ -1,7 +1,8 @@
 <script lang="ts">
   // One layer over the page for reading about Agents: an Agent's transcript,
   // or the messages two Agents sent each other. It only reads. It closes on
-  // Escape, on a click outside it, and on its ×.
+  // Escape, on a click outside it, and on its ×. An Agent that is live in a
+  // Window also gets a way to that Window, focused on its slot.
   //
   // A message body is shown as the plain text it is, line breaks kept. It is
   // what one Agent wrote to another, so it is never read as markup.
@@ -9,9 +10,10 @@
   import { get, paths } from "../lib/api";
   import { explain, phaseText, providerText } from "../lib/errors";
   import { t } from "../lib/i18n.svelte";
+  import { go } from "../lib/router.svelte";
   import { live } from "../lib/state.svelte";
   import { fullTime, shortTime } from "../lib/time";
-  import { agentTitle, type AgentRecord, type AgentView } from "../lib/tree";
+  import { agentTitle, locateSlot, onlineOf, slotRef, type AgentRecord, type AgentView } from "../lib/tree";
   import type { LayerTarget, PeerMessage, PeerMessages } from "../lib/types";
   import AgentBadges from "./AgentBadges.svelte";
   import Chat from "./Chat.svelte";
@@ -39,6 +41,21 @@
         cwd: "",
       }
     );
+  }
+
+  // Where an online Agent is running: its live slot, if a Window holds one.
+  // An offline Agent, or one no live pane holds, has nowhere to go.
+  const slot = $derived.by(() => {
+    if (target.kind !== "agent" || onlineOf(record(target.uid)) !== "online") return null;
+    const found = locateSlot(live.tree, target.uid);
+    return found?.pane.runtimeId ? found : null;
+  });
+
+  function goToWindow() {
+    if (!slot) return;
+    const to = { project: slot.project.uid, window: slot.win.uid, pane: slotRef(slot.pane) };
+    onClose();
+    go(to);
   }
 
   let panel: HTMLElement | undefined = $state();
@@ -139,6 +156,14 @@
           {/if}
         {/if}
       </div>
+      {#if slot}
+        <button
+          type="button"
+          class="tbtn layer-go"
+          title={t("web.layer.go_window_title", { project: slot.project.name, window: slot.win.name })}
+          onclick={goToWindow}>{t("web.layer.go_window")}</button
+        >
+      {/if}
       <span class="tag">{t("web.layer.read_only")}</span>
       <button type="button" class="layer-close" title={t("web.layer.close")} aria-label={t("web.layer.close")} onclick={onClose}
         >×</button

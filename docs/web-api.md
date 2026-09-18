@@ -418,7 +418,7 @@ Every path below serves the client; anything else outside `/api/` and
 
 | path | view |
 | --- | --- |
-| `/` | the overview |
+| `/` | Home: every Registry Agent of every Project, offline ones too, as cards grouped by Project; a card opens the Agent layer without changing the address |
 | `/project/{project}` | the Project's graph tab: its first tab, which cannot be closed, with the Project's Agent cards and conversation edges |
 | `/project/{project}/window/{window}` | a Window with all its slots |
 | `/project/{project}/window/{window}/agent/{agent}` | the Window, focused on an agent's slot |
