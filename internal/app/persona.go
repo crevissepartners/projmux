@@ -213,7 +213,7 @@ func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
 			source = os.Stdin
 		}
 	} else {
-		opened, err := os.Open(*file)
+		opened, err := openFileUnderParent(*file)
 		if err != nil {
 			return fmt.Errorf("persona set: %w", err)
 		}
@@ -327,7 +327,7 @@ func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error 
 	if err := runner(parts[0], append(parts[1:], tempPath), stdout, stderr); err != nil {
 		return fmt.Errorf("persona edit: editor %q exited: %w; nothing was written", editor, err)
 	}
-	edited, err := os.Open(tempPath)
+	edited, err := openFileUnderParent(tempPath)
 	if err != nil {
 		return fmt.Errorf("persona edit: read the edited copy: %w; nothing was written", err)
 	}
@@ -358,6 +358,18 @@ func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error 
 	}
 	_, err = fmt.Fprintf(stdout, "edited persona %s %s (%d bytes) at %s\n", entry.Name, entry.Digest, entry.Size, entry.Path)
 	return err
+}
+
+// openFileUnderParent opens one operator-named file through an os.Root on its
+// parent directory, as internal/testutil/codexinstalled does, so the open is
+// confined to that directory.
+func openFileUnderParent(path string) (*os.File, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Open(filepath.Base(path))
 }
 
 func printPersonaUsage(w io.Writer) {

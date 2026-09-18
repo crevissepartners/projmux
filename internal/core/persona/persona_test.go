@@ -377,3 +377,45 @@ func TestSnapshotPathRejectsMalformedDigests(t *testing.T) {
 		t.Fatalf("SnapshotPath(valid) = %v", err)
 	}
 }
+
+// TestPersonaReadsStayInsideTheirDirectory pins the os.Root confinement: a
+// persona or snapshot that is a symlink leaving its directory is not read.
+func TestPersonaReadsStayInsideTheirDirectory(t *testing.T) {
+	t.Parallel()
+	store, configDir, stateDir := newTestStore(t)
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	content := []byte("outside the persona directory")
+	if err := os.WriteFile(outside, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(configDir, "personas")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "escape.md")); err != nil {
+		t.Fatal(err)
+	}
+	if loaded, err := store.Load("escape"); err == nil {
+		t.Fatalf("Load followed a symlink out of the persona directory: %q", loaded.Content)
+	}
+
+	snapshotPath, err := store.SnapshotPath(Digest(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, "personas"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, snapshotPath); err != nil {
+		t.Fatal(err)
+	}
+	// The escaping symlink is not accepted as the snapshot; it is replaced by
+	// a regular file holding the content.
+	if _, err := store.WriteSnapshot(content); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(snapshotPath)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("snapshot after WriteSnapshot = %v, %v; want a regular file", info, err)
+	}
+}

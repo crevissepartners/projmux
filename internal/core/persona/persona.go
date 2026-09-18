@@ -168,7 +168,7 @@ func (s Store) Load(name string) (Persona, error) {
 	if err != nil {
 		return Persona{}, err
 	}
-	file, err := os.Open(path)
+	file, err := openIn(s.dir, name+FileExt)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Persona{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + path}
 	}
@@ -248,7 +248,16 @@ func (s Store) Delete(name string) error {
 	if err != nil {
 		return err
 	}
-	info, err := os.Lstat(path)
+	root, err := os.OpenRoot(s.dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + path}
+	}
+	if err != nil {
+		return fmt.Errorf("delete persona %q: %w", name, err)
+	}
+	defer root.Close()
+	fileName := name + FileExt
+	info, err := root.Lstat(fileName)
 	if errors.Is(err, fs.ErrNotExist) {
 		return &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + path}
 	}
@@ -258,7 +267,7 @@ func (s Store) Delete(name string) error {
 	if info.IsDir() {
 		return &Error{Reason: ReasonNotFound, Name: name, Detail: "is not a regular file at " + path}
 	}
-	if err := os.Remove(path); err != nil {
+	if err := root.Remove(fileName); err != nil {
 		return fmt.Errorf("delete persona %q: %w", name, err)
 	}
 	return nil
@@ -283,8 +292,7 @@ func (s Store) List() ([]Entry, error) {
 		if !ok || ValidateName(name) != nil {
 			continue
 		}
-		path := filepath.Join(s.dir, fileName)
-		entry, ok, err := describe(name, path)
+		entry, ok, err := describe(s.dir, name)
 		if err != nil {
 			return nil, err
 		}
@@ -298,8 +306,9 @@ func (s Store) List() ([]Entry, error) {
 
 // describe stats and hashes one persona file. A path that vanished between
 // the directory read and the stat, or that is not a regular file, is skipped.
-func describe(name, path string) (Entry, bool, error) {
-	file, err := os.Open(path)
+func describe(dir, name string) (Entry, bool, error) {
+	path := filepath.Join(dir, name+FileExt)
+	file, err := openIn(dir, name+FileExt)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Entry{}, false, nil
 	}
@@ -356,7 +365,7 @@ func (s Store) WriteSnapshot(content []byte) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, content) {
+	if snapshotHolds(s.snapshotDir, filepath.Base(path), content) {
 		state.RepairPrivateFile(path)
 		return Snapshot{Digest: digest, Path: path}, nil
 	}
@@ -364,6 +373,31 @@ func (s Store) WriteSnapshot(content []byte) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("write persona snapshot: %w", err)
 	}
 	return Snapshot{Digest: digest, Path: path}, nil
+}
+
+// snapshotHolds reports whether the snapshot file name in dir already holds
+// exactly content. Any read failure -- including a missing directory -- is
+// "no", which makes the caller write the snapshot.
+func snapshotHolds(dir, name string, content []byte) bool {
+	file, err := openIn(dir, name)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	existing, err := io.ReadAll(io.LimitReader(file, MaxSize+1))
+	return err == nil && bytes.Equal(existing, content)
+}
+
+// openIn opens name inside dir through an os.Root, so the open cannot leave
+// dir: not through "..", and not through a symlink that points outside it. A
+// missing dir reports fs.ErrNotExist like a missing file.
+func openIn(dir, name string) (*os.File, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Open(name)
 }
 
 // writeAtomic writes content to a hidden temporary file beside path and
