@@ -37,8 +37,16 @@ A same-ref call returns the original immutable receipt and never pushes again.
 Changing its payload is refused with the earlier ref and cause. A fresh ref
 allows one new attempt only when every previous attempt is known-zero. Failed
 records and the original request remain available; recovery never deletes or
-resets them. Store capacity can refuse a new attempt rather than discard its
-history.
+resets them.
+
+Store capacity treats the two kinds of attempt differently. A first attempt,
+one whose original has no stored attempt yet, is a new acceptance rather than a
+recovery, so a full store reclaims room for it under the same rule a new
+message uses, while pinning the original and every attempt already stored
+against it. A recovery attempt, which follows an earlier known-zero attempt, is
+still refused with a capacity error rather than discarding the history it is
+recovering from. Either way a reclaimed record moves to the history log below
+instead of being deleted, and a store with nothing reclaimable refuses both.
 
 Delivered replies, partial writes, unknown outcomes, pending attempts, expired
 deadlines, and stale routes must not be resent. Inspect their status and the
@@ -50,10 +58,11 @@ policy here.
 
 ## Reclaimed records move to a history log
 
-The store is a bounded hot inbox. When it accepts a new message it first
-reclaims records that went terminal more than 24 hours ago, and then, if it is
-still at its record limit, the oldest unprotected terminal record. Reclaiming is
-not deleting: every reclaimed record is appended to
+The store is a bounded hot inbox. When it accepts a new message, or a first
+explicit reply attempt, it first reclaims records that went terminal more than
+24 hours ago, and then, if it is still at its record limit, the oldest
+unprotected terminal record. Reclaiming is not deleting: every reclaimed record
+is appended to
 `<state>/agent-messages/history.jsonl`, one JSON object per line, under the same
 file lock and with the same private directory and file permissions as the store.
 

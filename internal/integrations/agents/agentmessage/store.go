@@ -268,11 +268,12 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 			out = record
 			return nil
 		}
+		attempted := false
 		for _, record := range state.Records {
 			if record.Envelope.ReplyTo != originalRef {
 				continue
 			}
-			previous = record
+			previous, attempted = record, true
 			if !KnownZeroReply(record) {
 				return &ReplyConflictError{Previous: record, Reason: "reply-already-committed"}
 			}
@@ -291,7 +292,15 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 		if err := coremessage.ValidateReply(original.Envelope, envelope); err != nil {
 			return err
 		}
-		// Recovery never removes or resets an old attempt to make room.
+		// A first attempt is a new acceptance rather than recovery, so it makes
+		// room under the same rule an accepted message does, pinning the original
+		// and every attempt already stored against it. Recovery never removes or
+		// resets an old attempt to make room.
+		now := s.clock()
+		var reclaimed []reclaimedRecord
+		if !attempted {
+			state.Records, reclaimed = pruneRecords(state.Records, now, originalRef)
+		}
 		if len(state.Records) >= maxRecords {
 			return ErrCapacity
 		}
@@ -302,7 +311,7 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 		}
 		out = Record{Envelope: envelope, Delivery: delivery, Adapter: adapterForTarget(envelope.Target)}
 		state.Records = append(state.Records, out)
-		if err := s.writeLocked(state, nil); err != nil {
+		if err := s.writeLocked(state, newHistoryRecords(reclaimed, now)); err != nil {
 			return err
 		}
 		created = true
@@ -630,11 +639,19 @@ func syncDir(dir string) error {
 // pruneRecords returns the records the store keeps and the ones it reclaimed.
 // Reclaiming is not deleting: every returned record is written to the history
 // log before the caller's store write commits.
-func pruneRecords(records []Record, now time.Time) ([]Record, []reclaimedRecord) {
+// pinned names refs the caller must keep whatever their delivery state: the
+// reply path pins the original it is answering, so making room for a first
+// attempt never reclaims the correlation that attempt depends on.
+func pruneRecords(records []Record, now time.Time, pinned ...string) ([]Record, []reclaimedRecord) {
 	// A live original and its attempts form one durable idempotency boundary.
 	// Evicting a delivered/unknown reply while retaining the original would
 	// make a later fresh ref look like the first attempt after store reload.
 	protected := make(map[string]bool)
+	for _, ref := range pinned {
+		if ref != "" {
+			protected[ref] = true
+		}
+	}
 	for _, record := range records {
 		if record.Envelope.Target.Provider == "claude" && record.Envelope.Deadline.After(now) && record.Delivery.State == coremessage.StateDelivered {
 			protected[record.Envelope.MessageRef] = true
