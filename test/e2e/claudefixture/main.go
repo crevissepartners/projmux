@@ -52,7 +52,11 @@ type providerFrame struct {
 }
 
 type coordinationContent struct {
-	Kind            string            `json:"kind"`
+	Kind string `json:"kind"`
+	// SchemaVersion has to be declared even though the fixture does not read
+	// it: decodeExact rejects unknown fields on purpose, so every key the
+	// producer emits must appear here or the frame stops decoding.
+	SchemaVersion   int               `json:"schemaVersion"`
 	Authority       string            `json:"authority"`
 	MessageRef      string            `json:"messageRef"`
 	ConversationRef string            `json:"conversationRef"`
