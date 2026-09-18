@@ -721,6 +721,17 @@ func createDriftScenarios() []createDriftScenario {
 			},
 			args: []string{"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main", "-o", "uid"},
 		},
+		{
+			// The production route bind, reconciler, and typed metadata mirror,
+			// with one other Project session whose name mirror is stale: the
+			// first guarded write is that mirror's, inside the transaction scope.
+			name: "create window",
+			build: func(t *testing.T) (*createCommand, *fakeResourceStore, *fakeTmux) {
+				fixture := newCallBudgetFixtureWith(t, 1, true)
+				return fixture.create, fixture.store, fixture.tmux
+			},
+			args: []string{"window", "--project", "uid:prj-target", "--name", "probe", "-o", "uid"},
+		},
 	}
 }
 
@@ -822,6 +833,10 @@ func TestRouteIdentityCacheMatchesUncachedCreateUnderDriftAfterEachGuardedWrite(
 			}
 			if scenario.name == "create pane" && !refusedSplit {
 				t.Fatal("no drift after the split-window write refused the create; the matrix no longer covers it")
+			}
+			if scenario.name == "create window" && !strings.Contains(cachedDry.guardedWrite[1], tmuxopts.ProjectNameSession) {
+				t.Fatalf("first guarded write = %q, want the typed metadata mirror's Project-name write; the matrix no longer covers it",
+					cachedDry.guardedWrite[1])
 			}
 		})
 	}
