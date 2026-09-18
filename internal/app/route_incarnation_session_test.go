@@ -17,9 +17,9 @@ import (
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
-// Readers accept exactly two incarnations for the current route: the full
-// digest writers emit today and the session-scoped value writers switch to
-// later. Every reader below is driven by the same four values.
+// Readers accept exactly two incarnations for the current route: the
+// session-scoped value writers emit and the full digest earlier builds wrote.
+// Every reader below is driven by the same four values.
 
 const arbitraryRouteIncarnation = "route-000000000000000000000000000000000000"
 
@@ -38,7 +38,7 @@ func incarnationCases(t *testing.T, f *claudeCoordinationTestFixture) []incarnat
 		t.Fatal("other-session fixture has no distinct session value")
 	}
 	return []incarnationCase{
-		{"full digest", f.route.Incarnation(), true},
+		{"full digest", f.route.FullIncarnation(), true},
 		{"session value", f.route.SessionIncarnation(), true},
 		{"session value of another SessionID", other.SessionIncarnation(), false},
 		{"arbitrary value", arbitraryRouteIncarnation, false},
@@ -281,7 +281,7 @@ func TestAgentMessageReplyMirrorsSessionIncarnation(t *testing.T) {
 		incarnation func(*claudeCoordinationTestFixture) string
 		accept      bool
 	}{
-		{"full digest", func(f *claudeCoordinationTestFixture) string { return f.route.Incarnation() }, true},
+		{"full digest", func(f *claudeCoordinationTestFixture) string { return f.route.FullIncarnation() }, true},
 		{"session value", func(f *claudeCoordinationTestFixture) string { return f.route.SessionIncarnation() }, true},
 		{"session value of another SessionID", func(f *claudeCoordinationTestFixture) string {
 			return changedClaudeRoute(t, f, false, func(a *coremetadata.ClaudeAuthorityRef) { a.SessionID = "other-session" }).SessionIncarnation()
@@ -359,7 +359,7 @@ func TestReplacedClaudeHelperWritesNothingEvenWithSessionIncarnation(t *testing.
 			replaced := changedClaudeRoute(t, f, false, replacement.mutate)
 			session := f.route.SessionIncarnation()
 			if replaced.SessionIncarnation() != session || !replaced.AcceptsIncarnation(session) || !f.route.AcceptsIncarnation(replaced.SessionIncarnation()) ||
-				replaced.Incarnation() == f.route.Incarnation() {
+				replaced.FullIncarnation() == f.route.FullIncarnation() {
 				t.Fatal("fixture does not isolate the authority fence from the incarnation predicate")
 			}
 			replacedTarget, ok := claudeTargetForRoute(replaced)

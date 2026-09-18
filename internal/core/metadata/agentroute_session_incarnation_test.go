@@ -33,14 +33,14 @@ func TestAgentRouteAcceptsExactlyFullAndSessionIncarnation(t *testing.T) {
 		value string
 		want  bool
 	}{
-		{"claude full digest", claude, claude.Incarnation(), true},
+		{"claude full digest", claude, claude.FullIncarnation(), true},
 		{"claude session value", claude, claude.SessionIncarnation(), true},
 		{"claude session value of another SessionID", claude, otherSession.SessionIncarnation(), false},
-		{"claude full digest of another SessionID", claude, otherSession.Incarnation(), false},
+		{"claude full digest of another SessionID", claude, otherSession.FullIncarnation(), false},
 		{"claude empty", claude, "", false},
 		{"claude arbitrary route value", claude, "route-000000000000000000000000000000000000", false},
 		{"claude codex session value", claude, codex.SessionIncarnation(), false},
-		{"codex full digest", codex, codex.Incarnation(), true},
+		{"codex full digest", codex, codex.FullIncarnation(), true},
 		{"codex session value", codex, codex.SessionIncarnation(), true},
 		{"codex empty", codex, "", false},
 		{"codex arbitrary route value", codex, "route-000000000000000000000000000000000000", false},
@@ -58,12 +58,12 @@ func TestAgentRouteAcceptsExactlyFullAndSessionIncarnation(t *testing.T) {
 		})
 	}
 	for name, route := range map[string]AgentRouteRef{"nil": nilAuthority, "invalid claude": invalidClaude, "codex empty thread": emptyThreadCodex} {
-		if route.SessionIncarnation() != "" || route.Incarnation() != "" {
+		if route.SessionIncarnation() != "" || route.FullIncarnation() != "" {
 			t.Fatalf("%s authority produced an incarnation", name)
 		}
 	}
 	for name, route := range map[string]AgentRouteRef{"claude": claude, "codex": codex} {
-		full, session := route.Incarnation(), route.SessionIncarnation()
+		full, session := route.FullIncarnation(), route.SessionIncarnation()
 		if session == "" || session == full || len(session) != len(full) || session[:6] != "route-" {
 			t.Fatalf("%s session value %q is not a distinct route value beside %q", name, session, full)
 		}
@@ -96,7 +96,7 @@ func TestAgentRouteSessionIncarnationScope(t *testing.T) {
 			test.change(&authority)
 			changed := base
 			changed.authority = authority
-			if changed.Incarnation() == base.Incarnation() {
+			if changed.FullIncarnation() == base.FullIncarnation() {
 				t.Fatal("full digest ignored the change")
 			}
 			if stable := changed.SessionIncarnation() == base.SessionIncarnation(); stable != test.sessionStable {
@@ -104,7 +104,7 @@ func TestAgentRouteSessionIncarnationScope(t *testing.T) {
 			}
 			// The old full digest never reads as current; the session value
 			// reads as current exactly when it is unchanged.
-			if changed.AcceptsIncarnation(base.Incarnation()) {
+			if changed.AcceptsIncarnation(base.FullIncarnation()) {
 				t.Fatal("previous full digest accepted after the change")
 			}
 			if changed.AcceptsIncarnation(base.SessionIncarnation()) != test.sessionStable {
@@ -125,7 +125,7 @@ func TestAgentRouteSessionIncarnationScope(t *testing.T) {
 		"other binding epoch":    codex("thread-1", 1, 2, "broker"),
 		"other broker runtime":   codex("thread-1", 1, 1, "restarted"),
 	} {
-		if other.Incarnation() == first.Incarnation() {
+		if other.FullIncarnation() == first.FullIncarnation() {
 			t.Fatalf("codex %s: full digest ignored the change", name)
 		}
 		if other.SessionIncarnation() != first.SessionIncarnation() {

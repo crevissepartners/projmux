@@ -107,8 +107,11 @@ the same lease. Its address is derived from the exact `AgentRouteRef`; names,
 tmux `%N`, the provider socket, and the provider token do not enter that address
 or its protocol. Every operation revalidates Agent UID, Pane UID, activation
 generation, provider/helper process births, registration generation, and route
-incarnation. Normal exit and cleanup unlink only the exact owned coord socket
-inode. Projmux never creates a replacement provider listener or relay.
+incarnation. The route incarnation follows the provider conversation (the
+Claude session), so a same-session SessionStart keeps it; the process birth
+and registration generation checks are what fence a replaced helper. Normal
+exit and cleanup unlink only the exact owned coord socket inode. Projmux never
+creates a replacement provider listener or relay.
 
 Claude ingress is immediate push. There is no receiver waiter, pending ingress
 queue, `asyncRewake`, `begin-handoff`, or `no-waiter` state. The helper retains
@@ -330,9 +333,9 @@ Codex Agent self-claims it.
 | Ready and idle | Immediate one-frame push; model visibility is separate evidence |
 | Active tool/turn | Push never interrupts; next official human boundary makes reply correlation ambiguous |
 | Provider exit or activation restart | Old generation writes and claims zero |
-| Same-generation registration/helper replacement | Old incarnation writes zero; fresh exact-version qualification required |
+| Same-generation registration/helper replacement | Incarnation unchanged within the same Claude session; the old helper still writes zero, enforced by the lease authority; fresh exact-version qualification still required |
 | Provider version replacement | Old qualification is cleared; unqualified writes zero |
-| Codex endpoint replacement | Old incarnation self-claim zero; exact new incarnation may claim |
+| Codex endpoint replacement | Incarnation unchanged; the old endpoint's self-claim is still zero by the exact authority check; the exact new endpoint may claim |
 
 Message state is receipt-only. It performs no Registry Agent-interaction or
 tmux badge write, so it cannot overwrite `in_progress`, approval-required, or
@@ -393,10 +396,11 @@ and [cross-session messaging](https://code.claude.com/docs/en/cross-session-mess
 Once a delivered message has unresolved reply ambiguity (an overlapping human
 turn, multiple pending messages, expiry, or an uncertain write/reply outcome),
 a later idle Stop cannot restore automatic reply correlation. The helper keeps
-push ingress available but refuses automatic replies for that incarnation.
-Use the documented public recovery on the same Agent UID and qualify its new
-activation before resuming automatic dialogue. Source and target routes are
-revalidated after durable handoff and immediately before the provider write.
+push ingress available but refuses automatic replies for the rest of its
+lifetime. Use the documented public recovery on the same Agent UID and qualify
+its new activation before resuming automatic dialogue. Source and target
+routes are revalidated after durable handoff and immediately before the
+provider write.
 
 The final source check also asks the existing Codex broker to verify the exact
 runtime, connection and binding lease. This read-only IPC observation binds
