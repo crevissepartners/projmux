@@ -111,7 +111,7 @@ func SanitizeMessage(message, home string) string {
 var (
 	allowedLevels     = stringSet("info", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent)
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -217,6 +217,7 @@ var (
 	allowedUsageSources = stringSet(
 		string(UsageSourceAppServer), string(UsageSourceRollout), string(UsageSourceLastKnownGood),
 	)
+	allowedSurfaceSites     = surfaceSiteSet()
 	allowedResourceFailures = stringSet(
 		string(ResourceFailureSampleUnavailable), string(ResourceFailureSamplePartial), string(ResourceFailureSampleStale), string(ResourceFailureInventory),
 		string(ResourceFailureProjectDiscovery), string(ResourceFailureCollection), string(ResourceFailureScanBudget),
@@ -415,6 +416,17 @@ func validateEventShape(event Event) error {
 		}
 		if !aiTupleMatches(event) {
 			return fmt.Errorf("invalid ai diagnostic tuple")
+		}
+	case surfaceUnshownEvent:
+		// A committed mutation whose result line was lost. The record exists to
+		// be counted, so it carries nothing but the seam that owed the line.
+		if event.Component != "runtime" || event.Level != "error" || event.Result != "error" || event.Kind != "runtime" ||
+			event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Code != "" ||
+			event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() || event.hasResourceFields() {
+			return fmt.Errorf("invalid surface unshown shape")
+		}
+		if _, ok := allowedSurfaceSites[event.Source]; !ok {
+			return fmt.Errorf("invalid surface unshown site")
 		}
 	case "resource.sampler.outcome":
 		if event.Component != "resource" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Code != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.AIKind != "" || event.AIResult != "" {

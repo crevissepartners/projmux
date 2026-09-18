@@ -1271,18 +1271,20 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 	if c.splitReplacesOrigin() {
 		return c.finishReplacingSplit(intent)
 	}
-	var diagnostics bytes.Buffer
-	created, err := c.panes.createFromIntent(intent, io.Discard, &diagnostics)
+	var createDiagnostics bytes.Buffer
+	created, err := c.panes.createFromIntent(intent, io.Discard, &createDiagnostics)
 	if err == nil {
 		// The split has committed. The pressing client, if it still shows this
 		// Window, now has the new Pane active. A failed focus keeps the Pane and
 		// is the one line that client sees, carrying any split start notice.
+		//
+		// Both lines below go through the committed-result seam
+		// (committed_result.go): the Pane is durable, so a line that could not be
+		// shown becomes a journal record instead of this route's exit status.
 		focusRunner := splitFocusRunner{runCommand: c.runCommand, readCommand: c.readCommand}
 		if focusErr := focusCreatedSplitPane(context.Background(), focusRunner, intent.targetClient, created); focusErr != nil {
-			line := splitFocusFailureLine(focusErr, strings.Join(strings.Fields(diagnostics.String()), " "))
-			if displayErr := c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", tmuxLiteralMessage(line)); displayErr != nil {
-				return fmt.Errorf("%s; display split focus failure to client %q: %v", line, intent.targetClient, displayErr)
-			}
+			line := splitFocusFailureLine(focusErr, strings.Join(strings.Fields(createDiagnostics.String()), " "))
+			c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitFocus, intent.targetClient, line)
 			return nil
 		}
 		// A successful split writes nothing. The producer on the other end of
@@ -1292,22 +1294,16 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 		// feedback a successful create owes them. The one exception is the
 		// split start notice: the requested Pane directory was not used, and
 		// that is shown once on the originating client.
-		if notice := strings.Join(strings.Fields(diagnostics.String()), " "); notice != "" {
-			message := tmuxLiteralMessage("projmux: " + notice)
-			var displayErr error
-			if intent.targetClient != "" {
-				displayErr = c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", message)
-			} else {
-				displayErr = c.run("tmux", "display-message", "-d", "10000", message)
-			}
-			if displayErr != nil {
-				return fmt.Errorf("%s; display split start notice to client %q: %v", notice, intent.targetClient, displayErr)
-			}
+		if notice := strings.Join(strings.Fields(createDiagnostics.String()), " "); notice != "" {
+			c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitNotice, intent.targetClient, "projmux: "+notice)
 		}
 		return nil
 	}
-	reason := canonicalCreateFailureReason(err, diagnostics.String())
+	reason := canonicalCreateFailureReason(err, createDiagnostics.String())
 	if intent.targetClient != "" {
+		// Nothing was committed. The refusal reached nobody if this display also
+		// fails, so it stays the route's result -- the one case the seam above
+		// deliberately does not cover.
 		if displayErr := c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", reason); displayErr != nil {
 			return fmt.Errorf("%s; display canonical create failure to client %q: %v", reason, intent.targetClient, displayErr)
 		}

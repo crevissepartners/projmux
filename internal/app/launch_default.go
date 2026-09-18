@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 // The saved launch default applied to a Window's first Pane.
@@ -44,6 +46,11 @@ type launchDefaultResult struct {
 	// producer then says nothing: the popup is the feedback, and a line
 	// displayed after it closed would overwrite whatever the picker reported.
 	picker bool
+	// committed is true once the canonical create behind this result has
+	// committed, whatever happened afterwards. It is what tells the replacing
+	// split funnel whether its line describes a durable mutation -- and so
+	// whether a failure to show that line may become the route's exit status.
+	committed bool
 }
 
 // launchDefaultFunc is the injected route a Window producer applies its saved
@@ -112,9 +119,9 @@ func (c *aiCommand) replaceOriginShellWithAgent(intent agentPaneIntent) launchDe
 	focusRunner := splitFocusRunner{runCommand: c.runCommand, readCommand: c.readCommand}
 	_ = focusCreatedSplitPane(context.Background(), focusRunner, intent.targetClient, created)
 	if err := c.deleteOriginShell(intent.anchorPaneID); err != nil {
-		return launchDefaultResult{problem: strings.TrimSpace(err.Error())}
+		return launchDefaultResult{problem: strings.TrimSpace(err.Error()), committed: true}
 	}
-	return launchDefaultResult{notice: notice}
+	return launchDefaultResult{notice: notice, committed: true}
 }
 
 // deleteOriginShell removes the replaced shell through the canonical Pane
@@ -197,13 +204,23 @@ func (c *aiCommand) finishReplacingSplit(intent agentPaneIntent) error {
 	if line == "" {
 		return nil
 	}
+	if result.committed {
+		// The Agent is durable. Whether the line is the start notice or the
+		// shell that could not be removed, failing to show it does not undo the
+		// create, so it goes to the journal instead of this route's exit status
+		// (committed_result.go).
+		c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitReplace, intent.targetClient, line)
+		return nil
+	}
 	return c.displaySplitLine(intent.targetClient, line)
 }
 
 // displaySplitLine shows one bounded line on the exact client that asked for
 // the Pane, or on whatever client tmux resolves when the producer carried
-// none. A display failure is returned rather than swallowed: the operator was
-// told nothing at all in that case.
+// none. It is the transport both halves of the split funnel share; the display
+// failure it returns is only the route's result for a caller whose mutation did
+// not commit. A committed caller reaches it through showCommittedSplitResult,
+// which swallows that failure and journals it.
 func (c *aiCommand) displaySplitLine(client, line string) error {
 	message := tmuxLiteralMessage(line)
 	var displayErr error

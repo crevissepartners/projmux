@@ -1213,14 +1213,19 @@ func TestWindowCreateIntentMovesOnlyThePressingClientToTheCreatedWindow(t *testi
 // stays, no switch-client or select-window is issued at all -- not even to the
 // bystander already showing the origin Session, which is the focus core's own
 // fallback -- and every client keeps what it showed.
+//
+// The route exits zero. The unshown-create line has no client to land on, and
+// the committed-result seam is what forbids that from becoming the route's exit
+// status: the Window is durable, and a non-zero foreground `run-shell` job
+// paints `returned 1` over the pane the key was pressed in
+// (internal/app/committed_result.go).
 func TestWindowCreateIntentWithAbsentPressingClientMovesNoClientAndKeepsTheCreate(t *testing.T) {
 	route := newWindowCreateIntentRoute(t, false, false)
 	before := route.windowUIDs()
 	viewsBefore := route.clientViews()
 
-	err := route.run()
-	if err == nil || !strings.Contains(err.Error(), windowCreatedUnshownMessage) || !strings.Contains(err.Error(), "is not attached") {
-		t.Fatalf("route error = %v, want the undeliverable unshown-create line", err)
+	if err := route.run(); err != nil {
+		t.Fatalf("route error = %v, want nil: the Window committed", err)
 	}
 	route.keptWindow(t, before)
 	if moves, _ := clientMovingCalls(route.tmux.calls); len(moves) != 0 {
@@ -1512,15 +1517,12 @@ func TestUISplitFocusesTheNewPaneOnlyForThePressingClientOnThatWindow(t *testing
 				client := placeSplitFocusClients(t, fx, view)
 				before := paneUIDsByWindow(fx.store)
 
-				err := route.run(t, fx, client)
-				if route.menu && view == splitFocusDetached {
-					// The menu's one result line has no client to land on; that is
-					// the route's existing undeliverable-message error.
-					if err == nil || !strings.Contains(err.Error(), paneMenuCreatedMessage) {
-						t.Fatalf("detached pane menu error = %v, want the undeliverable %q line", err, paneMenuCreatedMessage)
-					}
-				} else if err != nil {
-					t.Fatalf("%s error = %v", route.name, err)
+				// Every view exits zero, including the detached one whose result
+				// line has no client to land on: the split committed, so the
+				// committed-result seam journals the unshown line instead of
+				// returning it (internal/app/committed_result.go).
+				if err := route.run(t, fx, client); err != nil {
+					t.Fatalf("%s/%s error = %v, want nil: the split committed", route.name, view, err)
 				}
 				paneID, window := keptSplitPane(t, fx, before)
 				focused := focusSelectPaneCalls(fx.tmux.calls)

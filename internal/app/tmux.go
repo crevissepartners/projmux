@@ -505,7 +505,11 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 		if summary == "" {
 			summary = "delete pane completed"
 		}
-		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+summary)
+		// The delete committed, so the seam takes it from here: the Pane is gone
+		// whether or not its summary reaches the clicking client
+		// (committed_result.go).
+		c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuKill, strings.TrimSpace(*client), "projmux "+summary)
+		return nil
 	}
 	// A committed split writes stderr only for its split start notice, which
 	// rides on the one success message instead of replacing it.
@@ -514,13 +518,15 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 	// Window, now has the new Pane active; a failed focus keeps the Pane and
 	// replaces the success line with the one reason line.
 	if focusErr := focusCreatedSplitPane(context.Background(), c.runner, strings.TrimSpace(*client), created); focusErr != nil {
-		return c.displayPaneMenuMessage(strings.TrimSpace(*client), splitFocusFailureLine(focusErr, notice))
+		c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), splitFocusFailureLine(focusErr, notice))
+		return nil
 	}
 	message := paneMenuCreatedMessage
 	if notice != "" {
 		message += ": " + notice
 	}
-	return c.displayPaneMenuMessage(strings.TrimSpace(*client), message)
+	c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), message)
+	return nil
 }
 
 // windowCreatedUnshownMessage leads the line a pressing client sees when the
@@ -554,7 +560,8 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 		// replaces the shell Pane with an Agent or opens a picker popup, and
 		// both need the exact client that would see the result -- which is the
 		// one thing this branch has just established it does not have.
-		return c.displayPaneMenuMessage(strings.TrimSpace(*client), windowCreatedUnshownMessage+strings.TrimSpace(moveErr.Error()))
+		c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, strings.TrimSpace(*client), windowCreatedUnshownMessage+strings.TrimSpace(moveErr.Error()))
+		return nil
 	}
 	success := windowCreatedMessage
 	if c.launchDefault != nil {
@@ -562,7 +569,8 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 		case applied.problem != "":
 			// The Window and its shell Pane stay; the one line says what did
 			// not happen on top of them.
-			return c.displayPaneMenuMessage(strings.TrimSpace(*client), applied.problem)
+			c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, strings.TrimSpace(*client), applied.problem)
+			return nil
 		case applied.picker:
 			// The picker popup has already come and gone on this client. It
 			// owns whatever it reported, so nothing is written over it.
@@ -737,7 +745,10 @@ func (c *tmuxCommand) finishWindowIntent(client, label, success, detail string, 
 		}
 		return c.displayPaneMenuMessage(strings.TrimSpace(client), "projmux "+label+" failed: "+reason)
 	}
-	return c.displayPaneMenuMessage(strings.TrimSpace(client), success)
+	// The intent committed. Its bounded success line is the last thing this route
+	// owes the client, and it is not what the route reports (committed_result.go).
+	c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, strings.TrimSpace(client), success)
+	return nil
 }
 
 func deletePaneThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writer) error {

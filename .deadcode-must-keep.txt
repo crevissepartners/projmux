@@ -125,6 +125,7 @@ Store.Path	The Registry path accessor is retained for migration and storage-boun
 Store.Save	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
 Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
 StringAuditFinding.IsCandidate	Candidate predicate of the governance string audit retained with the guard that classifies shipped literals.
+SurfaceSites	Closed unshown-result site inventory; the C-1 committed-result sweep fails until every site is recorded by a registered call site.
 TeardownEventKinds	Closed teardown event vocabulary retained as the test seam that pins the teardown decision table totality.
 TeardownObservations	The closed teardown-observation catalog is called by the product path and retained for authority proofs.
 Text.Locale	Resolved-locale accessor retained as the test seam that pins the live catalog fallback resolution.
@@ -142,6 +143,9 @@ buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test 
 buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained as the popup launcher environment seam.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
 codexHooksBlock	Default-events entry point of codexHooksBlockForEvents retained as the managed Codex hook block seam.
+committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
+committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
+committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 formatRelativeAge	Fallback-locale entry point of formatRelativeAgeLocale retained as the status notify age bucket seam.
 formatStatusNotify	Fallback-locale entry point of formatStatusNotifyWithLiveLocale retained as the status notify width tier seam.
