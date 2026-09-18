@@ -81,18 +81,30 @@ Each line carries the envelope's own key names:
 ```json
 {"schemaVersion":1,"evictedAt":"…","reason":"retention","adapter":"claude-coordination",
  "messageRef":"…","conversationRef":"…","replyTo":"…",
- "state":"delivered","deliveryReason":"","outcomeUnknown":false,"handoffObserved":false,
- "acceptedAt":"…","deadline":"…","terminalAt":"…","payloadBytes":466,
- "source":{"agentUID":"…","paneUID":"…","activationGeneration":"…","provider":"…","incarnation":"…"},
- "target":{"agentUID":"…","paneUID":"…","activationGeneration":"…","provider":"…","incarnation":"…"}}
+ "state":"delivered","deliveryReason":"unspecified","handoffObserved":false,
+ "acceptedAt":"…","terminalAt":"…","payloadBytes":466,
+ "source":{"agentUID":"…","provider":"…"},
+ "target":{"agentUID":"…","provider":"…"}}
 ```
 
 `reason` is `retention` for the 24-hour rule and `capacity` for the record
-limit. `replyTo` is omitted when the record is not a reply. A line for operator
-input (see [Operator input](claude-coordination-endpoints.md#operator-input))
-carries `"origin":{"kind":"operator","client":"web"}` in place of `source`; an
-Agent message's line has no `origin` and is unchanged. Every other key is
-always present. `schemaVersion` starts at 1 and follows the same rule as the
+limit. `replyTo` is omitted when the record is not a reply. `outcomeUnknown`
+appears, as `true`, only on a failed record whose outcome is unknown; it is
+absent otherwise. `source` and `target` carry only `agentUID` and `provider`:
+the Pane, activation generation and incarnation fence a live delivery and mean
+nothing once the record has left the store. The envelope's `deadline` is not
+written. A line for operator input (see
+[Operator input](claude-coordination-endpoints.md#operator-input)) carries
+`"origin":{"kind":"operator","client":"web"}` in place of `source`; an Agent
+message's line has no `origin`. Every other key is always present.
+
+Lines written by earlier builds may still be in the same file. They carry full
+routes (`paneUID`, `activationGeneration`, `incarnation`), a `deadline`, and
+`outcomeUnknown` even when it is `false`, and they read the same way: a reader
+ignores keys it does not expect and reads an absent key as its zero value, so
+both shapes give the same edges, states and times. Both are `schemaVersion` 1.
+
+`schemaVersion` starts at 1 and follows the same rule as the
 coordination frame's field of that name: an absent or zero value reads as 1, and
 a reader that meets a higher version reads the fields it knows rather than
 discarding the line or failing. It is independent of the durable envelope
