@@ -78,6 +78,8 @@ func TestStoreRetryRestartAndSecretFreeWire(t *testing.T) {
 func TestStoreRefusesFullNonterminalCapacityWithoutChangingDisk(t *testing.T) {
 	t.Parallel()
 	store := NewStoreAt(filepath.Join(t.TempDir(), "messages.json"))
+	// Pin the clock: prune expires past-deadline non-terminal records, so the fixture deadlines must not be past at write time.
+	store.now = func() time.Time { return storeTestNow }
 	records := make([]Record, maxRecords)
 	for i := range records {
 		envelope := storeEnvelope(i + 100)
@@ -141,6 +143,8 @@ func TestStoreRejectsUnknownProviderSecretFieldOnRestart(t *testing.T) {
 func TestStoreAtomicClaimIsOldestExactActivationAndTerminalOnce(t *testing.T) {
 	t.Parallel()
 	store := NewStoreAt(filepath.Join(t.TempDir(), "messages.json"))
+	// Pin the clock: prune expires past-deadline non-terminal records, so the fixture deadlines must not be past at write time.
+	store.now = func() time.Time { return storeTestNow }
 	first, second := storeEnvelope(1), storeEnvelope(2)
 	if _, _, err := store.PutAccepted(second, "codex-inbox"); err != nil {
 		t.Fatal(err)
@@ -170,6 +174,8 @@ func TestStoreAtomicClaimIsOldestExactActivationAndTerminalOnce(t *testing.T) {
 func TestStoreConcurrentWritersAndClaimersSerialize(t *testing.T) {
 	t.Parallel()
 	store := NewStoreAt(filepath.Join(t.TempDir(), "messages.json"))
+	// Pin the clock: prune expires past-deadline non-terminal records, so the fixture deadlines must not be past at write time.
+	store.now = func() time.Time { return storeTestNow }
 	const count = 64
 	var writers sync.WaitGroup
 	errs := make(chan error, count)
@@ -322,6 +328,8 @@ func TestStorePostHandoffDeadlineIsFailedUnknownAcrossRestart(t *testing.T) {
 func TestCodexClaimLeavesUnrelatedOverdueClaudeHandoffUnchanged(t *testing.T) {
 	t.Parallel()
 	store := NewStoreAt(filepath.Join(t.TempDir(), "messages.json"))
+	// Pin the clock: prune expires past-deadline non-terminal records, so the fixture deadlines must not be past at write time.
+	store.now = func() time.Time { return storeTestNow }
 	claude := storeEnvelope(81)
 	claude.Target.Provider = "claude"
 	claude.Deadline = claude.AcceptedAt.Add(time.Second)

@@ -65,6 +65,9 @@ func capacityFixture(t *testing.T, terminalFillers bool, extra ...Record) *Store
 			records = append(records, capacityTerminalRecord(t, filler, "codex-inbox", coremessage.EventDeliver, "filler"))
 			continue
 		}
+		// A past-deadline non-terminal filler would be expired by prune and so be
+		// reclaimable; a future deadline keeps it genuinely non-reclaimable.
+		filler.Deadline = storeTestNow.Add(time.Hour)
 		records = append(records, capacityAcceptedRecord(t, filler, "codex-inbox"))
 	}
 	seedStore(t, store, records)

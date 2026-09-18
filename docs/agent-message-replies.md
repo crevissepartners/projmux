@@ -61,8 +61,11 @@ policy here.
 The store is a bounded hot inbox. When it accepts a new message, or a first
 explicit reply attempt, it first reclaims records that went terminal more than
 24 hours ago, and then, if it is still at its record limit, the oldest
-unprotected terminal record. Reclaiming is not deleting: every reclaimed record
-is appended to
+unprotected terminal record. Before either step it expires any accepted or
+held record whose deadline has passed, exactly as a status read would, so such
+a record becomes terminal at that moment and follows the same reclaim rules;
+its 24 hours count from that expiry, not from its deadline. Reclaiming is not
+deleting: every reclaimed record is appended to
 `<state>/agent-messages/history.jsonl`, one JSON object per line, under the same
 file lock and with the same private directory and file permissions as the store.
 

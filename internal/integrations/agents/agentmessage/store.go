@@ -750,7 +750,18 @@ func syncDir(dir string) error {
 // pinned names refs the caller must keep whatever their delivery state: the
 // reply path pins the original it is answering, so making room for a first
 // attempt never reclaims the correlation that attempt depends on.
+// Before any reclaim decision it expires every non-terminal record whose
+// deadline has passed, with the same deadline event Status and Claim use,
+// observed at now; those records then follow the terminal rules below.
 func pruneRecords(records []Record, now time.Time, pinned ...string) ([]Record, []reclaimedRecord) {
+	for i := range records {
+		if records[i].Delivery.State.Terminal() || records[i].Envelope.Deadline.After(now) {
+			continue
+		}
+		if next, changed := coremessage.Reduce(records[i].Delivery, records[i].Envelope, deadlineEvent(records[i], now)); changed {
+			records[i].Delivery = next
+		}
+	}
 	// A live original and its attempts form one durable idempotency boundary.
 	// Evicting a delivered/unknown reply while retaining the original would
 	// make a later fresh ref look like the first attempt after store reload.
