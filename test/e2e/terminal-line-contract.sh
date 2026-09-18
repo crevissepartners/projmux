@@ -14,6 +14,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 self="$root/test/e2e/terminal-line-contract.sh"
 
 if [[ -n "${PROJMUX_TERMINAL_LINE_CASE:-}" ]]; then
+  # shellcheck disable=SC1091 # The shared library is sourced at runtime; scripts/security.sh lints it on its own.
   source "$root/test/lib/smoke.sh"
   smoke_setup_env
   PROJMUX_E2E_SUITE="intentional-failure"
