@@ -105,6 +105,11 @@ func TestExactProviderStartupOpensIndependentAcknowledgementWindow(t *testing.T)
 			agent, _ := h.registry.Agent(h.agentUID)
 			agent.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationPending}
 			runner := &activationAuthorityRunner{paneUID: h.paneUID}
+			// Both fixtures stay inside their own stage bound while their sum
+			// exceeds either bound alone, which is what "independently bounded"
+			// buys over one larger budget.
+			const startupAt = 3 * time.Second
+			const acknowledgementAt = 5100 * time.Millisecond
 			now := sessionRefObservedAt
 			h.cmd.now = func() time.Time { return now }
 			startupObserved := false
@@ -112,7 +117,7 @@ func TestExactProviderStartupOpensIndependentAcknowledgementWindow(t *testing.T)
 			h.cmd.sleep = func(d time.Duration) {
 				now = now.Add(d)
 				elapsed := now.Sub(sessionRefObservedAt)
-				if !startupObserved && elapsed >= 3*time.Second {
+				if !startupObserved && elapsed >= startupAt {
 					startupObserved = true
 					h.ingest(t, []string{provider + "-hook"}, providerStartupPayload(provider))
 					activation := h.agent(t).Status.Activation
@@ -121,7 +126,7 @@ func TestExactProviderStartupOpensIndependentAcknowledgementWindow(t *testing.T)
 						t.Fatalf("SessionStart activation = %+v, want exact pending readiness", activation)
 					}
 				}
-				if startupObserved && !acknowledgementObserved && elapsed >= 5100*time.Millisecond {
+				if startupObserved && !acknowledgementObserved && elapsed >= acknowledgementAt {
 					acknowledgementObserved = true
 					h.ingest(t, []string{provider + "-hook"}, providerPromptPayload(provider))
 				}
@@ -132,8 +137,10 @@ func TestExactProviderStartupOpensIndependentAcknowledgementWindow(t *testing.T)
 			if err != nil || !acknowledged || source != string(coremetadata.InteractionSourceProviderHook) {
 				t.Fatalf("staged activation acknowledged=%t source=%q err=%v", acknowledged, source, err)
 			}
-			if elapsed := now.Sub(sessionRefObservedAt); elapsed <= agentActivationAcknowledgementDeadline || elapsed >= agentActivationStartupDeadline+agentActivationAcknowledgementDeadline {
-				t.Fatalf("total staged wait = %v, want >5s and <10s", elapsed)
+			if elapsed := now.Sub(sessionRefObservedAt); elapsed < acknowledgementAt ||
+				elapsed >= agentActivationStartupDeadline+agentActivationAcknowledgementDeadline {
+				t.Fatalf("total staged wait = %v, want the staged fixture total (>=%v) under the two bounds combined (<%v)",
+					elapsed, acknowledgementAt, agentActivationStartupDeadline+agentActivationAcknowledgementDeadline)
 			}
 		})
 	}
@@ -208,7 +215,13 @@ func TestActivationStartupAndAcknowledgementStagesAreIndependentlyBounded(t *tes
 		wantTotalBound time.Duration
 	}{
 		{name: "provider never starts", wantTotalBound: agentActivationStartupDeadline},
-		{name: "provider starts but never acknowledges", startupAt: 3 * time.Second, wantTotalBound: 8 * time.Second},
+		{
+			name:      "provider starts but never acknowledges",
+			startupAt: 3 * time.Second,
+			// The acknowledgement window is anchored on the SessionStart commit,
+			// so the total is that commit plus one acknowledgement budget.
+			wantTotalBound: 3*time.Second + agentActivationAcknowledgementDeadline,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newSessionRefHarness(t, aiModeClaude)

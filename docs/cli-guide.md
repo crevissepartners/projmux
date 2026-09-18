@@ -647,19 +647,31 @@ owner Project root from `get`/`describe`, and a successful resume persists that
 normalized effective workspace without changing Window Project ownership.
 
 When `create agent -- <initial-prompt>` is used, normal resource creation and
-provider activation are distinct. Projmux first waits up to five seconds for an
-exact provider `SessionStart`; that readiness evidence leaves activation
-`pending` and opens an independent five-second initial-task acknowledgement
+provider activation are distinct. Projmux first waits up to thirty-five seconds
+for an exact provider `SessionStart`; that readiness evidence leaves activation
+`pending` and opens an independent twelve-second initial-task acknowledgement
 window. A `UserPromptSubmit` acknowledgement may also arrive directly before
 the readiness observer sees `SessionStart`. The two stages are independently
-bounded, so provider startup plus an acknowledgement later than two seconds may
-take more than five but never more than ten seconds. Neither stage captures pane
-content or stores the prompt. Acknowledgement returns success and the requested
-exact `%N` output. If
-activation cannot be confirmed, the command exits nonzero while naming the
-exact Agent UID and Pane plus safe provider retry and `delete agent ... --yes`
-cleanup options. The live resources remain explicit and retryable rather than
-being reported as an ordinary success.
+bounded, so provider startup plus a late acknowledgement may take more than
+either bound alone but never more than forty-seven seconds. Both bounds are
+sized from measured provider startup on a loaded machine, with headroom past
+the measured peak, because a provider that is merely slow is not a failed one;
+they are not sized for a dead provider, which is why exceeding them still
+reports failure. Neither stage captures pane content or stores the prompt.
+Acknowledgement returns success and the requested exact `%N` output.
+
+If activation still cannot be confirmed, the command exits nonzero. A nonzero
+exit here does not mean the Agent is gone or unusable: the Agent and its
+managed Pane were created and are still live, and nothing is rolled back. The
+diagnostic therefore names the exact Agent UID and Pane first and orders the
+remediation cheapest-first — re-read the committed activation with `projmux get
+agent uid:<uid>`, since a provider hook that arrives after the bound still
+refines the activation to `acknowledged`; then look at the Pane or the provider
+transcript for the initial task and retry it through the provider if it never
+arrived; and only when neither read shows activation evidence, clean up with
+`projmux delete agent uid:<uid> --yes`. Deletion is the last option rather than
+the first, because a caller that acts on the exit code alone would otherwise
+remove an Agent that is already working.
 
 Activation metadata is bounded to provider-hook provenance and fixed
 acknowledged/timed-out/failed diagnostics. Provider error strings and initial
