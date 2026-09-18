@@ -97,12 +97,12 @@ tmux -L "$socket" kill-server >/dev/null 2>&1 || true
 tmux -L "$socket" new-session -d -s staging -c "$PROJMUX_SMOKE_WORKDIR" sleep 300
 tmux -L "$socket" source-file "$cfg"
 hooks="$(tmux -L "$socket" show-hooks -g 2>/dev/null || true)"
-if printf '%s\n' "$hooks" | grep -Fq "$retire_seg"; then
+if grep -Fq "$retire_seg" <<<"$hooks"; then
   echo "FAIL: live tmux hooks reference the retire/staging segment '$retire_seg'" >&2
   printf '%s\n' "$hooks" | grep -F "$retire_seg" >&2
   exit 1
 fi
-if ! printf '%s\n' "$hooks" | grep -Fq "node_modules/projmux/"; then
+if ! grep -Fq "node_modules/projmux/" <<<"$hooks"; then
   echo "FAIL: live tmux hooks do not reference the canonical package path" >&2
   printf '%s\n' "$hooks" >&2
   exit 1

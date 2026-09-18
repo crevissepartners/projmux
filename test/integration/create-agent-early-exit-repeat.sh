@@ -396,7 +396,7 @@ for iteration in $(seq 1 "$repeats"); do
   fi
   pmx describe pane "uid:$pane_uid" -o json >"$case_root/pane.json"
   exact_tmux "$app_socket_path" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
-    | grep -Fqx "$pane_uid|1" || {
+    | grep -Fx "$pane_uid|1" >/dev/null || {
       echo "PRODUCT-AUTHORITY exact abnormal Pane was not retained dead" >&2
       exit 1
     }
@@ -414,7 +414,7 @@ for iteration in $(seq 1 "$repeats"); do
     exit 1
   }
   exact_tmux "$app_socket_path" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
-    | grep -Fqx "$anchor_uid|0" || {
+    | grep -Fx "$anchor_uid|0" >/dev/null || {
       echo "PRODUCT-AUTHORITY owner anchor changed" >&2
       exit 1
     }

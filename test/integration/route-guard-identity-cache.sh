@@ -109,7 +109,7 @@ window_out="$(run_projmux create window --project "uid:$project_uid" --name iden
 [[ "$(printf '%s\n' "$window_out" | sed -n 2p)" == "receipt operation=create.window identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged projects=0 windows=1 panes=0 agents=0" ]] ||
   fail "create window receipt changed: $window_out"
 [[ "$(printf '%s\n' "$window_out" | grep -c .)" == "2" ]] || fail "create window printed more than two lines: $window_out"
-iso_tmux list-windows -a -F '#{window_name}' | grep -qx identity-w2 || fail "created Window identity-w2 is not live"
+iso_tmux list-windows -a -F '#{window_name}' | grep -x identity-w2 >/dev/null || fail "created Window identity-w2 is not live"
 window_uid="$(run_projmux create window --project "uid:$project_uid" --name identity-w3 -o uid)"
 [[ "$window_uid" =~ ^win-[a-z0-9]+$ ]] || fail "create window -o uid stdout was not one Window uid: $window_uid"
 echo "PASS: create window succeeds with the unchanged result shape"

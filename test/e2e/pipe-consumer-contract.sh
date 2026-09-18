@@ -14,13 +14,26 @@
 #   awk-exit      `| awk` (gawk, mawk, nawk) whose command text has an `exit` word
 #   sed-q         `| sed` whose script has a `q`/`Q` command
 #   grep-m        `| grep` (egrep, fgrep) with `-m N`, `-mN`, or `--max-count`
+#   grep-q        `| grep` (egrep, fgrep) with a short-option cluster holding
+#                 `q` (`-q`, `-Fq`, `-Fxq`, `-qx`, ...), `--quiet`, or `--silent`
 #
-# The scan is regex and quote heuristic based, not a shell parser. It scans
-# code inside quoted strings too (for example `sh -c "... | head -n 1"`), skips
-# whole-line comments, and joins backslash-continued lines and lines ending in a
-# single `|` into one logical line before matching. A finding reports the
-# physical line that holds the consumer command word, not the logical line
-# start. `| grep -q` is out of scope and is not reported.
+# `grep -q` exits at its first match, so a producer that writes again dies with
+# SIGPIPE (or EPIPE rc=1 when SIGPIPE is ignored), and pipefail makes
+# `if producer | grep -q X` false and `if ! producer | grep -q X` true although
+# X is present. The adopted forms are the drain `producer | grep ... >/dev/null`,
+# which reads to EOF and keeps a producer failure visible to pipefail, and a
+# here-string on a captured variable (`grep -q X <<<"$out"`), which has no pipe.
+#
+# The scan is regex and quote heuristic based, not a shell parser. The first
+# four patterns scan code inside quoted strings too (for example
+# `sh -c "... | head -n 1"`). grep-q is reported only when the `|` is in bash
+# code context: a quote-aware pass tracks single quotes, double quotes, `$(...)`,
+# backticks, and trailing comments, and skips pipes inside quoted strings such
+# as `sh -c "... | grep -q x"`, which run under sh without pipefail. The scan
+# skips whole-line comments, and joins backslash-continued lines and lines
+# ending in a single `|` into one logical line before matching. A finding
+# reports the physical line that holds the consumer command word, not the
+# logical line start.
 #
 # The SIGPIPE controls run in a child with SIGPIPE restored to its default: CI
 # runners can start jobs with SIGPIPE ignored, which bash cannot undo, and then
@@ -51,6 +64,7 @@ scan() {
       awk_exit = "(^|[^A-Za-z0-9_])exit([^A-Za-z0-9_]|$)"
       sed_q = "(^|[;{} \t0-9$/" dq sq "])[qQ]([ \t]*[0-9]+)?[ \t]*([;}" dq sq "]|$)"
       grep_m = "(^|[ \t])(-[A-Za-z]*m[A-Za-z0-9]*|--max-count(=[^ \t]*)?)([ \t]|$)"
+      grep_q = "(^|[ \t])(-[A-Za-z0-9]*q[A-Za-z0-9]*|--quiet|--silent)([ \t]|$)"
     }
     function line_of(pos,   s) {
       for (s = nseg; s > 1; s--) if (pos >= segpos[s]) break
@@ -100,8 +114,67 @@ scan() {
         if (base ~ /grep$/ && bare ~ grep_m) report(j, "grep-m")
       }
     }
+    # grep_q_at reports buf[i] (a pipe in bash code context) when the command
+    # after it is grep, egrep, or fgrep with a quiet option.
+    function grep_q_at(i,   j, word, base) {
+      if (substr(buf, i - 1, 1) == "|" || substr(buf, i + 1, 1) == "|") return
+      j = i + 1
+      if (substr(buf, j, 1) == "&") j++
+      while (substr(buf, j, 1) ~ /[ \t]/) j++
+      word = substr(buf, j)
+      if (!match(word, /^[A-Za-z0-9_.\/-]+/)) return
+      word = substr(word, 1, RLENGTH)
+      base = word; sub(/.*\//, "", base)
+      if (base !~ /^[ef]?grep$/) return
+      command_span(j)
+      if (bare ~ grep_q) report(j, "grep-q")
+    }
+    # scan_grep_q walks buf with a context stack: c (code), b (backtick code),
+    # s (single-quoted), d (double-quoted). pd counts plain parentheses per
+    # code frame so the right `)` closes a `$(` frame. Only a pipe whose top
+    # frame is code or backtick code is bash context.
+    function scan_grep_q(   i, n, c, top, s, prev, d, st, pd) {
+      d = 1; st[1] = "c"; pd[1] = 0
+      n = length(buf)
+      for (i = 1; i <= n; i++) {
+        c = substr(buf, i, 1)
+        top = st[d]
+        if (top == "s") { if (c == sq) d--; continue }
+        if (top == "d") {
+          if (c == "\\") { i++; continue }
+          if (c == dq) { d--; continue }
+          if (c == "$" && substr(buf, i + 1, 1) == "(") { d++; st[d] = "c"; pd[d] = 0; i++; continue }
+          if (c == "`") { d++; st[d] = "b"; pd[d] = 0 }
+          continue
+        }
+        if (c == "\\") { i++; continue }
+        if (c == "#") {
+          prev = (i == 1) ? " " : substr(buf, i - 1, 1)
+          if (prev ~ /[ \t;&|(]/) {
+            s = line_of(i)
+            if (s < nseg) { i = segpos[s + 1] - 1; continue }
+            break
+          }
+        }
+        if (c == sq) { d++; st[d] = "s"; continue }
+        if (c == dq) { d++; st[d] = "d"; continue }
+        if (c == "`") {
+          if (top == "b") d--
+          else { d++; st[d] = "b"; pd[d] = 0 }
+          continue
+        }
+        if (c == "$" && substr(buf, i + 1, 1) == "(") { d++; st[d] = "c"; pd[d] = 0; i++; continue }
+        if (c == "(") { pd[d]++; continue }
+        if (c == ")") {
+          if (pd[d] > 0) pd[d]--
+          else if (d > 1) d--
+          continue
+        }
+        if (c == "|") grep_q_at(i)
+      }
+    }
     function flush() {
-      if (nseg > 0) scan_logical()
+      if (nseg > 0) { scan_logical(); scan_grep_q() }
       buf = ""; nseg = 0
     }
     {
@@ -146,6 +219,22 @@ ok5="$(tmux list-panes | awk -v exitrec="$x" '{ print $1 }')"
 ok6="$(tmux list-panes | grep -c queue)" || exit 1
 ok7="$(tmux list-panes | sed -n '/queue/p')"
 # comment mentioning | head -n 1 is ignored
+if tmux list-panes -F '#{pane_id}|x' \
+  | grep -Fqx "$p"; then :; fi
+x="$(pmx get panes | grep -q pane && echo y)"
+pmx get panes | grep --quiet pane
+pmx get panes | grep --silent pane
+if ! pmx get panes | egrep -q pane; then :; fi
+wait_for "d" sh -c "tail -c +1 '$log' | grep -aFq 'x'"
+wait_for "d" sh -c \
+  "tmux list-keys | grep -Fq 'x'"
+sh -c 'a | grep -q b'
+  "test -n \"\$(tmux list-clients | grep -q x)\""
+pmx get panes | grep -Fx pane >/dev/null
+grep -Fxq "$p" <<<"$uids"
+grep -q pane "$file"
+true # a | grep -q b
+pmx get panes | grep -s pane >/dev/null
 EOF
 expected_selftest="$(
   cat <<'EOF'
@@ -158,6 +247,12 @@ selftest:6: grep-m
 selftest:8: head
 selftest:10: grep-m
 selftest:11: head
+selftest:17: grep-q
+selftest:23: grep-q
+selftest:24: grep-q
+selftest:25: grep-q
+selftest:26: grep-q
+selftest:27: grep-q
 EOF
 )"
 actual_selftest="$(scan "$selftest" selftest | cut -d: -f1-3)"
@@ -206,6 +301,42 @@ if [[ "$inherited_head_rc" == "0" ]]; then
 fi
 if [[ "$drain_rc" != "0" || "$inherited_drain_rc" != "0" || "$self_stop_rc" != "0" || "$self_stop_out" != "pane-1" ]]; then
   echo "pipe-consumer-contract: adopted forms failed: drain rc=$drain_rc inherited drain rc=$inherited_drain_rc self-stop rc=$self_stop_rc out=$self_stop_out" >&2
+  exit 1
+fi
+
+# grep-q controls under pipefail. The producer writes pane-1 first and then
+# keeps writing line by line, far past a pipe buffer, so `grep -q` exits while
+# the producer still writes. With the default disposition the old positive form
+# must judge the present match false and the old negative form must judge it
+# true; the drain and the captured here-string must judge it correctly. With
+# the inherited disposition the old form is only reported and the drain must
+# still judge the match present.
+grepq_produce="for ((i = 1; i <= 50000; i++)); do printf 'pane-%d\\n' \"\$i\"; done 2>/dev/null"
+# grepq_judge_script CONDITION prints a bash script that echoes how `if`
+# judges CONDITION under pipefail.
+grepq_judge_script() {
+  printf 'set -o pipefail; if %s; then echo true; else echo false; fi' "$1"
+}
+grepq_old="$(with_default_sigpipe bash -c "$(grepq_judge_script "$grepq_produce | grep -Fxq pane-1")")"
+grepq_drain="$(with_default_sigpipe bash -c "$(grepq_judge_script "$grepq_produce | grep -Fx pane-1 >/dev/null")")"
+grepq_capture="$(with_default_sigpipe bash -c "$(grepq_judge_script "out=\"\$($grepq_produce)\"; grep -Fxq pane-1 <<<\"\$out\"")")"
+grepq_old_negative="$(with_default_sigpipe bash -c "$(grepq_judge_script "! $grepq_produce | grep -Fxq pane-1")")"
+grepq_drain_negative="$(with_default_sigpipe bash -c "$(grepq_judge_script "! $grepq_produce | grep -Fx pane-1 >/dev/null")")"
+inherited_grepq_old="$(bash -c "$(grepq_judge_script "$grepq_produce | grep -Fxq pane-1")")"
+inherited_grepq_drain="$(bash -c "$(grepq_judge_script "$grepq_produce | grep -Fx pane-1 >/dev/null")")"
+echo "control (default SIGPIPE): if producer | grep -Fxq pane-1 -> $grepq_old (want false: present match judged absent)"
+echo "control (default SIGPIPE): if producer | grep -Fx pane-1 >/dev/null -> $grepq_drain (want true)"
+echo "control (default SIGPIPE): out=\"\$(producer)\"; grep -Fxq pane-1 <<<\"\$out\" -> $grepq_capture (want true)"
+echo "control (default SIGPIPE): if ! producer | grep -Fxq pane-1 -> $grepq_old_negative (want true: present match judged absent)"
+echo "control (default SIGPIPE): if ! producer | grep -Fx pane-1 >/dev/null -> $grepq_drain_negative (want false)"
+echo "control (inherited SIGPIPE): if producer | grep -Fxq pane-1 -> $inherited_grepq_old (reported only)"
+echo "control (inherited SIGPIPE): if producer | grep -Fx pane-1 >/dev/null -> $inherited_grepq_drain (want true)"
+if [[ "$grepq_old" != "false" || "$grepq_old_negative" != "true" ]]; then
+  echo "pipe-consumer-contract: grep-q control old forms judged positive=$grepq_old negative=$grepq_old_negative, not false/true; the producer did not outlive grep -q, so the controls prove nothing" >&2
+  exit 1
+fi
+if [[ "$grepq_drain" != "true" || "$grepq_capture" != "true" || "$grepq_drain_negative" != "false" || "$inherited_grepq_drain" != "true" ]]; then
+  echo "pipe-consumer-contract: adopted grep-q forms failed: drain=$grepq_drain capture=$grepq_capture drain negative=$grepq_drain_negative inherited drain=$inherited_grepq_drain" >&2
   exit 1
 fi
 
@@ -258,7 +389,7 @@ fi
 if [[ -n "$findings" ]]; then
   printf '%s' "$findings"
   finding_count=$(($(printf '%s' "$findings" | wc -l)))
-  echo "FAIL pipe-consumer-contract: $finding_count early-exit pipe consumer(s) in $finding_files of $file_count scanned file(s); drain them (sed -n 1p, awk found flag) or let a file reader stop itself with sed q and no pipe in front" >&2
+  echo "FAIL pipe-consumer-contract: $finding_count early-exit pipe consumer(s) in $finding_files of $file_count scanned file(s); drain them (sed -n 1p, awk found flag) or let a file reader stop itself with sed q and no pipe in front; for grep-q drop q and send grep output to /dev/null, or grep -q a captured variable through a here-string" >&2
   exit 1
 fi
-echo "PASS pipe-consumer-contract: $file_count $file_noun 0 early-exit pipe consumers; control head rc=$head_rc, drain rc=$drain_rc (default SIGPIPE); inherited head rc=$inherited_head_rc, drain rc=$inherited_drain_rc; self-stop rc=$self_stop_rc"
+echo "PASS pipe-consumer-contract: $file_count $file_noun 0 early-exit pipe consumers; control head rc=$head_rc, drain rc=$drain_rc (default SIGPIPE); inherited head rc=$inherited_head_rc, drain rc=$inherited_drain_rc; self-stop rc=$self_stop_rc; grep-q old=$grepq_old drain=$grepq_drain capture=$grepq_capture old negative=$grepq_old_negative drain negative=$grepq_drain_negative (default SIGPIPE); inherited grep-q old=$inherited_grepq_old drain=$inherited_grepq_drain"

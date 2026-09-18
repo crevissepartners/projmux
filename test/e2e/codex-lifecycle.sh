@@ -601,8 +601,8 @@ assert_lifecycle_queue_exact() {
   local expected_id="$1" expected_severity="$2" output=""
   output="$(lifecycle_queue_json)"
   if [[ "$(printf '%s\n' "$output" | grep -c '^[[:space:]]*"id":' || true)" != "1" ]] ||
-    ! printf '%s\n' "$output" | grep -Fq '"id": "'"$expected_id"'"' ||
-    ! printf '%s\n' "$output" | grep -Fq '"severity": "'"$expected_severity"'"'; then
+    ! grep -Fq '"id": "'"$expected_id"'"' <<<"$output" ||
+    ! grep -Fq '"severity": "'"$expected_severity"'"' <<<"$output"; then
     echo "unexpected isolated lifecycle queue identity/severity" >&2
     printf '%s\n' "$output" >&2
     return 1

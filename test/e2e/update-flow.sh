@@ -63,7 +63,7 @@ echo ">> published older=$older latest=$latest"
 npm install -g "projmux@$older" >/dev/null 2>&1 || fail "npm install -g projmux@$older failed"
 got_old="$(projmux version 2>/dev/null || true)"
 echo ">> before update: $got_old"
-echo "$got_old" | grep -Fq "$older" || fail "expected installed version $older, got: $got_old"
+grep -Fq "$older" <<<"$got_old" || fail "expected installed version $older, got: $got_old"
 
 # Keep the exact old physical generation live across the update. v0.12.2 wrote
 # @projmux_app but not the logical marker required by v0.13+ consumers.
@@ -95,7 +95,7 @@ build="$(mktemp -d)"
 
 # Guard: the fixed apply must plan `npm install -g projmux@latest`.
 fixed_plan="$(PROJMUX_INSTALLER=npm "$build/projmux" update apply --dry-run --no-apply 2>&1)" || fail "fixed apply --dry-run failed: $fixed_plan"
-echo "$fixed_plan" | grep -Fq "npm install -g projmux@latest" \
+grep -Fq "npm install -g projmux@latest" <<<"$fixed_plan" \
   || fail "fixed apply plan missing 'npm install -g projmux@latest': $fixed_plan"
 
 # Step 3: run the fixed apply for real. The fixed orchestrator must migrate the
@@ -115,8 +115,8 @@ updated_sessions="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" list-sessi
 # Step 4: the global projmux must now be the latest published version.
 got_new="$(projmux version 2>/dev/null || true)"
 echo ">> after update: $got_new"
-echo "$got_new" | grep -Fq "$latest" || fail "after update expected $latest, got: $got_new"
-[ "$older" != "$latest" ] && echo "$got_new" | grep -Fq "$older" \
+grep -Fq "$latest" <<<"$got_new" || fail "after update expected $latest, got: $got_new"
+[ "$older" != "$latest" ] && grep -Fq "$older" <<<"$got_new" \
   && fail "still reporting old version $older after update: $got_new"
 echo ">> PASS: upgraded $older -> $latest via fixed 'update apply'"
 
@@ -146,7 +146,7 @@ npmshape="$build/node_modules/@projmux/linux-x64/bin"
 mkdir -p "$npmshape"
 cp "$build/projmux" "$npmshape/projmux"
 detected="$(env -u PROJMUX_INSTALLER "$npmshape/projmux" update status --json 2>/dev/null || true)"
-echo "$detected" | grep -Fq '"source": "npm"' \
+grep -Fq '"source": "npm"' <<<"$detected" \
   || fail "autodetection did not report npm from npm-shaped path: $detected"
 echo ">> PASS: installer autodetection reports npm without PROJMUX_INSTALLER"
 

@@ -654,7 +654,7 @@ smoke_current_frame_contains() {
   local path="$1"
   local offset="$2"
   local needle="$3"
-  tail -c "+$((offset + 1))" "$path" 2>/dev/null | grep -aFq "$needle"
+  tail -c "+$((offset + 1))" "$path" 2>/dev/null | grep -aF "$needle" >/dev/null
 }
 
 smoke_wait_for_current_frame() {

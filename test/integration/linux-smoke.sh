@@ -1764,7 +1764,7 @@ timeout 10 script -qec "$attach_command" /dev/null >"$PROJMUX_SMOKE_WORKDIR/life
 attach_pid=$!
 attach_seen=0
 for _ in $(seq 1 500); do
-  if env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-clients -F '#{client_session}' 2>/dev/null | grep -Fxq raw-attach-success; then
+  if env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-clients -F '#{client_session}' 2>/dev/null | grep -Fx raw-attach-success >/dev/null; then
     attach_seen=1
     break
   fi
@@ -2762,7 +2762,7 @@ for envelope_copy in "${envelope_copies[@]}"; do
     exit 1
   fi
 done
-if find "$envelope_metadata" "$envelope_recovery" -maxdepth 1 -name '*.tmp-*' -print -quit | grep -q .; then
+if find "$envelope_metadata" "$envelope_recovery" -maxdepth 1 -name '*.tmp-*' -print -quit | grep . >/dev/null; then
   echo "the durable envelope leaked a staged temp file" >&2
   find "$envelope_metadata" >&2
   exit 1
@@ -3450,8 +3450,8 @@ if [[ "$termination_pane_session" != "$termination_session_id" ]] || [[ "$termin
   echo "termination fixture has no exact managed Pane anchor: $termination_anchor_receipt" >&2
   exit 1
 fi
-if ! termination_pmx get windows --project "uid:$termination_project_uid" -o uid | grep -Fxq "$termination_main_window_uid" ||
-  ! termination_pmx get panes --project "uid:$termination_project_uid" --window "uid:$termination_main_window_uid" -o uid | grep -Fxq "$termination_anchor_pane_uid"; then
+if ! termination_pmx get windows --project "uid:$termination_project_uid" -o uid | grep -Fx "$termination_main_window_uid" >/dev/null ||
+  ! termination_pmx get panes --project "uid:$termination_project_uid" --window "uid:$termination_main_window_uid" -o uid | grep -Fx "$termination_anchor_pane_uid" >/dev/null; then
   echo "termination fixture tmux anchor is not the exact Registry Window/Pane identity" >&2
   exit 1
 fi
@@ -3764,7 +3764,7 @@ termination_provider_case() {
       cat "$termination_root/clean-provider-pane-present.json" >&2
       exit 1
     fi
-    if termination_tmux list-panes -t "$termination_main_window_id" -F '#{@projmux_pane_uid}' | grep -Fxq "$pane_ref"; then
+    if termination_tmux list-panes -t "$termination_main_window_id" -F '#{@projmux_pane_uid}' | grep -Fx "$pane_ref" >/dev/null; then
       echo "clean provider $provider left exact dead runtime Pane $pane_ref" >&2
       exit 1
     fi
@@ -3784,7 +3784,7 @@ termination_provider_case() {
       ! termination_pmx describe project "uid:$termination_project_uid" -o json >/dev/null ||
       ! termination_pmx describe pane "uid:$anchor_ref" -o json >"$termination_root/provider-$provider-anchor.json" ||
       ! termination_pmx get agents --project "uid:$termination_project_uid" \
-        --window "uid:$termination_main_window_uid" -o uid | grep -Fxq "$agent_uid" ||
+        --window "uid:$termination_main_window_uid" -o uid | grep -Fx "$agent_uid" >/dev/null ||
       [[ "$(termination_tmux display-message -p -t "$termination_anchor_pane_id" '#{window_id}|#{@projmux_pane_uid}')" != "$termination_main_window_id|$termination_anchor_pane_uid" ]]; then
       echo "clean provider $provider did not preserve the exact Project/Window/sibling-anchor chain" >&2
       cat "$termination_root/provider-$provider-window.json" >&2
@@ -3875,7 +3875,7 @@ fi
 termination_pmx delete pane "uid:$termination_closed_shell_uid" --socket "$termination_socket" --yes \
   >"$termination_root/delete-closed-shell.out"
 if [[ "$(termination_tmux list-panes -t work-closed -F '#{@projmux_pane_uid}' | grep -c . || true)" != "1" ]] ||
-  ! termination_tmux list-panes -t work-closed -F '#{@projmux_pane_uid}' | grep -Fxq "$termination_closed_agent_pane_uid"; then
+  ! termination_tmux list-panes -t work-closed -F '#{@projmux_pane_uid}' | grep -Fx "$termination_closed_agent_pane_uid" >/dev/null; then
   echo "Phase 1 integration did not leave the managed Agent as exact last Pane" >&2
   exit 1
 fi
@@ -4336,8 +4336,8 @@ exitrec_capture_anchor() {
     echo "exit reconciliation $label host has no unique managed Pane receipt: $pane_receipt" >&2
     exit 1
   fi
-  if ! exitrec_pmx get windows --project "uid:$project_uid" -o uid | grep -Fxq "$window_uid" ||
-    ! exitrec_pmx get panes --project "uid:$project_uid" --window "uid:$window_uid" -o uid | grep -Fxq "$pane_uid"; then
+  if ! exitrec_pmx get windows --project "uid:$project_uid" -o uid | grep -Fx "$window_uid" >/dev/null ||
+    ! exitrec_pmx get panes --project "uid:$project_uid" --window "uid:$window_uid" -o uid | grep -Fx "$pane_uid" >/dev/null; then
     echo "exit reconciliation $label tmux receipt is outside its exact Registry owner graph" >&2
     exit 1
   fi
@@ -4462,13 +4462,13 @@ fi
 kill -KILL "$exitrec_preexisting_pid"
 for _ in $(seq 1 100); do
   if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
-    | grep -Fqx "$exitrec_preexisting_pane|1" && ! kill -0 "$exitrec_preexisting_pid" 2>/dev/null; then
+    | grep -Fx "$exitrec_preexisting_pane|1" >/dev/null && ! kill -0 "$exitrec_preexisting_pid" 2>/dev/null; then
     break
   fi
   sleep 0.05
 done
 if ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
-  | grep -Fqx "$exitrec_preexisting_pane|1" || kill -0 "$exitrec_preexisting_pid" 2>/dev/null ||
+  | grep -Fx "$exitrec_preexisting_pane|1" >/dev/null || kill -0 "$exitrec_preexisting_pid" 2>/dev/null ||
   { [[ -s "$exitrec_root/state/projmux/termination-receipts.jsonl" ]] &&
     grep -Fq "\"paneUID\":\"$exitrec_preexisting_pane\"" "$exitrec_root/state/projmux/termination-receipts.jsonl"; }; then
   echo "preexisting startup fixture lacks positive dead/absent-supervisor/receipt-absent authority" >&2
@@ -4490,7 +4490,7 @@ if [[ "$(exitrec_field phase)" != "Offline" || -n "$(exitrec_field paneRef)" ||
   "$(exitrec_termination_field source)" != "reconcile" ]] ||
   exitrec_doc_exists pane "$exitrec_preexisting_pane" ||
   exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
-    | grep -Eq "^${exitrec_preexisting_pane}\\|(0|1)$"; then
+    | grep -E "^${exitrec_preexisting_pane}\\|(0|1)$" >/dev/null; then
   echo "preexisting startup recovery did not converge the receipt-absent dead Agent Pane" >&2
   cat "$exitrec_root/doc.json" >&2
   exit 1
@@ -4535,7 +4535,7 @@ fi
 exitrec_await_journal_receipt "$exitrec_exhausted_pane" normal
 for _ in $(seq 1 100); do
   if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
-    | grep -Fqx "$exitrec_exhausted_pane|1"; then
+    | grep -Fx "$exitrec_exhausted_pane|1" >/dev/null; then
     break
   fi
   sleep 0.05
@@ -4543,7 +4543,7 @@ done
 exitrec_doc agent "$exitrec_exhausted_agent"
 if [[ "$(exitrec_field phase)" != "Running" || "$(exitrec_field paneRef)" != "$exitrec_exhausted_pane" ]] ||
   ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
-    | grep -Fqx "$exitrec_exhausted_pane|1"; then
+    | grep -Fx "$exitrec_exhausted_pane|1" >/dev/null; then
   echo "exhausted startup fixture did not retain a Running Agent and positive dead Pane mirror" >&2
   cat "$exitrec_root/doc.json" >&2
   exit 1
@@ -4596,7 +4596,7 @@ if [[ "$(exitrec_field name)" != "$exitrec_exhausted_name" || "$(exitrec_field p
   "$(exitrec_termination_field operationID)" != "$exitrec_exhausted_operation" ]] ||
   exitrec_doc_exists pane "$exitrec_exhausted_pane" ||
   exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
-    | grep -Eq "^${exitrec_exhausted_pane}\|(0|1)$" ||
+    | grep -E "^${exitrec_exhausted_pane}\|(0|1)$" >/dev/null ||
   [[ -e "$exitrec_controller_events/historical-retry3" ]]; then
   echo "exhausted startup replay did not converge the exact historical Agent/Pane/event" >&2
   cat "$exitrec_root/doc.json" >&2
@@ -4656,23 +4656,23 @@ exitrec_agent_case() {
   for _ in $(seq 1 100); do
     if [[ "$want_class" == "normal" ]]; then
       if ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
-        | grep -qx "$pane_ref"; then
+        | grep -x "$pane_ref" >/dev/null; then
         break
       fi
     elif exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
-      | grep -Fqx "$pane_ref|1"; then
+      | grep -Fx "$pane_ref|1" >/dev/null; then
       break
     fi
     sleep 0.1
   done
   if [[ "$want_class" == "normal" ]]; then
     if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
-      | grep -qx "$pane_ref"; then
+      | grep -x "$pane_ref" >/dev/null; then
       echo "exit reconciliation case $label did not clean normal dead pane $pane_ref" >&2
       exit 1
     fi
   elif ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
-    | grep -Fqx "$pane_ref|1"; then
+    | grep -Fx "$pane_ref|1" >/dev/null; then
     echo "exit reconciliation case $label lost abnormal retained dead pane $pane_ref" >&2
     exit 1
   fi
@@ -4784,13 +4784,13 @@ for exitrec_pair in \
     exit 1
   fi
   if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
-    | grep -Eq "^${exitrec_pair_pane}\\|(0|1)$"; then
+    | grep -E "^${exitrec_pair_pane}\\|(0|1)$" >/dev/null; then
     echo "simultaneous clean provider left mirrored/dead Pane $exitrec_pair_pane" >&2
     exit 1
   fi
 done
 if ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
-  | grep -Eq "^${exitrec_app_anchor_pane_uid}\\|0$"; then
+  | grep -E "^${exitrec_app_anchor_pane_uid}\\|0$" >/dev/null; then
   echo "simultaneous clean providers changed the sibling shell $exitrec_app_anchor_pane_uid" >&2
   exit 1
 fi
@@ -4870,7 +4870,7 @@ fi
 kill -KILL "$exitrec_sigkill_pid" 2>/dev/null || true
 for _ in $(seq 1 100); do
   exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
-    | grep -qx "$exitrec_sigkill_pane" || break
+    | grep -x "$exitrec_sigkill_pane" >/dev/null || break
   sleep 0.1
 done
 exitrec_reconcile app-owned
@@ -4903,7 +4903,7 @@ exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server
 touch "$exitrec_shell_release"
 for _ in $(seq 1 100); do
   exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
-    | grep -qx "$exitrec_shell_pane" || break
+    | grep -x "$exitrec_shell_pane" >/dev/null || break
   sleep 0.1
 done
 exitrec_await_journal_receipt "$exitrec_shell_pane" normal
@@ -4991,7 +4991,7 @@ if [[ "$(exitrec_field phase)" != "Failed" || -n "$(exitrec_field paneRef)" ||
 fi
 if ! exitrec_doc_exists pane "$exitrec_early_pane" ||
   ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
-    | grep -Fqx "$exitrec_early_pane|1"; then
+    | grep -Fx "$exitrec_early_pane|1" >/dev/null; then
   echo "immediate exit 42 lost its exact retained abnormal Pane $exitrec_early_pane" >&2
   exit 1
 fi
@@ -5016,7 +5016,7 @@ if [[ "$exitrec_early_before" != "$exitrec_early_after" ]]; then
   exit 1
 fi
 if [[ "$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel)" != "$exitrec_early_sibling_before" ]] ||
-  ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' | grep -Fqx "$exitrec_app_anchor_pane_uid"; then
+  ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' | grep -Fx "$exitrec_app_anchor_pane_uid" >/dev/null; then
   echo "immediate exit 42 changed a sibling server or the owner Window anchor" >&2
   exit 1
 fi

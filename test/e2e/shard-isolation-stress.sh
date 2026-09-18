@@ -117,7 +117,7 @@ for fixture in 3 1 4 2; do
     exit 1
   }
   for sibling in 1 2 3 4; do
-    if printf '%s\n' "${released[@]}" | grep -qx "$sibling"; then
+    if printf '%s\n' "${released[@]}" | grep -x "$sibling" >/dev/null; then
       continue
     fi
     [[ -d "${roots[$sibling]}" && -S "${paths[$sibling]}" ]] || {

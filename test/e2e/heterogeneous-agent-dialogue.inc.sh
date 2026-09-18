@@ -181,7 +181,7 @@ PY
 # Exercise the production observer on synthetic public events. No hand-authored
 # qualification evidence file is accepted as public activation evidence here.
 dialogue_observer_ready() {
-  dialogue_tmux capture-pane -p -J -t "$dialogue_claude_pane" | grep -Fq 'Claude reply-only activation is ready for explicit qualification.'
+  dialogue_tmux capture-pane -p -J -t "$dialogue_claude_pane" | grep -F 'Claude reply-only activation is ready for explicit qualification.' >/dev/null
 }
 if ! smoke_wait_for "dialogue public observer ready" dialogue_observer_ready; then
   dialogue_tmux capture-pane -p -J -t "$dialogue_claude_pane" >&2 || true

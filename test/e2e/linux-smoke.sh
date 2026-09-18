@@ -341,7 +341,7 @@ recorder_label_is() {
 recorder_client_saw() {
   local offset="$1"
   local text="$2"
-  tail -c "+$((offset + 1))" "$recorder_log" | grep -aFq "$text"
+  tail -c "+$((offset + 1))" "$recorder_log" | grep -aF "$text" >/dev/null
 }
 assert_recorder_identity_metadata() {
   if [[ "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_ai_topic)" != "recorder AI topic" ]] ||
@@ -660,7 +660,7 @@ for marker in 'Single Keys' 'Sequences' '+ Add binding'; do
   smoke_wait_for "action detail $marker" sh -c \
     "tail -c +$((recorder_detail_offset + 1)) '$recorder_log' | grep -aFq '$marker'"
 done
-if tail -c +$((recorder_detail_offset + 1)) "$recorder_log" | grep -aEq 'Target kind|Result kind|Placement|Anchor|Handler|Options|Troubleshooting|Advanced\.\.\.'; then
+if tail -c +$((recorder_detail_offset + 1)) "$recorder_log" | grep -aE 'Target kind|Result kind|Placement|Anchor|Handler|Options|Troubleshooting|Advanced\.\.\.' >/dev/null; then
   echo "action detail still renders passive internal copy or a teaching container" >&2
   exit 1
 fi
@@ -673,7 +673,7 @@ smoke_wait_for "key detail" sh -c \
   "tail -c +$((recorder_keydetail_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Keybindings > Action > Key > '"
 smoke_wait_for "key detail Test delivery row" sh -c \
   "tail -c +$((recorder_keydetail_offset + 1)) '$recorder_log' | grep -aFq 'Test delivery'"
-if tail -c +$((recorder_keydetail_offset + 1)) "$recorder_log" | grep -aEq 'Canonical key|Delivery path'; then
+if tail -c +$((recorder_keydetail_offset + 1)) "$recorder_log" | grep -aE 'Canonical key|Delivery path' >/dev/null; then
   echo "key detail still renders canonical-storage or delivery-path teaching" >&2
   exit 1
 fi
@@ -758,7 +758,7 @@ settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'sequence:C-o o\r' >&9
 smoke_wait_for "saved sequence detail" sh -c \
   "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'C-o,o'"
-if tail -c +$((settings_nav_offset + 1)) "$recorder_log" | grep -aEq 'Cancellation|authoring and saved bytes|saved logical strokes'; then
+if tail -c +$((settings_nav_offset + 1)) "$recorder_log" | grep -aE 'Cancellation|authoring and saved bytes|saved logical strokes' >/dev/null; then
   echo "sequence detail still renders cancellation, delivery, or storage teaching" >&2
   exit 1
 fi
@@ -834,7 +834,7 @@ smoke_wait_for "protected action reason" sh -c \
   "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Editing locked'"
 smoke_wait_for "protected trigger reason" sh -c \
   "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'shipped/default trigger'"
-if tail -c +$((settings_nav_offset + 1)) "$recorder_log" | grep -aEq '\+ Add binding|Enter binding manually|Unbind single keys|Reset to default|Use default'; then
+if tail -c +$((settings_nav_offset + 1)) "$recorder_log" | grep -aE '\+ Add binding|Enter binding manually|Unbind single keys|Reset to default|Use default' >/dev/null; then
   echo "protected action exposed a mutation row" >&2
   exit 1
 fi
@@ -2780,8 +2780,8 @@ smoke_assert_file_contains "$create_root/agent-reconcile-repeat.json" '"outcome"
 cross_agent_name="$(pmx_agent create agent --provider codex --interactive-only --project alpha --window "$alpha_window_name" \
   --cwd "$create_root/work/beta" --add-dir "$create_root/legacy/alpha" -o name)"
 smoke_assert_file_contains "$create_root/agent-launch.log" "args=-C $create_root/work/beta --add-dir $create_root/legacy/alpha"
-if ! pmx_agent get agents --project alpha -o name | grep -qx "$cross_agent_name" ||
-  pmx_agent get agents --project "uid:$create_beta_uid" -o name | grep -qx "$cross_agent_name"; then
+if ! pmx_agent get agents --project alpha -o name | grep -x "$cross_agent_name" >/dev/null ||
+  pmx_agent get agents --project "uid:$create_beta_uid" -o name | grep -x "$cross_agent_name" >/dev/null; then
   echo "cross-Project workspace changed Agent ownership" >&2
   exit 1
 fi
@@ -5447,7 +5447,7 @@ topology_assert_exact_resume() {
   local expected="$1"
   topology_launch_count_reached() { [[ "$(wc -l <"$topology_agent_argv")" -ge "$expected" ]]; }
   smoke_wait_until 10 "Continue provider argv receipt" topology_launch_count_reached
-  if [[ "$(wc -l <"$topology_agent_argv")" != "$expected" ]] || ! tail -n 1 "$topology_agent_argv" | grep -Fq "resume topology-thread"; then
+  if [[ "$(wc -l <"$topology_agent_argv")" != "$expected" ]] || ! tail -n 1 "$topology_agent_argv" | grep -F "resume topology-thread" >/dev/null; then
     echo "Continue did not resume the exact retained conversation once (expected total $expected)" >&2
     cat "$topology_agent_argv" >&2
     exit 1
@@ -5535,7 +5535,7 @@ done <<<"$topology_start_commands"
 # unlike the raw kill above, which is drift.
 topology_app_pmx delete pane "uid:$topology_extra_pane_uid" --socket "$topology_socket" --yes >"$topology_root/delete-pane.out"
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/after-delete.json"
-if topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | grep -Fqx "$topology_extra_pane_uid"; then
+if topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | grep -Fx "$topology_extra_pane_uid" >/dev/null; then
   echo "canonical delete was replayed by materialization" >&2
   exit 1
 fi
@@ -5706,7 +5706,7 @@ fi
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/agent-only-execute.json"
 topology_agent_only_launches_after="$(wc -l <"$topology_agent_argv")"
 if [[ "$((topology_agent_only_launches_after - topology_agent_only_launches_before))" != "1" ]] ||
-  ! tail -n 1 "$topology_agent_argv" | grep -Fq "resume topology-thread"; then
+  ! tail -n 1 "$topology_agent_argv" | grep -F "resume topology-thread" >/dev/null; then
   echo "Agent-only interrupted fixture did not resume its exact conversation once" >&2
   cat "$topology_agent_argv" >&2 || true
   exit 1
@@ -6281,7 +6281,7 @@ startup_wait_for "explicit Agent resume after external HUP" grep -Fq "resume sta
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-explicit-resume.json"
 startup_explicit_resume_pane_uid="$(sed -n '/.*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/agent-after-explicit-resume.json")"
 if [[ -z "$startup_explicit_resume_pane_uid" ]] ||
-  ! startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | grep -Fqx "$startup_explicit_resume_pane_uid" ||
+  ! startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | grep -Fx "$startup_explicit_resume_pane_uid" >/dev/null ||
   ! grep -Fq '"phase": "Running"' "$startup_root/agent-after-explicit-resume.json" ||
   ! grep -Fq 'startup-thread' "$startup_root/agent-after-explicit-resume.json"; then
   echo "explicit agent resume lost its independent exact-conversation authority" >&2
@@ -7281,7 +7281,7 @@ if [[ "$(printf '%s\n' "$fopen_project_uid" | wc -l)" != "1" ]] || [[ -z "$fopen
   exit 1
 fi
 # The sibling candidate under the same discovery root stays unregistered.
-if fopen_pmx get projects -o json | grep -Fq "$fopen_root/work/delta"; then
+if fopen_pmx get projects -o json | grep -F "$fopen_root/work/delta" >/dev/null; then
   echo "the first open also registered the sibling candidate delta" >&2
   exit 1
 fi
@@ -7349,7 +7349,7 @@ if [[ -z "$fopen_pane_uids" ]]; then
   exit 1
 fi
 fopen_live_pane_uid="$(fopen_tmux display-message -p -t "$fopen_created_pane" '#{@projmux_pane_uid}')"
-if ! printf '%s\n' "$fopen_pane_uids" | grep -Fqx "$fopen_live_pane_uid"; then
+if ! grep -Fqx "$fopen_live_pane_uid" <<<"$fopen_pane_uids"; then
   echo "the created pane uid '$fopen_live_pane_uid' is not in get panes: $fopen_pane_uids" >&2
   exit 1
 fi
@@ -7682,7 +7682,7 @@ rtd_tmux display-popup -c "$rtd_client" -T "Runtime E2E" -w 72 -h 24 -E \
 rtd_popup_pid=$!
 
 rtd_screen_has() {
-  tail -c +$((rtd_popup_offset + 1)) "$rtd_client_log" | grep -aFq "$1"
+  tail -c +$((rtd_popup_offset + 1)) "$rtd_client_log" | grep -aF "$1" >/dev/null
 }
 rtd_wait_for "Runtime diagnostics picker" rtd_screen_has "Runtime diagnostics"
 rtd_wait_for "runtime diagnostics host header" rtd_screen_has "host app-owned"
@@ -7712,7 +7712,7 @@ done
 # proves that the selected Pane survived the round trip.
 rtd_columns_offset="$(stat -c %s "$rtd_client_log")"
 rtd_columns_has() {
-  tail -c +$((rtd_columns_offset + 1)) "$rtd_client_log" | grep -aFq "$1"
+  tail -c +$((rtd_columns_offset + 1)) "$rtd_client_log" | grep -aF "$1" >/dev/null
 }
 printf '\033w' >&7
 rtd_wait_for "runtime wide column profile" rtd_columns_has "compact columns"
@@ -7725,7 +7725,7 @@ rtd_wait_for "runtime compact column profile" rtd_columns_has "wide columns"
 rtd_menu_offset="$(stat -c %s "$rtd_client_log")"
 printf '\r' >&7
 rtd_menu_has() {
-  tail -c +$((rtd_menu_offset + 1)) "$rtd_client_log" | grep -aFq "$1"
+  tail -c +$((rtd_menu_offset + 1)) "$rtd_client_log" | grep -aF "$1" >/dev/null
 }
 rtd_wait_for "runtime diagnostics action menu" rtd_menu_has "Runtime object"
 rtd_wait_for "runtime diagnostics focus action" rtd_menu_has "Focus"
@@ -7733,7 +7733,7 @@ rtd_wait_for "runtime diagnostics inspect action" rtd_menu_has "Open Resource In
 # The popup truncates the refusal at its width, so the needle is the part that
 # always fits.
 rtd_wait_for "runtime diagnostics attach refusal" rtd_menu_has "unavailable - only a session"
-if tail -c +$((rtd_menu_offset + 1)) "$rtd_client_log" | grep -aEq 'Kill|Delete|Adopt|Import|Rename'; then
+if tail -c +$((rtd_menu_offset + 1)) "$rtd_client_log" | grep -aE 'Kill|Delete|Adopt|Import|Rename' >/dev/null; then
   echo "runtime diagnostics action menu offered a destructive or adopting action" >&2
   exit 1
 fi
@@ -7949,7 +7949,7 @@ nav_open_projects() {
 nav_popup_offset=0
 nav_open_projects nav_popup_offset
 nav_screen_has() {
-  tail -c +$((nav_popup_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+  tail -c +$((nav_popup_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
 }
 nav_wait_for "Projects sidebar" nav_screen_has "Projects"
 # The Runtime link is a row of the Projects list, and it says what it leads to.
@@ -8010,7 +8010,7 @@ nav_wait_for "Projects sidebar after nested Runtime exit" nav_screen_has "Projec
 nav_filter_offset="$(stat -c %s "$nav_client_log")"
 printf 'alpha' >&8
 nav_filter_has() {
-  tail -c +$((nav_filter_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+  tail -c +$((nav_filter_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
 }
 # The needle is the row's own path line rather than the name, because the search
 # field echoes whatever was typed: only the card can put the Project root on the
@@ -8024,7 +8024,7 @@ nav_wait_for "managed Project row" nav_filter_has "nav/alpha"
 nav_hier_offset="$(stat -c %s "$nav_client_log")"
 printf '\022' >&8
 nav_hier_has() {
-  tail -c +$((nav_hier_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+  tail -c +$((nav_hier_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
 }
 nav_wait_for "Projects resources hierarchy" nav_hier_has "Projects > Resources"
 nav_wait_for "hierarchy host header" nav_hier_has "host app-owned"
@@ -8034,7 +8034,7 @@ nav_wait_for "hierarchy pane row" nav_hier_has "pane"
 nav_wait_for "hierarchy live status" nav_hier_has "live"
 nav_columns_offset="$(stat -c %s "$nav_client_log")"
 nav_columns_has() {
-  tail -c +$((nav_columns_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+  tail -c +$((nav_columns_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
 }
 printf '\033w' >&8
 nav_wait_for "Registry wide column profile" nav_columns_has "compact columns"
@@ -8156,14 +8156,14 @@ nav_wait_for "Projects sidebar after the session was killed" nav_screen_has "Pro
 nav_offline_filter_offset="$(stat -c %s "$nav_client_log")"
 printf 'alpha' >&8
 nav_offline_filter_has() {
-  tail -c +$((nav_offline_filter_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+  tail -c +$((nav_offline_filter_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
 }
 smoke_wait_for_current_frame "offline Project row" \
   "$nav_client_log" "$nav_offline_filter_offset" "nav/alpha"
 nav_offline_offset="$(stat -c %s "$nav_client_log")"
 printf '\022' >&8
 nav_offline_has() {
-  tail -c +$((nav_offline_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+  tail -c +$((nav_offline_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
 }
 smoke_wait_for_current_frame "offline hierarchy" \
   "$nav_client_log" "$nav_offline_offset" "Projects > Resources"
@@ -8479,7 +8479,7 @@ rtv_open_projects() {
 }
 rtv_popup_offset=0
 rtv_screen_has() {
-  tail -c +$((rtv_popup_offset + 1)) "$rtv_client_log" | grep -aFq "$1"
+  tail -c +$((rtv_popup_offset + 1)) "$rtv_client_log" | grep -aF "$1" >/dev/null
 }
 
 : >"$rtv_visibility_file"
@@ -9046,7 +9046,7 @@ if [[ "$exitrec_anchor_socket" != "$exitrec_socket_path" ]] || \
   echo "exit reconciliation create lacks exact managed anchor containment: $exitrec_anchor_receipt" >&2
   exit 1
 fi
-if ! exitrec_tmux show-hooks -g | grep -q "internal tmux converge --socket-path"; then
+if ! exitrec_tmux show-hooks -g | grep "internal tmux converge --socket-path" >/dev/null; then
   echo "the generated config installed no controller trigger, so hook-driven convergence cannot be observed" >&2
   exitrec_tmux show-hooks -g >&2
   exit 1
@@ -9061,14 +9061,14 @@ fi
 # happens to be server-global.
 exitrec_hooks="$(exitrec_tmux show-hooks -g; exitrec_tmux show-hooks -gw)"
 for exitrec_hook in pane-exited pane-died after-kill-pane window-unlinked after-new-window after-split-window; do
-  if ! printf '%s\n' "$exitrec_hooks" | grep -q "^$exitrec_hook.*internal tmux converge --socket-path"; then
+  if ! grep -q "^$exitrec_hook.*internal tmux converge --socket-path" <<<"$exitrec_hooks"; then
     echo "hook $exitrec_hook does not reach the controller entrypoint" >&2
     printf '%s\n' "$exitrec_hooks" >&2
     exit 1
   fi
 done
 for exitrec_retired in release-dead-agent-panes reconcile-bindings; do
-  if printf '%s\n' "$exitrec_hooks" | grep -q "$exitrec_retired"; then
+  if grep -q "$exitrec_retired" <<<"$exitrec_hooks"; then
     echo "a live hook still invokes the retired $exitrec_retired route" >&2
     printf '%s\n' "$exitrec_hooks" >&2
     exit 1
@@ -9232,7 +9232,7 @@ if ! exitrec_pmx describe window "uid:$exitrec_window_uid" -o json >"$exitrec_ro
   exit 1
 fi
 if ! exitrec_pmx describe pane "uid:$exitrec_shell_pane" -o json >"$exitrec_root/shell-after-clean.json" ||
-  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -qx "$exitrec_shell_pane"; then
+  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -x "$exitrec_shell_pane" >/dev/null; then
   echo "one-of-many clean exit deleted the sibling shell Pane/runtime" >&2
   exit 1
 fi
@@ -9272,14 +9272,14 @@ for exitrec_pair in \
     exit 1
   fi
   if exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
-    | grep -Eq "^${exitrec_pair_pane}\\|(0|1)$"; then
+    | grep -E "^${exitrec_pair_pane}\\|(0|1)$" >/dev/null; then
     echo "simultaneous Agent $exitrec_pair_agent left mirrored/dead Pane $exitrec_pair_pane" >&2
     exit 1
   fi
 done
 exitrec_doc agent "$exitrec_failed_agent"
 if [[ "$(exitrec_field phase)" != "Failed" ]] ||
-  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' | grep -Eq "^${exitrec_shell_pane}\\|0$"; then
+  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' | grep -E "^${exitrec_shell_pane}\\|0$" >/dev/null; then
   echo "simultaneous clean exits changed the failed Agent or sibling shell" >&2
   exit 1
 fi
@@ -9472,7 +9472,7 @@ if [[ "$(exitrec_tmux list-panes -t "$exitrec_beta_window_runtime" -F '#{pane_id
 fi
 exitrec_live_pmx delete pane "uid:$exitrec_beta_initial_pane_uid" --yes >"$exitrec_root/delete-beta-shell.out"
 if [[ "$(exitrec_tmux list-panes -t "$exitrec_beta_window_runtime" -F '#{@projmux_pane_uid}' | grep -c . || true)" != "1" ]] ||
-  ! exitrec_tmux list-panes -t "$exitrec_beta_window_runtime" -F '#{@projmux_pane_uid}' | grep -Fxq "$exitrec_beta_agent_pane_uid"; then
+  ! exitrec_tmux list-panes -t "$exitrec_beta_window_runtime" -F '#{@projmux_pane_uid}' | grep -Fx "$exitrec_beta_agent_pane_uid" >/dev/null; then
   echo "Phase 1 e2e canonical shell delete did not leave the Agent as target Window's sole descendant" >&2
   exit 1
 fi
@@ -9537,7 +9537,7 @@ if [[ "$exitrec_beta_closed_before" != "$exitrec_beta_closed_after" ]]; then
 fi
 if ! exitrec_pmx describe project "uid:$exitrec_project_uid" -o json >"$exitrec_root/alpha-after-beta.json" ||
   ! exitrec_pmx describe window "uid:$exitrec_window_uid" -o json >"$exitrec_root/alpha-window-after-beta.json" ||
-  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -qx "$exitrec_shell_pane"; then
+  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -x "$exitrec_shell_pane" >/dev/null; then
   echo "Phase 1 e2e Window closure changed its same-socket sibling Project" >&2
   exit 1
 fi
@@ -9721,13 +9721,13 @@ exitrec_preexisting_provider_before="$(sha256sum "$exitrec_root/preexisting-prov
 kill -KILL "$exitrec_preexisting_pid"
 for _ in $(seq 1 150); do
   if exitrec_tmux list-panes -a -F '#{pane_id}|#{pane_dead}' \
-    | grep -Fqx "$exitrec_preexisting_runtime|1" && ! kill -0 "$exitrec_preexisting_pid" 2>/dev/null; then
+    | grep -Fx "$exitrec_preexisting_runtime|1" >/dev/null && ! kill -0 "$exitrec_preexisting_pid" 2>/dev/null; then
     break
   fi
   sleep 0.1
 done
 if ! exitrec_tmux list-panes -a -F '#{pane_id}|#{pane_dead}' \
-  | grep -Fqx "$exitrec_preexisting_runtime|1" || kill -0 "$exitrec_preexisting_pid" 2>/dev/null || \
+  | grep -Fx "$exitrec_preexisting_runtime|1" >/dev/null || kill -0 "$exitrec_preexisting_pid" 2>/dev/null || \
   { [[ -s "$exitrec_root/state/projmux/termination-receipts.jsonl" ]] &&
     grep -Fq "\"paneUID\":\"$exitrec_preexisting_pane_uid\"" "$exitrec_root/state/projmux/termination-receipts.jsonl"; }; then
   echo "preexisting startup e2e fixture lacks positive dead/absent-supervisor/receipt-absent authority" >&2
@@ -9752,7 +9752,7 @@ exitrec_doc agent "$exitrec_preexisting_agent"
 if [[ "$(exitrec_field name)" != "$exitrec_preexisting_name" || "$(exitrec_field phase)" != "Offline" || \
   -n "$(exitrec_field paneRef)" || "$(exitrec_termination_field classification)" != "unknown" || \
   "$(exitrec_termination_field source)" != "reconcile" ]] || \
-  exitrec_tmux list-panes -a -F '#{pane_id}' | grep -Fqx "$exitrec_preexisting_runtime"; then
+  exitrec_tmux list-panes -a -F '#{pane_id}' | grep -Fx "$exitrec_preexisting_runtime" >/dev/null; then
   echo "preexisting startup e2e recovery did not converge Agent/Pane/runtime to its receipt-absent fixed point" >&2
   cat "$exitrec_root/doc.json" >&2
   exit 1
@@ -9850,13 +9850,13 @@ if [[ ! "$exitrec_rebound_runtime" =~ ^%[0-9]+$ ]] || \
 fi
 for _ in $(seq 1 150); do
   if exitrec_tmux list-panes -a -F '#{pane_id}|#{pane_dead}' \
-    | grep -Fqx "$exitrec_rebound_runtime|1"; then
+    | grep -Fx "$exitrec_rebound_runtime|1" >/dev/null; then
     break
   fi
   sleep 0.1
 done
 if ! exitrec_tmux list-panes -a -F '#{pane_id}|#{pane_dead}' \
-  | grep -Fqx "$exitrec_rebound_runtime|1"; then
+  | grep -Fx "$exitrec_rebound_runtime|1" >/dev/null; then
   echo "second-generation normal Agent did not become a retained dead current Pane: $exitrec_rebound_runtime" >&2
   exit 1
 fi
@@ -9905,7 +9905,7 @@ exitrec_await_phase agent "$exitrec_rebound_agent" Offline
 exitrec_await_absent pane "$exitrec_rebound_pane_uid"
 exitrec_doc agent "$exitrec_rebound_agent"
 if [[ "$(exitrec_field name)" != "$exitrec_rebound_agent_name" || -n "$(exitrec_field paneRef)" ]] || \
-  exitrec_tmux list-panes -a -F '#{pane_id}' | grep -Fqx "$exitrec_rebound_runtime"; then
+  exitrec_tmux list-panes -a -F '#{pane_id}' | grep -Fx "$exitrec_rebound_runtime" >/dev/null; then
   echo "second-generation cleanup left the Agent bound or retained its current dead runtime" >&2
   cat "$exitrec_root/doc.json" >&2
   exit 1
@@ -10165,9 +10165,9 @@ menu_delete_converged() {
   local log_offset="$2"
   local expected_pane_count="$3"
   local registry_uids pane_count
-  tail -c "+$((log_offset + 1))" "$menu_client_log" | grep -aFq 'delete pane: deleting 1 pane' || return 1
+  tail -c "+$((log_offset + 1))" "$menu_client_log" | grep -aF 'delete pane: deleting 1 pane' >/dev/null || return 1
   registry_uids="$(menu_pmx get panes -o uid)" || return 1
-  if printf '%s\n' "$registry_uids" | grep -Fxq "$uid"; then
+  if grep -Fxq "$uid" <<<"$registry_uids"; then
     return 1
   fi
   pane_count="$(menu_tmux list-panes -t "$menu_session:0" -F '#{pane_id}' | wc -l)" || return 1
@@ -10266,7 +10266,7 @@ menu_run_producer() {
 menu_client_saw() {
   local offset="$1"
   local text="$2"
-  tail -c "+$((offset + 1))" "$menu_client_log" | grep -aFq "$text"
+  tail -c "+$((offset + 1))" "$menu_client_log" | grep -aF "$text" >/dev/null
 }
 
 # A menu selection is driven by the client's own key press, so the run-shell job
@@ -10289,7 +10289,7 @@ menu_horizontal_pane="$(menu_new_pane_except "$menu_origin_pane")"
 menu_assert_split_focused "Horizontal Split menu item" "$menu_horizontal_pane"
 smoke_wait_for "Horizontal Split Registry identity" menu_pane_is_managed "$menu_horizontal_pane"
 menu_horizontal_uid="$(menu_tmux show-options -pqv -t "$menu_horizontal_pane" @projmux_pane_uid)"
-if [[ -z "$menu_horizontal_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu_horizontal_uid"; then
+if [[ -z "$menu_horizontal_uid" ]] || ! menu_pmx get panes -o uid | grep -Fx "$menu_horizontal_uid" >/dev/null; then
   echo "Horizontal Split did not create a Registry-backed Pane: pane=$menu_horizontal_pane uid=$menu_horizontal_uid" >&2
   exit 1
 fi
@@ -10312,7 +10312,7 @@ menu_vertical_pane="$(menu_new_pane_except "$menu_origin_pane")"
 menu_assert_split_focused "Vertical Split menu item" "$menu_vertical_pane"
 smoke_wait_for "Vertical Split Registry identity" menu_pane_is_managed "$menu_vertical_pane"
 menu_vertical_uid="$(menu_tmux show-options -pqv -t "$menu_vertical_pane" @projmux_pane_uid)"
-if [[ -z "$menu_vertical_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu_vertical_uid"; then
+if [[ -z "$menu_vertical_uid" ]] || ! menu_pmx get panes -o uid | grep -Fx "$menu_vertical_uid" >/dev/null; then
   echo "Vertical Split did not create a Registry-backed Pane: pane=$menu_vertical_pane uid=$menu_vertical_uid" >&2
   exit 1
 fi
@@ -10455,7 +10455,7 @@ menu_registry_resource_uids() {
   printf '%s|%s' "$(menu_pmx get panes -o uid | sort | tr '\n' ' ')" "$(menu_pmx get windows -o uid | sort | tr '\n' ' ')"
 }
 menu_window_absent() {
-  ! menu_tmux list-windows -a -F '#{window_id}' | grep -Fxq "$1"
+  ! menu_tmux list-windows -a -F '#{window_id}' | grep -Fx "$1" >/dev/null
 }
 menu_refocus_origin() {
   menu_tmux select-window -t "$menu_origin_pane"
@@ -10523,8 +10523,8 @@ fi
 menu_window_delete_converged() {
   local offset="$1"
   menu_client_saw "$offset" "delete window: deleting 1 window" || return 1
-  ! menu_pmx get windows -o uid | grep -Fxq "$menu_close_window_uid" || return 1
-  ! menu_pmx get panes -o uid | grep -Fxq "$menu_close_window_pane_uid" || return 1
+  ! menu_pmx get windows -o uid | grep -Fx "$menu_close_window_uid" >/dev/null || return 1
+  ! menu_pmx get panes -o uid | grep -Fx "$menu_close_window_pane_uid" >/dev/null || return 1
   menu_window_absent "$menu_close_window"
 }
 menu_tmux select-window -t "$menu_close_window"
@@ -10658,8 +10658,8 @@ menu_generated_window_deleted() {
   local window_uid="$3"
   local pane_uid="$4"
   menu_client_saw "$offset" "delete window: deleting 1 window" || return 1
-  ! menu_pmx get windows -o uid | grep -Fxq "$window_uid" || return 1
-  ! menu_pmx get panes -o uid | grep -Fxq "$pane_uid" || return 1
+  ! menu_pmx get windows -o uid | grep -Fx "$window_uid" >/dev/null || return 1
+  ! menu_pmx get panes -o uid | grep -Fx "$pane_uid" >/dev/null || return 1
   menu_window_absent "$window"
 }
 
@@ -10676,7 +10676,7 @@ menu_target_window_uid="$(menu_tmux show-options -wqv -t "$menu_target_window" @
 menu_target_pane="$(menu_tmux display-message -p -t "$menu_target_window" '#{pane_id}')"
 menu_target_pane_uid="$(menu_tmux show-options -pqv -t "$menu_target_pane" @projmux_pane_uid)"
 if [[ -z "$menu_target_window" || -z "$menu_target_window_uid" || -z "$menu_target_pane_uid" ]] ||
-  ! menu_pmx get windows -o uid | grep -Fxq "$menu_target_window_uid"; then
+  ! menu_pmx get windows -o uid | grep -Fx "$menu_target_window_uid" >/dev/null; then
   echo "Window menu New At End did not create a Registry-backed Window: window=$menu_target_window uid=$menu_target_window_uid pane-uid=$menu_target_pane_uid" >&2
   exit 1
 fi
@@ -10875,8 +10875,8 @@ menu_client_on_beta() {
 }
 smoke_wait_for "client on the last-Window menu fixture" menu_client_on_beta
 menu_beta_last_window_deleted() {
-  ! menu_pmx get windows -o uid | grep -Fxq "$menu_beta_window_uid" || return 1
-  ! menu_pmx get panes -o uid | grep -Fxq "$menu_beta_pane_uid" || return 1
+  ! menu_pmx get windows -o uid | grep -Fx "$menu_beta_window_uid" >/dev/null || return 1
+  ! menu_pmx get panes -o uid | grep -Fx "$menu_beta_pane_uid" >/dev/null || return 1
   menu_pmx describe project "uid:$menu_beta_project_uid" -o json >/dev/null || return 1
   [[ -z "$(menu_pmx get windows --project "uid:$menu_beta_project_uid" -o uid)" ]] || return 1
   ! menu_tmux has-session -t "$menu_beta_session" 2>/dev/null
@@ -10885,7 +10885,7 @@ menu_offset="$(stat -c %s "$menu_client_log")"
 menu_press C-b '<'
 menu_select_open_item "$menu_offset" "New At End" X
 smoke_wait_for "last-Window menu Kill keeps a zero-Window Project" menu_beta_last_window_deleted
-if ! menu_tmux has-session -t "$menu_session" 2>/dev/null || ! menu_tmux list-clients -F '#{client_name}' | grep -Fxq -- "$menu_client"; then
+if ! menu_tmux has-session -t "$menu_session" 2>/dev/null || ! menu_tmux list-clients -F '#{client_name}' | grep -Fx -- "$menu_client" >/dev/null; then
   echo "last-Window menu Kill ended the origin session or detached the client" >&2
   exit 1
 fi
@@ -10962,8 +10962,8 @@ if [[ -z "$menu_origin_window_uid" || "$(menu_tmux list-windows -t "$menu_sessio
   exit 1
 fi
 menu_last_window_deleted() {
-  ! menu_pmx get windows -o uid | grep -Fxq "$menu_origin_window_uid" || return 1
-  ! menu_pmx get panes -o uid | grep -Fxq "$menu_origin_uid" || return 1
+  ! menu_pmx get windows -o uid | grep -Fx "$menu_origin_window_uid" >/dev/null || return 1
+  ! menu_pmx get panes -o uid | grep -Fx "$menu_origin_uid" >/dev/null || return 1
   menu_pmx describe project "uid:$menu_project_uid" -o json >/dev/null || return 1
   ! menu_tmux has-session -t "$menu_session" 2>/dev/null
 }
