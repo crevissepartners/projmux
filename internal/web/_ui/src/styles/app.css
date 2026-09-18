@@ -1849,6 +1849,28 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
 .graph-edge:hover .line,
 .graph-edge:focus-visible .line { stroke: var(--accent); stroke-width: 2.6px; }
 
+/* Who created whom: a dashed neutral arrow, creator to child, so it never
+   reads as a conversation. It takes the pointer only to show its title. */
+.graph-created { pointer-events: stroke; }
+.graph-created path { fill: none; }
+.graph-created .hit { stroke: transparent; stroke-width: 12px; }
+.graph-created .line {
+  stroke: color-mix(in oklab, var(--ink) 45%, var(--rule));
+  stroke-width: 1.4px;
+  stroke-dasharray: 5 4;
+  transition: stroke var(--ease), stroke-width var(--ease);
+}
+.graph-created.lit .line { stroke: var(--ink); stroke-width: 1.9px; }
+.graph-arrowhead path { fill: color-mix(in oklab, var(--ink) 45%, var(--rule)); }
+.graph-arrowhead.lit path { fill: var(--ink); }
+
+.graph-legend { display: inline-flex; align-items: center; gap: var(--s4); }
+.graph-legend-item { display: inline-flex; align-items: center; gap: var(--s2); white-space: nowrap; }
+.graph-legend svg path { fill: none; }
+.graph-legend .conversation { stroke: color-mix(in oklab, var(--provenance) 55%, var(--rule)); stroke-width: 1.6px; }
+.graph-legend .created { stroke: color-mix(in oklab, var(--ink) 45%, var(--rule)); stroke-width: 1.4px; stroke-dasharray: 5 4; }
+.graph-legend .created-head { fill: color-mix(in oklab, var(--ink) 45%, var(--rule)); }
+
 /* An Agent card: the graph tab places it on the canvas, Home lists it in a
    Project's grid. Everything but where it sits is the same in both. */
 .agent-card {
