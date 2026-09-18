@@ -12,6 +12,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
@@ -461,7 +462,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	}
 
 	nameReason := ""
-	if err := r.create.transact(func(
+	if err := r.create.transact(diagnostics.CreateKindResume, func(
 		ctx context.Context,
 		working *coremetadata.Registry,
 		mutator coremetadata.Mutator,

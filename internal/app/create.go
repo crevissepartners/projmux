@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -132,6 +133,14 @@ type createCommand struct {
 	// Injectable, like newOperationID, so a test can hold the marker's second
 	// fixed and compare two transactions byte for byte. Nil selects time.Now.
 	now func() time.Time
+	// outcomes records one create.outcome per transaction: its kind, result,
+	// duration, and Registry lock hold. Nil records nothing -- fixtures, the
+	// Project startup helper, and the web API, whose app has no recorder.
+	outcomes *diagnostics.CreateRecorder
+	// outcomeClock measures those timings. It is separate from now so the
+	// measurement never adds a read to the operation-marker clock a test pins.
+	// Nil selects time.Now.
+	outcomeClock func() time.Time
 	// newGeneration mints the opaque activation generation one materialized
 	// Pane's supervisor quotes back when its child stops.
 	newGeneration    func() (string, error)

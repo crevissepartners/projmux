@@ -10,6 +10,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -173,7 +174,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 	var result createResult
 	var placement createdWindowRuntime
 	var opened intentAgentOpened
-	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	err = c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
 		}
@@ -276,7 +277,9 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, rename
 		return err
 	}
 	displayName := name
-	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, _ string, _ *runtimeLedger) error {
+	// A rename is not a create: it shares the transaction and writes no
+	// create.outcome.
+	err = c.transact(createKindUnrecorded, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, _ string, _ *runtimeLedger) error {
 		_, ok := working.Window(scope.windowUID)
 		if !ok {
 			return usageError("canonical rename: origin Window disappeared; nothing was changed")
@@ -613,7 +616,7 @@ func (c *createCommand) canonicalIntentGuards(scope canonicalIntentScope) []crea
 func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, intent agentPaneIntent, launchDir string, stdout io.Writer) (createdPaneRuntime, error) {
 	var result createResult
 	var created createdPaneRuntime
-	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	err := c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
 		}
@@ -681,7 +684,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	}
 	var result createResult
 	var opened intentAgentOpened
-	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	err = c.transact(diagnostics.CreateKindAgent, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
 		}

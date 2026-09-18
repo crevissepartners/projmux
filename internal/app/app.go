@@ -271,6 +271,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	usageCmd := usagecmd.New(nil)
 	createCmd := newCreateCommand()
 	createCmd.notify = notifyCmd
+	// Every create transaction on this graph -- the typed routes, the split UI
+	// through ai.panes, the UI new Window, and `agent resume` -- records its
+	// create.outcome here. A nil recorder (the web API) records nothing.
+	createCmd.outcomes = recorder.Create()
 	// `create agent` consumes the AI command through the narrow provider-launch
 	// seam only. There is no raw-argv half left: every create kind is
 	// resource-backed, so nothing forwards a split.

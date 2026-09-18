@@ -51,6 +51,7 @@ type Event struct {
 	ResumedCount       *int   `json:"resumed_count,omitempty"`
 	SkippedCount       *int   `json:"skipped_count,omitempty"`
 	ItemCount          *int   `json:"item_count,omitempty"`
+	LockHeldMS         *int64 `json:"lock_held_ms,omitempty"`
 	Decision           string `json:"decision,omitempty"`
 	Classification     string `json:"classification,omitempty"`
 	WindowUID          string `json:"window_uid,omitempty"`
@@ -110,8 +111,8 @@ func SanitizeMessage(message, home string) string {
 
 var (
 	allowedLevels     = stringSet("info", "error")
-	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent)
+	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -276,6 +277,12 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 }
 
 func validateEventShape(event Event) error {
+	if event.Event == createOutcomeEvent {
+		return validateCreateOutcomeEvent(event)
+	}
+	if event.Component == "create" || event.LockHeldMS != nil {
+		return fmt.Errorf("create fields on unrelated event")
+	}
 	if event.Event == teardownDecisionEvent {
 		return validateTeardownDecisionEvent(event)
 	}

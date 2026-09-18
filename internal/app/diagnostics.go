@@ -165,7 +165,11 @@ func formatOperationalEvent(event diagnostics.Event) string {
 			parts = append(parts, fmt.Sprintf("%s=%d", count.name, *count.value))
 		}
 	}
-	parts = append(parts, fmt.Sprintf("duration_ms=%d", event.DurationMS), "run_id="+event.RunID, "version="+event.Version, "mux_backend="+event.MuxBackend)
+	parts = append(parts, fmt.Sprintf("duration_ms=%d", event.DurationMS))
+	if event.LockHeldMS != nil {
+		parts = append(parts, fmt.Sprintf("lock_held_ms=%d", *event.LockHeldMS))
+	}
+	parts = append(parts, "run_id="+event.RunID, "version="+event.Version, "mux_backend="+event.MuxBackend)
 	if event.Kind != "" {
 		parts = append(parts, "kind="+event.Kind)
 	}

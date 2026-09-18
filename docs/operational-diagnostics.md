@@ -58,6 +58,43 @@ optional opaque `window_uid` (`win-…`) and `pane_uid` (`pane-…`) Registry UI
 tmux `%N`/`@N`/`$N` handles, socket paths, session names, cwd, argv, and free
 text are never recorded, and every other event family rejects these fields.
 
+Create transactions use `component=create` and `event=create.outcome`: one
+record per create transaction, written under the process `run_id`. It is
+measurement only and changes nothing about the create itself. The kind of the
+create is carried in the closed `operation` field: `window` (`create window`
+and the UI new Window, including one whose answer is an Agent), `pane`
+(`create pane`, the split UI's shell Pane, and the pane-menu split), `agent`
+(`create agent` and the split UI's Agent Pane, including a resume-picker
+pick, which creates a new Agent), or `resume` (`agent resume`, including the
+resume `agent persona` runs). A successful transaction is `info`/`success`;
+a failed one, including one that was rolled back, is `error`/`error` with
+`kind=runtime`, so the support report's existing error-only projection
+carries it. The record adds only two timings:
+
+- `duration_ms` runs from entering the create transaction to its return. It
+  includes the runtime route bind, the wait for the Registry lock, the time
+  the lock is held, and on failure the rollback, and in every case the
+  create-operation lease clear. It excludes everything outside the
+  transaction: process start and exit, argument parsing, scope and selector
+  resolution, the Settings enabled-agents gate, the time a picker or prompt
+  waits for the operator, the result line printed after the commit, and
+  Agent activation observed after the transaction returns.
+- `lock_held_ms` runs from entering the Registry mutation to the Registry
+  update returning. It includes the create's guards, reconciliation, Registry
+  and tmux mutations, the store's own validate and write, and the unlock. It
+  excludes the wait for the lock and the Registry read before the mutation
+  starts. It is absent when the transaction failed before it entered the
+  mutation, and `0 <= lock_held_ms <= duration_ms` always holds.
+
+The record is appended after the transaction returns, so never while the
+Registry lock is held, and a journal failure never changes the create's
+result, exit status, stdout, or stderr. It does not replace the invocation's
+`command.outcome`, and it does not count guard reads or time individual
+guards. The generated Window rename also runs through the same transaction
+and is not recorded, because it is not a create. The web API runs creates
+without a recorder, so web-initiated creates are not recorded either. Every
+other event family rejects `lock_held_ms` and the `create` component.
+
 projmux no longer emits `session-state.outcome` records. Project snapshots
 were removed, and the retained `internal tmux autosave-session-state` route is
 a no-op that writes nothing. Records written by older versions keep their

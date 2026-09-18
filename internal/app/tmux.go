@@ -133,29 +133,19 @@ type tmuxCommand struct {
 func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 	runner := inttmux.ExecRunner{}
 	cmd := &tmuxCommand{
-		popup:         inttmux.NewClient(inttmux.ExecRunner{}),
-		executable:    resolveExecutablePath,
-		rawExecutable: rawExecutablePath,
-		runner:        runner,
-		lookupEnv:     os.Getenv,
-		homeDir:       os.UserHomeDir,
-		writeFile:     os.WriteFile,
-		readFile:      os.ReadFile,
-		resources:     newResourceStore(),
-		popupOptions:  defaultPopupPreviewOptions,
-		switchPopup:   defaultPopupSwitchOptions,
-		sessionsPopup: defaultPopupSessionsOptions,
-		paneMenuCreate: func(intent agentPaneIntent, stdout, stderr io.Writer) (createdPaneRuntime, error) {
-			return newCreateCommand().createFromIntent(intent, stdout, stderr)
-		},
+		popup:          inttmux.NewClient(inttmux.ExecRunner{}),
+		executable:     resolveExecutablePath,
+		rawExecutable:  rawExecutablePath,
+		runner:         runner,
+		lookupEnv:      os.Getenv,
+		homeDir:        os.UserHomeDir,
+		writeFile:      os.WriteFile,
+		readFile:       os.ReadFile,
+		resources:      newResourceStore(),
+		popupOptions:   defaultPopupPreviewOptions,
+		switchPopup:    defaultPopupSwitchOptions,
+		sessionsPopup:  defaultPopupSessionsOptions,
 		paneMenuDelete: deletePaneThroughCanonicalRoute,
-		// The default Window producer has no provider launcher, so it commits
-		// shell answers only and refuses an Agent answer with zero mutations
-		// ("the provider launcher is not configured"). The application graph
-		// replaces it with the wired create command (app.go).
-		windowCreate: func(intent windowCreateIntent, stdout, stderr io.Writer) (createdWindowRuntime, error) {
-			return newCreateCommand().createWindowFromIntent(intent, stdout, stderr)
-		},
 		windowRename: func(intent windowRenameIntent, stdout, stderr io.Writer) error {
 			return newCreateCommand().renameWindowFromIntent(intent, newRenameCommand(), stdout, stderr)
 		},
@@ -164,6 +154,23 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 		},
 		stdin:        os.Stdin,
 		windowDelete: deleteWindowThroughCanonicalRoute,
+	}
+	// The pane-menu split and the default Window producer each build a create
+	// command of their own, so they hand it this invocation's recorder: their
+	// transactions write the same create.outcome the wired create command does.
+	cmd.paneMenuCreate = func(intent agentPaneIntent, stdout, stderr io.Writer) (createdPaneRuntime, error) {
+		create := newCreateCommand()
+		create.outcomes = cmd.diagnostics.Create()
+		return create.createFromIntent(intent, stdout, stderr)
+	}
+	// The default Window producer has no provider launcher, so it commits
+	// shell answers only and refuses an Agent answer with zero mutations
+	// ("the provider launcher is not configured"). The application graph
+	// replaces it with the wired create command (app.go).
+	cmd.windowCreate = func(intent windowCreateIntent, stdout, stderr io.Writer) (createdWindowRuntime, error) {
+		create := newCreateCommand()
+		create.outcomes = cmd.diagnostics.Create()
+		return create.createWindowFromIntent(intent, stdout, stderr)
 	}
 	// The saved launch default is read by the AI command, the one owner of that
 	// file. tmuxCmd.ai is wired by the application graph; a helper invocation

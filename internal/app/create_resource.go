@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
@@ -681,7 +682,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	var openedAgent coremetadata.Agent
 	var activationTargets []agentActivationTarget
 	var creator creatorProvenance
-	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	if err := c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
@@ -951,7 +952,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 	var results []createResult
 	var selectedWindowUIDs []string
 	var notices []string
-	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	if err := c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
@@ -1875,8 +1876,72 @@ func (c *createCommand) operationClock() func() time.Time {
 	return c.now
 }
 
-// transact runs one create operation under the declared transaction order:
-// full preflight -> operation id -> created-resource ledger -> metadata
+// createKindUnrecorded is the kind of a route that runs through transact but
+// is not a create -- the generated Window rename. It writes no create.outcome.
+const createKindUnrecorded diagnostics.CreateKind = ""
+
+// createOutcomeClock is the clock create.outcome timings are measured on.
+func (c *createCommand) createOutcomeClock() func() time.Time {
+	if c == nil || c.outcomeClock == nil {
+		return time.Now
+	}
+	return c.outcomeClock
+}
+
+// createLockSpan measures how long one transaction held the Registry lock:
+// from entering the mutation closure to the Registry update returning, so it
+// covers the closure, the store's own normalize/validate/write, and the unlock,
+// and never the wait for the lock or the Registry read before the closure.
+type createLockSpan struct {
+	clock     func() time.Time
+	entered   bool
+	enteredAt time.Time
+	held      *time.Duration
+}
+
+func (s *createLockSpan) enter() {
+	if !s.entered {
+		s.entered, s.enteredAt = true, s.clock()
+	}
+}
+
+func (s *createLockSpan) leave() {
+	if s.entered {
+		held := s.clock().Sub(s.enteredAt)
+		s.held = &held
+	}
+}
+
+// transact runs one create operation and records its create.outcome.
+//
+// The record is measurement only. It is appended after the whole transaction
+// returned -- the Registry lock released, rollback and lease clear done -- and a
+// journal failure never reaches the create's result. kind names the create;
+// createKindUnrecorded records nothing.
+func (c *createCommand) transact(kind diagnostics.CreateKind, op createOperation, guards ...createPreReconcile) error {
+	if c == nil {
+		return errCreateRoutesNotConfigured
+	}
+	clock := c.createOutcomeClock()
+	started := clock()
+	lock := createLockSpan{clock: clock}
+	err := c.runTransaction(&lock, op, guards...)
+	if kind != createKindUnrecorded {
+		result := diagnostics.LifecycleSuccess
+		if err != nil {
+			result = diagnostics.LifecycleError
+		}
+		c.outcomes.Record(diagnostics.CreateOutcome{
+			Kind: kind, Result: result, Duration: clock().Sub(started), LockHeld: lock.held,
+		})
+	}
+	return err
+}
+
+var errCreateRoutesNotConfigured = errors.New("create: the resource-backed create routes are not configured")
+
+// runTransaction runs one create operation under the declared transaction
+// order: full preflight -> operation id -> created-resource ledger -> metadata
 // mutation -> runtime mutation -> commit.
 //
 // Everything happens inside a single registry transaction, including the
@@ -1885,9 +1950,9 @@ func (c *createCommand) operationClock() func() time.Time {
 // a pre-create hook refusal, a stale anchor, a tmux error -- leaves the registry
 // file byte-identical. The tmux objects the body created are undone from the
 // runtime ledger, which is the half no transaction can roll back for us.
-func (c *createCommand) transact(op createOperation, guards ...createPreReconcile) error {
+func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation, guards ...createPreReconcile) error {
 	if c == nil || c.store == nil || c.store.update == nil || c.runtime == nil || c.reconciler == nil {
-		return errors.New("create: the resource-backed create routes are not configured")
+		return errCreateRoutesNotConfigured
 	}
 	ctx := context.Background()
 	// Parsing and scope resolution have already succeeded before a resource
@@ -1931,6 +1996,7 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 	}
 
 	_, err = c.store.update(func(working *coremetadata.Registry) error {
+		lock.enter()
 		preflight, err := guard(ctx, working.Clone(), c.store.mutator(), operationID)
 		if err != nil {
 			return err
@@ -1964,6 +2030,7 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 		// the whole operation back instead of committing on stale evidence.
 		return c.runtime.reproveReusedRouteIdentity(ctx)
 	})
+	lock.leave()
 	if err != nil {
 		// Rollback runs after the scope is closed, so every guard of the
 		// unwind -- and of the lease clear after it -- proves identity in full.
