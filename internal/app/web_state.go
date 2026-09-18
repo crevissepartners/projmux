@@ -131,8 +131,15 @@ func (b *webBackend) Usage(context.Context) (any, error) {
 	}
 	cache := statusbarUsageStateFromCache(state, cachedAt)
 	out.LastSync, out.SyncSource = cache.LastSync, cache.LastSyncSource
-	for _, snap := range command.HUDSnapshots(state.Snapshots) {
-		out.HUD = append(out.HUD, webUsageCellOf(snap, string(snap.Window)))
+	// The HUD follows the web settings layer's usage visibility; a web.toml
+	// that cannot be read is reported and draws no HUD cells.
+	c := webSettingsCommand()
+	if layer, err := loadWebSettingsLayer(c.homeDir, c.lookupEnv); err != nil {
+		out.Error = web.AsError(err).Message
+	} else {
+		for _, snap := range usagecmd.HUDSnapshotsWithVisibility(state.Snapshots, layer.usageVisible) {
+			out.HUD = append(out.HUD, webUsageCellOf(snap, string(snap.Window)))
+		}
 	}
 	for _, snap := range statusbarUsagePopupSnapshots(state.Snapshots) {
 		out.Rows = append(out.Rows, webUsageCellOf(snap, usagecmd.SnapshotWindowLabel(snap)))
@@ -147,9 +154,9 @@ func (b *webBackend) Usage(context.Context) (any, error) {
 	return out, nil
 }
 
-// webStatusbar is which parts of the status bar the operator turned on in
-// Settings. It is read with the functions the TUI renders from, so the two
-// bars show the same parts.
+// webStatusbar is which parts of the web status bar are on: the web settings
+// layer's value for each part, else the TUI's, read with the functions the
+// TUI renders from.
 type webStatusbar struct {
 	Notifications    bool `json:"notifications"`
 	Usage            bool `json:"usage"`
@@ -161,17 +168,30 @@ type webStatusbar struct {
 }
 
 func (b *webBackend) Statusbar(context.Context) (any, error) {
-	hud := loadStatusbarHUDVisibilitySet(nil, nil)
-	row := loadStatusbarRowOneVisibilitySet(nil, nil)
+	c := webSettingsCommand()
+	layer, err := loadWebSettingsLayer(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	return webStatusbarOf(layer), nil
+}
+
+// webStatusbarOf reads the status bar parts through the web settings layer;
+// resources is central and read from its own file.
+func webStatusbarOf(layer webSettingsLayer) webStatusbar {
+	visible := func(key string) bool {
+		on, _ := layer.visible(key)
+		return on
+	}
 	return webStatusbar{
-		Notifications:    hud.visible(statusbarHUDNotifications),
-		Usage:            hud.visible(statusbarHUDAgentUsage),
-		Project:          row.visible(statusbarRowOneProject),
-		WorkingDirectory: row.visible(statusbarRowOneWorkingDirectory),
-		Git:              row.visible(statusbarRowOneGit),
-		Resources:        loadLiveResourcesMode(nil, nil) == config.LiveResourcesOn,
-		Clock:            row.visible(statusbarRowOneClock),
-	}, nil
+		Notifications:    visible("statusbar.notifications"),
+		Usage:            visible("statusbar.usage"),
+		Project:          visible("statusbar.project"),
+		WorkingDirectory: visible("statusbar.working-directory"),
+		Git:              visible("statusbar.git"),
+		Resources:        loadLiveResourcesMode(layer.homeDir, layer.lookupEnv) == config.LiveResourcesOn,
+		Clock:            visible("statusbar.clock"),
+	}
 }
 
 // webGit is the git segment for one pane's directory.

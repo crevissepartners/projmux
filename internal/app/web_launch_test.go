@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,7 +78,7 @@ func TestWebSplitsFollowTheSavedStartDirectory(t *testing.T) {
 	backend.runCLI = recorder.run
 	handler := web.New(backend, nil).Handler()
 	settings := &settingsCommand{homeDir: backend.home, lookupEnv: backend.env}
-	if err := settings.setSplitCWDFrom(splitCWDFromPane, discard{}); err != nil {
+	if err := settings.setSplitCWDFrom(splitCWDFromPane, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if code, body := webSend(t, handler, "POST", webWindowAlpha+"/panes", `{"anchorPane":"pan-alpha-log","confirm":true}`); code != 201 {

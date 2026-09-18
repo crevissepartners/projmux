@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
@@ -16,9 +17,13 @@ import (
 )
 
 // The Settings the browser reads back. Only settings a web page consumes are
-// here: what a split launches, the status bar parts, and the language. Each
-// is saved with the same function the TUI Settings uses, so both surfaces end
-// in the same files and, for the status bar, the same reloaded tmux config.
+// here: what a split launches, the status bar parts, and the language.
+//
+// Front settings -- `ai.splitCwdFrom` and the status bar parts other than
+// resources -- are the web's own: a change is saved to web.toml only, and the
+// web shows web.toml's value over the TUI's (web_settings_layer.go). Central
+// settings -- enabled providers, locale, live resources -- are saved with the
+// same function the TUI Settings uses, so both surfaces end in the same files.
 
 // webSettingsEnv is the environment the Settings functions see from the web
 // server: the process environment without any tmux client evidence. The
@@ -78,6 +83,10 @@ type webSettings struct {
 		Value   string   `json:"value"`
 		Choices []string `json:"choices"`
 	} `json:"locale"`
+	// Origins names, per front-setting PATCH key, the layer its value came
+	// from: "web" (web.toml), "tui" (a saved TUI file), or "default"; for
+	// ai.splitCwdFrom, "web", "global" or "default".
+	Origins map[string]string `json:"origins"`
 }
 
 func (b *webBackend) Settings(ctx context.Context) (any, error) {
@@ -102,27 +111,34 @@ func (b *webBackend) Settings(ctx context.Context) (any, error) {
 	for _, provider := range config.KnownAIAgentProviders() {
 		out.AI.Providers = append(out.AI.Providers, webSettingChoice{Value: string(provider), Enabled: aiEnabledAgentsContains(enabled, provider)})
 	}
-	split := resolveUISplitCWDSource("", "", c.homeDir, c.lookupEnv)
-	out.AI.SplitCwdFrom, out.AI.SplitOrigin = string(split.Source), string(split.Origin)
-
-	bar, err := b.Statusbar(ctx)
+	layer, err := loadWebSettingsLayer(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return nil, err
 	}
-	out.Statusbar.webStatusbar = bar.(webStatusbar)
+	out.Origins = map[string]string{}
+	split, err := resolveWebSplitCWDSource("", "", c.homeDir, c.lookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	out.AI.SplitCwdFrom, out.AI.SplitOrigin = string(split.Source), string(split.Origin)
+	out.Origins[webSettingSplitCWDFrom] = string(split.Origin)
+
+	out.Statusbar.webStatusbar = webStatusbarOf(layer)
+	for _, key := range webStatusbarSettingKeys {
+		_, out.Origins[key] = layer.visible(key)
+	}
 	out.Statusbar.ResourcesSupported = systemstatus.Supported()
 	out.Statusbar.UsageProviders = []webUsageProviderSetting{}
 	for _, capability := range usagecmd.HUDProviderCapabilities() {
 		id := string(capability.ID)
-		row := webUsageProviderSetting{
-			ID:      id,
-			Name:    capability.DisplayName,
-			Visible: loadAgentUsageVisibilityState(c.homeDir, c.lookupEnv, agentUsageVisibilityLeaf{provider: id}).Effective == config.StatusbarVisibilityOn,
-			Windows: []webUsageWindowSetting{},
-		}
+		key := webUsageSettingKey(id, "")
+		row := webUsageProviderSetting{ID: id, Name: capability.DisplayName, Windows: []webUsageWindowSetting{}}
+		row.Visible, out.Origins[key] = layer.visible(key)
 		for _, window := range capability.Windows {
-			state := loadAgentUsageVisibilityState(c.homeDir, c.lookupEnv, agentUsageVisibilityLeaf{provider: id, window: window.Key})
-			row.Windows = append(row.Windows, webUsageWindowSetting{Key: window.Key, Label: window.Label, Visible: state.Effective == config.StatusbarVisibilityOn})
+			key := webUsageSettingKey(id, window.Key)
+			setting := webUsageWindowSetting{Key: window.Key, Label: window.Label}
+			setting.Visible, out.Origins[key] = layer.visible(key)
+			row.Windows = append(row.Windows, setting)
 		}
 		out.Statusbar.UsageProviders = append(out.Statusbar.UsageProviders, row)
 	}
@@ -170,12 +186,12 @@ func (b *webBackend) UpdateSetting(ctx context.Context, req web.SettingRequest) 
 				return nil
 			}
 			return c.toggleAIEnabledAgent(string(provider))
-		case key == "ai.splitCwdFrom":
+		case key == webSettingSplitCWDFrom:
 			source, ok := parseSplitCWDSource(value)
 			if !ok {
 				return web.InvalidRequest("splitCwdFrom must be project or pane")
 			}
-			return c.setSplitCWDFrom(source, discard{})
+			return saveWebSetting(c.homeDir, c.lookupEnv, key, string(source))
 		case key == "locale":
 			return c.setGlobalLocale(value)
 		case key == "statusbar.resources":
@@ -195,19 +211,22 @@ func (b *webBackend) UpdateSetting(ctx context.Context, req web.SettingRequest) 
 			} else if _, ok := agentUsageVisibilityPath(paths, leaf); !ok {
 				return web.InvalidRequest("unknown usage setting " + key)
 			}
-			return c.setAgentUsageVisibility(leaf, mode)
+			// Saved under the capability's own spelling, which is what
+			// web.toml accepts back.
+			capability, _ := agentUsageProviderCapability(provider)
+			canonical := webUsageSettingKey(string(capability.ID), "")
+			if window != "" {
+				found, _ := agentUsageWindowCapability(provider, window)
+				canonical = webUsageSettingKey(string(capability.ID), found.Key)
+			}
+			return saveWebSetting(c.homeDir, c.lookupEnv, canonical, string(mode))
 		case strings.HasPrefix(key, "statusbar."):
 			mode, err := onOff()
 			if err != nil {
 				return err
 			}
-			switch name := strings.TrimPrefix(key, "statusbar."); name {
-			case "notifications":
-				return c.setStatusbarHUDVisibility(statusbarHUDNotifications, mode)
-			case "usage":
-				return c.setStatusbarHUDVisibility(statusbarHUDAgentUsage, mode)
-			case "project", "working-directory", "git", "clock":
-				return c.setStatusbarRowOneVisibility(statusbarRowOneComponent(name), mode)
+			if slices.Contains(webStatusbarSettingKeys, key) {
+				return saveWebSetting(c.homeDir, c.lookupEnv, key, string(mode))
 			}
 		}
 		return web.InvalidRequest("unknown setting " + key)
@@ -222,7 +241,3 @@ func (b *webBackend) UpdateSetting(ctx context.Context, req web.SettingRequest) 
 	}
 	return b.Settings(ctx)
 }
-
-type discard struct{}
-
-func (discard) Write(p []byte) (int, error) { return len(p), nil }

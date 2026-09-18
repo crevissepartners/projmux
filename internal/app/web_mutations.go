@@ -175,8 +175,8 @@ func (b *webBackend) CreateWindow(ctx context.Context, project string, req web.C
 // route renders it and CreateAgent runs it, so what the operator approves is
 // what runs.
 // webSplitCWDFrom is where a web split starts: the request's value when it
-// names one, otherwise what the terminal launcher would use, the tiered
-// `[ai] split_cwd_from` setting.
+// names one, otherwise the web's tiered `[ai] split_cwd_from` setting: the
+// Project's config, then web.toml, then the global config.
 func (b *webBackend) splitCWDFrom(s webSnapshot, project, requested string) (string, error) {
 	if requested != "" {
 		source, ok := parseSplitCWDSource(requested)
@@ -196,7 +196,11 @@ func (b *webBackend) splitCWDFrom(s webSnapshot, project, requested string) (str
 	if env == nil {
 		env = webSettingsEnv
 	}
-	return string(resolveUISplitCWDSource("", root, home, env).Source), nil
+	resolved, err := resolveWebSplitCWDSource("", root, home, env)
+	if err != nil {
+		return "", err
+	}
+	return string(resolved.Source), nil
 }
 
 func (b *webBackend) createAgentArgv(s webSnapshot, project, window string, req web.CreateAgentRequest) ([]string, error) {

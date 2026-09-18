@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/systemstatus"
 	"github.com/crevissepartners/projmux/internal/web"
 )
 
@@ -103,8 +104,13 @@ func TestWebSettingsSaveThroughTheSettingsFunctions(t *testing.T) {
 		t.Fatalf("default mode file = %q %v", mode, err)
 	}
 	settings := &settingsCommand{homeDir: homeDir, lookupEnv: env}
-	if got := resolveUISplitCWDSource("", "", homeDir, env); got.Source != splitCWDFromPane {
-		t.Fatalf("split cwd = %+v", got)
+	// ai.splitCwdFrom is a front setting: the web reads it back from
+	// web.toml, and the terminal chain does not see it.
+	if got, err := resolveWebSplitCWDSource("", "", homeDir, env); err != nil || got.Source != splitCWDFromPane || got.Origin != splitCWDOriginWeb {
+		t.Fatalf("web split cwd = %+v %v", got, err)
+	}
+	if got := resolveUISplitCWDSource("", "", homeDir, env); got.Source != splitCWDFromProject {
+		t.Fatalf("terminal split cwd = %+v", got)
 	}
 	if locale, _, err := settings.currentGlobalLocaleSetting(); err != nil || locale != "ko-KR" {
 		t.Fatalf("locale = %q %v", locale, err)
@@ -122,14 +128,19 @@ func TestWebSettingsSaveThroughTheSettingsFunctions(t *testing.T) {
 	}
 }
 
-// A status bar change regenerates the tmux config and reloads the app server.
-// The reload is routed through the app's own logical socket; a TMUX the
-// process happens to carry is never the route.
+// A central status bar change (live resources) regenerates the tmux config
+// and reloads the app server. The reload is routed through the app's own
+// logical socket; a TMUX the process happens to carry is never the route.
+// The other status bar parts are front settings and reload nothing
+// (TestWebFrontSettingPatchWritesOnlyWebToml).
 func TestWebStatusbarSettingReloadsTheAppServerNotAnInheritedOne(t *testing.T) {
+	if !systemstatus.Supported() {
+		t.Skip("live resources are unavailable on this platform")
+	}
 	send, home, tmux := webSettingsHarness(t)
 	t.Setenv("TMUX", "/tmp/tmux-1000/stale,1,0")
 
-	code, body := send("PATCH", `{"key":"statusbar.clock","value":"off"}`)
+	code, body := send("PATCH", `{"key":"statusbar.resources","value":"on"}`)
 	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "tmux.conf")); err != nil {
 		t.Fatalf("the tmux config was not regenerated: %v (%d %v)", err, code, body)
 	}
@@ -137,9 +148,11 @@ func TestWebStatusbarSettingReloadsTheAppServerNotAnInheritedOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := config.LoadStatusbarVisibilityFile(paths.StatusbarClockVisibilityFile())
-	if err != nil || state.Effective != config.StatusbarVisibilityOff {
-		t.Fatalf("clock visibility = %+v %v", state, err)
+	if mode := loadLiveResourcesMode(func() (string, error) { return home, nil }, func(string) string { return "" }); mode != config.LiveResourcesOn {
+		t.Fatalf("live resources = %q", mode)
+	}
+	if _, err := os.Stat(paths.WebSettingsFile()); err == nil {
+		t.Fatal("a central setting created web.toml")
 	}
 	if len(tmux.calls) == 0 {
 		t.Fatal("the app server was not asked to reload")

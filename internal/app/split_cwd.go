@@ -49,6 +49,10 @@ const (
 	// splitCWDOriginProject is `[ai] split_cwd_from` in the owner Project
 	// root's `.projmux/config.toml`.
 	splitCWDOriginProject splitCWDOrigin = "project"
+	// splitCWDOriginWeb is `[ai] split_cwd_from` in the web settings layer,
+	// web.toml. Only the web resolves it (resolveWebSplitCWDSource); the TUI
+	// chain below never reads that file.
+	splitCWDOriginWeb splitCWDOrigin = "web"
 	// splitCWDOriginGlobal is `[ai] split_cwd_from` in the global config.
 	splitCWDOriginGlobal splitCWDOrigin = "global"
 	// splitCWDOriginDefault is the built-in fallback, `project`.

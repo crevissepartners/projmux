@@ -1546,7 +1546,11 @@ func (c *Command) loadHUDVisibilityPreferences() hudVisibilityPreferences {
 // snaps, in the order it draws them: the projected 5h and weekly windows under
 // the Settings visibility, with placeholder rows dropped.
 func (c *Command) HUDSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
-	projected := filterStatusProjectionByVisibility(projectStatusSnapshots(snaps), c.loadHUDVisibilityPreferences())
+	return hudSnapshotsUnder(snaps, c.loadHUDVisibilityPreferences())
+}
+
+func hudSnapshotsUnder(snaps []usage.Snapshot, prefs hudVisibilityPreferences) []usage.Snapshot {
+	projected := filterStatusProjectionByVisibility(projectStatusSnapshots(snaps), prefs)
 	byKey := make(map[string]usage.Snapshot, len(projected))
 	for _, s := range projected {
 		byKey[s.Model+"\x00"+string(s.Window)] = s
