@@ -410,6 +410,10 @@ h2 .count:empty { display: none; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   direction: rtl; text-align: left;
 }
+/* Home sits above the Projects, set off from them. Its line is a phrase, not
+   a path, so it is not read from the right. */
+.list > .home-item { margin-bottom: var(--s2); padding-bottom: var(--s2); border-bottom: 1px solid var(--rule); }
+.list > .home-item .sub { direction: ltr; }
 
 /* notify rows ------------------------------------------------------------- */
 
@@ -1427,52 +1431,36 @@ input.rename {
   border-color: color-mix(in oklab, var(--critical) 55%, transparent);
 }
 
-/* overview ---------------------------------------------------------------- */
+/* home: every Project's Agents as cards ---------------------------------- */
 
-.content .overview { max-width: 1100px; }
-.overview-head {
+.content .home { max-width: 1100px; }
+.home-head {
   display: flex;
   align-items: baseline;
   gap: var(--s4);
   flex-wrap: wrap;
   margin-bottom: var(--s4);
 }
-.overview-head h3 { margin: 0 !important; font-size: 16px !important; font-weight: 600; }
-.overview-sum { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.home-head h3 { margin: 0 !important; font-size: 16px !important; font-weight: 600; }
+.home-sum { font-size: 12px; color: var(--muted); font-family: var(--mono); }
 
-.cards {
+/* A group head is the page's section head (`#detail h4`), in ink: it names
+   a Project, not a field. */
+#detail .home-group-head { display: flex; align-items: baseline; gap: var(--s2); color: var(--ink); }
+#detail .home-group-head.dim { color: var(--muted); }
+.home-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.home-group-count { color: var(--muted); font-family: var(--mono); letter-spacing: 0; }
+/* The graph tab's card size, so a card reads the same in both places. */
+.home-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
   gap: var(--s3);
 }
-.card {
-  --pane: var(--muted);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s1);
-  text-align: left;
-  font: inherit;
-  color: var(--ink);
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  padding: var(--s3) var(--s4);
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 var(--bevel);
-  transition: border-color var(--ease), transform var(--ease), background var(--ease);
-}
-.card:hover { border-color: color-mix(in oklab, var(--pane) 60%, var(--rule)); background: var(--active); }
-.card:active { transform: translateY(1px); }
-.card[data-provider="claude"], .picker-row[data-provider="claude"] { --pane: var(--h-success); }
-.card[data-provider="codex"], .picker-row[data-provider="codex"] { --pane: var(--h-warning); }
-.card[data-provider="antigravity"], .picker-row[data-provider="antigravity"] { --pane: var(--h-violet); }
-.card[data-activity="wait"] { border-color: color-mix(in oklab, var(--warning) 60%, transparent); }
-.card[data-activity="alert"] { border-color: var(--critical); box-shadow: 0 0 0 1px var(--critical); }
-.card-top { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
-.card-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-.card-where { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card-meta { font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
+.home-cards .agent-card { height: 76px; }
 
+.picker-row[data-provider="claude"] { --pane: var(--h-success); }
+.picker-row[data-provider="codex"] { --pane: var(--h-warning); }
+.picker-row[data-provider="antigravity"] { --pane: var(--h-violet); }
 .picker-row .slot-dot { align-self: center; }
 .picker-row .slot-activity { font-size: 10px; }
 
@@ -1861,9 +1849,10 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
 .graph-edge:hover .line,
 .graph-edge:focus-visible .line { stroke: var(--accent); stroke-width: 2.6px; }
 
-.graph-card {
+/* An Agent card: the graph tab places it on the canvas, Home lists it in a
+   Project's grid. Everything but where it sits is the same in both. */
+.agent-card {
   --pane: var(--muted);
-  position: absolute;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1880,21 +1869,22 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
   box-shadow: inset 0 1px 0 var(--bevel), 0 4px 12px var(--cast);
   transition: border-color var(--ease), background var(--ease);
 }
-.graph-card:hover { background: var(--active); border-color: color-mix(in oklab, var(--pane) 60%, var(--rule)); border-left-color: var(--pane); }
-.graph-card[data-provider="claude"] { --pane: var(--h-success); }
-.graph-card[data-provider="codex"] { --pane: var(--h-warning); }
-.graph-card[data-provider="antigravity"] { --pane: var(--h-violet); }
+.agent-card:hover { background: var(--active); border-color: color-mix(in oklab, var(--pane) 60%, var(--rule)); border-left-color: var(--pane); }
+.agent-card[data-provider="claude"] { --pane: var(--h-success); }
+.agent-card[data-provider="codex"] { --pane: var(--h-warning); }
+.agent-card[data-provider="antigravity"] { --pane: var(--h-violet); }
 /* An offline Agent is red at a glance, whatever its provider. */
-.graph-card[data-online="offline"] {
+.agent-card[data-online="offline"] {
   --pane: var(--critical);
   border-color: color-mix(in oklab, var(--critical) 55%, transparent);
   background: color-mix(in oklab, var(--critical) 8%, var(--raised));
 }
-.graph-card-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.graph-card-name.dim { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
-.graph-card-badges,
+.agent-card-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card-name.dim { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
+.agent-card-badges,
 .layer-badges { display: flex; gap: 4px; min-width: 0; overflow: hidden; }
-.graph-card-meta { font-size: 10.5px; color: var(--muted); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card-meta { font-size: 10.5px; color: var(--muted); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-canvas > .agent-card { position: absolute; }
 
 .tag.role { color: var(--provenance); border-color: color-mix(in srgb, var(--provenance) 45%, transparent); }
 .tag.unknown { color: var(--muted); border-color: var(--rule); background: var(--sunken); }
@@ -1972,6 +1962,9 @@ button.seg.path { text-align: right; max-width: 45vw; display: block; line-heigh
   cursor: pointer;
 }
 .layer-close:hover { color: var(--critical); background: var(--sunken); }
+/* The one way out of the layer that goes somewhere: to the live Window. */
+.layer-go { flex: none; color: var(--accent); border-color: color-mix(in oklab, var(--accent) 35%, transparent); }
+.layer-go:hover { color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, transparent); }
 .layer-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: var(--s4); overflow-y: auto; }
 .layer-body .chat-area { flex: 1; min-height: 0; display: flex; }
 

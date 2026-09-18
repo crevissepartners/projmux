@@ -10,13 +10,13 @@
   import { onDestroy } from "svelte";
   import { get, paths } from "../lib/api";
   import { layoutAgentGraph } from "../lib/agentGraphLayout";
-  import { explain, phaseText, providerText } from "../lib/errors";
+  import { explain } from "../lib/errors";
   import { t } from "../lib/i18n.svelte";
   import { live } from "../lib/state.svelte";
   import { fullTime, shortTime } from "../lib/time";
-  import { agentTitle, onlineOf, type AgentRecord, type ProjectView } from "../lib/tree";
+  import { agentTitle, type AgentRecord, type ProjectView } from "../lib/tree";
   import type { AgentGraph, AgentGraphEdge, LayerTarget } from "../lib/types";
-  import AgentBadges from "./AgentBadges.svelte";
+  import AgentCard from "./AgentCard.svelte";
   import AgentLayer from "./AgentLayer.svelte";
 
   let { projectUID, project }: { projectUID: string; project: ProjectView | null } = $props();
@@ -139,32 +139,16 @@
           {/each}
         </svg>
         {#each layout.cards as card (card.uid)}
-          {@const rec = record(card.uid)}
-          {@const title = agentTitle(rec, card.uid)}
-          <button
-            type="button"
-            class="graph-card"
-            data-provider={rec?.provider}
-            data-online={onlineOf(rec)}
-            style:left="{card.x}px"
-            style:top="{card.y}px"
-            style:width="{card.w}px"
-            style:height="{card.h}px"
-            title={t("web.graph.open_agent", { name: title.name })}
+          <AgentCard
+            uid={card.uid}
+            record={record(card.uid)}
+            style="left: {card.x}px; top: {card.y}px; width: {card.w}px; height: {card.h}px"
             onclick={() => (layer = { kind: "agent", uid: card.uid })}
             onmouseenter={() => (hovered = card.uid)}
             onmouseleave={() => hovered === card.uid && (hovered = "")}
             onfocus={() => (hovered = card.uid)}
             onblur={() => hovered === card.uid && (hovered = "")}
-          >
-            <span class="graph-card-name" class:dim={title.dim}>{title.name}</span>
-            <span class="graph-card-badges"><AgentBadges record={rec} /></span>
-            {#if rec}
-              <span class="graph-card-meta"
-                >{[providerText(rec.provider), rec.phase ? phaseText(rec.phase) : ""].filter(Boolean).join(" · ")}</span
-              >
-            {/if}
-          </button>
+          />
         {/each}
       </div>
     </div>
