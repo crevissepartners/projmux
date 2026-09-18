@@ -618,6 +618,13 @@ func (s *Store) loadLocked() (diskState, error) {
 	if err != nil {
 		return diskState{}, err
 	}
+	return decodeState(data)
+}
+
+// decodeState is the whole store decode and validation, shared by the locked
+// writers and the lock-free archive reader so both accept exactly the same
+// files. It touches no file.
+func decodeState(data []byte) (diskState, error) {
 	if len(data) == 0 || len(data) > maxStoreBytes {
 		return diskState{}, ErrMalformedStore
 	}

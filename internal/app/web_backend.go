@@ -9,6 +9,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -38,6 +39,9 @@ type webBackend struct {
 	runCLI     func(argv []string) (string, error)
 	socketPath func(ctx context.Context) (string, error)
 	paths      func() (config.Paths, error)
+	// readMessages reads the Agent message archive under a state directory;
+	// nil means messagestore.ReadArchive. See web_agent_graph.go.
+	readMessages func(stateDir string) (messagestore.Archive, error)
 	// home and env are what the settings a split follows are read from; nil
 	// means the real home and webSettingsEnv.
 	home func() (string, error)

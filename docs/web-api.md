@@ -177,6 +177,7 @@ All core routes are under `/api/v1`.
 | GET | `/api/v1/graph` | — | one Registry read plus one tmux observation: every Project, Window, Pane and Agent with live status |
 | GET | `/api/v1/projects` | `get projects -o json` | `ProjectList` |
 | GET | `/api/v1/projects/{project}` | `get project uid:…` | |
+| GET | `/api/v1/projects/{project}/agent-graph` | — | which Agents exchanged peer messages, for this Project's Agents (see *Agent graph*) |
 | GET | `/api/v1/projects/{project}/windows` | `get windows -p uid:…` | `WindowList` |
 | POST | `/api/v1/projects/{project}/windows` | `create window` | body `{name?, agent?: {provider, payload?}, focus?, confirm}`; `agent` also starts that provider in the new Window |
 | GET | `/api/v1/projects/{project}/windows/{window}` | `get window` | |
@@ -194,6 +195,7 @@ All core routes are under `/api/v1`.
 | PATCH | `/api/v1/agents/{agent}` | `rename agent` | body `{name}` |
 | POST | `/api/v1/agents/{agent}/resume` | `agent resume` | body `{confirm}` |
 | GET | `/api/v1/agents/{agent}/capabilities` | `agent capabilities uid:…` | |
+| GET | `/api/v1/agents/{agent}/peers/{peer}/messages` | — | the retained messages between two Agents, both ways (see *Agent graph*) |
 | POST | `/api/v1/agents/{agent}/turns` | `agent turn start` | body `{text}`; Codex only |
 | POST | `/api/v1/agents/{agent}/turns/current/steer` | `agent turn steer` | body `{text}` |
 | DELETE | `/api/v1/agents/{agent}/turns/current` | `agent turn interrupt` | |
@@ -228,6 +230,66 @@ nothing.
 Starting a turn does not fall back to steer on the server. A client that gets
 `turn-in-progress` decides whether to steer, so one request never becomes two
 different operations.
+
+### Agent graph
+
+`GET /api/v1/projects/{project}/agent-graph` answers which Agents talked:
+
+```json
+{ "project": "proj-…",
+  "agents": [ { "uid": "agent-…", "projectUID": "proj-…" } ],
+  "edges": [ { "kind": "conversation", "a": "agent-…", "b": "agent-…",
+               "aToB": 3, "bToA": 1, "lastAcceptedAt": "…" } ],
+  "omitted": { "pairs": 1, "messages": 2 },
+  "since": "…",
+  "skipped": 0 }
+```
+
+Both reads are built from the retained record: the live message store and the
+two generations of its reclaim log (`history.jsonl`, then `history.jsonl.1`).
+The rules:
+
+- A `conversation` edge exists when the retained record holds at least one
+  message between two different Agents that are both in the Registry, and at
+  least one of them belongs to this Project. There is one edge per pair: `a`
+  sorts before `b`, `aToB` and `bToA` count the messages each way, and
+  `lastAcceptedAt` is the newest. Edges are sorted by `a`, then `b`.
+- A message in both the store and the log (same `messageRef`) is counted once.
+- A message from an Agent to itself, or with no Agent at one end, is counted
+  nowhere: not in an edge, not in `omitted`, not in `since`.
+- `agents` lists every Agent of this Project, including one with no edge, and
+  every Agent of another Project that has an edge with one of them, each with
+  its own `projectUID` (empty for an Agent whose Window has no Project). It is
+  sorted by `uid`.
+- `omitted` counts the pairs, and their messages, that have an Agent missing
+  from the Registry and an Agent of this Project. A pair of two missing Agents
+  belongs to no Project and is not counted.
+- `since` is the oldest `acceptedAt` among all messages read, across every
+  Project; `null` when nothing is retained, and `edges` is then `[]`.
+- `skipped` counts log lines that could not be read as a record, such as a
+  torn last line. A store that cannot be read or does not validate is an
+  error, not an empty graph.
+
+`GET /api/v1/agents/{agent}/peers/{peer}/messages` lists the messages between
+two Agents, both ways, oldest first:
+
+```json
+{ "agent": "agent-…", "peer": "agent-…",
+  "messages": [ { "messageRef": "…", "conversationRef": "…", "replyTo": "…",
+                  "direction": "outgoing", "source": "agent-…", "target": "agent-…",
+                  "state": "delivered", "acceptedAt": "…", "payloadBytes": 12,
+                  "bodyRetained": true, "payload": "…" } ],
+  "since": "…", "skipped": 0 }
+```
+
+`direction` is relative to `{agent}`, and `replyTo` is present only on a
+reply. The body is kept only while the message is in the live store: a message
+read from the log has `bodyRetained: false` and no `payload`. `since` and
+`skipped` are those of the graph. Either uid missing from the Registry is
+`not-found`; the same uid twice is `invalid-request`.
+
+These reads take no lock and create no file: the store and the log are only
+opened for reading.
 
 ### Events
 

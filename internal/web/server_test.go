@@ -73,6 +73,16 @@ func (f *fakeBackend) Agent(_ context.Context, agent string) (any, error) {
 	return nil, errBoom
 }
 
+func (f *fakeBackend) AgentGraph(_ context.Context, project string) (any, error) {
+	f.record("agent-graph " + project)
+	return map[string]any{"project": project, "agents": []any{}, "edges": []any{}}, nil
+}
+
+func (f *fakeBackend) PeerMessages(_ context.Context, agent, peer string) (any, error) {
+	f.record("peer-messages " + agent + " " + peer)
+	return map[string]any{"agent": agent, "peer": peer, "messages": []any{}}, nil
+}
+
 var errBoom = io.ErrUnexpectedEOF
 
 func decode(t *testing.T, res *http.Response) map[string]any {
@@ -99,6 +109,8 @@ func TestRoutesReachTheBackendWithPathValues(t *testing.T) {
 		"/api/v1/projects/proj-p/windows/win-w/panes",
 		"/api/v1/projects/proj-p/windows/win-w/panes/pane-x",
 		"/api/v1/projects/proj-p/windows/win-w/agents",
+		"/api/v1/projects/proj-p/agent-graph",
+		"/api/v1/agents/agent-a/peers/agent-b/messages",
 	} {
 		res, err := http.Get(srv.URL + path)
 		if err != nil {
@@ -112,6 +124,7 @@ func TestRoutesReachTheBackendWithPathValues(t *testing.T) {
 	want := []string{
 		"graph", "projects", "project proj-p", "windows proj-p", "window proj-p win-w",
 		"panes proj-p win-w", "pane proj-p win-w pane-x", "agents proj-p win-w",
+		"agent-graph proj-p", "peer-messages agent-a agent-b",
 	}
 	if strings.Join(backend.calls, "|") != strings.Join(want, "|") {
 		t.Fatalf("backend calls = %q\nwant %q", backend.calls, want)

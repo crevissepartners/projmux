@@ -32,6 +32,11 @@ type Backend interface {
 	WindowAgents(ctx context.Context, project, window string) (any, error)
 	Agent(ctx context.Context, agent string) (any, error)
 
+	// AgentGraph and PeerMessages read which Agents exchanged peer messages.
+	// They take no lock and create no file.
+	AgentGraph(ctx context.Context, project string) (any, error)
+	PeerMessages(ctx context.Context, agent, peer string) (any, error)
+
 	CreateWindow(ctx context.Context, project string, req CreateWindowRequest) (any, error)
 	RenameWindow(ctx context.Context, project, window, name string) (any, error)
 	DeleteWindow(ctx context.Context, project, window string, dryRun bool) (any, error)
@@ -96,6 +101,9 @@ func (s *Server) Handler() http.Handler {
 	read("/api/v1/projects/{project}", func(r *http.Request) (any, error) {
 		return s.backend.Project(r.Context(), r.PathValue("project"))
 	})
+	read("/api/v1/projects/{project}/agent-graph", func(r *http.Request) (any, error) {
+		return s.backend.AgentGraph(r.Context(), r.PathValue("project"))
+	})
 	read("/api/v1/projects/{project}/windows", func(r *http.Request) (any, error) {
 		return s.backend.Windows(r.Context(), r.PathValue("project"))
 	})
@@ -117,6 +125,9 @@ func (s *Server) Handler() http.Handler {
 
 	read("/api/v1/agents/{agent}/capabilities", func(r *http.Request) (any, error) {
 		return s.backend.Capabilities(r.Context(), r.PathValue("agent"))
+	})
+	read("/api/v1/agents/{agent}/peers/{peer}/messages", func(r *http.Request) (any, error) {
+		return s.backend.PeerMessages(r.Context(), r.PathValue("agent"), r.PathValue("peer"))
 	})
 	read("/api/v1/notifications", func(r *http.Request) (any, error) {
 		return s.backend.Notifications(r.Context())
