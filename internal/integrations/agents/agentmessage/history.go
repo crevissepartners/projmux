@@ -43,7 +43,8 @@ type reclaimedRecord struct {
 // historyRecord is one line of history.jsonl. Keys reuse the envelope's own
 // names, and payload is deliberately absent: the declared consumer needs the
 // edges (source, target, conversationRef, replyTo), not the free text, which is
-// the one part of an unbounded log a user wrote by hand.
+// the one part of an unbounded log a user wrote by hand. It is written through
+// encodeHistoryLine, which drops the fields no reader uses.
 type historyRecord struct {
 	SchemaVersion   int               `json:"schemaVersion"`
 	EvictedAt       time.Time         `json:"evictedAt"`
@@ -66,6 +67,60 @@ type historyRecord struct {
 	Origin coremessage.Origin `json:"origin,omitzero"`
 	Source coremessage.Route  `json:"source,omitzero"`
 	Target coremessage.Route  `json:"target"`
+}
+
+// historyRoute is the part of a route a reclaimed line still needs: which
+// Agent, on which provider. The Pane, activation and incarnation fence a live
+// delivery and name nothing once the record has left the store.
+type historyRoute struct {
+	AgentUID string `json:"agentUID"`
+	Provider string `json:"provider"`
+}
+
+// historyLine is what appendHistoryLocked writes for a historyRecord: the same
+// keys in the same order, routes narrowed to historyRoute, no deadline, and
+// outcomeUnknown only when set. historyRecord keeps its full shape so it still
+// decodes lines written before, and both shapes read the same.
+type historyLine struct {
+	SchemaVersion   int                `json:"schemaVersion"`
+	EvictedAt       time.Time          `json:"evictedAt"`
+	Reason          string             `json:"reason"`
+	Adapter         string             `json:"adapter"`
+	MessageRef      string             `json:"messageRef"`
+	ConversationRef string             `json:"conversationRef"`
+	ReplyTo         string             `json:"replyTo,omitempty"`
+	State           coremessage.State  `json:"state"`
+	DeliveryReason  string             `json:"deliveryReason"`
+	OutcomeUnknown  bool               `json:"outcomeUnknown,omitempty"`
+	HandoffObserved bool               `json:"handoffObserved"`
+	AcceptedAt      time.Time          `json:"acceptedAt"`
+	TerminalAt      time.Time          `json:"terminalAt"`
+	PayloadBytes    int                `json:"payloadBytes"`
+	Origin          coremessage.Origin `json:"origin,omitzero"`
+	Source          historyRoute       `json:"source,omitzero"`
+	Target          historyRoute       `json:"target"`
+}
+
+func encodeHistoryLine(record historyRecord) ([]byte, error) {
+	return json.Marshal(historyLine{
+		SchemaVersion:   record.SchemaVersion,
+		EvictedAt:       record.EvictedAt,
+		Reason:          record.Reason,
+		Adapter:         record.Adapter,
+		MessageRef:      record.MessageRef,
+		ConversationRef: record.ConversationRef,
+		ReplyTo:         record.ReplyTo,
+		State:           record.State,
+		DeliveryReason:  record.DeliveryReason,
+		OutcomeUnknown:  record.OutcomeUnknown,
+		HandoffObserved: record.HandoffObserved,
+		AcceptedAt:      record.AcceptedAt,
+		TerminalAt:      record.TerminalAt,
+		PayloadBytes:    record.PayloadBytes,
+		Origin:          record.Origin,
+		Source:          historyRoute{AgentUID: record.Source.AgentUID, Provider: record.Source.Provider},
+		Target:          historyRoute{AgentUID: record.Target.AgentUID, Provider: record.Target.Provider},
+	})
 }
 
 func newHistoryRecords(reclaimed []reclaimedRecord, evictedAt time.Time) []historyRecord {
@@ -118,7 +173,7 @@ func (s *Store) appendHistoryLocked(records []historyRecord) error {
 	}
 	var buf bytes.Buffer
 	for _, record := range records {
-		line, err := json.Marshal(record)
+		line, err := encodeHistoryLine(record)
 		if err != nil {
 			return err
 		}

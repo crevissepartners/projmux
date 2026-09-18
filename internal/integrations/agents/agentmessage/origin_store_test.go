@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -385,6 +386,17 @@ func TestStoreReturnsToVersion2OnceOperatorRecordsAreReclaimed(t *testing.T) {
 		if _, ok := line["source"]; ok {
 			t.Fatalf("operator history line carries a source: %v", line)
 		}
+		want := []string{"origin"}
+		for _, key := range historySchemaKeys {
+			if key != "source" {
+				want = append(want, key)
+			}
+		}
+		sort.Strings(want)
+		if got := historyKeys(line); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("operator history line keys = %v, want %v", got, want)
+		}
+		assertHistoryRoute(t, line, "target", delivered.Target)
 		var origin coremessage.Origin
 		if err := json.Unmarshal(line["origin"], &origin); err != nil || !origin.Operator() {
 			t.Fatalf("operator history line origin = %s (%v)", line["origin"], err)
