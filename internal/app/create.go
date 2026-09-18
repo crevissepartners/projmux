@@ -164,7 +164,13 @@ func (c *createCommand) observeWindowRuntimeBinding(
 }
 
 func newCreateCommand() *createCommand {
-	runner := inttmux.ExecRunner{}
+	return newCreateCommandOn(inttmux.ExecRunner{}, os.Getenv)
+}
+
+// newCreateCommandOn is newCreateCommand over an injected tmux runner and
+// environment. Production passes the exec runner and os.Getenv; a test passes an
+// in-memory server so it exercises the exact production route bind.
+func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string) *createCommand {
 	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 	routed := explicitTmuxRunner{runner: runner, target: target}
 	client := defaultTmuxClientWithRunner(routed)
@@ -180,22 +186,22 @@ func newCreateCommand() *createCommand {
 			target:     target,
 			warn:       os.Stderr,
 			executable: os.Executable,
-			lookupEnv:  os.Getenv,
+			lookupEnv:  lookupEnv,
 		},
 		activeTarget:     defaultActiveTargetLookup(),
 		anchorTarget:     defaultAnchoredActiveTargetLookup,
-		shell:            configuredShell(os.Getenv),
+		shell:            configuredShell(lookupEnv),
 		sessionNameFor:   namer.SessionName,
 		newOperationID:   newCreateOperationID,
 		now:              time.Now,
 		newGeneration:    coremetadata.NewGeneration,
 		resolveWorkspace: resolveAgentWorkspace,
 		homeDir:          os.UserHomeDir,
-		lookupEnv:        os.Getenv,
+		lookupEnv:        lookupEnv,
 		processAncestors: processAncestry,
 	}
 	bind := func(ctx context.Context, explicit bool) error {
-		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, os.Getenv, command.routeAnchor, explicit)
+		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, lookupEnv, command.routeAnchor, explicit)
 		if err != nil {
 			return err
 		}
