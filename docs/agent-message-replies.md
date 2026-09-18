@@ -101,10 +101,10 @@ Each line carries the envelope's own key names:
 limit. `replyTo` is omitted when the record is not a reply. `outcomeUnknown`
 appears, as `true`, only on a failed record whose outcome is unknown; it is
 absent otherwise. `source` and `target` carry only `agentUID` and `provider`:
-the Pane, activation generation and incarnation fence a live delivery and mean
-nothing once the record has left the store. The envelope's `deadline` is not
-written. A line for operator input (see
-[Operator input](claude-coordination-endpoints.md#operator-input)) carries
+the Pane and activation generation fence a live delivery, and the incarnation
+follows the provider conversation; all three mean nothing once the record has
+left the store. The envelope's `deadline` is not written. A line for operator
+input (see [Operator input](claude-coordination-endpoints.md#operator-input)) carries
 `"origin":{"kind":"operator","client":"web"}` in place of `source`; an Agent
 message's line has no `origin`. Every other key is always present.
 
