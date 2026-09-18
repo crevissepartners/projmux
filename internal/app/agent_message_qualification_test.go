@@ -60,9 +60,9 @@ func TestClaudeSourceNeedsCurrentLeaseButOnlyTargetNeedsIngressQualification(t *
 		t.Fatal("fixture Agent missing")
 	}
 	resolver := liveAgentMessageRouteResolver{
-		leaseProbe: func(string, coremetadata.AgentRouteRef) bool { return true },
-		eligibilityProbe: func(string, coremetadata.AgentRouteRef) bool {
-			return false
+		leaseProbe: func(string, coremetadata.AgentRouteRef) claudeProbeOutcome { return claudeProbeReady },
+		eligibilityProbe: func(string, coremetadata.AgentRouteRef) claudeProbeOutcome {
+			return claudeProbeUnqualified
 		},
 	}
 	source, err := resolver.Resolve(registry, *agent)

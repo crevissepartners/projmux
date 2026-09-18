@@ -29,7 +29,44 @@ import (
 // this producer check for its own SessionStart.
 const claudeRegistrationHookCommand = "exec projmux internal claude-endpoint-register >/dev/null 2>&1 # " + claudeHookManagedMarker
 
+// claudeEndpointPollInterval is the helper accept loop's idle cadence only. It
+// never bounds how long a readiness answer may take; see
+// claudeEndpointReadinessWriteDeadline and the client bounds below.
 const claudeEndpointPollInterval = 100 * time.Millisecond
+
+// claudeEndpointReadinessWriteDeadline bounds only the one-byte readiness write,
+// armed after current() has been evaluated. Under load current() (socket and
+// process identity checks plus a Registry read) took longer than the 100ms poll
+// interval that used to be armed before it, so the write missed its deadline and
+// the helper closed the connection unanswered: a live peer then read EOF and was
+// refused as "lease is stale". One byte never fills a socket buffer, so this
+// bound only guards the single accept loop against being preempted between
+// arming it and writing; the readiness budget is the client's read bound.
+const claudeEndpointReadinessWriteDeadline = time.Second
+
+// Client bounds for one Claude lease probe (dial, readiness byte, coordination
+// probe) and one coordination eligibility call. Each bound is the larger of the
+// previous 200ms and max + (max - p90) of that step, measured under a CPU hog of
+// 3x nproc (loadavg 33-59) against live helpers. The readiness read is measured
+// only against helpers that answer after current(), because the old 100ms helper
+// cap hid every slower answer; the other steps were never capped by the helper:
+//
+//	dial               p90   3.8ms  max  24.5ms  -> 45ms  -> stays 200ms
+//	readiness read     p90  54.4ms  max 197.5ms  -> 341ms -> 350ms (1.8x max)
+//	coordination probe p90  63.5ms  max 179.9ms  -> 296ms -> 300ms (1.7x max)
+//	eligibility        p90  60.3ms  max 123.3ms  -> 186ms -> stays 200ms
+//
+// Cost: identity and socket checks run before every bound, so a dead peer is
+// refused without waiting. A live helper that never answers is refused after
+// dial + readiness read (550ms). One ResolveTarget on a slow but healthy peer can
+// wait up to lease + lease + eligibility (1,900ms, was 1,400ms). This is a margin
+// over the measured distribution, not a proof for heavier load.
+const (
+	claudeLeaseDialTimeout               = 200 * time.Millisecond
+	claudeLeaseReadinessReadTimeout      = 350 * time.Millisecond
+	claudeLeaseCoordinationProbeTimeout  = 300 * time.Millisecond
+	claudeCoordinationEligibilityTimeout = 200 * time.Millisecond
+)
 
 // claudeEndpointIdleRegistryFloor bounds helper exit under a stat identity collision to <=2s including the 100ms tick granularity.
 const claudeEndpointIdleRegistryFloor = 1800 * time.Millisecond
@@ -586,75 +623,154 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 			}
 			return nil
 		}
-		_ = connection.SetDeadline(time.Now().Add(claudeEndpointPollInterval))
-		if current() {
-			_, _ = connection.Write([]byte{1})
-		}
-		_ = connection.Close()
+		answerClaudeLeaseReadiness(connection, current, time.Now)
 	}
 }
 
+// claudeLeaseReadinessConn is the part of an accepted lease connection the
+// readiness answer uses.
+type claudeLeaseReadinessConn interface {
+	SetWriteDeadline(time.Time) error
+	Write([]byte) (int, error)
+	Close() error
+}
+
+// answerClaudeLeaseReadiness evaluates current() before arming any deadline, so
+// a slow check delays the answer instead of cancelling it. A connection closed
+// without the byte therefore means the helper judged its lease not current.
+func answerClaudeLeaseReadiness(connection claudeLeaseReadinessConn, current func() bool, now func() time.Time) {
+	defer connection.Close()
+	if !current() {
+		return
+	}
+	_ = connection.SetWriteDeadline(now().Add(claudeEndpointReadinessWriteDeadline))
+	_, _ = connection.Write([]byte{1})
+}
+
+// claudeProbeOutcome separates a peer that did not answer within a client bound
+// from one whose lease is actually stale or absent, so a refusal can say which.
+type claudeProbeOutcome uint8
+
+const (
+	claudeProbeReady claudeProbeOutcome = iota
+	// claudeProbeStale: identity, socket, or peer checks failed, nothing listened,
+	// the helper closed without answering, or it answered not current.
+	claudeProbeStale
+	// claudeProbeUnanswered: a live helper did not answer within a client bound.
+	claudeProbeUnanswered
+	// claudeProbeUnqualified: the helper answered that coordination is not qualified.
+	claudeProbeUnqualified
+)
+
+// claudeProbeWaitOutcome classifies a failed bounded wait: only an expired bound
+// is unanswered; EOF, refusal, and every other error are stale.
+func claudeProbeWaitOutcome(err error) claudeProbeOutcome {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return claudeProbeUnanswered
+	}
+	return claudeProbeStale
+}
+
 func probeClaudeRegistrationLease(registryPath string, route coremetadata.AgentRouteRef) bool {
+	return classifyClaudeRegistrationLease(registryPath, route) == claudeProbeReady
+}
+
+// classifyClaudeRegistrationLease checks process identity and sockets before any
+// bounded wait, so a dead peer is refused as stale without spending a bound.
+func classifyClaudeRegistrationLease(registryPath string, route coremetadata.AgentRouteRef) claudeProbeOutcome {
 	authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
 	if !ok || !authority.Valid() {
-		return false
+		return claudeProbeStale
 	}
 	for _, expected := range []coremetadata.ProcessIdentity{authority.Process, authority.LeaseProcess} {
 		actual, _, err := claudeadapter.Process(expected.PID)
 		if err != nil || actual != expected {
-			return false
+			return claudeProbeStale
 		}
 	}
 	path := claudeLeaseSocket(registryPath, route.PaneUID, route.Generation, authority.RegistrationGeneration)
 	if _, err := inspectClaudeSocket(path); err != nil {
-		return false
+		return claudeProbeStale
 	}
 	// Dial only Projmux's readiness helper. Never connect to the provider inbox;
 	// its secret path exists only in serveClaudeEndpoint's private memory.
-	connection, err := net.DialTimeout("unix", path, 200*time.Millisecond)
+	connection, err := net.DialTimeout("unix", path, claudeLeaseDialTimeout)
 	if err != nil {
-		return false
+		return claudeProbeWaitOutcome(err)
 	}
 	defer connection.Close()
 	unixConnection, ok := connection.(*net.UnixConn)
 	if !ok {
-		return false
+		return claudeProbeStale
 	}
 	peer, err := claudeadapter.PeerProcess(unixConnection)
 	if err != nil || peer != authority.LeaseProcess {
-		return false
+		return claudeProbeStale
 	}
-	_ = connection.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	_ = connection.SetDeadline(time.Now().Add(claudeLeaseReadinessReadTimeout))
 	var ready [1]byte
-	_, err = io.ReadFull(connection, ready[:])
-	if err != nil || ready[0] != 1 {
-		return false
+	if _, err := io.ReadFull(connection, ready[:]); err != nil {
+		return claudeProbeWaitOutcome(err)
+	}
+	if ready[0] != 1 {
+		return claudeProbeStale
 	}
 	target, ok := claudeTargetForRoute(route)
 	if !ok {
-		return false
+		return claudeProbeStale
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), claudeLeaseCoordinationProbeTimeout)
 	defer cancel()
 	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "probe", Target: target,
 	})
-	return err == nil && response.Kind == "ready"
+	if err != nil {
+		return claudeCoordinationCallOutcome(ctx)
+	}
+	if response.Kind != "ready" {
+		return claudeProbeStale
+	}
+	return claudeProbeReady
+}
+
+// claudeCoordinationCallOutcome classifies a failed coordination call by its own
+// bound: callClaudeCoordination arms the connection with the context deadline.
+func claudeCoordinationCallOutcome(ctx context.Context) claudeProbeOutcome {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return claudeProbeUnanswered
+	}
+	return claudeProbeStale
 }
 
 func probeClaudeCoordinationEligibility(registryPath string, route coremetadata.AgentRouteRef) bool {
-	if !probeClaudeRegistrationLease(registryPath, route) {
-		return false
+	return classifyClaudeCoordinationEligibility(registryPath, route) == claudeProbeReady
+}
+
+// classifyClaudeCoordinationEligibility reports the lease probe's own outcome
+// when it fails, so a lease failure is never reported as unqualified.
+func classifyClaudeCoordinationEligibility(registryPath string, route coremetadata.AgentRouteRef) claudeProbeOutcome {
+	if lease := classifyClaudeRegistrationLease(registryPath, route); lease != claudeProbeReady {
+		return lease
 	}
 	target, ok := claudeTargetForRoute(route)
 	if !ok {
-		return false
+		return claudeProbeStale
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), claudeCoordinationEligibilityTimeout)
 	defer cancel()
 	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "eligibility", Target: target,
 	})
-	return err == nil && response.Kind == "qualified" && response.ProviderVersion == claudeFrozenFrameProviderVersion &&
-		response.Reason == "exact-public-init-and-explicit-reply" && !response.AutoResend && !response.Ambiguous
+	if err != nil {
+		return claudeCoordinationCallOutcome(ctx)
+	}
+	if response.Kind == "stale" {
+		return claudeProbeStale
+	}
+	if response.Kind == "qualified" && response.ProviderVersion == claudeFrozenFrameProviderVersion &&
+		response.Reason == "exact-public-init-and-explicit-reply" && !response.AutoResend && !response.Ambiguous {
+		return claudeProbeReady
+	}
+	return claudeProbeUnqualified
 }

@@ -53,22 +53,56 @@ type agentMessageRouteResolver interface {
 
 type liveAgentMessageRouteResolver struct {
 	registryPath     string
-	leaseProbe       func(string, coremetadata.AgentRouteRef) bool
-	eligibilityProbe func(string, coremetadata.AgentRouteRef) bool
+	leaseProbe       func(string, coremetadata.AgentRouteRef) claudeProbeOutcome
+	eligibilityProbe func(string, coremetadata.AgentRouteRef) claudeProbeOutcome
 }
 
-func (r liveAgentMessageRouteResolver) registrationReady(route coremetadata.AgentRouteRef) bool {
+func (r liveAgentMessageRouteResolver) registrationReady(route coremetadata.AgentRouteRef) claudeProbeOutcome {
 	if r.leaseProbe != nil {
 		return r.leaseProbe(r.registryPath, route)
 	}
-	return probeClaudeRegistrationLease(r.registryPath, route)
+	return classifyClaudeRegistrationLease(r.registryPath, route)
 }
 
-func (r liveAgentMessageRouteResolver) coordinationEligible(route coremetadata.AgentRouteRef) bool {
+func (r liveAgentMessageRouteResolver) coordinationEligible(route coremetadata.AgentRouteRef) claudeProbeOutcome {
 	if r.eligibilityProbe != nil {
 		return r.eligibilityProbe(r.registryPath, route)
 	}
-	return probeClaudeCoordinationEligibility(r.registryPath, route)
+	return classifyClaudeCoordinationEligibility(r.registryPath, route)
+}
+
+// errClaudeLeaseStale is the refusal when the peer's lease is actually stale or
+// absent: its process, sockets, or helper no longer prove the activation.
+var errClaudeLeaseStale = errors.New("claude registration lease is stale or unavailable")
+
+// claudeProbeUnansweredError is the refusal when a live peer's helper did not
+// answer within a client bound. It names a retry, never a cleanup.
+type claudeProbeUnansweredError struct{ probe string }
+
+func (e claudeProbeUnansweredError) Error() string {
+	return "claude " + e.probe + " did not answer in time; the Agent may be alive but busy under load, so retry the send and do not delete the Agent on this refusal"
+}
+
+// claudeProbeRefusal maps a failed probe outcome to its honest refusal.
+func claudeProbeRefusal(outcome claudeProbeOutcome, probe string) error {
+	switch outcome {
+	case claudeProbeUnanswered:
+		return claudeProbeUnansweredError{probe: probe}
+	case claudeProbeUnqualified:
+		return errors.New("claude coordination requires exact-version isolated qualification; use agent message qualify")
+	default:
+		return errClaudeLeaseStale
+	}
+}
+
+// claudeRouteRefusalPrefix keeps "not eligible" for stale or unqualified peers
+// and says "unconfirmed" when the peer only failed to answer in time.
+func claudeRouteRefusalPrefix(role string, err error) string {
+	var unanswered claudeProbeUnansweredError
+	if errors.As(err, &unanswered) {
+		return role + " Agent readiness is unconfirmed"
+	}
+	return role + " Agent is not eligible"
 }
 
 func (r liveAgentMessageRouteResolver) Resolve(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
@@ -76,8 +110,10 @@ func (r liveAgentMessageRouteResolver) Resolve(registry coremetadata.Registry, a
 	if reason != "" {
 		return coremetadata.AgentRouteRef{}, errors.New(reason)
 	}
-	if route.Authority().Provider() == string(aiprovider.Claude) && !r.registrationReady(route) {
-		return coremetadata.AgentRouteRef{}, errors.New("claude registration lease is stale or unavailable")
+	if route.Authority().Provider() == string(aiprovider.Claude) {
+		if outcome := r.registrationReady(route); outcome != claudeProbeReady {
+			return coremetadata.AgentRouteRef{}, claudeProbeRefusal(outcome, "registration lease probe")
+		}
 	}
 	return route, nil
 }
@@ -87,8 +123,10 @@ func (r liveAgentMessageRouteResolver) ResolveTarget(registry coremetadata.Regis
 	if err != nil {
 		return coremetadata.AgentRouteRef{}, err
 	}
-	if route.Authority().Provider() == string(aiprovider.Claude) && !r.coordinationEligible(route) {
-		return coremetadata.AgentRouteRef{}, errors.New("claude coordination requires exact-version isolated qualification; use agent message qualify")
+	if route.Authority().Provider() == string(aiprovider.Claude) {
+		if outcome := r.coordinationEligible(route); outcome != claudeProbeReady {
+			return coremetadata.AgentRouteRef{}, claudeProbeRefusal(outcome, "coordination eligibility probe")
+		}
 	}
 	return route, nil
 }
@@ -374,18 +412,18 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	sourceRoute, err := c.resolveMessageRoute(registry, source)
 	if err != nil {
 		if replyTo != "" {
-			return fmt.Errorf("%s: source Agent is not eligible: %w; %w", spelling, err,
+			return fmt.Errorf("%s: %s: %w; %w", spelling, claudeRouteRefusalPrefix("source", err), err,
 				c.replyCorrelationRefusal(replyTo, "explicit-reply-source-route-stale"))
 		}
-		return fmt.Errorf("%s: source Agent is not eligible: %w", spelling, err)
+		return fmt.Errorf("%s: %s: %w", spelling, claudeRouteRefusalPrefix("source", err), err)
 	}
 	targetRoute, err := c.resolveMessageTargetRoute(registry, target)
 	if err != nil {
 		if replyTo != "" {
-			err = fmt.Errorf("%s: target Agent is not eligible: %w; %w", spelling, err,
+			err = fmt.Errorf("%s: %s: %w; %w", spelling, claudeRouteRefusalPrefix("target", err), err,
 				c.replyCorrelationRefusal(replyTo, "explicit-reply-target-route-stale"))
 		} else {
-			err = fmt.Errorf("%s: target Agent is not eligible: %w", spelling, err)
+			err = fmt.Errorf("%s: %s: %w", spelling, claudeRouteRefusalPrefix("target", err), err)
 		}
 		// An Offline/Failed Codex target is recovered by resuming it (on the
 		// default daemon endpoint, or with a typed refusal naming its own next
