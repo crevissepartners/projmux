@@ -249,6 +249,7 @@ func LoadWebSettingsFile(path string, known WebSettingKnown) (WebSettings, error
 	if strings.TrimSpace(path) == "" {
 		return WebSettings{}, ErrHomeDirRequired
 	}
+	noteFrontFile(path)
 	// #nosec G304 -- path is the resolved projmux configuration file supplied by the caller.
 	content, err := os.ReadFile(path)
 	if err != nil {

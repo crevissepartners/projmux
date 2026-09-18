@@ -23,7 +23,19 @@ func newRenderThemeSource(effective theme.EffectiveTheme) renderThemeSource {
 }
 
 func configRenderThemeSource(homeDir func() (string, error), lookupEnv func(string) string, projectPath string) (renderThemeSource, error) {
-	effective, err := effectiveThemeFromConfig(homeDir, lookupEnv, projectPath)
+	effective, err := effectiveThemeFromConfigNoting(config.NoteFrontRead, homeDir, lookupEnv)
+	if err != nil {
+		return renderThemeSource{}, err
+	}
+	return newRenderThemeSource(effective), nil
+}
+
+// pickerRenderThemeSource is configRenderThemeSource for painting a picker.
+// It reads the same `[theme]`, but reports the read as a picker display read,
+// which any route that opens a picker may make. Only picker render call sites
+// use it; everything else keeps configRenderThemeSource.
+func pickerRenderThemeSource(homeDir func() (string, error), lookupEnv func(string) string) (renderThemeSource, error) {
+	effective, err := effectiveThemeFromConfigNoting(config.NotePickerDisplayRead, homeDir, lookupEnv)
 	if err != nil {
 		return renderThemeSource{}, err
 	}
@@ -37,10 +49,17 @@ func configRenderThemeSource(homeDir func() (string, error), lookupEnv func(stri
 // not participate in theme resolution.
 func effectiveThemeFromConfig(homeDir func() (string, error), lookupEnv func(string) string, projectPath string) (theme.EffectiveTheme, error) {
 	_ = projectPath
+	return effectiveThemeFromConfigNoting(config.NoteFrontRead, homeDir, lookupEnv)
+}
+
+// effectiveThemeFromConfigNoting reads the global `[theme]`, reporting the
+// read through note (config.NoteFrontRead or config.NotePickerDisplayRead).
+func effectiveThemeFromConfigNoting(note func(name, path string), homeDir func() (string, error), lookupEnv func(string) string) (theme.EffectiveTheme, error) {
 	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return theme.EffectiveTheme{}, err
 	}
+	note(config.SettingConfigTheme, paths.GlobalConfigFile())
 	globalCfg, err := hooks.LoadProjectConfigFile(paths.GlobalConfigFile())
 	if err != nil {
 		return theme.EffectiveTheme{}, err

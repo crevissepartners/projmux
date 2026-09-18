@@ -329,7 +329,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		options.DeferredUpdate = nil
 	}
 	if options.Theme == nil {
-		if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
+		if source, err := pickerRenderThemeSource(c.homeDir, c.lookupEnv); err == nil {
 			options = source.pickerOptions(options)
 		} else {
 			options = fallbackRenderThemeSource().pickerOptions(options)
@@ -695,7 +695,7 @@ func (c *notifyCommand) confirmNotifySidebarClearAll(count int, locale i18n.Loca
 		},
 		Actions: pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, "notify-sidebar", "esc"),
 	}
-	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
+	if source, err := pickerRenderThemeSource(c.homeDir, c.lookupEnv); err == nil {
 		options = source.pickerOptions(options)
 	} else {
 		options = fallbackRenderThemeSource().pickerOptions(options)

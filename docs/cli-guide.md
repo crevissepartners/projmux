@@ -1790,8 +1790,10 @@ conversation history. Cache rows have medium confidence and blank turns;
 summary. Legacy history is low confidence. Missing/malformed cache, stale
 missing-DB mappings, workspace-less metadata, and unknown fields degrade
 without failing Claude/Codex or legacy discovery.
-Settings > AI Settings > Enabled agents controls Claude/Codex/Antigravity launch
-visibility. Disabled agents are hidden from the selective picker and from the
+`Settings > Global > AI > Enabled providers`, or
+`projmux config providers [--enable <id> | --disable <id>]` through the same
+writer, controls Claude/Codex/Antigravity launch visibility. Disabled
+providers are hidden from the selective picker and from the
 default-mode picker. A saved default that later becomes disabled fails clearly
 instead of falling back to another agent. Direct
 Canonical `create agent --provider <p>` launches and the provider shortcuts also

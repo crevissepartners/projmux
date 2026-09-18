@@ -39,6 +39,7 @@ func nativeKeysSettingEnabled(lookupEnv func(string) string, homeDir func() (str
 	if err != nil {
 		return true
 	}
+	config.NoteFrontRead(config.SettingConfigUINativeKeys, path)
 	cfg, err := hooks.LoadGlobalConfig(path)
 	if err != nil {
 		// Do not enter a permission-requesting path when the saved policy
@@ -56,6 +57,7 @@ func (c *settingsCommand) currentNativeKeysSetting() (bool, error) {
 	if err != nil {
 		return true, err
 	}
+	config.NoteFrontRead(config.SettingConfigUINativeKeys, path)
 	cfg, err := hooks.LoadGlobalConfig(path)
 	if err != nil {
 		return true, err

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -118,11 +119,14 @@ func (c *settingsCommand) themeSettingsSummary() string {
 	return themePresetSummary(cfg.Theme)
 }
 
+// currentGlobalProjectConfig is the Theme settings' read of config.toml; its
+// callers use only [theme].
 func (c *settingsCommand) currentGlobalProjectConfig() (hooks.ProjectConfig, error) {
 	path, err := c.globalConfigPath()
 	if err != nil {
 		return hooks.ProjectConfig{}, err
 	}
+	config.NoteFrontRead(config.SettingConfigTheme, path)
 	return hooks.LoadGlobalConfig(path)
 }
 

@@ -19,7 +19,7 @@ func runNativePickerOption(homeDir func() (string, error), lookupEnv func(string
 		// that inject configRenderThemeSource themselves. Degrade to the built-in
 		// fallback only when the global config cannot be read. Theme is
 		// global-only, so no project path participates.
-		if source, err := configRenderThemeSource(homeDir, lookupEnv, ""); err == nil {
+		if source, err := pickerRenderThemeSource(homeDir, lookupEnv); err == nil {
 			options = source.pickerCompatOptions(options)
 		} else {
 			options = fallbackRenderThemeSource().pickerCompatOptions(options)

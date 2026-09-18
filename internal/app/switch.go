@@ -2428,7 +2428,7 @@ func effectivePickerKeysForPopupToggleMode(homeDir func() (string, error), looku
 func effectivePickerKeysForActions(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback []string) []string {
 	actions := defaultKeyBindingCatalog()
 	if homeDir != nil {
-		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv}); err == nil {
+		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv, pickerDisplay: true}); err == nil {
 			actions = merged
 		}
 	}
@@ -2533,7 +2533,7 @@ type pickerActionKeyGuideItem struct {
 func pickerActionKeyGuide(homeDir func() (string, error), lookupEnv func(string) string, items []pickerActionKeyGuideItem) string {
 	actions := defaultKeyBindingCatalog()
 	if homeDir != nil {
-		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv}); err == nil {
+		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv, pickerDisplay: true}); err == nil {
 			actions = merged
 		}
 	}

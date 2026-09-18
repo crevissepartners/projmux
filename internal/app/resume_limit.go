@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
@@ -65,6 +66,7 @@ func resolveAIResumePickerLimit(homeDir func() (string, error), lookupEnv func(s
 	}
 	if cwd = strings.TrimSpace(cwd); cwd != "" {
 		path := filepath.Join(cwd, ".projmux", "config.toml")
+		config.NoteFrontRead(config.SettingConfigAIResume, path)
 		if cfg, err := hooks.LoadProjectConfigFile(path); err == nil && cfg.AI.ResumePickerLimit > 0 {
 			return aiResumePickerLimitResolution{
 				Limit:  normalizeResumePickerLimit(cfg.AI.ResumePickerLimit),
@@ -74,6 +76,7 @@ func resolveAIResumePickerLimit(homeDir func() (string, error), lookupEnv func(s
 	}
 	if homeDir != nil {
 		if path, err := hooks.GlobalConfigPath(lookupEnv, homeDir); err == nil {
+			config.NoteFrontRead(config.SettingConfigAIResume, path)
 			if cfg, err := hooks.LoadGlobalConfig(path); err == nil && cfg.AI.ResumePickerLimit > 0 {
 				return aiResumePickerLimitResolution{
 					Limit:  normalizeResumePickerLimit(cfg.AI.ResumePickerLimit),

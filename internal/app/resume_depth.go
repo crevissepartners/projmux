@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
@@ -65,6 +66,7 @@ func resolveAIResumeScanDepth(homeDir func() (string, error), lookupEnv func(str
 	}
 	if cwd = strings.TrimSpace(cwd); cwd != "" {
 		path := filepath.Join(cwd, ".projmux", "config.toml")
+		config.NoteFrontRead(config.SettingConfigAIResume, path)
 		if cfg, err := hooks.LoadProjectConfigFile(path); err == nil && cfg.AI.ResumeScanDepth > 0 {
 			return aiResumeScanDepthResolution{
 				Depth:  normalizeResumeScanDepth(cfg.AI.ResumeScanDepth),
@@ -74,6 +76,7 @@ func resolveAIResumeScanDepth(homeDir func() (string, error), lookupEnv func(str
 	}
 	if homeDir != nil {
 		if path, err := hooks.GlobalConfigPath(lookupEnv, homeDir); err == nil {
+			config.NoteFrontRead(config.SettingConfigAIResume, path)
 			if cfg, err := hooks.LoadGlobalConfig(path); err == nil && cfg.AI.ResumeScanDepth > 0 {
 				return aiResumeScanDepthResolution{
 					Depth:  normalizeResumeScanDepth(cfg.AI.ResumeScanDepth),

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 const (
@@ -237,5 +239,5 @@ func (c *aiCommand) aiHookCatalogOverridePath(provider string) (string, error) {
 		}
 		configHome = filepath.Join(home, ".config")
 	}
-	return filepath.Join(configHome, "projmux", "ai-hooks.d", provider+".json"), nil
+	return config.DefaultPaths(configHome, "").AIHookCatalogOverrideFile(provider), nil
 }

@@ -9,8 +9,11 @@ import (
 )
 
 const (
-	StatusbarDecorationFileName = "statusbar-decoration"
-	AIBadgeStyleFileName        = "ai-badge-style"
+	StatusbarDecorationFileName       = "statusbar-decoration"
+	StatusbarDecorationCwdFileName    = "statusbar-decoration-cwd"
+	StatusbarDecorationGitFileName    = "statusbar-decoration-git"
+	StatusbarDecorationNotifyFileName = "statusbar-decoration-notify"
+	AIBadgeStyleFileName              = "ai-badge-style"
 
 	StatusbarDecorationOff    StatusbarDecoration = "off"
 	StatusbarDecorationSymbol StatusbarDecoration = "symbol"
@@ -52,6 +55,25 @@ func (p Paths) StatusbarDecorationFile() string {
 	return filepath.Join(p.ConfigDir, StatusbarDecorationFileName)
 }
 
+// StatusbarDecorationCwdFile returns the per-segment decoration override for
+// the status bar cwd segment. A missing file falls back to
+// StatusbarDecorationFile.
+func (p Paths) StatusbarDecorationCwdFile() string {
+	return filepath.Join(p.ConfigDir, StatusbarDecorationCwdFileName)
+}
+
+// StatusbarDecorationGitFile returns the per-segment decoration override for
+// the status bar git segment.
+func (p Paths) StatusbarDecorationGitFile() string {
+	return filepath.Join(p.ConfigDir, StatusbarDecorationGitFileName)
+}
+
+// StatusbarDecorationNotifyFile returns the per-segment decoration override for
+// the status bar notification segment.
+func (p Paths) StatusbarDecorationNotifyFile() string {
+	return filepath.Join(p.ConfigDir, StatusbarDecorationNotifyFileName)
+}
+
 // AIBadgeStyleFile returns the default file used for the persisted live AI
 // status badge display style.
 func (p Paths) AIBadgeStyleFile() string {
@@ -65,6 +87,7 @@ func LoadStatusbarDecorationFile(path string) (StatusbarDecoration, error) {
 	if strings.TrimSpace(path) == "" {
 		return StatusbarDecorationOff, nil
 	}
+	noteFrontFile(path)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -120,6 +143,7 @@ func LoadAIBadgeStyleFile(path string) (AIBadgeStyle, error) {
 	if strings.TrimSpace(path) == "" {
 		return AIBadgeStyleDot, nil
 	}
+	noteFrontFile(path)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

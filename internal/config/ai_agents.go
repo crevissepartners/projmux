@@ -12,6 +12,10 @@ import (
 
 const AIEnabledAgentsFileName = "ai-enabled-agents"
 
+// TmuxAISplitModeFileName holds the saved AI split launch default (the mode
+// `config edit --get|--set` reads and writes and the keybinding split uses).
+const TmuxAISplitModeFileName = "tmux-ai-split-mode"
+
 type AIAgentProvider string
 
 const (
@@ -24,6 +28,11 @@ var DefaultAIEnabledAgents = knownAIEnabledAgentProviders()
 
 func (p Paths) AIEnabledAgentsFile() string {
 	return filepath.Join(p.ConfigDir, AIEnabledAgentsFileName)
+}
+
+// TmuxAISplitModeFile returns the saved AI split launch default file.
+func (p Paths) TmuxAISplitModeFile() string {
+	return filepath.Join(p.ConfigDir, TmuxAISplitModeFileName)
 }
 
 func KnownAIAgentProviders() []AIAgentProvider {

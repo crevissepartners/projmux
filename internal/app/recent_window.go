@@ -486,7 +486,7 @@ func recentWindowPickerOptions(items []intpicker.Item, initialIndex int, homeDir
 		options.InitialIndex = initialIndex
 		options.InitialIndexSet = true
 	}
-	if source, err := configRenderThemeSource(homeDir, lookupEnv, ""); err == nil {
+	if source, err := pickerRenderThemeSource(homeDir, lookupEnv); err == nil {
 		options = source.pickerOptions(options)
 	} else {
 		options = fallbackRenderThemeSource().pickerOptions(options)

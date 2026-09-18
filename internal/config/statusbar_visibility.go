@@ -112,6 +112,7 @@ func LoadStatusbarVisibilityFileWithDefault(path string, defaultValue StatusbarV
 	if strings.TrimSpace(path) == "" {
 		return state, nil
 	}
+	noteFrontFile(path)
 	// #nosec G304 -- path is the resolved projmux configuration file supplied by the caller.
 	content, err := os.ReadFile(path)
 	if err != nil {

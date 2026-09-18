@@ -54,6 +54,10 @@ type keymapLoader struct {
 	homeDir   func() (string, error)
 	lookupEnv func(string) string
 	readFile  func(string) ([]byte, error)
+	// pickerDisplay marks a load made only to show a picker's keys. The
+	// picker key lookups set it at their call sites; every other load reports
+	// a setting read.
+	pickerDisplay bool
 }
 
 type keymapStore struct {
@@ -74,6 +78,11 @@ func loadMergedKeyBindingCatalog(loader keymapLoader) ([]keyBindingAction, bool,
 	readFile := loader.readFile
 	if readFile == nil {
 		readFile = os.ReadFile
+	}
+	if loader.pickerDisplay {
+		config.NotePickerDisplayRead(config.KeymapFileName, path)
+	} else {
+		config.NoteFrontRead(config.KeymapFileName, path)
 	}
 	raw, err := readFile(path)
 	if err != nil {
@@ -105,6 +114,7 @@ func loadKeymapForEdit(store keymapStore) (keymapFile, []keyBindingAction, bool,
 	if readFile == nil {
 		readFile = os.ReadFile
 	}
+	config.NoteFrontRead(config.KeymapFileName, path)
 	raw, err := readFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

@@ -15,6 +15,10 @@ const AINotifyDedupeSecondsFileName = "ai-notify-dedupe-seconds"
 const AIHookActionsFileName = "ai-hook-actions.json"
 const DesktopNotifyModeFileName = "desktop-notify-mode"
 
+// AIHooksDirName is the directory of per-provider AI hook catalog overrides,
+// one `<provider>.json` each.
+const AIHooksDirName = "ai-hooks.d"
+
 type DesktopNotifyMode string
 
 // The desktop notification setting is a two-state model. `raise` was a third
@@ -48,6 +52,12 @@ func (p Paths) AINotifyDedupeSecondsFile() string {
 
 func (p Paths) AIHookActionsFile() string {
 	return filepath.Join(p.ConfigDir, AIHookActionsFileName)
+}
+
+// AIHookCatalogOverrideFile returns the AI hook catalog override for one
+// provider.
+func (p Paths) AIHookCatalogOverrideFile(provider string) string {
+	return filepath.Join(p.ConfigDir, AIHooksDirName, provider+".json")
 }
 
 func (p Paths) DesktopNotifyModeFile() string {

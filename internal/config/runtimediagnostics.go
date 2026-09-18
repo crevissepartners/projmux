@@ -81,6 +81,7 @@ func LoadRuntimeDiagnosticsVisibilityFile(path string) (RuntimeDiagnosticsVisibi
 	if strings.TrimSpace(path) == "" {
 		return RuntimeDiagnosticsVisibilityDefault, RuntimeDiagnosticsVisibilityDefaulted, nil
 	}
+	noteFrontFile(path)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

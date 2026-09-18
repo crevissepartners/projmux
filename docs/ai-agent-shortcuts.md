@@ -53,11 +53,12 @@ Everything after `--` reaches the configured provider executable. Placeholder
 model, permission, and agent flags are private customization examples, not
 project defaults. Omit the separator when there is no payload.
 
-Settings > AI Settings > Enabled providers controls whether Claude, Codex, and
-Antigravity may launch. Canonical create routes respect that setting. There is
-no shared command-line override for a disabled provider; change Settings when
-the provider should become available. For a plain shell split use `projmux
-create pane`, not an Agent provider.
+`Settings > Global > AI > Enabled providers` controls whether Claude, Codex,
+and Antigravity may launch. Canonical create routes respect that setting.
+There is no per-launch override for a disabled provider; enable it in Settings
+or with `projmux config providers --enable <id>` (`--disable <id>` turns one
+off), which goes through the same writer. For a plain shell split use
+`projmux create pane`, not an Agent provider.
 
 Interactive provider and resume selection belong to the app's picker surfaces.
 CLI automation should choose an explicit provider or use `projmux agent resume

@@ -171,7 +171,7 @@ func (c *resourceCommand) currentTime() time.Time {
 }
 
 func (c *resourceCommand) pickerOptions(view *resourceViewState, lifecycle *resourceLifecycle) intpicker.Options {
-	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, "")
+	source, err := pickerRenderThemeSource(c.homeDir, c.lookupEnv)
 	if err != nil {
 		source = fallbackRenderThemeSource()
 	}

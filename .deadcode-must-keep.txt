@@ -85,6 +85,7 @@ NewWithConfig	Credential and endpoint injection constructor retained as the only
 NewWithRoot	Rollout-root injection constructor retained as the only seam that pins the live rollout parser without probing the installed Codex.
 NextPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 NextWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
+ObserveFrontReads	Test hook of the settings layer seam; the settings layer guard installs it to count front-layer reads per public route, and production never installs an observer.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
 OperatorWebOrigin	The operator-origin constructor is the one sanctioned way to build operator input; no product path calls it until the web sender lands, and TestNoProductPathBuildsAnOperatorOrigin pins that its callers are only the listed producers.
 Parse	Project layout preset reader/writer for <project>/.projmux/layouts retained as the supported preset format after the named-snapshot save and the Session picker snapshot view that called it were removed.
@@ -114,6 +115,7 @@ Run	Recorder-free CLI bootstrap retained as the test seam over the live App.Run 
 Runner.ListWindows	Structured window inventory read retained as the test seam that pins the live format join and pane target argument builders.
 RuntimeKoreanStringAuditOptions	Runtime Korean profile of the governance string audit; it scopes the live guard over shipped Go sources.
 SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
+SettingItems	Read-only projection of the settings layer declaration retained as the test seam the settings layer guard seeds every front file from.
 SharedOutputModes	Closed shared -o catalog retained as the test seam that pins catalog closure and contract ordering.
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
 StartDefaultThread	The default-endpoint start wrapper is retained for installed turn-free protocol qualification; generation-pinned product routing uses explicit routes.

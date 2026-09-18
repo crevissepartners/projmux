@@ -3,7 +3,6 @@ package app
 import (
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -88,11 +87,11 @@ func loadStatusbarDecorationForTarget(homeDir func() (string, error), lookupEnv 
 func statusbarDecorationTargetFile(paths config.Paths, target statusbarDecorationTarget) string {
 	switch target {
 	case statusbarDecorationTargetCwd:
-		return filepath.Join(paths.ConfigDir, "statusbar-decoration-cwd")
+		return paths.StatusbarDecorationCwdFile()
 	case statusbarDecorationTargetGit:
-		return filepath.Join(paths.ConfigDir, "statusbar-decoration-git")
+		return paths.StatusbarDecorationGitFile()
 	case statusbarDecorationTargetNotify:
-		return filepath.Join(paths.ConfigDir, "statusbar-decoration-notify")
+		return paths.StatusbarDecorationNotifyFile()
 	default:
 		return ""
 	}

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/layout"
 )
 
@@ -210,6 +211,7 @@ func replaceKeymapSchemaMarker(raw []byte, version int) ([]byte, error) {
 // The injected readFile hook (tests and the in-process Settings store) bypasses
 // the filesystem entirely, so the policy only applies to the real path.
 func readKeymapForMigration(store keymapStore, path string) ([]byte, error) {
+	config.NoteFrontRead(config.KeymapFileName, path)
 	if store.readFile != nil {
 		return store.readFile(path)
 	}
@@ -673,6 +675,7 @@ func rollbackKeymapMigration(store keymapStore, backupPath string) error {
 	if readFile == nil {
 		readFile = os.ReadFile
 	}
+	config.NoteFrontRead(config.KeymapFileName, backupPath)
 	raw, err := readFile(backupPath)
 	if err != nil {
 		return fmt.Errorf("read keymap backup %s: %w", backupPath, err)

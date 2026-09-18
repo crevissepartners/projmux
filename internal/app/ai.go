@@ -1844,7 +1844,7 @@ func (c *aiCommand) themedPickerOptions(options intpickercompat.Options) intpick
 	if options.Theme != nil {
 		return options
 	}
-	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
+	if source, err := pickerRenderThemeSource(c.homeDir, c.lookupEnv); err == nil {
 		return source.pickerCompatOptions(options)
 	}
 	return fallbackRenderThemeSource().pickerCompatOptions(options)
@@ -2063,7 +2063,9 @@ func aiProviderEnableCommand(provider string) string {
 }
 
 func (c *aiCommand) getMode() string {
-	content, err := os.ReadFile(c.configFile())
+	path := c.configFile()
+	config.NoteFrontRead(config.TmuxAISplitModeFileName, path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return aiModeSelective
 	}
@@ -2083,16 +2085,20 @@ func (c *aiCommand) setMode(mode string) error {
 	return nil
 }
 
+// configFile is the saved AI split launch default. With neither
+// XDG_CONFIG_HOME nor a home directory it stays relative to the working
+// directory, as it always has.
 func (c *aiCommand) configFile() string {
 	configHome := strings.TrimSpace(c.env("XDG_CONFIG_HOME"))
 	if configHome == "" {
 		homeDir, err := c.home()
 		if err != nil || strings.TrimSpace(homeDir) == "" {
-			return filepath.Join(".config", "projmux", "tmux-ai-split-mode")
+			configHome = ".config"
+		} else {
+			configHome = filepath.Join(homeDir, ".config")
 		}
-		configHome = filepath.Join(homeDir, ".config")
 	}
-	return filepath.Join(configHome, "projmux", "tmux-ai-split-mode")
+	return config.DefaultPaths(configHome, "").TmuxAISplitModeFile()
 }
 
 func (c *aiCommand) openPicker(direction string) error {
