@@ -433,11 +433,11 @@ func decodeTOMLBasicString(raw string) (string, int, error) {
 				if i+width >= len(raw) {
 					return "", 0, errors.New("short unicode escape")
 				}
-				code, err := strconv.ParseUint(raw[i+1:i+1+width], 16, 32)
-				if err != nil || !utf8.ValidRune(rune(code)) {
+				code, ok := decodeTOMLUnicodeEscape(raw[i+1 : i+1+width])
+				if !ok {
 					return "", 0, fmt.Errorf("invalid unicode escape %q", raw[i-1:i+1+width])
 				}
-				b.WriteRune(rune(code))
+				b.WriteRune(code)
 				i += width
 			default:
 				return "", 0, fmt.Errorf("invalid escape \\%c", raw[i])
@@ -449,6 +449,31 @@ func decodeTOMLBasicString(raw string) (string, int, error) {
 		}
 	}
 	return "", 0, errors.New("unterminated string")
+}
+
+// decodeTOMLUnicodeEscape reads the hex digits of a \uXXXX or \UXXXXXXXX
+// escape into a rune. It accepts only hex digits and a valid Unicode scalar
+// value: a value past utf8.MaxRune or a surrogate is refused.
+func decodeTOMLUnicodeEscape(digits string) (rune, bool) {
+	var code rune
+	for i := 0; i < len(digits); i++ {
+		var digit rune
+		switch c := rune(digits[i]); {
+		case c >= '0' && c <= '9':
+			digit = c - '0'
+		case c >= 'a' && c <= 'f':
+			digit = c - 'a' + 10
+		case c >= 'A' && c <= 'F':
+			digit = c - 'A' + 10
+		default:
+			return 0, false
+		}
+		code = code<<4 | digit
+		if code > utf8.MaxRune {
+			return 0, false
+		}
+	}
+	return code, digits != "" && utf8.ValidRune(code)
 }
 
 func parseTOMLTableName(raw string) (string, bool) {

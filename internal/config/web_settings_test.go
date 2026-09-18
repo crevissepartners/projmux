@@ -239,6 +239,43 @@ func TestWebSettingsStringEscapesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWebSettingsUnicodeEscapesDecodeOnlyScalarValues(t *testing.T) {
+	// The inputs spell the backslash as "\\" so the escapes reach the
+	// decoder as text rather than being decoded by Go.
+	for _, tc := range []struct {
+		raw, want string
+	}{
+		{"\"\\u00e9\"", "\u00e9"},
+		{"\"\\u00E9\"", "\u00e9"},
+		{"\"\\U0001F600\"", "\U0001F600"},
+		{"\"\\U0010FFFF\"", "\U0010FFFF"},
+		{"\"\\u0041\\u0062\"", "Ab"},
+	} {
+		got, n, err := decodeTOMLBasicString(tc.raw)
+		if err != nil || got != tc.want || n != len(tc.raw) {
+			t.Errorf("decode(%s) = %q %d %v, want %q", tc.raw, got, n, err, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		raw, want string
+	}{
+		{"\"\\U00110000\"", `invalid unicode escape "\\U00110000"`},
+		{"\"\\UFFFFFFFF\"", `invalid unicode escape "\\UFFFFFFFF"`},
+		{"\"\\uD800\"", `invalid unicode escape "\\uD800"`},
+		{"\"\\uDFFF\"", `invalid unicode escape "\\uDFFF"`},
+		{"\"\\u00g9\"", `invalid unicode escape "\\u00g9"`},
+		{"\"\\u+0e9\"", `invalid unicode escape "\\u+0e9"`},
+		// Too few digits before the closing quote: the quote is read as a
+		// digit and refused.
+		{"\"\\u00e\"", `invalid unicode escape "\\u00e\""`},
+		{"\"\\u00e", "short unicode escape"},
+	} {
+		if got, _, err := decodeTOMLBasicString(tc.raw); err == nil || err.Error() != tc.want {
+			t.Errorf("decode(%s) = %q %v, want error %q", tc.raw, got, err, tc.want)
+		}
+	}
+}
+
 func TestWebSettingsSaveIsPrivateAndReadable(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "projmux")
 	path := filepath.Join(dir, WebSettingsFileName)
