@@ -41,15 +41,20 @@ type canonicalIntentScope struct {
 type windowCreateIntent struct {
 	anchorPaneID string
 	targetClient string
+	// answer is what the operator chose for the new Window's first Pane,
+	// decided before this create runs. An empty provider keeps the shell Pane
+	// the Window is created with. A provider opens an Agent beside that shell
+	// and retires the shell in the same transaction, so the Window commits
+	// with its Agent or not at all.
+	answer agentPaneIntent
 }
 
 // createdWindowRuntime is the exact runtime placement of the Window a committed
 // intent create made: the stable `$N` Session and `@N` Window handles the
-// transaction bound into the Registry, plus the `%N` of the shell Pane the
-// Window was created with. It carries no identity authority; the generated
-// route only uses it to address the pressing client's move and to hand the
-// committed shell Pane to the saved launch default, which needs the exact Pane
-// rather than whatever is focused by the time it runs.
+// transaction bound into the Registry, plus the `%N` of the Window's one Pane --
+// the shell it was created with, or the Agent Pane that replaced it. It carries
+// no identity authority; the generated route only uses it to address the
+// pressing client's move.
 type createdWindowRuntime struct {
 	sessionID string
 	windowID  string
@@ -97,10 +102,42 @@ func (c *createCommand) projectCanonicalOriginWindowBinding(
 	return err
 }
 
+// createWindowFromIntent is the UI Window producer: the new-Window key and the
+// Window menu New At End. Its answer is committed in this one transaction. A
+// shell answer is the Window and its shell Pane. An Agent answer is the same
+// Window shape `create window --provider` commits -- the shell Pane is created,
+// the Agent Pane splits off it, and the shell is retired -- so the Window holds
+// exactly the Agent Pane, and any failure on the way rolls the whole Window
+// back. The Agent records no creator: the key press is the operator's, even
+// when it is pressed inside an Agent's Pane.
 func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout, stderr io.Writer) (createdWindowRuntime, error) {
 	anchor := strings.TrimSpace(intent.anchorPaneID)
 	if exactTmuxHandle(anchor, "%") == "" {
 		return createdWindowRuntime{}, usageError("canonical Window create intent requires an exact anchor Pane; nothing was created")
+	}
+	// An Agent answer is refused on its own terms before anything is resolved
+	// or written: a provider the Settings gate has switched off, or an answer
+	// that does not parse, costs zero mutations.
+	var answerFlags resourceCreateFlags
+	provider := strings.TrimSpace(intent.answer.provider)
+	if provider != "" {
+		argv, canonical, conversation, err := intent.answer.canonicalArgv()
+		if err != nil {
+			return createdWindowRuntime{}, err
+		}
+		if !intent.answer.producer.valid() {
+			return createdWindowRuntime{}, usageError("canonical create intent has no classified producer; nothing was created")
+		}
+		if c.agents == nil {
+			return createdWindowRuntime{}, errors.New("create agent: the provider launcher is not configured")
+		}
+		if err := c.agents.RequireAgentEnabled(canonical); err != nil {
+			return createdWindowRuntime{}, err
+		}
+		if answerFlags, err = intentAgentFlags(intent.answer, argv, conversation, stderr); err != nil {
+			return createdWindowRuntime{}, err
+		}
+		provider = canonical
 	}
 	scope, err := c.resolveCanonicalIntentScope(agentPaneIntent{
 		producer: canonicalProducerWindowCreate, anchorPaneID: anchor, targetClient: intent.targetClient,
@@ -108,8 +145,17 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 	if err != nil {
 		return createdWindowRuntime{}, visibleCanonicalCreateError(err)
 	}
+	var plan *intentAgentPlan
+	if provider != "" {
+		prepared, err := c.prepareIntentAgent(provider, answerFlags)
+		if err != nil {
+			return createdWindowRuntime{}, visibleCanonicalCreateError(err)
+		}
+		plan = &prepared
+	}
 	var result createResult
 	var placement createdWindowRuntime
+	var opened intentAgentOpened
 	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
@@ -159,13 +205,41 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 			return errors.Join(createErr, mirrorErr)
 		}
 		observeActivationRuntime(working, mutator, activation, created.PaneID, c.runtime.warn)
+		if createErr != nil {
+			return createErr
+		}
+		paneID := created.PaneID
+		if plan != nil {
+			var err error
+			// The lease this transaction installed before new-window still
+			// covers the split, so the Agent half does not write it again.
+			opened, err = c.openIntentAgent(ctx, working, mutator, ledger, operationID, scope, *plan, intentAgentTarget{
+				windowUID: window.Metadata.UID, anchorPaneID: created.PaneID, placement: intent.answer.placement,
+				leaseHeld: true,
+			})
+			if err != nil {
+				return err
+			}
+			// Both Panes exist now, which is what lets the shell go: the
+			// Window keeps exactly the Agent Pane, as its anchor, with no
+			// default shell -- the shape `create window --provider` commits.
+			if err := c.retireWindowInitialShell(ctx, working, mutator, windowWork{
+				window: window, initial: panes[0], initialPaneID: created.PaneID,
+			}); err != nil {
+				return err
+			}
+			paneID = opened.paneID
+		}
 		result = createResult{kind: coremetadata.KindWindow, uid: window.Metadata.UID, name: window.Metadata.Name,
-			paneID: created.PaneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
-		placement = createdWindowRuntime{sessionID: scope.sessionID, windowID: created.WindowID, paneID: created.PaneID}
-		return createErr
+			paneID: paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
+		placement = createdWindowRuntime{sessionID: scope.sessionID, windowID: created.WindowID, paneID: paneID}
+		return nil
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
 		return createdWindowRuntime{}, visibleCanonicalCreateError(err)
+	}
+	if plan != nil {
+		plan.startLifecycleObserver(opened)
 	}
 	return placement, c.writeResults(stdout, canonicalCreateWindow, cli.OutputModeDefault, coremetadata.KindWindow, []createResult{result})
 }
@@ -584,69 +658,13 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 }
 
 func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, intent agentPaneIntent, provider, launchDir string, flags resourceCreateFlags, stdout io.Writer) (createdPaneRuntime, error) {
-	if c.agents == nil {
-		return createdPaneRuntime{}, errors.New("create agent: the provider launcher is not configured")
-	}
-	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
-	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
-	freshNativeCreate := nativeCodexFreshCreateRequired(provider, flags)
-	nativeCatalogResume := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
-		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexAppServer
-	rolloutResume := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
-		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexRollout
-	if provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" && !nativeCatalogResume && !rolloutResume {
-		return createdPaneRuntime{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
-	}
-	var nativeRoute codexNativeEndpointRoute
-	if freshNativeCreate {
-		_, exactPrompt := nativePrompt(flags.payload)
-		if !exactPrompt {
-			return createdPaneRuntime{}, nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: "unsupported-create-shape"})
-		}
-		if !nativeLaunchCapable || c.codexNative == nil {
-			return createdPaneRuntime{}, nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
-		}
-		nativeCtx, cancel := prepareNativeContext(context.Background())
-		var routeErr error
-		nativeRoute, routeErr = c.codexNative.Current(nativeCtx)
-		cancel()
-		if routeErr != nil || !nativeRoute.valid() || nativeRoute.State != coremetadata.CodexGenerationCurrent {
-			if routeErr == nil {
-				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-			}
-			return createdPaneRuntime{}, nativeCreatePreparationRefusal(canonicalCreateAgent, routeErr)
-		}
-	} else if nativeCatalogResume {
-		if !nativeLaunchCapable || c.codexNative == nil || !flags.resumeEndpoint.Valid() {
-			return createdPaneRuntime{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
-		}
-		// Draining and handover-pending rows are leftovers of the retired
-		// private generation pool; they resolve like current rows, switching
-		// onto the default endpoint of the same Codex state domain or refusing.
-		switch flags.resumeGenerationState {
-		case coremetadata.CodexGenerationCurrent, coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
-		default:
-			return createdPaneRuntime{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
-		}
-		nativeCtx, cancel := prepareNativeContext(context.Background())
-		var routeErr error
-		nativeRoute, routeErr = c.codexNative.Resolve(nativeCtx, flags.resumeEndpoint)
-		cancel()
-		if routeErr == nil && nativeRoute.valid() && !nativeRoute.Endpoint.Same(flags.resumeEndpoint) &&
-			(!nativeRoute.Default || nativeRoute.Endpoint.StateDomainID != flags.resumeEndpoint.StateDomainID) {
-			routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-		}
-		if routeErr != nil || !nativeRoute.valid() || nativeRoute.State != coremetadata.CodexGenerationCurrent {
-			if routeErr == nil {
-				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-			}
-			return createdPaneRuntime{}, nativeResumePreparationRefusal(canonicalCreateAgent, routeErr)
-		}
+	plan, err := c.prepareIntentAgent(provider, flags)
+	if err != nil {
+		return createdPaneRuntime{}, err
 	}
 	var result createResult
-	var created createdPaneRuntime
-	var nativeLifecycleTarget codexLifecycleObserverTarget
-	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	var opened intentAgentOpened
+	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
 		}
@@ -654,193 +672,350 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		if !ok {
 			return usageError("canonical create: origin Window disappeared before allocation; nothing was created")
 		}
-		var workspace coremetadata.AgentWorkspace
 		var err error
-		if scope.rootKind == coremetadata.KindProject {
-			project, ok := working.Project(scope.rootUID)
-			if !ok {
-				return usageError("canonical create: origin Project disappeared before workspace planning; nothing was created")
-			}
-			resolver := c.resolveWorkspace
-			if resolver == nil {
-				resolver = resolveAgentWorkspace
-			}
-			cwd := flags.cwd
-			if launchDir != "" {
-				cwd = launchDir
-			}
-			workspace, err = resolver(*working, *project, provider, cwd, flags.addDirs)
-		} else {
-			workspace.CWD, err = canonicalExistingDir(scope.cwd)
-			if err != nil {
-				err = usageError(fmt.Sprintf("canonical create: ControlSession origin Pane launch cwd %q: %v", scope.cwd, err))
-			}
-		}
-		if err != nil {
-			return err
-		}
-		var title string
-		var launchArgv []string
-		if !freshNativeCreate && !nativeCatalogResume {
-			title, launchArgv, err = c.planAgentPaneLaunch(provider, workspace, flags)
-			if err != nil {
-				return err
-			}
-		}
-		agent, err := mutator.CreateAgent(working, scope.windowUID, coremetadata.CreateAgentOptions{
-			Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,
+		opened, err = c.openIntentAgent(ctx, working, mutator, ledger, operationID, scope, plan, intentAgentTarget{
+			windowUID: scope.windowUID, anchorPaneID: scope.anchorPaneID, placement: intent.placement,
+			launchDir: launchDir, equalize: true,
 		})
 		if err != nil {
-			return MapMetadataError(err)
-		}
-		// A resume-picker selection already carries provider-owned conversation
-		// identity before the provider starts. Persist that exact normalized
-		// identity now, in the same transaction that owns the Agent and Pane,
-		// instead of waiting for a hook that may arrive only after the Pane has
-		// stopped. Ordinary fresh creates leave the pointer nil.
-		if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" {
-			observation := pickerResumeSessionObservation(provider, conversation)
-			if nativeCatalogResume {
-				// The resolved route, not the row's endpoint: a switched row
-				// binds the new Agent to the default endpoint.
-				endpoint := nativeRoute.Endpoint
-				observation.Endpoint = &endpoint
-			}
-			if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, observation); err != nil {
-				return MapMetadataError(err)
-			}
-			if nativeCatalogResume {
-				storedAgent, _ := working.Agent(agent.Metadata.UID)
-				storedAgent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent}
-			}
-		}
-		pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{CWD: workspace.CWD}, operationID)
-		if err != nil {
-			return MapMetadataError(err)
-		}
-		activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
-		if err != nil {
 			return err
 		}
-		usedNative := false
-		nativeThreadID := ""
-		bindFlags := flags
-		if freshNativeCreate {
-			if err := mutator.StageCodexEndpoint(working, agent.Metadata.UID, nativeRoute.Endpoint); err != nil {
-				return MapMetadataError(err)
-			}
-			prompt, _ := nativePrompt(flags.payload)
-			nativeCtx, cancel := prepareNativeContext(ctx)
-			prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workspace, prompt, activation.Generation)
-			cancel()
-			switch {
-			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
-				title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
-				if err != nil {
-					return nativeLaunchError(canonicalCreateAgent, err)
-				}
-				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
-					AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID,
-					Generation: activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
-					Endpoint: nativeRoute.Endpoint,
-				}); err != nil {
-					return MapMetadataError(err)
-				}
-				nativeThreadID = prepared.ThreadID
-				usedNative = true
-			case nativeErr == nil:
-				return nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
-			case nativeFallbackAllowed(c.codexNative, nativeErr), nativeRootsUnsupported(nativeErr):
-				return nativeCreatePreparationRefusal(canonicalCreateAgent, nativeErr)
-			default:
-				return nativeLaunchError(canonicalCreateAgent, nativeErr)
-			}
-		} else if nativeCatalogResume {
-			nativeCtx, cancel := prepareNativeContext(ctx)
-			prepared, nativeErr := c.codexNative.Resume(nativeCtx, nativeRoute, workspace, flags.resumeConversation)
-			cancel()
-			switch {
-			case nativeErr == nil:
-				if strings.TrimSpace(prepared.ThreadID) != strings.TrimSpace(flags.resumeConversation) {
-					return nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native resume returned a different thread", codexappserver.ErrProtocol))
-				}
-				title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
-				if err != nil {
-					return nativeLaunchError(canonicalCreateAgent, err)
-				}
-				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
-					AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID,
-					Generation: activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
-					Endpoint: nativeRoute.Endpoint,
-				}); err != nil {
-					return MapMetadataError(err)
-				}
-				nativeThreadID = prepared.ThreadID
-				usedNative = true
-			case nativeFallbackAllowed(c.codexNative, nativeErr):
-				// The picker row names a thread the app-server owns. Rebinding it
-				// onto the rollout CLI lane looks like a resume but carries no
-				// native turn control, so the refusal is typed instead. There is
-				// no `--interactive-only` escape hatch on a resume: the operator
-				// picked an existing conversation, not a launch mode.
-				return nativeResumePreparationRefusal(canonicalCreateAgent, nativeErr)
-			default:
-				return nativeLaunchError(canonicalCreateAgent, nativeErr)
-			}
-		}
-		if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
-			return err
-		}
-		paneID, err := c.runtime.splitPane(ctx, scope.anchorPaneID, intent.placement, workspace.CWD,
-			c.runtime.supervisedLaunch(ctx, activation, launchArgv))
-		if paneID != "" {
-			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
-				return errors.Join(err, claimErr)
-			}
-			if mirrorErr := c.runtime.mirrorPane(ctx, paneID, pane); mirrorErr != nil {
-				return errors.Join(err, mirrorErr)
-			}
-			observeActivationRuntime(working, mutator, activation, paneID, c.runtime.warn)
-		}
-		if err != nil {
-			return err
-		}
-		c.runtime.equalizeSplitLayout(ctx, scope.anchorPaneID, intent.placement)
-		if usedNative {
-			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, "", nativeThreadID); err != nil {
-				return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
-			}
-			if nativeLifecycleCapable {
-				nativeLifecycleTarget = codexLifecycleObserverTarget{
-					Identity: codexLifecycleIdentity{
-						AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
-						Generation: activation.Generation, ThreadID: nativeThreadID,
-					},
-					Route: c.runtime.target, NativeRoute: nativeRoute,
-				}
-			}
-		} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, title,
-			declaredPlainCodexLane(provider, bindFlags, ""), bindFlags); err != nil {
-			return tmuxError("%s: bind Agent Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
-		}
-		if err := c.runtime.runIdentityWrites(ctx, "pane", paneID, pane.Metadata.UID, []identityPlanWrite{
-			{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption}, effect: "legacy AI topic projection absent"},
-			{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicManualOption}, effect: "legacy manual-topic projection absent"},
-		}); err != nil {
-			return tmuxError("%s: clear compatibility topic projections on Pane %s: %v", canonicalCreateAgent, paneID, err)
-		}
-		result = createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name,
-			paneID: paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
-		created = createdPaneRuntime{paneID: paneID}
+		result = createResult{kind: coremetadata.KindAgent, uid: opened.agent.Metadata.UID, name: opened.agent.Metadata.Name,
+			paneID: opened.paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
 		return nil
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
 		return createdPaneRuntime{}, err
 	}
-	if nativeLifecycleTarget.valid() {
-		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTarget)
+	plan.startLifecycleObserver(opened)
+	return createdPaneRuntime{paneID: opened.paneID}, c.writeResults(stdout, canonicalCreateAgent, cli.OutputModeDefault, coremetadata.KindAgent, []createResult{result})
+}
+
+// intentAgentPlan is one UI Agent answer prepared before its Registry
+// transaction opens: the provider, its parsed flags, which Codex lane it takes,
+// and for a native lane the app-server route it resolved. Every refusal the
+// answer alone can cause lands while it is built, with nothing written.
+//
+// It and openIntentAgent are the Agent half the two UI producers share: a split
+// (createCanonicalIntentAgent) opens it beside the Pane the operator pressed,
+// and a new Window (createWindowFromIntent) opens it beside the shell Pane the
+// same transaction created and then retires. What an Agent answer means --
+// resume identity, the Codex native lanes, the rollout-lane declaration, the
+// retired topic projections -- is therefore stated once.
+type intentAgentPlan struct {
+	provider               string
+	flags                  resourceCreateFlags
+	nativeLauncher         codexNativeAgentLauncher
+	nativeLifecycle        codexNativeLifecycleStarter
+	nativeLifecycleCapable bool
+	freshNativeCreate      bool
+	nativeCatalogResume    bool
+	nativeRoute            codexNativeEndpointRoute
+}
+
+// intentAgentTarget is where one planned UI Agent opens.
+type intentAgentTarget struct {
+	// windowUID is the Registry Window the Agent is created in.
+	windowUID string
+	// anchorPaneID is the exact `%N` the Agent's Pane splits off.
+	anchorPaneID string
+	placement    string
+	// launchDir is the resolved split start directory, or "" for the Project
+	// root (or the ControlSession cwd).
+	launchDir string
+	// equalize evens the split against its anchor. A split beside a Pane the
+	// operator keeps does; a new Window's Agent does not, because its anchor is
+	// the shell the same transaction retires.
+	equalize bool
+	// leaseHeld is true when the caller already installed this transaction's
+	// create-operation lease on the scope's session, so the Agent half does not
+	// write it a second time.
+	leaseHeld bool
+}
+
+// intentAgentOpened is what openIntentAgent committed into the working
+// Registry and materialized.
+type intentAgentOpened struct {
+	agent     coremetadata.Agent
+	pane      coremetadata.Pane
+	paneID    string
+	lifecycle codexLifecycleObserverTarget
+}
+
+// prepareIntentAgent is the preflight of one UI Agent answer. It runs before
+// the transaction: a Codex resume with no usable endpoint, a native lane with
+// no current generation, or a fresh native create without an exact prompt is
+// refused here with zero writes.
+func (c *createCommand) prepareIntentAgent(provider string, flags resourceCreateFlags) (intentAgentPlan, error) {
+	if c.agents == nil {
+		return intentAgentPlan{}, errors.New("create agent: the provider launcher is not configured")
 	}
-	return created, c.writeResults(stdout, canonicalCreateAgent, cli.OutputModeDefault, coremetadata.KindAgent, []createResult{result})
+	plan := intentAgentPlan{provider: provider, flags: flags}
+	nativeLaunchCapable := false
+	plan.nativeLauncher, nativeLaunchCapable = c.resumes.(codexNativeAgentLauncher)
+	plan.nativeLifecycle, plan.nativeLifecycleCapable = c.resumes.(codexNativeLifecycleStarter)
+	plan.freshNativeCreate = nativeCodexFreshCreateRequired(provider, flags)
+	plan.nativeCatalogResume = provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
+		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexAppServer
+	rolloutResume := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
+		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexRollout
+	if provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" && !plan.nativeCatalogResume && !rolloutResume {
+		return intentAgentPlan{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
+	}
+	if plan.freshNativeCreate {
+		_, exactPrompt := nativePrompt(flags.payload)
+		if !exactPrompt {
+			return intentAgentPlan{}, nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: "unsupported-create-shape"})
+		}
+		if !nativeLaunchCapable || c.codexNative == nil {
+			return intentAgentPlan{}, nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+		}
+		nativeCtx, cancel := prepareNativeContext(context.Background())
+		route, routeErr := c.codexNative.Current(nativeCtx)
+		cancel()
+		if routeErr != nil || !route.valid() || route.State != coremetadata.CodexGenerationCurrent {
+			if routeErr == nil {
+				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+			}
+			return intentAgentPlan{}, nativeCreatePreparationRefusal(canonicalCreateAgent, routeErr)
+		}
+		plan.nativeRoute = route
+	} else if plan.nativeCatalogResume {
+		if !nativeLaunchCapable || c.codexNative == nil || !flags.resumeEndpoint.Valid() {
+			return intentAgentPlan{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
+		}
+		// Draining and handover-pending rows are leftovers of the retired
+		// private generation pool; they resolve like current rows, switching
+		// onto the default endpoint of the same Codex state domain or refusing.
+		switch flags.resumeGenerationState {
+		case coremetadata.CodexGenerationCurrent, coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
+		default:
+			return intentAgentPlan{}, nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+		}
+		nativeCtx, cancel := prepareNativeContext(context.Background())
+		route, routeErr := c.codexNative.Resolve(nativeCtx, flags.resumeEndpoint)
+		cancel()
+		if routeErr == nil && route.valid() && !route.Endpoint.Same(flags.resumeEndpoint) &&
+			(!route.Default || route.Endpoint.StateDomainID != flags.resumeEndpoint.StateDomainID) {
+			routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+		}
+		if routeErr != nil || !route.valid() || route.State != coremetadata.CodexGenerationCurrent {
+			if routeErr == nil {
+				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+			}
+			return intentAgentPlan{}, nativeResumePreparationRefusal(canonicalCreateAgent, routeErr)
+		}
+		plan.nativeRoute = route
+	}
+	return plan, nil
+}
+
+// openIntentAgent creates one planned UI Agent inside the caller's
+// transaction: the Agent and its Pane in the working Registry, the resume
+// identity the answer already carries, the Codex native thread when the lane is
+// native, and the Pane split off target.anchorPaneID -- claimed for rollback,
+// mirrored, and given the managed-agent presentation. Any error leaves the
+// rollback to the caller's transaction.
+func (c *createCommand) openIntentAgent(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	ledger *runtimeLedger,
+	operationID string,
+	scope canonicalIntentScope,
+	plan intentAgentPlan,
+	target intentAgentTarget,
+) (intentAgentOpened, error) {
+	provider, flags := plan.provider, plan.flags
+	var workspace coremetadata.AgentWorkspace
+	var err error
+	if scope.rootKind == coremetadata.KindProject {
+		project, ok := working.Project(scope.rootUID)
+		if !ok {
+			return intentAgentOpened{}, usageError("canonical create: origin Project disappeared before workspace planning; nothing was created")
+		}
+		resolver := c.resolveWorkspace
+		if resolver == nil {
+			resolver = resolveAgentWorkspace
+		}
+		cwd := flags.cwd
+		if target.launchDir != "" {
+			cwd = target.launchDir
+		}
+		workspace, err = resolver(*working, *project, provider, cwd, flags.addDirs)
+	} else {
+		workspace.CWD, err = canonicalExistingDir(scope.cwd)
+		if err != nil {
+			err = usageError(fmt.Sprintf("canonical create: ControlSession origin Pane launch cwd %q: %v", scope.cwd, err))
+		}
+	}
+	if err != nil {
+		return intentAgentOpened{}, err
+	}
+	var title string
+	var launchArgv []string
+	if !plan.freshNativeCreate && !plan.nativeCatalogResume {
+		title, launchArgv, err = c.planAgentPaneLaunch(provider, workspace, flags)
+		if err != nil {
+			return intentAgentOpened{}, err
+		}
+	}
+	agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
+		Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,
+	})
+	if err != nil {
+		return intentAgentOpened{}, MapMetadataError(err)
+	}
+	// A resume-picker selection already carries provider-owned conversation
+	// identity before the provider starts. Persist that exact normalized
+	// identity now, in the same transaction that owns the Agent and Pane,
+	// instead of waiting for a hook that may arrive only after the Pane has
+	// stopped. Ordinary fresh creates leave the pointer nil.
+	if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" {
+		observation := pickerResumeSessionObservation(provider, conversation)
+		if plan.nativeCatalogResume {
+			// The resolved route, not the row's endpoint: a switched row
+			// binds the new Agent to the default endpoint.
+			endpoint := plan.nativeRoute.Endpoint
+			observation.Endpoint = &endpoint
+		}
+		if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, observation); err != nil {
+			return intentAgentOpened{}, MapMetadataError(err)
+		}
+		if plan.nativeCatalogResume {
+			storedAgent, _ := working.Agent(agent.Metadata.UID)
+			storedAgent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent}
+		}
+	}
+	pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{CWD: workspace.CWD}, operationID)
+	if err != nil {
+		return intentAgentOpened{}, MapMetadataError(err)
+	}
+	activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
+	if err != nil {
+		return intentAgentOpened{}, err
+	}
+	usedNative := false
+	nativeThreadID := ""
+	if plan.freshNativeCreate {
+		if err := mutator.StageCodexEndpoint(working, agent.Metadata.UID, plan.nativeRoute.Endpoint); err != nil {
+			return intentAgentOpened{}, MapMetadataError(err)
+		}
+		prompt, _ := nativePrompt(flags.payload)
+		nativeCtx, cancel := prepareNativeContext(ctx)
+		prepared, nativeErr := c.codexNative.Create(nativeCtx, plan.nativeRoute, workspace, prompt, activation.Generation)
+		cancel()
+		switch {
+		case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
+			title, launchArgv, err = plan.nativeLauncher.PlanNativeCodexResume(plan.nativeRoute, workspace, prepared.ThreadID)
+			if err != nil {
+				return intentAgentOpened{}, nativeLaunchError(canonicalCreateAgent, err)
+			}
+			if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
+				AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID,
+				Generation: activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+				Endpoint: plan.nativeRoute.Endpoint,
+			}); err != nil {
+				return intentAgentOpened{}, MapMetadataError(err)
+			}
+			nativeThreadID = prepared.ThreadID
+			usedNative = true
+		case nativeErr == nil:
+			return intentAgentOpened{}, nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
+		case nativeFallbackAllowed(c.codexNative, nativeErr), nativeRootsUnsupported(nativeErr):
+			return intentAgentOpened{}, nativeCreatePreparationRefusal(canonicalCreateAgent, nativeErr)
+		default:
+			return intentAgentOpened{}, nativeLaunchError(canonicalCreateAgent, nativeErr)
+		}
+	} else if plan.nativeCatalogResume {
+		nativeCtx, cancel := prepareNativeContext(ctx)
+		prepared, nativeErr := c.codexNative.Resume(nativeCtx, plan.nativeRoute, workspace, flags.resumeConversation)
+		cancel()
+		switch {
+		case nativeErr == nil:
+			if strings.TrimSpace(prepared.ThreadID) != strings.TrimSpace(flags.resumeConversation) {
+				return intentAgentOpened{}, nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native resume returned a different thread", codexappserver.ErrProtocol))
+			}
+			title, launchArgv, err = plan.nativeLauncher.PlanNativeCodexResume(plan.nativeRoute, workspace, prepared.ThreadID)
+			if err != nil {
+				return intentAgentOpened{}, nativeLaunchError(canonicalCreateAgent, err)
+			}
+			if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
+				AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID,
+				Generation: activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+				Endpoint: plan.nativeRoute.Endpoint,
+			}); err != nil {
+				return intentAgentOpened{}, MapMetadataError(err)
+			}
+			nativeThreadID = prepared.ThreadID
+			usedNative = true
+		case nativeFallbackAllowed(c.codexNative, nativeErr):
+			// The picker row names a thread the app-server owns. Rebinding it
+			// onto the rollout CLI lane looks like a resume but carries no
+			// native turn control, so the refusal is typed instead. There is
+			// no `--interactive-only` escape hatch on a resume: the operator
+			// picked an existing conversation, not a launch mode.
+			return intentAgentOpened{}, nativeResumePreparationRefusal(canonicalCreateAgent, nativeErr)
+		default:
+			return intentAgentOpened{}, nativeLaunchError(canonicalCreateAgent, nativeErr)
+		}
+	}
+	if !target.leaseHeld {
+		if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
+			return intentAgentOpened{}, err
+		}
+	}
+	paneID, err := c.runtime.splitPane(ctx, target.anchorPaneID, target.placement, workspace.CWD,
+		c.runtime.supervisedLaunch(ctx, activation, launchArgv))
+	if paneID != "" {
+		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
+			return intentAgentOpened{}, errors.Join(err, claimErr)
+		}
+		if mirrorErr := c.runtime.mirrorPane(ctx, paneID, pane); mirrorErr != nil {
+			return intentAgentOpened{}, errors.Join(err, mirrorErr)
+		}
+		observeActivationRuntime(working, mutator, activation, paneID, c.runtime.warn)
+	}
+	if err != nil {
+		return intentAgentOpened{}, err
+	}
+	if target.equalize {
+		c.runtime.equalizeSplitLayout(ctx, target.anchorPaneID, target.placement)
+	}
+	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID}
+	if usedNative {
+		if err := bindNativeCodexPaneOnRoute(ctx, plan.nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, "", nativeThreadID); err != nil {
+			return intentAgentOpened{}, tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
+		}
+		if plan.nativeLifecycleCapable {
+			opened.lifecycle = codexLifecycleObserverTarget{
+				Identity: codexLifecycleIdentity{
+					AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
+					Generation: activation.Generation, ThreadID: nativeThreadID,
+				},
+				Route: c.runtime.target, NativeRoute: plan.nativeRoute,
+			}
+		}
+	} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, title,
+		declaredPlainCodexLane(provider, flags, ""), flags); err != nil {
+		return intentAgentOpened{}, tmuxError("%s: bind Agent Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
+	}
+	if err := c.runtime.runIdentityWrites(ctx, "pane", paneID, pane.Metadata.UID, []identityPlanWrite{
+		{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption}, effect: "legacy AI topic projection absent"},
+		{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicManualOption}, effect: "legacy manual-topic projection absent"},
+	}); err != nil {
+		return intentAgentOpened{}, tmuxError("%s: clear compatibility topic projections on Pane %s: %v", canonicalCreateAgent, paneID, err)
+	}
+	return opened, nil
+}
+
+// startLifecycleObserver starts the Codex native lifecycle observer of a
+// committed native Agent. It runs after the transaction commits, never inside
+// it: an observer of a rolled-back Pane would watch a thread nothing owns.
+func (p intentAgentPlan) startLifecycleObserver(opened intentAgentOpened) {
+	if opened.lifecycle.valid() {
+		p.nativeLifecycle.startNativeCodexLifecycleObserver(opened.lifecycle)
+	}
 }
 
 // pickerResumeSessionObservation projects the provider-discriminated picker

@@ -4,7 +4,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"syscall"
 	"testing"
 
@@ -61,16 +60,19 @@ func launchDefaultAICommand(t *testing.T, home string) (*aiCommand, *replaceReco
 }
 
 // TestCanonicalWindowCreateCarriesTheCommittedShellPane runs the real canonical
-// Window create over the fake server and proves the runtime placement it
-// returns names the shell Pane the transaction committed -- the value seam the
-// answer is filled into, with no stdout parsing and no Pane-order guessing.
+// Window create over the fake server with a shell answer and proves the runtime
+// placement it returns names the shell Pane the transaction committed -- the
+// Pane the pressing client lands on, with no stdout parsing and no Pane-order
+// guessing.
 func TestCanonicalWindowCreateCarriesTheCommittedShellPane(t *testing.T) {
 	route := newWindowCreateIntentRoute(t, false, true)
 	before := route.windowUIDs()
-	origins := [][2]string{}
-	route.cmd.launchApply = func(originPaneID, client string, _ launchChoice) launchDefaultResult {
-		origins = append(origins, [2]string{originPaneID, client})
-		return launchDefaultResult{}
+	var placements []createdWindowRuntime
+	create := route.cmd.windowCreate
+	route.cmd.windowCreate = func(intent windowCreateIntent, stdout, stderr io.Writer) (createdWindowRuntime, error) {
+		created, err := create(intent, stdout, stderr)
+		placements = append(placements, created)
+		return created, err
 	}
 
 	if err := route.run(); err != nil {
@@ -81,9 +83,8 @@ func TestCanonicalWindowCreateCarriesTheCommittedShellPane(t *testing.T) {
 	if len(panes) != 1 {
 		t.Fatalf("created Window Panes = %+v, want its one initial Pane", panes)
 	}
-	want := [][2]string{{livePaneWithUID(t, route.tmux, panes[0].Metadata.UID), windowCreatePressingClient}}
-	if !reflect.DeepEqual(origins, want) {
-		t.Fatalf("answer filled into %v, want the committed shell Pane %v", origins, want)
+	if len(placements) != 1 || placements[0].paneID != livePaneWithUID(t, route.tmux, panes[0].Metadata.UID) {
+		t.Fatalf("create returned %+v, want the committed shell Pane", placements)
 	}
 }
 

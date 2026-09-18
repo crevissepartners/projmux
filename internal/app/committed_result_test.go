@@ -314,19 +314,6 @@ func TestCommittedPaneMenuAndWindowIntentsReturnNilWhenTheirLineCannotBeShown(t 
 			args:      []string{"window-create", "--client", committedResultClient, "--anchor", "%17"},
 			wantSites: []string{string(diagnostics.SurfaceSiteWindowIntent)},
 		},
-		{
-			name: "a committed Window whose first-Pane problem line cannot be shown",
-			wire: func(cmd *tmuxCommand) {
-				cmd.windowCreate = func(windowCreateIntent, io.Writer, io.Writer) (createdWindowRuntime, error) {
-					return createdWindowRuntime{sessionID: "$1", windowID: "@7", paneID: "%42"}, nil
-				}
-				cmd.launchApply = func(string, string, launchChoice) launchDefaultResult {
-					return launchDefaultResult{problem: "projmux kept the shell Pane: injected launch default refusal"}
-				}
-			},
-			args:      []string{"window-create", "--client", committedResultClient, "--anchor", "%17"},
-			wantSites: []string{string(diagnostics.SurfaceSiteWindowIntent)},
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cmd, runner, journal := committedIntentCommand(true)

@@ -173,12 +173,7 @@ func committedResultDisplaySites() []committedResultSite {
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, line)",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSiteWindowIntent,
-			Note: "the Window committed and was filled with the chosen first Pane, and the pressing client could not be moved onto it; a failed fill rides on this line",
-		},
-		{
-			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, applied.problem)",
-			Kind: committedResultCommitted, Site: diagnostics.SurfaceSiteWindowIntent,
-			Note: "the Window and its shell Pane committed; filling it with the chosen first Pane is what did not happen",
+			Note: "the Window committed with the chosen first Pane in one transaction, and the pressing client could not be moved onto it",
 		},
 		{
 			File: "tmux.go", Snippet: `return c.displayPaneMenuMessage(strings.TrimSpace(client), "projmux "+label+" failed: "+reason)`,

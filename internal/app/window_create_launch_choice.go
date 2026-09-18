@@ -20,12 +20,15 @@ import (
 //  1. chooseLaunchDefault reads the saved mode and, for the picker modes, asks
 //     on the Pane the operator pressed the key in. Nothing exists yet, so a
 //     cancelled picker creates nothing.
-//  2. The producer commits the Window, applyLaunchChoice fills its shell Pane
-//     with the answer, and only then is the pressing client moved onto it.
+//  2. The producer commits the answer. A Window create commits the Window and
+//     the chosen Agent in one transaction (createWindowFromIntent), so an Agent
+//     that cannot be opened leaves no Window at all; only then is the pressing
+//     client moved onto it.
 //
 // A fresh Project open is the other producer that asks this way: its one
 // Window is the new Window, and the question runs before anything is pruned
-// (project_startup_fresh.go).
+// (project_startup_fresh.go). Its Window already exists when the answer
+// arrives, so applyLaunchChoice fills that Window's shell Pane instead.
 //
 // The picker still cannot create here: its selection would commit into the
 // Window the key was pressed in. In answer mode it writes the selection to a
@@ -68,8 +71,9 @@ type launchChoice struct {
 }
 
 // launchChooseFunc and launchApplyFunc are the two halves a Window producer
-// reaches the saved launch default through. They are funcs so a unit test can
-// fake the whole application without an aiCommand, and so the mode file stays
+// reaches the saved launch default through; a Window create uses only the
+// first and commits the answer itself. They are funcs so a unit test can fake
+// the whole application without an aiCommand, and so the mode file stays
 // readable in exactly one place.
 type (
 	launchChooseFunc func(anchorPaneID, client string) launchChoice

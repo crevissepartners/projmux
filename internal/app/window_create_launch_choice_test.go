@@ -296,11 +296,12 @@ type orderedWindowCreateRoute struct {
 	runner  *recordingTmuxRunner
 	events  []string
 	creates int
-	applied []launchChoice
-	origins [][2]string
+	answers []agentPaneIntent
 }
 
-func newOrderedWindowCreateRoute(t *testing.T, choice launchChoice, applied launchDefaultResult, attached bool) *orderedWindowCreateRoute {
+// newOrderedWindowCreateRoute wires the route onto a Window create that
+// records the answer it was handed and fails with createErr (nil: commits).
+func newOrderedWindowCreateRoute(t *testing.T, choice launchChoice, createErr error, attached bool) *orderedWindowCreateRoute {
 	t.Helper()
 	clients := "\n"
 	if attached {
@@ -315,21 +316,19 @@ func newOrderedWindowCreateRoute(t *testing.T, choice launchChoice, applied laun
 			route.events = append(route.events, "ask "+anchorPaneID+" "+client)
 			return choice
 		},
-		windowCreate: func(_ windowCreateIntent, _, _ io.Writer) (createdWindowRuntime, error) {
+		windowCreate: func(intent windowCreateIntent, _, stderr io.Writer) (createdWindowRuntime, error) {
 			route.creates++
 			route.events = append(route.events, "commit")
-			return createdWindowRuntime{sessionID: "$1", windowID: "@5", paneID: launchDefaultOriginPane}, nil
-		},
-		launchApply: func(originPaneID, client string, got launchChoice) launchDefaultResult {
-			route.events = append(route.events, "fill")
-			route.applied = append(route.applied, got)
-			route.origins = append(route.origins, [2]string{originPaneID, client})
-			for _, call := range route.runner.calls {
-				if len(call.args) > 0 && (call.args[0] == "switch-client" || call.args[0] == "select-window") {
-					t.Fatalf("the client was moved (%v) before the new Window was filled", call.args)
-				}
+			route.answers = append(route.answers, intent.answer)
+			if intent.anchorPaneID != launchChoicePressedPane || intent.targetClient != launchDefaultClient {
+				t.Fatalf("Window create anchored on %q for client %q, want the pressed Pane %q and client %q",
+					intent.anchorPaneID, intent.targetClient, launchChoicePressedPane, launchDefaultClient)
 			}
-			return applied
+			if createErr != nil {
+				_, _ = io.WriteString(stderr, "injected detail")
+				return createdWindowRuntime{}, createErr
+			}
+			return createdWindowRuntime{sessionID: "$1", windowID: "@5", paneID: launchDefaultOriginPane}, nil
 		},
 	}
 	return route
@@ -345,7 +344,7 @@ func (r *orderedWindowCreateRoute) run(t *testing.T) {
 
 func (r *orderedWindowCreateRoute) moved() bool {
 	for _, call := range r.runner.calls {
-		if len(call.args) > 0 && call.args[0] == "switch-client" {
+		if len(call.args) > 0 && (call.args[0] == "switch-client" || call.args[0] == "select-window") {
 			return true
 		}
 	}
@@ -362,18 +361,21 @@ func (r *orderedWindowCreateRoute) lines() []string {
 	return lines
 }
 
-// TestWindowCreateIntentAsksBeforeItCreatesAndFillsBeforeItShows is the
+// TestWindowCreateIntentAsksFirstAndCommitsTheAnswerInOneCreate is the
 // condition table of the generated route's order. Every row asks first, on the
 // pressed Pane; a cancelled or unaskable question commits nothing; an answer is
-// committed, then filled into the new Window's shell Pane, and only then is the
-// pressing client moved -- with the one line the fill left.
-func TestWindowCreateIntentAsksBeforeItCreatesAndFillsBeforeItShows(t *testing.T) {
+// handed whole to the one Window create, and only a committed Window moves the
+// pressing client. An Agent answer that does not commit leaves no Window, moves
+// nobody, and says so in one line.
+func TestWindowCreateIntentAsksFirstAndCommitsTheAnswerInOneCreate(t *testing.T) {
 	claude := launchChoice{intent: agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right"}}
+	resume := launchChoice{intent: agentPaneIntent{producer: canonicalProducerResumePicker, provider: aiModeClaude,
+		placement: "right", conversationID: "claude-picker-session"}}
 	ask := "ask " + launchChoicePressedPane + " " + launchDefaultClient
 	for _, tt := range []struct {
 		name       string
 		choice     launchChoice
-		applied    launchDefaultResult
+		createErr  error
 		wantEvents []string
 		wantMoved  bool
 		wantLines  []string
@@ -384,33 +386,31 @@ func TestWindowCreateIntentAsksBeforeItCreatesAndFillsBeforeItShows(t *testing.T
 			choice:     launchChoice{problem: "could not open the launch picker: injected"},
 			wantEvents: []string{ask},
 			wantLines:  []string{"projmux Create Window failed: could not open the launch picker: injected; no Window was created"}},
-		{name: "shell answer", wantEvents: []string{ask, "commit", "fill"}, wantMoved: true,
+		{name: "shell answer", wantEvents: []string{ask, "commit"}, wantMoved: true,
 			wantLines: []string{windowCreatedMessage}},
-		{name: "Agent answer", choice: claude, wantEvents: []string{ask, "commit", "fill"}, wantMoved: true,
+		{name: "Agent answer", choice: claude, wantEvents: []string{ask, "commit"}, wantMoved: true,
 			wantLines: []string{windowCreatedMessage}},
-		{name: "notice rides on the created line", choice: claude, applied: launchDefaultResult{notice: "started in /srv/alpha"},
-			wantEvents: []string{ask, "commit", "fill"}, wantMoved: true,
-			wantLines: []string{windowCreatedMessage + ": started in /srv/alpha"}},
-		{name: "a failed fill keeps the Window and replaces the line", choice: claude,
-			applied:    launchDefaultResult{problem: "projmux create failed: injected; the Window keeps its shell Pane"},
-			wantEvents: []string{ask, "commit", "fill"}, wantMoved: true,
-			wantLines: []string{"projmux create failed: injected; the Window keeps its shell Pane"}},
+		{name: "resume answer", choice: resume, wantEvents: []string{ask, "commit"}, wantMoved: true,
+			wantLines: []string{windowCreatedMessage}},
+		{name: "an Agent that does not commit leaves no Window and one line", choice: claude,
+			createErr:  errors.New("create agent: injected launch refusal"),
+			wantEvents: []string{ask, "commit"},
+			wantLines:  []string{"projmux Create Window failed: create agent: injected launch refusal: injected detail; no Window was created"}},
+		{name: "a shell create that does not commit keeps its refusal line",
+			createErr:  errors.New("create window refused"),
+			wantEvents: []string{ask, "commit"},
+			wantLines:  []string{"projmux Create Window failed: create window refused: injected detail"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			route := newOrderedWindowCreateRoute(t, tt.choice, tt.applied, true)
+			route := newOrderedWindowCreateRoute(t, tt.choice, tt.createErr, true)
 
 			route.run(t)
 
 			if !slices.Equal(route.events, tt.wantEvents) {
 				t.Fatalf("route order = %v, want %v", route.events, tt.wantEvents)
 			}
-			if slices.Contains(tt.wantEvents, "fill") {
-				if want := [][2]string{{launchDefaultOriginPane, launchDefaultClient}}; !reflect.DeepEqual(route.origins, want) {
-					t.Fatalf("filled %v, want the committed shell Pane and the pressing client %v", route.origins, want)
-				}
-				if !reflect.DeepEqual(route.applied, []launchChoice{tt.choice}) {
-					t.Fatalf("filled with %+v, want the answer %+v", route.applied, tt.choice)
-				}
+			if slices.Contains(tt.wantEvents, "commit") && !reflect.DeepEqual(route.answers, []agentPaneIntent{tt.choice.intent}) {
+				t.Fatalf("Window create answered with %+v, want the answer %+v", route.answers, tt.choice.intent)
 			}
 			if got := route.moved(); got != tt.wantMoved {
 				t.Fatalf("client moved = %v, want %v", got, tt.wantMoved)
@@ -422,33 +422,22 @@ func TestWindowCreateIntentAsksBeforeItCreatesAndFillsBeforeItShows(t *testing.T
 	}
 }
 
-// TestWindowCreateIntentWithAnUnmovedClientStillFillsTheWindow pins the
-// decision for a create whose client could not be moved. The operator already
-// answered before the commit, so the answer is still filled in; the one line is
-// the unshown-create line, carrying what the fill could not do if anything.
-func TestWindowCreateIntentWithAnUnmovedClientStillFillsTheWindow(t *testing.T) {
+// TestWindowCreateIntentWithAnUnmovedClientKeepsTheCommittedWindow pins the
+// decision for a create whose client could not be moved. The Window and its
+// Agent committed together, so the one line is the unshown-create line and
+// nothing is rolled back.
+func TestWindowCreateIntentWithAnUnmovedClientKeepsTheCommittedWindow(t *testing.T) {
 	claude := launchChoice{intent: agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right"}}
-	for _, tt := range []struct {
-		name     string
-		applied  launchDefaultResult
-		wantTail string
-	}{
-		{name: "filled"},
-		{name: "fill failed", applied: launchDefaultResult{problem: "injected fill failure"}, wantTail: "; injected fill failure"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			route := newOrderedWindowCreateRoute(t, claude, tt.applied, false)
+	route := newOrderedWindowCreateRoute(t, claude, nil, false)
 
-			route.run(t)
+	route.run(t)
 
-			if len(route.applied) != 1 {
-				t.Fatalf("fills = %d, want the answer filled once", len(route.applied))
-			}
-			lines := route.lines()
-			if len(lines) != 1 || !strings.HasPrefix(lines[0], windowCreatedUnshownMessage) || !strings.HasSuffix(lines[0], tt.wantTail) {
-				t.Fatalf("client lines = %q, want one unshown-create line ending %q", lines, tt.wantTail)
-			}
-		})
+	if route.creates != 1 {
+		t.Fatalf("Window creates = %d, want the answer committed once", route.creates)
+	}
+	lines := route.lines()
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], windowCreatedUnshownMessage) {
+		t.Fatalf("client lines = %q, want one unshown-create line", lines)
 	}
 }
 

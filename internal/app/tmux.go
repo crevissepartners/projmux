@@ -110,17 +110,16 @@ type tmuxCommand struct {
 	windowCreate   windowCreateIntentFunc
 	windowRename   windowRenameIntentFunc
 	paneRename     paneRenameIntentFunc
-	// launchChoose and launchApply are the two halves of the saved launch
-	// default a generated Window create reaches: the answer is decided before
-	// the Window is committed, and applied to its shell Pane before the
-	// pressing client sees it (window_create_launch_choice.go). They are
-	// injected for the same reason the routes above are -- a test fakes the
-	// whole application without a Registry -- and because the saved mode file
-	// stays readable in exactly one place: the aiCommand behind these funcs. A
-	// nil route is the shell Pane the create makes, which is what the fixtures
-	// that exercise only the create and the client move expect.
+	// launchChoose is the saved launch default a generated Window create
+	// reaches: the answer is decided before the Window is committed, and the
+	// Window create commits it in its one transaction
+	// (window_create_launch_choice.go). It is injected for the same reason the
+	// routes above are -- a test fakes the whole application without a
+	// Registry -- and because the saved mode file stays readable in exactly one
+	// place: the aiCommand behind this func. A nil route is the shell Pane the
+	// create makes, which is what the fixtures that exercise only the create
+	// and the client move expect.
 	launchChoose launchChooseFunc
-	launchApply  launchApplyFunc
 	// stdin carries the raw prompt response of a generated rename binding. The
 	// binding hands it over in a quoted here-document so no shell parses it;
 	// see generatedRenameResponseHeredoc.
@@ -170,12 +169,6 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 			return launchChoice{}
 		}
 		return cmd.ai.chooseLaunchDefault(anchorPaneID, client)
-	}
-	cmd.launchApply = func(originPaneID, client string, choice launchChoice) launchDefaultResult {
-		if cmd.ai == nil {
-			return launchDefaultResult{}
-		}
-		return cmd.ai.applyLaunchChoice(originPaneID, client, choice)
 	}
 	if len(recorders) > 0 {
 		cmd.diagnostics = recorders[0]
@@ -571,40 +564,31 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 	case choice.cancelled:
 		return nil
 	}
+	// Commit the answer. The Window and the first Pane the operator chose are
+	// one transaction: an Agent answer commits the Window with exactly its
+	// Agent Pane, and an Agent that cannot be opened rolls the Window back, so
+	// the pressing client is never shown a Window that is half there.
 	var actionOut, actionErr bytes.Buffer
-	created, err := c.windowCreate(windowCreateIntent{anchorPaneID: *anchor, targetClient: pressing}, &actionOut, &actionErr)
+	created, err := c.windowCreate(windowCreateIntent{anchorPaneID: *anchor, targetClient: pressing, answer: choice.intent},
+		&actionOut, &actionErr)
 	if err != nil {
-		return c.finishWindowIntent(pressing, "Create Window", windowCreatedMessage, actionErr.String(), err)
-	}
-	// Complete the Window before anyone sees it. The answer replaces the shell
-	// Pane the create made while the pressing client is still on the Window it
-	// pressed the key in, so it never shows the shell that is about to go. A
-	// failure keeps the Window with its shell and becomes the one line below.
-	var applied launchDefaultResult
-	if c.launchApply != nil {
-		applied = c.launchApply(created.paneID, pressing, choice)
+		if strings.TrimSpace(choice.intent.provider) == "" {
+			return c.finishWindowIntent(pressing, "Create Window", windowCreatedMessage, actionErr.String(), err)
+		}
+		reason := strings.TrimSpace(err.Error())
+		if detail := strings.TrimSpace(actionErr.String()); detail != "" && !strings.Contains(reason, detail) {
+			reason += ": " + detail
+		}
+		return c.finishWindowIntent(pressing, "Create Window", "", "", errors.New(notCreatedLine(reason)))
 	}
 	// Now show it. A human asked for this Window, so the client that pressed
 	// the key moves onto it. A failed move keeps the Window.
 	if moveErr := c.moveIntentClientToCreatedWindow(context.Background(), pressing, created); moveErr != nil {
 		line := windowCreatedUnshownMessage + strings.TrimSpace(moveErr.Error())
-		if applied.problem != "" {
-			line += "; " + applied.problem
-		}
 		c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, line)
 		return nil
 	}
-	if applied.problem != "" {
-		// The Window and its shell Pane stay; the one line says what did not
-		// happen on top of them.
-		c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, applied.problem)
-		return nil
-	}
-	success := windowCreatedMessage
-	if applied.notice != "" {
-		success += ": " + applied.notice
-	}
-	return c.finishWindowIntent(pressing, "Create Window", success, "", nil)
+	return c.finishWindowIntent(pressing, "Create Window", windowCreatedMessage, "", nil)
 }
 
 // moveIntentClientToCreatedWindow moves exactly the pressing client onto a

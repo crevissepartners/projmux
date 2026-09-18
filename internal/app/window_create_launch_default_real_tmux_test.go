@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os/exec"
 	"slices"
@@ -53,7 +54,6 @@ func (fx *splitFocusRealTmux) windowCreateRoute(t *testing.T, mode string) (*tmu
 		runner:       probe,
 		windowCreate: fx.newCreate().createWindowFromIntent,
 		launchChoose: ai.chooseLaunchDefault,
-		launchApply:  ai.applyLaunchChoice,
 	}, ai, probe
 }
 
@@ -75,6 +75,20 @@ func (p *moveProbeRunner) Run(ctx context.Context, name string, args ...string) 
 		}
 	}
 	return p.inner.Run(ctx, name, args...)
+}
+
+// displayRecordingRunner forwards every tmux call and keeps the text of each
+// display-message, which is what the pressing client reads.
+type displayRecordingRunner struct {
+	inner tmuxRunner
+	lines []string
+}
+
+func (r *displayRecordingRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if slices.Contains(args, "display-message") && len(args) > 0 {
+		r.lines = append(r.lines, args[len(args)-1])
+	}
+	return r.inner.Run(ctx, name, args...)
 }
 
 // answerLaunchPicker stands in for the answer-mode picker popup, which cannot
@@ -274,6 +288,46 @@ func TestWindowCreateAppliesTheSavedLaunchDefaultThroughRealTmux(t *testing.T) {
 			t.Fatalf("launch picker opened %d times, want once", *asked)
 		}
 		fx.assertAgentOnlyWindow(t, fx.createdWindow(t, before), probe)
+	})
+
+	t.Run("mode claude whose Agent cannot open creates no Window", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		fx := newSplitFocusRealTmux(t, ctx)
+		before := fx.windowUIDs()
+		liveBefore := fx.liveWindowCount(t)
+		clientPaneBefore := fx.clientPane(t)
+
+		route, _, probe := fx.windowCreateRoute(t, aiModeClaude)
+		// The Agent fails after the Window already exists on the server: its
+		// launch is built inside the one transaction, right after new-window.
+		failing := fx.newCreate()
+		launcher := newFakeAgentLauncher()
+		launcher.planErr = errors.New("injected missing provider binary")
+		failing.agents = sleepAgentLauncher{launcher}
+		route.windowCreate = failing.createWindowFromIntent
+		lines := &displayRecordingRunner{inner: probe}
+		route.runner = lines
+		if err := route.Run([]string{"window-create", "--client", fx.client, "--anchor", fx.originID},
+			ioDiscard{}, ioDiscard{}); err != nil {
+			t.Fatalf("window-create route: %v", err)
+		}
+		if got := fx.windowUIDs(); len(got) != len(before) {
+			t.Fatalf("Registry Windows = %d after a failed Agent, want %d\n%s", len(got), len(before), fx.store.snapshot())
+		}
+		if got := fx.liveWindowCount(t); got != liveBefore {
+			t.Fatalf("live Windows = %d after a failed Agent, want %d: the new Window was not rolled back", got, liveBefore)
+		}
+		if probe.moveSeen {
+			t.Fatal("a failed Agent moved the pressing client")
+		}
+		if got := fx.clientPane(t); got != clientPaneBefore {
+			t.Fatalf("pressing client is on %s after a failed Agent, want it still on %s", got, clientPaneBefore)
+		}
+		if len(lines.lines) != 1 || !strings.Contains(lines.lines[0], "injected missing provider binary") ||
+			!strings.HasSuffix(lines.lines[0], "; no Window was created") {
+			t.Fatalf("pressing client lines = %q, want one not-created line", lines.lines)
+		}
 	})
 
 	t.Run("mode selective cancelled creates nothing", func(t *testing.T) {

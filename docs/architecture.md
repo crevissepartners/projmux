@@ -1405,9 +1405,13 @@ Projmux split UI:
   answer mode (`internal tmux popup-toggle --answer <file>`) on the Pane the key
   was pressed in; the picker writes the selection -- the same argv the
   continuation carries, read back by the same parser -- to a 0600 file its
-  producer made, and creates nothing. The producer then commits the Window,
-  replaces its shell Pane with the answer, and moves the pressing client onto it
-  last. A cancelled picker leaves the file empty and nothing is created.
+  producer made, and creates nothing. The producer then commits the Window and
+  the answer in one Registry transaction -- for an Agent, the same shape
+  `create window --provider` commits: the Agent Pane splits off the new shell
+  and the shell is retired -- and moves the pressing client onto it last. An
+  Agent that cannot be opened rolls the whole Window back and leaves one line on
+  the pressing client. A cancelled picker leaves the file empty and nothing is
+  created.
 - Only the materializer runs `split-window`. Before this convergence the saved
   default and both pickers descended into a legacy split that called tmux
   directly, so a pane opened from the UI was a runtime object the Registry had
