@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,18 +38,128 @@ func (fx *splitFocusRealTmux) deletePaneRoute() paneMenuDeleteFunc {
 
 // windowCreateRoute is the generated Window create key wired the way the
 // application graph wires it: the canonical Window create, and the saved launch
-// default behind the AI command that owns the mode file.
-func (fx *splitFocusRealTmux) windowCreateRoute(t *testing.T, mode string) *tmuxCommand {
+// default behind the AI command that owns the mode file. The client move runs
+// through a probe that records, at the moment the pressing client is moved,
+// the live Panes of the Window it is moved onto.
+func (fx *splitFocusRealTmux) windowCreateRoute(t *testing.T, mode string) (*tmuxCommand, *aiCommand, *moveProbeRunner) {
 	t.Helper()
 	ai := fx.aiCommand(t)
 	ai.paneDelete = fx.deletePaneRoute()
 	if err := ai.setMode(mode); err != nil {
 		t.Fatalf("set saved mode %s: %v", mode, err)
 	}
+	probe := &moveProbeRunner{fx: fx, inner: fx.physical}
 	return &tmuxCommand{
-		runner:        fx.physical,
-		windowCreate:  fx.newCreate().createWindowFromIntent,
-		launchDefault: ai.applyLaunchDefault,
+		runner:       probe,
+		windowCreate: fx.newCreate().createWindowFromIntent,
+		launchChoose: ai.chooseLaunchDefault,
+		launchApply:  ai.applyLaunchChoice,
+	}, ai, probe
+}
+
+// moveProbeRunner forwards every tmux call and, on the select-window that
+// moves the pressing client onto the new Window, records that Window's live
+// Pane uids -- what the client is about to see.
+type moveProbeRunner struct {
+	fx       *splitFocusRealTmux
+	inner    tmuxRunner
+	atMove   []string
+	moveSeen bool
+}
+
+func (p *moveProbeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if i := slices.Index(args, "select-window"); i >= 0 {
+		if t := slices.Index(args[i:], "-t"); t >= 0 && i+t+1 < len(args) {
+			out, _ := p.fx.tmux("list-panes", "-t", args[i+t+1], "-F", "#{"+tmuxopts.PaneUID+"}")
+			p.atMove, p.moveSeen = strings.Fields(out), true
+		}
+	}
+	return p.inner.Run(ctx, name, args...)
+}
+
+// answerLaunchPicker stands in for the answer-mode picker popup, which cannot
+// run inside a test. It forwards every tmux call, and when the producer opens
+// the picker it checks what the picker would see -- the pressed Pane, no new
+// Window yet -- and then writes answer (nil: the operator cancelled).
+func (fx *splitFocusRealTmux) answerLaunchPicker(t *testing.T, ai *aiCommand, answer *agentPaneIntent) *int {
+	t.Helper()
+	asked := new(int)
+	windowsBefore := len(fx.store.registry.Windows)
+	tmuxRun := ai.runCommand
+	ai.runCommand = func(ctx context.Context, name string, args ...string) error {
+		if !slices.Contains(args, "popup-toggle") {
+			return tmuxRun(ctx, name, args...)
+		}
+		*asked++
+		if got := args[slices.Index(args, "--anchor")+1]; got != fx.originID {
+			t.Fatalf("launch picker anchored on %s, want the pressed Pane %s", got, fx.originID)
+		}
+		if got := args[slices.Index(args, "--client")+1]; got != fx.client {
+			t.Fatalf("launch picker opened on client %s, want the pressing client %s", got, fx.client)
+		}
+		if got := len(fx.store.registry.Windows); got != windowsBefore {
+			t.Fatalf("Registry Windows while the picker is up = %d, want %d: nothing exists before the answer", got, windowsBefore)
+		}
+		if answer != nil {
+			path := args[slices.Index(args, popupToggleAnswerFlag)+1]
+			if err := writeSplitSelectionAnswer(path, *answer); err != nil {
+				t.Fatalf("write answer: %v", err)
+			}
+		}
+		return nil
+	}
+	return asked
+}
+
+// liveWindowCount counts the isolated server's Windows.
+func (fx *splitFocusRealTmux) liveWindowCount(t *testing.T) int {
+	t.Helper()
+	out, err := fx.tmux("list-windows", "-a", "-F", "#{window_id}")
+	if err != nil {
+		t.Fatalf("list windows: %v: %s", err, out)
+	}
+	return len(strings.Fields(out))
+}
+
+// assertAgentOnlyWindow checks the end state every Agent answer must leave: the
+// Window's one Pane is the Agent Pane, it is the Window's anchor, the Window has
+// no default shell, and the pressing client is on it -- and at the moment the
+// client was moved, that Agent Pane was already the Window's only Pane.
+func (fx *splitFocusRealTmux) assertAgentOnlyWindow(t *testing.T, created coremetadata.Window, probe *moveProbeRunner) {
+	t.Helper()
+	// The shell the create committed is gone from the Registry; what the
+	// Window owns is the Agent, and the Agent owns the one Pane. (An Agent
+	// Pane's owner is its Agent, which is why the Window itself now owns no
+	// Pane at all.)
+	if shells := fx.store.registry.PanesOf(created.Metadata.UID); len(shells) != 0 {
+		t.Fatalf("created Window still owns Panes %+v, want the shell replaced\n%s", shells, fx.store.snapshot())
+	}
+	agents := fx.store.registry.AgentsOf(created.Metadata.UID)
+	if len(agents) != 1 {
+		t.Fatalf("created Window Agents = %+v, want exactly one\n%s", agents, fx.store.snapshot())
+	}
+	panes := fx.store.registry.PanesOf(agents[0].Metadata.UID)
+	if len(panes) != 1 || panes[0].Spec.Role != coremetadata.PaneRoleAgent {
+		t.Fatalf("Agent Panes = %+v, want exactly one Agent Pane\n%s", panes, fx.store.snapshot())
+	}
+	window, _ := fx.store.registry.Window(created.Metadata.UID)
+	if window.Spec.AnchorPaneRef != panes[0].Metadata.UID {
+		t.Fatalf("Window anchor = %q, want the Agent Pane %q", window.Spec.AnchorPaneRef, panes[0].Metadata.UID)
+	}
+	if strings.TrimSpace(window.Spec.DefaultShellPaneRef) != "" {
+		t.Fatalf("Window default shell = %q, want none after the shell was replaced", window.Spec.DefaultShellPaneRef)
+	}
+	livePanes := fx.tmuxPaneIDs(t, created)
+	if len(livePanes) != 2 {
+		t.Fatalf("live Pane rows of the created Window = %v, want exactly the Agent Pane", livePanes)
+	}
+	live := realTmuxPaneWithUID(t, livePanes, panes[0].Metadata.UID)
+	if got := fx.clientPane(t); got != live {
+		t.Fatalf("pressing client is on Pane %s, want the Agent Pane %s", got, live)
+	}
+	if !probe.moveSeen || !slices.Equal(probe.atMove, []string{panes[0].Metadata.UID}) {
+		t.Fatalf("Panes when the client was moved = %v (move seen %v), want only the Agent Pane %s",
+			probe.atMove, probe.moveSeen, panes[0].Metadata.UID)
 	}
 }
 
@@ -112,7 +223,7 @@ func TestWindowCreateAppliesTheSavedLaunchDefaultThroughRealTmux(t *testing.T) {
 		fx := newSplitFocusRealTmux(t, ctx)
 		before := fx.windowUIDs()
 
-		route := fx.windowCreateRoute(t, aiModeShell)
+		route, _, _ := fx.windowCreateRoute(t, aiModeShell)
 		if err := route.Run([]string{"window-create", "--client", fx.client, "--anchor", fx.originID},
 			ioDiscard{}, ioDiscard{}); err != nil {
 			t.Fatalf("window-create route: %v", err)
@@ -139,42 +250,60 @@ func TestWindowCreateAppliesTheSavedLaunchDefaultThroughRealTmux(t *testing.T) {
 		fx := newSplitFocusRealTmux(t, ctx)
 		before := fx.windowUIDs()
 
-		route := fx.windowCreateRoute(t, aiModeClaude)
+		route, _, probe := fx.windowCreateRoute(t, aiModeClaude)
 		if err := route.Run([]string{"window-create", "--client", fx.client, "--anchor", fx.originID},
 			ioDiscard{}, ioDiscard{}); err != nil {
 			t.Fatalf("window-create route: %v", err)
 		}
+		fx.assertAgentOnlyWindow(t, fx.createdWindow(t, before), probe)
+	})
 
-		created := fx.createdWindow(t, before)
-		// The shell the create committed is gone from the Registry; what the
-		// Window owns is the Agent, and the Agent owns the one Pane. (An Agent
-		// Pane's owner is its Agent, which is why the Window itself now owns no
-		// Pane at all.)
-		if shells := fx.store.registry.PanesOf(created.Metadata.UID); len(shells) != 0 {
-			t.Fatalf("created Window still owns Panes %+v, want the shell replaced\n%s", shells, fx.store.snapshot())
+	t.Run("mode selective asks on the pressed Pane and opens the chosen Agent", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		fx := newSplitFocusRealTmux(t, ctx)
+		before := fx.windowUIDs()
+
+		route, ai, probe := fx.windowCreateRoute(t, aiModeSelective)
+		asked := fx.answerLaunchPicker(t, ai, &agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right"})
+		if err := route.Run([]string{"window-create", "--client", fx.client, "--anchor", fx.originID},
+			ioDiscard{}, ioDiscard{}); err != nil {
+			t.Fatalf("window-create route: %v", err)
 		}
-		agents := fx.store.registry.AgentsOf(created.Metadata.UID)
-		if len(agents) != 1 {
-			t.Fatalf("created Window Agents = %+v, want exactly one\n%s", agents, fx.store.snapshot())
+		if *asked != 1 {
+			t.Fatalf("launch picker opened %d times, want once", *asked)
 		}
-		panes := fx.store.registry.PanesOf(agents[0].Metadata.UID)
-		if len(panes) != 1 || panes[0].Spec.Role != coremetadata.PaneRoleAgent {
-			t.Fatalf("Agent Panes = %+v, want exactly one Agent Pane\n%s", panes, fx.store.snapshot())
+		fx.assertAgentOnlyWindow(t, fx.createdWindow(t, before), probe)
+	})
+
+	t.Run("mode selective cancelled creates nothing", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		fx := newSplitFocusRealTmux(t, ctx)
+		before := fx.windowUIDs()
+		liveBefore := fx.liveWindowCount(t)
+		clientPaneBefore := fx.clientPane(t)
+
+		route, ai, probe := fx.windowCreateRoute(t, aiModeSelective)
+		asked := fx.answerLaunchPicker(t, ai, nil)
+		if err := route.Run([]string{"window-create", "--client", fx.client, "--anchor", fx.originID},
+			ioDiscard{}, ioDiscard{}); err != nil {
+			t.Fatalf("window-create route: %v", err)
 		}
-		window, _ := fx.store.registry.Window(created.Metadata.UID)
-		if window.Spec.AnchorPaneRef != panes[0].Metadata.UID {
-			t.Fatalf("Window anchor = %q, want the Agent Pane %q", window.Spec.AnchorPaneRef, panes[0].Metadata.UID)
+		if *asked != 1 {
+			t.Fatalf("launch picker opened %d times, want once", *asked)
 		}
-		if strings.TrimSpace(window.Spec.DefaultShellPaneRef) != "" {
-			t.Fatalf("Window default shell = %q, want none after the shell was replaced", window.Spec.DefaultShellPaneRef)
+		if got := fx.windowUIDs(); len(got) != len(before) {
+			t.Fatalf("Registry Windows = %d after a cancelled picker, want %d", len(got), len(before))
 		}
-		livePanes := fx.tmuxPaneIDs(t, created)
-		if len(livePanes) != 2 {
-			t.Fatalf("live Pane rows of the created Window = %v, want exactly the Agent Pane", livePanes)
+		if got := fx.liveWindowCount(t); got != liveBefore {
+			t.Fatalf("live Windows = %d after a cancelled picker, want %d", got, liveBefore)
 		}
-		live := realTmuxPaneWithUID(t, livePanes, panes[0].Metadata.UID)
-		if got := fx.clientPane(t); got != live {
-			t.Fatalf("pressing client is on Pane %s, want the Agent Pane %s", got, live)
+		if probe.moveSeen {
+			t.Fatal("a cancelled picker moved the pressing client")
+		}
+		if got := fx.clientPane(t); got != clientPaneBefore {
+			t.Fatalf("pressing client is on %s after a cancelled picker, want it still on %s", got, clientPaneBefore)
 		}
 	})
 }

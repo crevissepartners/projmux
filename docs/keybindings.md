@@ -224,32 +224,43 @@ and exits, and that job runs the same create the picker used to run while the
 popup stayed up as an empty frame. The new Pane therefore appears a moment
 after the popup closes. A successful split still shows nothing else; a refused
 create, a failed focus, or a split start notice reaches the client that pressed
-the key as one line. Codex advanced launch is the one exception: its model and
-effort choice is bound to the Codex connection the picker process opened, so
-that selection still creates the Pane before its popup closes.
+the key as one line. Every picker row travels this way: a selection is a plain
+value -- a provider, and for a resume the conversation it names. The provider
+picker offers one row per enabled provider plus the shell row; it has no
+per-launch model or effort row.
 
 ### The new Window's first Pane
 
-`window.create` (v0 id `new-window`) and the Window menu's New At End create the
-Window with one shell Pane, move the pressing client onto it, and then open that
-Pane according to the saved launch default -- the same setting the saved-default
-split key reads (Settings > AI Settings, stored in
-`$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode`):
+`window.create` (v0 id `new-window`) and the Window menu's New At End decide the
+new Window's first Pane before the Window exists, following the saved launch
+default -- the same setting the saved-default split key reads (Settings > AI
+Settings, stored in `$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode`). The order is:
+
+1. Ask. A picker mode opens its picker on the Pane the key was pressed in; a
+   provider mode and `shell` are already the answer and open nothing.
+2. Create the Window with one shell Pane.
+3. Fill it: an Agent answer is created in that Window first, and the shell is
+   then removed through the canonical Pane delete.
+4. Move the pressing client onto the finished Window.
+
+The client therefore never sees a shell Pane that is about to be replaced.
 
 | Saved default | The new Window ends up with |
 | --- | --- |
 | `shell` | the shell Pane the create made; nothing else runs |
-| `claude`, `codex`, `antigravity` | exactly that Agent Pane: the Agent is created first and the shell is then removed through the canonical Pane delete |
-| `selective` (also the unset default) | the `Alt-7` picker on the pressing client, anchored on the new shell; the selection replaces the shell, and the shell row keeps it |
-| `resume` | the resume picker on the pressing client, on the same terms |
+| `claude`, `codex`, `antigravity` | exactly that Agent Pane, with no picker |
+| `selective` (also the unset default) | whatever the `Alt-7` picker chose: that Agent Pane, or the shell Pane for the shell row |
+| `resume` | whatever the resume picker chose, on the same terms |
 
-Cancelling a picker leaves the shell Pane. Nothing here rolls the Window back:
-a provider that Settings has since disabled, an Agent that could not be created,
-or a shell that could not be removed keeps the Window and reports one line on
-the pressing client instead of the usual `Created Window`. A create whose
-pressing client could not be moved keeps its existing line and applies no
-launch default, because there is no client left to show a picker or a result
-on.
+Cancelling the picker creates nothing: no Window, and the client stays where it
+was. If the picker cannot be opened, nothing is created either, and the client
+sees `projmux Create Window failed:` with the reason. Once the Window exists
+nothing rolls it back: a provider that Settings has since disabled, an Agent that
+could not be created, or a shell that could not be removed keeps the Window with
+its shell Pane and reports one line on the pressing client instead of the usual
+`Created Window`. A create whose pressing client could not be moved still fills
+the Window with what was chosen and shows the existing `Created Window, but
+projmux could not move this client to it` line.
 
 The typed `projmux create window` and `projmux create agent --create-window`
 are unchanged and never read the saved default: a typed command's outcome

@@ -1363,9 +1363,15 @@ Projmux split UI:
   (`internal agent-pane launch-selection`, carrying the origin Pane, client,
   context directory, and replace marker as env) and exits. The continuation
   calls the same create funnel; a success writes nothing and anything else is
-  one bounded line on the pressing client. Codex advanced launch stays in the
-  picker process, because its capability selection is bound to that process's
-  app-server connection.
+  one bounded line on the pressing client. Every selection travels: it is a
+  plain value with no live handle left in the picker process.
+- A generated Window create asks before it commits. It opens the split picker in
+  answer mode (`internal tmux popup-toggle --answer <file>`) on the Pane the key
+  was pressed in; the picker writes the selection -- the same argv the
+  continuation carries, read back by the same parser -- to a 0600 file its
+  producer made, and creates nothing. The producer then commits the Window,
+  replaces its shell Pane with the answer, and moves the pressing client onto it
+  last. A cancelled picker leaves the file empty and nothing is created.
 - Only the materializer runs `split-window`. Before this convergence the saved
   default and both pickers descended into a legacy split that called tmux
   directly, so a pane opened from the UI was a runtime object the Registry had

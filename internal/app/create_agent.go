@@ -213,7 +213,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	nativeCreate := nativeCodexFreshCreateRequired(provider, flags)
 	var nativeRoute codexNativeEndpointRoute
 	if nativeCreate {
-		if flags.codexCapability != nil || !nativePromptExact {
+		if !nativePromptExact {
 			return nativeCreatePreparationRefusal(spelling, &codexNativeRouteError{Reason: "unsupported-create-shape"})
 		}
 		if c.codexNative == nil || !nativeLaunchCapable {
@@ -665,13 +665,6 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 		return launcher.PlanClaudeDialogueLaunch(workspace, conversation)
 	}
 	if conversation == "" {
-		if flags.codexCapability != nil {
-			launcher, ok := c.agents.(codexCapabilityAgentLauncher)
-			if !ok {
-				return "", nil, errors.New("create agent: Codex capability launch is not configured")
-			}
-			return launcher.PlanAgentLaunchWithCapability(provider, workspace, flags.payload, *flags.codexCapability)
-		}
 		if flags.model != "" || flags.effort != "" {
 			launcher, ok := c.agents.(claudeOptionsAgentLauncher)
 			if !ok {

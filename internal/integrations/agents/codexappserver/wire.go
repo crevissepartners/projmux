@@ -75,33 +75,6 @@ type remoteControlStatusReadResult struct {
 	Status string `json:"status"`
 }
 
-type modelListParams struct {
-	Cursor        *string `json:"cursor,omitempty"`
-	IncludeHidden bool    `json:"includeHidden"`
-}
-
-type modelListResult struct {
-	Data       []wireModel `json:"data"`
-	NextCursor *string     `json:"nextCursor"`
-}
-
-type wireModel struct {
-	ID                        string                      `json:"id"`
-	Model                     string                      `json:"model"`
-	DisplayName               string                      `json:"displayName"`
-	Description               string                      `json:"description"`
-	Hidden                    bool                        `json:"hidden"`
-	Default                   bool                        `json:"isDefault"`
-	DefaultReasoningEffort    string                      `json:"defaultReasoningEffort"`
-	SupportedReasoningEfforts []wireReasoningEffortOption `json:"supportedReasoningEfforts"`
-	InputModalities           []string                    `json:"inputModalities"`
-	SupportsPersonality       bool                        `json:"supportsPersonality"`
-}
-
-type wireReasoningEffortOption struct {
-	Effort string `json:"reasoningEffort"`
-}
-
 type reviewStartParams struct {
 	ThreadID string `json:"threadId"`
 	Target   any    `json:"target"`

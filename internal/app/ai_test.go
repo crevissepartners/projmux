@@ -323,7 +323,7 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	if got := runner.options.Header; got != "" {
 		t.Fatalf("runner header = %q, want direction only in title", got)
 	}
-	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiActionCodexAdvancedLaunch, aiModeClaude, aiModeAntigravity, aiModeShell}; !reflect.DeepEqual(got, want) {
+	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeAntigravity, aiModeShell}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("runner entry order = %#v, want %#v", got, want)
 	}
 	for _, entry := range runner.options.Entries {
@@ -2713,5 +2713,33 @@ func TestAIStatusWaitingSetsReplyDuringSidebarPreview(t *testing.T) {
 	}
 	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%2", "@projmux_attention_focus_armed", "1"}) {
 		t.Fatalf("commands = %#v, want focus_armed=1 while sidebar preview marker exists", commands)
+	}
+}
+
+// TestCodexProviderPickerRowGolden pins the one Codex row the split picker
+// offers. The picker used to add a second, advanced row whose model and effort
+// selection was bound to the picker process; it was removed so that every
+// picker row is a plain value a later process can apply.
+func TestCodexProviderPickerRowGolden(t *testing.T) {
+	t.Parallel()
+	provider, ok := aiprovider.Lookup(string(aiprovider.Codex))
+	if !ok {
+		t.Fatal("Codex provider metadata is missing")
+	}
+	cmd := testAICommand(t.TempDir())
+	for _, test := range []struct {
+		locale i18n.Locale
+		want   string
+	}{
+		{locale: i18n.FallbackLocale, want: "codex    [MISSING] Codex default launch"},
+		{locale: i18n.Locale("ko-KR"), want: "codex    [MISSING] Codex 기본 실행"},
+	} {
+		row := cmd.agentRow(provider, test.locale)
+		if got := stripANSI(row.Label); got != test.want {
+			t.Errorf("locale %s Codex row = %q, want %q", test.locale, got, test.want)
+		}
+		if row.Value != aiModeCodex {
+			t.Errorf("locale %s Codex row value = %q, want %q", test.locale, row.Value, aiModeCodex)
+		}
 	}
 }

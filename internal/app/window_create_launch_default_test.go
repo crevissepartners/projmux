@@ -16,14 +16,11 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
-// window_create_launch_default_test.go covers the saved launch default applied
-// to the first Pane of a generated Window create.
-//
-// The Window itself is unchanged: it is committed with the topology engine's
-// default shell Pane, and the client that pressed the key is moved onto it.
-// What is new is what happens to that shell afterwards -- nothing, an Agent
-// that replaces it, or a picker popup that decides -- and that every failure
-// keeps the committed Window.
+// window_create_launch_default_test.go covers applyLaunchDefault -- the saved
+// launch default opened on an already-committed shell Pane, which is how a
+// fresh Project open still fills its first Window -- and the replace-origin
+// picker transport that path uses. A generated Window create asks before it
+// commits instead (window_create_launch_choice_test.go).
 
 const (
 	launchDefaultOriginPane = "%41"
@@ -67,10 +64,10 @@ func launchDefaultAICommand(t *testing.T, home string) (*aiCommand, *replaceReco
 	return cmd, recorder
 }
 
-// TestWindowCreateLaunchDefaultAppliesTheSavedModeToTheNewShellPane is the
-// condition table of the applied default. Every saved mode is a row, including
-// the unset file, and each row states what reached the canonical routes.
-func TestWindowCreateLaunchDefaultAppliesTheSavedModeToTheNewShellPane(t *testing.T) {
+// TestApplyLaunchDefaultOpensTheSavedModeOnACommittedShellPane is the condition
+// table of the applied default. Every saved mode is a row, including the unset
+// file, and each row states what reached the canonical routes.
+func TestApplyLaunchDefaultOpensTheSavedModeOnACommittedShellPane(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
 		mode       string
@@ -169,11 +166,10 @@ func TestWindowCreateLaunchDefaultAppliesTheSavedModeToTheNewShellPane(t *testin
 	}
 }
 
-// TestWindowCreateLaunchDefaultFailuresKeepTheWindowAndSayOneThing is the
-// negative half. None of these roll anything back: the Window and whatever
-// Panes exist when the failure happens stay, and the producer gets exactly one
-// line to show.
-func TestWindowCreateLaunchDefaultFailuresKeepTheWindowAndSayOneThing(t *testing.T) {
+// TestApplyLaunchDefaultFailuresKeepTheShellAndSayOneThing is the negative half.
+// None of these roll anything back: the Window and whatever Panes exist when
+// the failure happens stay, and the producer gets exactly one line to show.
+func TestApplyLaunchDefaultFailuresKeepTheShellAndSayOneThing(t *testing.T) {
 	t.Run("provider disabled in Settings", func(t *testing.T) {
 		home := t.TempDir()
 		enableAgents(t, home, config.AIAgentClaude)
@@ -245,103 +241,15 @@ func TestWindowCreateLaunchDefaultFailuresKeepTheWindowAndSayOneThing(t *testing
 	})
 }
 
-// TestWindowCreateIntentHandsTheCommittedShellPaneToTheLaunchDefault is the
-// generated route's half: the exact `%N` the create committed and the exact
-// client that pressed the key reach the launch default, and the one line the
-// client sees follows what the default did.
-func TestWindowCreateIntentHandsTheCommittedShellPaneToTheLaunchDefault(t *testing.T) {
-	const createdPane = "%7"
-	for _, tt := range []struct {
-		name   string
-		result launchDefaultResult
-		want   string
-	}{
-		{name: "shell keeps the created line", want: windowCreatedMessage},
-		{name: "notice rides on the created line", result: launchDefaultResult{notice: "started in /srv/alpha"},
-			want: windowCreatedMessage + ": started in /srv/alpha"},
-		{name: "problem replaces the created line", result: launchDefaultResult{problem: "projmux create failed: injected"},
-			want: "projmux create failed: injected"},
-		{name: "a picker owns the line", result: launchDefaultResult{picker: true}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := &recordingTmuxRunner{outputs: map[string]string{
-				recordedTmuxCallKey("tmux", "list-clients", "-F", "#{client_name}"+focusFieldSeparator+"#{client_session}"): launchDefaultClient + focusFieldSeparator + "alpha\n",
-			}}
-			origins := [][2]string{}
-			cmd := &tmuxCommand{
-				runner: runner,
-				windowCreate: func(_ windowCreateIntent, _, _ io.Writer) (createdWindowRuntime, error) {
-					return createdWindowRuntime{sessionID: "$1", windowID: "@5", paneID: createdPane}, nil
-				},
-				launchDefault: func(originPaneID, client string) launchDefaultResult {
-					origins = append(origins, [2]string{originPaneID, client})
-					return tt.result
-				},
-			}
-
-			if err := cmd.Run([]string{"window-create", "--client", launchDefaultClient, "--anchor", "%9"},
-				ioDiscard{}, ioDiscard{}); err != nil {
-				t.Fatalf("window-create route: %v", err)
-			}
-			if want := [][2]string{{createdPane, launchDefaultClient}}; !reflect.DeepEqual(origins, want) {
-				t.Fatalf("launch default applied with %v, want %v", origins, want)
-			}
-			var lines []string
-			for _, call := range runner.calls {
-				if len(call.args) > 0 && call.args[0] == "display-message" {
-					lines = append(lines, call.args[len(call.args)-1])
-				}
-			}
-			var want []string
-			if tt.want != "" {
-				want = []string{tt.want}
-			}
-			if !slices.Equal(lines, want) {
-				t.Fatalf("client lines = %v, want %v", lines, want)
-			}
-		})
-	}
-}
-
-// TestWindowCreateIntentWithAnUnmovedClientDoesNotApplyTheLaunchDefault pins
-// the decision for a create whose client could not be moved: both the Agent
-// replacement and the picker need the exact client that would see the result,
-// and this route has just proved it has none. The Window and its shell Pane
-// stay, with the unshown-create line the route always showed.
-func TestWindowCreateIntentWithAnUnmovedClientDoesNotApplyTheLaunchDefault(t *testing.T) {
-	runner := &recordingTmuxRunner{outputs: map[string]string{
-		recordedTmuxCallKey("tmux", "list-clients", "-F", "#{client_name}"+focusFieldSeparator+"#{client_session}"): "\n",
-	}}
-	cmd := &tmuxCommand{
-		runner: runner,
-		windowCreate: func(_ windowCreateIntent, _, _ io.Writer) (createdWindowRuntime, error) {
-			return createdWindowRuntime{sessionID: "$1", windowID: "@5", paneID: "%7"}, nil
-		},
-		launchDefault: func(string, string) launchDefaultResult {
-			t.Fatal("the launch default ran without a client to show its result on")
-			return launchDefaultResult{}
-		},
-	}
-
-	if err := cmd.Run([]string{"window-create", "--client", launchDefaultClient, "--anchor", "%9"},
-		ioDiscard{}, ioDiscard{}); err != nil {
-		t.Fatalf("window-create route: %v", err)
-	}
-	line := runner.calls[len(runner.calls)-1].args
-	if !strings.HasPrefix(line[len(line)-1], windowCreatedUnshownMessage) {
-		t.Fatalf("client line = %q, want the unshown-create line", line[len(line)-1])
-	}
-}
-
 // TestCanonicalWindowCreateCarriesTheCommittedShellPane runs the real canonical
 // Window create over the fake server and proves the runtime placement it
 // returns names the shell Pane the transaction committed -- the value seam the
-// launch default hangs off, with no stdout parsing and no Pane-order guessing.
+// answer is filled into, with no stdout parsing and no Pane-order guessing.
 func TestCanonicalWindowCreateCarriesTheCommittedShellPane(t *testing.T) {
 	route := newWindowCreateIntentRoute(t, false, true)
 	before := route.windowUIDs()
 	origins := [][2]string{}
-	route.cmd.launchDefault = func(originPaneID, client string) launchDefaultResult {
+	route.cmd.launchApply = func(originPaneID, client string, _ launchChoice) launchDefaultResult {
 		origins = append(origins, [2]string{originPaneID, client})
 		return launchDefaultResult{}
 	}
@@ -356,7 +264,7 @@ func TestCanonicalWindowCreateCarriesTheCommittedShellPane(t *testing.T) {
 	}
 	want := [][2]string{{livePaneWithUID(t, route.tmux, panes[0].Metadata.UID), windowCreatePressingClient}}
 	if !reflect.DeepEqual(origins, want) {
-		t.Fatalf("launch default applied with %v, want the committed shell Pane %v", origins, want)
+		t.Fatalf("answer filled into %v, want the committed shell Pane %v", origins, want)
 	}
 }
 

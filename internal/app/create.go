@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
-	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -55,10 +54,6 @@ type agentLauncher interface {
 
 type claudeOptionsAgentLauncher interface {
 	PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort string) (title string, argv []string, err error)
-}
-
-type codexCapabilityAgentLauncher interface {
-	PlanAgentLaunchWithCapability(provider string, workspace coremetadata.AgentWorkspace, payload []string, selection corecap.Selection) (title string, argv []string, err error)
 }
 
 // createCommand implements the canonical `create` verb.
@@ -399,9 +394,6 @@ type agentPaneIntent struct {
 	resumeSource          string
 	resumeEndpoint        coremetadata.CodexEndpointRef
 	resumeGenerationState coremetadata.CodexGenerationState
-	// codexCapability is a connection/version-bound picker selection. It is a
-	// private UI intent field, not a public create flag or persisted config.
-	codexCapability *corecap.Selection
 	// anchorPaneID states the origin pane this split hangs off, for the one
 	// producer that cannot let create infer it: a tmux popup inherits $TMUX but
 	// no $TMUX_PANE, so the picker running inside one has no target of its own
@@ -516,7 +508,6 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 	flags.resumeSource = strings.TrimSpace(intent.resumeSource)
 	flags.resumeEndpoint = intent.resumeEndpoint
 	flags.resumeGenerationState = intent.resumeGenerationState
-	flags.codexCapability = intent.codexCapability
 	created, err := c.createCanonicalIntentAgent(scope, intent, provider, launchDir, flags, stdout)
 	return created, finishSplitIntent(stderr, notice, err)
 }

@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"slices"
 	"strings"
-	"sync/atomic"
 
 	"golang.org/x/mod/semver"
 
@@ -15,168 +13,10 @@ import (
 )
 
 const (
-	maxModelPages = 32
-	maxModels     = 1024
 	// review/start is a stable v2 method in the oldest Codex version this Phase
 	// validates. Older versions retain static launch and report review unavailable.
 	minimumReviewVersion = "v0.149.0"
 )
-
-var capabilityConnectionSequence atomic.Uint64
-
-// CapabilitySession owns the initialized app-server connection that produced a
-// model snapshot. Callers keep it alive from picker render through pre-create
-// validation; Refresh observes disconnects and model-set changes on that exact
-// connection rather than trusting a detached cache entry.
-type CapabilitySession struct {
-	client   *Client
-	epoch    corecap.Epoch
-	snapshot corecap.Snapshot
-}
-
-// OpenDefaultCapabilitySession opens one live Phase 0 transport connection and
-// discovers the initial model catalog on it.
-func OpenDefaultCapabilitySession(ctx context.Context, projmuxVersion string) (*CapabilitySession, error) {
-	health, err := EnsureDefaultProxyReady(ctx, TriggerNativeUserAction, projmuxVersion, true)
-	if err != nil {
-		return nil, err
-	}
-	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable || health.NativeAction == NativeActionRefused {
-		return nil, unavailableHealthError(health)
-	}
-	client, version, err := openDefaultProxyClient(ctx, projmuxVersion)
-	if err != nil {
-		return nil, err
-	}
-	if capability := reviewCapabilityForVersion(version); !capability.Available {
-		_ = client.Close()
-		return nil, fmt.Errorf("%w: Codex app-server model capability discovery is unavailable for this version", corecap.ErrUnavailable)
-	}
-	session := &CapabilitySession{
-		client: client,
-		epoch: corecap.Epoch{
-			Connection: fmt.Sprintf("connection-%d", capabilityConnectionSequence.Add(1)),
-			Version:    version,
-		},
-	}
-	snapshot, err := session.Refresh(ctx)
-	if err != nil {
-		_ = session.Close()
-		return nil, err
-	}
-	session.snapshot = snapshot
-	return session, nil
-}
-
-func (s *CapabilitySession) Snapshot() corecap.Snapshot {
-	return s.snapshot.Clone()
-}
-
-// Refresh re-reads the whole paginated model catalog on the still-owned
-// connection. Its epoch is unchanged only because it is the same initialized
-// connection and negotiated version.
-func (s *CapabilitySession) Refresh(ctx context.Context) (corecap.Snapshot, error) {
-	if s == nil || s.client == nil || !s.epoch.Valid() {
-		return corecap.Snapshot{}, fmt.Errorf("%w: capability connection is closed", corecap.ErrUnavailable)
-	}
-	snapshot, err := s.client.discoverCapabilities(ctx, s.epoch)
-	if err != nil {
-		return corecap.Snapshot{}, err
-	}
-	s.snapshot = snapshot.Clone()
-	return snapshot, nil
-}
-
-func (s *CapabilitySession) Close() error {
-	if s == nil || s.client == nil {
-		return nil
-	}
-	client := s.client
-	s.client = nil
-	return client.Close()
-}
-
-func (c *Client) discoverCapabilities(ctx context.Context, epoch corecap.Epoch) (corecap.Snapshot, error) {
-	var models []wireModel
-	var cursor *string
-	seenCursors := map[string]bool{}
-	for range maxModelPages {
-		var result modelListResult
-		if err := c.Request(ctx, methodModelList, modelListParams{Cursor: cursor, IncludeHidden: false}, &result); err != nil {
-			return corecap.Snapshot{}, err
-		}
-		models = append(models, result.Data...)
-		if len(models) > maxModels {
-			return corecap.Snapshot{}, fmt.Errorf("%w: model catalog exceeds bound", ErrProtocol)
-		}
-		if result.NextCursor == nil || strings.TrimSpace(*result.NextCursor) == "" {
-			return normalizeCapabilitySnapshot(epoch, models), nil
-		}
-		next := strings.TrimSpace(*result.NextCursor)
-		if seenCursors[next] {
-			return corecap.Snapshot{}, fmt.Errorf("%w: model catalog cursor repeated", ErrProtocol)
-		}
-		seenCursors[next] = true
-		cursor = &next
-	}
-	return corecap.Snapshot{}, fmt.Errorf("%w: model catalog pagination exceeds bound", ErrProtocol)
-}
-
-func normalizeCapabilitySnapshot(epoch corecap.Epoch, wireModels []wireModel) corecap.Snapshot {
-	out := corecap.Snapshot{Epoch: epoch, Review: reviewCapabilityForVersion(epoch.Version)}
-	seenModels := map[string]bool{}
-	defaultSeen := false
-	for _, raw := range wireModels {
-		if raw.Hidden {
-			continue
-		}
-		id := strings.TrimSpace(raw.ID)
-		launchName := strings.TrimSpace(raw.Model)
-		if launchName == "" {
-			launchName = id
-		}
-		if id == "" || launchName == "" || seenModels[id] {
-			continue
-		}
-		seenModels[id] = true
-		model := corecap.Model{
-			ID:                  id,
-			LaunchName:          launchName,
-			DisplayName:         strings.TrimSpace(raw.DisplayName),
-			Description:         strings.TrimSpace(raw.Description),
-			Default:             raw.Default && !defaultSeen,
-			SupportsPersonality: raw.SupportsPersonality,
-		}
-		if model.DisplayName == "" {
-			model.DisplayName = launchName
-		}
-		if model.Default {
-			defaultSeen = true
-		}
-		for _, option := range raw.SupportedReasoningEfforts {
-			appendUnique(&model.Efforts, option.Effort)
-		}
-		defaultEffort := strings.TrimSpace(raw.DefaultReasoningEffort)
-		if slices.Contains(model.Efforts, defaultEffort) {
-			model.DefaultEffort = defaultEffort
-		}
-		for _, modality := range raw.InputModalities {
-			switch strings.TrimSpace(modality) {
-			case "text", "image", "audio":
-				appendUnique(&model.InputModalities, modality)
-			}
-		}
-		out.Models = append(out.Models, model)
-	}
-	return out
-}
-
-func appendUnique(values *[]string, raw string) {
-	value := strings.TrimSpace(raw)
-	if value != "" && !slices.Contains(*values, value) {
-		*values = append(*values, value)
-	}
-}
 
 func reviewCapabilityForVersion(version string) corecap.ReviewCapability {
 	match := versionPattern.FindStringSubmatch(version)

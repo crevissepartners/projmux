@@ -28,12 +28,9 @@ import (
 // inside that funnel are unchanged, so a successful selection still writes
 // nothing and anything else reaches the pressing client as one bounded line.
 //
-// The one terminal action that does not travel is Codex advanced launch. Its
-// model and effort selection is bound to the app-server connection the picker
-// process opened (corecap.Selection.Epoch), and the create route takes that live
-// session out of this process's memory. A different process cannot honor it
-// without re-validating by model text on a newer connection, which the
-// capability cache contract forbids, so that action still commits in the popup.
+// Every terminal action travels: a picker selection is a plain value -- a
+// provider, and for a resume the conversation it names -- with no live handle
+// left behind in the picker process.
 
 // splitSelectionContinuationRoute is the argv prefix of the continuation route.
 var splitSelectionContinuationRoute = []string{"internal", "agent-pane", "launch-selection"}
@@ -53,10 +50,15 @@ const (
 )
 
 // launchPickerSelection is where a split picker's terminal action leaves the
-// picker. A picker hosted in a popup hands the intent to the detached
-// continuation so the popup closes now; a picker with no popup origin -- run in
-// the Pane it acts on -- has no popup to close and keeps the in-process create.
+// picker. An answer-mode picker records the intent for the Window producer that
+// asked and creates nothing (window_create_launch_choice.go). A picker hosted in
+// a popup hands the intent to the detached continuation so the popup closes now;
+// a picker with no popup origin -- run in the Pane it acts on -- has no popup to
+// close and keeps the in-process create.
 func (c *aiCommand) launchPickerSelection(intent agentPaneIntent) error {
+	if answer := c.splitAnswerFile(); answer != "" {
+		return writeSplitSelectionAnswer(answer, intent)
+	}
 	origin := c.splitOriginPane()
 	if origin == "" {
 		return c.createPaneFromIntent(intent)
@@ -89,9 +91,8 @@ func (c *aiCommand) launchSplitSelectionContinuation(intent agentPaneIntent, ori
 	return nil
 }
 
-// splitSelectionContinuationArgs renders the picker's half of the intent. The
-// Codex capability selection is deliberately absent: it cannot leave this
-// process (see the file comment).
+// splitSelectionContinuationArgs renders the picker's half of the intent -- the
+// fields the operator chose -- as the argv the continuation route parses.
 func splitSelectionContinuationArgs(intent agentPaneIntent) []string {
 	args := append([]string{}, splitSelectionContinuationRoute...)
 	args = append(args, "--"+splitSelectionProducerFlag, string(intent.producer))
@@ -138,6 +139,22 @@ func (c *aiCommand) splitSelectionContinuationEnv(origin string) map[string]stri
 // entry, and it requires the exact origin Pane the picker named.
 func (c *aiCommand) runLaunchSelection(args []string, stderr io.Writer) error {
 	const spelling = "internal agent-pane launch-selection"
+	intent, err := parseSplitSelectionArgs(spelling, args, stderr)
+	if err != nil {
+		return err
+	}
+	if exactTmuxHandle(c.splitOriginPane(), "%") == "" {
+		return usageError(spelling + " requires the exact popup origin %N its picker handed it")
+	}
+	return c.createPaneFromIntent(intent)
+}
+
+// parseSplitSelectionArgs rebuilds a picker selection from the argv
+// splitSelectionContinuationArgs rendered. It is the one reader of that
+// encoding: the continuation route and a Window producer's launch picker answer
+// both go through it, so a selection is held to the same rules wherever it
+// travels.
+func parseSplitSelectionArgs(spelling string, args []string, stderr io.Writer) (agentPaneIntent, error) {
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	producer := fs.String(splitSelectionProducerFlag, "", "split picker that made the selection")
@@ -148,15 +165,15 @@ func (c *aiCommand) runLaunchSelection(args []string, stderr io.Writer) error {
 	generation := fs.String(splitSelectionResumeGenerationFlag, "", "resume Codex endpoint generation")
 	generationState := fs.String(splitSelectionResumeGenerationStFlag, "", "resume Codex endpoint generation state")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return agentPaneIntent{}, err
 	}
 	if fs.NArg() != 1 {
 		printAIUsage(stderr)
-		return usageError(spelling + " requires exactly 1 <right|down> argument")
+		return agentPaneIntent{}, usageError(spelling + " requires exactly 1 <right|down> argument")
 	}
 	direction, err := parseAISplitDirection(fs.Args(), spelling, stderr)
 	if err != nil {
-		return err
+		return agentPaneIntent{}, err
 	}
 	intent := agentPaneIntent{
 		producer:       canonicalCreateProducer(strings.TrimSpace(*producer)),
@@ -171,24 +188,21 @@ func (c *aiCommand) runLaunchSelection(args []string, stderr io.Writer) error {
 	switch intent.producer {
 	case canonicalProducerProviderPicker, canonicalProducerResumePicker:
 	default:
-		return usageError(fmt.Sprintf("%s: --%s must be %s or %s, got %q", spelling, splitSelectionProducerFlag,
+		return agentPaneIntent{}, usageError(fmt.Sprintf("%s: --%s must be %s or %s, got %q", spelling, splitSelectionProducerFlag,
 			canonicalProducerProviderPicker, canonicalProducerResumePicker, intent.producer))
 	}
 	if raw := strings.TrimSpace(*provider); raw != "" {
 		if intent.provider, err = requireCanonicalProvider(spelling, raw); err != nil {
-			return err
+			return agentPaneIntent{}, err
 		}
 	}
 	if intent.producer == canonicalProducerResumePicker && (intent.provider == "" || intent.conversationID == "") {
-		return usageError(fmt.Sprintf("%s: a resume picker selection requires --%s and --%s", spelling,
+		return agentPaneIntent{}, usageError(fmt.Sprintf("%s: a resume picker selection requires --%s and --%s", spelling,
 			splitSelectionProviderFlag, splitSelectionConversationFlag))
 	}
 	if intent.producer == canonicalProducerProviderPicker && (intent.conversationID != "" || intent.resumeSource != "" ||
 		intent.resumeEndpoint != (coremetadata.CodexEndpointRef{}) || intent.resumeGenerationState != "") {
-		return usageError(fmt.Sprintf("%s: a provider picker selection carries no resume conversation", spelling))
+		return agentPaneIntent{}, usageError(fmt.Sprintf("%s: a provider picker selection carries no resume conversation", spelling))
 	}
-	if exactTmuxHandle(c.splitOriginPane(), "%") == "" {
-		return usageError(spelling + " requires the exact popup origin %N its picker handed it")
-	}
-	return c.createPaneFromIntent(intent)
+	return intent, nil
 }

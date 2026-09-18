@@ -187,9 +187,9 @@ func (c *aiCommand) splitReplacesOrigin() bool {
 }
 
 // finishReplacingSplit is the replace-mode half of createPaneFromIntent's
-// terminal actions. Every picker row lands here: a provider row, the Codex
-// advanced row, a resume row, and the resume picker's `new` row all commit an
-// Agent that takes the origin shell's place, while a `shell` row has nothing to
+// terminal actions. Every picker row lands here: a provider row, a resume row,
+// and the resume picker's `new` row all commit an Agent that takes the origin
+// shell's place, while a `shell` row has nothing to
 // create -- the origin shell already is a shell, and creating a second one is
 // the bug this branch exists to prevent.
 func (c *aiCommand) finishReplacingSplit(intent agentPaneIntent) error {

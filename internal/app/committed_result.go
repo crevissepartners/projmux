@@ -181,14 +181,14 @@ func committedResultDisplaySites() []committedResultSite {
 			Note: "the pane-menu split committed and focused; the bounded success line carries any start notice",
 		},
 		{
-			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, strings.TrimSpace(*client), windowCreatedUnshownMessage",
+			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, line)",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSiteWindowIntent,
-			Note: "the Window committed and the pressing client could not be moved onto it",
+			Note: "the Window committed and was filled with the chosen first Pane, and the pressing client could not be moved onto it; a failed fill rides on this line",
 		},
 		{
-			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, strings.TrimSpace(*client), applied.problem)",
+			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, applied.problem)",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSiteWindowIntent,
-			Note: "the Window and its shell Pane committed; the saved launch default is what did not happen",
+			Note: "the Window and its shell Pane committed; filling it with the chosen first Pane is what did not happen",
 		},
 		{
 			File: "tmux.go", Snippet: `return c.displayPaneMenuMessage(strings.TrimSpace(client), "projmux "+label+" failed: "+reason)`,

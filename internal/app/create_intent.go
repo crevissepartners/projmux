@@ -600,7 +600,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	var nativeRoute codexNativeEndpointRoute
 	if freshNativeCreate {
 		_, exactPrompt := nativePrompt(flags.payload)
-		if flags.codexCapability != nil || !exactPrompt {
+		if !exactPrompt {
 			return createdPaneRuntime{}, nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: "unsupported-create-shape"})
 		}
 		if !nativeLaunchCapable || c.codexNative == nil {

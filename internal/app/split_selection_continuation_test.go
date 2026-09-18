@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"maps"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -229,46 +228,6 @@ func TestAPopupHostedPickerSelectionHandsOffAndCreatesNothing(t *testing.T) {
 	}
 }
 
-// TestCodexAdvancedLaunchIsTheOneSelectionThatStillCommitsInThePopup pins the
-// single exception. Its selection is bound to the app-server connection the
-// picker process opened, so it cannot travel; if the exception disappears (the
-// action is handed off) or widens (see the test above), one of the two breaks.
-func TestCodexAdvancedLaunchIsTheOneSelectionThatStillCommitsInThePopup(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	cmd := testAICommand(home)
-	cmd.lookupEnv = splitContinuationPopupEnv(home, nil)
-	creator := &capabilityPlanningPaneCreator{cmd: cmd}
-	cmd.panes = creator
-	cmd.nativePicker = nativePickerFromCompatRunner(&sequencingAIRunner{results: []intpickercompat.Result{
-		{Key: "enter", Value: aiActionCodexAdvancedLaunch},
-		{Key: "enter", Value: "capability:0:1"},
-	}})
-	session := &fakeCodexCapabilitySession{snapshot: testCodexCapabilitySnapshot()}
-	cmd.openCodexCapabilitySession = func(context.Context) (codexCapabilitySession, error) { return session, nil }
-	codexPath := writeExecutable(t, filepath.Join(home, "bin", "codex"))
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
-			return []byte(codexPath + "\n"), nil
-		}
-		return nil, errors.New("unexpected command lookup")
-	}
-
-	if err := cmd.runAgentPickerSelection("right"); err != nil {
-		t.Fatal(err)
-	}
-	if got := splitContinuationDispatches(cmdRecorder(cmd).commands); len(got) != 0 {
-		t.Fatalf("Codex advanced launch dispatched %q; its capability selection cannot leave the picker process", got)
-	}
-	if len(creator.intents) != 1 || creator.intents[0].codexCapability == nil {
-		t.Fatalf("intents = %#v, want one in-process capability-bound Codex create", creator.intents)
-	}
-	if creator.intents[0].anchorPaneID != splitContinuationOrigin {
-		t.Fatalf("anchor = %q, want the popup origin %q", creator.intents[0].anchorPaneID, splitContinuationOrigin)
-	}
-}
-
 // TestTheSplitSelectionContinuationCarriesTheWholeIntent is the golden of the
 // hand-off: the four split picker popup modes, each with and without the
 // replace-origin marker. The picker's environment is derived from the popup
@@ -342,9 +301,6 @@ func TestTheSplitSelectionContinuationCarriesTheWholeIntent(t *testing.T) {
 			got := splitContinuationDispatches(cmdRecorder(cmd).commands)
 			if len(got) != 1 || got[0] != test.want {
 				t.Fatalf("continuation =\n%q\nwant\n%q", got, test.want)
-			}
-			if strings.Contains(got[0], aiActionCodexAdvancedLaunch) || strings.Contains(got[0], "capability") {
-				t.Fatalf("continuation %q carries a Codex capability selection", got[0])
 			}
 		})
 	}

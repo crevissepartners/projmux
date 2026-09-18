@@ -466,30 +466,11 @@ in-flight process decision, then retries proxy initialization with a bounded
 backoff. Projmux never automatically stops, kills, restarts, adopts, or enables
 remote control on the shared app server.
 
-The default `Codex` row in the provider picker launches immediately through the
+The `Codex` row in the provider picker launches immediately through the
 canonical create route. It does not start or probe the app-server, call
 `model/list`, or add `--model` or `model_reasoning_effort`; the Codex process
-therefore keeps its own configured defaults.
-
-The separate `Codex advanced launch` action uses the readiness path to read
-every page of the current app-server `model/list`. Its second picker shows only
-visible models and their advertised reasoning efforts. The display also carries
-the advertised default, supported input modalities, and whether personality is
-supported; the boolean personality capability is not expanded into invented
-personality choices. The selected model and effort are launch-only CLI
-overrides (`--model` and `--config model_reasoning_effort=...`); Projmux never
-writes a Codex configuration file. Each normalized catalog is tied to its live
-connection and negotiated-version epoch. Projmux retains that connection from
-picker render through pre-create validation and refreshes `model/list` before
-building argv, so a disconnect or removed option invalidates the selection. If
-advanced discovery fails, is empty, or comes from an older Codex, that action
-reports the exact unavailable reason and creates nothing; the separate default
-`Codex` row remains available.
-
-Picker chrome and semantic annotations such as default, unspecified modality,
-and personality support use the Projmux message catalog. Model display names,
-effort identifiers, and advertised modality tags remain exact provider data and
-are not translated.
+therefore keeps its own configured defaults. The picker has no per-launch model
+or effort row.
 
 `projmux agent review` starts `review/start` only for a Running Codex Agent whose
 Registry Agent, owned Pane, activation generation, stored thread, and live Pane

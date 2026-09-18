@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
-	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -108,7 +107,6 @@ type resourceCreateFlags struct {
 	resumeSource          string
 	resumeEndpoint        coremetadata.CodexEndpointRef
 	resumeGenerationState coremetadata.CodexGenerationState
-	codexCapability       *corecap.Selection
 }
 
 // resourceCreateShape selects which optional flag groups a resource-backed
