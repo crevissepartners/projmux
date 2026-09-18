@@ -83,7 +83,10 @@ type agentCommand struct {
 	// messageExecutable is the sender's own executable for the Claude push
 	// frame pre-check render. Nil means os.Executable.
 	messageExecutable func() (string, error)
-	focus             rawArgvCommand
+	// messageRelease launches the detached release of the messages held for
+	// one target Agent. Nil launches nothing.
+	messageRelease func(string) error
+	focus          rawArgvCommand
 	// paneDelete is the `delete` route. `agent persona` closes a Running
 	// Agent's managed Pane through it rather than through a tmux call of its
 	// own, so the stop is the same one `delete pane` performs.
@@ -119,6 +122,7 @@ func newAgentCommand() *agentCommand {
 		messageNewRef:  newCoordinationRef,
 		messageClaude:  liveAgentMessageClaudeAdapter{},
 		lookupEnv:      os.Getenv,
+		messageRelease: launchAgentMessageRelease,
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		command.messagePaths = defaultAgentMessagePaths(paths)

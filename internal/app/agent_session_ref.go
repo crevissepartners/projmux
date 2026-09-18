@@ -464,11 +464,13 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 		return agent, true, nil
 	}
 	var committed coremetadata.Agent
+	var previous coremetadata.AgentInteractionKind
 	_, err = c.updateRegistry(func(working *coremetadata.Registry) error {
 		current, ok := working.Agent(agent.Metadata.UID)
 		if !ok || current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != agent.Status.PaneRef {
 			return fmt.Errorf("managed Agent binding changed before interaction commit")
 		}
+		previous = current.Status.Interaction.Kind
 		if activationNeedsAck {
 			currentPane, ok := working.Pane(binding.paneUID)
 			if !ok || currentPane.Status.Activation.Generation != binding.generation ||
@@ -510,7 +512,22 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 		committed = updated.Clone()
 		return nil
 	})
+	if err == nil {
+		c.releaseHeldAfterOperatorAnswer(committed, previous, kind)
+	}
 	return committed, true, err
+}
+
+// releaseHeldAfterOperatorAnswer is the one trigger of the held-message
+// release on the ingest side: a committed interaction that moved a Claude
+// Agent from awaiting its operator to anything else. It reads the message
+// store only on that transition and never waits for the release.
+func (c *aiCommand) releaseHeldAfterOperatorAnswer(agent coremetadata.Agent, previous, next coremetadata.AgentInteractionKind) {
+	if c == nil || agent.Spec.Provider != aiModeClaude ||
+		!agentInteractionAwaitsOperator(previous) || agentInteractionAwaitsOperator(next) {
+		return
+	}
+	c.heldRelease.releaseIfHeld(agent.Metadata.UID)
 }
 
 var errManagedAgentObservationIgnored = errors.New("managed Agent observation provider does not match")

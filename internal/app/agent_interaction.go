@@ -520,11 +520,13 @@ func (c *agentCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 		return usageError(fmt.Sprintf("agent status set: agent/%s is %s without a current managed Pane; semantic status can only be set on a Running Agent", agent.Metadata.Name, agent.Status.Phase))
 	}
 	var committed coremetadata.Agent
+	var previous coremetadata.AgentInteractionKind
 	if err := c.mutateAgent(agent.Metadata.UID, func(reg *coremetadata.Registry, mut coremetadata.Mutator) error {
 		current, ok := reg.Agent(agent.Metadata.UID)
 		if !ok {
 			return fmt.Errorf("agent status set: agent %q disappeared", agent.Metadata.UID)
 		}
+		previous = current.Status.Interaction.Kind
 		if current.Status.Phase != coremetadata.PhaseRunning || strings.TrimSpace(current.Status.PaneRef) == "" {
 			return usageError(fmt.Sprintf("agent status set: agent/%s is %s without a current managed Pane; semantic status can only be set on a Running Agent", current.Metadata.Name, current.Status.Phase))
 		}
@@ -533,6 +535,9 @@ func (c *agentCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 		return err
 	}); err != nil {
 		return err
+	}
+	if committed.Spec.Provider == aiModeClaude && agentInteractionAwaitsOperator(previous) && !agentInteractionAwaitsOperator(kind) {
+		c.heldRelease().releaseIfHeld(committed.Metadata.UID)
 	}
 	return c.mirrorAgentInteraction(committed, kind)
 }

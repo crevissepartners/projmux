@@ -120,6 +120,8 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return runClaudeMessageReply(rest)
 	case "claude-message-boundary":
 		return runClaudeMessageBoundary(rest)
+	case agentMessageReleaseRoute:
+		return runAgentMessageRelease(rest)
 	case "codex-broker":
 		return forwardRawArgv(c.codexBroker, "internal codex-broker", "codex-broker", nil, rest, stdout, stderr)
 	case "install-replace":

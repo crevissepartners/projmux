@@ -586,6 +586,14 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 }
 
 func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, transcriptPath string) {
+	c.markAIHookPaneBinding(paneID, agent, cwd, threadID, sessionID, transcriptPath)
+}
+
+// markAIHookPaneBinding is markAIHookPane that also returns the exact
+// Agent->Pane binding the marking already read, so a handler can judge the
+// Agent without a second Registry read. ok is false unless the Pane is bound
+// to a Running Agent of this provider.
+func (c *aiCommand) markAIHookPaneBinding(paneID, agent, cwd, threadID, sessionID, transcriptPath string) (managedAgentBinding, bool) {
 	c.recordAIPaneOption(paneID, aiPaneHookActiveOption, "1")
 	// A hook is observation, not launch authorship. Only an exact current
 	// Agent->Pane Registry binding may receive the managed/provider projection;
@@ -623,7 +631,9 @@ func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, tran
 			ThreadID:       threadID,
 			TranscriptPath: transcriptPath,
 		})
+		return binding, true
 	}
+	return managedAgentBinding{}, false
 }
 
 func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {

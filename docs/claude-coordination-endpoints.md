@@ -200,6 +200,47 @@ error, because a peer message that silently disappears is worse than one read
 by a slightly stale reader. The append-only eviction history log record uses
 the same field name, the same default, and the same higher-version rule.
 
+### Held while the target awaits its operator
+
+A push frame reaching Claude while it shows its operator an `AskUserQuestion`
+question, a permission dialog, or an MCP elicitation renders as pending input
+and can push that widget off a narrow screen. So `agent message send` does not
+call the target's helper while the target Agent's effective interaction is
+`approval_required` or `input_required`. It keeps the accepted record in the
+existing `held` state with reason `target-awaiting-operator`, prints
+
+```text
+<messageRef>	held	target-awaiting-operator	delivery resumes automatically when the target Agent's dialog closes; check projmux agent message status <messageRef>; do not resend
+```
+
+and exits 0. Plain sends and a Claude source's `--reply-to` behave the same.
+A send to a target that is not blocked is also held while that target still has
+an earlier held message, so a later message never overtakes an earlier one.
+Codex targets are never held. An observation older than the 30-minute
+interaction freshness window reads as `unknown` and does not block.
+
+The hold ends when the target's interaction leaves `approval_required` or
+`input_required`: `UserPromptSubmit`, `Stop`, `StopFailure`, and the events that
+follow an operator answer (`PostToolUse`, `PostToolUseFailure`,
+`PermissionDenied`, `ElicitationResult`) move it on. The last four change the
+interaction to `in_progress` only when it was blocked; otherwise they stay quiet
+and write nothing. That transition starts a detached
+`projmux internal agent-message-release --agent uid:<agent>` process, which
+holds a per-Agent lock and delivers that Agent's held messages one at a time in
+acceptance order through the ordinary push. Before each message it reads the
+Registry again: a removed Agent or a route that no longer accepts the message
+makes it `stale`, a passed deadline makes it `expired`, and a target that
+awaits its operator again stops the release with the rest still held. A send
+that holds only behind earlier messages, or that finds the dialog already
+closed after writing its hold, starts the same release.
+
+The TTL still applies: a held message is not extended, and one still held at
+its deadline becomes `expired` with reason `deadline-expired`.
+`agent message status <messageRef>` answers a held message from the durable
+store, never from the target's helper, which has not seen it; it prints the
+same held line, `expired` once the deadline has passed, and the delivered or
+other terminal result once the release has run.
+
 ### Operator input
 
 A durable envelope can also carry operator input: text a person wrote through

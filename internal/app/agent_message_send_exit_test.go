@@ -84,6 +84,15 @@ func assertSendExitFollowsReceipt(t *testing.T, stdout string, err error, ref st
 		t.Fatalf("stdout = %q, want exactly one receipt line", stdout)
 	}
 	fields := strings.Split(strings.TrimSuffix(stdout, "\n"), "\t")
+	// A held receipt exits 0 and still names its reason and the action: the
+	// message resumes on its own and must not be resent.
+	if delivery.State == coremessage.StateHeld {
+		if err != nil || len(fields) != 4 || fields[0] != ref || fields[1] != string(delivery.State) ||
+			fields[2] != delivery.Reason || !strings.Contains(fields[3], "do not resend") {
+			t.Fatalf("stdout=%q err=%v, want %s\\theld\\t%s\\t<action> and exit 0", stdout, err, ref, delivery.Reason)
+		}
+		return
+	}
 	if !contractUndelivered[delivery.State] {
 		if err != nil || len(fields) != 2 || fields[0] != ref || fields[1] != string(delivery.State) {
 			t.Fatalf("stdout=%q err=%v, want %s\\t%s and exit 0", stdout, err, ref, delivery.State)

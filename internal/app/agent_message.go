@@ -530,7 +530,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			// nothing would ever hand it to the target.
 			var pushErr error
 			if created {
-				record, pushErr = c.pushCoordination(record, target, targetRoute, record.Envelope)
+				record, pushErr = c.deliverOrHoldCoordination(record, target, targetRoute, record.Envelope)
 			}
 			if err := writeAgentMessageReceiptText(stdout, receiptFor(record), claudeContentBytes); err != nil {
 				return err
@@ -557,7 +557,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	}
 	var pushErr error
 	if created {
-		record, pushErr = c.pushCoordination(record, target, targetRoute, envelope)
+		record, pushErr = c.deliverOrHoldCoordination(record, target, targetRoute, envelope)
 	}
 	// The receipt is written before the failure is returned, so the sender sees
 	// the terminal state, reason, and action on stdout and still exits nonzero.
@@ -861,6 +861,14 @@ func (c *agentCommand) runMessageStatus(args []string, stdout, stderr io.Writer)
 			return capabilityErr
 		} else if route, routeErr := c.resolveMessageRoute(registry, *target); routeErr != nil || !messageRouteAccepts(route, record.Envelope.Target) {
 			record, _, err = c.messageStore.Apply(record.Envelope.MessageRef, c.staleMessageEvent(record, "target-activation-stale"))
+		} else if record.Delivery.State == coremessage.StateHeld {
+			// A held message never reached a helper, which would answer
+			// unknown-message. The store is its only witness, and its deadline
+			// read reports expired once the TTL has passed.
+			record, found, err = c.messageStore.Status(refs[0], c.messageClock())
+			if err == nil && !found {
+				err = messagestore.ErrNotFound
+			}
 		} else if record.Adapter == "claude-coordination" {
 			private, statusErr := c.messageClaude.Status(context.Background(), c.messagePaths.registryPath, route, record.Envelope.MessageRef)
 			record, err = c.projectClaudeDelivery(record, private, statusErr)
@@ -1114,6 +1122,11 @@ func writeAgentMessageReceiptText(stdout io.Writer, receipt agentMessageReceipt,
 	if agentMessageUndelivered(receipt.Delivery) {
 		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s%s\n", receipt.MessageRef, receipt.Delivery.State,
 			receipt.Delivery.Reason, agentMessageReceiptFailureAction(receipt, claudeContentBytes), source)
+		return err
+	}
+	if receipt.Delivery.State == coremessage.StateHeld {
+		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s%s\n", receipt.MessageRef, receipt.Delivery.State,
+			receipt.Delivery.Reason, agentMessageHeldAction(receipt.MessageRef), source)
 		return err
 	}
 	_, err := fmt.Fprintf(stdout, "%s\t%s%s\n", receipt.MessageRef, receipt.Delivery.State, source)

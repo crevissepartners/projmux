@@ -52,7 +52,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	}
 	defer c.flushPendingAgentSessionRef(paneID)
 
-	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
+	binding, owned := c.markAIHookPaneBinding(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
 	metadata := payload.claudeMetadata()
 	action := c.aiHookEffectiveAction(aiHookProviderClaude, payload.EventName)
 
@@ -76,7 +76,9 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 		return c.ingestClaudeStopFailure(paneID, payload, metadata, action)
 	case "SubagentStop":
 		return c.ingestClaudeSubagentStop(paneID, payload, metadata, action)
-	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "PermissionDenied", "UserPromptExpansion", "SubagentStart", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
+	case "PostToolUse", "PostToolUseFailure", "PermissionDenied", "ElicitationResult":
+		return c.ingestClaudeOperatorDialogClosed(paneID, payload, metadata, action, binding, owned)
+	case "PreToolUse", "PostToolBatch", "UserPromptExpansion", "SubagentStart", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
 		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	case "TeammateIdle":
@@ -93,6 +95,30 @@ func (c *aiCommand) ingestClaudeUserPromptSubmit(paneID string, payload claudeHo
 		return nil
 	}
 	if err := c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
+		Metadata:  metadata,
+		BadgeKind: aiBadgeKindInProgress,
+	}); err != nil {
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
+		return err
+	}
+	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", ""))
+	return nil
+}
+
+// ingestClaudeOperatorDialogClosed handles the events that follow an operator
+// answer: a tool ran or failed after its permission dialog, a permission was
+// denied, or an MCP elicitation returned. Only an Agent still recorded as
+// awaiting its operator moves to in_progress, state only; every other Agent
+// stays quiet and writes nothing. PostToolUse fires on every tool call, so the
+// judgment reads only the binding the hook marking already loaded.
+func (c *aiCommand) ingestClaudeOperatorDialogClosed(paneID string, payload claudeHookPayload, metadata map[string]string,
+	action aiHookActionResolution, binding managedAgentBinding, owned bool,
+) error {
+	if !owned || binding.agent.Spec.Provider != aiModeClaude || !claudeAgentAwaitsOperator(binding.agent, c.sessionRefClock()()) {
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
+		return nil
+	}
+	if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{
 		Metadata:  metadata,
 		BadgeKind: aiBadgeKindInProgress,
 	}); err != nil {

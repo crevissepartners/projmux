@@ -120,6 +120,10 @@ type aiCommand struct {
 	// stop before the real Registry and tmux mutations; production installs no
 	// second deleter here.
 	paneDelete paneMenuDeleteFunc
+	// heldRelease launches the detached release of the coordination messages
+	// held for a Claude Agent whose interaction stopped awaiting its operator.
+	// The zero value launches nothing, so a fixture never spawns a process.
+	heldRelease heldMessageRelease
 	// A hook's session ref and semantic interaction are staged until the event
 	// has been classified, then committed in one Registry transaction. Quiet
 	// events flush only the session ref at the top-level ingest return.
@@ -158,6 +162,7 @@ func newAICommand() *aiCommand {
 		loadRegistry:   loadResourceRegistry,
 		updateRegistry: updateResourceRegistry,
 		paneDelete:     deletePaneThroughCanonicalRoute,
+		heldRelease:    defaultHeldMessageRelease(),
 	}
 }
 
