@@ -1765,6 +1765,17 @@ Agent stays Offline with its new annotations and stderr prints the
 `projmux agent resume uid:<agent> --project uid:<project> --window uid:<window>`
 command that finishes the job with the persona.
 
+A Claude Agent created with `--effort <level>` records it as `projmux.io/effort`
+on the Agent, because Claude does not restore a conversation's effort on
+resume. Every resume passes it again as `--effort <level>`: `agent resume`,
+Continue/topology replay, and the restart of `agent persona attach|detach`. A
+recorded value that is not one of `low`, `medium`, `high`, `xhigh`, or `max` is
+skipped, the resume still proceeds, and one `effort-invalid` line is disclosed
+where a `persona-unavailable` line would be. The model given with `--model` is
+not recorded or passed again: Claude restores the conversation's model itself
+on resume, and passing the create-time model would override a `/model` switch
+made in the session.
+
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`
 and `projmux create pane --placement right -o pane-id` each print exactly the

@@ -388,6 +388,10 @@ func planTopologyAgentReplay(
 	if notice := launch.personaNotice(label); notice != "" {
 		plan.notices = append(plan.notices, notice)
 	}
+	// So is a recorded effort the resume could not re-pass.
+	if notice := launch.effortNotice(label); notice != "" {
+		plan.notices = append(plan.notices, notice)
+	}
 	work.conversationID, work.title, work.argv = decision.conversationID, launch.title, launch.argv
 	return work, true
 }

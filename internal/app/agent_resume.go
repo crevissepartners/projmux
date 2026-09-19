@@ -53,6 +53,13 @@ type agentResumeLaunch struct {
 	// could not re-pass. It never fails the resume: the Agent comes back
 	// without its persona and the consumer discloses personaNotice.
 	personaUnavailable *persona.Error
+	// effortInvalid is the recorded effort this launch did not re-pass
+	// because Claude would not take it. Like personaUnavailable it never
+	// fails the resume: the consumer discloses effortNotice.
+	// effortSkipped reports that effortInvalid holds such a value, which may
+	// itself be empty.
+	effortInvalid string
+	effortSkipped bool
 }
 
 // personaNotice is the one-line disclosure of a persona the resume could not
@@ -64,6 +71,17 @@ func (l agentResumeLaunch) personaNotice(label string) string {
 	}
 	return fmt.Sprintf("projmux: agent/%s resumed without its persona %s (%s): %s",
 		label, l.personaUnavailable.Name, l.personaUnavailable.Reason, l.personaUnavailable.Detail)
+}
+
+// effortNotice is the one-line disclosure of a recorded effort the resume did
+// not re-pass, or "" when there is nothing to disclose. label names the Agent
+// the way personaNotice does.
+func (l agentResumeLaunch) effortNotice(label string) string {
+	if !l.effortSkipped {
+		return ""
+	}
+	return fmt.Sprintf("projmux: agent/%s resumed without its effort %q (%s): not one of %s",
+		label, l.effortInvalid, claudeEffortReasonInvalid, strings.Join(claudeEffortLevels, ", "))
 }
 
 // PlanAgentResume builds the provider resume launch for one stored conversation.
@@ -87,6 +105,12 @@ func (l agentResumeLaunch) personaNotice(label string) string {
 // rebuilds the system prompt instead of replaying the one it recorded before
 // the attach. An Agent without that annotation gets exactly the argv it got
 // before the annotation existed.
+//
+// A Claude Agent created with --effort records it, and every resume re-passes
+// it where create put it, because Claude does not restore a conversation's
+// effort on resume. A recorded value Claude would not take is skipped and
+// disclosed, never a failed resume. The model is not re-passed: Claude
+// restores it itself.
 func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error) {
 	mode := normalizeAIMode(provider)
 	resumeArgv, err := resumeArgsForAgent(mode, conversationID)
@@ -113,12 +137,13 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 	if err != nil {
 		return agentResumeLaunch{}, err
 	}
-	// The persona goes where create puts it, before the workspace arguments,
-	// so Claude's variadic --add-dir cannot take it. The system prompt
-	// snapshot mode an attached persona recorded goes right after it, for the
-	// same reason.
+	// The effort and the persona go where create puts them, before the
+	// workspace arguments, so Claude's variadic --add-dir cannot take them.
+	// The system prompt snapshot mode an attached persona recorded goes right
+	// after them, for the same reason.
+	effort, effortInvalid, effortSkipped := claudeResumeEffort(mode, annotations)
 	personaFile, personaUnavailable := c.resumePersonaSnapshot(mode, annotations)
-	if prefix := append(claudeLaunchOptionArgs("", "", personaFile), claudeResumeSnapshotArgs(mode, annotations)...); len(prefix) > 0 {
+	if prefix := append(claudeLaunchOptionArgs("", effort, personaFile), claudeResumeSnapshotArgs(mode, annotations)...); len(prefix) > 0 {
 		workspaceArgs = append(prefix, workspaceArgs...)
 	}
 	resumeArgv = append(resumeArgv[:1], append(workspaceArgs, resumeArgv[1:]...)...)
@@ -126,7 +151,10 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 	if err != nil {
 		return agentResumeLaunch{}, err
 	}
-	return agentResumeLaunch{title: plan.title, argv: plan.commandArgs, personaUnavailable: personaUnavailable}, nil
+	return agentResumeLaunch{
+		title: plan.title, argv: plan.commandArgs, personaUnavailable: personaUnavailable,
+		effortInvalid: effortInvalid, effortSkipped: effortSkipped,
+	}, nil
 }
 
 // resumePersonaSnapshot returns the persona snapshot a resumed Agent started
@@ -421,7 +449,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var nativeRoute codexNativeEndpointRoute
 	var title string
 	var launchArgv []string
-	var personaNotice string
+	var personaNotice, effortNotice string
 	var err error
 	if plan.provider == aiModeCodex {
 		nativeCtx, cancel := prepareNativeContext(context.Background())
@@ -444,7 +472,8 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		} else {
 			var launch agentResumeLaunch
 			launch, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID, plan.annotations)
-			title, launchArgv, personaNotice = launch.title, launch.argv, launch.personaNotice(plan.agentName)
+			title, launchArgv = launch.title, launch.argv
+			personaNotice, effortNotice = launch.personaNotice(plan.agentName), launch.effortNotice(plan.agentName)
 		}
 	}
 	if err != nil {
@@ -639,6 +668,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// The Agent is back without its persona; like the name notice, a lost
 		// disclosure must not turn a committed resume into a failure.
 		fmt.Fprintln(stderr, personaNotice)
+	}
+	if effortNotice != "" {
+		// The Agent is back without the effort it recorded, for the same reason
+		// and with the same best-effort disclosure.
+		fmt.Fprintln(stderr, effortNotice)
 	}
 
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)

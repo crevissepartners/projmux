@@ -105,6 +105,48 @@ func (p personaLaunch) withAnnotations(base map[string]string) map[string]string
 	return out
 }
 
+// withEffortAnnotation adds the effort a new Claude Agent is created with to
+// base, the Agent annotations the create already records. Without an effort
+// it returns base itself, so a create without --effort stores exactly what it
+// stored before the effort was recorded -- nil included. Otherwise it returns
+// a new map and never writes into base. requireClaudeLaunchOptions has already
+// refused an effort on any other provider and any value Claude does not take.
+func withEffortAnnotation(effort string, base map[string]string) map[string]string {
+	if effort == "" {
+		return base
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = make(map[string]string, 1)
+	}
+	out[coremetadata.AnnotationAgentEffort] = effort
+	return out
+}
+
+// claudeEffortReasonInvalid is the reason token of a recorded effort a resume
+// does not re-pass because it is not one of claudeEffortLevels.
+const claudeEffortReasonInvalid = "effort-invalid"
+
+// claudeResumeEffort returns the effort a resumed Agent re-passes. When the
+// recorded value is not one Claude takes, it returns no effort, that value as
+// invalid, and skipped. Only a Claude Agent is read: any other provider
+// carrying the annotation, and an Agent without it, get nothing at all, so
+// their resume argv stays byte-identical to the one they had before the
+// effort was recorded.
+func claudeResumeEffort(mode string, annotations map[string]string) (effort, invalid string, skipped bool) {
+	if mode != aiModeClaude {
+		return "", "", false
+	}
+	value, ok := annotations[coremetadata.AnnotationAgentEffort]
+	if !ok {
+		return "", "", false
+	}
+	if !slices.Contains(claudeEffortLevels, value) {
+		return "", value, true
+	}
+	return value, "", false
+}
+
 // requireClaudePersona refuses --persona where it would be ignored: another
 // provider, or the reply-only activation, which has its own fixed launch. Like
 // requireClaudeLaunchOptions it is an argv-only refusal, so it lands before the

@@ -95,8 +95,9 @@ type resourceCreateFlags struct {
 	interactiveOnly   bool
 	dialogueReplyOnly bool
 	// model and effort choose what a new Claude Agent runs with. They are
-	// passed to the provider as its own --model and --effort and are not
-	// recorded; the provider's transcript says what it ran with.
+	// passed to the provider as its own --model and --effort. The model is not
+	// recorded, because Claude restores it on resume; the effort is recorded
+	// as an Agent annotation so every resume can pass it again.
 	model  string
 	effort string
 	// persona names a stored persona the new Claude Agent starts with, and
