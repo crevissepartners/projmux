@@ -19,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -540,33 +541,42 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 	}
 }
 
+// enableRawTerminal puts in's terminal into the mode `stty raw -echo min 0
+// time 0` sets and returns the restore of the exact prior state. It talks to
+// the terminal through termios ioctls instead of three stty processes, which
+// the picker would otherwise fork before its first frame.
 func enableRawTerminal(in io.Reader) (func(), bool) {
 	file, ok := in.(*os.File)
 	if !ok {
 		return func() {}, false
 	}
-
-	stateCmd := exec.Command("stty", "-g")
-	stateCmd.Stdin = file
-	stateBytes, err := stateCmd.Output()
+	fd := int(file.Fd())
+	saved, err := unix.IoctlGetTermios(fd, termiosGetRequest)
 	if err != nil {
 		return func() {}, false
 	}
-	state := strings.TrimSpace(string(stateBytes))
-	rawCmd := exec.Command("stty", "raw", "-echo", "min", "0", "time", "0")
-	rawCmd.Stdin = file
-	if err := rawCmd.Run(); err != nil {
+	restore := *saved
+	raw := rawTermios(restore)
+	if err := unix.IoctlSetTermios(fd, termiosSetRequest, &raw); err != nil {
 		return func() {}, false
 	}
 
 	return func() {
-		if state == "" {
-			return
-		}
-		restoreCmd := exec.Command("stty", state)
-		restoreCmd.Stdin = file
-		_ = restoreCmd.Run()
+		_ = unix.IoctlSetTermios(fd, termiosSetRequest, &restore)
 	}, true
+}
+
+// rawTermios is the termios `stty raw -echo min 0 time 0` produces from t:
+// raw input and output processing, no echo, and reads that return at once. The
+// control flags are left as they are, as stty raw leaves them.
+func rawTermios(t unix.Termios) unix.Termios {
+	t.Iflag &^= unix.IGNBRK | unix.BRKINT | unix.IGNPAR | unix.PARMRK | unix.INPCK | unix.ISTRIP |
+		unix.INLCR | unix.IGNCR | unix.ICRNL | unix.IXON | unix.IXOFF | unix.IXANY | unix.IMAXBEL | rawExtraIflagClear
+	t.Oflag &^= unix.OPOST
+	t.Lflag &^= unix.ICANON | unix.ISIG | unix.ECHO | rawExtraLflagClear
+	t.Cc[unix.VMIN] = 0
+	t.Cc[unix.VTIME] = 0
+	return t
 }
 
 func openNativeTTYFallback(in io.Reader) (*os.File, bool) {
@@ -1264,22 +1274,14 @@ func detectNativeLayout(in io.Reader) nativeLayout {
 	if !ok {
 		return layout
 	}
-	cmd := exec.Command("stty", "size")
-	cmd.Stdin = file
-	out, err := cmd.Output()
+	size, err := unix.IoctlGetWinsize(int(file.Fd()), unix.TIOCGWINSZ)
 	if err != nil {
 		return layout
 	}
-	fields := strings.Fields(string(out))
-	if len(fields) != 2 {
-		return layout
-	}
-	rows, rowErr := strconv.Atoi(fields[0])
-	cols, colErr := strconv.Atoi(fields[1])
-	if rowErr == nil && rows > 0 {
+	if rows := int(size.Row); rows > 0 {
 		layout.Rows = rows
 	}
-	if colErr == nil && cols > 0 {
+	if cols := int(size.Col); cols > 0 {
 		layout.Cols = cols
 	}
 	return layout

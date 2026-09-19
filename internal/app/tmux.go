@@ -1022,7 +1022,16 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	}
 
 	ctx := context.Background()
-	popupCtx := c.popupContext(ctx)
+	var popupCtx tmuxPopupContext
+	// An anchored popup opened for an exact client needs no ambient context
+	// reads: every field popupContext would read is overwritten by the anchor
+	// containment row (Pane, session, directory) or by --client, and nothing
+	// downstream reads its decoration. Only the client geometry is left, so
+	// the single containment read carries it too.
+	fastPath := mode.AnchorPane != "" && mode.ClientKey != ""
+	if !fastPath {
+		popupCtx = c.popupContext(ctx)
+	}
 	if mode.AnchorPane != "" {
 		route, routeErr := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, c.runner, c.lookupEnv, mode.AnchorPane)
 		if routeErr != nil {
@@ -1031,13 +1040,29 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 		if route.authority == nil || route.authority.PaneID != mode.AnchorPane {
 			return errors.New("tmux popup-toggle exact anchor authority has no matching invocation receipt")
 		}
-		out, observeErr := c.runner.Run(ctx, "tmux", "-S", route.expectedSocketPath, "display-message", "-p", "-t", mode.AnchorPane,
-			"-F", tmuxRowFormat("#{pane_id}", "#S", "#{pane_current_path}"))
-		rows := splitTmuxRows(string(out), 3)
-		if observeErr != nil || len(rows) != 1 || rows[0][0] != mode.AnchorPane {
-			return errors.New("tmux popup-toggle exact anchor containment drifted")
+		observed := false
+		if fastPath {
+			row, ok, err := c.observeAnchoredPopupClient(ctx, route.expectedSocketPath, mode.AnchorPane, mode.ClientKey)
+			if err != nil {
+				return err
+			}
+			if ok {
+				popupCtx, observed = row, true
+			} else {
+				// The combined read could not answer (an error, or no row tmux
+				// could expand): take today's exact path.
+				popupCtx = c.popupContext(ctx)
+			}
 		}
-		popupCtx.OriginPane, popupCtx.OriginSession, popupCtx.ContextDir = rows[0][0], rows[0][1], rows[0][2]
+		if !observed {
+			out, observeErr := c.runner.Run(ctx, "tmux", "-S", route.expectedSocketPath, "display-message", "-p", "-t", mode.AnchorPane,
+				"-F", tmuxRowFormat("#{pane_id}", "#S", "#{pane_current_path}"))
+			rows := splitTmuxRows(string(out), 3)
+			if observeErr != nil || len(rows) != 1 || rows[0][0] != mode.AnchorPane {
+				return errors.New("tmux popup-toggle exact anchor containment drifted")
+			}
+			popupCtx.OriginPane, popupCtx.OriginSession, popupCtx.ContextDir = rows[0][0], rows[0][1], rows[0][2]
+		}
 	}
 	if mode.ClientKey != "" {
 		popupCtx.ClientKey = sanitizePopupKey(mode.ClientKey)
@@ -1093,6 +1118,43 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 		return fmt.Errorf("display tmux popup-toggle %q: %w", mode.Raw, err)
 	}
 	return nil
+}
+
+// observeAnchoredPopupClient is the one read an anchored popup for an exact
+// client needs after its anchor proof: the containment row of the proven
+// anchor plus the geometry of the client that pressed the key. The geometry is
+// read with -c <client>, which names that exact client; the ambient
+// `display-message` popupContext issues lets tmux pick a best client instead,
+// which is also all tmux can answer with once the named client is gone.
+//
+// ok=false means the read could not answer at all (an error, or no
+// well-formed row) and the caller falls back to the ambient reads followed by
+// the plain containment read, exactly as before. A well-formed answer that
+// names anything but the anchor is containment drift and is refused here with
+// the same error the plain read returns.
+func (c *tmuxCommand) observeAnchoredPopupClient(ctx context.Context, socketPath, anchor, client string) (tmuxPopupContext, bool, error) {
+	targetClient := strings.TrimSpace(client)
+	out, err := c.runner.Run(ctx, "tmux", "-S", socketPath, "display-message", "-p", "-c", targetClient, "-t", anchor,
+		"-F", tmuxRowFormat("#{pane_id}", "#S", "#{pane_current_path}", "#{client_width}", "#{client_height}"))
+	if err != nil {
+		return tmuxPopupContext{}, false, nil
+	}
+	rows := splitTmuxRows(string(out), 5)
+	if len(rows) == 0 {
+		return tmuxPopupContext{}, false, nil
+	}
+	if len(rows) != 1 || rows[0][0] != anchor {
+		return tmuxPopupContext{}, false, errors.New("tmux popup-toggle exact anchor containment drifted")
+	}
+	return tmuxPopupContext{
+		ClientKey:     sanitizePopupKey(targetClient),
+		TargetClient:  targetClient,
+		OriginPane:    rows[0][0],
+		OriginSession: rows[0][1],
+		ContextDir:    rows[0][2],
+		ClientWidth:   parseTmuxPositiveInt(rows[0][3]),
+		ClientHeight:  parseTmuxPositiveInt(rows[0][4]),
+	}, true, nil
 }
 
 func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleMode, error) {
