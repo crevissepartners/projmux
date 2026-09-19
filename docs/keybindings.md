@@ -253,13 +253,17 @@ The client therefore never sees a shell Pane that is about to be replaced.
 | `resume` | whatever the resume picker chose, on the same terms |
 
 Cancelling the picker creates nothing: no Window, and the client stays where it
-was. If the picker cannot be opened, nothing is created either, and the client
-sees `projmux Create Window failed:` with the reason. Once the Window exists
-nothing rolls it back: a provider that Settings has since disabled, an Agent that
-could not be created, or a shell that could not be removed keeps the Window with
-its shell Pane and reports one line on the pressing client instead of the usual
-`Created Window`. A create whose pressing client could not be moved still fills
-the Window with what was chosen and shows the existing `Created Window, but
+was. If the picker cannot be opened, nothing is created either. An Agent answer
+is committed with its Window in one transaction, so a provider that Settings has
+since disabled or an Agent that could not be created leaves no Window behind.
+Both report one line on the pressing client instead of the usual
+`Created Window`:
+`projmux Create Window failed; no Window was created: <reason>`. The line is
+fitted to that client's width (80 cells when the width cannot be read). The
+outcome is never cut; a reason too long to fit keeps its front, which names the
+step that failed, and its end, where tmux's own cause is, and loses its middle
+to one `…`. A create whose pressing client could not be moved still fills the
+Window with what was chosen and shows the existing `Created Window, but
 projmux could not move this client to it` line.
 
 The typed `projmux create window` and `projmux create agent --create-window`

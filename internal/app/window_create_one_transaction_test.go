@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -90,7 +91,7 @@ func (r *windowCreateIntentRoute) assertMovedOnceOnto(t *testing.T, window corem
 
 // assertNothingCreated checks a refused Agent answer left the Registry and the
 // live server exactly as they were, moved nobody, and said one line that names
-// the reason and that no Window was created.
+// that no Window was created, then the reason.
 func (r *windowCreateIntentRoute) assertNothingCreated(t *testing.T, registryBefore, runtimeBefore string, reason string) {
 	t.Helper()
 	if got := r.store.snapshot(); got != registryBefore {
@@ -106,8 +107,8 @@ func (r *windowCreateIntentRoute) assertNothingCreated(t *testing.T, registryBef
 		t.Fatalf("client messages = %+v, want one line on the pressing client", r.tmux.clientMessages)
 	}
 	text := r.tmux.clientMessages[0].text
-	if !strings.HasPrefix(text, "projmux Create Window failed: ") || !strings.HasSuffix(text, "; no Window was created") ||
-		!strings.Contains(text, reason) || strings.Contains(text, "\n") || strings.Contains(text, windowCreatedMessage) {
+	if !strings.HasPrefix(text, windowNotCreatedHead) || !strings.Contains(text, reason) ||
+		strings.Contains(text, "\n") || strings.Contains(text, windowCreatedMessage) {
 		t.Fatalf("refusal line = %q, want one not-created line naming %q", text, reason)
 	}
 }
@@ -411,9 +412,13 @@ func TestWindowCreateQuietRefusalSaysExactlyOneLineOnThePressingClient(t *testin
 			if route.store.transactions != transactions || route.store.writes != 0 {
 				t.Fatalf("refusal opened %d transaction(s) and %d write(s)", route.store.transactions-transactions, route.store.writes)
 			}
-			displays := 0
+			displays, widthReads := 0, 0
 			for _, call := range route.tmux.calls {
 				argv := tmuxCommandArgv(call)
+				if slices.Equal(argv, []string{"display-message", "-p", "-c", windowCreatePressingClient, "-F", "#{client_width}"}) {
+					widthReads++
+					continue
+				}
 				if len(argv) == 0 || argv[0] != "display-message" {
 					t.Fatalf("refusal reached tmux beyond its one line: %v", call)
 				}
@@ -422,8 +427,9 @@ func TestWindowCreateQuietRefusalSaysExactlyOneLineOnThePressingClient(t *testin
 					t.Fatalf("refusal line shown ambiently, not on the pressing client: %v", argv)
 				}
 			}
-			if displays != 1 {
-				t.Fatalf("display-message calls = %d, want exactly one", displays)
+			if displays != 1 || widthReads != 1 {
+				t.Fatalf("display-message calls = %d and pressing-client width reads = %d, want exactly one of each",
+					displays, widthReads)
 			}
 			if plans := len(launcher.plans) + len(route.create.resumes.(*fakeResumeLauncher).plans); plans != 0 {
 				t.Fatalf("refused answer still built %d launch(es)", plans)

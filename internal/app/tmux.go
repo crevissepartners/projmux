@@ -571,7 +571,7 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 	}
 	switch {
 	case choice.problem != "":
-		return c.finishWindowIntent(pressing, "Create Window", "", "", errors.New(notCreatedLine(choice.problem)))
+		return c.finishWindowNotCreated(pressing, choice.problem)
 	case choice.cancelled:
 		return nil
 	}
@@ -590,7 +590,7 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 		if detail := strings.TrimSpace(actionErr.String()); detail != "" && !strings.Contains(reason, detail) {
 			reason += ": " + detail
 		}
-		return c.finishWindowIntent(pressing, "Create Window", "", "", errors.New(notCreatedLine(reason)))
+		return c.finishWindowNotCreated(pressing, reason)
 	}
 	// Now show it. A human asked for this Window, so the client that pressed
 	// the key moves onto it. A failed move keeps the Window.
@@ -600,6 +600,15 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 		return nil
 	}
 	return c.finishWindowIntent(pressing, "Create Window", windowCreatedMessage, "", nil)
+}
+
+// finishWindowNotCreated shows the one line of a Window create that committed
+// nothing on the exact client that pressed the key, fitted to that client's
+// width. The width read is the only tmux call it adds, and only this failure
+// pays for it.
+func (c *tmuxCommand) finishWindowNotCreated(client, reason string) error {
+	client = strings.TrimSpace(client)
+	return c.displayPaneMenuMessage(client, notCreatedLine(reason, readClientLineWidth(context.Background(), c.runner, client)))
 }
 
 // moveIntentClientToCreatedWindow moves exactly the pressing client onto a

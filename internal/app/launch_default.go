@@ -84,12 +84,17 @@ func (c *aiCommand) deleteOriginShell(paneID string) error {
 	return nil
 }
 
-// keptOriginShellLine appends what did not change to a failure reason. The
-// Window and its shell Pane are committed by the time any of this runs, and a
-// bare failure line reads like a rollback that never happened.
+// keptOriginShellHead leads a failure line whose Window and shell Pane are
+// already committed. What did not change comes first: a bare failure line reads
+// like a rollback that never happened, and a reason long enough to fill the
+// status line would push an outcome written after it off the screen.
+const keptOriginShellHead = "the Window keeps its shell Pane: "
+
+// keptOriginShellLine leads a failure reason with what did not change. The
+// display site fits it to the client with the head kept whole
+// (displayFreshLaunchDefaultLine).
 func keptOriginShellLine(reason string) string {
-	reason = strings.Join(strings.Fields(strings.TrimSpace(reason)), " ")
-	return reason + "; the Window keeps its shell Pane"
+	return keptOriginShellHead + strings.Join(strings.Fields(reason), " ")
 }
 
 // displaySplitLine shows one bounded line on the exact client that asked for

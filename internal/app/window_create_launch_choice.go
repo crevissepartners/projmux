@@ -183,11 +183,17 @@ func readAnswerFromStart(answer *os.File) ([]byte, error) {
 	return io.ReadAll(answer)
 }
 
-// notCreatedLine appends what did not happen to a reason a Window create's
-// question could not be asked. Nothing has been created at that point, and a
-// bare reason reads like a Window that is half there.
-func notCreatedLine(reason string) string {
-	return strings.Join(strings.Fields(strings.TrimSpace(reason)), " ") + "; no Window was created"
+// windowNotCreatedHead leads the line a Window create that committed nothing
+// shows. What did not happen comes first: a bare reason reads like a Window
+// that is half there, and a reason long enough to fill the status line would
+// push an outcome written after it off the screen.
+const windowNotCreatedHead = "projmux Create Window failed; no Window was created: "
+
+// notCreatedLine is the one line a Window create that committed nothing shows
+// on a client width cells wide: the outcome, then the reason, fitted by
+// fitClientLine.
+func notCreatedLine(reason string, width int) string {
+	return fitClientLine(windowNotCreatedHead, strings.Join(strings.Fields(reason), " "), width)
 }
 
 // splitAnswerFile is the answer file an answer-mode picker writes to, or empty

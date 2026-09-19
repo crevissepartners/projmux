@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -82,15 +83,20 @@ type fakeTmuxSession struct {
 	current string
 }
 
-// fakeTmuxClient is one attached client and the Session it shows.
+// fakeTmuxClient is one attached client, the Session it shows, and its width.
 type fakeTmuxClient struct {
 	name    string
 	session string
+	width   int
 }
+
+// fakeTmuxClientWidth is the width of an attached fake client: a wide
+// terminal, so a failure line's reason is shown whole unless a test narrows it.
+const fakeTmuxClientWidth = 200
 
 // attachClient models a client attached to session.
 func (f *fakeTmux) attachClient(name string, session *fakeTmuxSession) {
-	f.clients = append(f.clients, &fakeTmuxClient{name: name, session: session.id})
+	f.clients = append(f.clients, &fakeTmuxClient{name: name, session: session.id, width: fakeTmuxClientWidth})
 }
 
 // clientView returns the Session id and current Window id a client shows.
@@ -783,6 +789,15 @@ type fakeTmuxClientMessage struct {
 func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 	target := flagValue(args, "-t")
 	format := flagValue(args, "-F")
+	// A client-scoped width read is what a failure line is fitted to.
+	if client := flagValue(args, "-c"); client != "" && format == "#{client_width}" {
+		for _, candidate := range f.clients {
+			if candidate.name == client {
+				return []byte(strconv.Itoa(candidate.width) + "\n"), nil
+			}
+		}
+		return nil, fmt.Errorf("fake tmux: display-message: can't find client %q", client)
+	}
 	// A client-scoped message with no format is a status write, not a read:
 	// this is where every interactive action's bounded result lands.
 	if client := flagValue(args, "-c"); client != "" && format == "" && len(args) > 0 {

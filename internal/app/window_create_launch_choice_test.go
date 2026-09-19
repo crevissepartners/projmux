@@ -309,6 +309,7 @@ func newOrderedWindowCreateRoute(t *testing.T, choice launchChoice, createErr er
 	}
 	route := &orderedWindowCreateRoute{runner: &recordingTmuxRunner{outputs: map[string]string{
 		recordedTmuxCallKey("tmux", "list-clients", "-F", "#{client_name}"+focusFieldSeparator+"#{client_session}"): clients,
+		launchDefaultClientWidthKey: "200\n",
 	}}}
 	route.cmd = &tmuxCommand{
 		runner: route.runner,
@@ -351,14 +352,30 @@ func (r *orderedWindowCreateRoute) moved() bool {
 	return false
 }
 
+// launchDefaultClientWidthKey is the one width read a failure line costs,
+// addressed at the pressing client.
+var launchDefaultClientWidthKey = recordedTmuxCallKey("tmux", "display-message", "-p", "-c", launchDefaultClient, "-F", "#{client_width}")
+
+// lines is every line shown on a client; the width read is not one.
 func (r *orderedWindowCreateRoute) lines() []string {
 	var lines []string
 	for _, call := range r.runner.calls {
-		if len(call.args) > 0 && call.args[0] == "display-message" {
+		if len(call.args) > 0 && call.args[0] == "display-message" && !slices.Contains(call.args, "-p") {
 			lines = append(lines, call.args[len(call.args)-1])
 		}
 	}
 	return lines
+}
+
+// widthReads counts the reads of the pressing client's width.
+func (r *orderedWindowCreateRoute) widthReads() int {
+	reads := 0
+	for _, call := range r.runner.calls {
+		if recordedTmuxCallKey(call.name, call.args...) == launchDefaultClientWidthKey {
+			reads++
+		}
+	}
+	return reads
 }
 
 // TestWindowCreateIntentAsksFirstAndCommitsTheAnswerInOneCreate is the
@@ -385,7 +402,7 @@ func TestWindowCreateIntentAsksFirstAndCommitsTheAnswerInOneCreate(t *testing.T)
 		{name: "unaskable question creates nothing and says why",
 			choice:     launchChoice{problem: "could not open the launch picker: injected"},
 			wantEvents: []string{ask},
-			wantLines:  []string{"projmux Create Window failed: could not open the launch picker: injected; no Window was created"}},
+			wantLines:  []string{"projmux Create Window failed; no Window was created: could not open the launch picker: injected"}},
 		{name: "shell answer", wantEvents: []string{ask, "commit"}, wantMoved: true,
 			wantLines: []string{windowCreatedMessage}},
 		{name: "Agent answer", choice: claude, wantEvents: []string{ask, "commit"}, wantMoved: true,
@@ -395,7 +412,7 @@ func TestWindowCreateIntentAsksFirstAndCommitsTheAnswerInOneCreate(t *testing.T)
 		{name: "an Agent that does not commit leaves no Window and one line", choice: claude,
 			createErr:  errors.New("create agent: injected launch refusal"),
 			wantEvents: []string{ask, "commit"},
-			wantLines:  []string{"projmux Create Window failed: create agent: injected launch refusal: injected detail; no Window was created"}},
+			wantLines:  []string{"projmux Create Window failed; no Window was created: create agent: injected launch refusal: injected detail"}},
 		{name: "a shell create that does not commit keeps its refusal line",
 			createErr:  errors.New("create window refused"),
 			wantEvents: []string{ask, "commit"},
@@ -417,6 +434,15 @@ func TestWindowCreateIntentAsksFirstAndCommitsTheAnswerInOneCreate(t *testing.T)
 			}
 			if got := route.lines(); !slices.Equal(got, tt.wantLines) {
 				t.Fatalf("client lines = %q, want %q", got, tt.wantLines)
+			}
+			// Only a line that says no Window was created is fitted, so only it
+			// reads the client's width.
+			wantReads := 0
+			if len(tt.wantLines) == 1 && strings.HasPrefix(tt.wantLines[0], windowNotCreatedHead) {
+				wantReads = 1
+			}
+			if got := route.widthReads(); got != wantReads {
+				t.Fatalf("client width reads = %d, want %d", got, wantReads)
 			}
 		})
 	}

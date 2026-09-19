@@ -176,6 +176,11 @@ func committedResultDisplaySites() []committedResultSite {
 			Note: "the Window committed with the chosen first Pane in one transaction, and the pressing client could not be moved onto it",
 		},
 		{
+			File: "tmux.go", Snippet: `return c.displayPaneMenuMessage(client, notCreatedLine(reason, readClientLineWidth(`,
+			Kind: committedResultPreCommit,
+			Note: "finishWindowNotCreated: a Window create refused before its answer committed, or its answer rolled back; no Window was created",
+		},
+		{
 			File: "tmux.go", Snippet: `return c.displayPaneMenuMessage(strings.TrimSpace(client), "projmux "+label+" failed: "+reason)`,
 			Kind: committedResultPreCommit,
 			Note: "finishWindowIntent's failure half: the Window intent refused and committed nothing",

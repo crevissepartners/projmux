@@ -13,6 +13,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 // deletePaneRoute is the canonical Pane delete bound to this fixture's
@@ -85,7 +86,7 @@ type displayRecordingRunner struct {
 }
 
 func (r *displayRecordingRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if slices.Contains(args, "display-message") && len(args) > 0 {
+	if slices.Contains(args, "display-message") && !slices.Contains(args, "-p") && len(args) > 0 {
 		r.lines = append(r.lines, args[len(args)-1])
 	}
 	return r.inner.Run(ctx, name, args...)
@@ -324,9 +325,17 @@ func TestWindowCreateAppliesTheSavedLaunchDefaultThroughRealTmux(t *testing.T) {
 		if got := fx.clientPane(t); got != clientPaneBefore {
 			t.Fatalf("pressing client is on %s after a failed Agent, want it still on %s", got, clientPaneBefore)
 		}
-		if len(lines.lines) != 1 || !strings.Contains(lines.lines[0], "injected missing provider binary") ||
-			!strings.HasSuffix(lines.lines[0], "; no Window was created") {
+		if len(lines.lines) != 1 || !strings.HasSuffix(lines.lines[0], "injected missing provider binary") ||
+			!strings.HasPrefix(lines.lines[0], windowNotCreatedHead) {
 			t.Fatalf("pressing client lines = %q, want one not-created line", lines.lines)
+		}
+		// The line was fitted to the pressing client's real width.
+		width, err := fx.tmux("display-message", "-p", "-c", fx.client, "-F", "#{client_width}")
+		if err != nil || parsePositiveInt(width) <= 0 {
+			t.Fatalf("read the pressing client's width: %q, %v", width, err)
+		}
+		if got := projmuxpicker.VisibleLen(lines.lines[0]); got > parsePositiveInt(width) {
+			t.Fatalf("pressing client line %q is %d cells on a %s-cell client", lines.lines[0], got, width)
 		}
 	})
 

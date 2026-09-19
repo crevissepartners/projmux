@@ -618,6 +618,11 @@ func (c *switchCommand) fillFreshLaunchChoice(ctx context.Context, root string, 
 // would either be skipped or land on an unrelated server. A failed display is
 // swallowed -- the Session is open and the Window is there, and a line that
 // could not be shown is not a reason to call the open a failure.
+//
+// The line is fitted to the client's width, read through the same exact
+// socket; only an open that has a line to show pays for the read. A line led by
+// keptOriginShellHead keeps that head whole. Every other line the fill can
+// return is fitted as one reason.
 func (c *switchCommand) displayFreshLaunchDefaultLine(ctx context.Context, client, line string) {
 	line = strings.Join(strings.Fields(line), " ")
 	client = strings.TrimSpace(client)
@@ -629,6 +634,11 @@ func (c *switchCommand) displayFreshLaunchDefaultLine(ctx context.Context, clien
 		return
 	}
 	exact := explicitTmuxRunner{runner: c.tmuxRunner, target: target}
+	head := ""
+	if reason, kept := strings.CutPrefix(line, keptOriginShellHead); kept {
+		head, line = keptOriginShellHead, reason
+	}
+	line = fitClientLine(head, line, readClientLineWidth(ctx, exact, client))
 	_, _ = exact.Run(ctx, "tmux", "display-message", "-c", client, "-d", "10000", tmuxLiteralMessage(line))
 }
 

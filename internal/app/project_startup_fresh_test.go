@@ -1449,11 +1449,18 @@ func (s freshAskStarter) PruneProjectFreshStart(ctx context.Context, root string
 
 // freshAskRunner is the app-socket tmux of a fresh open: the exact handoff and
 // the one bounded line are recorded on the open's timeline, and displayErr
-// stands in for a client that could not be shown the line.
+// stands in for a client that could not be shown the line. The pressing
+// client's width read is recorded apart from the timeline, with its whole argv:
+// it answers width as tmux would print it, or a wide terminal when the test
+// states none, or widthErr.
 type freshAskRunner struct {
 	events     *[]string
 	lines      []string
 	displayErr error
+	width      string
+	widthErr   error
+	widthReads [][]string
+	displays   [][]string
 }
 
 func (r *freshAskRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
@@ -1462,11 +1469,21 @@ func (r *freshAskRunner) Run(_ context.Context, _ string, args ...string) ([]byt
 		command = command[2:]
 	}
 	switch {
+	case len(command) > 0 && command[0] == "display-message" && slices.Contains(command, "-p"):
+		r.widthReads = append(r.widthReads, slices.Clone(args))
+		if r.widthErr != nil {
+			return nil, r.widthErr
+		}
+		if r.width == "" {
+			return []byte("200\n"), nil
+		}
+		return []byte(r.width), nil
 	case len(command) > 0 && command[0] == "switch-client":
 		*r.events = append(*r.events, "open")
 	case len(command) > 0 && command[0] == "display-message":
 		*r.events = append(*r.events, "line")
 		r.lines = append(r.lines, command[len(command)-1])
+		r.displays = append(r.displays, slices.Clone(args))
 		if len(command) < 3 || command[1] != "-c" || command[2] != freshLaunchDefaultClient {
 			return nil, fmt.Errorf("display-message %v is not addressed at the pressing client", command)
 		}
@@ -1632,15 +1649,15 @@ func TestFreshOpenAsksBeforeItPrunesAndFillsBeforeItHandsOff(t *testing.T) {
 				wantEvents: opened},
 			{name: "a question that could not be asked opens with the shell and says so once",
 				choice:     launchChoice{problem: "could not open the launch picker: injected"},
-				wantEvents: saidOnce(opened), wantLine: "could not open the launch picker: injected; the Window keeps its shell Pane"},
+				wantEvents: saidOnce(opened), wantLine: "the Window keeps its shell Pane: could not open the launch picker: injected"},
 			{name: "a refused fill keeps the Session and says so once", choice: claude,
 				applied:    launchDefaultResult{problem: keptOriginShellLine("projmux could not open the Agent: injected")},
 				wantEvents: saidOnce(filled), wantFill: true,
-				wantLine: "projmux could not open the Agent: injected; the Window keeps its shell Pane"},
+				wantLine: "the Window keeps its shell Pane: projmux could not open the Agent: injected"},
 			{name: "an unresolvable shell Pane keeps the Session and says so once", choice: claude,
 				origin:     errors.New("the fresh Window declares 2 shell Panes and 0 Agents"),
 				wantEvents: saidOnce(opened),
-				wantLine:   "the fresh Window declares 2 shell Panes and 0 Agents; the Window keeps its shell Pane"},
+				wantLine:   "the Window keeps its shell Pane: the fresh Window declares 2 shell Panes and 0 Agents"},
 			{name: "a line that cannot be shown does not fail the open", choice: claude,
 				applied:    launchDefaultResult{problem: "injected fill refusal"},
 				displayErr: errors.New("injected display failure"),
@@ -1680,6 +1697,9 @@ func TestFreshOpenAsksBeforeItPrunesAndFillsBeforeItHandsOff(t *testing.T) {
 				}
 				if !slices.Equal(open.runner.lines, wantLines) {
 					t.Fatalf("client lines = %q, want %q", open.runner.lines, wantLines)
+				}
+				if len(open.runner.widthReads) != len(wantLines) {
+					t.Fatalf("client width reads = %q, want one per line shown and none otherwise", open.runner.widthReads)
 				}
 				for _, line := range open.runner.lines {
 					if strings.Contains(line, "no Window was created") {
@@ -1766,7 +1786,7 @@ func TestFreshOpenFromTheInProcessPickerNeverWaitsOnAQuestionItCannotShow(t *tes
 	}{
 		{name: "the popup could not show, so the answer is empty", choice: launchChoice{cancelled: true}},
 		{name: "the question failed", choice: launchChoice{problem: "could not open the launch picker: a popup is already open"},
-			wantLine: "could not open the launch picker: a popup is already open; the Window keeps its shell Pane"},
+			wantLine: "the Window keeps its shell Pane: could not open the launch picker: a popup is already open"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
