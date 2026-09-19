@@ -230,9 +230,23 @@ holds a per-Agent lock and delivers that Agent's held messages one at a time in
 acceptance order through the ordinary push. Before each message it reads the
 Registry again: a removed Agent or a route that no longer accepts the message
 makes it `stale`, a passed deadline makes it `expired`, and a target that
-awaits its operator again stops the release with the rest still held. A send
-that holds only behind earlier messages, or that finds the dialog already
-closed after writing its hold, starts the same release.
+awaits its operator again is watched as below, with the rest still held behind
+that message. Every send that writes a hold also starts the same release, so a
+hold never depends on a hook arriving later.
+
+A denied permission sends no hook in current Claude Code, so the release
+watches a target that awaits its operator instead of stopping. It keeps its
+lock and reads the Registry and the tail of the Agent's own recorded
+`transcript_path` again at a fixed interval of at most 2 seconds, for at most
+10 minutes or until the earliest deadline still ahead among the held messages,
+whichever comes first. A hook that moves the interaction on lets the message go
+out on the next read. A `turn_duration` line stamped after the blocking
+observation, with no assistant `tool_use` after it, means that turn has ended
+and its dialog is gone: the release records the `response_complete` interaction
+the `Stop` hook would have written, Registry state only and only if that same
+observation is still current, and delivers at once. A missing path, an
+unreadable file or line, or any other doubt keeps the message held; when the
+window ends the message stays held as below.
 
 When the target's helper does not answer the release's route probe and the
 target is not awaiting its operator, or when the Registry cannot be read, the

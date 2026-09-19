@@ -87,6 +87,16 @@ type holdFixture struct {
 	// runs after the clock advanced for that wait.
 	waits  []time.Duration
 	onWait func()
+	// transcript is what the target's transcript tail read returns;
+	// transcriptTruncated and transcriptErr complete that answer.
+	transcript          []byte
+	transcriptTruncated bool
+	transcriptErr       error
+	transcriptReads     int
+	// registryWrites counts committed Registry updates; beforeUpdate runs on
+	// the working copy before the update function sees it.
+	registryWrites int
+	beforeUpdate   func(*coremetadata.Registry)
 }
 
 // newHoldFixture wires one Claude Agent as both source and target, with one
@@ -131,6 +141,25 @@ func newHoldFixture(t *testing.T) *holdFixture {
 		messageRelease: func(agentUID string) error {
 			f.launches = append(f.launches, agentUID)
 			return nil
+		},
+		messageTranscriptTail: func(string) ([]byte, bool, error) {
+			f.transcriptReads++
+			return f.transcript, f.transcriptTruncated, f.transcriptErr
+		},
+		store: &resourceStore{
+			update: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+				working := f.registry.Clone()
+				if f.beforeUpdate != nil {
+					f.beforeUpdate(&working)
+				}
+				if err := fn(&working); err != nil {
+					return coremetadata.Registry{}, err
+				}
+				*f.registry = working
+				f.registryWrites++
+				return working.Clone(), nil
+			},
+			mutator: func() coremetadata.Mutator { return coremetadata.Mutator{} },
 		},
 	}
 	return f
@@ -226,8 +255,10 @@ func TestAgentMessageSendHoldsWhileClaudeTargetAwaitsOperator(t *testing.T) {
 				if got := f.delivery(t, ref); got.State != coremessage.StateHeld || got.Reason != claudeHoldReasonAwaitingOperator {
 					t.Fatalf("persisted = %+v, want held/%s", got, claudeHoldReasonAwaitingOperator)
 				}
-				if len(f.launches) != 0 {
-					t.Fatalf("release launched %v while the target still awaits its operator", f.launches)
+				// A blocked target may never send the hook that ends the
+				// hold, so the hold launches the release that watches it.
+				if !slices.Equal(f.launches, []string{f.claudeUID}) {
+					t.Fatalf("launches = %v, want one release watching the blocked target", f.launches)
 				}
 			})
 		}
@@ -292,8 +323,8 @@ func TestAgentMessageSendQueuesBehindEarlierHeldMessages(t *testing.T) {
 	if len(f.adapter.submits) != 0 {
 		t.Fatalf("the later message overtook the held one: submits=%v", f.adapter.submits)
 	}
-	if !slices.Equal(f.launches, []string{f.claudeUID}) {
-		t.Fatalf("launches = %v, want one release for a hold with no dialog to wait for", f.launches)
+	if !slices.Equal(f.launches, []string{f.claudeUID, f.claudeUID}) {
+		t.Fatalf("launches = %v, want one release per hold", f.launches)
 	}
 
 	if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
@@ -332,16 +363,25 @@ func TestAgentMessageReleaseOrderReblockExpiryAndStale(t *testing.T) {
 			t.Fatalf("release order = %v, want %v", f.adapter.submits, want)
 		}
 	})
-	t.Run("re-block stops and leaves the rest held", func(t *testing.T) {
+	t.Run("re-block watches and leaves the rest held", func(t *testing.T) {
 		f := newHoldFixture(t)
 		f.setInteraction(t, coremetadata.InteractionInProgress)
-		putThree(t, f)
+		f.installFakeSleep()
+		base := f.now.Add(-time.Minute)
+		// Deadlines past the watch window, so the window ends before any
+		// record expires.
+		f.putHeld(t, "message-release-c", base.Add(2*time.Second), f.now.Add(time.Hour))
+		f.putHeld(t, "message-release-a", base, f.now.Add(time.Hour))
+		f.putHeld(t, "message-release-b", base.Add(time.Second), f.now.Add(time.Hour))
 		f.adapter.onSubmit = func(string) { f.setInteraction(t, coremetadata.InteractionInputRequired) }
 		if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
 			t.Fatal(err)
 		}
 		if want := []string{"message-release-a"}; !slices.Equal(f.adapter.submits, want) {
 			t.Fatalf("release pushed %v, want only %v before the target blocked again", f.adapter.submits, want)
+		}
+		if got := sumHoldWaits(f.waits); got != agentMessageReleaseRetryWindow {
+			t.Fatalf("watched %v, want the whole %v window", got, agentMessageReleaseRetryWindow)
 		}
 		for _, ref := range []string{"message-release-b", "message-release-c"} {
 			if got := f.delivery(t, ref); got.State != coremessage.StateHeld {
@@ -505,12 +545,12 @@ func TestAgentMessageReleaseRejudgesAfterAnUndecidableRead(t *testing.T) {
 			t.Fatalf("waited %v, want the whole %v window", got, agentMessageReleaseRetryWindow)
 		}
 	})
-	t.Run("target blocked again during a wait stops", func(t *testing.T) {
+	t.Run("target blocked again during a wait is watched", func(t *testing.T) {
 		f := newHoldFixture(t)
 		f.setInteraction(t, coremetadata.InteractionInProgress)
 		f.installFakeSleep()
 		const ref = "message-retry-reblock"
-		f.putHeld(t, ref, f.now.Add(-time.Minute), f.now.Add(5*time.Minute))
+		f.putHeld(t, ref, f.now.Add(-time.Minute), f.now.Add(time.Hour))
 		f.routeErr = unanswered
 		f.onWait = func() { f.setInteraction(t, coremetadata.InteractionInputRequired) }
 		if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
@@ -519,8 +559,15 @@ func TestAgentMessageReleaseRejudgesAfterAnUndecidableRead(t *testing.T) {
 		if got := f.delivery(t, ref); got.State != coremessage.StateHeld || len(f.adapter.submits) != 0 {
 			t.Fatalf("record = %+v submits=%v, want still held and no push", got, f.adapter.submits)
 		}
-		if want := []time.Duration{2 * time.Second}; !slices.Equal(f.waits, want) {
-			t.Fatalf("waits = %v, want only %v before the blocked target stopped the release", f.waits, want)
+		// The blocked target is watched at the fixed interval, not at the
+		// doubling backoff, until the window ends.
+		for _, wait := range f.waits {
+			if wait != agentMessageReleaseWatchInterval {
+				t.Fatalf("waits = %v, want every wait %v", f.waits, agentMessageReleaseWatchInterval)
+			}
+		}
+		if got := sumWaits(f.waits); got != agentMessageReleaseRetryWindow {
+			t.Fatalf("watched %v, want the whole %v window", got, agentMessageReleaseRetryWindow)
 		}
 	})
 	t.Run("deadline during the retry expires the record", func(t *testing.T) {

@@ -86,7 +86,11 @@ type agentCommand struct {
 	// messageRelease launches the detached release of the messages held for
 	// one target Agent. Nil launches nothing.
 	messageRelease func(string) error
-	focus          rawArgvCommand
+	// messageTranscriptTail reads the bounded tail of a blocked Claude target's
+	// recorded transcript for the held-message release, and reports whether
+	// the read started after offset 0. Nil reads the file.
+	messageTranscriptTail func(string) ([]byte, bool, error)
+	focus                 rawArgvCommand
 	// paneDelete is the `delete` route. `agent persona` closes a Running
 	// Agent's managed Pane through it rather than through a tmux call of its
 	// own, so the stop is the same one `delete pane` performs.

@@ -523,6 +523,16 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | `CwdChanged` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `FileChanged` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 
+Current Claude Code (2.1.277) sends no hook when the operator denies a
+permission dialog, so neither `PermissionDenied` nor `Stop` closes it and the
+Agent keeps its `approval_required` observation. The held coordination message
+release is therefore a second transcript tail reader besides `Stop`: while a
+held message waits on that Agent, it reads the tail (at most 256 KiB) of the
+`transcript_path` recorded in the Agent's own Registry binding, and looks only
+at each line's type, subtype, and timestamp and whether an assistant line has a
+`tool_use` item. Nothing it reads is stored, logged, or forwarded. See
+[held messages](claude-coordination-endpoints.md#held-while-the-target-awaits-its-operator).
+
 Hook-generated queue rows use the same compact body catalog: agent label,
 event category, then the best available summary (Codex assistant text, Claude
 tool/action summary, transcript summary, error, or teammate labels). Structured
