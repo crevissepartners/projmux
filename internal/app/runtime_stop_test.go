@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -22,7 +23,10 @@ type exactManagedStopRunner struct {
 	applyKills bool
 	listReads  int
 	onListRead func(int)
-	calls      []recordedTmuxCall
+	// goneAfterRead, when set, makes every list-sessions read after that many
+	// answer without the target Session, as if it ended outside this stop.
+	goneAfterRead int
+	calls         []recordedTmuxCall
 }
 
 func (r *exactManagedStopRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -52,6 +56,9 @@ func (r *exactManagedStopRunner) Run(_ context.Context, name string, args ...str
 		r.listReads++
 		if r.onListRead != nil {
 			r.onListRead(r.listReads)
+		}
+		if r.goneAfterRead > 0 && r.listReads > r.goneAfterRead {
+			return nil, nil
 		}
 		rootUID := r.rootUID
 		if rootUID == "" {
@@ -133,7 +140,8 @@ func TestManagedRuntimeStopUsesOnePrintedPhysicalObservationAndRegistryAuthority
 	}
 	pane, _ := store.registry.Pane("pan-alpha-codex")
 	agent, _ := store.registry.Agent("agt-alpha-codex")
-	if store.writes != 1 || pane.Status.LastTermination == nil || agent.Status.LastTermination == nil ||
+	// One interruption prewrite before the kill, one projection write after it.
+	if store.writes != 2 || pane.Status.LastTermination == nil || agent.Status.LastTermination == nil ||
 		pane.Status.LastTermination.Classification != coremetadata.TerminationInterrupted ||
 		pane.Status.LastTermination.Source != coremetadata.TerminationSourceControlAction ||
 		pane.Status.LastTermination.Generation != "gen-alpha" ||
@@ -141,6 +149,7 @@ func TestManagedRuntimeStopUsesOnePrintedPhysicalObservationAndRegistryAuthority
 		t.Fatalf("managed stop interruption evidence = writes=%d pane=%+v agent=%+v", store.writes,
 			pane.Status.LastTermination, agent.Status.LastTermination)
 	}
+	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: false})
 	for _, call := range runner.calls {
 		if len(call.args) < 2 || call.args[0] != "-S" || call.args[1] != runner.physical {
 			t.Fatalf("managed stop mixed logical/ambient route: %#v", runner.calls)
@@ -238,9 +247,12 @@ func TestProjectStopFailureCompensatesOnlyWhenExactSessionIsProvedLive(t *testin
 		name       string
 		applyKills bool
 		wantStored bool
+		wantLive   bool
 	}{
-		{name: "apply error and live session compensates", wantStored: false},
-		{name: "apply error after absence retains", applyKills: true, wantStored: true},
+		// A proved-live Session keeps its stored projection live; a proved-absent
+		// one is recorded not live even though tmux reported the kill as failed.
+		{name: "apply error and live session compensates", wantStored: false, wantLive: true},
+		{name: "apply error after absence retains", applyKills: true, wantStored: true, wantLive: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := freshStartFixtureStore(t)
@@ -269,6 +281,7 @@ func TestProjectStopFailureCompensatesOnlyWhenExactSessionIsProvedLive(t *testin
 				pane.Status.LastTermination.OperationID != agent.Status.LastTermination.OperationID) {
 				t.Fatalf("retained receipts do not share operation: pane=%+v agent=%+v", pane.Status.LastTermination, agent.Status.LastTermination)
 			}
+			assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: test.wantLive})
 		})
 	}
 }
@@ -305,6 +318,7 @@ func TestProjectStopGenerationDriftAfterPrewriteRefusesKill(t *testing.T) {
 	if pane.Status.Activation.Generation != "gen-racing-activation" || pane.Status.LastTermination != nil || agent.Status.LastTermination != nil {
 		t.Fatalf("generation drift compensation touched foreign activation: pane=%+v agent=%+v", pane.Status, agent.Status)
 	}
+	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: true})
 	for _, call := range runner.calls {
 		if len(call.args) > 2 && call.args[2] == "kill-session" {
 			t.Fatalf("generation drift reached tmux mutation: %#v", runner.calls)
@@ -383,4 +397,163 @@ func TestProjectStopSurfaceExecutorMatchesLifecycleTableAndGenericCopyStaysGener
 		t.Fatalf("generic Session stop copy does not state runtime-only managed-identity preservation: label=%q description=%q",
 			keyBindingDisplayName(generic), generic.Description)
 	}
+}
+
+func runtimeStopProjectTarget(runner *exactManagedStopRunner) managedRuntimeStopTarget {
+	return managedRuntimeStopTarget{SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+		Route: runtimeMutationRoute{target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
+			socketName: defaultAppSocket, expectedSocketPath: runner.physical,
+			authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
+}
+
+func assertRuntimeStopSessionProjection(t *testing.T, store *fakeResourceStore, projectUID string, want *coremetadata.SessionProjection) {
+	t.Helper()
+	project, ok := store.registry.Project(projectUID)
+	if !ok {
+		t.Fatalf("Project %s disappeared", projectUID)
+	}
+	got := project.Status.Session
+	if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+		t.Fatalf("Project %s status.session = %+v, want %+v", projectUID, got, want)
+	}
+}
+
+// projectionWriteFailingStore commits every Registry transaction into backing
+// except one that changes a Project's stored session projection, which fails
+// the way a lost durable write would. Interruption receipts still commit.
+func projectionWriteFailingStore(backing *fakeResourceStore) *resourceStore {
+	store := backing.store()
+	store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		backing.transactions++
+		working := backing.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		for _, project := range working.Projects {
+			before, _ := backing.registry.Project(project.Metadata.UID)
+			if !reflect.DeepEqual(before.Status.Session, project.Status.Session) {
+				return coremetadata.Registry{}, errors.New("injected projection write failure")
+			}
+		}
+		working = working.Normalize()
+		if err := working.Validate(); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		backing.registry = working
+		backing.writes++
+		return working, nil
+	}
+	return store
+}
+
+func TestManagedProjectStopLowersOnlyTheExactStoredSessionProjection(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		stored *coremetadata.SessionProjection
+		want   *coremetadata.SessionProjection
+	}{
+		{name: "matching live projection is recorded not live",
+			stored: &coremetadata.SessionProjection{Name: "alpha", Live: true},
+			want:   &coremetadata.SessionProjection{Name: "alpha", Live: false}},
+		{name: "projection naming another session is untouched",
+			stored: &coremetadata.SessionProjection{Name: "alpha-renamed", Live: true},
+			want:   &coremetadata.SessionProjection{Name: "alpha-renamed", Live: true}},
+		{name: "absent projection is not invented"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := freshStartFixtureStore(t)
+			activateRuntimeStopAgent(t, store, "gen-projection")
+			for i := range store.registry.Projects {
+				if store.registry.Projects[i].Metadata.UID == "prj-alpha" {
+					store.registry.Projects[i].Status.Session = test.stored
+				}
+			}
+			runner := &exactManagedStopRunner{physical: "/tmp/projmux-stop", logical: defaultAppSocket, rootUID: "prj-alpha"}
+			stopStore := store.store()
+			if err := executeManagedRuntimeStop(context.Background(), runner, runtimeStopProjectTarget(runner),
+				managedRuntimeStopRegistryAuthority(stopStore.snapshot), stopStore); err != nil {
+				t.Fatalf("executeManagedRuntimeStop() error = %v", err)
+			}
+			if !runner.killed {
+				t.Fatal("managed stop did not kill the exact Session")
+			}
+			assertRuntimeStopSessionProjection(t, store, "prj-alpha", test.want)
+			// A sibling Project's projection is never part of this stop.
+			assertRuntimeStopSessionProjection(t, store, "prj-beta", &coremetadata.SessionProjection{Name: "beta", Live: false})
+		})
+	}
+}
+
+func TestManagedProjectStopRefusedBeforeKillLeavesSessionProjectionLive(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	runner := &exactManagedStopRunner{physical: "/tmp/projmux-stop", logical: defaultAppSocket, rootUID: "prj-alpha"}
+	err := executeManagedRuntimeStop(context.Background(), runner, runtimeStopProjectTarget(runner),
+		func(context.Context, coremetadata.Kind, string, string) (bool, error) { return false, nil }, store.store())
+	if err == nil || !strings.Contains(err.Error(), "Registry authority") || runner.killed {
+		t.Fatalf("authority refusal = killed %t, err %v; want refusal and zero kill", runner.killed, err)
+	}
+	if store.writes != 0 {
+		t.Fatalf("refused stop wrote the Registry %d times, want 0", store.writes)
+	}
+	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: true})
+}
+
+func TestManagedProjectStopOfAlreadyAbsentSessionRecordsProjectionNotLive(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	activateRuntimeStopAgent(t, store, "gen-gone")
+	// Read 1 is the pre-prewrite liveness check; the plan's own reobservation
+	// then finds the Session gone, so the plan converges without a kill.
+	runner := &exactManagedStopRunner{physical: "/tmp/projmux-stop", logical: defaultAppSocket, rootUID: "prj-alpha", goneAfterRead: 1}
+	stopStore := store.store()
+	if err := executeManagedRuntimeStop(context.Background(), runner, runtimeStopProjectTarget(runner),
+		managedRuntimeStopRegistryAuthority(stopStore.snapshot), stopStore); err != nil {
+		t.Fatalf("executeManagedRuntimeStop() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 2 && call.args[2] == "kill-session" {
+			t.Fatalf("already-absent Session reached tmux mutation: %#v", runner.calls)
+		}
+	}
+	pane, _ := store.registry.Pane("pan-alpha-codex")
+	agent, _ := store.registry.Agent("agt-alpha-codex")
+	if pane.Status.LastTermination != nil || agent.Status.LastTermination != nil {
+		t.Fatalf("stop that interrupted nothing retained receipts: pane=%+v agent=%+v", pane.Status.LastTermination, agent.Status.LastTermination)
+	}
+	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: false})
+}
+
+func TestManagedProjectStopProjectionWriteFailureReportsTheSessionWasStopped(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	activateRuntimeStopAgent(t, store, "gen-write-fails")
+	runner := &exactManagedStopRunner{physical: "/tmp/projmux-stop", logical: defaultAppSocket, rootUID: "prj-alpha"}
+	stopStore := projectionWriteFailingStore(store)
+	err := executeManagedRuntimeStop(context.Background(), runner, runtimeStopProjectTarget(runner),
+		managedRuntimeStopRegistryAuthority(stopStore.snapshot), stopStore)
+	if err == nil || !runner.killed {
+		t.Fatalf("projection write failure = killed %t, err %v; want the kill and a returned error", runner.killed, err)
+	}
+	for _, want := range []string{
+		"managed session alpha was stopped but Project prj-alpha session projection could not be recorded as not live",
+		"injected projection write failure",
+		"action=stop stage=runtime-stop",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("projection write failure error = %q, want %q", err, want)
+		}
+	}
+	if IsUsageError(err) {
+		t.Fatalf("projection write failure classified as usage error: %v", err)
+	}
+	// The Session is gone, so its interruption receipts stay; only the
+	// projection write was lost.
+	pane, _ := store.registry.Pane("pan-alpha-codex")
+	if pane.Status.LastTermination == nil || pane.Status.LastTermination.Generation != "gen-write-fails" {
+		t.Fatalf("interruption receipt after projection failure = %+v", pane.Status.LastTermination)
+	}
+	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: true})
 }

@@ -1683,6 +1683,54 @@ if [[ "$(run_inside_lifecycle describe project lifecycle-verbs -o uid)" != "$lif
   exit 1
 fi
 
+# A proved stop records the stored session projection as not live and keeps its
+# name, so the STATUS column that reads it says offline. start raises it again
+# and a second stop lowers it again, leaving the Project stopped as it was for
+# the unregister steps below.
+lifecycle_session_projection() {
+  run_inside_lifecycle describe project "uid:$lifecycle_project_uid" -o json \
+    | awk '/"session": \{/ { inside = 1 }
+      inside && /"name":/ && name == "" { sub(/.*"name": "/, ""); sub(/".*/, ""); name = $0 }
+      inside && /"live":/ && live == "" { sub(/.*"live": /, ""); sub(/[,[:space:]].*/, ""); live = $0 }
+      END { print name " " live }'
+}
+lifecycle_projection_status() {
+  run_inside_lifecycle get projects | awk '$1 == "lifecycle-verbs" { print $2 }'
+}
+for lifecycle_projection_step in stopped started restopped; do
+  case "$lifecycle_projection_step" in
+    started)
+      run_inside_lifecycle start project "uid:$lifecycle_project_uid" \
+        >"$PROJMUX_SMOKE_WORKDIR/lifecycle-projection-start.out"
+      smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-projection-start.out" "runtime=materialized"
+      lifecycle_projection_want="live"
+      lifecycle_projection_live="true"
+      ;;
+    restopped)
+      run_inside_lifecycle stop project "uid:$lifecycle_project_uid" \
+        >"$PROJMUX_SMOKE_WORKDIR/lifecycle-projection-restop.out"
+      smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-projection-restop.out" "runtime=stopped"
+      lifecycle_projection_want="offline"
+      lifecycle_projection_live="false"
+      ;;
+    *)
+      lifecycle_projection_want="offline"
+      lifecycle_projection_live="false"
+      ;;
+  esac
+  lifecycle_projection="$(lifecycle_session_projection)"
+  if [[ "$lifecycle_projection" != "$lifecycle_session $lifecycle_projection_live" ]]; then
+    echo "after $lifecycle_projection_step, status.session = '$lifecycle_projection', want '$lifecycle_session $lifecycle_projection_live'" >&2
+    exit 1
+  fi
+  lifecycle_projection_row="$(lifecycle_projection_status)"
+  if [[ "$lifecycle_projection_row" != "$lifecycle_projection_want" ]]; then
+    echo "after $lifecycle_projection_step, get projects STATUS = '$lifecycle_projection_row', want '$lifecycle_projection_want'" >&2
+    exit 1
+  fi
+done
+echo ">> stop project recorded status.session live=false for $lifecycle_session (stop, start, stop again)"
+
 # unregister removes the Registry subtree and preserves the filesystem root.
 run_inside_lifecycle unregister project "uid:$lifecycle_project_uid" --yes \
   >"$PROJMUX_SMOKE_WORKDIR/lifecycle-unregister.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-unregister.err"

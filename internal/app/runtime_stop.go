@@ -165,10 +165,15 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 		},
 	}})
 	if !applyAttempted {
-		return compensate(planErr)
+		if planErr != nil {
+			return compensate(planErr)
+		}
+		// Reobserve proved the exact Session already absent, so this stop
+		// interrupted nothing yet still succeeds on a proved-absent target.
+		return errors.Join(compensate(nil), recordManagedRuntimeStopSessionNotLive(stopStore, target))
 	}
 	if planErr == nil {
-		return nil
+		return recordManagedRuntimeStopSessionNotLive(stopStore, target)
 	}
 
 	// tmux may return an error after applying kill-session. Retain the receipt
@@ -184,7 +189,35 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 			coremetadata.TerminationSourceControlAction, coremetadata.TerminationInterrupted, operationID,
 			projectStopInterruptionSummary(interruptions), observeErr))
 	}
-	return planErr
+	return errors.Join(planErr, recordManagedRuntimeStopSessionNotLive(stopStore, target))
+}
+
+// recordManagedRuntimeStopSessionNotLive lowers the stored Project session
+// projection once exact reobservation proved the target Session absent. It is
+// written after the kill, not prewritten with compensation like interruption
+// receipts: the create routes read status.session as their materialization
+// preflight, so a prewrite would publish live=false while the Session still
+// runs, and a failed compensation would leave a live Session reported offline.
+// Only the projection naming this exact Session is lowered; a missing Project,
+// an absent projection, or one naming another Session stays untouched.
+func recordManagedRuntimeStopSessionNotLive(store *resourceStore, target managedRuntimeStopTarget) error {
+	if target.RootKind != coremetadata.KindProject {
+		return nil
+	}
+	_, err := store.update(func(working *coremetadata.Registry) error {
+		project, ok := working.Project(target.RootUID)
+		if !ok || project.Status.Session == nil || project.Status.Session.Name != target.SessionName ||
+			!project.Status.Session.Live {
+			return nil
+		}
+		_, err := store.mutator().BindProjectSession(working, target.RootUID, project.Status.Session.Name, false)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("managed session %s was stopped but Project %s session projection could not be recorded as not live: %w",
+			target.SessionName, target.RootUID, MapMetadataError(err))
+	}
+	return nil
 }
 
 // recordProjectStopInterruptions atomically records one receipt for every and

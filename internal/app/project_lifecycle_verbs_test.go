@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -248,6 +249,89 @@ func TestStopProjectEndsOnlyTheRuntimeAndRefusesAnOfflineTarget(t *testing.T) {
 				store.writes, len(store.registry.Projects), before)
 		}
 	})
+}
+
+// TestStopProjectRecordsSessionProjectionNotLiveOrFailsLoudly pins the stored
+// projection half of `stop project`: a proved stop records the Project's
+// status.session as not live, and a lost projection write is a non-zero stop
+// that says the Session was stopped, never a silent success receipt.
+func TestStopProjectRecordsSessionProjectionNotLiveOrFailsLoudly(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		failWrite bool
+	}{
+		{name: "stop records the projection not live"},
+		{name: "lost projection write fails with the stop disclosed", failWrite: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			const (
+				socketPath = "/tmp/fake-tmux/primary"
+				serverPID  = "4242"
+				projectDir = "/src/alpha"
+				anchorPane = "%9"
+			)
+			switcher, stop, executor := sidebarPopupStopFixture(t, projectDir, socketPath, serverPID, anchorPane, nil)
+			popupEnv := switcher.lookupEnv
+			switcher.lookupEnv = func(name string) string {
+				if name == "TMUX_PANE" {
+					return anchorPane
+				}
+				return popupEnv(name)
+			}
+			bindSidebarPopupManagedRow(t, switcher, stop, projectDir)
+			sessionName, err := switcher.resolveTargetSession(projectDir)
+			if err != nil {
+				t.Fatalf("resolve fixture session: %v", err)
+			}
+			executor.exists[sessionName] = true
+			backing := &fakeResourceStore{
+				registry: runtimeFixtureRegistry(),
+				dirs:     map[string]bool{projectDir: true},
+				now:      resourceFixtureClock,
+			}
+			backing.registry.Projects[0].Status.Session = &coremetadata.SessionProjection{Name: sessionName, Live: true}
+			switcher.managedStopStore = backing.store()
+			if test.failWrite {
+				switcher.managedStopStore = projectionWriteFailingStore(backing)
+			}
+			cmd := &projectLifecycleCommand{
+				verb: projectLifecycleStop, store: backing.store(), switcher: switcher,
+				lookupEnv: func(string) string { return "" },
+			}
+
+			stdout, _, runErr := runRoute(t, cmd, "project", "uid:"+runtimeFixtureProject)
+			if !stop.killed {
+				t.Fatalf("stop project did not kill the managed Session (err: %v)", runErr)
+			}
+			project, _ := backing.registry.Project(runtimeFixtureProject)
+			if !test.failWrite {
+				if runErr != nil {
+					t.Fatalf("stop project error = %v", runErr)
+				}
+				if got := project.Status.Session; got == nil || got.Name != sessionName || got.Live {
+					t.Fatalf("stop project status.session = %+v, want {%s false}", got, sessionName)
+				}
+				return
+			}
+			if exitCodeOf(runErr) != 1 {
+				t.Fatalf("stop project exit = %d (err %v), want 1", exitCodeOf(runErr), runErr)
+			}
+			want := "managed session " + sessionName + " was stopped but Project " + runtimeFixtureProject +
+				" session projection could not be recorded as not live"
+			if !strings.Contains(runErr.Error(), want) {
+				t.Fatalf("stop project error = %q, want %q", runErr, want)
+			}
+			if stdout != "" {
+				t.Fatalf("stop project with a lost projection write printed a receipt: %q", stdout)
+			}
+			if got := project.Status.Session; got == nil || !got.Live {
+				t.Fatalf("failed projection write changed status.session = %+v", got)
+			}
+		})
+	}
 }
 
 // TestProjectLifecycleReceiptProjectionIsVersionedJSON pins the machine half of

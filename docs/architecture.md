@@ -216,6 +216,16 @@ Resources and ownership:
   live only in runtime inventory, outside the Project hierarchy. A
   ControlSession is not a counter-example: it is a root resource that *names* a
   session, and the session still carries no identity of its own.
+- `Project.status.session` is the **last recorded** projection, not a live
+  read. Registration records the name with `live=false`; create,
+  materialize, Project startup, and legacy import write `live=true`; a
+  successful managed Project stop writes `live=false` only after the exact
+  Session is observed absent, keeping the name. The full reconciler pass
+  (`refreshSessionProjections`, run by the create routes and by controller
+  convergence) recomputes it for every Project, while `reconcile resources`
+  scopes its pass to Projects with an observed live Session, so it does not
+  lower a stopped Project's projection. A Session that ends outside projmux
+  can therefore leave a stale `live=true` until a full pass recomputes it.
 - `Window` and `Pane` carry **no stored liveness field**, deliberately. Their
   `status` block holds observed conditions only; live/offline is derived from a
   live tmux observation at read time. See *Runtime observation and resource
@@ -1093,8 +1103,8 @@ Runtime observation and resource status:
   precedence contract is unchanged, and it now applies to a Window or Pane whose
   owning Project lost its root even while tmux is still running them.
 - A **Project** is the one kind whose runtime object is a tmux *session*, which
-  has no `@projmux` uid of its own, so Project status still reads
-  `status.session` as refreshed by the reconciler.
+  has no `@projmux` uid of its own, so Project status still reads the stored
+  `status.session` projection (see *Resource metadata model* for its writers).
 - An **Agent** owns no tmux object of its own — there is no `@projmux_agent_uid`
   and there must not be one, because an Agent outlives the managed Pane it is
   bound to. Its runtime object is **that managed Pane**, named by
