@@ -11,6 +11,8 @@ SMOKE_CONTRACT_STARTED_MS=0
 SMOKE_CONTRACT_TERMINAL=0
 SMOKE_CONTRACT_TERMINAL_JSON=""
 SMOKE_CONTRACT_DIAGNOSTIC_JSON=""
+SMOKE_CONTRACT_SUBSHELL=0
+SMOKE_CONTRACT_LINE=0
 
 SMOKE_L06_HOLDER_PID=0
 SMOKE_L06_HOLDER_HELD_MS=0
@@ -336,16 +338,39 @@ smoke_contract_fail() {
   SMOKE_CONTRACT_TERMINAL=1
 }
 
+# Pick the terminal line inside the file the contract records as its source and
+# leave it in SMOKE_CONTRACT_LINE. Frame i's caller file is BASH_SOURCE[i+1] and
+# its line there is BASH_LINENO[i]; the innermost frame called from the recorded
+# file wins, and FALLBACK stays when none is. A failure inside a function of the
+# recorded file keeps its own line; one inside another file's function or at the
+# top level of a sourced file maps to the recorded file's call or `source` line.
+# Frame 0 is this helper, so the walk starts at its caller. No `$(...)` here:
+# with errtrace the ERR trap would run inside it.
+smoke_contract_line() {
+  local frame
+  SMOKE_CONTRACT_LINE="$1"
+  [[ -n "$SMOKE_CONTRACT_ID" ]] || return 0
+  for ((frame = 1; frame + 1 < ${#BASH_SOURCE[@]}; frame++)); do
+    if [[ "${BASH_SOURCE[frame + 1]#"$smoke_root/"}" == "$SMOKE_CONTRACT_SOURCE" ]]; then
+      SMOKE_CONTRACT_LINE="${BASH_LINENO[frame]}"
+      return 0
+    fi
+  done
+}
+
 # Bash does not run ERR for the explicit `exit 1` branches used by assertion
 # blocks. Keep exit semantics intact while giving those branches the same exact
-# call-site source line as command failures. This function is not exported, so
-# fixture children and product commands retain the shell builtin unchanged.
+# call-site source line as command failures. An exit inside a subshell only ends
+# that subshell: the contract shell records it once, from the ERR trap at the
+# line that started the subshell. This function is not exported, so fixture
+# children and product commands retain the shell builtin unchanged.
 exit() {
   local status="${1:-0}"
-  local line="${BASH_LINENO[0]:-0}"
-  if [[ "$status" != "0" && -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
+  if [[ "$status" != "0" && -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" &&
+    "$BASH_SUBSHELL" == "$SMOKE_CONTRACT_SUBSHELL" ]]; then
     set +e
-    smoke_contract_fail "$status" "$line"
+    smoke_contract_line "${BASH_LINENO[0]:-0}"
+    smoke_contract_fail "$status" "$SMOKE_CONTRACT_LINE"
   fi
   builtin exit "$status"
 }
@@ -362,6 +387,7 @@ smoke_contract_begin() {
   SMOKE_CONTRACT_PHASE="$phase"
   SMOKE_CONTRACT_OWNER="$owner"
   SMOKE_CONTRACT_SOURCE="${BASH_SOURCE[1]#"$smoke_root/"}"
+  SMOKE_CONTRACT_SUBSHELL="$BASH_SUBSHELL"
   SMOKE_CONTRACT_TERMINAL_STATE_PATH=""
   SMOKE_CONTRACT_STARTED_MS="$(smoke_now_ms)"
   SMOKE_CONTRACT_TERMINAL=0
@@ -377,33 +403,24 @@ smoke_contract_pass() {
 
 smoke_contract_err() {
   local status="$1"
-  local line="$2"
-  local had_errexit=0 frame
+  local had_errexit=0
   case "$-" in
     *e*) had_errexit=1 ;;
   esac
   set +e
-  # Keep the line inside the file the contract records as its source. Frame i's
-  # caller file is BASH_SOURCE[i+1] and its line there is BASH_LINENO[i], so a
-  # failure at the top level of a file sourced after smoke_contract_begin is
-  # reported at that file's `source` call in the recorded file.
-  if [[ -n "$SMOKE_CONTRACT_ID" ]]; then
-    for ((frame = 0; frame + 1 < ${#BASH_SOURCE[@]}; frame++)); do
-      if [[ "${BASH_SOURCE[frame + 1]#"$smoke_root/"}" == "$SMOKE_CONTRACT_SOURCE" ]]; then
-        line="${BASH_LINENO[frame]}"
-        break
-      fi
-    done
-  fi
+  smoke_contract_line "$2"
   # ERR traps also run for deliberately observed non-zero commands while the
   # caller has `set +e`.  Those commands are part of the assertion protocol,
   # not terminal failures.  In particular, never re-enable errexit behind the
   # caller's back: doing so turns the expected status capture itself into a
-  # false deterministic regression.
-  if [[ "$had_errexit" == "1" && -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
-    smoke_contract_fail "$status" "$line"
-  elif [[ "$had_errexit" == "1" ]]; then
-    echo "E2E_CONTRACT unattributed=1 status=$status line=$line" >&2
+  # false deterministic regression. A subshell's firing is left to the
+  # contract shell, which fires again at the line that started the subshell.
+  if [[ "$had_errexit" == "1" && "$BASH_SUBSHELL" == "$SMOKE_CONTRACT_SUBSHELL" ]]; then
+    if [[ -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
+      smoke_contract_fail "$status" "$SMOKE_CONTRACT_LINE"
+    else
+      echo "E2E_CONTRACT unattributed=1 status=$status line=$SMOKE_CONTRACT_LINE" >&2
+    fi
   fi
   if [[ "$had_errexit" == "1" ]]; then
     set -e
@@ -414,10 +431,12 @@ smoke_contract_err() {
 # Inside the ERR trap $LINENO is the failing command's own line. BASH_LINENO[0]
 # is the caller frame's line, which Bash reports as 0 for any top-level failure.
 # smoke_contract_err then maps the line into the recorded `source` file, so the
-# terminal line is always a line of that file. Without errtrace, a command
-# failing inside a function under errexit never runs this trap, so that shape
-# records no terminal line rather than a wrong one.
+# terminal line is always a line of that file. errtrace makes the trap run for a
+# command failing inside a function too, at that command's line. It also runs
+# the trap in `$(...)`, `( ... )`, and pipeline subshells; only the contract
+# shell records, so each failure still yields one terminal record.
 smoke_contract_install_trap() {
+  set -o errtrace
   trap 'smoke_contract_err "$?" "$LINENO"' ERR
 }
 

@@ -6,9 +6,10 @@ set -euo pipefail
 # `terminal-line:` marker comment, and the expected line is read from this file,
 # so moving a line never needs a second edit.
 #
-# The function-internal shape has no ERR trap without errtrace, and errtrace is
-# deliberately off (it would run the trap in every `$(...)` subshell too). That
-# case is pinned as "no terminal record": never a wrong line, never a duplicate.
+# errtrace runs the ERR trap inside functions and subshells too. A failure
+# inside a function of this file records the failing line in that function; a
+# subshell's failure or exit records once, at the line that started it; and a
+# non-zero status observed under `set +e` records nothing.
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 self="$root/test/e2e/terminal-line-contract.sh"
@@ -25,6 +26,23 @@ if [[ -n "${PROJMUX_TERMINAL_LINE_CASE:-}" ]]; then
   fail_return() { return 1; }
   fail_inside() {
     true
+    false # terminal-line: func-internal
+  }
+  inner() {
+    true
+    false # terminal-line: func-nested
+  }
+  outer() {
+    inner
+  }
+  fail_cmdsub() {
+    # shellcheck disable=SC2034
+    value="$(false)" # terminal-line: func-cmdsub
+  }
+  fail_subshell() {
+    (false) # terminal-line: func-subshell
+  }
+  observed_status() {
     false
   }
   case "$PROJMUX_TERMINAL_LINE_CASE" in
@@ -43,7 +61,20 @@ if [[ -n "${PROJMUX_TERMINAL_LINE_CASE:-}" ]]; then
       exit 1 # terminal-line: exit
       ;;
     func-internal)
-      fail_inside # terminal-line: func-internal
+      fail_inside
+      ;;
+    func-nested)
+      outer
+      ;;
+    func-cmdsub)
+      fail_cmdsub
+      ;;
+    func-subshell)
+      fail_subshell
+      ;;
+    cmdsub-exit)
+      # shellcheck disable=SC2034
+      value="$(exit 1)" # terminal-line: cmdsub-exit
       ;;
     sourced-top)
       # The L20 shape: the contract began here, then a sourced file fails at its
@@ -54,6 +85,27 @@ if [[ -n "${PROJMUX_TERMINAL_LINE_CASE:-}" ]]; then
       printf '%s\n' 'true' 'value="$(false)"' >"$sourced"
       # shellcheck source=/dev/null
       source "$sourced" # terminal-line: sourced-top
+      ;;
+    sourced-exit)
+      # A sourced file's top-level `exit 1` names this file too, so it maps to
+      # the `source` call here rather than to the sourced file's own line.
+      sourced="$(dirname "$PROJMUX_E2E_ARTIFACTS")/sourced-exit.inc.sh"
+      printf '%s\n' 'true' 'exit 1' >"$sourced"
+      # shellcheck source=/dev/null
+      source "$sourced" # terminal-line: sourced-exit
+      ;;
+    set-e-off)
+      # Observed statuses are assertion input, not failures: neither the
+      # top-level nor the function-internal ERR firing may record a terminal.
+      set +e
+      false
+      top_status=$?
+      observed_status
+      func_status=$?
+      set -e
+      [[ "$top_status" == "1" && "$func_status" == "1" ]]
+      smoke_contract_pass
+      exit 0
       ;;
   esac
   exit 99
@@ -82,12 +134,19 @@ cases=0
 failed=0
 
 # check_case NAME WANT: WANT is "terminal" (exactly one record at the marker
-# line with status 1 and this file as source) or "none" (no record at all).
+# line with status 1 and this file as source) or "pass" (a clean exit 0 with no
+# record at all).
 check_case() {
-  local name="$1" want="$2" line status=0 verdict
-  line="$(marker_line "$name")"
+  local name="$1" want="$2" line=0 status=0 verdict
+  if [[ "$want" == "terminal" ]]; then
+    line="$(marker_line "$name")"
+  fi
+  # The child's EXIT-trap cleanup needs three quiet /proc samples inside a 1s
+  # budget; a loaded machine misses that and turns a "pass" child's exit into 1.
+  # A wider default budget only lengthens that wait when sampling is slow.
   PROJMUX_TERMINAL_LINE_CASE="$name" \
     PROJMUX_E2E_ARTIFACTS="$tmp/$name" \
+    E2E_WAIT_SCALE="${E2E_WAIT_SCALE:-10}" \
     "$self" >"$tmp/$name.out" 2>"$tmp/$name.err" || status=$?
   verdict="$(python3 - "$tmp/$name.err" "$tmp/$name/L06-attempt-1.json" "$want" "$line" "$status" <<'PY'
 import json
@@ -99,9 +158,9 @@ line, status = int(line), int(status)
 lines = pathlib.Path(err_path).read_text().splitlines()
 records = [json.loads(text.split(" ", 1)[1]) for text in lines if text.startswith("E2E_TERMINAL ")]
 problems = []
-if want == "none":
-    if status == 0:
-        problems.append("child exited 0, want non-zero")
+if want == "pass":
+    if status != 0:
+        problems.append(f"child exit status: expected 0, got {status}")
     if records:
         problems.append(f"want no E2E_TERMINAL record, got {len(records)}: {records}")
 else:
@@ -138,8 +197,14 @@ check_case top-assign terminal
 check_case top-pipe terminal
 check_case top-return terminal
 check_case exit terminal
-check_case func-internal none
+check_case func-internal terminal
+check_case func-nested terminal
+check_case func-cmdsub terminal
+check_case func-subshell terminal
+check_case cmdsub-exit terminal
 check_case sourced-top terminal
+check_case sourced-exit terminal
+check_case set-e-off pass
 
 if [[ "$failed" != "0" ]]; then
   echo "FAIL terminal-line-contract ($failed of $cases cases)" >&2
