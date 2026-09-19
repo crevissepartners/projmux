@@ -114,7 +114,7 @@ func claudeAgentTranscriptPath(agent coremetadata.Agent) string {
 // readClaudeTranscriptTail reads at most the last claudeTranscriptTailLimit
 // bytes of a transcript and reports whether the read started after offset 0.
 func readClaudeTranscriptTail(path string) ([]byte, bool, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- the path is the transcript the target Agent's own Registry binding recorded from its hook; the read is bounded and read-only.
 	if err != nil {
 		return nil, false, err
 	}
