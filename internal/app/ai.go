@@ -166,6 +166,44 @@ func newAICommand() *aiCommand {
 	}
 }
 
+// cloneSeams returns a new aiCommand carrying every seam of c. The staged hook
+// observations and the recorded Pane write failure are ingest state guarded by
+// c's mutexes, so the clone deliberately starts with its own zero value of each
+// instead of copying the locks and sharing the maps.
+func (c *aiCommand) cloneSeams() *aiCommand {
+	return &aiCommand{
+		nativePicker:                  c.nativePicker,
+		executable:                    c.executable,
+		lookupEnv:                     c.lookupEnv,
+		homeDir:                       c.homeDir,
+		stdin:                         c.stdin,
+		readFile:                      c.readFile,
+		writeFile:                     c.writeFile,
+		mkdirAll:                      c.mkdirAll,
+		runCommand:                    c.runCommand,
+		readCommand:                   c.readCommand,
+		now:                           c.now,
+		sleep:                         c.sleep,
+		producer:                      c.producer,
+		notifyStore:                   c.notifyStore,
+		events:                        c.events,
+		notifyDiagnostics:             c.notifyDiagnostics,
+		operationalDiagnostics:        c.operationalDiagnostics,
+		openCodexCatalog:              c.openCodexCatalog,
+		codexNative:                   c.codexNative,
+		discoverResumeSummaryProvider: c.discoverResumeSummaryProvider,
+		readResumeDetail:              c.readResumeDetail,
+		readResumePreview:             c.readResumePreview,
+		acquireCodexAuthority:         c.acquireCodexAuthority,
+		notifyDeliveryOwnsTopLevel:    c.notifyDeliveryOwnsTopLevel,
+		loadRegistry:                  c.loadRegistry,
+		updateRegistry:                c.updateRegistry,
+		panes:                         c.panes,
+		paneDelete:                    c.paneDelete,
+		heldRelease:                   c.heldRelease,
+	}
+}
+
 // newSettingsAIFallback builds the minimally wired aiCommand Settings falls
 // back to when no ai dependency was injected. It lives next to aiCommand so
 // the settings files never construct the struct directly.

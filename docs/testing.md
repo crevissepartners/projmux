@@ -7,6 +7,8 @@ and humans run the same entrypoints.
 
 - `make test` runs the fast Go unit suite. These tests avoid tmux, TTY, GUI,
   and host shell dependencies.
+- `make vet` runs `go vet ./...`. CI runs it in the Unit Tests job after
+  `make test`.
 - Picker unit coverage includes the backend-neutral item/action contract,
   native title-focused filtering, numeric selection, and shared close actions.
 - `make test-integration` builds `test/docker/Dockerfile` and runs

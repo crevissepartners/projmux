@@ -189,6 +189,9 @@ jobs:
       - name: Run unit tests
         run: make test
 
+      - name: Vet
+        run: make vet
+
   # `make test` runs without the detector so the ordinary unit gate stays fast.
   # Keep the detector on the packages whose contracts actually create
   # contention, with the broker and its app-server transport isolated from the

@@ -79,6 +79,9 @@ class CIWorkflowContractTest(unittest.TestCase):
             unit.index("go-version-file: go.mod"), unit.index("run: make deadcode")
         )
         self.assertLess(unit.index("run: make deadcode"), unit.index("run: make test"))
+        vet = workflow_step(unit, "Vet")
+        self.assertEqual(vet.strip(), "run: make vet")
+        self.assertLess(unit.index("run: make test"), unit.index("run: make vet"))
 
         # The repository tool directive and module version pin the scanner;
         # a runner must not install a floating tool or substitute a waiver.
@@ -89,6 +92,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         )
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn("if ! $(GO) tool deadcode ./...", makefile)
+        self.assertIn("\nvet:\n\t$(GO) vet ./...\n", makefile)
 
         for job, name in {
             "fmt": "Format",

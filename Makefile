@@ -30,7 +30,7 @@ WEB_UI_DIR ?= internal/web/_ui
 WEB_DIST_DIR ?= internal/web/dist
 NPM ?= npm
 
-.PHONY: fmt fmt-check mod-tidy-check fix build install npm-pack docs web-build web-check test smoke-assert-contract build-vcs-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs web-build web-check test smoke-assert-contract build-vcs-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -136,6 +136,9 @@ deadcode: deadcode-contract
 
 deadcode-contract:
 	python3 -m unittest discover -s test -p 'deadcode_baseline_test.py'
+
+vet:
+	$(GO) vet ./...
 
 test: deadcode-contract release-contract ci-contract smoke-assert-contract build-vcs-contract e2e-admission-contract e2e-pipe-contract e2e-terminal-line-contract
 	$(GO) test ./...

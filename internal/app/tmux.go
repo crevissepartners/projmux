@@ -1863,14 +1863,14 @@ func guardConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner,
 }
 
 func (c *tmuxCommand) managedIngestMigrationAI() *aiCommand {
-	clone := *c.ai
+	clone := c.ai.cloneSeams()
 	clone.homeDir = c.homeDir
 	clone.lookupEnv = c.lookupEnv
 	clone.executable = c.executable
 	clone.readFile = c.readFile
 	clone.writeFile = c.writeFile
 	clone.mkdirAll = os.MkdirAll
-	return &clone
+	return clone
 }
 
 func (c *tmuxCommand) managedIngestMigrationAIForRoute(route runtimeMutationRoute) *aiCommand {
