@@ -648,64 +648,111 @@ func TestDeleteOfflinePaneAndAgentDryRunApplyRepeatAreRegistryOnly(t *testing.T)
 		}
 	})
 
-	t.Run("Agent with retained Pane", func(t *testing.T) {
-		store := newFakeResourceStore(t)
-		agent, _ := store.registry.Agent("agt-alpha-codex")
-		agent.Status.Phase = coremetadata.PhaseOffline
-		agent.Status.PaneRef = ""
-		markPaneMissingRuntime(t, &store.registry, "pan-alpha-codex")
-		runtime := newFixturePaneDeleteRuntime()
-		runtime.offlineUIDs = map[string]bool{"agt-alpha-codex": true}
-		cmd := newTestDeleteCommand(store, false, false, nil)
-		cmd.panes = runtime
-		before := store.snapshot()
+	// A paneless Failed Agent is accepted under exactly the authority that
+	// accepts a paneless Offline one; only the evidence token names the phase.
+	for _, phase := range []coremetadata.AgentPhase{coremetadata.PhaseOffline, coremetadata.PhaseFailed} {
+		t.Run("Agent with retained Pane/"+string(phase), func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			agent, _ := store.registry.Agent("agt-alpha-codex")
+			agent.Status.Phase = phase
+			agent.Status.PaneRef = ""
+			markPaneMissingRuntime(t, &store.registry, "pan-alpha-codex")
+			runtime := newFixturePaneDeleteRuntime()
+			runtime.offlineUIDs = map[string]bool{"agt-alpha-codex": true}
+			cmd := newTestDeleteCommand(store, false, false, nil)
+			cmd.panes = runtime
+			before := store.snapshot()
+			evidence := string(phase) + "+MissingRuntime"
 
-		preview, _, err := runRoute(t, cmd, "agent", "uid:agt-alpha-codex", "--dry-run")
-		if err != nil {
-			t.Fatalf("offline Agent dry-run: %v", err)
-		}
-		wantPreview := "  registry-only would delete this Agent; no tmux Pane would be killed on socket=" + testDeleteTarget.Label() +
-			" evidence=Offline+MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
-		for _, want := range []string{"cascade pane/codex-pane uid=pan-alpha-codex", wantPreview, "evidence=Offline+MissingRuntime"} {
-			if !strings.Contains(preview, want) {
-				t.Fatalf("offline Agent preview missing %q:\n%s", want, preview)
+			preview, _, err := runRoute(t, cmd, "agent", "uid:agt-alpha-codex", "--dry-run")
+			if err != nil {
+				t.Fatalf("%s Agent dry-run: %v", phase, err)
 			}
-		}
-		if store.snapshot() != before || store.transactions != 0 || len(runtime.killed) != 0 {
-			t.Fatal("offline Agent dry-run changed Registry or runtime")
-		}
-
-		applied, _, err := runRoute(t, cmd, "agent", "uid:agt-alpha-codex", "--yes")
-		if err != nil {
-			t.Fatalf("offline Agent apply: %v", err)
-		}
-		wantApplied := "  registry-only deleted this Agent; no tmux Pane was killed on socket=" + testDeleteTarget.Label() +
-			" evidence=Offline+MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
-		if registryUIDs(store.registry)["agt-alpha-codex"] || registryUIDs(store.registry)["pan-alpha-codex"] ||
-			len(runtime.killed) != 0 || !strings.Contains(applied, wantApplied) {
-			t.Fatalf("offline Agent apply killed=%#v output=%q", runtime.killed, applied)
-		}
-		for _, uid := range []string{"prj-alpha", "win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log"} {
-			if !registryUIDs(store.registry)[uid] {
-				t.Fatalf("offline Agent delete removed sibling/owner %s", uid)
+			wantPreview := "  registry-only would delete this Agent; no tmux Pane would be killed on socket=" + testDeleteTarget.Label() +
+				" evidence=" + evidence + " owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
+			for _, want := range []string{"cascade pane/codex-pane uid=pan-alpha-codex", wantPreview, "evidence=" + evidence} {
+				if !strings.Contains(preview, want) {
+					t.Fatalf("%s Agent preview missing %q:\n%s", phase, want, preview)
+				}
 			}
-		}
-	})
+			if store.snapshot() != before || store.transactions != 0 || len(runtime.killed) != 0 {
+				t.Fatalf("%s Agent dry-run changed Registry or runtime", phase)
+			}
 
-	t.Run("Agent without retained Pane", func(t *testing.T) {
-		store := newFakeResourceStore(t)
-		runtime := newFixturePaneDeleteRuntime()
-		cmd := newTestDeleteCommand(store, false, false, nil)
-		cmd.panes = runtime
-		out, _, err := runRoute(t, cmd, "agent", "uid:agt-beta-codex", "--yes")
-		if err != nil {
-			t.Fatalf("offline empty Agent apply: %v", err)
-		}
-		if registryUIDs(store.registry)["agt-beta-codex"] || len(runtime.killed) != 0 ||
-			!strings.Contains(out, "evidence=Offline") {
-			t.Fatalf("offline empty Agent apply killed=%#v output=%q", runtime.killed, out)
-		}
-	})
+			applied, _, err := runRoute(t, cmd, "agent", "uid:agt-alpha-codex", "--yes")
+			if err != nil {
+				t.Fatalf("%s Agent apply: %v", phase, err)
+			}
+			wantApplied := "  registry-only deleted this Agent; no tmux Pane was killed on socket=" + testDeleteTarget.Label() +
+				" evidence=" + evidence + " owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
+			if registryUIDs(store.registry)["agt-alpha-codex"] || registryUIDs(store.registry)["pan-alpha-codex"] ||
+				len(runtime.killed) != 0 || !strings.Contains(applied, wantApplied) {
+				t.Fatalf("%s Agent apply killed=%#v output=%q", phase, runtime.killed, applied)
+			}
+			for _, uid := range []string{"prj-alpha", "win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log", "agt-beta-codex"} {
+				if !registryUIDs(store.registry)[uid] {
+					t.Fatalf("%s Agent delete removed sibling/owner %s", phase, uid)
+				}
+			}
+
+			assertRegistryOnlyAgentRepeatIsNoMatch(t, cmd, store, runtime, "uid:agt-alpha-codex")
+		})
+
+		t.Run("Agent without retained Pane/"+string(phase), func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			agent, _ := store.registry.Agent("agt-beta-codex")
+			agent.Status.Phase = phase
+			runtime := newFixturePaneDeleteRuntime()
+			cmd := newTestDeleteCommand(store, false, false, nil)
+			cmd.panes = runtime
+			before := store.snapshot()
+
+			preview, _, err := runRoute(t, cmd, "agent", "uid:agt-beta-codex", "--dry-run")
+			if err != nil {
+				t.Fatalf("%s empty Agent dry-run: %v", phase, err)
+			}
+			wantPreview := "  registry-only would delete this Agent; no tmux Pane would be killed on socket=" + testDeleteTarget.Label() +
+				" evidence=" + string(phase) + " owner-window=win-beta-main root=project/prj-beta preserving owner and siblings\n"
+			if !strings.Contains(preview, wantPreview) || !strings.Contains(preview, "dry-run: nothing was deleted") {
+				t.Fatalf("%s empty Agent preview missing %q:\n%s", phase, wantPreview, preview)
+			}
+			if store.snapshot() != before || store.transactions != 0 || len(runtime.killed) != 0 {
+				t.Fatalf("%s empty Agent dry-run changed Registry or runtime", phase)
+			}
+
+			out, _, err := runRoute(t, cmd, "agent", "uid:agt-beta-codex", "--yes")
+			if err != nil {
+				t.Fatalf("%s empty Agent apply: %v", phase, err)
+			}
+			wantApplied := "  registry-only deleted this Agent; no tmux Pane was killed on socket=" + testDeleteTarget.Label() +
+				" evidence=" + string(phase) + " owner-window=win-beta-main root=project/prj-beta preserving owner and siblings\n"
+			if registryUIDs(store.registry)["agt-beta-codex"] || len(runtime.killed) != 0 || !strings.Contains(out, wantApplied) {
+				t.Fatalf("%s empty Agent apply killed=%#v output=%q", phase, runtime.killed, out)
+			}
+			for _, uid := range []string{"prj-beta", "win-beta-main", "pan-beta-zsh", "prj-alpha", "win-alpha-main", "pan-alpha-codex", "agt-alpha-codex"} {
+				if !registryUIDs(store.registry)[uid] {
+					t.Fatalf("%s empty Agent delete removed sibling/owner %s", phase, uid)
+				}
+			}
+
+			assertRegistryOnlyAgentRepeatIsNoMatch(t, cmd, store, runtime, "uid:agt-beta-codex")
+		})
+	}
+}
+
+// assertRegistryOnlyAgentRepeatIsNoMatch runs the same exact-uid delete again
+// after a Registry-only apply: the Agent is gone, so the repeat is the
+// ordinary no-match refusal and touches neither the Registry nor tmux.
+func assertRegistryOnlyAgentRepeatIsNoMatch(t *testing.T, cmd *deleteCommand, store *fakeResourceStore,
+	runtime *fakePaneDeleteRuntime, selector string) {
+	t.Helper()
+	beforeRepeat := store.snapshot()
+	transactions := store.transactions
+	out, _, err := runRoute(t, cmd, "agent", selector, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "matched no agents") || out != "" ||
+		store.snapshot() != beforeRepeat || store.transactions != transactions || len(runtime.killed) != 0 {
+		t.Fatalf("repeat delete agent %s err=%v out=%q transactions=%d->%d", selector, err, out, transactions, store.transactions)
+	}
 }
 
 func TestDeleteOfflinePanePreservesResumedLiveAgent(t *testing.T) {
@@ -799,6 +846,44 @@ func TestDeletePaneAndAgentLockedRevalidationRaceTable(t *testing.T) {
 				}
 			},
 			args: []string{"agent", "uid:agt-alpha-codex", "--yes"}, want: "exact live cascade changed",
+		},
+		{
+			// The dry-run signed a paneless Failed Agent; a resume rebound it to
+			// its now-live Pane before the locked apply.
+			name: "Failed Agent resumed before locked apply",
+			prepare: func(store *fakeResourceStore, runtime *fakePaneDeleteRuntime) {
+				agent, _ := store.registry.Agent("agt-alpha-codex")
+				agent.Status.Phase = coremetadata.PhaseFailed
+				agent.Status.PaneRef = ""
+				markPaneMissingRuntime(t, &store.registry, "pan-alpha-codex")
+				runtime.offlineUIDs = map[string]bool{"agt-alpha-codex": true}
+			},
+			run: func(call int, registry *coremetadata.Registry, runtime *fakePaneDeleteRuntime) {
+				if call == 2 {
+					agent, _ := registry.Agent("agt-alpha-codex")
+					agent.Status.Phase = coremetadata.PhaseRunning
+					agent.Status.PaneRef = "pan-alpha-codex"
+					pane, _ := registry.Pane("pan-alpha-codex")
+					pane.Status.Conditions = nil
+					delete(runtime.offlineUIDs, "agt-alpha-codex")
+				}
+			},
+			args: []string{"agent", "uid:agt-alpha-codex", "--yes"}, want: "exact live cascade changed",
+		},
+		{
+			name: "zero-Pane Failed Agent resumed before locked apply",
+			prepare: func(store *fakeResourceStore, _ *fakePaneDeleteRuntime) {
+				agent, _ := store.registry.Agent("agt-beta-codex")
+				agent.Status.Phase = coremetadata.PhaseFailed
+			},
+			run: func(call int, registry *coremetadata.Registry, _ *fakePaneDeleteRuntime) {
+				if call == 2 {
+					agent, _ := registry.Agent("agt-beta-codex")
+					agent.Status.Phase = coremetadata.PhaseRunning
+					agent.Status.PaneRef = "pan-beta-zsh"
+				}
+			},
+			args: []string{"agent", "uid:agt-beta-codex", "--yes"}, want: "exact live cascade changed",
 		},
 		{
 			name:    "duplicate mirror appeared",

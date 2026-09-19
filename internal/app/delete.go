@@ -184,9 +184,9 @@ type deletePlan struct {
 	Targets []deleteTarget
 	// ExactUID reports that every target occurrence was an explicit uid:<uid>
 	// reference. It is the only selector shape allowed to turn a durable
-	// Offline/MissingRuntime state plus a positive exact-server inventory into a
-	// Registry-only Pane or Agent delete. Names, scopes, labels, --all, and the
-	// active-target fallback keep requiring a live mirror.
+	// Offline/Failed/MissingRuntime state plus a positive exact-server inventory
+	// into a Registry-only Pane or Agent delete. Names, scopes, labels, --all,
+	// and the active-target fallback keep requiring a live mirror.
 	ExactUID bool
 	// Unnamed reports that the invocation carried no selector at all, so the
 	// target set came from the active tmux target or from --all rather than from

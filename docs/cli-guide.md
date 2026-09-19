@@ -822,9 +822,12 @@ report a final-window cascade with its actual root kind.
 Pane and Agent Registry-only deletion is deliberately narrower. It accepts
 only an explicit exact `uid:` selector: a Pane must carry durable
 `MissingRuntime=True/RuntimeUnbound` evidence, and an Agent must be `Offline`
-with no `paneRef` (with every retained descendant Pane also marked
-`MissingRuntime`). The exact routed server must answer with a non-empty socket
-identity and a non-empty Pane inventory that proves the target has zero mirrors.
+or `Failed` with no `paneRef` (with every retained descendant Pane also marked
+`MissingRuntime`). Both phases are accepted under the same authority; the
+reported evidence names the phase, such as `Failed` or
+`Offline+MissingRuntime`. The exact routed server must answer with a non-empty
+socket identity and a non-empty Pane inventory that proves the target has zero
+mirrors.
 A missing server, empty or failed inventory, unavailable or permission-denied
 transport, implicit/name/scope/`--all` selection, and duplicate or foreign
 mirrors are not absence authority and make zero writes. Dry-run and apply sign
@@ -841,7 +844,7 @@ typed resource's exact form to run instead —
 `projmux delete pane|agent uid:<uid> --socket-path <server> --dry-run`, then the
 same command with `--yes` — and says which evidence qualifies it. A target the
 `uid:` form would refuse too, such as a Pane without `MissingRuntime` or a
-`Running` or `Failed` Agent, gets no such pointer.
+`Running` Agent, gets no such pointer.
 
 `delete window|pane|agent` names the server its live half addresses the same
 way `reconcile resources` does: `--socket <name>`, `--socket-path <absolute>`,

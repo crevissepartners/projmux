@@ -78,6 +78,15 @@ func markPaneMissingRuntime(t *testing.T, registry *coremetadata.Registry, uid s
 	}}
 }
 
+func assertNoPaneDeleteTmuxKill(t *testing.T, runner *recordingTmuxRunner) {
+	t.Helper()
+	for _, call := range runner.calls {
+		if strings.Contains(strings.Join(call.args, " "), "kill-pane") {
+			t.Fatalf("pane delete preflight mutated tmux: %#v", runner.calls)
+		}
+	}
+}
+
 type paneDeleteExitCommandFailure struct {
 	failure inttmux.CommandFailure
 }
@@ -417,6 +426,43 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 		}
 	})
 
+	// A Failed Agent is as absent as an Offline one: the same exact uid, empty
+	// paneRef, owning Window, and MissingRuntime descendants authorize it, and
+	// its evidence token names the phase it was accepted under.
+	t.Run("Failed Agent with retained MissingRuntime Pane", func(t *testing.T) {
+		runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
+		agent, _ := registry.Agent("agt-alpha-codex")
+		agent.Status.Phase = coremetadata.PhaseFailed
+		agent.Status.PaneRef = ""
+		markPaneMissingRuntime(t, &registry, "pan-alpha-codex")
+		plan, err := runtime.preflight(context.Background(), registry,
+			exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex"))
+		if err != nil {
+			t.Fatalf("registry-only Failed Agent preflight: %v", err)
+		}
+		if len(plan.Targets) != 0 || len(plan.RegistryOnly) != 1 ||
+			plan.RegistryOnly[0].ResourceUID != "agt-alpha-codex" || plan.RegistryOnly[0].Evidence != "Failed+MissingRuntime" {
+			t.Fatalf("registry-only Failed Agent plan = %#v", plan)
+		}
+		assertNoPaneDeleteTmuxKill(t, runner)
+	})
+
+	t.Run("Failed Agent without retained Pane", func(t *testing.T) {
+		runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
+		agent, _ := registry.Agent("agt-beta-codex")
+		agent.Status.Phase = coremetadata.PhaseFailed
+		plan, err := runtime.preflight(context.Background(), registry,
+			exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-beta-codex"))
+		if err != nil {
+			t.Fatalf("registry-only empty Failed Agent preflight: %v", err)
+		}
+		if len(plan.Targets) != 0 || len(plan.RegistryOnly) != 1 ||
+			plan.RegistryOnly[0].ResourceUID != "agt-beta-codex" || plan.RegistryOnly[0].Evidence != "Failed" {
+			t.Fatalf("registry-only empty Failed Agent plan = %#v", plan)
+		}
+		assertNoPaneDeleteTmuxKill(t, runner)
+	})
+
 	for _, test := range []struct {
 		name      string
 		plan      func(coremetadata.Registry) deletePlan
@@ -447,9 +493,47 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 			prepare: func(reg *coremetadata.Registry) { markPaneMissingRuntime(t, reg, "pan-alpha-log") },
 			want:    "absence is not Registry deletion authority", inventory: "",
 		},
+		{
+			name: "Failed Agent with a paneRef is not absent",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return exactPanePlanFor(t, reg, coremetadata.KindAgent, "agt-alpha-codex")
+			},
+			prepare: func(reg *coremetadata.Registry) {
+				agent, _ := reg.Agent("agt-alpha-codex")
+				// The paneRef stays pan-alpha-codex: only an unbound Agent is eligible.
+				agent.Status.Phase = coremetadata.PhaseFailed
+				markPaneMissingRuntime(t, reg, "pan-alpha-codex")
+			},
+			want:      `delete agent: registry Pane uid "pan-alpha-codex" has no exact live tmux Pane mirror on -L ` + testDeleteTarget.Value + `; nothing was changed`,
+			inventory: sibling,
+		},
+		{
+			name: "Failed Agent whose retained Pane lacks MissingRuntime",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return exactPanePlanFor(t, reg, coremetadata.KindAgent, "agt-alpha-codex")
+			},
+			prepare: func(reg *coremetadata.Registry) {
+				agent, _ := reg.Agent("agt-alpha-codex")
+				agent.Status.Phase = coremetadata.PhaseFailed
+				agent.Status.PaneRef = ""
+			},
+			want:      `delete agent: registry Pane uid "pan-alpha-codex" has no exact live tmux Pane mirror on -L ` + testDeleteTarget.Value + `; nothing was changed`,
+			inventory: sibling,
+		},
+		{
+			name: "empty inventory is not authority for a Failed Agent",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return exactPanePlanFor(t, reg, coremetadata.KindAgent, "agt-beta-codex")
+			},
+			prepare: func(reg *coremetadata.Registry) {
+				agent, _ := reg.Agent("agt-beta-codex")
+				agent.Status.Phase = coremetadata.PhaseFailed
+			},
+			want: "absence is not Registry deletion authority", inventory: "",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			runtime, _, registry := newPaneRuntimeFixture(t, test.inventory)
+			runtime, runner, registry := newPaneRuntimeFixture(t, test.inventory)
 			if test.prepare != nil {
 				test.prepare(&registry)
 			}
@@ -457,6 +541,7 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("preflight error = %v, want %q", err, test.want)
 			}
+			assertNoPaneDeleteTmuxKill(t, runner)
 		})
 	}
 
@@ -522,7 +607,7 @@ func TestPaneDeleteLiveMirrorRefusalNamesTheExactUIDRegistryOnlyForm(t *testing.
 			plan: func(reg coremetadata.Registry) deletePlan {
 				return panePlanFor(t, reg, coremetadata.KindAgent, "agt-beta-codex")
 			},
-			want: `delete agent: registry Agent uid "agt-beta-codex" is Offline, not an exact Offline target; no live managed Pane can authorize deletion and nothing was changed; ` +
+			want: `delete agent: registry Agent uid "agt-beta-codex" is Offline, not an exact Offline or Failed target; no live managed Pane can authorize deletion and nothing was changed; ` +
 				`Agent uid "agt-beta-codex" carries Offline evidence, which authorizes Registry-only deletion only under the exact uid: selector: run ` +
 				"`projmux delete agent uid:agt-beta-codex --socket-path " + server + " --dry-run`, then `projmux delete agent uid:agt-beta-codex --socket-path " + server + " --yes`",
 		},
@@ -549,7 +634,7 @@ func TestPaneDeleteLiveMirrorRefusalNamesTheExactUIDRegistryOnlyForm(t *testing.
 			want: `delete agent: registry Pane uid "pan-alpha-codex" has no exact live tmux Pane mirror on -L ` + server + `; nothing was changed`,
 		},
 		{
-			name: "name-selected zero-Pane Failed Agent gets no pointer",
+			name: "name-selected zero-Pane Failed Agent names the exact uid form",
 			prepare: func(reg *coremetadata.Registry) {
 				agent, _ := reg.Agent("agt-beta-codex")
 				agent.Status.Phase = coremetadata.PhaseFailed
@@ -557,7 +642,36 @@ func TestPaneDeleteLiveMirrorRefusalNamesTheExactUIDRegistryOnlyForm(t *testing.
 			plan: func(reg coremetadata.Registry) deletePlan {
 				return panePlanFor(t, reg, coremetadata.KindAgent, "agt-beta-codex")
 			},
-			want: `delete agent: registry Agent uid "agt-beta-codex" is Failed, not an exact Offline target; no live managed Pane can authorize deletion and nothing was changed`,
+			want: `delete agent: registry Agent uid "agt-beta-codex" is Failed, not an exact Offline or Failed target; no live managed Pane can authorize deletion and nothing was changed; ` +
+				`Agent uid "agt-beta-codex" carries Failed evidence, which authorizes Registry-only deletion only under the exact uid: selector: run ` +
+				"`projmux delete agent uid:agt-beta-codex --socket-path " + server + " --dry-run`, then `projmux delete agent uid:agt-beta-codex --socket-path " + server + " --yes`",
+		},
+		{
+			name: "name-selected Failed Agent names the Agent, not its Pane",
+			prepare: func(reg *coremetadata.Registry) {
+				offlineAlphaAgent(reg)
+				agent, _ := reg.Agent("agt-alpha-codex")
+				agent.Status.Phase = coremetadata.PhaseFailed
+			},
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return panePlanFor(t, reg, coremetadata.KindAgent, "agt-alpha-codex")
+			},
+			want: `delete agent: registry Pane uid "pan-alpha-codex" has no exact live tmux Pane mirror on -L ` + server +
+				`; nothing was changed; Agent uid "agt-alpha-codex" carries Failed+MissingRuntime evidence, which authorizes Registry-only deletion only under the exact uid: selector: run ` +
+				"`projmux delete agent uid:agt-alpha-codex --socket-path " + server + " --dry-run`, then `projmux delete agent uid:agt-alpha-codex --socket-path " + server + " --yes`",
+		},
+		{
+			// The refusal names the whole accepted phase set, so an operator
+			// reading it for a Running Agent does not conclude Failed is refused.
+			name: "exact uid zero-Pane Running Agent names both accepted phases",
+			prepare: func(reg *coremetadata.Registry) {
+				agent, _ := reg.Agent("agt-beta-codex")
+				agent.Status.Phase = coremetadata.PhaseRunning
+			},
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return exactPanePlanFor(t, reg, coremetadata.KindAgent, "agt-beta-codex")
+			},
+			want: `delete agent: registry Agent uid "agt-beta-codex" is Running, not an exact Offline or Failed target; no live managed Pane can authorize deletion and nothing was changed`,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -599,6 +713,14 @@ func TestDeleteByNameRefusalPointsAtARunnableUIDCommand(t *testing.T) {
 		},
 		{
 			name: "zero-Pane Offline Agent",
+			args: []string{"agent", "codex", "--project", "beta", "--dry-run"},
+		},
+		{
+			name: "zero-Pane Failed Agent",
+			prepare: func(reg *coremetadata.Registry) {
+				agent, _ := reg.Agent("agt-beta-codex")
+				agent.Status.Phase = coremetadata.PhaseFailed
+			},
 			args: []string{"agent", "codex", "--project", "beta", "--dry-run"},
 		},
 	} {
@@ -657,6 +779,15 @@ func TestPaneDeleteStandaloneSocketAuthorizesOnlyRegistryOnlyEvidence(t *testing
 			prepare: func(registry *coremetadata.Registry) {
 				agent, _ := registry.Agent("agt-alpha-codex")
 				agent.Status.Phase = coremetadata.PhaseOffline
+				agent.Status.PaneRef = ""
+				markPaneMissingRuntime(t, registry, "pan-alpha-codex")
+			},
+		},
+		{
+			name: "Failed Agent", kind: coremetadata.KindAgent, uid: "agt-alpha-codex", want: "Failed+MissingRuntime",
+			prepare: func(registry *coremetadata.Registry) {
+				agent, _ := registry.Agent("agt-alpha-codex")
+				agent.Status.Phase = coremetadata.PhaseFailed
 				agent.Status.PaneRef = ""
 				markPaneMissingRuntime(t, registry, "pan-alpha-codex")
 			},
@@ -795,6 +926,70 @@ func TestPaneDeleteAuthorityUsesActivationGenerationNotTerminationReceipt(t *tes
 	if afterGeneration == before {
 		t.Fatal("current Pane activation generation did not change live authority")
 	}
+}
+
+// TestPaneDeleteRuntimeFailedAgentResumeChangesTheSignedPlan proves a Failed
+// Agent's Registry-only authority is the signed dry-run fact, not a standing
+// grant: a resume between the dry-run and the locked apply rebinds the Agent,
+// and the locked reobservation either refuses it or signs a different plan.
+func TestPaneDeleteRuntimeFailedAgentResumeChangesTheSignedPlan(t *testing.T) {
+	sibling := livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review")
+	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+		"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}")
+	inventoryKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value, "list-panes", "-a", "-F", format)
+
+	t.Run("retained Pane rebinds live", func(t *testing.T) {
+		runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
+		agent, _ := registry.Agent("agt-alpha-codex")
+		agent.Status.Phase = coremetadata.PhaseFailed
+		agent.Status.PaneRef = ""
+		markPaneMissingRuntime(t, &registry, "pan-alpha-codex")
+		plan := exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex")
+		approved, err := runtime.preflight(context.Background(), registry, plan)
+		if err != nil {
+			t.Fatalf("Failed Agent dry-run preflight: %v", err)
+		}
+		if len(approved.RegistryOnly) != 1 || approved.RegistryOnly[0].Evidence != "Failed+MissingRuntime" {
+			t.Fatalf("Failed Agent dry-run plan = %#v", approved)
+		}
+
+		agent.Status.Phase = coremetadata.PhaseRunning
+		agent.Status.PaneRef = "pan-alpha-codex"
+		pane, _ := registry.Pane("pan-alpha-codex")
+		pane.Status.Conditions = nil
+		runner.outputs[inventoryKey] = paneRuntimeInventory()
+		current, err := runtime.preflight(context.Background(), registry, plan)
+		if err != nil {
+			t.Fatalf("resumed Agent locked preflight: %v", err)
+		}
+		if len(current.RegistryOnly) != 0 || current.signature() == approved.signature() {
+			t.Fatalf("resume did not change the signed plan: approved %#v, current %#v", approved, current)
+		}
+		assertNoPaneDeleteTmuxKill(t, runner)
+	})
+
+	t.Run("zero-Pane Agent turns Running", func(t *testing.T) {
+		runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
+		agent, _ := registry.Agent("agt-beta-codex")
+		agent.Status.Phase = coremetadata.PhaseFailed
+		plan := exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-beta-codex")
+		approved, err := runtime.preflight(context.Background(), registry, plan)
+		if err != nil {
+			t.Fatalf("zero-Pane Failed Agent dry-run preflight: %v", err)
+		}
+		if len(approved.RegistryOnly) != 1 || approved.RegistryOnly[0].Evidence != "Failed" {
+			t.Fatalf("zero-Pane Failed Agent dry-run plan = %#v", approved)
+		}
+
+		agent.Status.Phase = coremetadata.PhaseRunning
+		agent.Status.PaneRef = "pan-beta-zsh"
+		_, err = runtime.preflight(context.Background(), registry, plan)
+		want := `delete agent: registry Agent uid "agt-beta-codex" is Running, not an exact Offline or Failed target; no live managed Pane can authorize deletion and nothing was changed`
+		if err == nil || err.Error() != want {
+			t.Fatalf("resumed zero-Pane Agent locked preflight error =\n%v\nwant\n%s", err, want)
+		}
+		assertNoPaneDeleteTmuxKill(t, runner)
+	})
 }
 
 func TestNamedLastPaneCreatesReplacementWithoutRootCascadeConfirmation(t *testing.T) {

@@ -444,9 +444,10 @@ func (r *tmuxPaneDeleteRuntime) exactSocketPath(ctx context.Context) (string, er
 
 // observeSocketIdentity binds every read in this invocation to one immutable
 // physical socket without claiming mutation authority. Registry-only cleanup
-// of an exact durable Offline/MissingRuntime target is intentionally available
-// on a standalone tmux server, but it still requires a positive inventory from
-// this same physical socket and a second byte-identical preflight under lock.
+// of an exact durable Offline/Failed/MissingRuntime target is intentionally
+// available on a standalone tmux server, but it still requires a positive
+// inventory from this same physical socket and a second byte-identical
+// preflight under lock.
 func (r *tmuxPaneDeleteRuntime) observeSocketIdentity(ctx context.Context) error {
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
@@ -574,7 +575,8 @@ func paneHasMissingRuntime(pane coremetadata.Pane) bool {
 // paneDeleteAuthoritySignature signs the exact Registry facts that make a Pane
 // or Agent delete safe. buildDeletePlan already signs the uid cascade; this
 // signs the parts that can change without changing that set: owner chain,
-// Offline/MissingRuntime evidence, current binding, and activation generation.
+// Offline/Failed/MissingRuntime evidence, current binding, and activation
+// generation.
 func paneDeleteAuthoritySignature(registry coremetadata.Registry, plan deletePlan) (string, error) {
 	var b strings.Builder
 	writeRoot := func(window coremetadata.Window) error {
@@ -662,7 +664,10 @@ func registryOnlyPaneTarget(registry coremetadata.Registry, plan deletePlan, tar
 		if !ok {
 			return paneRegistryOnlyDeleteTarget{}, false, fmt.Errorf("registry Agent uid %q disappeared during live preflight", target.Match.UID)
 		}
-		if agent.Status.Phase != coremetadata.PhaseOffline || strings.TrimSpace(agent.Status.PaneRef) != "" {
+		// Offline and Failed are equally absent: neither has a live managed Pane
+		// to authorize a kill, so the same exact-uid evidence authorizes both.
+		if (agent.Status.Phase != coremetadata.PhaseOffline && agent.Status.Phase != coremetadata.PhaseFailed) ||
+			strings.TrimSpace(agent.Status.PaneRef) != "" {
 			return paneRegistryOnlyDeleteTarget{}, false, nil
 		}
 		window, ok := registry.Window(agent.Metadata.OwnerUID())
@@ -682,7 +687,7 @@ func registryOnlyPaneTarget(registry coremetadata.Registry, plan deletePlan, tar
 				return paneRegistryOnlyDeleteTarget{}, false, nil
 			}
 		}
-		evidence := string(coremetadata.PhaseOffline)
+		evidence := string(agent.Status.Phase)
 		if len(target.Descendants) > 0 {
 			evidence += "+" + coremetadata.ConditionMissingRuntime
 		}
@@ -838,7 +843,7 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 		for _, target := range plan.Targets {
 			if len(target.Descendants) == 0 && !registryOnlyByResource[target.Match.UID] {
 				agent, _ := registry.Agent(target.Match.UID)
-				return paneLiveDeletePlan{}, fmt.Errorf("delete agent: registry Agent uid %q is %s, not an exact Offline target; no live managed Pane can authorize deletion and nothing was changed%s",
+				return paneLiveDeletePlan{}, fmt.Errorf("delete agent: registry Agent uid %q is %s, not an exact Offline or Failed target; no live managed Pane can authorize deletion and nothing was changed%s",
 					target.Match.UID, agent.Status.Phase, r.registryOnlyUIDSelectorHint(registry, plan, target.Match.UID))
 			}
 		}

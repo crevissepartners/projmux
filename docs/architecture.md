@@ -555,7 +555,8 @@ Exit reconciliation and lifecycle projection:
 - Abnormal, killed, unknown, whole-host absence, missing/empty server inventory,
   permission failure, foreign Window observation, stale generation, and an
   Agent that now binds a resumed Pane all produce delete-plan zero. They keep the
-  retained lifecycle projection and canonical explicit Offline delete recovery.
+  retained lifecycle projection and the canonical exact-uid Registry-only
+  delete recovery of a paneless Offline or Failed Agent.
 - The closed Agent transition table stays the authority. An Agent that may not
   reach the implied phase keeps its phase, its `paneRef`, and its managed Pane;
   only the evidence is recorded. A refused transition is not a reason to discard
