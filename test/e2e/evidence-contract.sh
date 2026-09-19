@@ -44,6 +44,12 @@ fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+# The intentional children below name their attempt from PROJMUX_E2E_ATTEMPT
+# before GITHUB_RUN_ATTEMPT, so a CI rerun would move their evidence away from
+# what this script reads. Pin the attempt, and hand every child a decoy
+# GITHUB_RUN_ATTEMPT so a dropped pin fails on every run instead of on a rerun.
+contract_attempt=1
+decoy_attempt=$((contract_attempt + 1))
 
 record=(python3 "$root/scripts/e2e-evidence.py" record --directory "$tmp/golden" --scenario-id L01 --suite linux-bootstrap --attempt 1 --phase bootstrap --owner harness)
 "${record[@]}" --class unattributed --outcome begin --elapsed-ms 0 >"$tmp/begin.out"
@@ -210,6 +216,8 @@ assert_result_hash_rejects terminal-unattributed "$tmp/unattributed"
 set +e
 PROJMUX_E2E_INTENTIONAL_FAILURE=1 \
   PROJMUX_E2E_ARTIFACTS="$tmp/intentional" \
+  PROJMUX_E2E_ATTEMPT="$contract_attempt" \
+  GITHUB_RUN_ATTEMPT="$decoy_attempt" \
   "$root/test/e2e/evidence-contract.sh" >"$tmp/intentional.out" 2>"$tmp/intentional.err"
 intentional_status=$?
 set -e
@@ -221,11 +229,13 @@ fi
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/intentional/summary.jsonl"
 # A single observed failure no longer borrows the reproduction claim: nothing has
 # been retried, so the class says exactly that.
-grep -Fq 'id=L17 attempt=1 phase=exit-reconcile outcome=fail class=unrepeated-failure owner=exit-reconciler' "$tmp/intentional.err"
+grep -Fq "id=L17 attempt=$contract_attempt phase=exit-reconcile outcome=fail class=unrepeated-failure owner=exit-reconciler" "$tmp/intentional.err"
 
 set +e
 PROJMUX_E2E_INTENTIONAL_EXIT=1 \
   PROJMUX_E2E_ARTIFACTS="$tmp/intentional-exit" \
+  PROJMUX_E2E_ATTEMPT="$contract_attempt" \
+  GITHUB_RUN_ATTEMPT="$decoy_attempt" \
   "$root/test/e2e/evidence-contract.sh" >"$tmp/intentional-exit.out" 2>"$tmp/intentional-exit.err"
 intentional_exit_status=$?
 set -e
@@ -234,7 +244,7 @@ if [[ "$intentional_exit_status" != "23" ]]; then
   exit 1
 fi
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/intentional-exit/summary.jsonl"
-python3 - "$tmp/intentional-exit.err" "$tmp/intentional-exit/L06-attempt-1.json" <<'PY'
+python3 - "$tmp/intentional-exit.err" "$tmp/intentional-exit/L06-attempt-$contract_attempt.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -268,6 +278,8 @@ PY
 set +e
 PROJMUX_E2E_INTENTIONAL_ZERO_LINE=1 \
   PROJMUX_E2E_ARTIFACTS="$tmp/zero-line" \
+  PROJMUX_E2E_ATTEMPT="$contract_attempt" \
+  GITHUB_RUN_ATTEMPT="$decoy_attempt" \
   "$root/test/e2e/evidence-contract.sh" >"$tmp/zero-line.out" 2>"$tmp/zero-line.err"
 zero_line_status=$?
 set -e
@@ -277,7 +289,7 @@ if [[ "$zero_line_status" != "42" ]]; then
   exit 1
 fi
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/zero-line/summary.jsonl"
-python3 - "$tmp/zero-line.err" "$tmp/zero-line/L06-attempt-1.json" <<'PY'
+python3 - "$tmp/zero-line.err" "$tmp/zero-line/L06-attempt-$contract_attempt.json" <<'PY'
 import json
 import pathlib
 import sys

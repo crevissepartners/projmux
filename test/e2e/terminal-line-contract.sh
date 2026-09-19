@@ -113,6 +113,12 @@ fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+# Children name their attempt artifact from PROJMUX_E2E_ATTEMPT before
+# GITHUB_RUN_ATTEMPT, so a CI rerun would move it away from the file read
+# below. Pin the attempt, and hand every child a decoy GITHUB_RUN_ATTEMPT so a
+# dropped pin fails on every run instead of only on a rerun.
+contract_attempt=1
+decoy_attempt=$((contract_attempt + 1))
 
 marker_line() {
   local name="$1" text number=0 found=0 found_count=0
@@ -146,9 +152,11 @@ check_case() {
   # A wider default budget only lengthens that wait when sampling is slow.
   PROJMUX_TERMINAL_LINE_CASE="$name" \
     PROJMUX_E2E_ARTIFACTS="$tmp/$name" \
+    PROJMUX_E2E_ATTEMPT="$contract_attempt" \
+    GITHUB_RUN_ATTEMPT="$decoy_attempt" \
     E2E_WAIT_SCALE="${E2E_WAIT_SCALE:-10}" \
     "$self" >"$tmp/$name.out" 2>"$tmp/$name.err" || status=$?
-  verdict="$(python3 - "$tmp/$name.err" "$tmp/$name/L06-attempt-1.json" "$want" "$line" "$status" <<'PY'
+  verdict="$(python3 - "$tmp/$name.err" "$tmp/$name/L06-attempt-$contract_attempt.json" "$want" "$line" "$status" <<'PY'
 import json
 import pathlib
 import sys
