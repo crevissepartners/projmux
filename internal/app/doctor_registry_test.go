@@ -49,7 +49,7 @@ func auditRegisterProject(t *testing.T, registry *coremetadata.Registry, mutator
 	if err != nil {
 		t.Fatalf("register project %s: %v", root, err)
 	}
-	if _, err := mutator.BindProjectSession(registry, result.Project.Metadata.UID, session, false); err != nil {
+	if _, err := mutator.BindOfflineProjectSession(registry, result.Project.Metadata.UID, session); err != nil {
 		t.Fatalf("bind project session %s: %v", session, err)
 	}
 	project, ok := registry.Project(result.Project.Metadata.UID)

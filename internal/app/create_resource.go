@@ -1695,7 +1695,7 @@ func (c *createCommand) ensureProjectRuntime(
 		}
 		ledger.observeCurrentWindow(window.Metadata.UID, owner)
 	}
-	if _, err := mutator.BindProjectSession(working, project.Metadata.UID, sessionName, true); err != nil {
+	if _, err := mutator.BindLiveProjectSession(working, project.Metadata.UID, sessionName, c.runtime.expectedSocketPath); err != nil {
 		return "", MapMetadataError(err)
 	}
 	if err := c.runtime.finalizeSessionStartup(ctx, created, sessionName, project.Spec.Root, ledger); err != nil {

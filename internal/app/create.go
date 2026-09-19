@@ -233,6 +233,10 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 		command.runtime.invalidateRouteIdentity("route-bind")
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 		command.reconciler.shareRouteIdentityScope(command.runtime)
+		// A route resolved before any server exists has no path yet; the
+		// materializer binds it from new-session's own #{socket_path}. The
+		// reconcile pass after the create's writes records that bound value.
+		command.reconciler.sessionSocketPath = func() string { return command.runtime.expectedSocketPath }
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
 		command.runtime.sessions = client

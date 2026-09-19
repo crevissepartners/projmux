@@ -256,6 +256,13 @@ type resourceReconcilePlanner struct {
 	// invoking the opaque UID allocator. Execute leaves it false and binds the
 	// same slots under the Registry lock.
 	symbolicAllocations bool
+	// exactSocketPath is the physical socket path the runtime authority of
+	// this pass verified against the server's own #{socket_path}. The ordinary
+	// reconcile records it on the live session projections it writes and
+	// lowers, outside its scope, the live projections recorded on exactly this
+	// server whose session is gone. Empty means no verified path: nothing is
+	// lowered and live projections record an unknown server.
+	exactSocketPath string
 }
 
 func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata.Registry) (resourceReconcilePlan, error) {
@@ -269,6 +276,8 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		newReconciler = newRegistryReconciler
 	}
 	reconciler := newReconciler(recorder, sessions)
+	exactSocketPath := p.exactSocketPath
+	reconciler.sessionSocketPath = func() string { return exactSocketPath }
 	reconciler.initializeRefusalBookkeeping()
 	reconciler.refuseForeign = true
 	reconciler.targetLiveOnly = true
@@ -333,6 +342,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	}
 	after := mergeScopedResourceRegistry(before, scopedBefore, scopedAfter, projectSessions, reconciler)
 	promotions := detectAuthorshipPromotions(before, after, recorder.objects)
+	var endedSessions []coremetadata.Project
 	if len(promotions) != 0 {
 		targetWindows := map[string]bool{}
 		for _, promotion := range promotions {
@@ -347,6 +357,9 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 			return resourceReconcilePlan{}, err
 		}
 	} else {
+		// Promotion passes above stay Window-local; only an ordinary pass also
+		// lowers the live flag of Projects it did not select.
+		endedSessions = lowerEndedResourceProjectSessions(mutator, &after, before, scopedBefore, p.exactSocketPath, projectSessions)
 		if err := planResourceBoundMirrorDrift(ctx, recorder, after, reconciler); err != nil {
 			return resourceReconcilePlan{}, err
 		}
@@ -374,6 +387,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 
 	normalize := newPlanUIDNormalizerWithAllocations(before, after, allocationOrder)
 	items := registryReconcileItems(before, after, normalize)
+	items = describeEndedResourceProjectSessions(items, endedSessions, p.exactSocketPath, normalize)
 	items = append(items, recorder.planItems(before, normalize)...)
 	items = append(items, promotionPlanItems(promotions, normalize)...)
 	items = append(items, resourceProjectForeignItems(before, projectSessions, reconciler)...)
@@ -386,6 +400,79 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		registry: after, items: items, writes: slices.Clone(recorder.writes),
 		allocations: normalize.slots(after, promotions), promotions: promotions,
 	}, nil
+}
+
+// lowerEndedResourceProjectSessions applies the ended-session judgement to the
+// Projects this pass did not select.
+//
+// The scoped reconcile only sees Projects with a session observed on the exact
+// server, so it can never notice that one of them is gone. Absence alone does
+// not say which server a Project lived on; its recorded socketPath does. The
+// judgement therefore runs over exactly the Projects outside the scope, with
+// every session name the server has (tagged or not), and it changes nothing
+// but their status.session live flag. The lowered Projects are copied onto the
+// merged Registry by uid, so the retained graphs are otherwise byte-identical.
+func lowerEndedResourceProjectSessions(
+	mutator coremetadata.Mutator,
+	after *coremetadata.Registry,
+	before, scopedBefore coremetadata.Registry,
+	socketPath string,
+	sessions []observedResourceProjectSession,
+) []coremetadata.Project {
+	if socketPath == "" || after == nil {
+		return nil
+	}
+	scoped := map[string]bool{}
+	for _, project := range scopedBefore.Projects {
+		scoped[project.Metadata.UID] = true
+	}
+	outside := coremetadata.Registry{UpdatedAt: after.UpdatedAt}
+	for _, project := range before.Projects {
+		if scoped[project.Metadata.UID] {
+			continue
+		}
+		if current, ok := after.Project(project.Metadata.UID); ok {
+			outside.Projects = append(outside.Projects, current.Clone())
+		}
+	}
+	present := make(map[string]bool, len(sessions))
+	for _, session := range sessions {
+		present[session.name] = true
+	}
+	lowered := mutator.LowerProjectSessionsEndedOnServer(&outside, socketPath, present)
+	for _, project := range lowered {
+		if target, ok := after.Project(project.Metadata.UID); ok {
+			session := *project.Status.Session
+			target.Status.Session = &session
+		}
+	}
+	if len(lowered) != 0 {
+		after.UpdatedAt = outside.UpdatedAt
+	}
+	return lowered
+}
+
+// describeEndedResourceProjectSessions gives each lowered Project's Registry
+// item the reason the generic diff cannot know: which session is absent from
+// which exact server.
+func describeEndedResourceProjectSessions(items []resourceReconcileItem, lowered []coremetadata.Project, socketPath string, normalize resourcePlanUIDNormalizer) []resourceReconcileItem {
+	for _, project := range lowered {
+		target := strings.ToLower(string(coremetadata.KindProject)) + "/" + normalize.value(project.Metadata.Name)
+		key := "registry:update:" + strings.ToLower(string(coremetadata.KindProject)) + ":" + target
+		for index := range items {
+			if items[index].Key != key {
+				continue
+			}
+			items[index].Drift = resourceDriftStale
+			items[index].Divergence = resourcegraph.DivergenceDrifted
+			items[index].Field = "status.session.live"
+			items[index].Before = "true"
+			items[index].After = "false"
+			items[index].Reason = fmt.Sprintf("session %q is absent on the exact socket %s the live projection recorded; lower it to not live, keeping its session name and socketPath",
+				project.Status.Session.Name, socketPath)
+		}
+	}
+	return items
 }
 
 func refusedAuthorshipTargets(registry coremetadata.Registry, objects []observedPlanObject) map[string]string {

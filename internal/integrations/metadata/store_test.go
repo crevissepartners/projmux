@@ -980,14 +980,14 @@ func TestProjectAndWindowMetadataStayQueryableWhileTmuxIsDown(t *testing.T) {
 			return err
 		}
 		uid = result.Project.Metadata.UID
-		_, err = m.BindProjectSession(reg, uid, "projmux", true)
+		_, err = m.BindLiveProjectSession(reg, uid, "projmux", "")
 		return err
 	}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
 	if _, err := store.Update(func(reg *coremetadata.Registry) error {
-		_, err := m.BindProjectSession(reg, uid, "projmux", false)
+		_, err := m.BindOfflineProjectSession(reg, uid, "projmux")
 		return err
 	}); err != nil {
 		t.Fatalf("mark offline: %v", err)

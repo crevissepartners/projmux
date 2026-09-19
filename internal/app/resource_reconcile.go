@@ -251,6 +251,14 @@ func (c *resourceReconcileCommand) runDryRun(ctx context.Context, planner resour
 // applies the policy, and returns the same projection an execute produces.
 func (c *resourceReconcileCommand) runControllerDryRun(ctx context.Context, kernel *resourceControllerKernel, target resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
 	kernel.planner.symbolicAllocations = true
+	// The preview reads the same runtime authority an execute binds first, so
+	// it plans against the same exact socket path. The bind is read-only. A
+	// server without that authority still previews: the plan then has no
+	// verified path and lowers no session projection, and the execute it
+	// previews stops at the same authority stage.
+	if err := kernel.bindRuntimeRoute(ctx); err != nil {
+		kernel.planner.exactSocketPath = ""
+	}
 	registry, err := kernel.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)

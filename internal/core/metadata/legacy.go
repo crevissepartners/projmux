@@ -55,6 +55,10 @@ type LegacySession struct {
 	Session string
 	Root    string
 	Windows []LegacyWindow
+	// SocketPath is the exact absolute socket path of the server the session
+	// was observed live on, as the observing route verified it; empty when
+	// that route has none. Import records it on the live session projection.
+	SocketPath string
 }
 
 // ImportOrigin records how one reported Window or Pane came to be reported.
@@ -194,7 +198,11 @@ func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op strin
 
 	if session := strings.TrimSpace(legacy.Session); session != "" {
 		if project, ok := reg.Project(projectUID); ok {
-			project.Status.Session = &SessionProjection{Name: session, Live: true}
+			projection, err := liveSessionProjection(op, projectUID, session, legacy.SocketPath)
+			if err != nil {
+				return ImportResult{}, err
+			}
+			project.Status.Session = projection
 		}
 	}
 

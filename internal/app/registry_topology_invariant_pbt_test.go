@@ -58,7 +58,7 @@ func pbtProject(t *testing.T, root string) (*coremetadata.Registry, coremetadata
 	if err != nil {
 		t.Fatalf("register project: %v", err)
 	}
-	if _, err := mutator.BindProjectSession(&registry, result.Project.Metadata.UID, "pbt-session", false); err != nil {
+	if _, err := mutator.BindOfflineProjectSession(&registry, result.Project.Metadata.UID, "pbt-session"); err != nil {
 		t.Fatalf("bind project session: %v", err)
 	}
 	project, ok := registry.Project(result.Project.Metadata.UID)

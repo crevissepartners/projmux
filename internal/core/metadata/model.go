@@ -219,6 +219,14 @@ func cloneBoolSet(in map[string]bool) map[string]bool {
 type SessionProjection struct {
 	Name string `json:"name"`
 	Live bool   `json:"live"`
+	// SocketPath is the exact absolute socket path of the tmux server the
+	// session was last created or observed live on, as that write's route
+	// verified it against the server's own #{socket_path}. It is empty when the
+	// writing route had no verified path. A not-live projection keeps it, so it
+	// always names the one server whose observation can lower a live
+	// projection: absence of the session there, and only there, is evidence
+	// that it ended (see Mutator.LowerProjectSessionsEndedOnServer).
+	SocketPath string `json:"socketPath,omitempty"`
 }
 
 // Project is the canonical Projmux root resource.

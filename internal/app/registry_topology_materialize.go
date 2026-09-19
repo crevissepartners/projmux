@@ -1351,7 +1351,7 @@ func executeRegistryTopology(
 			return fmt.Errorf("window %s role-agnostic anchor Pane is not live after materialization", work.window.Metadata.Name)
 		}
 	}
-	if _, err := mutator.BindProjectSession(registry, plan.project.Metadata.UID, plan.sessionName, true); err != nil {
+	if _, err := mutator.BindLiveProjectSession(registry, plan.project.Metadata.UID, plan.sessionName, runtime.expectedSocketPath); err != nil {
 		return MapMetadataError(err)
 	}
 	// Startup runs only after every created object carries its exact uid, so a

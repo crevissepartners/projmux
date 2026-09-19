@@ -110,7 +110,7 @@ func TestProjectUIDIsUnchangedByRuntimeCreationTeardownAndRebind(t *testing.T) {
 	uid := registered.Project.Metadata.UID
 	name := registered.Project.Metadata.Name
 
-	live, err := m.BindProjectSession(&reg, uid, "projmux", true)
+	live, err := m.BindLiveProjectSession(&reg, uid, "projmux", "")
 	if err != nil {
 		t.Fatalf("bind session: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestProjectUIDIsUnchangedByRuntimeCreationTeardownAndRebind(t *testing.T) {
 		t.Fatalf("session projection = %+v", live.Status.Session)
 	}
 
-	down, err := m.BindProjectSession(&reg, uid, "projmux", false)
+	down, err := m.BindOfflineProjectSession(&reg, uid, "projmux")
 	if err != nil {
 		t.Fatalf("mark session offline: %v", err)
 	}

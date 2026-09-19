@@ -165,6 +165,9 @@ func TestAutomaticReconcilePreservesCanonicalShellWithGenericAgentMarker(t *test
 	registryBefore, tmuxBefore := store.registry.Clone(), tmux.state()
 	reconciler := reconcileFixtureReconciler(root, "alpha")(tmux, inttmux.NewClient(tmux))
 	reconciler.refuseForeign = true
+	// A production pass records the server its route verified; this one
+	// observes the fixture's server, so the seeded projection stays converged.
+	reconciler.sessionSocketPath = func() string { return tmux.socketPath }
 	for pass := 1; pass <= 2; pass++ {
 		if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-canonical-shell"); err != nil {
 			t.Fatalf("automatic reconcile pass %d: %v", pass, err)

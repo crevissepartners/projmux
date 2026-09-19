@@ -210,7 +210,7 @@ func recordManagedRuntimeStopSessionNotLive(store *resourceStore, target managed
 			!project.Status.Session.Live {
 			return nil
 		}
-		_, err := store.mutator().BindProjectSession(working, target.RootUID, project.Status.Session.Name, false)
+		_, err := store.mutator().BindOfflineProjectSession(working, target.RootUID, project.Status.Session.Name)
 		return err
 	})
 	if err != nil {

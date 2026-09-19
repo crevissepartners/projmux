@@ -125,7 +125,11 @@ func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore,
 
 func (k *resourceControllerKernel) bindRuntimeRoute(ctx context.Context) error {
 	if k.route != nil {
-		return guardResolvedRuntimeMutationRoute(ctx, k.runner, *k.route)
+		if err := guardResolvedRuntimeMutationRoute(ctx, k.runner, *k.route); err != nil {
+			return err
+		}
+		k.planner.exactSocketPath = k.route.expectedSocketPath
+		return nil
 	}
 	lookup := k.lookupEnv
 	if lookup == nil {
@@ -136,6 +140,9 @@ func (k *resourceControllerKernel) bindRuntimeRoute(ctx context.Context) error {
 		return err
 	}
 	k.route = &route
+	// The planner records and judges session projections against the exact
+	// path this authority verified, never against the operator's -L name.
+	k.planner.exactSocketPath = route.expectedSocketPath
 	return nil
 }
 

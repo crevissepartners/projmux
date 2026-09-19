@@ -151,6 +151,12 @@ func TestCanonicalProjectStartupNamesTheFirstWindowItAdopts(t *testing.T) {
 				"beta", root, startupProject); err != nil {
 				t.Fatalf("canonical Project startup: %v", err)
 			}
+			// The live projection records the physical socket the
+			// materializer bound from the created server itself.
+			if stored, _ := store.registry.Project("prj-beta"); stored.Status.Session == nil ||
+				*stored.Status.Session != (coremetadata.SessionProjection{Name: "beta", Live: true, SocketPath: server.socketPath}) {
+				t.Fatalf("canonical startup projection = %+v, want beta live on %s", stored.Status.Session, server.socketPath)
+			}
 			var creates [][]string
 			for _, call := range server.calls {
 				if argv := tmuxCommandArgv(call); slices.Contains(argv, "new-session") {

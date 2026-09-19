@@ -264,7 +264,7 @@ func TestAuthorshipPromotionPreservesSiblingProjectSocketAndOtherHostDesiredStat
 	if err != nil {
 		t.Fatalf("seed sibling Project: %v", err)
 	}
-	if _, err := store.mutator().BindProjectSession(&store.registry, siblingProject.Project.Metadata.UID, "donus", true); err != nil {
+	if _, err := store.mutator().BindLiveProjectSession(&store.registry, siblingProject.Project.Metadata.UID, "donus", primary.socketPath); err != nil {
 		t.Fatalf("bind donus D5 session: %v", err)
 	}
 	siblingProjectRow, _ := store.registry.Project(siblingProject.Project.Metadata.UID)
@@ -311,7 +311,7 @@ func TestAuthorshipPromotionPreservesSiblingProjectSocketAndOtherHostDesiredStat
 	if err != nil {
 		t.Fatalf("seed other-host Project: %v", err)
 	}
-	if _, err := store.mutator().BindProjectSession(&store.registry, otherHostProject.Project.Metadata.UID, "other-host", true); err != nil {
+	if _, err := store.mutator().BindLiveProjectSession(&store.registry, otherHostProject.Project.Metadata.UID, "other-host", ""); err != nil {
 		t.Fatalf("bind other-host Project: %v", err)
 	}
 	otherHostWindow := store.registry.WindowsOf(otherHostProject.Project.Metadata.UID)[0]
@@ -1057,6 +1057,9 @@ func newReconcileFixture(t *testing.T, socketFlag, socketValue string) (*resourc
 			Name:  session.windows[0].name,
 			Panes: []coremetadata.LegacyPane{{Command: "zsh", CWD: root}},
 		}},
+		// Import through a verified route records that server, exactly as the
+		// production full pass does, so the fixture starts converged.
+		SocketPath: server.socketPath,
 	}, "/bin/zsh", "op-fixture-authority", coremetadata.NewBindingMatcher(coremetadata.RuntimeObservation{}))
 	if err != nil {
 		t.Fatalf("seed authoritative reconcile fixture: %v", err)
@@ -1096,7 +1099,7 @@ func TestResourceReconcileRefusesCanonicalShellAgentMarkerAndContinuesUnrelatedD
 	if err != nil {
 		t.Fatalf("register unrelated beta Project: %v", err)
 	}
-	if _, err := store.mutator().BindProjectSession(&store.registry, betaResult.Project.Metadata.UID, "beta", true); err != nil {
+	if _, err := store.mutator().BindLiveProjectSession(&store.registry, betaResult.Project.Metadata.UID, "beta", server.socketPath); err != nil {
 		t.Fatalf("bind unrelated beta session: %v", err)
 	}
 	betaProject, _ := store.registry.Project(betaResult.Project.Metadata.UID)

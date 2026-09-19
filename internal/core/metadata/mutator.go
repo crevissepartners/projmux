@@ -577,10 +577,18 @@ func (m Mutator) RenamePane(reg *Registry, paneUID, name string) (Pane, error) {
 	return pane.Clone(), nil
 }
 
-// BindProjectSession records the 1:1 persistent tmux session projection. It
-// never changes metadata.uid, so a Project keeps its identity across runtime
-// creation, teardown, and recreation.
-func (m Mutator) BindProjectSession(reg *Registry, projectUID, sessionName string, live bool) (Project, error) {
+// BindLiveProjectSession records the 1:1 persistent tmux session projection
+// as live on one exact server. It never changes metadata.uid, so a Project
+// keeps its identity across runtime creation, teardown, and recreation.
+//
+// socketPath is the exact absolute socket path of the server this write's
+// route created or observed the session on -- the value that route verified
+// against the server's own #{socket_path}, never one derived from a socket
+// name. A route that has no verified path passes "": the projection then
+// records the server as unknown rather than keeping a path an earlier write
+// recorded for what may be a different server. An empty sessionName clears
+// the projection.
+func (m Mutator) BindLiveProjectSession(reg *Registry, projectUID, sessionName, socketPath string) (Project, error) {
 	const op = "bind project session"
 
 	project, ok := reg.Project(projectUID)
@@ -591,7 +599,48 @@ func (m Mutator) BindProjectSession(reg *Registry, projectUID, sessionName strin
 	if sessionName == "" {
 		project.Status.Session = nil
 	} else {
-		project.Status.Session = &SessionProjection{Name: sessionName, Live: live}
+		projection, err := liveSessionProjection(op, projectUID, sessionName, socketPath)
+		if err != nil {
+			return Project{}, err
+		}
+		project.Status.Session = projection
+	}
+	reg.UpdatedAt = m.clock()().UTC()
+	return project.Clone(), nil
+}
+
+// liveSessionProjection is the one constructor of a live projection, shared by
+// BindLiveProjectSession and legacy import. A non-empty socketPath must be an
+// absolute clean path: it is compared by exact string, so a spelling variant
+// would silently name a different server.
+func liveSessionProjection(op, projectUID, sessionName, socketPath string) (*SessionProjection, error) {
+	if socketPath != "" && (!filepath.IsAbs(socketPath) || filepath.Clean(socketPath) != socketPath) {
+		return nil, stateErr(op, ErrInvalidRegistry, "project %q session socket path %q is not absolute and clean", projectUID, socketPath)
+	}
+	return &SessionProjection{Name: sessionName, Live: true, SocketPath: socketPath}, nil
+}
+
+// BindOfflineProjectSession records the persistent tmux session projection as
+// not live. The recorded socketPath is kept: it still names the server the
+// session was last live on, which is the only server whose later observation
+// can say anything about this projection. An empty sessionName clears the
+// projection.
+func (m Mutator) BindOfflineProjectSession(reg *Registry, projectUID, sessionName string) (Project, error) {
+	const op = "bind project session"
+
+	project, ok := reg.Project(projectUID)
+	if !ok {
+		return Project{}, stateErr(op, ErrNotFound, "project %q does not exist", projectUID)
+	}
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		project.Status.Session = nil
+	} else {
+		socketPath := ""
+		if project.Status.Session != nil {
+			socketPath = project.Status.Session.SocketPath
+		}
+		project.Status.Session = &SessionProjection{Name: sessionName, SocketPath: socketPath}
 	}
 	reg.UpdatedAt = m.clock()().UTC()
 	return project.Clone(), nil

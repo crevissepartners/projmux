@@ -578,7 +578,7 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 				return err
 			}
 		}
-		if _, err := store.mutator().BindProjectSession(working, current.Metadata.UID, sessionName, true); err != nil {
+		if _, err := store.mutator().BindLiveProjectSession(working, current.Metadata.UID, sessionName, runtime.expectedSocketPath); err != nil {
 			return MapMetadataError(err)
 		}
 		return runtime.finalizeSessionStartup(ctx, created, sessionName, cwd, ledger)

@@ -217,15 +217,25 @@ Resources and ownership:
   ControlSession is not a counter-example: it is a root resource that *names* a
   session, and the session still carries no identity of its own.
 - `Project.status.session` is the **last recorded** projection, not a live
-  read. Registration records the name with `live=false`; create,
-  materialize, Project startup, and legacy import write `live=true`; a
-  successful managed Project stop writes `live=false` only after the exact
-  Session is observed absent, keeping the name. The full reconciler pass
-  (`refreshSessionProjections`, run by the create routes and by controller
-  convergence) recomputes it for every Project, while `reconcile resources`
-  scopes its pass to Projects with an observed live Session, so it does not
-  lower a stopped Project's projection. A Session that ends outside projmux
-  can therefore leave a stale `live=true` until a full pass recomputes it.
+  read. It holds `name`, `live`, and `socketPath`: the exact absolute socket
+  path of the tmux server the session was last created or observed live on,
+  as the writing route verified it against the server's own `#{socket_path}`
+  (never derived from a socket name; empty when that route had no verified
+  path). Registration records the name with `live=false` and no path. Create,
+  materialize, Project startup, and legacy import write `live=true` with the
+  path of their route. A successful managed Project stop writes `live=false`
+  only after the exact Session is observed absent, keeping the name and
+  `socketPath`; deleting a Project's last valid primary Window lowers `live`
+  the same way. The full reconciler pass (`refreshSessionProjections`, run by
+  the create routes and by controller convergence) recomputes it for every
+  Project: a live one records this pass's path, a not-live one keeps the path
+  it had. `reconcile resources` scopes that pass to Projects with an observed
+  live Session, and outside that scope it lowers a `live=true` projection
+  whose `socketPath` is exactly the reconciled server's path and whose session
+  is absent there, keeping its name and `socketPath`; Projects with another or
+  no `socketPath` are untouched, because absence from one server is not
+  evidence about a session recorded on another. The one judgement is
+  `Mutator.LowerProjectSessionsEndedOnServer`.
 - `Window` and `Pane` carry **no stored liveness field**, deliberately. Their
   `status` block holds observed conditions only; live/offline is derived from a
   live tmux observation at read time. See *Runtime observation and resource

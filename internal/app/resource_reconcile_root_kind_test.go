@@ -174,6 +174,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "counts Projects claiming one session name; a control session is not a Project claimant",
 	},
 	{
+		File: "internal/app/resource_reconcile_plan.go", Func: "lowerEndedResourceProjectSessions",
+		Source: "Registry", Verdict: rootKindProjectOnly,
+		Why: "selects the out-of-scope Projects whose status.session live flag may be lowered; a ControlSession records no session projection",
+	},
+	{
 		File: "internal/app/resource_reconcile_plan.go", Func: "registryResourceRecords",
 		Source: "Registry", Verdict: rootKindBoth,
 		Why: "the flat record projection feeding registryUIDSet and registryReconcileItems; both ask a whole-Registry question",
@@ -227,6 +232,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		File: "internal/core/metadata/mutator.go", Func: "Mutator.ObserveProjectRoots",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "stats spec.root to maintain the MissingRoot condition; there is no control-root path to stat",
+	},
+	{
+		File: "internal/core/metadata/sessionprojection.go", Func: "Mutator.LowerProjectSessionsEndedOnServer",
+		Source: "Registry", Verdict: rootKindProjectOnly,
+		Why: "lowers the live flag of Project status.session projections; a ControlSession names its session in spec and carries no live projection",
 	},
 	{
 		File: "internal/core/metadata/schema.go", Func: "Registry.rebuildMissingReservations",
@@ -422,14 +432,14 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 	for verdict, want := range map[rootKindVerdict]int{
 		rootKindBoth:        19,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 22,
+		rootKindProjectOnly: 24,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 43; got != want {
+	if got, want := len(rootKindProjectionSites), 45; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

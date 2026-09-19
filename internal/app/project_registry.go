@@ -116,6 +116,12 @@ type registryReconciler struct {
 	targetLiveOnly            bool
 	approvedOrphanImport      bool
 	atomicAuthorshipPromotion bool
+	// sessionSocketPath answers the exact absolute socket path of the server
+	// this pass observes, as its route verified it, for the live session
+	// projections the pass records. It is read at write time because a create
+	// transaction may bind that path only when its new-session starts the
+	// server. Nil or "" records the server as unknown.
+	sessionSocketPath func() string
 	// linkError carries a canonical launch promotion failure out of the
 	// per-Pane walk. Hook-only/legacy best-effort linkage remains non-fatal, but
 	// a composite authorship transaction cannot turn allocator or validation
@@ -153,6 +159,8 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 			return namer.SessionName(root)
 		},
 	}
+	routeSocketPath := route.expectedSocketPath
+	reconciler.sessionSocketPath = func() string { return routeSocketPath }
 	if _, recording := runner.(*resourcePlanTmuxRunner); recording {
 		// Project identity is already an explicit resource-plan item. Repeating
 		// it inside the shadow reconciler would mutate the observation used to
@@ -579,6 +587,7 @@ func (r *registryReconciler) importLiveSessions(
 				continue
 			}
 		}
+		legacy.SocketPath = r.passSocketPath()
 		result, err := mutator.ImportLegacySession(working, legacy, r.shell, operationID, binder)
 		if err != nil {
 			if coremetadata.IsUsageError(err) || errors.Is(err, coremetadata.ErrInvalidRoot) {
@@ -1096,19 +1105,36 @@ func (r *registryReconciler) mirrorImported(
 
 // refreshSessionProjections recomputes Project.status.session against the live
 // tmux inventory. This is the `status.session` preflight the create routes read
-// to decide whether a Project runtime needs materializing.
+// to decide whether a Project runtime needs materializing. A live projection
+// records this pass's exact socket path; a not-live one keeps the path it had.
 func (r *registryReconciler) refreshSessionProjections(working *coremetadata.Registry, mutator coremetadata.Mutator, live map[string]bool) error {
+	socketPath := r.passSocketPath()
 	for i := range working.Projects {
 		project := working.Projects[i]
 		name := r.projectPhysicalSessionName(*working, project)
 		if name == "" {
 			return fmt.Errorf("reconcile Project %q: no valid collision-safe physical session name", project.Metadata.UID)
 		}
-		if _, err := mutator.BindProjectSession(working, project.Metadata.UID, name, live[name]); err != nil {
+		var err error
+		if live[name] {
+			_, err = mutator.BindLiveProjectSession(working, project.Metadata.UID, name, socketPath)
+		} else {
+			_, err = mutator.BindOfflineProjectSession(working, project.Metadata.UID, name)
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// passSocketPath is the exact socket path this pass records on the live
+// session projections it writes, "" when the pass has no verified path.
+func (r *registryReconciler) passSocketPath() string {
+	if r == nil || r.sessionSocketPath == nil {
+		return ""
+	}
+	return r.sessionSocketPath()
 }
 
 // livePaneInventory is the mirrored-uid inventory the lifecycle projection
