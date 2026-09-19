@@ -200,7 +200,7 @@ func TestAgentMessageSendReplyToOperatorInputIsRefusedWithItsReasonToken(t *test
 // both origins. The Agent receipt is the exact text and JSON it was before
 // Origin; operator input gains its label and loses the source it never had.
 func TestAgentMessageStatusLabelsOperatorInputAndKeepsAgentOutput(t *testing.T) {
-	now := time.Date(2026, 9, 18, 1, 2, 3, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	store := messagestore.NewStore(t.TempDir())
 	operatorStatusRecord(t, store, "message-operator-status", now)
 	agent := *dialogueEnvelope("message-agent-status", now.Add(time.Minute)).BrokerEnvelope
@@ -224,11 +224,12 @@ func TestAgentMessageStatusLabelsOperatorInputAndKeepsAgentOutput(t *testing.T) 
 	if got := status("message-agent-status"); got != "message-agent-status\tdelivered\n" {
 		t.Fatalf("agent text status = %q", got)
 	}
-	const agentJSON = `{"version":2,"messageRef":"message-agent-status","conversationRef":"conversation-message-agent-status",` +
+	stamp, deadline := now.Format(time.RFC3339), now.Add(time.Minute).Format(time.RFC3339)
+	agentJSON := `{"version":2,"messageRef":"message-agent-status","conversationRef":"conversation-message-agent-status",` +
 		`"source":{"agentUID":"codex-agent","paneUID":"codex-pane","activationGeneration":"codex-generation","provider":"codex","incarnation":"codex-incarnation"},` +
 		`"target":{"agentUID":"claude-agent","paneUID":"claude-pane","activationGeneration":"claude-generation","provider":"claude","incarnation":"claude-incarnation"},` +
-		`"delivery":{"messageRef":"message-agent-status","conversationRef":"conversation-message-agent-status","state":"delivered","reason":"unspecified","acceptedAt":"2026-09-18T01:02:03Z","terminalAt":"2026-09-18T01:02:03Z"},` +
-		`"deadline":"2026-09-18T01:03:03Z"}` + "\n"
+		`"delivery":{"messageRef":"message-agent-status","conversationRef":"conversation-message-agent-status","state":"delivered","reason":"unspecified","acceptedAt":"` + stamp + `","terminalAt":"` + stamp + `"},` +
+		`"deadline":"` + deadline + `"}` + "\n"
 	if got := status("message-agent-status", "-o", "json"); got != agentJSON {
 		t.Fatalf("agent JSON status =\n%s\nwant\n%s", got, agentJSON)
 	}
