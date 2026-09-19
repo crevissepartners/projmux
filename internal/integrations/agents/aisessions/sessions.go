@@ -21,8 +21,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
@@ -224,11 +227,44 @@ func countUserTurnsReaderContext(ctx context.Context, r io.Reader) (int, bool) {
 	return turns, true
 }
 
-// EncodeClaudeProjectPath returns Claude Code's project directory name for cwd:
-// the cleaned slash form with path separators replaced by dashes.
+// claudeProjectDirNameMax is the longest project directory name Claude Code
+// writes before it truncates the name and appends a hash suffix.
+const claudeProjectDirNameMax = 200
+
+// EncodeClaudeProjectPath returns Claude Code's project directory name for cwd,
+// mirroring the naming Claude Code is observed to use under its projects
+// directory. The cleaned slash form of cwd is read as UTF-16 code units: each
+// ASCII letter or digit is kept as is and every other unit becomes '-', so a
+// BMP non-ASCII character yields one dash and a character outside the BMP (a
+// surrogate pair) yields two. Runs of dashes are not collapsed and case is
+// preserved. A name longer than claudeProjectDirNameMax is cut to that length
+// and suffixed with '-' plus the base-36 absolute value of the Java-style
+// int32 string hash (h = 31*h + unit, wrapping) of the cleaned path's UTF-16
+// code units. The result is always ASCII.
 func EncodeClaudeProjectPath(cwd string) string {
-	cleaned := filepath.ToSlash(cleanCWD(cwd))
-	return strings.ReplaceAll(cleaned, "/", "-")
+	units := utf16.Encode([]rune(filepath.ToSlash(cleanCWD(cwd))))
+	encoded := make([]byte, len(units))
+	var hash int32
+	for i, unit := range units {
+		hash = hash*31 + int32(unit)
+		if unit < utf8.RuneSelf && isASCIIAlnum(byte(unit)) {
+			encoded[i] = byte(unit)
+		} else {
+			encoded[i] = '-'
+		}
+	}
+	if len(encoded) <= claudeProjectDirNameMax {
+		return string(encoded)
+	}
+	abs := int64(hash)
+	if abs < 0 {
+		abs = -abs
+	}
+	return string(encoded[:claudeProjectDirNameMax]) + "-" + strconv.FormatInt(abs, 36)
+}
+
+func isASCIIAlnum(c byte) bool {
+	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
 }
 
 func (opts DiscoverOptions) withDefaults() DiscoverOptions {
@@ -286,7 +322,25 @@ func discoverClaude(ctx context.Context, cwd, projectsDir string, depth, limit i
 		if err != nil {
 			return nil, ctx.Err() != nil
 		}
+		// A descendant's untruncated name starts with encoded+"-". When the
+		// root's name fits (len(encoded) <= claudeProjectDirNameMax), a
+		// descendant name that Claude Code truncated still starts that way:
+		// its first claudeProjectDirNameMax units include encoded and the
+		// following separator dash, or, when len(encoded) is exactly the
+		// limit, the truncated prefix is encoded followed by "-hash". A root
+		// whose name exceeds the limit is itself truncated to its first
+		// claudeProjectDirNameMax units plus "-hash", and every descendant
+		// shares those first units, so match on that truncated prefix instead.
 		encoded := EncodeClaudeProjectPath(cwd)
+		matchesRoot := func(name string) bool {
+			return name == encoded || strings.HasPrefix(name, encoded+"-")
+		}
+		if len(encoded) > claudeProjectDirNameMax {
+			truncated := encoded[:claudeProjectDirNameMax] + "-"
+			matchesRoot = func(name string) bool {
+				return strings.HasPrefix(name, truncated)
+			}
+		}
 		guard := newPathGuard()
 		for _, entry := range entries {
 			if ctx.Err() != nil {
@@ -296,7 +350,7 @@ func discoverClaude(ctx context.Context, cwd, projectsDir string, depth, limit i
 				continue
 			}
 			name := entry.Name()
-			if name != encoded && !strings.HasPrefix(name, encoded+"-") {
+			if !matchesRoot(name) {
 				continue
 			}
 			dir := filepath.Join(projectsDir, name)

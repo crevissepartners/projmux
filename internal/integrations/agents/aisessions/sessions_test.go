@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -689,12 +690,128 @@ func TestDiscoverUsesShortIDWhenTitleIsOutsideBoundedPrefix(t *testing.T) {
 	}
 }
 
+// Claude project directory names observed from real Claude Code 2.1.278
+// project directories: each cwd was opened in Claude Code and the directory it
+// created under its projects directory was recorded verbatim.
+var (
+	observedClaudeLongRoot  = "/tmp/pmxenc/" + strings.Repeat("l", 130) + "/" + strings.Repeat("m", 80)
+	observedClaudeLongFirst = "-tmp-pmxenc-" + strings.Repeat("l", 130) + "-" + strings.Repeat("m", 57)
+)
+
 func TestEncodeClaudeProjectPath(t *testing.T) {
 	t.Parallel()
 
-	got := EncodeClaudeProjectPath("/workspace/app")
-	if got != "-workspace-app" {
-		t.Fatalf("EncodeClaudeProjectPath() = %q, want %q", got, "-workspace-app")
+	for _, tc := range []struct {
+		cwd  string
+		want string
+	}{
+		{cwd: "/workspace/app", want: "-workspace-app"},
+		{cwd: "/tmp/pmxenc/한글", want: "-tmp-pmxenc---"},
+		{cwd: "/tmp/pmxenc/" + strings.Repeat("b", 188), want: "-tmp-pmxenc-" + strings.Repeat("b", 188)},
+		{cwd: "/tmp/pmxenc/" + strings.Repeat("c", 189), want: "-tmp-pmxenc-" + strings.Repeat("c", 188) + "-ot8dga"},
+		{cwd: "/tmp/pmxenc/dot.v1.2", want: "-tmp-pmxenc-dot-v1-2"},
+		{cwd: "/tmp/pmxenc/emo😀ji", want: "-tmp-pmxenc-emo--ji"},
+		{cwd: observedClaudeLongRoot, want: observedClaudeLongFirst + "-rmuhye"},
+		{cwd: observedClaudeLongRoot + "/.wt/child", want: observedClaudeLongFirst + "-ab5grz"},
+		{cwd: "/tmp/pmxenc/MiXeD-Case_9", want: "-tmp-pmxenc-MiXeD-Case-9"},
+		{cwd: "/tmp/pmxenc/p+u@n~c,t(1)", want: "-tmp-pmxenc-p-u-n-c-t-1-"},
+		{cwd: "/tmp/pmxenc/repo/.wt/fix/topic", want: "-tmp-pmxenc-repo--wt-fix-topic"},
+		{cwd: "/tmp/pmxenc/sp ace", want: "-tmp-pmxenc-sp-ace"},
+		{cwd: "/tmp/pmxenc/under_score", want: "-tmp-pmxenc-under-score"},
+	} {
+		if got := EncodeClaudeProjectPath(tc.cwd); got != tc.want {
+			t.Fatalf("EncodeClaudeProjectPath(%q) = %q, want %q", tc.cwd, got, tc.want)
+		}
+	}
+}
+
+func TestDiscoverClaudeFindsRootWithDot(t *testing.T) {
+	t.Parallel()
+
+	projectsDir := filepath.Join(t.TempDir(), "claude", "projects")
+	path := writeClaudeSession(t, projectsDir, "-tmp-pmxenc-dot-v1-2", "dot.jsonl",
+		"11111111-2222-4333-8444-555555550101", "/tmp/pmxenc/dot.v1.2", "feat/dot", "Dot session")
+	setModTime(t, path, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
+
+	for _, depth := range []int{0, 2} {
+		got, err := Discover("/tmp/pmxenc/dot.v1.2", DiscoverOptions{ClaudeProjectsDir: projectsDir, Depth: depth})
+		if err != nil {
+			t.Fatalf("Discover(depth=%d) error = %v", depth, err)
+		}
+		if len(got) != 1 || got[0].Agent != AgentClaude || got[0].Title != "Dot session" {
+			t.Fatalf("Discover(depth=%d) = %#v, want the dot root's Claude session", depth, got)
+		}
+	}
+}
+
+func TestDiscoverClaudeDepthFindsDotWorktreeChild(t *testing.T) {
+	t.Parallel()
+
+	projectsDir := filepath.Join(t.TempDir(), "claude", "projects")
+	path := writeClaudeSession(t, projectsDir, "-tmp-pmxenc-repo--wt-fix-topic", "topic.jsonl",
+		"11111111-2222-4333-8444-555555550102", "/tmp/pmxenc/repo/.wt/fix/topic", "fix/topic", "Topic session")
+	setModTime(t, path, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
+
+	got, err := Discover("/tmp/pmxenc/repo", DiscoverOptions{ClaudeProjectsDir: projectsDir, Depth: 3})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "Topic session" || got[0].Context.CWD != "/tmp/pmxenc/repo/.wt/fix/topic" {
+		t.Fatalf("Discover() = %#v, want the .wt child's Claude session", got)
+	}
+}
+
+func TestDiscoverClaudeDepthFindsTruncatedLongRootAndChild(t *testing.T) {
+	t.Parallel()
+
+	projectsDir := filepath.Join(t.TempDir(), "claude", "projects")
+	at := time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC)
+	rootPath := writeClaudeSession(t, projectsDir, observedClaudeLongFirst+"-rmuhye", "root.jsonl",
+		"11111111-2222-4333-8444-555555550103", observedClaudeLongRoot, "feat/root", "Long root session")
+	childPath := writeClaudeSession(t, projectsDir, observedClaudeLongFirst+"-ab5grz", "child.jsonl",
+		"11111111-2222-4333-8444-555555550104", observedClaudeLongRoot+"/.wt/child", "feat/child", "Long child session")
+	setModTime(t, rootPath, at)
+	setModTime(t, childPath, at)
+
+	got, err := Discover(observedClaudeLongRoot, DiscoverOptions{ClaudeProjectsDir: projectsDir, Depth: 2})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	titles := make([]string, 0, len(got))
+	for _, session := range got {
+		titles = append(titles, session.Title)
+	}
+	sort.Strings(titles)
+	if len(titles) != 2 || titles[0] != "Long child session" || titles[1] != "Long root session" {
+		t.Fatalf("Discover() titles = %v, want the long root and its .wt child", titles)
+	}
+}
+
+func TestDiscoverClaudeSharedProjectDirKeepsEachRootsOwnSession(t *testing.T) {
+	t.Parallel()
+
+	// "/tmp/pmxenc/a_b" and "/tmp/pmxenc/a-b" encode to the same directory; the
+	// recorded cwd decides which root a transcript belongs to.
+	projectsDir := filepath.Join(t.TempDir(), "claude", "projects")
+	at := time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC)
+	underscore := writeClaudeSession(t, projectsDir, "-tmp-pmxenc-a-b", "underscore.jsonl",
+		"11111111-2222-4333-8444-555555550105", "/tmp/pmxenc/a_b", "feat/underscore", "Underscore session")
+	dash := writeClaudeSession(t, projectsDir, "-tmp-pmxenc-a-b", "dash.jsonl",
+		"11111111-2222-4333-8444-555555550106", "/tmp/pmxenc/a-b", "feat/dash", "Dash session")
+	setModTime(t, underscore, at)
+	setModTime(t, dash, at)
+
+	for root, want := range map[string]string{
+		"/tmp/pmxenc/a_b": "Underscore session",
+		"/tmp/pmxenc/a-b": "Dash session",
+	} {
+		got, err := Discover(root, DiscoverOptions{ClaudeProjectsDir: projectsDir})
+		if err != nil {
+			t.Fatalf("Discover(%q) error = %v", root, err)
+		}
+		if len(got) != 1 || got[0].Title != want {
+			t.Fatalf("Discover(%q) = %#v, want only %q", root, got, want)
+		}
 	}
 }
 
