@@ -236,6 +236,12 @@ Resources and ownership:
   no `socketPath` are untouched, because absence from one server is not
   evidence about a session recorded on another. The one judgement is
   `Mutator.LowerProjectSessionsEndedOnServer`.
+  The `window-unlinked` hook, which a raw `kill-session` fires, applies the
+  same judgement on its fast path: once its lifecycle stage has observed the
+  host, it lowers a live projection recorded on the hook's exact verified
+  server whose session is gone there, re-reading that server's sessions under
+  the Registry lock. It does not run the full pass, and when no live
+  projection records that server it costs the hook no extra tmux call.
 - When the exact server `reconcile resources` targets is not running (its
   runtime authority read fails with a missing-server signature, and only
   then), the same judgement runs with an empty present set against the exact

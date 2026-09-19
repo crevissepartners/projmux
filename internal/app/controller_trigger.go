@@ -194,14 +194,26 @@ type controllerTriggerOutcome struct {
 	// final pass so a manual invocation can distinguish clean first-attempt
 	// convergence from recovery of a transient runtime cleanup failure.
 	retryReason coremetadata.TeardownReason
+	// sessionsLowered counts Project session projections this worker's
+	// window-unlinked passes lowered to not live because their session ended
+	// on this exact server. It is reported, never counted as changed: see
+	// controllerPassResult.sessionsLowered.
+	sessionsLowered int
 }
 
 func (o controllerTriggerOutcome) describe() string {
+	lowered := ""
+	if o.sessionsLowered > 0 {
+		lowered = fmt.Sprintf(" lowered=%d", o.sessionsLowered)
+	}
 	if o.deferred != "" {
-		return string(o.reason) + " deferred: " + o.deferred
+		// A pass can lower a session and then defer, most often a kill-session
+		// unlink awaiting its causal pane-exited, so the count precedes the
+		// deferral message rather than disappearing behind it.
+		return string(o.reason) + lowered + " deferred: " + o.deferred
 	}
 	out := fmt.Sprintf("%s passes=%d changed=%d events=%d converged=%t",
-		o.reason, o.passes, o.changed, o.events, o.converged)
+		o.reason, o.passes, o.changed, o.events, o.converged) + lowered
 	if o.unverified != "" {
 		out += " unverified: " + o.unverified
 	}
@@ -458,6 +470,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 				passTrigger.retry++
 				carriedUnlinks = append(carriedUnlinks, passTrigger)
 			}
+			outcome.sessionsLowered += pass.sessionsLowered
 			if pass.changed() {
 				batchChanged = true
 				outcome.changed++
@@ -643,6 +656,12 @@ type controllerPassResult struct {
 	// removed the retained Agent Pane and projected its stable Agent Offline.
 	// It is the acknowledgement authority for a terminal event record.
 	exhaustedCleanExitConverged bool
+	// sessionsLowered counts Projects whose live session projection the
+	// window-unlinked fast path lowered because the session is gone from the
+	// hook's exact server. It is deliberately not part of changed(): a changed
+	// batch buys a widened repeat pass, and the lower is one idempotent
+	// convergent commit whose repeat is already a no-op.
+	sessionsLowered int
 }
 
 func (r controllerPassResult) changed() bool {
@@ -748,6 +767,13 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 		pass.exhaustedCleanExitConverged = len(exits.cascaded) == 1
 		pass.awaitingPaneExit = exits.awaitingPaneExit
 		pass.awaitingSubject = exits.awaitingSubject
+		if trigger.reason == controllerTriggerWindowUnlinked {
+			lowered, err := r.lowerProjectSessionsEndedOnHookServer(ctx, target)
+			if err != nil {
+				return pass, err
+			}
+			pass.sessionsLowered = lowered
+		}
 		return pass, nil
 	}
 	route, err := resolveControllerRuntimeMutationRoute(ctx, r.runner, target, func(string) string { return "" })
@@ -810,6 +836,92 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	}
 	pass.residualExits = exits.changed()
 	return pass, nil
+}
+
+// lowerProjectSessionsEndedOnHookServer is the window-unlinked fast path's
+// session-projection stage. A raw `tmux kill-session` fires window-unlinked on
+// the server that lost the session and nothing else, so this is where a live
+// Project projection learns its session ended outside projmux.
+//
+// Absence on this exact server is evidence only about Projects whose
+// projection recorded this server. A Project recorded on another server, or on
+// none, cannot be judged from here -- its session may be alive elsewhere -- so
+// the judgement is Mutator.LowerProjectSessionsEndedOnServer's, unchanged, and
+// the comparison path is the route's verified #{socket_path}, the same value
+// the writers that recorded the projection verified.
+//
+// It does not widen the pass. The full pass would re-derive every projection
+// from one server's observation, which costs a reconciliation on every hook and
+// lowers Projects recorded on other servers. This stage is one idempotent
+// convergent commit instead. Its lock-free filter is the same seam run on a
+// throwaway copy with no present sessions, which names exactly the live
+// projections recorded on this path, so the ordinary hook costs no extra tmux
+// call and the predicate lives in one place. The session list that decides the
+// lower is re-read under the Registry lock, so a create that owns the lock and
+// is starting that session again cannot be raced into a false lower.
+//
+// An unreachable or sessionless server lowers nothing and is not an error;
+// the server's own absence is a different judgement than a session's.
+func (r *controllerTriggerRunner) lowerProjectSessionsEndedOnHookServer(ctx context.Context, target tmuxTransport) (int, error) {
+	registry, err := r.store.load()
+	if err != nil {
+		return 0, MapMetadataError(err)
+	}
+	// Both pre-lock seam calls lower a private Clone, never the store's
+	// Registry, so they decide without writing anything.
+	mutator := r.store.mutator()
+	probe := registry.Clone()
+	if len(mutator.LowerProjectSessionsEndedOnServer(&probe, target.Value, nil)) == 0 {
+		return 0, nil
+	}
+	present, reachable, err := listHookServerSessionNames(ctx, explicitTmuxRunner{runner: r.runner, target: target})
+	if err != nil || !reachable {
+		return 0, err
+	}
+	check := registry.Clone()
+	if len(mutator.LowerProjectSessionsEndedOnServer(&check, target.Value, present)) == 0 {
+		return 0, nil
+	}
+	route, err := resolveControllerRuntimeMutationRoute(ctx, r.runner, target, func(string) string { return "" })
+	if err != nil {
+		return 0, err
+	}
+	verified := explicitTmuxRunner{runner: r.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
+	lowered := 0
+	_, err = r.store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		lowered = 0
+		present, reachable, err := listHookServerSessionNames(ctx, verified)
+		if err != nil || !reachable {
+			return err
+		}
+		lowered = len(mutator.LowerProjectSessionsEndedOnServer(working, route.expectedSocketPath, present))
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return lowered, nil
+}
+
+// listHookServerSessionNames reads every session name on one exact server,
+// tagged or not, so a session that merely lost its mirror still counts as
+// present. reachable is false, with no error, when the server is not up or
+// holds no session.
+func listHookServerSessionNames(ctx context.Context, routed explicitTmuxRunner) (map[string]bool, bool, error) {
+	out, err := routed.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		if tmuxSessionAbsent(err) || tmuxServerUnreachable(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("list sessions on %s: %w", routed.target.Label(), err)
+	}
+	present := map[string]bool{}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			present[name] = true
+		}
+	}
+	return present, true, nil
 }
 
 // convergeControlTargets continuously repairs every live exact
