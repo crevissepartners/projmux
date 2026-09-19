@@ -303,14 +303,12 @@ func TestStoreConcurrentAnswersSettleTheRecordOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make(chan error, writers)
 	for range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// Each writer opens its own view of the same file, as separate
 			// processes would.
 			_, err := NewStoreAt(store.Path()).WithClock(clock.Now).Answer(record.ID, "agt-a", testAnswers)
 			results <- err
-		}()
+		})
 	}
 	wg.Wait()
 	close(results)

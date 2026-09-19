@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -400,9 +401,7 @@ func findRecord(records []Record, id, agentUID string) int {
 
 func cloneAnswers(answers map[string]string) map[string]string {
 	out := make(map[string]string, len(answers))
-	for key, value := range answers {
-		out[key] = value
-	}
+	maps.Copy(out, answers)
 	return out
 }
 
