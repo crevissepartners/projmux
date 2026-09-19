@@ -258,6 +258,11 @@ func (c *resourceReconcileCommand) runControllerDryRun(ctx context.Context, kern
 	// previews stops at the same authority stage.
 	if err := kernel.bindRuntimeRoute(ctx); err != nil {
 		kernel.planner.exactSocketPath = ""
+		// No server behind the exact target: preview only the lower of the
+		// projections recorded live on it, which is all its execute may do.
+		if plan, _, ok := kernel.previewAbsentServer(err); ok {
+			return writeResourceReconcileReport(stdout, opts.output, reportForDryRun(plan, target, retryResourceReconcile(target)))
+		}
 	}
 	registry, err := kernel.loadRegistry()
 	if err != nil {

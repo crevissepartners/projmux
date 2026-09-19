@@ -456,6 +456,39 @@ func lowerEndedResourceProjectSessions(
 // item the reason the generic diff cannot know: which session is absent from
 // which exact server.
 func describeEndedResourceProjectSessions(items []resourceReconcileItem, lowered []coremetadata.Project, socketPath string, normalize resourcePlanUIDNormalizer) []resourceReconcileItem {
+	return describeLoweredProjectSessions(items, lowered, normalize, func(project coremetadata.Project) string {
+		return fmt.Sprintf("session %q is absent on the exact socket %s the live projection recorded; lower it to not live, keeping its session name and socketPath",
+			project.Status.Session.Name, socketPath)
+	})
+}
+
+// planAbsentServerSessionLower is the whole plan when the exact server is not
+// running: the ended-session judgement with an empty present set, since a
+// server that is not running has no session, and nothing else. It returns the
+// lowered Registry, one Registry item per lowered Project, and how many were
+// lowered; zero means the plan is empty and the Registry is before unchanged.
+func planAbsentServerSessionLower(mutator coremetadata.Mutator, before coremetadata.Registry, socketPath string) (resourceReconcilePlan, int, error) {
+	after := before.Clone()
+	lowered := mutator.LowerProjectSessionsEndedOnServer(&after, socketPath, map[string]bool{})
+	if len(lowered) == 0 {
+		return resourceReconcilePlan{registry: before.Clone()}, 0, nil
+	}
+	normalize := newPlanUIDNormalizerWithAllocations(before, after, nil)
+	items := describeLoweredProjectSessions(registryReconcileItems(before, after, normalize), lowered, normalize, func(project coremetadata.Project) string {
+		return fmt.Sprintf("session %q is recorded live on the exact socket %s, whose server is not running; lower it to not live, keeping its session name and socketPath",
+			project.Status.Session.Name, socketPath)
+	})
+	sort.SliceStable(items, func(i, j int) bool { return items[i].Key < items[j].Key })
+	if err := validateResourcePlanItems(items); err != nil {
+		return resourceReconcilePlan{}, 0, err
+	}
+	return resourceReconcilePlan{registry: after, items: items}, len(lowered), nil
+}
+
+// describeLoweredProjectSessions rewrites each lowered Project's generic
+// Registry update item as the status.session.live true -> false transition,
+// with the reason its caller knows.
+func describeLoweredProjectSessions(items []resourceReconcileItem, lowered []coremetadata.Project, normalize resourcePlanUIDNormalizer, reason func(coremetadata.Project) string) []resourceReconcileItem {
 	for _, project := range lowered {
 		target := strings.ToLower(string(coremetadata.KindProject)) + "/" + normalize.value(project.Metadata.Name)
 		key := "registry:update:" + strings.ToLower(string(coremetadata.KindProject)) + ":" + target
@@ -468,8 +501,7 @@ func describeEndedResourceProjectSessions(items []resourceReconcileItem, lowered
 			items[index].Field = "status.session.live"
 			items[index].Before = "true"
 			items[index].After = "false"
-			items[index].Reason = fmt.Sprintf("session %q is absent on the exact socket %s the live projection recorded; lower it to not live, keeping its session name and socketPath",
-				project.Status.Session.Name, socketPath)
+			items[index].Reason = reason(project)
 		}
 	}
 	return items

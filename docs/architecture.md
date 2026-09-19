@@ -236,6 +236,20 @@ Resources and ownership:
   no `socketPath` are untouched, because absence from one server is not
   evidence about a session recorded on another. The one judgement is
   `Mutator.LowerProjectSessionsEndedOnServer`.
+- When the exact server `reconcile resources` targets is not running (its
+  runtime authority read fails with a missing-server signature, and only
+  then), the same judgement runs with an empty present set against the exact
+  target path: the `--socket-path` or inherited `$TMUX` path itself, or for
+  `--socket <name>` the path tmux would use for that label (the first existing
+  `tmux-<uid>` directory under `$TMUX_TMPDIR`, then `/tmp`, resolved through
+  symlinks). Every projection recorded `live=true` on exactly that path is
+  lowered in one Registry commit, keeping its name and `socketPath`, and the
+  receipt states the absent server and the lowered count; nothing else is
+  planned, written, or reobserved, and `--dry-run` previews the same items.
+  When nothing is left to lower, or the path cannot be resolved, the command
+  fails at the runtime authority stage exactly as before and writes nothing.
+  Any other authority failure (a refused or unreadable socket, a timeout, a
+  server that is not app-owned) never lowers anything.
 - `Window` and `Pane` carry **no stored liveness field**, deliberately. Their
   `status` block holds observed conditions only; live/offline is derived from a
   live tmux observation at read time. See *Runtime observation and resource

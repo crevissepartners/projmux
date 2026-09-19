@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -685,6 +687,9 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 	}
 	var run controllerRun
 	if err := k.bindRuntimeRoute(ctx); err != nil {
+		if absent, handled, absentErr := k.convergeAbsentServer(err); handled {
+			return absent, absentErr
+		}
 		return run, &controllerRunError{stage: "runtime authority", err: err, run: run}
 	}
 	snapshot, err := k.loadRegistry()
@@ -783,6 +788,154 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 		run.completed = append(run.completed, controllerReobserveStage(reobserved))
 	}
 	return run, nil
+}
+
+// errAbsentServerNothingToLower aborts the absent-server transaction when the
+// locked Registry has nothing left to lower, so the store writes no bytes.
+var errAbsentServerNothingToLower = errors.New("absent server: no live session projection recorded on its exact socket")
+
+// convergeAbsentServer is the one thing a convergence may still do when the
+// runtime authority stage found no server behind the exact target.
+//
+// A server that is not running holds no session, so every projection recorded
+// live on its exact socket path has ended; that is the same judgement a running
+// server makes about a session it no longer has, with an empty present set.
+// Nothing else is attempted: there is no graph to adopt, no topology or mirror
+// to repair, no tmux write, and nothing to reobserve.
+//
+// handled is false -- and the caller reports the runtime authority error
+// exactly as before -- unless bindErr is a missing server, the exact socket
+// path resolves, and at least one projection is lowered. A Registry that cannot
+// be read is left to that same report rather than surfaced as a new failure.
+func (k *resourceControllerKernel) convergeAbsentServer(bindErr error) (controllerRun, bool, error) {
+	var run controllerRun
+	// The unlocked preview decides whether to open a transaction at all, so a
+	// repeat that has nothing to lower never takes the lock or touches bytes.
+	_, socketPath, ok := k.previewAbsentServer(bindErr)
+	if !ok || k.store.updateConvergent == nil {
+		return run, false, nil
+	}
+	mutator := k.store.mutator()
+	var locked resourceReconcilePlan
+	lowered := 0
+	_, changed, updateErr := k.store.updateConvergent(func(working *coremetadata.Registry) error {
+		plan, count, err := planAbsentServerSessionLower(mutator, working.Clone(), socketPath)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return errAbsentServerNothingToLower
+		}
+		locked, lowered = plan, count
+		*working = plan.registry.Clone()
+		return nil
+	})
+	if errors.Is(updateErr, errAbsentServerNothingToLower) {
+		return run, false, nil
+	}
+	run.completed = []string{
+		"exact server absent: " + socketPath,
+		fmt.Sprintf("server absent: lowered %d session projection(s) recorded on %s", lowered, socketPath),
+	}
+	run.plan = locked
+	if updateErr != nil {
+		return run, true, &controllerRunError{stage: "registry commit", err: MapMetadataError(updateErr), run: run}
+	}
+	run.registryChanged = changed
+	registryStage := "Registry commit"
+	if !changed {
+		registryStage += " (no-op)"
+	}
+	run.completed = append(run.completed, registryStage)
+	for _, item := range run.plan.items {
+		if item.registry {
+			run.completed = append(run.completed, item.Key)
+		}
+	}
+	return run, true, nil
+}
+
+// previewAbsentServer is convergeAbsentServer's dry-run half: the same plan
+// over an unlocked snapshot, writing nothing, and the exact socket path it was
+// judged against. ok is false whenever the execute it previews would report
+// the runtime authority error unchanged.
+func (k *resourceControllerKernel) previewAbsentServer(bindErr error) (resourceReconcilePlan, string, bool) {
+	if bindErr == nil || !isMissingTmuxServer(bindErr) || k.store == nil || k.store.mutator == nil {
+		return resourceReconcilePlan{}, "", false
+	}
+	socketPath := k.absentServerSocketPath()
+	if socketPath == "" {
+		return resourceReconcilePlan{}, "", false
+	}
+	snapshot, err := k.loadRegistry()
+	if err != nil {
+		return resourceReconcilePlan{}, "", false
+	}
+	plan, count, err := planAbsentServerSessionLower(k.store.mutator(), snapshot, socketPath)
+	if err != nil || count == 0 {
+		return resourceReconcilePlan{}, "", false
+	}
+	return plan, socketPath, true
+}
+
+func (k *resourceControllerKernel) absentServerSocketPath() string {
+	return absentServerSocketPath(k.target, k.lookupEnv, "/tmp", os.Getuid())
+}
+
+// absentServerSocketPath is the exact socket path of the target server when no
+// server is running there to report its own #{socket_path}.
+//
+// A -S target is its own path: an explicit --socket-path, or the path an
+// inherited $TMUX named, both already absolute and clean. A -L <name> target is
+// the path tmux itself would use for that label (tmux make_label): the first of
+// $TMUX_TMPDIR (only when set and absolute) and defaultTmpdir whose
+// tmux-<uid> entry is an existing directory -- not a symlink -- owned by uid
+// with no access for others, resolved through symlinks as tmux realpaths it,
+// joined with the name. Nothing is created: tmux creates that directory when a
+// server starts, so a server that ever ran there left it behind.
+//
+// An empty result means the path cannot be known, and nothing may be lowered
+// against it.
+func absentServerSocketPath(target tmuxTransport, lookupEnv func(string) string, defaultTmpdir string, uid int) string {
+	switch target.Flag() {
+	case "-S":
+		if filepath.IsAbs(target.Value) && filepath.Clean(target.Value) == target.Value {
+			return target.Value
+		}
+		return ""
+	case "-L":
+	default:
+		return ""
+	}
+	name := target.Value
+	if name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	var bases []string
+	if lookupEnv != nil {
+		if tmpdir := lookupEnv("TMUX_TMPDIR"); tmpdir != "" && filepath.IsAbs(tmpdir) {
+			bases = append(bases, tmpdir)
+		}
+	}
+	if defaultTmpdir != "" && filepath.IsAbs(defaultTmpdir) {
+		bases = append(bases, defaultTmpdir)
+	}
+	for _, base := range bases {
+		dir := filepath.Join(base, fmt.Sprintf("tmux-%d", uid))
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && (int64(stat.Uid) != int64(uid) || info.Mode().Perm()&0o007 != 0) {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			continue
+		}
+		return filepath.Join(resolved, name)
+	}
+	return ""
 }
 
 // rollbackPromotionRegistry restores the exact preimage only when the current
