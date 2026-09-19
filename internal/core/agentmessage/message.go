@@ -105,9 +105,10 @@ type Route struct {
 	PaneUID              string `json:"paneUID"`
 	ActivationGeneration string `json:"activationGeneration"`
 	Provider             string `json:"provider"`
-	// Incarnation is an opaque digest of the provider-typed authority. It is
-	// neither a provider locator nor a credential. An endpoint upgrade changes
-	// this fence even when the Pane activation generation remains stable.
+	// Incarnation is an opaque value scoped to the provider conversation (the
+	// Claude session, or the Codex activation's thread). It is neither a
+	// provider locator nor a credential. Earlier builds wrote a digest of the
+	// full provider authority here; readers still accept that form.
 	Incarnation string `json:"incarnation"`
 }
 

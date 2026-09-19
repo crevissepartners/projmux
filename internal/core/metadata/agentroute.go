@@ -26,12 +26,49 @@ type AgentRouteRef struct {
 
 func (r AgentRouteRef) Authority() ProviderAuthorityRef { return r.authority }
 
-// Incarnation is a non-secret, provider-neutral fence for the complete typed
-// authority. It lets durable coordination records reject an endpoint upgrade
-// even when the stable Agent and Pane activation generation did not change.
-// Consumers compare the opaque digest only; provider-specific fields retain
-// their meaning inside the adapter which constructed the route.
+// Incarnation is the non-secret, provider-neutral route incarnation which
+// writers put in durable coordination records. It follows the provider
+// conversation: a digest of the Claude SessionID alone, or one fixed value for
+// every Codex activation (whose thread is already fixed by the Agent's
+// activation generation). It does not follow helper, registration, or process
+// lifetime, so a same-session SessionStart re-registration or a Codex
+// reconnect keeps it. A replaced helper, registration, or provider process is
+// refused by the authority fences (claudeCoordinationTarget.matches,
+// claudeCoordinationSocket, (*liveClaudeDialogueBroker).Current /proc checks,
+// claudeQualificationEvidence.valid explicit fields, and AgentRouteRef.Same),
+// not by this value. Consumers compare the opaque value only.
 func (r AgentRouteRef) Incarnation() string {
+	if r.authority == nil {
+		return ""
+	}
+	var material string
+	switch authority := r.authority.(type) {
+	case CodexRouteAuthority:
+		if authority.ThreadID == "" || !authority.Authority.Valid() {
+			return ""
+		}
+		material = "codex-session"
+	case ClaudeAuthorityRef:
+		if !authority.Valid() {
+			return ""
+		}
+		material = "claude-session\x00" + authority.SessionID
+	default:
+		return ""
+	}
+	digest := sha256.Sum256([]byte(material))
+	return fmt.Sprintf("route-%x", digest[:18])
+}
+
+// SessionIncarnation is the session-scoped route incarnation. It is the same
+// value as Incarnation.
+func (r AgentRouteRef) SessionIncarnation() string { return r.Incarnation() }
+
+// FullIncarnation is a digest of the complete typed authority. It is what
+// earlier builds wrote as the route incarnation; readers still accept it
+// through AcceptsIncarnation, and writers no longer emit it. It uses a
+// separate material domain, so it never equals Incarnation.
+func (r AgentRouteRef) FullIncarnation() string {
 	if r.authority == nil {
 		return ""
 	}
@@ -58,39 +95,12 @@ func (r AgentRouteRef) Incarnation() string {
 	return fmt.Sprintf("route-%x", digest[:18])
 }
 
-// SessionIncarnation is the session-scoped route incarnation: a digest of the
-// Claude SessionID alone, or one fixed value for every Codex route. It uses a
-// separate material domain, so it never equals a full Incarnation digest.
-func (r AgentRouteRef) SessionIncarnation() string {
-	if r.authority == nil {
-		return ""
-	}
-	var material string
-	switch authority := r.authority.(type) {
-	case CodexRouteAuthority:
-		if authority.ThreadID == "" || !authority.Authority.Valid() {
-			return ""
-		}
-		material = "codex-session"
-	case ClaudeAuthorityRef:
-		if !authority.Valid() {
-			return ""
-		}
-		material = "claude-session\x00" + authority.SessionID
-	default:
-		return ""
-	}
-	digest := sha256.Sum256([]byte(material))
-	return fmt.Sprintf("route-%x", digest[:18])
-}
-
 // AcceptsIncarnation is the one reader-side test of a stored incarnation. It
-// accepts the full digest and the session-scoped value so every reader can
-// read the session value before any writer emits it; writers switch later.
-// A replaced helper or provider process is refused by the authority fences,
-// not by this value.
+// accepts the session-scoped value writers emit and the full-authority digest
+// earlier builds wrote. A replaced helper or provider process is refused by
+// the authority fences, not by this value.
 func (r AgentRouteRef) AcceptsIncarnation(value string) bool {
-	return value != "" && (value == r.Incarnation() || value == r.SessionIncarnation())
+	return value != "" && (value == r.FullIncarnation() || value == r.Incarnation())
 }
 
 func (r AgentRouteRef) Same(other AgentRouteRef) bool {
