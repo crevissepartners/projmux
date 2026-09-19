@@ -697,6 +697,53 @@ Codex and are managed from `Settings > Notifications > Agent event behavior`.
 They only affect ingest delivery; `projmux agent integrate claude` still uses the
 catalog `install` field for installed hook events.
 
+### Answering AskUserQuestion From The Command Line
+
+`projmux agent integrate claude` also installs one `PreToolUse` entry with
+`"matcher": "AskUserQuestion"` that runs
+`projmux internal claude-question-hook` (marker
+`projmux-managed:claude-question:v1`, `"timeout": 315`). Unlike the ingest
+command its stdout is not discarded, because that is where an answer is handed
+to Claude Code. Re-running the integration keeps exactly one such entry,
+`--remove` deletes it, and `config apply` never adds or changes it.
+
+The hook does nothing unless the Claude Agent that asks was opted in:
+
+```sh
+projmux agent question enable <agent-ref>
+projmux agent question disable <agent-ref>
+```
+
+For every other Agent, and for a subagent's question, the hook prints nothing
+and exits at once, so Claude Code shows its usual question prompt.
+
+For an opted-in Agent the hook records the question and holds the tool call
+open for up to 300 seconds. While it waits, Claude Code shows the hook's status
+message instead of the question prompt; pressing Esc cancels the wait and
+declines the question. Answer it from any shell:
+
+```sh
+projmux agent question list <agent-ref> [-o json]
+projmux agent question answer <agent-ref> <question-id> --option 1=<label> --index 2=<n> --text 3=<free text>
+```
+
+Questions are numbered from 1 in the order Claude asked them, and so are the
+options of each question. `--option <n>=<label>` picks an option by its exact
+label, `--index <n>=<k>` by its number, and `--text <n>=<text>` answers with
+free text; a label that is not one of the options is refused rather than taken
+as free text. A multi-select question takes several `--option`/`--index`
+occurrences, which are joined with `", "` in option order; a single-select
+question takes exactly one. Every question needs an answer. A refused answer
+changes nothing and names one reason token: `question-not-found`,
+`question-not-pending` (already answered), `question-expired`,
+`question-closed`, `question-invalid-answer`, `question-channel-off`, or
+`question-provider-unsupported`.
+
+If nobody answers within 300 seconds, the question expires and Claude Code
+shows its own prompt as usual. `agent question disable` also hands every
+question the Agent is still holding back to that prompt immediately. Records
+live in `<state dir>/agent-questions/` and settled ones are kept for a day.
+
 ## Antigravity Hook Ingest
 
 `projmux internal agent-hook ingest antigravity-hook --event <event> < payload.json` accepts
