@@ -1,0 +1,47 @@
+name: Update Flow E2E
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/update-flow.yml"
+      - "test/e2e/update-flow.sh"
+      - "scripts/test-e2e-update-docker.sh"
+      - "scripts/test-docker-run.sh"
+      - "test/docker/Dockerfile.node"
+      - "internal/app/update.go"
+      - "internal/app/update_channel.go"
+      - "internal/app/tmux.go"
+      - "internal/app/runtime_mutation_route.go"
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A schedule or dispatch run must reach a result; only a superseded pull
+# request head may be cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # This lane depends on the public npm registry and the published `projmux`
+  # package, so it is intentionally separate from the required checks and from
+  # CI's aggregate `Test`. The path filter makes whoever changes the update path
+  # see the result, and the schedule catches registry and published-package
+  # drift. `update apply`'s pre-publication stage runs the fixed binary's
+  # `config apply`, so tmux.go and runtime_mutation_route.go are update inputs.
+  update-flow:
+    name: npm update flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # GitHub Actions sets CI=true, which the wrapper maps to --strict so a
+      # skip fails this run instead of reading as a pass.
+      - name: Run the npm update-flow e2e
+        run: make test-e2e-update

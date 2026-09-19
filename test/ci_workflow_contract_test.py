@@ -244,6 +244,146 @@ class CIWorkflowContractTest(unittest.TestCase):
         for stable_aggregate in (e2e_required, required_test):
             self.assertNotIn("installed-codex", stable_aggregate)
 
+    def test_update_flow_runs_on_update_path_prs_and_schedule_outside_required_gates(
+        self,
+    ) -> None:
+        ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/update-flow.yml").read_text(
+            encoding="utf-8"
+        )
+
+        # Triggers: update-path pull requests, a daily schedule, and dispatch.
+        # There is no push trigger; the lane never runs on main pushes.
+        self.assertIn("  pull_request:\n    paths:\n", workflow)
+        lines = workflow.splitlines()
+        start = lines.index("    paths:") + 1
+        paths: list[str] = []
+        for line in lines[start:]:
+            if not line.startswith("      - "):
+                break
+            paths.append(line.removeprefix("      - "))
+        self.assertEqual(
+            paths,
+            [
+                '".github/workflows/update-flow.yml"',
+                '"test/e2e/update-flow.sh"',
+                '"scripts/test-e2e-update-docker.sh"',
+                '"scripts/test-docker-run.sh"',
+                '"test/docker/Dockerfile.node"',
+                '"internal/app/update.go"',
+                '"internal/app/update_channel.go"',
+                '"internal/app/tmux.go"',
+                '"internal/app/runtime_mutation_route.go"',
+            ],
+        )
+        self.assertIn('    - cron: "41 4 * * *"', workflow)
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertNotRegex(workflow, r"(?m)^  push:")
+        self.assertIn("permissions:\n  contents: read\n", workflow)
+
+        job = workflow_job(workflow, "update-flow")
+        self.assertIn("    timeout-minutes: 30\n", job)
+        self.assertIn("    runs-on: ubuntu-latest\n", job)
+        self.assertEqual(
+            step_script(workflow_step(job, "Run the npm update-flow e2e")),
+            "make test-e2e-update",
+        )
+
+        # The registry-dependent lane stays outside the required checks and
+        # the aggregate `Test`, whose required display names stay intact.
+        self.assertNotIn("update-flow", ci_workflow)
+        self.assertNotIn("test-e2e-update", ci_workflow)
+        for stable_aggregate in (
+            workflow_job(ci_workflow, "e2e-tests"),
+            workflow_job(ci_workflow, "test"),
+        ):
+            self.assertNotIn("update-flow", stable_aggregate)
+            self.assertNotIn("test-e2e-update", stable_aggregate)
+        for name in (
+            "Format",
+            "Unit Tests",
+            "NPM Packages",
+            "Integration Tests",
+            "E2E Tests",
+        ):
+            self.assertIn(f"    name: {name}\n", ci_workflow)
+
+        base_env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"CI", "GITHUB_ACTIONS", "PROJMUX_UPDATE_FLOW_STRICT"}
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+
+            # A skip passes locally and fails under --strict.
+            stubs = temporary_path / "bin"
+            stubs.mkdir()
+            for name, body in {
+                "node": 'echo "v20.0.0"\n',
+                "npm": 'if [ "$1" = "--version" ]; then echo "10.0.0"; exit 0; fi\n'
+                "exit 1\n",
+                "go": "exit 0\n",
+            }.items():
+                stub = stubs / name
+                stub.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+                stub.chmod(0o700)
+            suite_env = {
+                **base_env,
+                "PATH": f"{stubs}:/usr/bin:/bin",
+                "HOME": str(temporary_path / "home"),
+            }
+            suite = str(ROOT / "test/e2e/update-flow.sh")
+            for args, code, message in (
+                ([], 0, "update-flow e2e SKIP: npm registry unreachable"),
+                (
+                    ["--strict"],
+                    1,
+                    "update-flow e2e: SKIP is a failure under --strict: "
+                    "npm registry unreachable",
+                ),
+                (["--bogus"], 2, "usage: test/e2e/update-flow.sh [--strict]"),
+            ):
+                with self.subTest(suite_args=args):
+                    completed = subprocess.run(
+                        ["bash", suite, *args],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        env=suite_env,
+                    )
+                    self.assertEqual(completed.returncode, code, completed.stderr)
+                    self.assertIn(message, completed.stderr)
+
+            # The host wrapper maps CI=true (or the explicit opt-in) to --strict.
+            wrapper_root = temporary_path / "root"
+            (wrapper_root / "scripts").mkdir(parents=True)
+            wrapper = wrapper_root / "scripts/test-e2e-update-docker.sh"
+            shutil.copy2(ROOT / "scripts/test-e2e-update-docker.sh", wrapper)
+            runner = wrapper_root / "scripts/test-docker-run.sh"
+            runner.write_text(
+                '#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n', encoding="utf-8"
+            )
+            runner.chmod(0o700)
+            for extra, expected in (
+                ({}, ["test/e2e/update-flow.sh"]),
+                ({"CI": "true"}, ["test/e2e/update-flow.sh", "--strict"]),
+                (
+                    {"PROJMUX_UPDATE_FLOW_STRICT": "1"},
+                    ["test/e2e/update-flow.sh", "--strict"],
+                ),
+            ):
+                with self.subTest(wrapper_env=extra):
+                    completed = subprocess.run(
+                        ["bash", str(wrapper)],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        env={**base_env, **extra},
+                    )
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertEqual(completed.stdout.splitlines(), expected)
+
     def test_native_platform_payload_stages_as_canonical_release(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             temporary_path = Path(temporary)

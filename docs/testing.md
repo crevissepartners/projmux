@@ -40,6 +40,19 @@ and humans run the same entrypoints.
   runner is slow or loaded; a wait that expires still fails with the description
   of what it was waiting for, so a slow machine reports a timeout rather than
   the regression message of the assertion that would have run next.
+- `make test-e2e-update` runs `test/e2e/update-flow.sh` in the Node image
+  (`test/docker/Dockerfile.node`) on a bridged network. It installs an older
+  published `projmux` from the public npm registry, runs the source build's
+  `update apply`, and asserts the global install reaches the latest published
+  version while the exact legacy tmux server, socket, and sessions survive,
+  then checks npm installer autodetection from an npm-shaped path. Because it
+  depends on the public registry and the published package, it is not a
+  required check and stays out of the aggregate `Test`: the separate
+  `Update Flow E2E` workflow runs it on pull requests that change the update
+  path, daily on a schedule, and on manual dispatch. A local run skips when the
+  registry is unreachable; under CI (`CI=true`) or
+  `PROJMUX_UPDATE_FLOW_STRICT=1` the script runs with `--strict`, where a skip
+  fails the run instead.
 - `make test-e2e-contract`, `make test-e2e-reliability`, and
   `make test-e2e-shards` validate typed attempt evidence, bounded semantic
   waits/owned cleanup, and exhaustive four-shard isolation without rerunning

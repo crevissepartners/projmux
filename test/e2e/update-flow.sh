@@ -14,11 +14,31 @@ set -euo pipefail
 #      binary path even when PROJMUX_INSTALLER is unset
 #
 # This depends on the public npm registry and the published `projmux` package,
-# so it is opt-in / local rather than a required CI gate. It skips cleanly when
-# the registry is unreachable or too few versions are published.
+# so it is not a required gate; the separate `Update Flow E2E` workflow runs it
+# on update-path pull requests, a daily schedule, and manual dispatch. Locally
+# it skips cleanly when the registry is unreachable or too few versions are
+# published. `--strict` (set for every CI run) turns each skip into a failure,
+# so a run that exists to prove the update path never reports success without
+# proving it.
+
+strict=0
+case "$#:${1:-}" in
+  0:) ;;
+  1:--strict) strict=1 ;;
+  *)
+    echo "usage: test/e2e/update-flow.sh [--strict]" >&2
+    exit 2
+    ;;
+esac
 
 fail() { echo "update-flow e2e: $*" >&2; exit 1; }
-skip() { echo "update-flow e2e SKIP: $*" >&2; exit 0; }
+skip() {
+  if [[ "$strict" == 1 ]]; then
+    fail "SKIP is a failure under --strict: $*"
+  fi
+  echo "update-flow e2e SKIP: $*" >&2
+  exit 0
+}
 
 # Non-root container user cannot write the default global prefix; point npm at
 # writable dirs under HOME.
