@@ -17,6 +17,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
@@ -103,6 +104,9 @@ type agentCommand struct {
 	managedPaneLive func(tmuxTransport, string) (bool, error)
 	// personaStore opens the persona store; nil resolves the default paths.
 	personaStore func() (persona.Store, error)
+	// questionStore opens the AskUserQuestion answer store `agent question`
+	// reads and settles; nil refuses.
+	questionStore func() (*agentquestion.Store, error)
 	// lookupEnv reads the ambient tmux Pane that `agent persona` refuses to
 	// restart from, and the inherited $TMUX its stop routes through.
 	lookupEnv func(string) string
@@ -133,6 +137,7 @@ func newAgentCommand() *agentCommand {
 		messageClaude:  liveAgentMessageClaudeAdapter{},
 		lookupEnv:      os.Getenv,
 		messageRelease: launchAgentMessageRelease,
+		questionStore:  defaultAgentQuestionStore,
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		command.messagePaths = defaultAgentMessagePaths(paths)
@@ -183,6 +188,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runMessage(rest, stdout, stderr)
 	case "wait":
 		return c.runWait(rest, stdout, stderr)
+	case "question":
+		return c.runQuestion(rest, stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("agent %s is not available; this release implements: %s",
 			args[0], strings.Join(agentSubcommands, ", ")))

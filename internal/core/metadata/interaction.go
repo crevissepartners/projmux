@@ -84,6 +84,35 @@ func (m Mutator) SetAgentTopic(reg *Registry, agentUID, topic string) (Agent, er
 	return agent.Clone(), nil
 }
 
+// QuestionChannelEnabled reports whether an Agent is opted into answering its
+// AskUserQuestion prompts from the command line.
+func QuestionChannelEnabled(agent Agent) bool {
+	return agent.Metadata.Annotations[AnnotationAgentQuestionChannel] == QuestionChannelOn
+}
+
+// SetAgentQuestionChannel sets or clears the question channel annotation of one
+// existing Agent. Every other annotation is left as it was.
+func (m Mutator) SetAgentQuestionChannel(reg *Registry, agentUID string, on bool) (Agent, error) {
+	const op = "set agent question channel"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	if on {
+		if agent.Metadata.Annotations == nil {
+			agent.Metadata.Annotations = map[string]string{}
+		}
+		agent.Metadata.Annotations[AnnotationAgentQuestionChannel] = QuestionChannelOn
+	} else {
+		delete(agent.Metadata.Annotations, AnnotationAgentQuestionChannel)
+		if len(agent.Metadata.Annotations) == 0 {
+			agent.Metadata.Annotations = nil
+		}
+	}
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // AgentPersonaAnnotations is the persona state of one existing Agent: the
 // persona name and digest (both set or both empty) and the system prompt
 // snapshot mode ("" or SystemPromptSnapshotOff). An empty field removes its

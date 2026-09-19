@@ -635,7 +635,7 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	case "ai":
 		return false
 	case "agent":
-		if len(args) >= 2 && (args[1] == "capabilities" || args[1] == "message" || (args[1] == "resume" && hasClaudeDialogueModeFlag(args[2:]))) {
+		if len(args) >= 2 && (args[1] == "capabilities" || args[1] == "message" || args[1] == "question" || (args[1] == "resume" && hasClaudeDialogueModeFlag(args[2:]))) {
 			return false
 		}
 	case "create":
@@ -648,7 +648,7 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 		if len(args) >= 2 && (args[1] == "claude-endpoint-register" || args[1] == "claude-endpoint-helper" || (len(args) >= 4 && args[1] == "agent-hook" && args[2] == "ingest" && args[3] == "claude-hook")) {
 			return false
 		}
-		if len(args) >= 2 && (args[1] == "install-residue" || args[1] == "claude-message-wait" || args[1] == "claude-message-reply" || args[1] == "claude-message-boundary" || args[1] == agentMessageReleaseRoute || args[1] == "claude-reply-tool" || args[1] == "claude-dialogue-exec" || args[1] == "claude-dialogue-observe") {
+		if len(args) >= 2 && (args[1] == "install-residue" || args[1] == "claude-message-wait" || args[1] == "claude-message-reply" || args[1] == "claude-message-boundary" || args[1] == agentMessageReleaseRoute || args[1] == "claude-reply-tool" || args[1] == claudeQuestionHookRoute || args[1] == "claude-dialogue-exec" || args[1] == "claude-dialogue-observe") {
 			return false
 		}
 	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",

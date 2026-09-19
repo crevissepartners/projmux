@@ -45,6 +45,21 @@ const (
 	// provider-specific.
 	aiHookPaneArgument = " --pane=${" + internalActivationPaneUIDEnv + ":-}"
 
+	// claudeQuestionManagedMarker owns the one AskUserQuestion PreToolUse entry
+	// that lets `projmux agent question answer` answer an opted-in Claude
+	// Agent's question. Unlike the ingest command, its stdout reaches Claude
+	// Code: that is where the answer is handed over.
+	claudeQuestionManagedMarker = "projmux-managed:claude-question:v1"
+	claudeQuestionHookCommand   = "exec projmux internal " + claudeQuestionHookRoute + aiHookPaneArgument + " 2>/dev/null # " + claudeQuestionManagedMarker
+	// claudeQuestionHookMatcher limits the entry to the one tool it answers.
+	claudeQuestionHookMatcher = "AskUserQuestion"
+	// claudeQuestionHookTimeout outlasts the answer window, so the hook, not
+	// Claude Code's timeout, is what ends an unanswered wait.
+	claudeQuestionHookTimeout = claudeQuestionWindow + 15*time.Second
+	// claudeQuestionStatusMessage is what Claude Code shows while the hook
+	// holds the question.
+	claudeQuestionStatusMessage = "Question held for a projmux answer (projmux agent question answer); Esc declines"
+
 	tmuxBellManagedMarker = "projmux-managed:tmux-bell:v1"
 	tmuxBellHookName      = "alert-bell"
 	tmuxBellHookCommand   = `run-shell -b 'projmux internal agent-hook ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
@@ -447,6 +462,10 @@ func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordina
 		// Only an authenticated explicit public reply can commit a peer response.
 		hooks["Stop"] = append(claudeHookEntrySlice(hooks["Stop"]), claudeCoordinationManagedEntry())
 		hooks["UserPromptSubmit"] = append(claudeHookEntrySlice(hooks["UserPromptSubmit"]), claudeCoordinationBoundaryManagedEntry())
+		// The question channel rides on explicit integration only, like the
+		// coordination callbacks above. It holds nothing open for an Agent that
+		// was not opted in with `projmux agent question enable`.
+		hooks["PreToolUse"] = append(claudeHookEntrySlice(hooks["PreToolUse"]), claudeQuestionManagedEntry())
 	}
 	next, err := encodeClaudeSettings(settings)
 	if err != nil {
@@ -1069,6 +1088,7 @@ func claudeHookEntriesWithoutManaged(value any, event, path string) ([]any, bool
 			continue
 		}
 		nextHooks := make([]any, 0, len(hookValues))
+		removedQuestion := false
 		for _, hookValue := range hookValues {
 			hook, ok := hookValue.(map[string]any)
 			if !ok {
@@ -1076,18 +1096,28 @@ func claudeHookEntriesWithoutManaged(value any, event, path string) ([]any, bool
 				continue
 			}
 			command, _ := hook["command"].(string)
+			if hook["type"] == "command" && strings.Contains(command, claudeQuestionManagedMarker) {
+				removed, removedQuestion = true, true
+				continue
+			}
 			if hook["type"] == "command" && (strings.Contains(command, claudeHookManagedMarker) ||
 				strings.Contains(command, claudeCoordinationManagedMarker) || strings.Contains(command, priorClaudeCoordinationV2Marker) || strings.Contains(command, priorClaudeCoordinationManagedMarker)) {
 				removed = true
 				continue
 			}
 			if hook["type"] == "command" && (strings.Contains(command, legacyClaudeHookRoute) || strings.Contains(command, canonicalClaudeHookRoute) ||
-				strings.Contains(command, "internal claude-message-wait") || strings.Contains(command, "internal claude-message-reply") || strings.Contains(command, "internal claude-message-boundary")) && conflict == "" {
+				strings.Contains(command, "internal claude-message-wait") || strings.Contains(command, "internal claude-message-reply") || strings.Contains(command, "internal claude-message-boundary") || strings.Contains(command, "internal "+claudeQuestionHookRoute)) && conflict == "" {
 				conflict = fmt.Sprintf("Claude Code hook %s already contains unmanaged projmux ingest command in %s: %s", event, path, command)
 			}
 			nextHooks = append(nextHooks, hookValue)
 		}
 		if len(nextHooks) == 0 && len(entry) == 1 {
+			continue
+		}
+		// The question entry is the one managed entry that carries a matcher.
+		// Once its command is gone the matcher alone matches nothing, so the
+		// entry goes with it.
+		if len(nextHooks) == 0 && removedQuestion && claudeHookEntryIsHooksAndMatcherOnly(entry) {
 			continue
 		}
 		if len(nextHooks) == 0 {
@@ -1113,6 +1143,34 @@ func claudeHookManagedEntry() map[string]any {
 			map[string]any{
 				"type":    "command",
 				"command": claudeHookCommand,
+			},
+		},
+	}
+}
+
+// claudeHookEntryIsHooksAndMatcherOnly reports whether a matcher entry holds
+// nothing but its hooks and its matcher.
+func claudeHookEntryIsHooksAndMatcherOnly(entry map[string]any) bool {
+	for key := range entry {
+		if key != "hooks" && key != "matcher" {
+			return false
+		}
+	}
+	return true
+}
+
+// claudeQuestionManagedEntry is the AskUserQuestion PreToolUse entry. Its
+// command's stdout is not discarded: an answered question's decision is printed
+// there.
+func claudeQuestionManagedEntry() map[string]any {
+	return map[string]any{
+		"matcher": claudeQuestionHookMatcher,
+		"hooks": []any{
+			map[string]any{
+				"type":          "command",
+				"command":       claudeQuestionHookCommand,
+				"timeout":       int(claudeQuestionHookTimeout / time.Second),
+				"statusMessage": claudeQuestionStatusMessage,
 			},
 		},
 	}

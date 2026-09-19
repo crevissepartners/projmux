@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -116,6 +117,11 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return runClaudeDialogueObserver(rest, stdout)
 	case "claude-reply-tool":
 		return runClaudeReplyTool(rest, stdout)
+	case claudeQuestionHookRoute:
+		// The AskUserQuestion PreToolUse hook `agent integrate claude`
+		// installs. It prints a decision only for an answered question and
+		// otherwise nothing, and always exits 0.
+		return runClaudeQuestionHook(rest, os.Stdin, stdout, stderr)
 	case "claude-message-reply":
 		return runClaudeMessageReply(rest)
 	case "claude-message-boundary":

@@ -546,3 +546,13 @@ const SystemPromptSnapshotOff = "off"
 // model on resume by itself, and re-passing the create-time model would
 // override a `/model` switch made inside the session.
 const AnnotationAgentEffort = "projmux.io/effort"
+
+// AnnotationAgentQuestionChannel opts one Claude Agent into answering its
+// AskUserQuestion prompts from the command line. The only value is
+// QuestionChannelOn; the key is absent otherwise. It is written only by
+// `projmux agent question enable|disable`, and read by the PreToolUse hook that
+// decides whether to hold a question open for `projmux agent question answer`.
+const AnnotationAgentQuestionChannel = "projmux.io/question-channel"
+
+// QuestionChannelOn is the one value AnnotationAgentQuestionChannel carries.
+const QuestionChannelOn = "on"

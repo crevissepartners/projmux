@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 185 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 190 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -132,6 +132,10 @@ projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <re
 projmux agent message status <message-ref> [-o json]
 projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
 projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]
+projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]
+projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
 ```
 
 Subcommands:
@@ -150,8 +154,9 @@ Subcommands:
 | [`projmux agent capabilities`](#projmux-agent-capabilities) | Read static provider support or one exact Agent's Registry-backed runtime eligibility |
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
+| [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent persona attach`, `projmux agent persona detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent persona attach`, `projmux agent persona detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`
 
 ### `projmux agent status`
 
@@ -647,6 +652,127 @@ projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]
 ```
 
 Output modes (`-o`): `json`
+
+### `projmux agent question`
+
+Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]
+projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux agent question enable`](#projmux-agent-question-enable) | Opt one exact Claude Agent into answering its AskUserQuestion prompts from the command line |
+| [`projmux agent question disable`](#projmux-agent-question-disable) | Opt one exact Claude Agent out and hand its waiting questions back to its own prompt |
+| [`projmux agent question list`](#projmux-agent-question-list) | List one exact Claude Agent's waiting and recent questions |
+| [`projmux agent question answer`](#projmux-agent-question-answer) | Answer one waiting question by option label, option number, or explicit free text |
+
+Canonical spelling: `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`
+
+#### `projmux agent question enable`
+
+Opt one exact Claude Agent into answering its AskUserQuestion prompts from the command line
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+```
+
+#### `projmux agent question disable`
+
+Opt one exact Claude Agent out and hand its waiting questions back to its own prompt
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+```
+
+#### `projmux agent question list`
+
+List one exact Claude Agent's waiting and recent questions
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]
+```
+
+Output modes (`-o`): `json`
+
+#### `projmux agent question answer`
+
+Answer one waiting question by option label, option number, or explicit free text
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+```
 
 ## `projmux attention`
 

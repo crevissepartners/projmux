@@ -790,8 +790,12 @@ var routes = []Route{
 			"projmux agent message status <message-ref> [-o json]",
 			"projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json",
 			"projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]",
+			"projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
+			"projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
+			"projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]",
+			"projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent persona attach", "agent persona detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent message send", "agent message status", "agent message qualify", "agent wait"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent persona attach", "agent persona detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -883,6 +887,25 @@ var routes = []Route{
 				},
 			},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "wait", Invocation: InvocationExplicit, Summary: "Wait read-only for one exact Agent's Registry-backed idle observation", Usage: []string{"projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]"}, Canonical: []string{"agent wait"}, Outputs: []OutputMode{OutputModeJSON}},
+			{
+				// The question channel answers an opted-in Claude Agent's
+				// AskUserQuestion prompt from the command line. enable and
+				// disable change one Agent annotation; list and answer read
+				// and settle the question records the installed PreToolUse
+				// hook holds open.
+				Effects:    unchangedEffects(CardinalityExactOne),
+				Name:       "question",
+				Invocation: InvocationExplicit,
+				Summary:    "Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line",
+				Usage:      []string{"projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...", "projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...", "projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]", "projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."},
+				Canonical:  []string{"agent question enable", "agent question disable", "agent question list", "agent question answer"},
+				Children: []Route{
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "enable", Invocation: InvocationExplicit, Summary: "Opt one exact Claude Agent into answering its AskUserQuestion prompts from the command line", Usage: []string{"projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"agent question enable"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "disable", Invocation: InvocationExplicit, Summary: "Opt one exact Claude Agent out and hand its waiting questions back to its own prompt", Usage: []string{"projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"agent question disable"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "list", Invocation: InvocationExplicit, Summary: "List one exact Claude Agent's waiting and recent questions", Usage: []string{"projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]"}, Canonical: []string{"agent question list"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "answer", Invocation: InvocationExplicit, Summary: "Answer one waiting question by option label, option number, or explicit free text", Usage: []string{"projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"agent question answer"}},
+				},
+			},
 		},
 	},
 	{

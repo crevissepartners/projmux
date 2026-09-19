@@ -15,8 +15,11 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `agent persona attach|detach` joined the Agent
-// domain: two rows that give a running or stopped Claude Agent a persona, or
+// The baseline last moved when `agent question enable|disable|list|answer`
+// joined the Agent domain: four rows that opt a Claude Agent into answering its
+// AskUserQuestion prompts from the command line, list them with a json
+// projection, and answer one. Before that, it moved when `agent persona
+// attach|detach` joined the Agent domain: two rows that give a running or stopped Claude Agent a persona, or
 // take it away, and resume it on the same conversation, both with a json
 // projection for their dry run. Before that, it moved when `config providers`
 // joined the config domain as the CLI door onto the enabled-providers policy,
@@ -55,7 +58,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "b042a75fc23d7eed5d24a595aa5e27f21f59f1355413f1e8dc6d7e056b05a8eb"
+	const want = "e1983674529cfbcdaaa69d11e4d96fa19b522fdfbf39077580986092d6fffda8"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}
