@@ -115,6 +115,11 @@ type resourceCreateFlags struct {
 	resumeSource          string
 	resumeEndpoint        coremetadata.CodexEndpointRef
 	resumeGenerationState coremetadata.CodexGenerationState
+	// resumeLaunchValues is the launch-value bundle (persona, persona digest,
+	// system prompt snapshot mode, effort) a resume-picker create inherited
+	// from the Agents that already recorded resumeConversation. It is set only
+	// inside that create's transaction, and nil everywhere else.
+	resumeLaunchValues map[string]string
 }
 
 // resourceCreateShape selects which optional flag groups a resource-backed

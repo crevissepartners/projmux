@@ -504,6 +504,11 @@ const AnnotationAgentTopic = "projmux.io/agent-topic"
 // `agent persona attach|detach` is the one other writer: it changes both keys on
 // an existing Agent together with AnnotationAgentSystemPromptSnapshot, in one
 // mutation, before it relaunches that Agent's provider session.
+//
+// A resume-picker create is such a create transaction: when the Agents that
+// already recorded the picked Claude conversation agree on these keys,
+// AnnotationAgentSystemPromptSnapshot and AnnotationAgentEffort, it launches
+// the new Agent with them and copies them onto it verbatim.
 const (
 	AnnotationAgentPersona       = "projmux.io/persona"
 	AnnotationAgentPersonaDigest = "projmux.io/persona-digest"
@@ -527,7 +532,7 @@ const SystemPromptSnapshotOff = "off"
 // so every resume of it re-passes the same effort: Claude does not restore the
 // effort of a resumed conversation. The value is one of Claude's effort
 // levels. It is written only by the create transaction that launched the
-// provider with that effort.
+// provider with that effort, a resume-picker create that inherited it included.
 //
 // The model is deliberately not recorded. Claude restores a conversation's
 // model on resume by itself, and re-passing the create-time model would

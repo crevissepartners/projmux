@@ -1786,6 +1786,20 @@ not recorded or passed again: Claude restores the conversation's model itself
 on resume, and passing the create-time model would override a `/model` switch
 made in the session.
 
+A Claude conversation opened from the resume picker creates a new Agent, and
+when Agents in the Registry already record that conversation (in any Project or
+Window, live or not) the new Agent inherits their launch values: the persona
+and its snapshot (`projmux.io/persona`, `projmux.io/persona-digest`), the
+system prompt snapshot mode (`projmux.io/system-prompt-snapshot`), and the
+effort (`projmux.io/effort`). It launches with them and records them, so its own
+later resumes behave like theirs; a snapshot that is gone or an effort Claude
+would not take is disclosed with `persona-unavailable` or `effort-invalid`, as
+on `agent resume`. Inheritance happens only when every such Agent records the
+same values; if they disagree, nothing is inherited and one
+`launch-values-ambiguous` line on stderr names them. The creator, topic, and
+labels of those Agents are never inherited, and they keep their conversation
+and annotations. Codex and Antigravity picker selections inherit nothing.
+
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`
 and `projmux create pane --placement right -o pane-id` each print exactly the

@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
@@ -488,4 +489,36 @@ func (r *Registry) agentForConversation(windowUID string, observed LegacyPane, b
 		found = agent.Metadata.UID
 	}
 	return found, found != ""
+}
+
+// AgentsRecordingConversation returns every Agent anywhere in the Registry
+// whose status.sessionRef records the provider conversation observed names,
+// in uid order.
+//
+// The comparison is agentForConversation's: the observation is folded through
+// NewAgentSessionRef and matched by provider and ConversationID with exact
+// identifier equality, so a Codex thread id and a Claude session id are never
+// equated. Unlike agentForConversation it is not scoped to one Window and does
+// not skip Agents that own a Pane: it answers "who has recorded this
+// conversation", not "which Agent may take this pane". An observation that
+// names no conversation matches nothing.
+func (r *Registry) AgentsRecordingConversation(observed AgentSessionObservation) []Agent {
+	ref, ok := NewAgentSessionRef(observed, time.Time{})
+	if !ok {
+		return nil
+	}
+	conversation := ref.ConversationID()
+	if conversation == "" {
+		return nil
+	}
+	var found []Agent
+	for _, agent := range r.Agents {
+		stored := agent.Status.SessionRef
+		if stored.Empty() || stored.Provider != ref.Provider || stored.ConversationID() != conversation {
+			continue
+		}
+		found = append(found, agent)
+	}
+	slices.SortStableFunc(found, func(a, b Agent) int { return strings.Compare(a.Metadata.UID, b.Metadata.UID) })
+	return found
 }

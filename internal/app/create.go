@@ -534,7 +534,7 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 	if err != nil {
 		return createdPaneRuntime{}, err
 	}
-	created, err := c.createCanonicalIntentAgent(scope, intent, provider, launchDir, flags, stdout)
+	created, err := c.createCanonicalIntentAgent(scope, intent, provider, launchDir, flags, stdout, stderr)
 	return created, finishSplitIntent(stderr, notice, err)
 }
 

@@ -323,6 +323,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 	}
 	if plan != nil {
 		plan.startLifecycleObserver(opened)
+		writeIntentAgentNotices(stderr, opened.notices)
 	}
 	return placement, c.writeResults(stdout, canonicalCreateWindow, cli.OutputModeDefault, coremetadata.KindWindow, []createResult{result})
 }
@@ -785,7 +786,7 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 	return created, c.writeResults(stdout, canonicalCreatePane, cli.OutputModeDefault, coremetadata.KindPane, []createResult{result})
 }
 
-func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, intent agentPaneIntent, provider, launchDir string, flags resourceCreateFlags, stdout io.Writer) (createdPaneRuntime, error) {
+func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, intent agentPaneIntent, provider, launchDir string, flags resourceCreateFlags, stdout, stderr io.Writer) (createdPaneRuntime, error) {
 	plan, err := c.prepareIntentAgent(provider, flags)
 	if err != nil {
 		return createdPaneRuntime{}, err
@@ -816,6 +817,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		return createdPaneRuntime{}, err
 	}
 	plan.startLifecycleObserver(opened)
+	writeIntentAgentNotices(stderr, opened.notices)
 	return createdPaneRuntime{paneID: opened.paneID}, c.writeResults(stdout, canonicalCreateAgent, cli.OutputModeDefault, coremetadata.KindAgent, []createResult{result})
 }
 
@@ -868,6 +870,9 @@ type intentAgentOpened struct {
 	pane      coremetadata.Pane
 	paneID    string
 	lifecycle codexLifecycleObserverTarget
+	// notices are the stderr lines the committed create discloses: launch
+	// values a resume-picker create could not inherit or re-pass.
+	notices []string
 }
 
 // prepareIntentAgent is the preflight of one UI Agent answer. It runs before
@@ -979,19 +984,37 @@ func (c *createCommand) openIntentAgent(
 	if err != nil {
 		return intentAgentOpened{}, err
 	}
+	// A picked Claude conversation that Registry Agents already recorded
+	// launches with the launch values they agree on, read before this
+	// create's own Agent records the conversation.
+	var notices []string
+	if provider == aiModeClaude && strings.TrimSpace(flags.resumeConversation) != "" {
+		var notice string
+		flags.resumeLaunchValues, notice = inheritedResumeLaunchValues(working, provider, flags.resumeConversation)
+		if notice != "" {
+			notices = append(notices, notice)
+		}
+	}
 	var title string
 	var launchArgv []string
+	var resumeLaunch agentResumeLaunch
 	if !plan.freshNativeCreate && !plan.nativeCatalogResume {
-		title, launchArgv, err = c.planAgentPaneLaunch(provider, workspace, flags)
+		title, launchArgv, resumeLaunch, err = c.planAgentPaneLaunchWithResume(provider, workspace, flags)
 		if err != nil {
 			return intentAgentOpened{}, err
 		}
 	}
 	agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
 		Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,
+		Annotations: flags.resumeLaunchValues,
 	})
 	if err != nil {
 		return intentAgentOpened{}, MapMetadataError(err)
+	}
+	for _, notice := range []string{resumeLaunch.personaNotice(agent.Metadata.Name), resumeLaunch.effortNotice(agent.Metadata.Name)} {
+		if notice != "" {
+			notices = append(notices, notice)
+		}
 	}
 	// A resume-picker selection already carries provider-owned conversation
 	// identity before the provider starts. Persist that exact normalized
@@ -1109,7 +1132,7 @@ func (c *createCommand) openIntentAgent(
 	if target.equalize {
 		c.runtime.equalizeSplitLayout(ctx, target.anchorPaneID, target.placement)
 	}
-	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID}
+	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID, notices: notices}
 	if usedNative {
 		if err := bindNativeCodexPaneOnRoute(ctx, plan.nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, "", nativeThreadID); err != nil {
 			return intentAgentOpened{}, tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)

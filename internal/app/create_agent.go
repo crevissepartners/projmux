@@ -671,36 +671,54 @@ func (c *createCommand) resolveCreateProvider(spelling, shortcutProvider string,
 // silently started a new conversation would lose the context the operator picked
 // the row for.
 func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, error) {
+	title, argv, _, err := c.planAgentPaneLaunchWithResume(provider, workspace, flags)
+	return title, argv, err
+}
+
+// planAgentPaneLaunchWithResume is planAgentPaneLaunch that also returns the
+// resume launch, whose persona and effort notices a resume-picker create
+// discloses once its Agent has a name. Every other launch returns the zero
+// resume launch, which discloses nothing.
+func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, agentResumeLaunch, error) {
 	conversation := strings.TrimSpace(flags.resumeConversation)
 	if flags.dialogueReplyOnly {
 		launcher, ok := c.agents.(claudeDialogueLauncher)
 		if !ok {
-			return "", nil, errors.New("claude reply-only launcher is unavailable")
+			return "", nil, agentResumeLaunch{}, errors.New("claude reply-only launcher is unavailable")
 		}
-		return launcher.PlanClaudeDialogueLaunch(workspace, conversation)
+		title, argv, err := launcher.PlanClaudeDialogueLaunch(workspace, conversation)
+		return title, argv, agentResumeLaunch{}, err
 	}
 	if conversation == "" {
+		var title string
+		var argv []string
+		var err error
 		personaFile := flags.personaLaunch.snapshot.Path
-		if flags.model != "" || flags.effort != "" || personaFile != "" {
+		switch {
+		case flags.model != "" || flags.effort != "" || personaFile != "":
 			launcher, ok := c.agents.(claudeOptionsAgentLauncher)
 			if !ok {
-				return "", nil, errors.New("create agent: the Claude model launcher is not configured")
+				return "", nil, agentResumeLaunch{}, errors.New("create agent: the Claude model launcher is not configured")
 			}
-			return launcher.PlanAgentLaunchWithOptions(provider, workspace, flags.payload, flags.model, flags.effort, personaFile)
-		}
-		if provider == aiModeCodex && len(flags.payload) == 0 {
+			title, argv, err = launcher.PlanAgentLaunchWithOptions(provider, workspace, flags.payload, flags.model, flags.effort, personaFile)
+		case provider == aiModeCodex && len(flags.payload) == 0:
 			// A payload-free Codex create always takes the plain lane.
-			return c.agents.PlanAgentLaunch(aiModeCodex, workspace, nil)
+			title, argv, err = c.agents.PlanAgentLaunch(aiModeCodex, workspace, nil)
+		default:
+			title, argv, err = c.agents.PlanAgentLaunch(provider, workspace, flags.payload)
 		}
-		return c.agents.PlanAgentLaunch(provider, workspace, flags.payload)
+		return title, argv, agentResumeLaunch{}, err
 	}
 	if c.resumes == nil {
-		return "", nil, errors.New("create agent: the provider resume launcher is not configured")
+		return "", nil, agentResumeLaunch{}, errors.New("create agent: the provider resume launcher is not configured")
 	}
-	// The split-UI resume picker does not re-pass a persona: it hands the seam
-	// no annotations, so its argv is what it always was.
-	launch, err := c.resumes.PlanAgentResume(provider, workspace, conversation, nil)
-	return launch.title, launch.argv, err
+	// A resume-picker create hands the seam the launch values it inherited
+	// from the Agents that already recorded this conversation, so the new
+	// Agent starts with the persona snapshot, snapshot mode and effort they
+	// would resume with. With nothing inherited the seam gets no annotations
+	// and the argv is what it always was.
+	launch, err := c.resumes.PlanAgentResume(provider, workspace, conversation, flags.resumeLaunchValues)
+	return launch.title, launch.argv, launch, err
 }
 
 // bindAgentPane applies the managed-agent pane options.
