@@ -96,50 +96,9 @@ per-line outcomes and the ambiguity refusal.
 
 ## Legacy Project Layout Files
 
-Older checkouts may already have named layout files in the project-local
-storage directory:
-
-```text
-<project>/.projmux/layouts/<name>.toml
-```
-
-The project context comes from `PROJMUX_CWD` when set, otherwise projmux walks
-upward from the current directory to the nearest `.projmux` or `.git` marker.
-Files outside that project tree are not discovered. No current projmux surface
-opens or writes these files: closed-Project startup does not offer layout
-choices, and Settings no longer saves a named layout from a live session. The
-format stays documented so existing files can be recognized, and a declared
-startup `command` stays behind project automation trust (see
-[hooks.md](hooks.md#trust-model)).
-
-The schema describes Windows and Panes:
-
-```toml
-schema_version = 1
-description = "Daily dev"
-mode = "inherit-autosave" # default; or "fresh-each-time"
-default_cwd = "${PROJMUX_CWD}"
-
-[[windows]]
-index = 0
-name = "main"
-layout = "..."
-active_pane_index = 0
-
-[[windows.panes]]
-index = 0
-cwd = "${PROJMUX_CWD}"
-command = "make watch"
-```
-
-`command` records a startup recipe. Panes without `command` may use `recipe = "shell"`. Supported
-interpolation placeholders are limited to `${PROJMUX_CWD}` and
-`${PROJMUX_SESSION}`; other `${...}` values are rejected during load.
-
-Unknown fields and unknown sections are ignored so future schema additions do
-not break older files. The built-in parser only accepts quoted strings and
-integer values for the known fields above; it does not implement the full TOML
-language.
+Older checkouts may still have named layout files under
+`<project>/.projmux/layouts/*.toml`. projmux no longer reads, writes, trusts,
+or deletes them; they have no effect and can be removed by hand.
 
 ## Keymap File
 

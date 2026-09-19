@@ -159,6 +159,8 @@ removed them
 Settings no longer saves a
 named layout from a live session into `<project>/.projmux/layouts`, and no
 current surface opens those files.
+Leftover `.projmux/layouts` files on disk and layout entries in
+`trusted-projects.json` are kept and ignored.
 
 ### Private Codex generation files reclaimed
 

@@ -134,60 +134,6 @@ func (r *Runner) authorizeProjectDigest(event Event, repo, rel, path, kind, sum,
 	}
 }
 
-// AuthorizeProjectLayoutArtifact gates executable commands parsed from one
-// project-local layout. contents must be the exact bytes used to parse the
-// in-memory layout that will be restored; this function never reopens path.
-//
-// Unlike project hook discovery, this gate is intentionally independent of
-// PROJMUX_PROJECT_HOOKS and the Labs project-hooks toggle.
-func (r *Runner) AuthorizeProjectLayoutArtifact(repoPath, relativePath, path string, contents []byte, commands []string) (bool, error) {
-	if r == nil {
-		return false, errors.New("project layout trust authorizer is not configured")
-	}
-	repoPath = strings.TrimSpace(repoPath)
-	if repoPath == "" {
-		return false, errors.New("repo path is required")
-	}
-	repo, err := filepath.Abs(repoPath)
-	if err != nil {
-		return false, err
-	}
-	rel := filepath.ToSlash(filepath.Clean(strings.TrimSpace(relativePath)))
-	if rel == "." || rel == "" || !strings.HasPrefix(rel, ".projmux/layouts/") || filepath.Ext(rel) != ".toml" {
-		return false, fmt.Errorf("invalid project layout artifact path %q", relativePath)
-	}
-	expectedPath := filepath.Join(repo, filepath.FromSlash(rel))
-	absolutePath, err := filepath.Abs(strings.TrimSpace(path))
-	if err != nil {
-		return false, err
-	}
-	if absolutePath != expectedPath {
-		return false, fmt.Errorf("project layout artifact path %q does not match %q", absolutePath, expectedPath)
-	}
-	if len(commands) == 0 {
-		return true, nil
-	}
-	sum := sha256.Sum256(contents)
-	preview := layoutCommandPreview(commands)
-	return r.authorizeProjectDigest(
-		EventPreCreate,
-		repo,
-		rel,
-		absolutePath,
-		"project layout",
-		hex.EncodeToString(sum[:]),
-		preview,
-	), nil
-}
-
-func layoutCommandPreview(commands []string) string {
-	lines := []string{"commands to run:"}
-	for _, command := range commands {
-		lines = append(lines, "  "+terminaltext.EscapeControls(command))
-	}
-	return strings.Join(lines, "\n")
-}
-
 func (r *Runner) authorizedProjectFile(repo, rel, sum string) bool {
 	r.trustMu.Lock()
 	defer r.trustMu.Unlock()

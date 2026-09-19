@@ -232,14 +232,6 @@ type hookTrustScopeCopy struct {
 }
 
 func hookTrustRequestScope(req hooks.ProjectHookPromptRequest) hookTrustScopeCopy {
-	if strings.TrimSpace(req.ArtifactKind) == "project layout" ||
-		strings.HasPrefix(strings.TrimSpace(req.RelativePath), ".projmux/layouts/") {
-		return hookTrustScopeCopy{
-			label:       "layout",
-			description: "Project-local layout commands are disabled until this exact file hash is trusted.",
-			denyDetail:  "skip this layout",
-		}
-	}
 	if strings.TrimSpace(req.RelativePath) == ".projmux/config.toml" {
 		return hookTrustScopeCopy{
 			label:       "config",

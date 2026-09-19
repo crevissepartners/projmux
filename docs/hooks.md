@@ -117,10 +117,8 @@ special fields—`[env]` preserves any valid user-supplied key verbatim and no
 Global hooks under `$XDG_CONFIG_HOME` are prompt-free.
 
 Project-local executable automation is gated by trust-on-first-use. This
-includes `.projmux/config.toml` before projmux runs hooks or applies
-startup/session environment settings, and a selected
-`.projmux/layouts/*.toml` layout preset before projmux runs any declared
-`command`.
+covers `.projmux/config.toml` before projmux runs hooks or applies
+startup/session environment settings.
 Approving "always"
 records the file content hash in:
 
@@ -131,19 +129,13 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/trusted-projects.json
 The trust key is the absolute repository path and each artifact path is stored
 relative to that repository. Each project entry has a
 `trusted_at` timestamp and a `files` map of relative paths to SHA-256 hashes.
-When file content changes or the layout path is replaced, projmux asks again
-and shows the old and new SHA-256 hashes. Layout symlinks, including symlinked
-`.projmux` or `layouts` path components, are rejected. The selected layout is
-read once; those exact bytes are both hashed and parsed, and the resulting
-in-memory preset is what projmux uses. In non-interactive contexts such as
-tmux run-shell or CI, untrusted or changed project-local executable files fail
-closed with a warning.
+When file content changes, projmux asks again and shows the old and new
+SHA-256 hashes. In non-interactive contexts such as tmux run-shell or CI,
+untrusted or changed project-local executable files fail closed with a warning.
 
 Set `PROJMUX_PROJECT_HOOKS=off` to disable project-local hook discovery
 entirely. Project-local hooks can also be disabled from `projmux settings`
-under Labs. The global hook still runs either way. This setting does not trust
-or bypass executable layout preset commands. A layout without a startup
-`command` does not require executable-artifact approval.
+under Labs. The global hook still runs either way.
 
 ## Startup Commands
 

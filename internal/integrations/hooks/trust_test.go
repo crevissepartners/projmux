@@ -1,6 +1,10 @@
 package hooks
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -197,5 +201,94 @@ run = "echo ready"
 	}
 	if _, err := os.Stat(trustPath); !os.IsNotExist(err) {
 		t.Fatalf("trust store should not have been created, stat err = %v", err)
+	}
+}
+
+// TestAuthorizeProjectConfigIgnoresLegacyLayoutTrustEntries pins that a
+// trusted-projects.json written by an older projmux, which still carries a
+// `.projmux/layouts/*.toml` entry next to the config entry, keeps loading and
+// authorizing project config without a prompt, and that the legacy entry is
+// left on disk untouched.
+func TestAuthorizeProjectConfigIgnoresLegacyLayoutTrustEntries(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	configPath := writeProjectConfig(t, cwd, `
+[startup]
+run = "echo ready"
+`)
+	repo, err := filepath.Abs(cwd)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	sum := sha256.Sum256(contents)
+	repoJSON, err := json.Marshal(repo)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	trustPath := testTrustStorePath(t)
+	legacyStore := []byte(`{
+  ` + string(repoJSON) + `: {
+    "trusted_at": "2026-01-02T03:04:05Z",
+    "files": {
+      ".projmux/config.toml": {
+        "sha256": "` + hex.EncodeToString(sum[:]) + `",
+        "trusted_at": "2026-01-02T03:04:05Z"
+      },
+      ".projmux/layouts/team.toml": {
+        "sha256": "` + hex.EncodeToString(make([]byte, sha256.Size)) + `",
+        "trusted_at": "2026-01-02T03:04:05Z"
+      }
+    }
+  }
+}
+`)
+	if err := os.WriteFile(trustPath, legacyStore, 0o600); err != nil {
+		t.Fatalf("WriteFile(trust store): %v", err)
+	}
+
+	report, err := InspectProjectConfigTrust(cwd, trustPath)
+	if err != nil {
+		t.Fatalf("InspectProjectConfigTrust() error = %v", err)
+	}
+	if report.State != ProjectConfigTrustTrusted {
+		t.Fatalf("State = %q, want %q", report.State, ProjectConfigTrustTrusted)
+	}
+
+	runner := &Runner{
+		DiscoverProjectHooks: true,
+		ProjectHooksFilePath: testProjectHooksFilePath(t),
+		TrustStorePath:       trustPath,
+		ProjectHookPrompt: func(req ProjectHookPromptRequest) ProjectHookDecision {
+			t.Errorf("unexpected trust prompt for %q", req.RelativePath)
+			return ProjectHookDeny
+		},
+	}
+	trusted, err := runner.AuthorizeProjectConfig(cwd)
+	if err != nil {
+		t.Fatalf("AuthorizeProjectConfig() error = %v", err)
+	}
+	if !trusted {
+		t.Fatalf("AuthorizeProjectConfig() = false, want true from the stored config hash")
+	}
+
+	after, err := os.ReadFile(trustPath)
+	if err != nil {
+		t.Fatalf("ReadFile(trust store): %v", err)
+	}
+	if !bytes.Equal(after, legacyStore) {
+		t.Fatalf("trust store rewritten:\n got %s\nwant %s", after, legacyStore)
+	}
+	store, err := loadTrustedProjects(trustPath)
+	if err != nil {
+		t.Fatalf("loadTrustedProjects() error = %v", err)
+	}
+	if _, ok := store.trustedFile(repo, ".projmux/layouts/team.toml"); !ok {
+		t.Fatalf("legacy layout trust entry missing after authorization, store = %+v", store)
 	}
 }

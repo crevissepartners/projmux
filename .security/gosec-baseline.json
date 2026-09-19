@@ -460,13 +460,6 @@
     },
     {
       "rule": "G301",
-      "path": "internal/core/layout/layout.go",
-      "message": "Expect directory permissions to be 0750 or less",
-      "source": "if err := os.MkdirAll(s.Dir(), 0o755); err != nil {",
-      "max_count": 1
-    },
-    {
-      "rule": "G301",
       "path": "internal/integrations/hooks/project_config.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
@@ -755,13 +748,6 @@
     {
       "rule": "G304",
       "path": "internal/config/workdirs.go",
-      "message": "Potential file inclusion via variable",
-      "source": "file, err := os.Open(path)",
-      "max_count": 1
-    },
-    {
-      "rule": "G304",
-      "path": "internal/core/layout/layout.go",
       "message": "Potential file inclusion via variable",
       "source": "file, err := os.Open(path)",
       "max_count": 1

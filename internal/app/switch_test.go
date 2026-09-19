@@ -17,7 +17,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
-	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
@@ -3398,27 +3397,23 @@ func (f pickerRunnerFunc) Run(options intpicker.Options) (intpicker.Result, erro
 }
 
 type capturingSwitchSessionExecutor struct {
-	ensureSessionName     string
-	ensureCWD             string
-	openSessionName       string
-	killSessionName       string
-	authorizeCalled       bool
-	authorizeResult       bool
-	authorizeSet          bool
-	layoutAuthorizeCalled bool
-	layoutAuthorizeResult bool
-	layoutAuthorizeSet    bool
-	exists                map[string]bool
-	recentSessions        []string
-	calls                 []string
-	killHook              func(string)
-	ensureErr             error
-	openErr               error
-	killErr               error
-	authorizeErr          error
-	layoutAuthorizeErr    error
-	existsErr             error
-	recentErr             error
+	ensureSessionName string
+	ensureCWD         string
+	openSessionName   string
+	killSessionName   string
+	authorizeCalled   bool
+	authorizeResult   bool
+	authorizeSet      bool
+	exists            map[string]bool
+	recentSessions    []string
+	calls             []string
+	killHook          func(string)
+	ensureErr         error
+	openErr           error
+	killErr           error
+	authorizeErr      error
+	existsErr         error
+	recentErr         error
 }
 
 type bulkSwitchSessionExecutor struct {
@@ -3483,19 +3478,6 @@ func (e *sidebarOpenTrustPopupExecutor) AuthorizeProjectHooks(_ context.Context,
 	return decision != hooks.ProjectHookDeny, nil
 }
 
-func (e *sidebarOpenTrustPopupExecutor) AuthorizeProjectLayout(_ context.Context, cwd string, artifact corelayout.Artifact) (bool, error) {
-	e.calls = append(e.calls, "authorize-layout:"+artifact.RelativePath)
-	prompt := tmuxProjectHookPrompt(e.lookupEnv, e.executable, e.popupRunner)
-	decision := prompt(hooks.ProjectHookPromptRequest{
-		RepoPath:     cwd,
-		RelativePath: artifact.RelativePath,
-		ArtifactKind: "project layout",
-		SHA256:       "abc123",
-		Preview:      strings.Join(artifact.ExecutableCommands(), "\n"),
-	})
-	return decision != hooks.ProjectHookDeny, nil
-}
-
 func (e *capturingSwitchSessionExecutor) EnsureSession(_ context.Context, sessionName, cwd string) error {
 	e.ensureSessionName = sessionName
 	e.ensureCWD = cwd
@@ -3529,18 +3511,6 @@ func (e *capturingSwitchSessionExecutor) AuthorizeProjectHooks(_ context.Context
 	}
 	if e.authorizeSet {
 		return e.authorizeResult, nil
-	}
-	return true, nil
-}
-
-func (e *capturingSwitchSessionExecutor) AuthorizeProjectLayout(_ context.Context, _ string, artifact corelayout.Artifact) (bool, error) {
-	e.layoutAuthorizeCalled = true
-	e.calls = append(e.calls, "authorize-layout:"+artifact.RelativePath)
-	if e.layoutAuthorizeErr != nil {
-		return false, e.layoutAuthorizeErr
-	}
-	if e.layoutAuthorizeSet {
-		return e.layoutAuthorizeResult, nil
 	}
 	return true, nil
 }
