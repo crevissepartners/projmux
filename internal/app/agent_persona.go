@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -92,6 +93,14 @@ type agentPersonaRequest struct {
 // Every refusal happens before the snapshot is written and leaves no trace.
 // A resume that fails after the stop leaves the Agent Offline with the new
 // annotations and prints the `agent resume` command that finishes the job.
+//
+// A stop that reports an error is not taken at its word, because `delete
+// pane` can fail after the Pane is already gone: the Registry and the exact
+// tmux server are observed again. A Pane still alive keeps running the old
+// session, so the previous annotations are restored. A Pane already closed
+// keeps the new annotations and the run goes on to the resume, with a warning.
+// When liveness cannot be observed the previous annotations are restored and
+// the command to re-run is printed.
 func (c *agentCommand) runPersona(args []string, stdout, stderr io.Writer) error {
 	request, err := parseAgentPersonaArgs(args, stderr)
 	if err != nil {
@@ -223,16 +232,35 @@ func (c *agentCommand) runPersona(args []string, stdout, stderr io.Writer) error
 	}
 	if running {
 		if err := c.stopAgentPane(request, paneUID, forward, stderr); err != nil {
-			// The Agent still runs its old provider session, so its annotations
-			// go back to what that session was launched with: leaving the new
-			// ones would make a re-run report `unchanged` for a persona the
-			// provider never received.
-			if restoreErr := c.setAgentPersona(request.spelling, target, current); restoreErr != nil {
-				return fmt.Errorf("%s: closing agent/%s's managed pane failed: %w; restoring its persona annotations also failed: %v",
-					request.spelling, target.Metadata.Name, err, restoreErr)
+			// `delete pane` can fail after its live half already closed the
+			// Pane, so the error alone does not say whether the old provider
+			// session still runs. Observe it before choosing which annotations
+			// the Agent keeps.
+			liveness, observeErr := c.observeStoppedAgentPane(request, target.Metadata.UID, paneUID)
+			if liveness == personaPaneClosed {
+				// The old session is gone, so the old annotations describe
+				// nothing that runs. Keep the new ones and resume: restoring
+				// them would bring the next resume back without the persona.
+				fmt.Fprintf(stderr, "projmux: warning: closing agent/%s's managed pane %s reported an error, but that pane is already closed, so its new persona is kept and the Agent is resumed: %v\n",
+					target.Metadata.Name, paneUID, err)
+			} else {
+				// The Agent may still run its old provider session, so its
+				// annotations go back to what that session was launched with:
+				// leaving the new ones would make a re-run report `unchanged`
+				// for a persona the provider never received.
+				if restoreErr := c.setAgentPersona(request.spelling, target, current); restoreErr != nil {
+					return fmt.Errorf("%s: closing agent/%s's managed pane failed: %w; restoring its persona annotations also failed: %v",
+						request.spelling, target.Metadata.Name, err, restoreErr)
+				}
+				if liveness == personaPaneUnknown {
+					fmt.Fprintf(stderr, "projmux: could not observe whether agent/%s's managed pane %s is still alive (%v); its persona annotations were restored, and re-running the same command recovers: %s\n",
+						target.Metadata.Name, paneUID, observeErr, personaRerunCommand(registry, target, request))
+					return fmt.Errorf("%s: closing agent/%s's managed pane failed and whether it is still alive could not be observed, so its persona annotations were restored: %w",
+						request.spelling, target.Metadata.Name, err)
+				}
+				return fmt.Errorf("%s: closing agent/%s's managed pane failed, so its persona annotations were restored: %w",
+					request.spelling, target.Metadata.Name, err)
 			}
-			return fmt.Errorf("%s: closing agent/%s's managed pane failed, so its persona annotations were restored: %w",
-				request.spelling, target.Metadata.Name, err)
 		}
 	}
 	if err := c.resumePersonaAgent(request.spelling, target.Metadata.UID, forward, stderr); err != nil {
@@ -380,6 +408,81 @@ func (c *agentCommand) stopAgentPane(request agentPersonaRequest, paneUID string
 	return c.paneDelete.Run(args, stdout, stderr)
 }
 
+// personaPaneLiveness is what a failed stop left of the managed Pane.
+type personaPaneLiveness int
+
+const (
+	// personaPaneAlive: the Pane still runs the old provider session.
+	personaPaneAlive personaPaneLiveness = iota
+	// personaPaneClosed: the stop closed the Pane before it failed.
+	personaPaneClosed
+	// personaPaneUnknown: neither could be observed.
+	personaPaneUnknown
+)
+
+// observeStoppedAgentPane decides whether the managed Pane a failed stop
+// targeted is still alive. The Registry answers first: an Agent no longer
+// Running on paneUID, or a Pane uid gone from the Registry, means the stop's
+// Registry half committed. Otherwise the exact server `delete pane` addressed
+// answers, because the live half can close the Pane before the Registry
+// commit fails. The error explains a personaPaneUnknown answer.
+func (c *agentCommand) observeStoppedAgentPane(request agentPersonaRequest, agentUID, paneUID string) (personaPaneLiveness, error) {
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return personaPaneUnknown, err
+	}
+	agent, ok := registry.Agent(agentUID)
+	if !ok {
+		return personaPaneUnknown, fmt.Errorf("agent %q is no longer in the registry", agentUID)
+	}
+	if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != paneUID {
+		return personaPaneClosed, nil
+	}
+	if _, ok := registry.Pane(paneUID); !ok {
+		return personaPaneClosed, nil
+	}
+	target, err := resolveDeleteTarget(request.spelling, request.socket, c.lookupEnv)
+	if err != nil {
+		return personaPaneUnknown, err
+	}
+	live := c.managedPaneLive
+	if live == nil {
+		live = observeManagedPaneLive
+	}
+	alive, err := live(target, paneUID)
+	switch {
+	case err != nil:
+		return personaPaneUnknown, err
+	case alive:
+		return personaPaneAlive, nil
+	default:
+		return personaPaneClosed, nil
+	}
+}
+
+// observeManagedPaneLive is the production managedPaneLive: a fresh `delete
+// pane` runtime bound to target, read-only.
+func observeManagedPaneLive(target tmuxTransport, paneUID string) (bool, error) {
+	runtime := newTmuxPaneDeleteRuntime()
+	runtime.useExactTarget(target)
+	return managedPaneMirrorLive(context.Background(), runtime, paneUID)
+}
+
+// managedPaneMirrorLive reports whether runtime's exact server holds a live
+// tmux Pane mirroring paneUID, from the inventory `delete pane` plans its
+// kills from. An empty inventory proves nothing about one Pane, the same way
+// it authorizes nothing in `delete pane`, so it is an error.
+func managedPaneMirrorLive(ctx context.Context, runtime *tmuxPaneDeleteRuntime, paneUID string) (bool, error) {
+	rows, err := runtime.inventory(ctx)
+	if err != nil {
+		return false, err
+	}
+	if len(rows) == 0 {
+		return false, fmt.Errorf("exact tmux inventory on %s was empty", runtime.target.Label())
+	}
+	return slices.ContainsFunc(rows, func(row livePaneDeleteRow) bool { return row.paneUID == paneUID }), nil
+}
+
 // resumePersonaAgent brings the stopped Agent back through the `agent resume`
 // rebinder, planned from the registry as it is now.
 func (c *agentCommand) resumePersonaAgent(spelling, agentUID string, stdout, stderr io.Writer) error {
@@ -405,15 +508,49 @@ func (c *agentCommand) resumePersonaAgent(spelling, agentUID string, stdout, std
 // attach or detach whose resume failed. It names the Agent by uid inside its
 // exact Window and Project, so it resolves to the same Agent from anywhere.
 func personaRecoveryCommand(registry coremetadata.Registry, agent coremetadata.Agent) string {
-	command := "projmux agent resume " + selector.UIDPrefix + agent.Metadata.UID
+	return "projmux agent resume " + personaAgentRef(registry, agent)
+}
+
+// personaRerunCommand is the same `agent persona` invocation, for a run that
+// restored the previous annotations without knowing whether the stop closed
+// the Pane: a re-run observes the Agent afresh and finishes the change.
+func personaRerunCommand(registry coremetadata.Registry, agent coremetadata.Agent, request agentPersonaRequest) string {
+	command := "projmux " + request.spelling + " " + personaAgentRef(registry, agent)
+	if request.socket.socket != "" {
+		command += " --socket " + personaCommandWord(request.socket.socket)
+	}
+	if request.socket.socketPath != "" {
+		command += " --socket-path " + personaCommandWord(request.socket.socketPath)
+	}
+	if request.yes {
+		command += " --yes"
+	}
+	if request.action == "attach" {
+		command += " " + request.persona
+	}
+	return command
+}
+
+// personaAgentRef names the Agent by uid inside its exact Window and Project.
+func personaAgentRef(registry coremetadata.Registry, agent coremetadata.Agent) string {
+	ref := selector.UIDPrefix + agent.Metadata.UID
 	windowUID := agent.Metadata.OwnerUID()
 	if window, ok := registry.Window(windowUID); ok {
 		if projectUID := window.Metadata.OwnerUID(); projectUID != "" {
-			command += " --project " + selector.UIDPrefix + projectUID
+			ref += " --project " + selector.UIDPrefix + projectUID
 		}
-		command += " --window " + selector.UIDPrefix + windowUID
+		ref += " --window " + selector.UIDPrefix + windowUID
 	}
-	return command
+	return ref
+}
+
+// personaCommandWord quotes a flag value for a printed command only when the
+// shell would split or expand it.
+func personaCommandWord(value string) string {
+	if value != "" && !strings.ContainsAny(value, " \t\n'\"\\$`;&|<>()*?[]{}~#!") {
+		return value
+	}
+	return shellQuote(value)
 }
 
 func describePersonaAnnotations(annotations coremetadata.AgentPersonaAnnotations) string {

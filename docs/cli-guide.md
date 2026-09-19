@@ -1748,7 +1748,12 @@ the first two). The last key is sticky and makes every later resume of that
 Agent pass `--system-prompt-snapshot off`: Claude records the system prompt of
 a conversation's first request and replays that record on resume, so without
 it a persona attached after the conversation started would be ignored on the
-next resume. A Running Agent whose interaction is not `idle` or
+next resume. In steady state that costs little: each resume re-creates a
+byte-identical system prompt, so the prompt cache still hits and the extra cost
+is a few dozen cache-creation tokens per resume (measured +4 to +45); after the
+environment context in the system prompt changes (date, git state, CLAUDE.md),
+the first resume can re-cache the prompt prefix once. A Running Agent whose
+interaction is not `idle` or
 `response_complete` -- `unknown` included -- is refused with
 `persona-agent-busy` unless `--yes` confirms cutting its turn, and `--dry-run`
 (`-o json` for scripts) reports the target, its interaction, the current and
@@ -1763,7 +1768,12 @@ with the new snapshot. Outside tmux the stop needs `--socket <name>` or
 snapshot, Registry, or Pane change. If the resume fails after the stop, the
 Agent stays Offline with its new annotations and stderr prints the
 `projmux agent resume uid:<agent> --project uid:<project> --window uid:<window>`
-command that finishes the job with the persona.
+command that finishes the job with the persona. If closing the managed Pane
+reports an error, the command checks whether that Pane is still alive: if it
+is, the previous annotations are restored; if it is already closed, the new
+annotations are kept and the resume proceeds with a warning on stderr (a failed
+resume prints the recovery command above); if it cannot tell, the previous
+annotations are restored and stderr prints the command to re-run.
 
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`

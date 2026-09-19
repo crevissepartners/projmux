@@ -91,6 +91,12 @@ type agentCommand struct {
 	// Agent's managed Pane through it rather than through a tmux call of its
 	// own, so the stop is the same one `delete pane` performs.
 	paneDelete rawArgvCommand
+	// managedPaneLive reports whether the exact live tmux mirror of a Registry
+	// Pane uid still exists on the server `delete pane` addressed. `agent
+	// persona` asks it only after that stop reports an error, to tell a Pane
+	// still running the old provider from one the stop already closed. Nil
+	// reads the same exact inventory `delete pane` plans from.
+	managedPaneLive func(tmuxTransport, string) (bool, error)
 	// personaStore opens the persona store; nil resolves the default paths.
 	personaStore func() (persona.Store, error)
 	// lookupEnv reads the ambient tmux Pane that `agent persona` refuses to

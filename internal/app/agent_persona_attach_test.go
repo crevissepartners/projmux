@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -66,6 +68,11 @@ func newPersonaAttachFixture(t *testing.T) *personaAttachFixture {
 	command.personaStore = func() (persona.Store, error) { return personaStoreFor(t, planner), nil }
 	env := map[string]string{"TMUX": testDeleteEnvironment["TMUX"]}
 	command.lookupEnv = func(name string) string { return env[name] }
+	// The live half of the fixture is the fake delete runtime, so a managed
+	// Pane is alive until that runtime has killed it.
+	command.managedPaneLive = func(_ tmuxTransport, paneUID string) (bool, error) {
+		return !slices.ContainsFunc(deletes.killed, func(killed paneLiveDeleteTarget) bool { return killed.PaneUID == paneUID }), nil
+	}
 	return &personaAttachFixture{
 		store: store, tmux: tmux, command: command, planner: planner,
 		launcher: launcher, deletes: deletes, delete: deleteCmd, env: env,
@@ -667,5 +674,266 @@ func TestAgentPersonaStopFailureRestoresTheAnnotationsTheRunningSessionHas(t *te
 	}
 	if calls := splitWindowCalls(f.tmux); len(calls) != 0 {
 		t.Fatalf("a failed stop launched %v", calls)
+	}
+}
+
+// personaAttachRerun is the command a stop failure with unobservable Pane
+// liveness prints for the fixture Agent and the go-reviewer persona.
+const personaAttachRerun = "projmux agent persona attach uid:agt-alpha-codex --project uid:prj-alpha --window uid:win-alpha-main go-reviewer"
+
+// failingStopRoute is a `delete` route that reports stopErr. With closes set it
+// first runs the real route to completion, the way a `delete pane` whose
+// Registry commit and kill both happened fails while writing its result.
+type failingStopRoute struct {
+	route   rawArgvCommand
+	closes  bool
+	stopErr error
+}
+
+func (r failingStopRoute) Run(args []string, stdout, stderr io.Writer) error {
+	if r.closes {
+		if err := r.route.Run(args, stdout, stderr); err != nil {
+			return err
+		}
+	}
+	return r.stopErr
+}
+
+// assertNewPersonaAnnotations checks that the Agent records the go-reviewer
+// persona with the snapshot mode off.
+func (f *personaAttachFixture) assertNewPersonaAnnotations(t *testing.T) {
+	t.Helper()
+	want := map[string]string{
+		coremetadata.AnnotationAgentPersona:              "go-reviewer",
+		coremetadata.AnnotationAgentPersonaDigest:        persona.Digest([]byte(personaResumeContent)),
+		coremetadata.AnnotationAgentSystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff,
+	}
+	if got := f.agent(t).Metadata.Annotations; !mapsEqual(got, want) {
+		t.Fatalf("annotations = %v, want the new persona kept %v", got, want)
+	}
+}
+
+// TestAgentPersonaStopErrorAfterThePaneClosedKeepsTheNewPersonaAndRestarts is
+// a stop whose Registry half committed and whose kill happened but which still
+// reported an error: the old session is gone, so the new persona is kept, the
+// run warns, and the Agent restarts with it.
+func TestAgentPersonaStopErrorAfterThePaneClosedKeepsTheNewPersonaAndRestarts(t *testing.T) {
+	f := newPersonaAttachFixture(t)
+	f.writePersona(t, "go-reviewer", personaResumeContent)
+	f.command.paneDelete = failingStopRoute{route: f.delete, closes: true, stopErr: errors.New("write delete result: no space left on device")}
+
+	stdout, stderr, err := runRoute(t, f.command, "persona", "attach", "uid:"+personaAttachAgent, "go-reviewer", "-o", "json")
+	if err != nil {
+		t.Fatalf("attach after a closed-but-failed stop: stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if !strings.Contains(stderr, "projmux: warning: closing agent/codex's managed pane "+personaAttachPane+" reported an error, but that pane is already closed") ||
+		!strings.Contains(stderr, "new persona is kept and the Agent is resumed: write delete result: no space left on device\n") {
+		t.Fatalf("stderr = %q, want the closed-pane warning with the stop error", stderr)
+	}
+	after := f.assertRestartedOnTheSameConversation(t, personaAttachPane)
+	var result agentPersonaResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("attach output %q is not JSON: %v", stdout, err)
+	}
+	if result.Outcome != personaOutcomeRestarted || result.NewPaneUID != after.Status.PaneRef {
+		t.Fatalf("attach result = %+v, want restarted on %s", result, after.Status.PaneRef)
+	}
+	f.assertNewPersonaAnnotations(t)
+	want := []string{"--append-system-prompt-file", f.snapshotPath(t, personaResumeContent), "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}
+	if got := f.lastArgvTail(t); !slices.Equal(got, want) {
+		t.Fatalf("resumed exec argv tail = %q, want %q", got, want)
+	}
+}
+
+// TestAgentPersonaStopErrorAfterThePaneClosedWithAFailedResumePrintsTheRecoveryCommand
+// is the same closed-but-failed stop followed by a resume that fails: the
+// Agent is Offline with the new persona, and the printed `agent resume`
+// command brings it back with that persona.
+func TestAgentPersonaStopErrorAfterThePaneClosedWithAFailedResumePrintsTheRecoveryCommand(t *testing.T) {
+	f := newPersonaAttachFixture(t)
+	f.writePersona(t, "go-reviewer", personaResumeContent)
+	f.command.paneDelete = failingStopRoute{route: f.delete, closes: true, stopErr: errors.New("write delete result: no space left on device")}
+	working := f.command.rebind.launcher
+	f.command.rebind.launcher = &failingPersonaResumeLauncher{exactArgvResumeLauncher: f.launcher}
+
+	_, stderr, err := runRoute(t, f.command, "persona", "attach", "uid:"+personaAttachAgent, "go-reviewer")
+	if err == nil {
+		t.Fatal("attach with a closed-but-failed stop and a failing resume succeeded")
+	}
+	if phase := f.agent(t).Status.Phase; phase != coremetadata.PhaseOffline {
+		t.Fatalf("phase = %s, want Offline", phase)
+	}
+	f.assertNewPersonaAnnotations(t)
+	if !strings.Contains(stderr, "that pane is already closed, so its new persona is kept") ||
+		!strings.Contains(stderr, "projmux: recover with: "+personaAttachRecovery+"\n") {
+		t.Fatalf("stderr = %q, want the closed-pane warning and the recovery command %q", stderr, personaAttachRecovery)
+	}
+	if calls := splitWindowCalls(f.tmux); len(calls) != 0 {
+		t.Fatalf("a failed resume launched %v", calls)
+	}
+
+	f.command.rebind.launcher = working
+	recovery := strings.Fields(strings.TrimPrefix(personaAttachRecovery, "projmux agent "))
+	if _, stderr, err := runRoute(t, f.command, recovery...); err != nil {
+		t.Fatalf("recovery command: stderr=%q err=%v", stderr, err)
+	}
+	want := []string{"--append-system-prompt-file", f.snapshotPath(t, personaResumeContent), "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}
+	if got := f.lastArgvTail(t); !slices.Equal(got, want) {
+		t.Fatalf("recovery resume exec argv tail = %q, want %q", got, want)
+	}
+	if f.agent(t).Status.Phase != coremetadata.PhaseRunning {
+		t.Fatal("the recovery command did not bring the Agent back")
+	}
+}
+
+// TestAgentPersonaStopErrorWithTheLivePaneGoneBeforeTheRegistryCommitKeepsTheNewPersona
+// is a stop that killed the live Pane and then failed its Registry commit: the
+// Registry still says Running, but the exact server `delete pane` addressed
+// has no mirror of the Pane. The new persona is kept, and the resume, which
+// the Running phase refuses, prints the recovery command.
+func TestAgentPersonaStopErrorWithTheLivePaneGoneBeforeTheRegistryCommitKeepsTheNewPersona(t *testing.T) {
+	f := newPersonaAttachFixture(t)
+	f.writePersona(t, "go-reviewer", personaResumeContent)
+	f.command.paneDelete = failingStopRoute{stopErr: errors.New("registry write failed; exact live target(s) %32/pane-uid=pan-alpha-codex were removed before the store failure")}
+	var observed []string
+	f.command.managedPaneLive = func(target tmuxTransport, paneUID string) (bool, error) {
+		if target != testDeleteTarget {
+			t.Errorf("liveness observed on %+v, want the server delete pane addresses %+v", target, testDeleteTarget)
+		}
+		observed = append(observed, paneUID)
+		return false, nil
+	}
+
+	_, stderr, err := runRoute(t, f.command, "persona", "attach", "uid:"+personaAttachAgent, "go-reviewer")
+	if err == nil {
+		t.Fatal("attach whose stop left the Registry Running succeeded")
+	}
+	if !slices.Equal(observed, []string{personaAttachPane}) {
+		t.Fatalf("liveness observed %q, want exactly %s", observed, personaAttachPane)
+	}
+	f.assertNewPersonaAnnotations(t)
+	after := f.agent(t)
+	if after.Status.Phase != coremetadata.PhaseRunning || after.Status.PaneRef != personaAttachPane {
+		t.Fatalf("agent = %s on %q, want the Registry left Running on %s", after.Status.Phase, after.Status.PaneRef, personaAttachPane)
+	}
+	if !strings.Contains(stderr, "that pane is already closed, so its new persona is kept") ||
+		!strings.Contains(stderr, "were removed before the store failure\n") ||
+		!strings.Contains(stderr, "did not resume") ||
+		!strings.Contains(stderr, "projmux: recover with: "+personaAttachRecovery+"\n") {
+		t.Fatalf("stderr = %q, want the closed-pane warning and the recovery command", stderr)
+	}
+	if calls := splitWindowCalls(f.tmux); len(calls) != 0 {
+		t.Fatalf("a refused resume launched %v", calls)
+	}
+}
+
+// TestAgentPersonaStopErrorWithUnobservablePaneLivenessRestoresAndPrintsTheRerunCommand
+// is a failed stop whose Pane liveness cannot be observed: the previous
+// annotations come back as for a Pane still alive, stderr names the
+// observation error and the same command to re-run, and that command finishes
+// the attach.
+func TestAgentPersonaStopErrorWithUnobservablePaneLivenessRestoresAndPrintsTheRerunCommand(t *testing.T) {
+	f := newPersonaAttachFixture(t)
+	f.writePersona(t, "go-reviewer", personaResumeContent)
+	f.deletes.killErr = errors.New("tmux kill-pane failed")
+	observe := f.command.managedPaneLive
+	f.command.managedPaneLive = func(tmuxTransport, string) (bool, error) {
+		return false, errors.New("tmux list-panes: lost server")
+	}
+	beforeAnnotations := f.agent(t).Metadata.Annotations
+
+	_, stderr, err := runRoute(t, f.command, "persona", "attach", "uid:"+personaAttachAgent, "go-reviewer")
+	if err == nil || !strings.Contains(err.Error(), "persona annotations were restored") || !strings.Contains(err.Error(), "tmux kill-pane failed") {
+		t.Fatalf("attach with a failing stop and unobservable liveness err = %v", err)
+	}
+	after := f.agent(t)
+	if after.Status.Phase != coremetadata.PhaseRunning || after.Status.PaneRef != personaAttachPane {
+		t.Fatalf("agent = %s on %q, want Running on %s", after.Status.Phase, after.Status.PaneRef, personaAttachPane)
+	}
+	if !mapsEqual(after.Metadata.Annotations, beforeAnnotations) {
+		t.Fatalf("annotations = %v, want the original %v", after.Metadata.Annotations, beforeAnnotations)
+	}
+	if !strings.Contains(stderr, "could not observe whether agent/codex's managed pane "+personaAttachPane+" is still alive (tmux list-panes: lost server)") ||
+		!strings.Contains(stderr, "re-running the same command recovers: "+personaAttachRerun+"\n") {
+		t.Fatalf("stderr = %q, want the observation error and the re-run command %q", stderr, personaAttachRerun)
+	}
+	if calls := splitWindowCalls(f.tmux); len(calls) != 0 {
+		t.Fatalf("a failed stop launched %v", calls)
+	}
+
+	f.deletes.killErr = nil
+	f.command.managedPaneLive = observe
+	rerun := strings.Fields(strings.TrimPrefix(personaAttachRerun, "projmux agent "))
+	if _, stderr, err := runRoute(t, f.command, rerun...); err != nil {
+		t.Fatalf("re-run command: stderr=%q err=%v", stderr, err)
+	}
+	f.assertRestartedOnTheSameConversation(t, personaAttachPane)
+	f.assertNewPersonaAnnotations(t)
+}
+
+// TestAgentPersonaDetachStopErrorWithUnobservablePaneLivenessRestoresThePersona
+// is the detach half: the persona the running session has comes back, and
+// the re-run command is a detach with no persona argument.
+func TestAgentPersonaDetachStopErrorWithUnobservablePaneLivenessRestoresThePersona(t *testing.T) {
+	f := newPersonaAttachFixture(t)
+	f.writePersona(t, "go-reviewer", personaResumeContent)
+	if _, _, err := runRoute(t, f.command, "persona", "attach", "uid:"+personaAttachAgent, "go-reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	attached := f.agent(t)
+	f.setInteraction(coremetadata.InteractionIdle)
+	f.tmux.calls = nil
+	f.deletes.killErr = errors.New("tmux kill-pane failed")
+	f.command.managedPaneLive = func(tmuxTransport, string) (bool, error) {
+		return false, errors.New("tmux list-panes: lost server")
+	}
+
+	_, stderr, err := runRoute(t, f.command, "persona", "detach", "uid:"+personaAttachAgent)
+	if err == nil || !strings.Contains(err.Error(), "persona annotations were restored") {
+		t.Fatalf("detach with a failing stop and unobservable liveness err = %v", err)
+	}
+	after := f.agent(t)
+	if after.Status.Phase != coremetadata.PhaseRunning || after.Status.PaneRef != attached.Status.PaneRef {
+		t.Fatalf("agent = %s on %q, want Running on %s", after.Status.Phase, after.Status.PaneRef, attached.Status.PaneRef)
+	}
+	if !mapsEqual(after.Metadata.Annotations, attached.Metadata.Annotations) {
+		t.Fatalf("annotations = %v, want the attached persona restored %v", after.Metadata.Annotations, attached.Metadata.Annotations)
+	}
+	const rerun = "projmux agent persona detach uid:agt-alpha-codex --project uid:prj-alpha --window uid:win-alpha-main"
+	if !strings.Contains(stderr, "re-running the same command recovers: "+rerun+"\n") {
+		t.Fatalf("stderr = %q, want the detach re-run command %q", stderr, rerun)
+	}
+	if calls := splitWindowCalls(f.tmux); len(calls) != 0 {
+		t.Fatalf("a failed stop launched %v", calls)
+	}
+}
+
+// TestManagedPaneMirrorLiveReadsTheExactDeleteInventory pins the production
+// liveness answer to the inventory `delete pane` plans from: a Pane uid
+// mirrored on the exact server is alive, an unmirrored one is not, and an
+// empty or failed inventory is an error rather than absence.
+func TestManagedPaneMirrorLiveReadsTheExactDeleteInventory(t *testing.T) {
+	runtime, _, _ := newPaneRuntimeFixture(t, paneRuntimeInventory())
+	if alive, err := managedPaneMirrorLive(context.Background(), runtime, personaAttachPane); err != nil || !alive {
+		t.Fatalf("mirrored pane liveness = %t, %v; want alive", alive, err)
+	}
+	withoutAgentPane := strings.ReplaceAll(paneRuntimeInventory(),
+		livePaneInventoryRow("$1", "alpha", "@10", "%32", "prj-alpha", "win-alpha-main", "pan-alpha-codex"), "")
+	runtime, _, _ = newPaneRuntimeFixture(t, withoutAgentPane)
+	if alive, err := managedPaneMirrorLive(context.Background(), runtime, personaAttachPane); err != nil || alive {
+		t.Fatalf("unmirrored pane liveness = %t, %v; want absent", alive, err)
+	}
+	runtime, _, _ = newPaneRuntimeFixture(t, "")
+	if _, err := managedPaneMirrorLive(context.Background(), runtime, personaAttachPane); err == nil || !strings.Contains(err.Error(), "was empty") {
+		t.Fatalf("empty inventory err = %v, want an error", err)
+	}
+	runtime, runner, _ := newPaneRuntimeFixture(t, paneRuntimeInventory())
+	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+		"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}")
+	runner.errors = map[string]error{
+		recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value, "list-panes", "-a", "-F", format): errors.New("lost server"),
+	}
+	if _, err := managedPaneMirrorLive(context.Background(), runtime, personaAttachPane); err == nil || !strings.Contains(err.Error(), "lost server") {
+		t.Fatalf("failed inventory err = %v, want the tmux error", err)
 	}
 }
