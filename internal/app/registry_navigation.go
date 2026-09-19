@@ -60,10 +60,18 @@ func newRegistryNavigationReader(runner tmuxCommandRunner) *registryNavigationRe
 
 // graph resolves one observation of the exact host onto the Registry.
 func (r *registryNavigationReader) graph(ctx context.Context) (resourcegraph.Graph, error) {
+	return r.graphOn(ctx, runtimeTransportRequest{})
+}
+
+// graphOn resolves one observation of the host the request names onto the
+// Registry. An empty request is the inherited-host read graph performs; an
+// explicit socket is for a caller that already holds the exact server it is
+// about to act on and must read the same one.
+func (r *registryNavigationReader) graphOn(ctx context.Context, req runtimeTransportRequest) (resourcegraph.Graph, error) {
 	if r == nil || r.reader == nil {
 		return resourcegraph.Graph{}, errors.New("registry navigation reader is not configured")
 	}
-	transport, err := r.reader.transport(runtimeTransportRequest{})
+	transport, err := r.reader.transport(req)
 	if err != nil {
 		return resourcegraph.Graph{}, err
 	}
@@ -72,7 +80,13 @@ func (r *registryNavigationReader) graph(ctx context.Context) (resourcegraph.Gra
 
 // view builds the navigation model for one invocation.
 func (r *registryNavigationReader) view(ctx context.Context, candidates []registryview.Candidate) (registryview.View, error) {
-	graph, err := r.graph(ctx)
+	return r.viewOn(ctx, runtimeTransportRequest{}, candidates)
+}
+
+// viewOn builds the navigation model over the host the request names; see
+// graphOn for when a caller passes anything but the empty request.
+func (r *registryNavigationReader) viewOn(ctx context.Context, req runtimeTransportRequest, candidates []registryview.Candidate) (registryview.View, error) {
+	graph, err := r.graphOn(ctx, req)
 	if err != nil {
 		return registryview.View{}, err
 	}

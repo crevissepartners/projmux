@@ -15,7 +15,8 @@ import (
 //
 // `live` names the sessions the fake tmux already has, which is the single
 // input that decides between the materialized and already-live halves of every
-// verb below.
+// verb below. Inside tmux the session inspector answers it; outside tmux the
+// app server behind `-L projmux` does, so both fakes carry the same map.
 func lifecycleVerbFixture(
 	t *testing.T,
 	verb projectLifecycleVerb,
@@ -35,7 +36,7 @@ func lifecycleVerbFixture(
 	switcher := &switchCommand{
 		sessions:        executor,
 		identity:        stubSwitchIdentityResolver{name: "alpha"},
-		tmuxRunner:      &recordingTmuxRunner{},
+		tmuxRunner:      &lifecycleAppServerRunner{live: live},
 		homeDir:         func() (string, error) { return home, nil },
 		lookupEnv:       lookupEnv,
 		projectTopology: &fakeProjectTopologyMaterializer{materialized: true},

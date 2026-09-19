@@ -1030,6 +1030,13 @@ func (c *switchCommand) parseCycleArgs(command string, args []string, stderr io.
 	return target, direction, nil
 }
 
+// inheritsTmuxServer reports whether this invocation carries an inherited
+// `$TMUX` server, which is the one the mutation route resolves from. Without
+// it, the route is the default app socket rather than tmux's default server.
+func (c *switchCommand) inheritsTmuxServer() bool {
+	return c.lookupEnvValue("TMUX") != ""
+}
+
 func (c *switchCommand) switchSessionExists(ctx context.Context, sessionName string) (bool, error) {
 	inspector, ok := c.sessions.(switchSessionInspector)
 	if !ok || inspector == nil {
@@ -2700,10 +2707,31 @@ func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fal
 }
 
 func (c *switchCommand) stopManagedProjectSession(ctx context.Context, selection, sessionName, fallbackSession, anchorPane string) error {
+	return c.stopManagedProjectSessionOnRoute(ctx, selection, sessionName, fallbackSession, anchorPane, nil)
+}
+
+// stopManagedProjectSessionOnRoute is stopManagedProjectSession for a caller
+// that already resolved the invocation's mutation route. A nil route keeps the
+// sidebar shape: confirm on the inherited host, then resolve the route. A
+// resolved route is used as-is, and the target session is confirmed through
+// its exact physical socket, so the confirmation, the kill, and whatever the
+// caller read before it all name one server and the route is resolved once.
+func (c *switchCommand) stopManagedProjectSessionOnRoute(
+	ctx context.Context,
+	selection, sessionName, fallbackSession, anchorPane string,
+	resolved *runtimeMutationRoute,
+) error {
 	if c == nil {
 		return errors.New("switch managed runtime mutation runner is not configured")
 	}
-	view, err := c.navigationView(ctx)
+	observed := runtimeTransportRequest{}
+	if resolved != nil {
+		if strings.TrimSpace(resolved.expectedSocketPath) == "" {
+			return errors.New("switch managed runtime stop: resolved route has no physical socket; nothing was changed")
+		}
+		observed.socketPath = resolved.expectedSocketPath
+	}
+	view, err := c.navigationViewOn(ctx, observed)
 	if err != nil {
 		return fmt.Errorf("resolve managed Project runtime stop: %w", err)
 	}
@@ -2737,8 +2765,10 @@ func (c *switchCommand) stopManagedProjectSession(ctx context.Context, selection
 	} else if c.tmuxRunner == nil {
 		return errors.New("switch managed runtime mutation runner is not configured")
 	}
-	route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, c.tmuxRunner, c.lookupEnv, anchorPane)
-	if err != nil {
+	var route runtimeMutationRoute
+	if resolved != nil {
+		route = *resolved
+	} else if route, err = resolveInvocationRuntimeMutationRouteWithAnchor(ctx, c.tmuxRunner, c.lookupEnv, anchorPane); err != nil {
 		return err
 	}
 	target, ok := resolve(view)

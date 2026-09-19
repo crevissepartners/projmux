@@ -71,10 +71,17 @@ func switchRegistrySelectionUID(value string) string {
 // navigationView reads the Registry and one bounded observation of the exact
 // host. It writes nothing.
 func (c *switchCommand) navigationView(ctx context.Context) (registryview.View, error) {
+	return c.navigationViewOn(ctx, runtimeTransportRequest{})
+}
+
+// navigationViewOn is navigationView over the host the request names. Only a
+// caller that already resolved the exact server it is about to mutate passes a
+// non-empty request, so its read and its write name one server.
+func (c *switchCommand) navigationViewOn(ctx context.Context, req runtimeTransportRequest) (registryview.View, error) {
 	if c.navigation == nil || c.navigation.reader == nil {
 		return registryview.View{}, nil
 	}
-	return c.navigation.reader.view(ctx, nil)
+	return c.navigation.reader.viewOn(ctx, req, nil)
 }
 
 // switchManagedRows renders the Registry Projects as picker candidates.

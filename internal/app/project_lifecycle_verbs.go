@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 // The canonical spellings this file makes executable.
@@ -132,12 +133,12 @@ func (c *projectLifecycleCommand) runProject(args []string, stdout, stderr io.Wr
 	}
 
 	ctx := context.Background()
-	live, err := c.switcher.switchSessionExists(ctx, sessionName)
+	live, route, err := c.sessionLive(ctx, sessionName)
 	if err != nil {
 		return err
 	}
 
-	receipt, err := c.execute(ctx, spelling, project, root, sessionName, live)
+	receipt, err := c.execute(ctx, spelling, project, root, sessionName, live, route)
 	if err != nil {
 		return err
 	}
@@ -157,6 +158,7 @@ func (c *projectLifecycleCommand) execute(
 	project coremetadata.Project,
 	root, sessionName string,
 	live bool,
+	route *runtimeMutationRoute,
 ) (cli.OperationReceipt, error) {
 	target := cli.ReceiptTarget{Kind: "Project", UID: project.Metadata.UID, Name: project.Metadata.Name}
 
@@ -200,12 +202,51 @@ func (c *projectLifecycleCommand) execute(
 		if c.attachedToSession(sessionName) {
 			focus = cli.FocusMovedCurrentClient
 		}
-		if err := c.switcher.stopManagedProjectSession(ctx, switchRegistryUIDPrefix+project.Metadata.UID, sessionName, "", ""); err != nil {
+		if err := c.switcher.stopManagedProjectSessionOnRoute(ctx, switchRegistryUIDPrefix+project.Metadata.UID, sessionName, "", "", route); err != nil {
 			return cli.OperationReceipt{}, err
 		}
 		return c.receipt(cli.OperationStopProject, target, cli.RuntimeStopped, focus), nil
 	}
 	return cli.OperationReceipt{}, fmt.Errorf("%s: unknown Project lifecycle verb", spelling)
+}
+
+// sessionLive answers whether the Project's persistent session is live on the
+// server this invocation would act on.
+//
+// Inside tmux that is the inherited server, read the way it always was. Outside
+// tmux there is no inherited server, and asking tmux without a socket would ask
+// the operator's default server -- not the app server a web request, a script,
+// or an IDE terminal is driving. So `start` and `stop` resolve the same app
+// route their writes use (`-L projmux`, proven app-owned) and read the exact
+// session through its physical socket. That route is returned so `stop` can
+// confirm and kill on it without resolving it a second time.
+//
+// An app server that is absent, or one the route cannot prove app-owned, is
+// "not live": stop keeps its zero-write refusal and start keeps its
+// materializing path, which owns its own route and its own refusals.
+func (c *projectLifecycleCommand) sessionLive(ctx context.Context, sessionName string) (bool, *runtimeMutationRoute, error) {
+	if c.verb == projectLifecycleOpen || c.switcher.inheritsTmuxServer() {
+		live, err := c.switcher.switchSessionExists(ctx, sessionName)
+		return live, nil, err
+	}
+	if c.switcher.tmuxRunner == nil {
+		return false, nil, nil
+	}
+	route, err := resolveInvocationRuntimeMutationRoute(ctx, c.switcher.tmuxRunner, c.switcher.lookupEnv)
+	if err != nil || route.authority == nil || strings.TrimSpace(route.expectedSocketPath) == "" {
+		return false, nil, nil
+	}
+	exact := explicitTmuxRunner{runner: c.switcher.tmuxRunner, target: tmuxTransport{
+		Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource,
+	}}
+	live, err := inttmux.NewClient(exact).SessionExists(ctx, sessionName)
+	if err != nil {
+		return false, nil, fmt.Errorf("check existing switch session %q: %w", sessionName, err)
+	}
+	if !live {
+		return false, nil, nil
+	}
+	return true, &route, nil
 }
 
 // receipt renders the fixed lifecycle shape: the four desired-state axes are
