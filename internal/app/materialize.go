@@ -1279,6 +1279,20 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 			},
 			Apply: func(ctx context.Context) error {
 				_, err := runRuntimeMutationCommand(ctx, m.runner, action)
+				if err == nil {
+					return nil
+				}
+				// Every guard ran before the first kill, so an earlier kill of
+				// this same plan can remove this object first: tmux removes a
+				// Window with its last Pane, and a session with its last
+				// Window. Its own effect observer then proves the desired
+				// absence, and the plan goes on to the rest of the ledger. A
+				// failure the observer cannot explain away -- the object is
+				// still listed, or the route itself cannot be read -- stops the
+				// plan as before.
+				if absent, observeErr := m.observeMutationEffect(ctx, action); observeErr == nil && absent {
+					return nil
+				}
 				return err
 			},
 		})

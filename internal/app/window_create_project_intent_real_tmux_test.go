@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +37,8 @@ type projectIntentRealTmux struct {
 	store   *fakeResourceStore
 	create  *createCommand
 	resumes *fakeResumeLauncher
+	// warnings is everything the materializer warned, rollback included.
+	warnings *bytes.Buffer
 }
 
 const (
@@ -172,13 +176,14 @@ func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentR
 	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 	routed := explicitTmuxRunner{runner: runner, target: target}
 	resumes := newFakeResumeLauncher()
+	warnings := &bytes.Buffer{}
 	command := &createCommand{
 		store:      store.store(),
 		reconciler: newRegistryReconciler(routed, inttmux.NewClient(routed, inttmux.WithSocketName(defaultAppSocket))),
 		runtime: &materializer{
 			runner: routed, mirror: intmetadata.NewMirror(routed),
 			sessions: inttmux.NewClient(routed, inttmux.WithSocketName(defaultAppSocket)), target: target,
-			warn: testWarnWriter{t}, lookupEnv: lookupEnv,
+			warn: io.MultiWriter(testWarnWriter{t}, warnings), lookupEnv: lookupEnv,
 			executable: func() (string, error) { return "", errors.New("no supervisor in this test") },
 		},
 		agents:  sleepAgentLauncher{newFakeAgentLauncher()},
@@ -217,7 +222,7 @@ func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentR
 	}
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }
 	command.bindExplicitRuntime = func(ctx context.Context) error { return bind(ctx, true) }
-	return &projectIntentRealTmux{tmux: tmux, store: store, create: command, resumes: resumes}
+	return &projectIntentRealTmux{tmux: tmux, store: store, create: command, resumes: resumes, warnings: warnings}
 }
 
 func (fx *projectIntentRealTmux) sessionNames(t *testing.T) []string {
@@ -242,13 +247,15 @@ func (fx *projectIntentRealTmux) liveWindowCount(t *testing.T) int {
 // half of the Project scope, from a caller outside tmux: the stopped Project's
 // session starts, the Agent's resumed conversation is recorded, and the new
 // Window holds exactly one live Pane, the Agent's. An Agent that cannot be
-// opened after the Window exists leaves no Window behind.
+// opened after the Window -- and on a stopped Project the session -- exists
+// leaves neither behind.
 //
-// The failure half runs on the live Project. On a stopped Project the shared
-// create rollback -- fresh `create window --project` included -- stops at the
-// kill-window of a Window whose last Pane it has just killed, before it reaches
-// the session it started; that is a rollback defect of its own, outside this
-// scope, and is covered by the fake-runtime rollback test instead.
+// The stopped failure rows are the regression guard of the shared create
+// rollback: killing a Window's last Pane removes that Window, and the adopted
+// Window's last Pane removes the session, so later kills in the same plan find
+// their target already gone. Rollback used to stop there with "rollback
+// stopped before an unguarded runtime write" and leave the started session
+// running; fresh `create window --project` had the same defect.
 func TestProjectWindowIntentResumesIntoAStoppedProjectThroughRealTmux(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux is not installed")
@@ -309,26 +316,72 @@ func TestProjectWindowIntentResumesIntoAStoppedProjectThroughRealTmux(t *testing
 		}
 	})
 
-	t.Run("an Agent that cannot open on a live Project leaves no Window", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
-		fx := newProjectIntentRealTmux(t, ctx)
-		fx.resumes.planErr = errors.New("provider refused exact picker conversation")
-		registryBefore := fx.store.snapshot()
-		sessionsBefore, windowsBefore := fx.sessionNames(t), fx.liveWindowCount(t)
+	for _, row := range []struct {
+		name string
+		// create runs the failing create; it returns its error.
+		create func(t *testing.T, fx *projectIntentRealTmux) error
+	}{
+		{
+			name: "stopped Project intent whose resumed Agent is refused",
+			create: func(t *testing.T, fx *projectIntentRealTmux) error {
+				fx.resumes.planErr = errors.New("provider refused exact picker conversation")
+				_, err := fx.create.createWindowFromIntent(windowCreateIntent{projectUID: projectIntentStoppedUID, answer: answer}, ioDiscard{}, ioDiscard{})
+				if err == nil || !strings.Contains(err.Error(), "provider refused exact picker conversation") || !strings.Contains(err.Error(), "nothing was created") {
+					t.Fatalf("error = %v, want the refusal and that nothing was created", err)
+				}
+				return err
+			},
+		},
+		{
+			name: "live Project intent whose resumed Agent is refused",
+			create: func(t *testing.T, fx *projectIntentRealTmux) error {
+				fx.resumes.planErr = errors.New("provider refused exact picker conversation")
+				_, err := fx.create.createWindowFromIntent(windowCreateIntent{projectUID: projectIntentLiveUID, answer: answer}, ioDiscard{}, ioDiscard{})
+				if err == nil || !strings.Contains(err.Error(), "provider refused exact picker conversation") || !strings.Contains(err.Error(), "nothing was created") {
+					t.Fatalf("error = %v, want the refusal and that nothing was created", err)
+				}
+				return err
+			},
+		},
+		{
+			name: "fresh create window on the stopped Project whose commit fails",
+			create: func(t *testing.T, fx *projectIntentRealTmux) error {
+				fx.create.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+					fx.store.transactions++
+					working := fx.store.registry.Clone()
+					if err := fn(&working); err != nil {
+						return coremetadata.Registry{}, err
+					}
+					return coremetadata.Registry{}, errors.New("injected Registry commit failure")
+				}
+				_, _, err := runRoute(t, fx.create, "window", "--project", "uid:"+projectIntentStoppedUID)
+				if err == nil || !strings.Contains(err.Error(), "injected Registry commit failure") {
+					t.Fatalf("error = %v, want the injected commit failure", err)
+				}
+				return err
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+			fx := newProjectIntentRealTmux(t, ctx)
+			registryBefore := fx.store.snapshot()
+			sessionsBefore, windowsBefore := fx.sessionNames(t), fx.liveWindowCount(t)
 
-		_, err := fx.create.createWindowFromIntent(windowCreateIntent{projectUID: projectIntentLiveUID, answer: answer}, ioDiscard{}, ioDiscard{})
-		if err == nil || !strings.Contains(err.Error(), "provider refused exact picker conversation") || !strings.Contains(err.Error(), "nothing was created") {
-			t.Fatalf("error = %v, want the refusal and that nothing was created", err)
-		}
-		if fx.store.writes != 0 || fx.store.snapshot() != registryBefore {
-			t.Fatalf("failed intent wrote the Registry: writes=%d", fx.store.writes)
-		}
-		if got := fx.sessionNames(t); strings.Join(got, " ") != strings.Join(sessionsBefore, " ") {
-			t.Fatalf("live sessions = %v after the failure, want %v", got, sessionsBefore)
-		}
-		if got := fx.liveWindowCount(t); got != windowsBefore {
-			t.Fatalf("live Windows = %d after the failure, want %d", got, windowsBefore)
-		}
-	})
+			row.create(t, fx)
+			if fx.store.writes != 0 || fx.store.snapshot() != registryBefore {
+				t.Fatalf("failed create wrote the Registry: writes=%d", fx.store.writes)
+			}
+			if got := fx.sessionNames(t); strings.Join(got, " ") != strings.Join(sessionsBefore, " ") {
+				t.Fatalf("live sessions = %v after the failure, want %v: the started session was not rolled back", got, sessionsBefore)
+			}
+			if got := fx.liveWindowCount(t); got != windowsBefore {
+				t.Fatalf("live Windows = %d after the failure, want %d: an adopted or created Window was left", got, windowsBefore)
+			}
+			if strings.Contains(fx.warnings.String(), "rollback stopped before an unguarded runtime write") {
+				t.Fatalf("rollback stopped part way: %q", fx.warnings.String())
+			}
+		})
+	}
 }
