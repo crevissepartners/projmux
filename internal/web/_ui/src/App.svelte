@@ -4,6 +4,7 @@
   import { createWindow } from "./lib/commands";
   import { stopGeometry, followGeometry, geometry } from "./lib/geometry.svelte";
   import { loadMessages, t } from "./lib/i18n.svelte";
+  import { altChord } from "./lib/keys";
   import { canonicalize, go, route } from "./lib/router.svelte";
   import { connect, live, refresh } from "./lib/state.svelte";
   import { toast } from "./lib/toast.svelte";
@@ -207,7 +208,7 @@
   function keydown(event: KeyboardEvent) {
     // Alt-1 and Alt-2 open their sidebar and put the keyboard in it; pressed
     // again while focus is there, they close it.
-    if (event.altKey && event.key === "1") {
+    if (altChord(event, "1")) {
       event.preventDefault();
       if (ui.sidebar && projectList?.contains(document.activeElement)) closeSidebar("sidebar");
       else {
@@ -216,7 +217,7 @@
       }
       return;
     }
-    if (event.altKey && event.key === "2") {
+    if (altChord(event, "2")) {
       event.preventDefault();
       if (ui.notify && notifyList?.contains(document.activeElement)) closeSidebar("notify");
       else {
@@ -230,8 +231,7 @@
     const newWindow =
       !inTextField() &&
       !event.metaKey &&
-      event.key.toLowerCase() === "n" &&
-      ((event.ctrlKey && !event.altKey) || (event.altKey && !event.ctrlKey));
+      ((event.ctrlKey && !event.altKey && event.key.toLowerCase() === "n") || (!event.ctrlKey && altChord(event, "n")));
     if (newWindow) {
       if (!route.sel.project) return;
       event.preventDefault();
@@ -253,17 +253,17 @@
     }
     // Alt-7 opens the launcher and Alt-4 the resume picker, as in the
     // terminal; pressed again, each closes.
-    if (event.altKey && event.key === "7") {
+    if (altChord(event, "7")) {
       event.preventDefault();
       ui.overlay = ui.overlay === "launch" ? "" : "launch";
       return;
     }
-    if (event.altKey && event.key === "5") {
+    if (altChord(event, "5")) {
       event.preventDefault();
       ui.overlay = ui.overlay === "settings" ? "" : "settings";
       return;
     }
-    if (event.altKey && event.key === "4") {
+    if (altChord(event, "4")) {
       event.preventDefault();
       ui.overlay = ui.overlay === "resume" ? "" : "resume";
       return;

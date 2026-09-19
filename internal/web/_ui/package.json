@@ -5,7 +5,8 @@
   "scripts": {
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "dev": "vite"
+    "dev": "vite",
+    "test": "node --test \"test/*.test.mjs\""
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.0",

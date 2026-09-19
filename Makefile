@@ -81,7 +81,7 @@ docs:
 # $(WEB_DIST_DIR). The build output is committed, so `go build` and the release
 # matrix never need Node; this target is the only place that does.
 web-build:
-	cd $(WEB_UI_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run check && $(NPM) run build
+	cd $(WEB_UI_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run check && $(NPM) test && $(NPM) run build
 
 # web-check fails when the committed client differs from a fresh build of its
 # source: a changed or missing file, or a stray one left in the dist directory.
