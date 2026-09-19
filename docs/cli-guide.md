@@ -1796,7 +1796,7 @@ later resumes behave like theirs; a snapshot that is gone or an effort Claude
 would not take is disclosed with `persona-unavailable` or `effort-invalid`, as
 on `agent resume`. Inheritance happens only when every such Agent records the
 same values; if they disagree, nothing is inherited and one
-`launch-values-ambiguous` line on stderr names them. The creator, topic, and
+`launch-values-ambiguous` notice names them. The creator, topic, and
 labels of those Agents are never inherited, and they keep their conversation
 and annotations. Codex and Antigravity picker selections inherit nothing.
 

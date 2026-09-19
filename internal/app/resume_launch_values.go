@@ -67,8 +67,10 @@ func sameResumeLaunchValues(a, b map[string]string) bool {
 // take included, since the new Agent should resume exactly like the old one.
 // When they disagree nothing is inherited and the returned notice says so:
 // picking one of them, the latest say, would be a guess the operator never
-// made. No holder, a common empty bundle, or a provider other than Claude
-// inherits nothing, which keeps the create what it was before.
+// made. The notice carries no `projmux: ` prefix: the consumers of
+// writeIntentAgentNotices add it, as they do for the split start notice.
+// No holder, a common empty bundle, or a provider other than Claude inherits
+// nothing, which keeps the create what it was before.
 //
 // Nothing about the holders changes. The picker still creates a new Agent;
 // the old ones keep their conversation, Panes and annotations.
@@ -89,7 +91,7 @@ func inheritedResumeLaunchValues(registry *coremetadata.Registry, provider, conv
 				names = append(names, fmt.Sprintf("agent/%s (uid:%s)", h.Metadata.Name, h.Metadata.UID))
 			}
 			return nil, fmt.Sprintf(
-				"projmux: %s conversation %s opened without inherited launch values (%s): %s record different persona, system prompt snapshot or effort values",
+				"%s conversation %s opened without inherited launch values (%s): %s record different persona, system prompt snapshot or effort values",
 				provider, conversation, launchValuesReasonAmbiguous, strings.Join(names, ", "))
 		}
 	}
@@ -99,11 +101,17 @@ func inheritedResumeLaunchValues(registry *coremetadata.Registry, provider, conv
 // writeIntentAgentNotices discloses what a committed UI Agent create could not
 // carry over. Like agent resume's notices, a lost disclosure must not turn a
 // committed create into a failure.
+//
+// Each notice is written without a leading `projmux: `. The intent path's
+// consumers add that prefix themselves -- the split funnel shows create's
+// stderr on the pressing client as one `projmux: ` line, exactly as it shows
+// the split start notice -- so the seam's persona and effort notices, which
+// `agent resume` prints with the prefix, would otherwise say it twice.
 func writeIntentAgentNotices(stderr io.Writer, notices []string) {
 	if stderr == nil {
 		return
 	}
 	for _, notice := range notices {
-		_, _ = fmt.Fprintln(stderr, notice)
+		_, _ = fmt.Fprintln(stderr, strings.TrimPrefix(notice, "projmux: "))
 	}
 }

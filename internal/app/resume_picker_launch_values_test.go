@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -194,9 +195,9 @@ func TestResumePickerLaunchValueLookupTable(t *testing.T) {
 		if gotAmbiguous := strings.Contains(notice, "("+launchValuesReasonAmbiguous+")"); gotAmbiguous != test.ambiguous {
 			t.Errorf("%s: notice %q, want ambiguous=%t", test.name, notice, test.ambiguous)
 		}
-		if test.ambiguous && (!strings.HasPrefix(notice, "projmux: claude conversation "+id+" ") ||
+		if test.ambiguous && (!strings.HasPrefix(notice, "claude conversation "+id+" ") ||
 			!strings.Contains(notice, "agent/agt-a (uid:agt-a), agent/agt-b (uid:agt-b)")) {
-			t.Errorf("%s: notice %q does not name the conversation and both holders in uid order", test.name, notice)
+			t.Errorf("%s: notice %q does not open with the conversation (and no projmux: prefix) and name both holders in uid order", test.name, notice)
 		}
 	}
 }
@@ -327,7 +328,8 @@ func TestResumePickerInheritsNothingWhenTheHoldersDisagree(t *testing.T) {
 		if got, want := agentRecord(t, agent), agentRecord(t, controlAgent); got != want {
 			t.Fatalf("%s: stored Agent:\n got %s\nwant %s", test.name, got, want)
 		}
-		want := "projmux: claude conversation " + personaResumeConversation +
+		// No `projmux: ` prefix: the split funnel adds it to the client line.
+		want := "claude conversation " + personaResumeConversation +
 			" opened without inherited launch values (launch-values-ambiguous): " +
 			"agent/codex (uid:agt-alpha-codex), agent/codex (uid:agt-beta-codex) record different persona, system prompt snapshot or effort values\n"
 		if stderr != want {
@@ -370,10 +372,13 @@ func TestResumePickerDisclosesInheritedValuesItCannotRepass(t *testing.T) {
 	if !maps.Equal(agent.Metadata.Annotations, bundle) {
 		t.Fatalf("new Agent annotations = %v, want the bundle verbatim %v", agent.Metadata.Annotations, bundle)
 	}
-	personaLine := "projmux: agent/" + agent.Metadata.Name + " resumed without its persona go-reviewer (" + persona.ReasonUnavailable + "): "
-	effortLine := wantEffortInvalidNotice(agent.Metadata.Name, effortInvalidFixture) + "\n"
-	if strings.Count(stderr, "\n") != 2 || !strings.HasPrefix(stderr, personaLine) || !strings.HasSuffix(stderr, effortLine) {
-		t.Fatalf("stderr = %q, want one %q line then %q", stderr, personaLine, effortLine)
+	// The seam's lines lose their `projmux: ` prefix on this path: the split
+	// funnel prefixes the one client line it shows.
+	personaLine := "agent/" + agent.Metadata.Name + " resumed without its persona go-reviewer (" + persona.ReasonUnavailable + "): "
+	effortLine := strings.TrimPrefix(wantEffortInvalidNotice(agent.Metadata.Name, effortInvalidFixture), "projmux: ") + "\n"
+	if strings.Count(stderr, "\n") != 2 || !strings.HasPrefix(stderr, personaLine) || !strings.HasSuffix(stderr, effortLine) ||
+		strings.Contains(stderr, "projmux: ") {
+		t.Fatalf("stderr = %q, want one %q line then %q, neither prefixed", stderr, personaLine, effortLine)
 	}
 }
 
@@ -430,5 +435,63 @@ func TestResumePickerOfCodexOrAntigravityInheritsNothing(t *testing.T) {
 		if stderr != "" {
 			t.Fatalf("%s: stderr = %q, want nothing", test.provider, stderr)
 		}
+	}
+}
+
+// TestResumePickerAmbiguityReachesTheClientOnceThroughTheSplitFunnel drives
+// the real split-UI funnel, (*aiCommand).createPaneFromIntent, over a real
+// canonical create with two disagreeing holders: the pressing client gets one
+// `projmux: ` line carrying launch-values-ambiguous exactly once, never a
+// doubled `projmux: projmux:` prefix.
+func TestResumePickerAmbiguityReachesTheClientOnceThroughTheSplitFunnel(t *testing.T) {
+	t.Parallel()
+	f := newPickerLaunchValuesFixture(t, nil)
+	bundle := claudeLaunchBundle(map[string]string{
+		coremetadata.AnnotationAgentPersona: "go-reviewer", coremetadata.AnnotationAgentPersonaDigest: "sha256:0",
+	}, "low")
+	f.hold(t, "agt-alpha-codex", aiModeClaude, personaResumeConversation, bundle, nil)
+	f.hold(t, "agt-beta-codex", aiModeClaude, personaResumeConversation, claudeLaunchBundle(bundle, "high"), nil)
+
+	const client = "/dev/pts/9"
+	var displayed [][]string
+	ai := &aiCommand{
+		panes: f.create,
+		lookupEnv: func(key string) string {
+			switch key {
+			case canonicalCreateTargetClientEnv:
+				return client
+			case "TMUX_SPLIT_TARGET_PANE":
+				return f.originID
+			}
+			return ""
+		},
+		// No client is attached, so the focus step has nothing to move and the
+		// notice is the one line the funnel shows.
+		readCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		runCommand: func(_ context.Context, name string, args ...string) error {
+			displayed = append(displayed, append([]string{name}, args...))
+			return nil
+		},
+	}
+	if err := ai.createPaneFromIntent(agentPaneIntent{
+		producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right",
+		conversationID: personaResumeConversation,
+	}); err != nil {
+		t.Fatalf("split UI funnel failed: %v", err)
+	}
+	if len(f.launcher.argv) != 1 {
+		t.Fatalf("planned %d resume argv values, want 1", len(f.launcher.argv))
+	}
+	if len(displayed) != 1 {
+		t.Fatalf("funnel tmux calls = %v, want exactly one display-message", displayed)
+	}
+	argv := displayed[0]
+	line := argv[len(argv)-1]
+	if argv[0] != "tmux" || argv[1] != "display-message" || argv[2] != "-c" || argv[3] != client {
+		t.Fatalf("funnel display = %v, want one display-message on %s", argv, client)
+	}
+	if !strings.HasPrefix(line, "projmux: ") || strings.Count(line, launchValuesReasonAmbiguous) != 1 ||
+		strings.Contains(line, "projmux: projmux:") {
+		t.Fatalf("client line = %q, want one `projmux: ` line carrying %s exactly once", line, launchValuesReasonAmbiguous)
 	}
 }
