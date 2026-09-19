@@ -37,10 +37,18 @@ type canonicalIntentScope struct {
 }
 
 // windowCreateIntent is the generated Window-create surface's complete input.
-// The exact anchor Pane supplies runtime containment; owner UID and root kind
-// are resolved from its mirrored Registry chain before allocation.
+// It names its scope exactly one way. The exact anchor Pane supplies runtime
+// containment, and its owner UID and root kind are resolved from its mirrored
+// Registry chain before allocation. An exact Project UID instead names the
+// Project the Window is created under, live or stopped: a stopped Project is
+// started the way `create window --project uid:<uid>` starts it.
 type windowCreateIntent struct {
 	anchorPaneID string
+	// projectUID is a bare Registry Project UID (no `uid:` selector prefix,
+	// no name). It is the scope for a caller with no Pane to anchor on.
+	projectUID string
+	// targetClient is the client that pressed the key. Only the anchor scope
+	// has one; the Project scope does not consult it.
 	targetClient string
 	// answer is what the operator chose for the new Window's first Pane,
 	// decided before this create runs. An empty provider keeps the shell Pane
@@ -111,9 +119,22 @@ func (c *createCommand) projectCanonicalOriginWindowBinding(
 // exactly the Agent Pane, and any failure on the way rolls the whole Window
 // back. The Agent records no creator: the key press is the operator's, even
 // when it is pressed inside an Agent's Pane.
+//
+// The intent is scoped by exactly one of its anchor Pane and its Project UID.
+// The Project scope has no origin Window to bind and no pressing client: it
+// allocates the Window, makes the Project's session live the way fresh `create
+// window --project` does -- in the same order, so a stopped Project starts in
+// the same shape -- and then runs the same Window and Agent body, all in one
+// transaction.
 func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout, stderr io.Writer) (createdWindowRuntime, error) {
 	anchor := strings.TrimSpace(intent.anchorPaneID)
-	if exactTmuxHandle(anchor, "%") == "" {
+	projectUID := strings.TrimSpace(intent.projectUID)
+	switch {
+	case anchor != "" && projectUID != "":
+		return createdWindowRuntime{}, usageError("canonical Window create intent names both an anchor Pane and a Project; it takes exactly one scope, so nothing was created")
+	case anchor == "" && projectUID == "":
+		return createdWindowRuntime{}, usageError("canonical Window create intent requires an exact anchor Pane or an exact Project UID; nothing was created")
+	case projectUID == "" && exactTmuxHandle(anchor, "%") == "":
 		return createdWindowRuntime{}, usageError("canonical Window create intent requires an exact anchor Pane; nothing was created")
 	}
 	// An Agent answer is refused on its own terms before anything is resolved
@@ -157,9 +178,15 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		}
 		provider = canonical
 	}
-	scope, err := c.resolveCanonicalIntentScope(agentPaneIntent{
-		producer: canonicalProducerWindowCreate, anchorPaneID: anchor, targetClient: intent.targetClient,
-	})
+	var scope canonicalIntentScope
+	var err error
+	if projectUID != "" {
+		scope, err = c.resolveProjectWindowIntentScope(projectUID)
+	} else {
+		scope, err = c.resolveCanonicalIntentScope(agentPaneIntent{
+			producer: canonicalProducerWindowCreate, anchorPaneID: anchor, targetClient: intent.targetClient,
+		})
+	}
 	if err != nil {
 		return createdWindowRuntime{}, visibleCanonicalCreateError(err)
 	}
@@ -174,9 +201,28 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 	var result createResult
 	var placement createdWindowRuntime
 	var opened intentAgentOpened
+	guards := c.canonicalIntentGuards(scope)
+	if projectUID != "" {
+		// The fresh-path ownership proof: there is no origin Pane to re-prove.
+		guards = []createPreReconcile{c.exactProjectOwnershipGuard(projectUID)}
+	}
 	err = c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
-		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
-			return err
+		var project coremetadata.Project
+		if projectUID == "" {
+			if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
+				return err
+			}
+		} else {
+			// Re-read under the lock, as fresh `create window` does.
+			stored, ok := working.Project(projectUID)
+			if !ok {
+				return usageError(fmt.Sprintf("canonical create: Project uid %q disappeared before allocation", projectUID))
+			}
+			if err := c.refuseMissingRoot(*stored); err != nil {
+				return err
+			}
+			project = *stored
+			scope.rootName, scope.cwd = project.Metadata.Name, project.Spec.Root
 		}
 		cwd := scope.cwd
 		if scope.rootKind == coremetadata.KindControlSession {
@@ -195,8 +241,21 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		if activationErr != nil {
 			return activationErr
 		}
-		if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
-			return err
+		if projectUID == "" {
+			if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
+				return err
+			}
+		} else {
+			// The Window is allocated first, exactly as fresh `create window`
+			// allocates it before ensureProjectRuntime, so a stopped Project
+			// adopts the same first Window into its new session. ensureSession
+			// installs this transaction's lease on the session whether it
+			// created it or found it live, so it is not written again here.
+			sessionID, err := c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
+			if err != nil {
+				return err
+			}
+			scope.sessionID = sessionID
 		}
 		created, createErr := c.runtime.newWindow(ctx, scope.sessionID, window.Metadata.Name, cwd,
 			c.runtime.supervisedLaunch(ctx, activation, nil))
@@ -252,8 +311,14 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 			paneID: paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
 		placement = createdWindowRuntime{sessionID: scope.sessionID, windowID: created.WindowID, paneID: paneID}
 		return nil
-	}, c.canonicalIntentGuards(scope)...)
+	}, guards...)
 	if err != nil {
+		// The transaction rolls back the Registry and the tmux objects its
+		// ledger recorded, a session it started included. The Project scope's
+		// caller has no pressing client to tell, so the error itself says so.
+		if projectUID != "" && !strings.Contains(err.Error(), "nothing was created") {
+			err = fmt.Errorf("%w; nothing was created", err)
+		}
 		return createdWindowRuntime{}, visibleCanonicalCreateError(err)
 	}
 	if plan != nil {
@@ -458,6 +523,49 @@ func (c *createCommand) resolveCanonicalIntentScope(intent agentPaneIntent) (can
 	}
 	scope.sessionID = runtimeSession.ID
 	return scope, nil
+}
+
+// resolveProjectWindowIntentScope resolves a Window intent's exact Project UID
+// before the Registry transaction opens. The UID is looked up as given: it is
+// never a name or a selector, and anything that is not a Registry Project -- a
+// ControlSession UID included -- is refused, as is a Project whose root is
+// gone, with nothing written. The runtime route is the one explicit `create
+// window --project` binds: the caller need not run inside tmux, and no
+// inherited Pane chooses the server.
+func (c *createCommand) resolveProjectWindowIntentScope(projectUID string) (canonicalIntentScope, error) {
+	if c == nil || c.store == nil || c.store.load == nil || c.reconciler == nil {
+		return canonicalIntentScope{}, errors.New("canonical create: the resource-backed create route is not configured")
+	}
+	registry, err := c.store.load()
+	if err != nil {
+		return canonicalIntentScope{}, MapMetadataError(err)
+	}
+	project, ok := registry.Project(projectUID)
+	if !ok {
+		if _, control := registry.ControlSession(projectUID); control {
+			return canonicalIntentScope{}, usageError(fmt.Sprintf(
+				"canonical create: uid %q is a ControlSession, not a Project; nothing was created", projectUID))
+		}
+		return canonicalIntentScope{}, usageError(fmt.Sprintf(
+			"canonical create: no Registry Project has uid %q; nothing was created", projectUID))
+	}
+	if err := c.refuseMissingRoot(*project); err != nil {
+		return canonicalIntentScope{}, usageError(err.Error() + "; nothing was created")
+	}
+	sessionName := c.reconciler.projectPhysicalSessionName(registry, *project)
+	if sessionName == "" {
+		return canonicalIntentScope{}, usageError(fmt.Sprintf(
+			"canonical create: Project %q has no valid collision-safe physical session name; nothing was created", projectUID))
+	}
+	c.selectRuntimeAuthority(true)
+	return canonicalIntentScope{
+		producer:    canonicalProducerWindowCreate,
+		rootKind:    coremetadata.KindProject,
+		rootUID:     project.Metadata.UID,
+		rootName:    project.Metadata.Name,
+		sessionName: sessionName,
+		cwd:         project.Spec.Root,
+	}, nil
 }
 
 func (c *createCommand) canonicalIntentRuntimeSession(ctx context.Context, paneID string) (liveSessionIdentity, error) {
