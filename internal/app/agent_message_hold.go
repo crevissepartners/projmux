@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -31,6 +32,19 @@ const agentMessageReleaseRoute = "agent-message-release"
 // another for the same target. The holder re-lists held records before it
 // unlocks, so a waiter that gives up cannot strand a record held before that.
 const agentMessageReleaseLockWait = 30 * time.Second
+
+// agentMessageReleaseRetryWindow bounds how long one release keeps its lock
+// re-judging a record it cannot judge yet, so a helper that stays busy cannot
+// hold the release forever.
+const agentMessageReleaseRetryWindow = 10 * time.Minute
+
+// agentMessageReleaseRetryFirstWait is the first wait before judging again: a
+// helper too busy for one 200ms probe is usually free again within seconds.
+const agentMessageReleaseRetryFirstWait = 2 * time.Second
+
+// agentMessageReleaseRetryMaxWait caps the doubling wait, so a target that frees
+// up late in the window is still reached within half a minute.
+const agentMessageReleaseRetryMaxWait = 30 * time.Second
 
 // agentInteractionAwaitsOperator is the one closed set of interaction kinds
 // that block a coordination push: the Agent waits on its operator's answer.
@@ -192,11 +206,31 @@ func (c *agentCommand) targetStillAwaitsOperator(agentUID string) bool {
 	return ok && claudeAgentAwaitsOperator(*agent, c.messageClock())
 }
 
+// heldReleaseOutcome is how judging one held record ended.
+type heldReleaseOutcome int
+
+const (
+	// heldReleaseDone means the record was finished or pushed, and the release
+	// goes on to the next record.
+	heldReleaseDone heldReleaseOutcome = iota
+	// heldReleaseStop means the target awaits its operator again, or the retry
+	// window ended, so this record and the rest stay held.
+	heldReleaseStop
+	// heldReleaseUndecidable means the target's helper did not answer its probe
+	// while the target was not blocked, or the Registry could not be read. The
+	// same record is judged again after a wait.
+	heldReleaseUndecidable
+)
+
 // releaseHeldMessages delivers the messages held for one target Agent, oldest
 // first and one at a time, under the per-target release lock. It stops, and
-// leaves the rest held, as soon as the target awaits its operator again. After
-// a pass it lists again under the same lock, so a message held while this
-// release was running is not left for a release that already gave up.
+// leaves the rest held, as soon as the target awaits its operator again. A
+// record it cannot judge yet, because the target's helper is too busy to answer
+// its probe or the Registry cannot be read, is judged again in place after a
+// backoff wait, inside one retry window per release; when that window ends the
+// release ends with the record still held, and no later record overtakes it.
+// After a pass it lists again under the same lock, so a message held while
+// this release was running is not left for a release that already gave up.
 func (c *agentCommand) releaseHeldMessages(agentUID string) error {
 	lister, listOK := c.messageStore.(agentMessageHeldLister)
 	locker, lockOK := c.messageStore.(agentMessageReleaseLocker)
@@ -209,20 +243,21 @@ func (c *agentCommand) releaseHeldMessages(agentUID string) error {
 	}
 	defer unlock()
 	attempted := map[string]bool{}
+	var windowEnd time.Time
 	for {
 		held, err := lister.HeldFor(agentUID)
 		if err != nil {
 			return err
 		}
 		progressed := false
-		for _, record := range held {
+		for i, record := range held {
 			if attempted[record.Envelope.MessageRef] {
 				continue
 			}
 			attempted[record.Envelope.MessageRef] = true
 			progressed = true
-			stop, err := c.releaseHeldMessage(record)
-			if err != nil || stop {
+			outcome, err := c.judgeHeldMessage(record, held[i:], &windowEnd)
+			if err != nil || outcome != heldReleaseDone {
 				return err
 			}
 		}
@@ -232,47 +267,107 @@ func (c *agentCommand) releaseHeldMessages(agentUID string) error {
 	}
 }
 
+// judgeHeldMessage judges one held record and, while that judgment is
+// undecidable, waits and judges the same record again. The release's one retry
+// window opens at its first undecidable judgment and ends 10 minutes later or
+// at the earliest deadline still ahead among the records still held, whichever
+// is first. pending is the current listing from this record on. A record whose
+// own deadline has passed is expired instead of waited for. A window that ends
+// on a Registry read failure returns that failure.
+func (c *agentCommand) judgeHeldMessage(record messagestore.Record, pending []messagestore.Record,
+	windowEnd *time.Time,
+) (heldReleaseOutcome, error) {
+	wait := agentMessageReleaseRetryFirstWait
+	outcome, err := c.releaseHeldMessage(record)
+	for outcome == heldReleaseUndecidable {
+		now := c.messageClock()
+		if !now.Before(record.Envelope.Deadline) {
+			_, _, err := c.messageStore.Status(record.Envelope.MessageRef, now)
+			return heldReleaseDone, err
+		}
+		if windowEnd.IsZero() {
+			*windowEnd = heldReleaseWindowEnd(now, pending)
+		}
+		pause := min(wait, windowEnd.Sub(now))
+		if pause <= 0 {
+			return heldReleaseStop, err
+		}
+		_ = c.sleepMessage(context.Background(), pause)
+		now = c.messageClock()
+		if !now.Before(record.Envelope.Deadline) {
+			_, _, err := c.messageStore.Status(record.Envelope.MessageRef, now)
+			return heldReleaseDone, err
+		}
+		if !now.Before(*windowEnd) {
+			return heldReleaseStop, err
+		}
+		wait = min(2*wait, agentMessageReleaseRetryMaxWait)
+		outcome, err = c.releaseHeldMessage(record)
+	}
+	return outcome, err
+}
+
+// heldReleaseWindowEnd bounds the retry window opened at now: a release never
+// waits past the earliest deadline still ahead among the records still held. A
+// deadline already passed does not close the window; that record is expired
+// when it is judged.
+func heldReleaseWindowEnd(now time.Time, pending []messagestore.Record) time.Time {
+	end := now.Add(agentMessageReleaseRetryWindow)
+	for _, record := range pending {
+		if record.Envelope.Deadline.After(now) && record.Envelope.Deadline.Before(end) {
+			end = record.Envelope.Deadline
+		}
+	}
+	return end
+}
+
 // releaseHeldMessage judges one held record against a fresh Registry read and
 // either finishes it or pushes it through the ordinary Claude path. stop means
-// the remaining records stay held.
-func (c *agentCommand) releaseHeldMessage(record messagestore.Record) (bool, error) {
+// the target awaits its operator again and the remaining records stay held;
+// undecidable means the record could not be judged now and stays held for the
+// caller to judge again.
+func (c *agentCommand) releaseHeldMessage(record messagestore.Record) (heldReleaseOutcome, error) {
 	ref := record.Envelope.MessageRef
 	registry, err := c.readMessageRegistry()
 	if err != nil {
-		return true, err
+		return heldReleaseUndecidable, err
 	}
 	current, ok := registry.Agent(record.Envelope.Target.AgentUID)
 	if !ok {
 		_, _, err := c.messageStore.Apply(ref, c.staleMessageEvent(record, "target-removed"))
-		return false, err
+		return heldReleaseDone, err
 	}
 	target := current.Clone()
 	route, routeErr := c.resolveMessageTargetRoute(registry, target)
 	var unanswered claudeProbeUnansweredError
 	if errors.As(routeErr, &unanswered) {
-		// A live target too busy to answer its probe is not stale. The record
-		// stays held until the next release or its deadline.
-		return true, nil
+		// A live target too busy to answer its probe is not stale. A target
+		// that awaits its operator again stops the release; otherwise the
+		// record is judged again after a wait.
+		if claudeAgentAwaitsOperator(target, c.messageClock()) {
+			return heldReleaseStop, nil
+		}
+		return heldReleaseUndecidable, nil
 	}
 	if routeErr != nil || !messageRouteAccepts(route, record.Envelope.Target) {
 		_, _, err := c.messageStore.Apply(ref, c.staleMessageEvent(record, "target-activation-stale"))
-		return false, err
+		return heldReleaseDone, err
 	}
 	if record.HandoffObserved {
 		// A helper may already have written this frame. A push now could write
 		// it twice, and automatic resend is never allowed.
 		_, _, err := c.messageStore.Apply(ref,
 			c.publicMessageEvent(record, coremessage.EventFail, "provider-handoff-outcome-unknown", true))
-		return false, err
+		return heldReleaseDone, err
 	}
 	now := c.messageClock()
 	if !now.Before(record.Envelope.Deadline) {
 		_, _, err := c.messageStore.Status(ref, now)
-		return false, err
+		return heldReleaseDone, err
 	}
 	if claudeAgentAwaitsOperator(target, now) {
-		return true, nil
+		return heldReleaseStop, nil
 	}
 	_, err = c.pushCoordination(record, target, route, record.Envelope)
-	return false, err
+	return heldReleaseDone, err
 }

@@ -234,6 +234,17 @@ awaits its operator again stops the release with the rest still held. A send
 that holds only behind earlier messages, or that finds the dialog already
 closed after writing its hold, starts the same release.
 
+When the target's helper does not answer the release's route probe and the
+target is not awaiting its operator, or when the Registry cannot be read, the
+release cannot judge that message yet. It keeps its lock and judges the same
+message again after 2 seconds, doubling the wait up to 30 seconds, for at most
+10 minutes or until the earliest deadline still ahead among the held
+messages, whichever comes first. Each attempt checks the deadline and the
+blocking interaction again, a message whose deadline has passed becomes
+`expired` instead of being waited for, and later messages still wait behind
+this one. When that window ends the release stops and the message stays held;
+it becomes `expired` at its deadline unless a later release delivers it first.
+
 The TTL still applies: a held message is not extended, and one still held at
 its deadline becomes `expired` with reason `deadline-expired`.
 `agent message status <messageRef>` answers a held message from the durable
