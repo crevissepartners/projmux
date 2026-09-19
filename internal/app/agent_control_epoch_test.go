@@ -15,7 +15,26 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
+
+type scriptedLifecycleWire struct {
+	*fakeExactControlWire
+	snapshots []codexappserver.LifecycleSnapshot
+	errors    []error
+}
+
+func (w *scriptedLifecycleWire) ReadLifecycleSnapshot(_ context.Context, threadID string) (codexappserver.LifecycleSnapshot, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.reads++
+	w.operations = append(w.operations, "lifecycle-read:"+threadID)
+	index := w.reads - 1
+	if index < len(w.snapshots) {
+		return w.snapshots[index], w.errors[index]
+	}
+	return codexappserver.LifecycleSnapshot{}, errors.New("unexpected lifecycle read")
+}
 
 type fakeExactControlWire struct {
 	mu          sync.Mutex
@@ -94,6 +113,74 @@ func (w *fakeExactControlWire) resultTurnID() string {
 
 func phase6Identity() codexLifecycleIdentity {
 	return codexLifecycleIdentity{AgentUID: "agent-1", PaneUID: "pane-1", RuntimeID: "%7", Generation: "generation-1", ThreadID: "thread-1"}
+}
+
+func TestExactAgentControlDeliverChoosesFromOneLifecycleRead(t *testing.T) {
+	identity := phase6Identity()
+	idle := codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle,
+		TurnID: "turn-old", TurnState: codexappserver.TurnStateCompleted}
+	active := activeWithThreadState(codexappserver.ThreadStateActive)
+	for _, test := range []struct {
+		name      string
+		snapshot  codexappserver.LifecycleSnapshot
+		wantStart int
+		wantSteer int
+	}{
+		{name: "idle starts", snapshot: idle, wantStart: 1},
+		{name: "active steers observed turn", snapshot: active, wantSteer: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wire := &fakeExactControlWire{snapshot: test.snapshot}
+			epoch := newCodexControlEpoch(wire, identity, "epoch-1", test.snapshot, func(codexLifecycleIdentity) bool { return true })
+			response := epoch.Handle(t.Context(), agentControlRequest{Operation: agentControlOpDeliver, Identity: identity, Epoch: "epoch-1", Text: "input"})
+			if !response.OK || wire.reads != 1 || wire.start != test.wantStart || wire.steer != test.wantSteer || wire.writes() != 1 {
+				t.Fatalf("response=%+v reads=%d start=%d steer=%d writes=%d", response, wire.reads, wire.start, wire.steer, wire.writes())
+			}
+		})
+	}
+}
+
+func TestExactAgentControlConsecutiveDeliveriesPassOneSecondReadFence(t *testing.T) {
+	identity := phase6Identity()
+	active := activeWithThreadState(codexappserver.ThreadStateActive)
+	wire := &scriptedLifecycleWire{
+		fakeExactControlWire: &fakeExactControlWire{},
+		snapshots:            []codexappserver.LifecycleSnapshot{active, {}, active},
+		errors:               []error{nil, &codexbroker.BrokerError{Refusal: codexbroker.RefusalLifecycleRetry}, nil},
+	}
+	epoch := newCodexControlEpoch(wire, identity, "epoch-1", active, func(codexLifecycleIdentity) bool { return true })
+	waits := 0
+	epoch.retryWait = func(context.Context) error { waits++; return nil }
+	request := agentControlRequest{Operation: agentControlOpDeliver, Identity: identity, Epoch: "epoch-1", Text: "input"}
+	first := epoch.Handle(t.Context(), request)
+	second := epoch.Handle(t.Context(), request)
+	if !first.OK || !second.OK || waits != 1 || wire.reads != 3 || wire.steer != 2 || wire.writes() != 2 {
+		t.Fatalf("first=%+v second=%+v waits=%d reads=%d writes=%d operations=%q", first, second, waits, wire.reads, wire.writes(), wire.operations)
+	}
+}
+
+func TestExactAgentControlDeliverDoesNotRetryAfterWrite(t *testing.T) {
+	identity := phase6Identity()
+	active := activeWithThreadState(codexappserver.ThreadStateActive)
+	wire := &fakeExactControlWire{snapshot: active, err: errors.New("turn ended between read and write")}
+	epoch := newCodexControlEpoch(wire, identity, "epoch-1", active, func(codexLifecycleIdentity) bool { return true })
+	response := epoch.Handle(t.Context(), agentControlRequest{Operation: agentControlOpDeliver, Identity: identity, Epoch: "epoch-1", Text: "input"})
+	if response.OK || response.Code != "stale-turn" || wire.reads != 1 || wire.steer != 1 || wire.writes() != 1 {
+		t.Fatalf("response=%+v reads=%d writes=%d operations=%q", response, wire.reads, wire.writes(), wire.operations)
+	}
+}
+
+func TestExactAgentControlLifecycleReadRefusalTokens(t *testing.T) {
+	identity := phase6Identity()
+	active := activeWithThreadState(codexappserver.ThreadStateActive)
+	for _, refusal := range []codexbroker.Refusal{codexbroker.RefusalLifecycleRetry, codexbroker.RefusalLifecycleBusy} {
+		wire := &fakeExactControlWire{snapshotErr: &codexbroker.BrokerError{Refusal: refusal}}
+		epoch := newCodexControlEpoch(wire, identity, "epoch-1", active, func(codexLifecycleIdentity) bool { return true })
+		response := epoch.Handle(t.Context(), agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: "epoch-1", Text: "input"})
+		if response.OK || response.Code != string(refusal) || wire.writes() != 0 {
+			t.Fatalf("refusal=%s response=%+v writes=%d", refusal, response, wire.writes())
+		}
+	}
 }
 
 func TestExactAgentControlActionGenerationEpochAndTurnTable(t *testing.T) {

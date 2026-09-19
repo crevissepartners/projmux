@@ -534,7 +534,8 @@ id and one text input. Immediately before that write it reads one bounded,
 content-free lifecycle snapshot: fresh active/in-progress returns
 `turn-in-progress`, fresh idle/terminal repairs stale cached state and starts
 once, and an unavailable or inconsistent snapshot returns
-`turn-state-unavailable` with no turn mutation. `steer` also reads that
+`turn-state-unavailable` with no turn mutation. Broker read admission refusals
+remain visible as `lifecycle-retry` or `lifecycle-busy`. `steer` also reads that
 content-free snapshot before any write and submits exactly once only when it
 still proves the same exact active turn. Fresh idle, terminal, or different-turn
 state returns `no-active-turn`; an unavailable or inconsistent read, including
@@ -546,6 +547,11 @@ confirm TUI display, model consumption, or goal continuation. `interrupt`
 supplies the cached exact turn id without adopting the steer preflight in this
 phase. These commands never install sticky model, effort, cwd, sandbox,
 permission, or collaboration overrides.
+
+Codex coordination delivery chooses start or steer inside one native control
+operation from one lifecycle snapshot. If that read returns `lifecycle-retry`,
+it waits through the fixed retry window and reads once more before any write;
+no provider write is ever retried.
 
 Approval review shows only the safe one-shot intersection supplied by the
 exact pending request. Command, file, and network requests are limited to

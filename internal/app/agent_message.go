@@ -654,11 +654,9 @@ const (
 )
 
 // codexTurnPushOutcome is one native control attempt classified into the public
-// coordination vocabulary. steer is set only for the single start refusal that
-// a steer can complete.
+// coordination vocabulary.
 type codexTurnPushOutcome struct {
 	delivered bool
-	steer     bool
 	reason    string
 	unknown   bool
 	err       error
@@ -680,26 +678,11 @@ func classifyCodexTurnPush(operation string, response agentControlResponse, call
 		return codexTurnPushOutcome{reason: codexPushUnknownReason, unknown: true, err: callErr}
 	}
 	if err := response.Error(); err != nil {
-		switch operation {
-		case agentControlOpStart:
-			switch response.Code {
-			case "turn-in-progress":
-				// The only start refusal a steer can complete. Nothing was
-				// written, and the thread is busy rather than unreachable.
-				return codexTurnPushOutcome{steer: true, reason: codexPushRefusedReason, err: err}
-			case "stale-epoch", "stale-binding", "unavailable", "stale-turn", "turn-state-unavailable", "invalid-operation":
-				// turn-start emits every one of these before StartExactTurn.
-				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
-			}
-		case agentControlOpSteer:
-			switch response.Code {
-			case "stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable", "invalid-operation":
-				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
-			}
-			// `stale-turn` is per-operation, not one shared meaning: turn-start
-			// emits it as a pre-write refusal, while turn-steer emits it as
-			// controlWireFailure("stale-turn", err) after SteerExactTurn was
-			// already called. Do not re-flatten the collision.
+		if operation == agentControlOpDeliver && slices.Contains([]string{
+			"stale-epoch", "stale-binding", "unavailable", "no-active-turn",
+			"turn-state-unavailable", "lifecycle-retry", "lifecycle-busy", "invalid-operation",
+		}, response.Code) {
+			return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
 		}
 		// turn-start-failed, steer stale-turn, timeout, protocol-error, and every
 		// unrecognised code fail closed as ambiguous.
@@ -734,14 +717,8 @@ func (c *agentCommand) pushCodexCoordination(record messagestore.Record, target 
 	if bindErr != nil {
 		return c.terminalCoordination(record, coremessage.EventFail, "codex-native-binding-unavailable", false, bindErr)
 	}
-	response, callErr := c.callControl(binding, agentControlRequest{Operation: agentControlOpStart, Text: text})
-	outcome := classifyCodexTurnPush(agentControlOpStart, response, callErr)
-	if outcome.steer {
-		// The one fallback in this path. There is no steer after a successful
-		// start and no automatic resend anywhere.
-		response, callErr = c.callControl(binding, agentControlRequest{Operation: agentControlOpSteer, Text: text})
-		outcome = classifyCodexTurnPush(agentControlOpSteer, response, callErr)
-	}
+	response, callErr := c.callControl(binding, agentControlRequest{Operation: agentControlOpDeliver, Text: text})
+	outcome := classifyCodexTurnPush(agentControlOpDeliver, response, callErr)
 	if !outcome.delivered {
 		return c.terminalCoordination(record, coremessage.EventFail, outcome.reason, outcome.unknown, outcome.err)
 	}

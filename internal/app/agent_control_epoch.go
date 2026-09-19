@@ -9,14 +9,17 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
 
 const (
 	agentControlOpStatus    = "status"
 	agentControlOpStart     = "turn-start"
 	agentControlOpSteer     = "turn-steer"
+	agentControlOpDeliver   = "turn-deliver"
 	agentControlOpInterrupt = "turn-interrupt"
 	agentControlOpApprovals = "approval-list"
 	agentControlOpReview    = "approval-review"
@@ -91,6 +94,7 @@ type codexControlEpoch struct {
 	turnState   codexappserver.TurnState
 	pending     map[string]codexappserver.ApprovalEnvelope
 	ambiguous   map[string]struct{}
+	retryWait   func(context.Context) error
 }
 
 func newCodexControlEpoch(wire agentControlWire, identity codexLifecycleIdentity, epoch string, snapshot codexappserver.LifecycleSnapshot, current func(codexLifecycleIdentity) bool) *codexControlEpoch {
@@ -98,6 +102,29 @@ func newCodexControlEpoch(wire agentControlWire, identity codexLifecycleIdentity
 		wire: wire, identity: identity, epoch: strings.TrimSpace(epoch), current: current, active: true,
 		threadState: snapshot.ThreadState, turnID: strings.TrimSpace(snapshot.TurnID), turnState: snapshot.TurnState,
 		pending: map[string]codexappserver.ApprovalEnvelope{}, ambiguous: map[string]struct{}{},
+		retryWait: waitCodexLifecycleRetry,
+	}
+}
+
+func waitCodexLifecycleRetry(ctx context.Context) error {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func lifecycleReadRefusal(err error) (string, bool) {
+	switch codexbroker.RefusalOf(err) {
+	case codexbroker.RefusalLifecycleRetry:
+		return string(codexbroker.RefusalLifecycleRetry), true
+	case codexbroker.RefusalLifecycleBusy:
+		return string(codexbroker.RefusalLifecycleBusy), true
+	default:
+		return "", false
 	}
 }
 
@@ -189,11 +216,16 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 		return agentControlResponse{OK: true, Availability: e.availability()}
 	case agentControlOpApprovals:
 		return agentControlResponse{OK: true, Availability: e.availability(), Approvals: e.approvals()}
+	case agentControlOpDeliver:
+		return e.deliver(ctx, request)
 	case agentControlOpStart:
 		if strings.TrimSpace(request.Text) == "" {
 			return refusedControl("stale-turn", "thread is not idle; new turn write refused")
 		}
 		snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
+		if code, ok := lifecycleReadRefusal(err); ok {
+			return refusedControl(code, "fresh exact turn state read was refused; new turn write refused")
+		}
 		if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
 			return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; new turn write refused")
 		}
@@ -228,6 +260,9 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 		}
 		expectedTurnID := e.turnID
 		snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
+		if code, ok := lifecycleReadRefusal(err); ok {
+			return refusedControl(code, "fresh exact turn state read was refused; steer write refused")
+		}
 		if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
 			return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; steer write refused")
 		}
@@ -275,6 +310,55 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 	default:
 		return refusedControl("invalid-operation", "unsupported exact Agent control operation")
 	}
+}
+
+func (e *codexControlEpoch) deliver(ctx context.Context, request agentControlRequest) agentControlResponse {
+	if strings.TrimSpace(request.Text) == "" {
+		return refusedControl("stale-turn", "input is empty; turn write refused")
+	}
+	snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
+	if codexbroker.RefusalOf(err) == codexbroker.RefusalLifecycleRetry {
+		if e.retryWait == nil || e.retryWait(ctx) != nil {
+			return refusedControl(string(codexbroker.RefusalLifecycleRetry), "fresh exact turn state retry window did not pass; turn write refused")
+		}
+		snapshot, err = e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
+	}
+	if code, ok := lifecycleReadRefusal(err); ok {
+		return refusedControl(code, "fresh exact turn state read was refused; turn write refused")
+	}
+	if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
+		return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; turn write refused")
+	}
+	if !e.current(e.identity) {
+		return refusedControl("stale-binding", "exact Agent binding or activation generation changed")
+	}
+	e.reconcileTurn(snapshot)
+	if e.canStart() {
+		result, writeErr := e.wire.StartExactTurn(ctx, e.identity.ThreadID, request.Text)
+		if writeErr != nil {
+			return controlWireFailure("turn-start-failed", writeErr)
+		}
+		if result.ThreadID != e.identity.ThreadID || result.TurnID == "" {
+			return refusedControl("protocol-error", "turn/start returned a different or incomplete identity")
+		}
+		e.turnID, e.turnState, e.threadState = result.TurnID, codexappserver.TurnStateInProgress, codexappserver.ThreadStateActive
+		e.pending = map[string]codexappserver.ApprovalEnvelope{}
+		e.ambiguous = map[string]struct{}{}
+		return agentControlResponse{OK: true, ThreadID: result.ThreadID, TurnID: result.TurnID}
+	}
+	if !e.canMutateCurrentTurn() {
+		return refusedControl("no-active-turn", "no exact active turn is available to steer")
+	}
+	expectedTurnID := snapshot.TurnID
+	result, writeErr := e.wire.SteerExactTurn(ctx, e.identity.ThreadID, expectedTurnID, request.Text)
+	if writeErr != nil {
+		return controlWireFailure("stale-turn", writeErr)
+	}
+	if result.ThreadID != e.identity.ThreadID || result.TurnID != expectedTurnID {
+		return refusedControl("protocol-error", "turn/steer returned a different identity")
+	}
+	return agentControlResponse{OK: true, ThreadID: result.ThreadID, TurnID: result.TurnID,
+		Acceptance: agentControlAcceptanceProvider, Delivery: agentControlDeliveryUnconfirmed}
 }
 
 func (e *codexControlEpoch) review(ctx context.Context, request agentControlRequest) agentControlResponse {

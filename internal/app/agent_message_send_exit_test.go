@@ -262,15 +262,15 @@ func TestAgentMessageSendReplayOfTerminalUndeliveredReceiptExitsNonzero(t *testi
 
 	t.Run("codex target", func(t *testing.T) {
 		fixture := newCodexPushFixture(t)
-		fixture.script(map[string]agentControlResponse{agentControlOpStart: refusal("stale-epoch")}, nil)
+		fixture.script(map[string]agentControlResponse{agentControlOpDeliver: refusal("stale-epoch")}, nil)
 		const ref = "message-exit-replay-codex"
 		args := []string{"message", "send", "uid:agt-alpha-codex", "--message-ref", ref, "--", "peer coordination payload"}
 		first, _, firstErr := runRoute(t, fixture.cmd, args...)
-		if firstErr == nil || fixture.calls[agentControlOpStart] != 1 || fixture.binding.calls != 1 {
+		if firstErr == nil || fixture.calls[agentControlOpDeliver] != 1 || fixture.binding.calls != 1 {
 			t.Fatalf("first send err=%v calls=%v bindings=%d, want a nonzero exit after one start", firstErr, fixture.calls, fixture.binding.calls)
 		}
 		second, _, secondErr := runRoute(t, fixture.cmd, args...)
-		if fixture.calls[agentControlOpStart] != 1 || fixture.calls[agentControlOpSteer] != 0 || fixture.binding.calls != 1 {
+		if fixture.calls[agentControlOpDeliver] != 1 || fixture.binding.calls != 1 {
 			t.Fatalf("same-ref replay pushed again: calls=%v bindings=%d", fixture.calls, fixture.binding.calls)
 		}
 		if second != first {
@@ -312,7 +312,7 @@ func TestAgentMessageSendCodexTargetTerminalFailureExitsNonzeroUnderTheSameJudgm
 		stdout, _, err := runRoute(t, fixture.cmd, "message", "send", "uid:agt-alpha-codex",
 			"--message-ref", ref, "--", "peer coordination payload")
 		persisted := persistedDelivery(t, fixture.store, ref).Delivery
-		if persisted.State != coremessage.StateDelivered || fixture.calls[agentControlOpStart] != 1 {
+		if persisted.State != coremessage.StateDelivered || fixture.calls[agentControlOpDeliver] != 1 {
 			t.Fatalf("persisted = %+v calls=%v, want one delivered start", persisted, fixture.calls)
 		}
 		assertSendExitFollowsReceipt(t, stdout, err, ref, persisted)
@@ -322,7 +322,7 @@ func TestAgentMessageSendCodexTargetTerminalFailureExitsNonzeroUnderTheSameJudgm
 func TestClassifyCodexTurnPushNeverReturnsUndeliveredWithoutCause(t *testing.T) {
 	codes := []string{"turn-in-progress", "stale-epoch", "stale-binding", "unavailable", "stale-turn", "turn-state-unavailable",
 		"invalid-operation", "no-active-turn", "turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code", ""}
-	for _, operation := range []string{agentControlOpStart, agentControlOpSteer} {
+	for _, operation := range []string{agentControlOpDeliver} {
 		responses := map[string]agentControlResponse{"zero response": {}}
 		for _, code := range codes {
 			responses["code "+code] = refusal(code)
@@ -345,7 +345,7 @@ func TestClassifyCodexTurnPushNeverReturnsUndeliveredWithoutCause(t *testing.T) 
 			t.Errorf("%s transport outcome = %+v, want an ambiguous failure with a cause", operation, transport)
 		}
 		delivered := classifyCodexTurnPush(operation, agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil)
-		if !delivered.delivered || delivered.err != nil || delivered.steer || delivered.reason != "" {
+		if !delivered.delivered || delivered.err != nil || delivered.reason != "" {
 			t.Errorf("%s delivered outcome = %+v, want delivered without a cause", operation, delivered)
 		}
 	}

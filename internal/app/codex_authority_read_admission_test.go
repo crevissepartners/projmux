@@ -168,16 +168,16 @@ func TestObserverReadyControlStartPreservesOwnedReadAdmissionAndFreshness(t *tes
 	}
 	request.Operation = agentControlOpStart
 	request.Text = "fresh synthetic immediate input"
-	if result := control.Handle(ctx, request); result.Code != "turn-state-unavailable" || wire.lastRefusal() != codexbroker.RefusalLifecycleRetry || owned.Load() != 1 || endpoint.requestCount("turn/start") != 0 {
+	if result := control.Handle(ctx, request); result.Code != "lifecycle-retry" || wire.lastRefusal() != codexbroker.RefusalLifecycleRetry || owned.Load() != 1 || endpoint.requestCount("turn/start") != 0 {
 		t.Fatalf("immediate start did not reproduce read admission: result=%+v refusal=%s owned=%d", result, wire.lastRefusal(), owned.Load())
 	}
-	t.Log("current authority + status Start=true -> lifecycle-retry -> turn-state-unavailable; owned opens=1, turn/start writes=0")
+	t.Log("current authority + status Start=true -> lifecycle-retry; owned opens=1, turn/start writes=0")
 	clock.advance(time.Second - time.Nanosecond)
 	if result := admission.observe(clock.Now(), observation); result.Stage != "waiting-read-admission" {
 		t.Fatal("fixture admitted before the broker boundary")
 	}
 	request.Text = "distinct synthetic input before boundary"
-	if result := control.Handle(ctx, request); result.Code != "turn-state-unavailable" || wire.lastRefusal() != codexbroker.RefusalLifecycleRetry || owned.Load() != 1 {
+	if result := control.Handle(ctx, request); result.Code != "lifecycle-retry" || wire.lastRefusal() != codexbroker.RefusalLifecycleRetry || owned.Load() != 1 {
 		t.Fatalf("retry fence shortened: %+v", result)
 	}
 	// The next admitted read must observe new state, not reuse readiness.

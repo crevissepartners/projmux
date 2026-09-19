@@ -146,21 +146,14 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 		wantState    coremessage.State
 		wantReason   string
 		wantUnknown  bool
-		wantStarts   int
-		wantSteers   int
+		wantCalls    int
 		wantBindings int
 	}
 	cases := []pushCase{
 		{
-			name:      "start succeeds",
+			name:      "delivery succeeds",
 			wantState: coremessage.StateDelivered, wantReason: "provider-turn-push",
-			wantStarts: 1, wantBindings: 1,
-		},
-		{
-			name:      "turn-in-progress falls through to a steer that succeeds",
-			responses: map[string]agentControlResponse{agentControlOpStart: refusal("turn-in-progress")},
-			wantState: coremessage.StateDelivered, wantReason: "provider-turn-push",
-			wantStarts: 1, wantSteers: 1, wantBindings: 1,
+			wantCalls: 1, wantBindings: 1,
 		},
 		{
 			name: "render failure never reaches the binding",
@@ -192,47 +185,25 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 		},
 		{
 			name:      "transport failure is ambiguous",
-			errs:      map[string]error{agentControlOpStart: errors.New("fixture transport failure")},
+			errs:      map[string]error{agentControlOpDeliver: errors.New("fixture transport failure")},
 			wantState: coremessage.StateFailed, wantReason: codexPushUnknownReason, wantUnknown: true,
-			wantStarts: 1, wantBindings: 1,
+			wantCalls: 1, wantBindings: 1,
 		},
 	}
-	for _, code := range []string{"stale-epoch", "stale-binding", "unavailable", "stale-turn", "turn-state-unavailable", "invalid-operation"} {
+	for _, code := range []string{"stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable", "lifecycle-retry", "lifecycle-busy", "invalid-operation"} {
 		cases = append(cases, pushCase{
-			name:      "start known-zero " + code,
-			responses: map[string]agentControlResponse{agentControlOpStart: refusal(code)},
+			name:      "delivery known-zero " + code,
+			responses: map[string]agentControlResponse{agentControlOpDeliver: refusal(code)},
 			wantState: coremessage.StateFailed, wantReason: codexPushRefusedReason,
-			wantStarts: 1, wantBindings: 1,
+			wantCalls: 1, wantBindings: 1,
 		})
 	}
-	for _, code := range []string{"turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code"} {
+	for _, code := range []string{"stale-turn", "turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code"} {
 		cases = append(cases, pushCase{
-			name:      "start ambiguous " + code,
-			responses: map[string]agentControlResponse{agentControlOpStart: refusal(code)},
+			name:      "delivery ambiguous " + code,
+			responses: map[string]agentControlResponse{agentControlOpDeliver: refusal(code)},
 			wantState: coremessage.StateFailed, wantReason: codexPushUnknownReason, wantUnknown: true,
-			wantStarts: 1, wantBindings: 1,
-		})
-	}
-	for _, code := range []string{"stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable", "invalid-operation"} {
-		cases = append(cases, pushCase{
-			name: "steer known-zero " + code,
-			responses: map[string]agentControlResponse{
-				agentControlOpStart: refusal("turn-in-progress"), agentControlOpSteer: refusal(code),
-			},
-			wantState: coremessage.StateFailed, wantReason: codexPushRefusedReason,
-			wantStarts: 1, wantSteers: 1, wantBindings: 1,
-		})
-	}
-	// `stale-turn` is ambiguous for turn-steer and known-zero for turn-start:
-	// the steer spelling is controlWireFailure after the provider write left.
-	for _, code := range []string{"stale-turn", "timeout", "protocol-error", "fixture-unrecognised-code"} {
-		cases = append(cases, pushCase{
-			name: "steer ambiguous " + code,
-			responses: map[string]agentControlResponse{
-				agentControlOpStart: refusal("turn-in-progress"), agentControlOpSteer: refusal(code),
-			},
-			wantState: coremessage.StateFailed, wantReason: codexPushUnknownReason, wantUnknown: true,
-			wantStarts: 1, wantSteers: 1, wantBindings: 1,
+			wantCalls: 1, wantBindings: 1,
 		})
 	}
 	for _, test := range cases {
@@ -251,10 +222,10 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 				updated.Delivery.OutcomeUnknown != test.wantUnknown {
 				t.Fatalf("delivery = %+v, want %s/%s/unknown=%t", updated.Delivery, test.wantState, test.wantReason, test.wantUnknown)
 			}
-			if fixture.calls[agentControlOpStart] != test.wantStarts || fixture.calls[agentControlOpSteer] != test.wantSteers ||
+			if fixture.calls[agentControlOpDeliver] != test.wantCalls ||
 				fixture.binding.calls != test.wantBindings {
-				t.Fatalf("start=%d steer=%d bindings=%d, want %d/%d/%d", fixture.calls[agentControlOpStart],
-					fixture.calls[agentControlOpSteer], fixture.binding.calls, test.wantStarts, test.wantSteers, test.wantBindings)
+				t.Fatalf("deliver=%d bindings=%d, want %d/%d", fixture.calls[agentControlOpDeliver],
+					fixture.binding.calls, test.wantCalls, test.wantBindings)
 			}
 			stored, found, getErr := fixture.store.Get("message-classify")
 			if getErr != nil || !found || stored.Delivery != updated.Delivery {
@@ -332,7 +303,7 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 		{
 			name: "known zero-write refusal",
 			prepare: func(_ *testing.T, f *codexPushFixture) {
-				f.script(map[string]agentControlResponse{agentControlOpStart: refusal("stale-epoch")}, nil)
+				f.script(map[string]agentControlResponse{agentControlOpDeliver: refusal("stale-epoch")}, nil)
 			},
 			wantState: "failed", wantReason: codexPushRefusedReason,
 			wantAction: "no turn was written; retry manually once the target thread state allows it",
@@ -340,7 +311,7 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 		{
 			name: "ambiguous outcome",
 			prepare: func(_ *testing.T, f *codexPushFixture) {
-				f.script(map[string]agentControlResponse{agentControlOpStart: refusal("timeout")}, nil)
+				f.script(map[string]agentControlResponse{agentControlOpDeliver: refusal("timeout")}, nil)
 			},
 			wantState: "failed", wantReason: codexPushUnknownReason,
 			wantAction: "inspect provider outcome; do not resend while unknown; automatic resend disabled",
@@ -383,7 +354,7 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 	// cause is never overwritten by the persistence error.
 	t.Run("failure event whose persistence fails keeps the original cause", func(t *testing.T) {
 		fixture := newCodexPushFixture(t)
-		fixture.script(map[string]agentControlResponse{agentControlOpStart: refusal("stale-epoch")}, nil)
+		fixture.script(map[string]agentControlResponse{agentControlOpDeliver: refusal("stale-epoch")}, nil)
 		fixture.cmd.messageStore = applyFailingMessageStore{agentMessageStore: fixture.store, err: errors.New("fixture persist failure")}
 		stdout, _, err := runRoute(t, fixture.cmd, "message", "send", "uid:agt-alpha-codex",
 			"--message-ref", "message-persist-failure", "--", "peer coordination payload")
@@ -416,8 +387,8 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 			fields[3] != "inspect provider outcome; do not resend while unknown; automatic resend disabled" {
 			t.Fatalf("receipt = %q, want the ambiguous persist projection", stdout)
 		}
-		if fixture.calls[agentControlOpStart] != 1 || fixture.calls[agentControlOpSteer] != 0 {
-			t.Fatalf("calls = %v, want exactly one start", fixture.calls)
+		if fixture.calls[agentControlOpDeliver] != 1 {
+			t.Fatalf("calls = %v, want exactly one delivery", fixture.calls)
 		}
 	})
 }
@@ -429,8 +400,8 @@ func TestCodexCoordinationPushKeepsTerminalReceiptAndSkipsExtraSteer(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fixture.calls[agentControlOpStart] != 1 || fixture.calls[agentControlOpSteer] != 0 {
-		t.Fatalf("calls = %v, want one start and no steer after a successful start", fixture.calls)
+	if fixture.calls[agentControlOpDeliver] != 1 {
+		t.Fatalf("calls = %v, want one delivery operation", fixture.calls)
 	}
 	if delivered.Delivery.State != coremessage.StateDelivered || delivered.Delivery.Reason != "provider-turn-push" ||
 		delivered.Delivery.OutcomeUnknown {

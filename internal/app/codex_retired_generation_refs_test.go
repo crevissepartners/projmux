@@ -403,7 +403,7 @@ func runRetiredRefsTurnAndMessage(t *testing.T, transcript *retiredRefsTranscrip
 		agent.Status.SessionRef.Codex.Lifecycle = retiredRefsLifecycle(coremetadata.CodexGenerationDraining, *agent.Status.SessionRef.Codex.Endpoint)
 		record := fixture.accept(t, "message-retired-live")
 		updated, err := fixture.cmd.pushCodexCoordination(record, *agent, record.Envelope)
-		if err != nil || updated.Delivery.State != coremessage.StateDelivered || fixture.calls[agentControlOpStart] != 1 {
+		if err != nil || updated.Delivery.State != coremessage.StateDelivered || fixture.calls[agentControlOpDeliver] != 1 {
 			t.Fatalf("live draining push delivery=%+v err=%v calls=%v", updated.Delivery, err, fixture.calls)
 		}
 	})
