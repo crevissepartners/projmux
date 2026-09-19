@@ -187,3 +187,27 @@ func TestImportLegacySessionRecordsObservedSocketPath(t *testing.T) {
 		t.Fatalf("imported projection = %+v, want %+v", project.Status.Session, want)
 	}
 }
+
+func TestSessionAbsenceIsAttributableOnlyToTheRecordedServerOrToNoRecordedServer(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		projection *SessionProjection
+		pass       string
+		want       bool
+	}{
+		{name: "no projection", projection: nil, pass: endedSessionSocket, want: true},
+		{name: "no recorded server", projection: &SessionProjection{Name: "p", Live: true}, pass: endedSessionSocket, want: true},
+		{name: "recorded on the pass server", projection: &SessionProjection{Name: "p", Live: true, SocketPath: endedSessionSocket}, pass: endedSessionSocket, want: true},
+		{name: "recorded on another server", projection: &SessionProjection{Name: "p", Live: true, SocketPath: otherSessionSocket}, pass: endedSessionSocket, want: false},
+		{name: "not live on another server", projection: &SessionProjection{Name: "p", SocketPath: otherSessionSocket}, pass: endedSessionSocket, want: false},
+		{name: "pass without a verified path, recorded server", projection: &SessionProjection{Name: "p", Live: true, SocketPath: endedSessionSocket}, pass: "", want: false},
+		{name: "pass without a verified path, no recorded server", projection: &SessionProjection{Name: "p", Live: true}, pass: "", want: true},
+		{name: "pass without a verified path, no projection", projection: nil, pass: "", want: true},
+	} {
+		if got := SessionAbsenceAttributableTo(tc.projection, tc.pass); got != tc.want {
+			t.Errorf("%s: SessionAbsenceAttributableTo(%+v, %q) = %t, want %t", tc.name, tc.projection, tc.pass, got, tc.want)
+		}
+	}
+}

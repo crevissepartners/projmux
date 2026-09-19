@@ -227,9 +227,13 @@ Resources and ownership:
   only after the exact Session is observed absent, keeping the name and
   `socketPath`; deleting a Project's last valid primary Window lowers `live`
   the same way. The full reconciler pass (`refreshSessionProjections`, run by
-  the create routes and by controller convergence) recomputes it for every
-  Project: a live one records this pass's path, a not-live one keeps the path
-  it had. `reconcile resources` scopes that pass to Projects with an observed
+  the create routes and by controller convergence) records `live=true` with
+  this pass's path for every Project whose session is on the server it
+  observed. It lowers by absence only a projection recorded on that server or
+  on no server, keeping its name and path; a projection recorded on another
+  server is left as it is, and a pass without a verified path lowers none that
+  record a path. The rule is `SessionAbsenceAttributableTo`.
+  `reconcile resources` scopes that pass to Projects with an observed
   live Session, and outside that scope it lowers a `live=true` projection
   whose `socketPath` is exactly the reconciled server's path and whose session
   is absent there, keeping its name and `socketPath`; Projects with another or

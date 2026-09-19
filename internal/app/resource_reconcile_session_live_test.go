@@ -168,7 +168,8 @@ func TestResourceReconcileNeverLowersWithoutAVerifiedSocketPath(t *testing.T) {
 
 // TestFullReconcilePassRecordsItsSocketPathLiveAndKeepsItOffline is the full
 // pass writer: a live projection records the pass's own verified path, and a
-// projection the pass computes not live keeps the path it had.
+// later pass on that same server that no longer finds the session lowers it,
+// keeping the name and the path it had.
 func TestFullReconcilePassRecordsItsSocketPathLiveAndKeepsItOffline(t *testing.T) {
 	t.Parallel()
 
@@ -187,12 +188,102 @@ func TestFullReconcilePassRecordsItsSocketPathLiveAndKeepsItOffline(t *testing.T
 	}
 
 	server.sessions = slices.DeleteFunc(server.sessions, func(session *fakeTmuxSession) bool { return session.name == "alpha" })
-	reconciler.sessionSocketPath = func() string { return "/tmp/fake-tmux/unrelated" }
 	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-offline"); err != nil {
 		t.Fatalf("offline pass: %v", err)
 	}
 	if got, want := storedSessionProjection(t, store, uid), (coremetadata.SessionProjection{Name: "alpha", SocketPath: passSocket}); got != want {
 		t.Fatalf("offline full pass projection = %+v, want %+v", got, want)
+	}
+}
+
+// fullPassFixture is the full reconciler of newReconcileFixture whose pass
+// observes the fake server under the given verified socket path.
+func fullPassFixture(t *testing.T, passSocket string) (*registryReconciler, *fakeResourceStore) {
+	t.Helper()
+	_, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	reconciler := reconcileFixtureReconciler(root, "alpha")(server, inttmux.NewClient(server))
+	reconciler.sessionSocketPath = func() string { return passSocket }
+	return reconciler, store
+}
+
+// storedProjectJSON is the whole stored Project as bytes, so a comparison
+// covers every field a pass could have written.
+func storedProjectJSON(t *testing.T, store *fakeResourceStore, uid string) []byte {
+	t.Helper()
+	project, ok := store.registry.Project(uid)
+	if !ok {
+		t.Fatalf("Project %s does not exist", uid)
+	}
+	encoded, err := json.Marshal(project)
+	if err != nil {
+		t.Fatalf("marshal Project %s: %v", uid, err)
+	}
+	return encoded
+}
+
+// TestFullReconcilePassLeavesAProjectionRecordedOnAnotherServerByteIdentical
+// is the cross-server case: a pass on one app server does not hold the session
+// of a Project recorded live on another server, and that absence says nothing
+// about it, so the Project is left exactly as it was.
+func TestFullReconcilePassLeavesAProjectionRecordedOnAnotherServerByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	reconciler, store := fullPassFixture(t, "/tmp/fake-tmux/pass")
+	elsewhere := addEndedSessionProject(t, store, "elsewhere", "/tmp/fake-tmux/unrelated")
+	stopped := addEndedSessionProject(t, store, "stopped", "/tmp/fake-tmux/unrelated")
+	if _, err := store.mutator().BindOfflineProjectSession(&store.registry, stopped, "stopped"); err != nil {
+		t.Fatalf("lower stopped: %v", err)
+	}
+	before := map[string][]byte{elsewhere: storedProjectJSON(t, store, elsewhere), stopped: storedProjectJSON(t, store, stopped)}
+
+	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-cross-server"); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	for uid, previous := range before {
+		if after := storedProjectJSON(t, store, uid); string(after) != string(previous) {
+			t.Fatalf("Project %s recorded on another server changed:\nbefore=%s\nafter=%s", uid, previous, after)
+		}
+	}
+}
+
+// TestFullReconcilePassLowersAnAbsentProjectionRecordedOnItsServerOrOnNoServer
+// keeps the lowering the full pass is entitled to: a session absent from the
+// server the Project was recorded on, or a Project that records no server,
+// is written not live with its name and recorded path kept.
+func TestFullReconcilePassLowersAnAbsentProjectionRecordedOnItsServerOrOnNoServer(t *testing.T) {
+	t.Parallel()
+
+	const passSocket = "/tmp/fake-tmux/pass"
+	reconciler, store := fullPassFixture(t, passSocket)
+	own := addEndedSessionProject(t, store, "own", passSocket)
+	unknown := addEndedSessionProject(t, store, "unknown", "")
+
+	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-own-server"); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if got, want := storedSessionProjection(t, store, own), (coremetadata.SessionProjection{Name: "own", SocketPath: passSocket}); got != want {
+		t.Fatalf("own-server projection = %+v, want %+v", got, want)
+	}
+	if got, want := storedSessionProjection(t, store, unknown), (coremetadata.SessionProjection{Name: "unknown"}); got != want {
+		t.Fatalf("no-server projection = %+v, want %+v", got, want)
+	}
+}
+
+// TestFullReconcilePassWithoutAVerifiedSocketPathLowersNoProjectionThatRecordsAPath
+// is a create's first pass before its server exists: it observed no exact
+// server, so no projection recorded on one is lowered by it.
+func TestFullReconcilePassWithoutAVerifiedSocketPathLowersNoProjectionThatRecordsAPath(t *testing.T) {
+	t.Parallel()
+
+	reconciler, store := fullPassFixture(t, "")
+	recorded := addEndedSessionProject(t, store, "recorded", "/tmp/fake-tmux/pass")
+	before := storedProjectJSON(t, store, recorded)
+
+	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-unverified"); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if after := storedProjectJSON(t, store, recorded); string(after) != string(before) {
+		t.Fatalf("pass without a verified path changed a recorded projection:\nbefore=%s\nafter=%s", before, after)
 	}
 }
 
@@ -212,6 +303,33 @@ func TestCreateRecordsTheVerifiedSocketPathOnLiveProjectProjections(t *testing.T
 		if project.Status.Session == nil || *project.Status.Session != want {
 			t.Fatalf("%s projection = %+v, want %+v", uid, project.Status.Session, want)
 		}
+	}
+}
+
+// TestCreateLeavesAProjectRecordedLiveOnAnotherServerUntouched is the
+// production route over the full pass: a create on one app server, whose
+// passes do not see the session of a Project recorded live on another server,
+// leaves that Project byte-identical.
+func TestCreateLeavesAProjectRecordedLiveOnAnotherServerUntouched(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCallBudgetFixture(t, 1)
+	const otherServer = "/tmp/fake-tmux/other-server"
+	if _, err := fixture.store.mutator().BindLiveProjectSession(&fixture.store.registry, "prj-other1", "other1", otherServer); err != nil {
+		t.Fatalf("record other1 on another server: %v", err)
+	}
+	fixture.tmux.sessions = slices.DeleteFunc(fixture.tmux.sessions, func(session *fakeTmuxSession) bool { return session.name == "other1" })
+	before := storedProjectJSON(t, fixture.store, "prj-other1")
+
+	if stdout, stderr, err := runRoute(t, fixture.create, "window", "--project", "uid:prj-target", "--name", "probe", "-o", "uid"); err != nil {
+		t.Fatalf("create window: %v (stderr %q)\n%s", err, stderr, stdout)
+	}
+	if after := storedProjectJSON(t, fixture.store, "prj-other1"); string(after) != string(before) {
+		t.Fatalf("create changed a Project recorded on another server:\nbefore=%s\nafter=%s", before, after)
+	}
+	target, _ := fixture.store.registry.Project("prj-target")
+	if want := (coremetadata.SessionProjection{Name: "target", Live: true, SocketPath: callBudgetSocket}); target.Status.Session == nil || *target.Status.Session != want {
+		t.Fatalf("target projection = %+v, want %+v", target.Status.Session, want)
 	}
 }
 

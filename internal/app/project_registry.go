@@ -1105,8 +1105,13 @@ func (r *registryReconciler) mirrorImported(
 
 // refreshSessionProjections recomputes Project.status.session against the live
 // tmux inventory. This is the `status.session` preflight the create routes read
-// to decide whether a Project runtime needs materializing. A live projection
-// records this pass's exact socket path; a not-live one keeps the path it had.
+// to decide whether a Project runtime needs materializing. A Project whose
+// session is on this pass's server records it live with this pass's exact
+// socket path. A Project whose session is absent is written not live (keeping
+// its recorded path) only when coremetadata.SessionAbsenceAttributableTo says
+// the absence is evidence: its projection records this pass's server or no
+// server. A projection recorded on another server is left as it is, and a pass
+// without a verified path lowers none that record a path.
 func (r *registryReconciler) refreshSessionProjections(working *coremetadata.Registry, mutator coremetadata.Mutator, live map[string]bool) error {
 	socketPath := r.passSocketPath()
 	for i := range working.Projects {
@@ -1116,9 +1121,10 @@ func (r *registryReconciler) refreshSessionProjections(working *coremetadata.Reg
 			return fmt.Errorf("reconcile Project %q: no valid collision-safe physical session name", project.Metadata.UID)
 		}
 		var err error
-		if live[name] {
+		switch {
+		case live[name]:
 			_, err = mutator.BindLiveProjectSession(working, project.Metadata.UID, name, socketPath)
-		} else {
+		case coremetadata.SessionAbsenceAttributableTo(project.Status.Session, socketPath):
 			_, err = mutator.BindOfflineProjectSession(working, project.Metadata.UID, name)
 		}
 		if err != nil {

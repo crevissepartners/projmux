@@ -40,3 +40,18 @@ func (m Mutator) LowerProjectSessionsEndedOnServer(reg *Registry, socketPath str
 	}
 	return lowered
 }
+
+// SessionAbsenceAttributableTo reports whether a full pass that observed the
+// exact server at socketPath may read "the session is not there" as the
+// Project's session having ended, and so write the projection not live.
+//
+// It is true when projection is nil, records no server (an empty SocketPath:
+// written before paths were recorded, or by a route with no verified path),
+// or records exactly socketPath (a plain string match). It is false for a
+// projection recorded on any other server: that server was not observed, so
+// the projection must be left as it is. An empty socketPath matches only a
+// projection that records no server, so a pass without a verified path
+// lowers none that record one.
+func SessionAbsenceAttributableTo(projection *SessionProjection, socketPath string) bool {
+	return projection == nil || projection.SocketPath == "" || projection.SocketPath == socketPath
+}
