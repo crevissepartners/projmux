@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
@@ -133,6 +134,10 @@ type installReplacementCommand struct {
 	getenv      func(string) string
 	stateDir    func() (string, error)
 	readVintage func(now time.Time) projmuxProcessVintage
+	// readTargets is a fresh, output-only observation after a failed request.
+	// Process identities never enter the persisted outcome or residue census.
+	readTargets func() []installReplacementTarget
+	locale      i18n.Locale
 	// requestDrain asks one live broker runtime to stand down and reports
 	// whether a live runtime answered at all, plus the refusal that closed the
 	// request. A nil reader makes the pass a census with no request, which is
@@ -158,6 +163,8 @@ func newInstallReplacementCommand() *installReplacementCommand {
 			return paths.StateDir, nil
 		},
 		readVintage: defaultInstallResidueVintage,
+		readTargets: defaultInstallReplacementTargets,
+		locale:      appLocale(os.UserHomeDir, os.Getenv),
 		settle:      installReplacementSettle,
 		poll:        installReplacementPoll,
 	}
@@ -168,23 +175,21 @@ func newInstallReplacementCommand() *installReplacementCommand {
 
 // runInstallReplacement is the route entrypoint.
 //
-// It always returns nil, for the reason the residue census always does: this
-// runs as a step of an install that has already succeeded, and a step that can
-// fail the thing it completes is worse than no step. Everything it could not do
-// is on the record it writes and on the L2 row that reads it.
+// Binary publication and config convergence have already finished. An
+// unreachable replacement target still fails this step, without rolling either
+// of those completed stages back. Accepted drains carrying work remain success.
 func runInstallReplacement(args []string, stderr io.Writer) error {
 	if len(args) != 0 {
 		return usageError("internal install-replace does not accept arguments")
 	}
-	newInstallReplacementCommand().Run(stderr)
-	return nil
+	return newInstallReplacementCommand().Run(stderr)
 }
 
 // Run takes the census, asks the drainable roles to stand down, waits a bounded
 // moment, and records what happened.
-func (c *installReplacementCommand) Run(stderr io.Writer) {
+func (c *installReplacementCommand) Run(stderr io.Writer) error {
 	if c == nil {
-		return
+		return nil
 	}
 	now := time.Now()
 	if c.now != nil {
@@ -215,7 +220,25 @@ func (c *installReplacementCommand) Run(stderr io.Writer) {
 	if text := renderInstallReplacementNotice(outcome); text != "" && stderr != nil {
 		_, _ = io.WriteString(stderr, text)
 	}
+	if outcome.Outcome == installReplacementOutcomeUnreachable {
+		var targets []installReplacementTarget
+		if c.readTargets != nil {
+			targets = c.readTargets()
+		}
+		if stderr != nil {
+			_, _ = io.WriteString(stderr, renderInstallReplacementFailure(targets, c.locale))
+		}
+		return installReplacementExitError{}
+	}
+	return nil
 }
+
+// The diagnostic has already been printed. The CLI's exitCoder contract keeps
+// the failure machine-readable without printing a second, generic error line.
+type installReplacementExitError struct{}
+
+func (installReplacementExitError) Error() string { return installReplacementOutcomeUnreachable }
+func (installReplacementExitError) ExitCode() int { return 1 }
 
 // replace makes the one request this pass is allowed to make and watches for
 // the answer.
@@ -271,9 +294,8 @@ func (c *installReplacementCommand) settleUntilGone() bool {
 	}
 }
 
-// write places the outcome record. A failure is swallowed for the reason Run
-// swallows everything: an unwritable state directory must not turn a completed
-// install into a failed one.
+// write places the outcome record. An unwritable diagnostic record does not
+// change the replacement result or hide its terminal diagnostic.
 func (c *installReplacementCommand) write(outcome installReplacementOutcome) {
 	path := c.recordPath()
 	if strings.TrimSpace(path) == "" {

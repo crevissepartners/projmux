@@ -62,8 +62,10 @@ install: build
 	@echo ">> reconciling notify queue..."
 	@$(INSTALL_BIN) notification reconcile || true
 	@echo ">> replacing long-lived processes running the superseded image..."
-	@PROJMUX_INSTALLER=make $(INSTALL_BIN) internal install-replace || true
-	@PROJMUX_INSTALLER=make $(INSTALL_BIN) internal install-residue || true
+	@replacement_status=0; \
+	  PROJMUX_INSTALLER=make $(INSTALL_BIN) internal install-replace || replacement_status=$$?; \
+	  PROJMUX_INSTALLER=make $(INSTALL_BIN) internal install-residue || true; \
+	  exit $$replacement_status
 
 npm-pack:
 	scripts/package-npm.sh --pack

@@ -64,6 +64,7 @@ func TestDefaultCatalogKoKRCompletesRequiredMigratedSurfaces(t *testing.T) {
 		"picker.",
 		"welcome.",
 		"update.",
+		"install.replacement.",
 		"help.",
 		"web.",
 	})

@@ -121,6 +121,17 @@ Classification:
 | Command syntax | `projmux shell`, `make test`, `gh pr create` | `literal` | Preserve exactly. |
 | Version strings and release tags | `vX.Y.Z`, git SHA, installer source | `data` | Preserve source content. |
 
+### Install replacement failures
+
+`internal/app/install_replacement*.go` adds the failure explanation, remaining
+target heading, impact, and recovery under `install.replacement.*` catalog keys
+with `en-US` and `ko-KR` entries (`translate`). The pre-existing summary and
+successful/pending install output remain unchanged. Role/refusal tokens,
+`pid`, `revision`, and `unknown` are `literal`; observed pids and revisions are
+`data`, preserved only in the terminal diagnostic. `Codex` and `make install`
+remain literal inside the translated guidance. No process identity is added to
+the persisted outcome or residue ledger.
+
 ## Literal Preservation Rules
 
 Do not translate these families:

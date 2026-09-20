@@ -410,9 +410,24 @@ writes `install-replacement.json`.
 
 It **starts nothing** — a replacement pass that launched what it was sent to
 replace would leave more behind than it found, so it dials and never ensures.
-It **signals nothing**: the only request it makes is a socket handshake. And it
-never fails an install: it runs after the install has already succeeded, and
-everything it could not do is on the record it writes.
+It **signals nothing**: the only request it makes is a socket handshake.
+An unreachable target makes `internal install-replace` exit 1. `make install`
+still runs the residue census, then fails because replacement did not finish.
+The binary publication and config convergence have already completed; this
+failure does not roll them back. Accepted drains that are still carrying work
+remain successful, as do complete, no-target, and unsupported-platform passes.
+Their output is unchanged.
+
+On an unreachable result, stderr retains the count and refusal and adds the
+remaining drain targets' role, pid, and mapped executable revision, followed by
+the impact and next action. Targets are rechecked after the refusal; a vanished
+or unreadable target is not invented, and an unavailable build revision is
+`unknown`. These identities are transient terminal output only:
+`install-replacement.json` and the residue ledger retain counts and tokens.
+The diagnostic states that later Codex Agents may lack control while the old
+broker remains. Let existing work finish, check that the named processes exit
+naturally, and retry `make install`. If they remain, the operator reviews the
+targets before deciding on termination; the install does not signal them.
 
 Its outcome vocabulary is closed, and it reaches the `L2` row as
 `replacement.outcome`:

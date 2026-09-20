@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
 
@@ -29,6 +31,7 @@ type installReplacementFixture struct {
 	cutoff    string
 	stateDir  string
 	stderr    *bytes.Buffer
+	targets   []installReplacementTarget
 }
 
 func runTestInstallReplacement(t *testing.T, fixture installReplacementFixture) installReplacementOutcome {
@@ -51,6 +54,7 @@ func runTestInstallReplacement(t *testing.T, fixture installReplacementFixture) 
 		},
 		stateDir:    func() (string, error) { return dir, nil },
 		readVintage: func(time.Time) projmuxProcessVintage { return fixture.vintage },
+		readTargets: func() []installReplacementTarget { return fixture.targets },
 		runtimeGone: func() bool {
 			polls++
 			return fixture.goneAfter >= 0 && polls > fixture.goneAfter
@@ -67,11 +71,19 @@ func runTestInstallReplacement(t *testing.T, fixture installReplacementFixture) 
 	if stderr == nil {
 		stderr = &bytes.Buffer{}
 	}
-	command.Run(stderr)
+	runErr := command.Run(stderr)
 
 	outcome, ok := readInstallReplacementOutcome(filepath.Join(dir, installReplacementFile))
 	if !ok {
 		t.Fatalf("the pass wrote no readable outcome under %s", dir)
+	}
+	if outcome.Outcome == installReplacementOutcomeUnreachable {
+		var coded interface{ ExitCode() int }
+		if !errors.As(runErr, &coded) || coded.ExitCode() != 1 {
+			t.Fatalf("unreachable Run() = %v, want exit 1", runErr)
+		}
+	} else if runErr != nil {
+		t.Fatalf("%s Run() = %v, want success", outcome.Outcome, runErr)
 	}
 	return outcome
 }
@@ -196,23 +208,10 @@ func TestInstallReplacementRecordsTheCutoffItRanUnder(t *testing.T) {
 	}
 }
 
-// TestInstallReplacementNeverFailsAnInstall holds the property every step after
-// a successful publication has to have.
-//
-// The pass runs when the install has already succeeded. A step that can turn a
-// completed install into a failed one is worse than no step, so an unwritable
-// state directory, an unreadable census, and a missing request route all leave
-// the route returning nil.
-func TestInstallReplacementNeverFailsAnInstall(t *testing.T) {
+func TestInstallReplacementUnsupportedAndUnwritableRecordRemainSuccessful(t *testing.T) {
 	t.Parallel()
 
 	var stderr bytes.Buffer
-	if err := runInstallReplacement(nil, &stderr); err != nil {
-		t.Fatalf("runInstallReplacement() = %v, want nil", err)
-	}
-
-	// Arguments are the one thing it refuses, because a caller passing them has
-	// misunderstood the route rather than hit a runtime condition.
 	if err := runInstallReplacement([]string{"--now"}, &stderr); err == nil {
 		t.Fatal("runInstallReplacement(args) = nil, want a usage error")
 	}
@@ -225,11 +224,28 @@ func TestInstallReplacementNeverFailsAnInstall(t *testing.T) {
 		settle:      time.Millisecond,
 		poll:        time.Millisecond,
 	}
-	command.Run(&stderr)
+	if err := command.Run(&stderr); err != nil {
+		t.Fatalf("unsupported Run() = %v, want nil", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unsupported Run() printed %q, want silence", stderr.String())
+	}
 
 	// And a nil command is a no-op rather than a panic on an install path.
 	var nilCommand *installReplacementCommand
-	nilCommand.Run(&stderr)
+	if err := nilCommand.Run(&stderr); err != nil {
+		t.Fatalf("nil Run() = %v, want nil", err)
+	}
+
+	// Failure remains visible even when its record cannot be written.
+	command.readVintage = func(time.Time) projmuxProcessVintage {
+		return projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+			{Role: codexControlPlaneRoleBroker, Processes: 1, Replaced: 1},
+		}}
+	}
+	if err := command.Run(&stderr); err == nil || !strings.Contains(stderr.String(), "broker replacement is incomplete") {
+		t.Fatalf("unwritable unreachable Run() = %v, stderr = %q", err, stderr.String())
+	}
 }
 
 // TestInstallReplacementNoticeSpeaksOnlyWhenAnActionFollows holds the terminal
@@ -249,15 +265,15 @@ func TestInstallReplacementNoticeSpeaksOnlyWhenAnActionFollows(t *testing.T) {
 		{outcome: installReplacementOutcome{Outcome: installReplacementOutcomeUnsupported}},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomeComplete, Drained: 1},
-			want:    "replaced 1 long-lived process is running the image this install superseded",
+			want:    ">> replaced 1 long-lived process is running the image this install superseded\n",
 		},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomePending, Attempted: 2},
-			want:    "asked 2 long-lived processes are to stand down",
+			want:    ">> asked 2 long-lived processes are to stand down; they are still carrying work\n   The runtime accepts no new work and goes when that work ends.\n",
 		},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomeUnreachable, Attempted: 1, Refusal: "host-unavailable"},
-			want:    "host-unavailable",
+			want:    ">> could not reach 1 long-lived process is to replace: host-unavailable\n",
 		},
 	} {
 		got := renderInstallReplacementNotice(tc.outcome)
@@ -267,13 +283,13 @@ func TestInstallReplacementNoticeSpeaksOnlyWhenAnActionFollows(t *testing.T) {
 			}
 			continue
 		}
-		if !strings.Contains(got, tc.want) {
-			t.Fatalf("%s printed %q, want it to contain %q", tc.outcome.Outcome, got, tc.want)
+		if got != tc.want {
+			t.Fatalf("%s printed %q, want %q", tc.outcome.Outcome, got, tc.want)
 		}
 	}
 
-	// A notice never carries a path, a pid, or an argv word. It is the same
-	// promise the residue notice makes, on the one surface that now also acts.
+	// The original summary stays identity-free; failure details carry identities
+	// separately and never alter the persisted record.
 	text := renderInstallReplacementNotice(installReplacementOutcome{
 		Outcome: installReplacementOutcomeUnreachable, Attempted: 1, Refusal: "discovery-untrusted",
 	})
@@ -281,6 +297,66 @@ func TestInstallReplacementNoticeSpeaksOnlyWhenAnActionFollows(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("notice %q carries %q", text, forbidden)
 		}
+	}
+}
+
+func TestInstallReplacementRefusalNamesTargetsImpactAndRecovery(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	dir := t.TempDir()
+	runTestInstallReplacement(t, installReplacementFixture{
+		stateDir: dir,
+		stderr:   &stderr,
+		vintage: projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+			{Role: codexControlPlaneRoleBroker, Processes: 2, Replaced: 2},
+		}},
+		targets: []installReplacementTarget{
+			{role: codexControlPlaneRoleBroker, pid: 4321, revision: "8ae6e563"},
+			{role: codexControlPlaneRoleBroker, pid: 4322, revision: "unknown"},
+		},
+		refusal: "host-unavailable",
+	})
+	for _, want := range []string{
+		"host-unavailable", "role=broker-runtime pid=4321 revision=8ae6e563",
+		"role=broker-runtime pid=4322 revision=unknown", "binary and config are already installed",
+		"broker replacement is incomplete", "Codex Agents created afterward may have no control",
+		"exit naturally", "retry make install", "operator review the targets",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("failure omitted %q: %s", want, stderr.String())
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(dir, installReplacementFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, identity := range []string{"4321", "4322", "8ae6e563", "revision", "pid"} {
+		if strings.Contains(string(body), identity) {
+			t.Errorf("outcome persisted %q: %s", identity, body)
+		}
+	}
+}
+
+func TestInstallReplacementFailureLocalizationPreservesIdentityAndCommands(t *testing.T) {
+	t.Parallel()
+	targets := []installReplacementTarget{{role: codexControlPlaneRoleBroker, pid: 4321, revision: "8ae6e563"}}
+	english := renderInstallReplacementFailure(targets, i18n.FallbackLocale)
+	if fallback := renderInstallReplacementFailure(targets, i18n.Locale("fr-FR")); fallback != english {
+		t.Fatalf("unsupported locale did not fall back: %q", fallback)
+	}
+	korean := renderInstallReplacementFailure(targets, i18n.Locale("ko-KR"))
+	if !strings.Contains(korean, "교체가 완료되지 않았습니다") {
+		t.Fatalf("Korean failure = %q", korean)
+	}
+	for _, text := range []string{english, korean} {
+		for _, literal := range []string{"role=broker-runtime pid=4321 revision=8ae6e563", "Codex", "make install"} {
+			if !strings.Contains(text, literal) {
+				t.Errorf("localized failure lost %q: %q", literal, text)
+			}
+		}
+	}
+	if text := renderInstallReplacementFailure(nil, i18n.FallbackLocale); !strings.Contains(text, "No remaining target could be identified") || strings.Contains(text, "pid=") {
+		t.Fatalf("unidentified targets = %q", text)
 	}
 }
 

@@ -2,6 +2,11 @@ package i18n
 
 var defaultCatalogData = map[Locale]map[Key]Entry{
 	FallbackLocale: {
+		KeyInstallReplacementIncomplete:                                      textEntry("The binary and config are already installed; broker replacement is incomplete."),
+		KeyInstallReplacementUnknown:                                         textEntry("No remaining target could be identified on recheck; the process table may have changed."),
+		KeyInstallReplacementRemaining:                                       textEntry("Remaining targets at failure recheck:"),
+		KeyInstallReplacementImpact:                                          textEntry("Codex Agents created afterward may have no control while the old broker remains."),
+		KeyInstallReplacementRecovery:                                        textEntry("Let existing Codex work finish, check that the listed processes exit naturally, then retry make install. If they remain, have the operator review the targets before deciding on termination."),
 		Key("startup.recovery.summary"):                                      textEntry("Continue: resumed %d, skipped %d; %s"),
 		Key("startup.recovery.failed"):                                       textEntry("Continue failed: resumed %d, skipped %d; %s"),
 		Key("agent.progress.working"):                                        textEntry("Working"),
@@ -1257,6 +1262,11 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("web.message.failed"):                                            textEntry("failed"),
 	},
 	Locale("ko-KR"): {
+		KeyInstallReplacementIncomplete:                                      textEntry("바이너리와 config는 이미 설치되었으며 broker 교체가 완료되지 않았습니다."),
+		KeyInstallReplacementUnknown:                                         textEntry("재확인 시 남은 대상을 식별하지 못했습니다. 프로세스 목록이 달라졌을 수 있습니다."),
+		KeyInstallReplacementRemaining:                                       textEntry("실패 후 재확인한 남은 대상:"),
+		KeyInstallReplacementImpact:                                          textEntry("옛 broker가 남아 있는 동안 이후 생성된 Codex Agent의 제어가 불가능할 수 있습니다."),
+		KeyInstallReplacementRecovery:                                        textEntry("기존 Codex 작업이 끝나도록 두고, 나열된 프로세스가 자연 종료했는지 확인한 뒤 make install을 다시 실행하세요. 계속 남아 있다면 운영자가 대상을 확인하고 종료 여부를 결정해야 합니다."),
 		Key("startup.recovery.summary"):                                      textEntry("Continue: 복귀 %d, 건너뜀 %d; %s"),
 		Key("startup.recovery.failed"):                                       textEntry("Continue 실패: 복귀 %d, 건너뜀 %d; %s"),
 		Key("agent.progress.working"):                                        textEntry("작업 중"),
