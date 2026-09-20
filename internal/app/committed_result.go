@@ -129,7 +129,7 @@ func committedResultDisplaySites() []committedResultSite {
 		{
 			File: "ai.go", Snippet: "c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitFocus",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSiteSplitFocus,
-			Note: "the split committed and the new Pane could not be focused; the Pane stays either way",
+			Note: "the split committed and the new Pane could not be focused; the Pane stays either way, and the line is fitted to the pressing client, focus cause first",
 		},
 		{
 			File: "ai.go", Snippet: "c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitNotice",
@@ -139,7 +139,7 @@ func committedResultDisplaySites() []committedResultSite {
 		{
 			File: "ai.go", Snippet: `c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", reason)`,
 			Kind: committedResultPreCommit,
-			Note: "canonical create refused before committing anything; the refusal is the route's own result",
+			Note: "canonical create refused before committing anything; the refusal is the route's own result, fitted to the client that asked for the Pane",
 		},
 
 		// --- split funnel: internal/app/launch_default.go ---------------------
@@ -151,9 +151,9 @@ func committedResultDisplaySites() []committedResultSite {
 
 		// --- pane context menu and Window intents: internal/app/tmux.go -------
 		{
-			File: "tmux.go", Snippet: `return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+paneMenuActionLabel(action)+" failed: "+reason)`,
+			File: "tmux.go", Snippet: "return c.displayPaneMenuMessage(strings.TrimSpace(*client), fitLineToClient(",
 			Kind: committedResultPreCommit,
-			Note: "the pane-menu create or delete refused; nothing was committed",
+			Note: "the pane-menu create or delete refused; nothing was committed, and the refusal is fitted to the clicking client",
 		},
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuKill",
@@ -163,7 +163,7 @@ func committedResultDisplaySites() []committedResultSite {
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), splitFocusFailureLine(",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSitePaneMenuSplit,
-			Note: "the pane-menu split committed and the clicking client could not be moved onto it",
+			Note: "the pane-menu split committed and the clicking client could not be moved onto it; the line is fitted to that client, focus cause first",
 		},
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), message)",
@@ -173,7 +173,7 @@ func committedResultDisplaySites() []committedResultSite {
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, line)",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSiteWindowIntent,
-			Note: "the Window committed with the chosen first Pane in one transaction, and the pressing client could not be moved onto it",
+			Note: "the Window committed with the chosen first Pane in one transaction, and the pressing client could not be moved onto it; the line is fitted to that client, move cause first",
 		},
 		{
 			File: "tmux.go", Snippet: `return c.displayPaneMenuMessage(client, notCreatedLine(reason, readClientLineWidth(`,
@@ -181,9 +181,9 @@ func committedResultDisplaySites() []committedResultSite {
 			Note: "finishWindowNotCreated: a Window create refused before its answer committed, or its answer rolled back; no Window was created",
 		},
 		{
-			File: "tmux.go", Snippet: `return c.displayPaneMenuMessage(strings.TrimSpace(client), "projmux "+label+" failed: "+reason)`,
+			File: "tmux.go", Snippet: "return c.displayPaneMenuMessage(strings.TrimSpace(client), fitLineToClient(",
 			Kind: committedResultPreCommit,
-			Note: "finishWindowIntent's failure half: the Window intent refused and committed nothing",
+			Note: "finishWindowIntent's failure half, shared by all four Window intents: the intent refused and committed nothing, and the refusal is fitted to the pressing client",
 		},
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, strings.TrimSpace(client), success)",

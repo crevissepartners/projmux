@@ -290,15 +290,19 @@ func TestCommittedWindowIntentDetailStaysTheFailureHalvesParameter(t *testing.T)
 }
 
 // TestWindowCreatedLineIsTheConstantWithNothingToDisclose pins the one rule
-// the eight existing assertions on windowCreatedMessage depend on.
+// the eight existing assertions on windowCreatedMessage depend on. A
+// disclosure that fits its client is carried whole, and a create with nothing
+// to disclose reads no width at all.
 func TestWindowCreatedLineIsTheConstantWithNothingToDisclose(t *testing.T) {
 	t.Parallel()
+	const client = "/dev/pts/9"
+	cmd := &tmuxCommand{runner: &fakeTmux{}}
 	for _, notice := range []string{"", "   ", "\n", " \n\t "} {
-		if got := windowCreatedLine(notice); got != windowCreatedMessage {
+		if got := cmd.windowCreatedLine(client, notice); got != windowCreatedMessage {
 			t.Fatalf("windowCreatedLine(%q) = %q, want the constant %q", notice, got, windowCreatedMessage)
 		}
 	}
-	if got, want := windowCreatedLine(" a notice "), windowCreatedMessage+": a notice"; got != want {
+	if got, want := cmd.windowCreatedLine(client, " a notice "), windowCreatedMessage+": a notice"; got != want {
 		t.Fatalf("windowCreatedLine carried the notice as %q, want %q", got, want)
 	}
 }

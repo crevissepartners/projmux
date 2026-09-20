@@ -298,10 +298,11 @@ func TestWindowIntentFailureKeepsTheMutationStoryStraight(t *testing.T) {
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("Window intent wrote to the foreground job: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	if len(runner.calls) != 1 {
+	shown := clientLinesShown(runner.calls)
+	if len(shown) != 1 {
 		t.Fatalf("tmux calls = %#v, want one message", runner.calls)
 	}
-	message := runner.calls[0].args[len(runner.calls[0].args)-1]
+	message := shown[0].args[len(shown[0].args)-1]
 	for _, want := range []string{"Rename Window failed", "rename window refused", "exact anchor drifted"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("message = %q, want it to contain %q", message, want)

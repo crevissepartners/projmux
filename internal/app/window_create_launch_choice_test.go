@@ -435,11 +435,14 @@ func TestWindowCreateIntentAsksFirstAndCommitsTheAnswerInOneCreate(t *testing.T)
 			if got := route.lines(); !slices.Equal(got, tt.wantLines) {
 				t.Fatalf("client lines = %q, want %q", got, tt.wantLines)
 			}
-			// Only a line that says no Window was created is fitted, so only it
-			// reads the client's width.
+			// Every line this route cannot bound is fitted, and each fitted
+			// line reads the pressing client's width exactly once. The
+			// bounded success constant reads nothing.
 			wantReads := 0
-			if len(tt.wantLines) == 1 && strings.HasPrefix(tt.wantLines[0], windowNotCreatedHead) {
-				wantReads = 1
+			for _, line := range tt.wantLines {
+				if line != windowCreatedMessage {
+					wantReads++
+				}
 			}
 			if got := route.widthReads(); got != wantReads {
 				t.Fatalf("client width reads = %d, want %d", got, wantReads)

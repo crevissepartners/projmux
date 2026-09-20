@@ -31,8 +31,9 @@ const clientLineWidthFormat = "#{client_width}"
 // readClientLineWidth reads the exact client's width, in cells. Anything that
 // is not a positive width -- no runner, a failed read, an empty or non-numeric
 // answer -- is defaultClientLineWidth: a line that cannot be measured against
-// its client is still shown, fitted to a common terminal. Only failure lines
-// call it, so no successful intent pays for the read.
+// its client is still shown, fitted to a common terminal. Only a line that can
+// be arbitrarily long calls it -- every failure line, and the one success line
+// that carries a disclosure -- so a bounded constant never pays for the read.
 func readClientLineWidth(ctx context.Context, runner tmuxRunner, client string) int {
 	if runner == nil || strings.TrimSpace(client) == "" {
 		return defaultClientLineWidth
@@ -103,4 +104,63 @@ func clientLineBack(value string, cells int) string {
 		start--
 	}
 	return string(runes[start:])
+}
+
+// clientLineWords is the one-space normalization the transports apply before
+// tmux renders a line. Fitting has to measure what is rendered, so a producer
+// normalizes first and the transport's own pass is then a no-op.
+func clientLineWords(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+// fitLineToClient is head followed by reason, fitted to the exact client that
+// pressed the key. It is the whole of what a producer of an unbounded line
+// does about width: the read is the only tmux call it adds.
+func fitLineToClient(ctx context.Context, runner tmuxRunner, client, head, reason string) string {
+	return fitClientLine(head, clientLineWords(reason), readClientLineWidth(ctx, runner, client))
+}
+
+// clientLineNoticeSeparator joins a notice to the cause it rides behind.
+const clientLineNoticeSeparator = "; "
+
+// fitClientCauseFirstLine is head, cause and a trailing notice, no wider than
+// width cells: the line shape whose cause is not at its end.
+//
+// fitClientLine keeps a reason's front and its end because tmux's own stderr
+// is at the end of it. A mutation that committed and could not be shown
+// reverses that. What failed is the focus or move error right after the head,
+// and what follows the separator is a notice that only adds context, so
+// fitting the two as one reason would spend the line's last cells on the
+// notice and elide the middle of the cause. The notice yields instead: it is
+// cut back to whatever the cause left over, and it is gone once the cause
+// alone needs the line. The cause is then fitted exactly as every other
+// failure line is.
+func fitClientCauseFirstLine(head, cause, notice string, width int) string {
+	if width <= 0 {
+		width = defaultClientLineWidth
+	}
+	cause, notice = clientLineWords(cause), clientLineWords(notice)
+	if notice == "" {
+		return fitClientLine(head, cause, width)
+	}
+	if line := head + cause + clientLineNoticeSeparator + notice; projmuxpicker.VisibleLen(line) <= width {
+		return line
+	}
+	fitted := fitClientLine(head, cause, width)
+	room := width - projmuxpicker.VisibleLen(fitted) -
+		projmuxpicker.VisibleLen(clientLineNoticeSeparator) - projmuxpicker.VisibleLen(clientLineElision)
+	if room <= 0 {
+		return fitted
+	}
+	front, used := clientLineFront(notice, room)
+	if used == 0 {
+		return fitted
+	}
+	return fitted + clientLineNoticeSeparator + front + clientLineElision
+}
+
+// fitCauseFirstLineToClient is fitClientCauseFirstLine for the exact client
+// that pressed the key.
+func fitCauseFirstLineToClient(ctx context.Context, runner tmuxRunner, client, head, cause, notice string) string {
+	return fitClientCauseFirstLine(head, cause, notice, readClientLineWidth(ctx, runner, client))
 }

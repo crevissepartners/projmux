@@ -1113,9 +1113,10 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 		// Both lines below go through the committed-result seam
 		// (committed_result.go): the Pane is durable, so a line that could not be
 		// shown becomes a journal record instead of this route's exit status.
-		focusRunner := splitFocusRunner{runCommand: c.runCommand, readCommand: c.readCommand}
+		focusRunner := c.clientLineRunner()
 		if focusErr := focusCreatedSplitPane(context.Background(), focusRunner, intent.targetClient, created); focusErr != nil {
-			line := splitFocusFailureLine(focusErr, strings.Join(strings.Fields(createDiagnostics.String()), " "))
+			line := splitFocusFailureLine(focusErr, createDiagnostics.String(),
+				readClientLineWidth(context.Background(), focusRunner, intent.targetClient))
 			c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitFocus, intent.targetClient, line)
 			return nil
 		}
@@ -1131,8 +1132,12 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 		}
 		return nil
 	}
-	reason := canonicalCreateFailureReason(err, createDiagnostics.String())
+	head, cause := canonicalCreateFailureParts(err, createDiagnostics.String())
 	if intent.targetClient != "" {
+		// The refusal names the whole argv it could not run and tmux's own
+		// cause is at the end of that, so it is fitted to the client that
+		// asked for the Pane before it is shown.
+		reason := fitLineToClient(context.Background(), c.clientLineRunner(), intent.targetClient, head, cause)
 		// Nothing was committed. The refusal reached nobody if this display also
 		// fails, so it stays the route's result -- the one case the seam above
 		// deliberately does not cover.
@@ -1148,13 +1153,24 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 	return err
 }
 
+// canonicalCreateFailureHead leads every canonical create refusal.
+const canonicalCreateFailureHead = "projmux create failed: "
+
 func canonicalCreateFailureReason(err error, diagnostics string) string {
+	head, reason := canonicalCreateFailureParts(err, diagnostics)
+	return head + reason
+}
+
+// canonicalCreateFailureParts is that same refusal as the two pieces a fitted
+// line takes: the outcome, which is never cut, and the reason, whose end
+// carries tmux's own cause.
+func canonicalCreateFailureParts(err error, diagnostics string) (string, string) {
 	reason := strings.TrimSpace(err.Error())
 	diagnostics = strings.TrimSpace(diagnostics)
 	if diagnostics != "" && !strings.Contains(reason, diagnostics) {
 		reason += ": " + diagnostics
 	}
-	return "projmux create failed: " + strings.Join(strings.Fields(reason), " ")
+	return canonicalCreateFailureHead, clientLineWords(reason)
 }
 
 func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {

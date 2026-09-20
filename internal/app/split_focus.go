@@ -87,12 +87,16 @@ func (r splitFocusRunner) Run(ctx context.Context, name string, args ...string) 
 }
 
 // splitFocusFailureLine is the one client line for a kept split whose focus
-// step failed. A split start notice rides on the same line so the client still
-// sees exactly one message.
-func splitFocusFailureLine(focusErr error, notice string) string {
-	line := paneCreatedUnfocusedMessage + strings.TrimSpace(focusErr.Error())
-	if notice = strings.TrimSpace(notice); notice != "" {
-		line += "; " + notice
-	}
-	return strings.Join(strings.Fields(line), " ")
+// step failed, fitted to the client that pressed the key. A split start notice
+// rides on the same line so the client still sees exactly one message, and it
+// is what yields when the line does not fit: the focus error is the cause here
+// and it leads, so fitClientCauseFirstLine keeps it ahead of the notice.
+func splitFocusFailureLine(focusErr error, notice string, width int) string {
+	return fitClientCauseFirstLine(paneCreatedUnfocusedMessage, focusErr.Error(), notice, width)
+}
+
+// clientLineRunner adapts the aiCommand seams to the runner a client-width
+// read takes. Reading the pressing client's width is a read like any other.
+func (c *aiCommand) clientLineRunner() tmuxRunner {
+	return splitFocusRunner{runCommand: c.runCommand, readCommand: c.readCommand}
 }

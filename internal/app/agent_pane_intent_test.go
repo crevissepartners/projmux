@@ -767,7 +767,8 @@ func TestAISplitFocusConditionTable(t *testing.T) {
 			}
 			var messages [][]string
 			for _, call := range runner.calls {
-				if len(call.args) > 0 && call.args[0] == "display-message" && slices.Contains(call.args, "-c") {
+				if len(call.args) > 0 && call.args[0] == "display-message" && slices.Contains(call.args, "-c") &&
+					!clientLineWidthRead(call.args) {
 					messages = append(messages, call.args)
 				}
 			}
@@ -790,8 +791,9 @@ func TestAISplitFocusConditionTable(t *testing.T) {
 
 // TestSplitFocusFailureCarriesTheSplitStartNotice keeps the one-line promise
 // when a committed split has both a split start notice and a failed focus step.
+// A client wide enough for both carries both, byte for byte.
 func TestSplitFocusFailureCarriesTheSplitStartNotice(t *testing.T) {
-	line := splitFocusFailureLine(errors.New("focus: select-pane \"%42\": gone"), "split start notice:\n cwd was not used")
+	line := splitFocusFailureLine(errors.New("focus: select-pane \"%42\": gone"), "split start notice:\n cwd was not used", 200)
 	want := paneCreatedUnfocusedMessage + `focus: select-pane "%42": gone; split start notice: cwd was not used`
 	if line != want {
 		t.Fatalf("line = %q, want %q", line, want)

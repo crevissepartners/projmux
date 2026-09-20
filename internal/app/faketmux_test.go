@@ -90,9 +90,11 @@ type fakeTmuxClient struct {
 	width   int
 }
 
-// fakeTmuxClientWidth is the width of an attached fake client: a wide
-// terminal, so a failure line's reason is shown whole unless a test narrows it.
-const fakeTmuxClientWidth = 200
+// fakeTmuxClientWidth is the width of an attached fake client: wider than any
+// line this package builds, so a line is shown whole unless a test narrows the
+// client on purpose. Fitting itself is measured against exact widths in
+// client_failure_line_bounds_test.go, not here.
+const fakeTmuxClientWidth = 400
 
 // attachClient models a client attached to session.
 func (f *fakeTmux) attachClient(name string, session *fakeTmuxSession) {
@@ -789,12 +791,18 @@ type fakeTmuxClientMessage struct {
 func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 	target := flagValue(args, "-t")
 	format := flagValue(args, "-F")
-	// A client-scoped width read is what a failure line is fitted to.
+	// A client-scoped width read is what a line is fitted to. A fixture that
+	// models no clients at all answers with the wide default, the same way it
+	// accepts a client-scoped message: not modelling clients must not turn
+	// into a narrow one.
 	if client := flagValue(args, "-c"); client != "" && format == "#{client_width}" {
 		for _, candidate := range f.clients {
 			if candidate.name == client {
 				return []byte(strconv.Itoa(candidate.width) + "\n"), nil
 			}
+		}
+		if f.clients == nil {
+			return []byte(strconv.Itoa(fakeTmuxClientWidth) + "\n"), nil
 		}
 		return nil, fmt.Errorf("fake tmux: display-message: can't find client %q", client)
 	}

@@ -1348,10 +1348,13 @@ func TestWindowCreateIntentCreateFailureIssuesNoClientMoveAndKeepsItsMessage(t *
 		if err := cmd.Run([]string{"window-create", "--client", windowCreatePressingClient, "--anchor", "%9"}, ioDiscard{}, ioDiscard{}); err != nil {
 			t.Fatalf("displayed create refusal escaped as an exit code: %v", err)
 		}
-		want := [][]string{{"display-message", "-c", windowCreatePressingClient, "-d", "10000",
-			"projmux Create Window failed: create window refused: exact anchor drifted"}}
+		want := [][]string{
+			{"display-message", "-p", "-c", windowCreatePressingClient, "-F", "#{client_width}"},
+			{"display-message", "-c", windowCreatePressingClient, "-d", "10000",
+				"projmux Create Window failed: create window refused: exact anchor drifted"},
+		}
 		if !equalArgvs(server.calls, want) {
-			t.Fatalf("tmux calls = %v, want only the unchanged refusal line %v", server.calls, want)
+			t.Fatalf("tmux calls = %v, want the width read and the unchanged refusal line %v", server.calls, want)
 		}
 	})
 }

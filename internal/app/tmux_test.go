@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -2327,6 +2328,18 @@ func splitFocusCases(client string) []splitFocusCase {
 }
 
 // focusStepCalls drops everything but the focus step's own tmux calls.
+// clientLinesShown is every recorded call that put a line on a client. The one
+// width read a fitted line costs is a read, not a line.
+func clientLinesShown(calls []recordedTmuxCall) []recordedTmuxCall {
+	var lines []recordedTmuxCall
+	for _, call := range calls {
+		if len(call.args) > 0 && call.args[0] == "display-message" && !slices.Contains(call.args, "-p") {
+			lines = append(lines, call)
+		}
+	}
+	return lines
+}
+
 func focusStepCalls(calls []recordedTmuxCall) (reads int, selects [][]string) {
 	for _, call := range calls {
 		switch {
@@ -2370,12 +2383,7 @@ func TestTmuxPaneMenuSplitFocusConditionTable(t *testing.T) {
 			if !equalArgvs(selects, wantSelects) {
 				t.Fatalf("select-pane calls = %v, want %v", selects, wantSelects)
 			}
-			var messages []recordedTmuxCall
-			for _, call := range runner.calls {
-				if len(call.args) > 0 && call.args[0] == "display-message" && slices.Contains(call.args, "-c") {
-					messages = append(messages, call)
-				}
-			}
+			messages := clientLinesShown(runner.calls)
 			if len(messages) != 1 {
 				t.Fatalf("client messages = %#v, want exactly one", messages)
 			}
@@ -2488,12 +2496,13 @@ func TestTmuxPaneMenuFailuresRemainVisibleWithoutFallbackMutation(t *testing.T) 
 			if err := cmd.Run([]string{"pane-menu", "--client", "/dev/pts/8", test.action, "%21"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("a displayed managed refusal escaped as an invisible exit code: %v", err)
 			}
-			if len(runner.calls) != 1 || runner.calls[0].name != "tmux" ||
-				!containsAll(runner.calls[0].args, []string{"display-message", "-c", "/dev/pts/8"}) ||
-				!strings.Contains(runner.calls[0].args[len(runner.calls[0].args)-1], test.wantReason) {
+			shown := clientLinesShown(runner.calls)
+			if len(shown) != 1 || shown[0].name != "tmux" ||
+				!containsAll(shown[0].args, []string{"display-message", "-c", "/dev/pts/8"}) ||
+				!strings.Contains(shown[0].args[len(shown[0].args)-1], test.wantReason) {
 				t.Fatalf("failure was not shown to the exact client: calls=%#v want reason %q", runner.calls, test.wantReason)
 			}
-			if test.name == "split" && !strings.Contains(runner.calls[0].args[len(runner.calls[0].args)-1], "exact action stderr detail") {
+			if test.name == "split" && !strings.Contains(shown[0].args[len(shown[0].args)-1], "exact action stderr detail") {
 				t.Fatalf("pane-menu dropped action stderr: calls=%#v", runner.calls)
 			}
 		})
@@ -3427,6 +3436,10 @@ type recordingTmuxRunner struct {
 	markers map[string]string
 }
 
+// recordedTmuxClientWidth is the width recordingTmuxRunner reports for a
+// client-width read no test answered.
+const recordedTmuxClientWidth = 400
+
 type recordedTmuxCall struct {
 	name string
 	args []string
@@ -3443,6 +3456,14 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 	}
 	if output, ok := r.outputs[key]; ok {
 		return []byte(output), nil
+	}
+	// A client-scoped width read a test did not answer gets a client wider
+	// than any line this package builds, so a fixture that is about what a
+	// line says is never also about where it is clipped. Tests that are about
+	// the clipping state the width they mean.
+	if name == "tmux" && len(args) >= 6 && args[0] == "display-message" && args[1] == "-p" &&
+		args[len(args)-1] == clientLineWidthFormat {
+		return []byte(strconv.Itoa(recordedTmuxClientWidth) + "\n"), nil
 	}
 	if name == "tmux" && len(args) >= 6 && args[0] == "-S" && args[2] == "set-option" &&
 		args[len(args)-2] == runtimeMutationSocketNameOption {

@@ -502,7 +502,7 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 		if detail := strings.TrimSpace(actionErr.String()); detail != "" && !strings.Contains(reason, detail) {
 			reason += ": " + detail
 		}
-		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+paneMenuActionLabel(action)+" failed: "+reason)
+		return c.displayPaneMenuMessage(strings.TrimSpace(*client), fitLineToClient(context.Background(), c.runner, strings.TrimSpace(*client), "projmux "+paneMenuActionLabel(action)+" failed: ", reason))
 	}
 	// The canonical route's projection is consumed here rather than copied to
 	// stdout. tmux would paint a foreground `run-shell` job's stdout as a
@@ -531,7 +531,7 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 	// Window, now has the new Pane active; a failed focus keeps the Pane and
 	// replaces the success line with the one reason line.
 	if focusErr := focusCreatedSplitPane(context.Background(), c.runner, strings.TrimSpace(*client), created); focusErr != nil {
-		c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), splitFocusFailureLine(focusErr, notice))
+		c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), splitFocusFailureLine(focusErr, notice, readClientLineWidth(context.Background(), c.runner, strings.TrimSpace(*client))))
 		return nil
 	}
 	message := paneMenuCreatedMessage
@@ -600,24 +600,26 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 	// Now show it. A human asked for this Window, so the client that pressed
 	// the key moves onto it. A failed move keeps the Window.
 	if moveErr := c.moveIntentClientToCreatedWindow(context.Background(), pressing, created); moveErr != nil {
-		line := windowCreatedUnshownMessage + strings.TrimSpace(moveErr.Error())
-		if notice != "" {
-			line = strings.Join(strings.Fields(line+"; "+notice), " ")
-		}
+		line := fitCauseFirstLineToClient(context.Background(), c.runner, pressing, windowCreatedUnshownMessage, moveErr.Error(), notice)
 		c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, line)
 		return nil
 	}
-	return c.finishWindowIntent(pressing, "Create Window", windowCreatedLine(notice), "", nil)
+	return c.finishWindowIntent(pressing, "Create Window", c.windowCreatedLine(pressing, notice), "", nil)
 }
 
 // windowCreatedLine is the success line of a committed Window create: the
-// bounded constant, carrying whatever that create could not carry over. With
-// nothing to disclose it is the constant itself, byte for byte.
-func windowCreatedLine(notice string) string {
+// bounded constant, carrying whatever that create could not carry over,
+// fitted to the client that reads it.
+//
+// tmux clips a `display-message` at the client's right edge with no elision of
+// its own, so a disclosure long enough to reach that edge simply stops
+// mid-sentence. With nothing to disclose the line is the constant itself, byte
+// for byte, and costs no width read: only the variable half is ever measured.
+func (c *tmuxCommand) windowCreatedLine(client, notice string) string {
 	if notice = strings.TrimSpace(notice); notice == "" {
 		return windowCreatedMessage
 	}
-	return windowCreatedMessage + ": " + notice
+	return fitLineToClient(context.Background(), c.runner, client, windowCreatedMessage+": ", notice)
 }
 
 // finishWindowNotCreated shows the one line of a Window create that committed
@@ -790,7 +792,7 @@ func (c *tmuxCommand) finishWindowIntent(client, label, success, detail string, 
 		if detail = strings.TrimSpace(detail); detail != "" && !strings.Contains(reason, detail) {
 			reason += ": " + detail
 		}
-		return c.displayPaneMenuMessage(strings.TrimSpace(client), "projmux "+label+" failed: "+reason)
+		return c.displayPaneMenuMessage(strings.TrimSpace(client), fitLineToClient(context.Background(), c.runner, strings.TrimSpace(client), "projmux "+label+" failed: ", reason))
 	}
 	// The intent committed. Its bounded success line is the last thing this route
 	// owes the client, and it is not what the route reports (committed_result.go).

@@ -397,8 +397,8 @@ func TestGeneratedRenameRouteRequiresTheIntactHereDocumentBody(t *testing.T) {
 				t.Fatalf("intent responses = %q, want %q", calls, test.wantCalls)
 			}
 			want := []recordedTmuxCall{{name: "tmux", args: []string{"display-message", "-c", "/dev/pts/2", "-d", "10000", tmuxLiteralMessage(strings.Join(strings.Fields(test.want), " "))}}}
-			if !reflect.DeepEqual(runner.calls, want) {
-				t.Fatalf("tmux calls = %#v, want %#v", runner.calls, want)
+			if shown := clientLinesShown(runner.calls); !reflect.DeepEqual(shown, want) {
+				t.Fatalf("tmux calls = %#v, want %#v", shown, want)
 			}
 		})
 	}

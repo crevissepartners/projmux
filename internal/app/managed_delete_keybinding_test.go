@@ -379,10 +379,11 @@ func TestTmuxWindowDeleteIntentRefusalIsShownWithoutRawFallback(t *testing.T) {
 	if err := cmd.Run([]string{"window-delete", "--client", "/dev/pts/8", "--anchor", "%21"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("a displayed canonical refusal escaped as an invisible exit code: %v", err)
 	}
-	if len(runner.calls) != 1 || !containsAll(runner.calls[0].args, []string{"display-message", "-c", "/dev/pts/8"}) {
+	shown := clientLinesShown(runner.calls)
+	if len(shown) != 1 || !containsAll(shown[0].args, []string{"display-message", "-c", "/dev/pts/8"}) {
 		t.Fatalf("refusal was not shown to the exact client as one message: %#v", runner.calls)
 	}
-	message := runner.calls[0].args[len(runner.calls[0].args)-1]
+	message := shown[0].args[len(shown[0].args)-1]
 	for _, want := range []string{"Delete Window failed", "delete window refused", "maps to no registry Window"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("refusal message = %q, want it to contain %q", message, want)
