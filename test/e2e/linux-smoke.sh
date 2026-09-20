@@ -361,7 +361,24 @@ recorder_offset="$(stat -c %s "$recorder_log")"
 recorder_rename_prompt
 tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_pane_label "initial value probe"
 printf '\r' >&9
-smoke_wait_for "captured initial pane label refusal" recorder_client_saw "$recorder_offset" 'usable name "existing-label"'
+# The refusal is fitted to this recorder client. It is 80 cells wide and the
+# outcome takes 28 of them, so this reason loses its middle to one elision and
+# the usable spelling is cut one character short:
+#   projmux Rename Pane failed: usable name "existing-labe... " "; nothing was changed
+# The truncation point is pinned rather than relaxed to a short prefix, the end
+# of the reason has to survive the fit, and the full spelling has to be absent.
+# The elision itself is not asserted: this client renders it as `_`, because
+# tmux substitutes a character the client cannot represent. Which value was
+# refused is what the scenario discriminates, so the label written after the
+# prompt opened is asserted absent too.
+smoke_wait_for "captured initial pane label refusal" recorder_client_saw "$recorder_offset" 'usable name "existing-labe'
+smoke_wait_for "captured initial pane label refusal keeps its end" recorder_client_saw "$recorder_offset" '"; nothing was changed'
+for absent in 'existing-label"' 'initial-value-probe'; do
+  if recorder_client_saw "$recorder_offset" "$absent"; then
+    echo "rename-pane-label refusal was not fitted to the client: it still shows $absent" >&2
+    exit 1
+  fi
+done
 if ! recorder_label_is "initial value probe"; then
   echo "rename-pane-label refusal wrote the label" >&2
   exit 1
