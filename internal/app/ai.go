@@ -1127,8 +1127,17 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 		// feedback a successful create owes them. The one exception is the
 		// split start notice: the requested Pane directory was not used, and
 		// that is shown once on the originating client.
-		if notice := strings.Join(strings.Fields(createDiagnostics.String()), " "); notice != "" {
-			c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitNotice, intent.targetClient, "projmux: "+notice)
+		//
+		// The notice is whatever the create seam wrote, and the resume seam
+		// writes one holder per Agent that opened the conversation, so it has no
+		// bound of its own. tmux clips a `display-message` at the client's right
+		// edge with no elision, which is where the reason token at its front and
+		// the sentence at its end would go. It is fitted instead, exactly as
+		// windowCreatedLine fits the same disclosure: nothing to say costs no
+		// width read, because the line is not shown at all.
+		if notice := clientLineWords(createDiagnostics.String()); notice != "" {
+			line := fitLineToClient(context.Background(), focusRunner, intent.targetClient, splitNoticeHead, notice)
+			c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitNotice, intent.targetClient, line)
 		}
 		return nil
 	}
@@ -1155,6 +1164,11 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 
 // canonicalCreateFailureHead leads every canonical create refusal.
 const canonicalCreateFailureHead = "projmux create failed: "
+
+// splitNoticeHead leads the one line a committed split shows: the start notice
+// the create seam wrote. The split itself says nothing, so this head is the
+// only thing marking the line as projmux's.
+const splitNoticeHead = "projmux: "
 
 func canonicalCreateFailureReason(err error, diagnostics string) string {
 	head, reason := canonicalCreateFailureParts(err, diagnostics)

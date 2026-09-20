@@ -498,7 +498,7 @@ func TestResumePickerAmbiguityReachesTheClientOnceThroughTheSplitFunnel(t *testi
 		},
 		// No client is attached, so the focus step has nothing to move and the
 		// notice is the one line the funnel shows.
-		readCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		readCommand: splitFunnelWideClientRead,
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			displayed = append(displayed, append([]string{name}, args...))
 			return nil

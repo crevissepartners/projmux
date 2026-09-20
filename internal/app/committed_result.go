@@ -134,7 +134,7 @@ func committedResultDisplaySites() []committedResultSite {
 		{
 			File: "ai.go", Snippet: "c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitNotice",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSiteSplitNotice,
-			Note: "the split committed and its start notice says the requested Pane directory was not used",
+			Note: "the split committed and its start notice says the requested Pane directory was not used; the notice has no bound of its own, so the line is fitted to the client that asked for the Pane",
 		},
 		{
 			File: "ai.go", Snippet: `c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", reason)`,
@@ -158,7 +158,7 @@ func committedResultDisplaySites() []committedResultSite {
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuKill",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSitePaneMenuKill,
-			Note: "the Pane is already gone; its summary is the only description left of it",
+			Note: "the Pane is already gone; its summary is the only description left of it, and this layer does not fix that summary's length, so the line is fitted to the clicking client",
 		},
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), splitFocusFailureLine(",
@@ -168,7 +168,7 @@ func committedResultDisplaySites() []committedResultSite {
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), message)",
 			Kind: committedResultCommitted, Site: diagnostics.SurfaceSitePaneMenuSplit,
-			Note: "the pane-menu split committed and focused; the bounded success line carries any start notice",
+			Note: "the pane-menu split committed and focused; the success line carries any start notice, fitted to the clicking client, and is the bare constant when there is nothing to disclose",
 		},
 		{
 			File: "tmux.go", Snippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, line)",

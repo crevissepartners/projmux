@@ -2457,12 +2457,19 @@ func TestTmuxPaneMenuRoutesSplitAndKillThroughCanonicalIntents(t *testing.T) {
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("pane-menu wrote to the foreground job: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	wantDisplay := recordedTmuxCall{name: "tmux", args: []string{
-		"display-message", "-c", "/dev/pts/7", "-d", "10000",
-		"projmux delete pane: deleting 1 pane and 0 descendant resources",
-	}}
-	if !reflect.DeepEqual(runner.calls, []recordedTmuxCall{wantDisplay}) {
-		t.Fatalf("tmux calls = %#v, want client-visible canonical delete result %#v", runner.calls, wantDisplay)
+	// The summary is the canonical route's own projection line and nothing
+	// here fixes its length, so the line is fitted to the clicking client: one
+	// width read, then the line itself. This summary is far inside a
+	// conventional terminal, so what the client is shown is unchanged.
+	wantCalls := []recordedTmuxCall{
+		{name: "tmux", args: []string{"display-message", "-p", "-c", "/dev/pts/7", "-F", clientLineWidthFormat}},
+		{name: "tmux", args: []string{
+			"display-message", "-c", "/dev/pts/7", "-d", "10000",
+			"projmux delete pane: deleting 1 pane and 0 descendant resources",
+		}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("tmux calls = %#v, want client-visible canonical delete result %#v", runner.calls, wantCalls)
 	}
 }
 

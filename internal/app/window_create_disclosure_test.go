@@ -63,7 +63,7 @@ func (f pickerLaunchValuesFixture) splitFunnelClientLines(t *testing.T, client s
 			}
 			return ""
 		},
-		readCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		readCommand: splitFunnelWideClientRead,
 		runCommand: func(_ context.Context, name string, args ...string) error {
 			displayed = append(displayed, append([]string{name}, args...))
 			return nil

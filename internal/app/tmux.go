@@ -442,6 +442,11 @@ func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
 // the public CLI, which is the surface a script reads.
 const (
 	paneMenuCreatedMessage = "Created Pane"
+	// paneMenuSummaryHead leads the summary a committed pane-menu delete keeps
+	// from the canonical route's projection, and paneMenuDeletedMessage is the
+	// whole line when that projection said nothing.
+	paneMenuSummaryHead    = "projmux "
+	paneMenuDeletedMessage = paneMenuSummaryHead + "delete pane completed"
 	windowCreatedMessage   = "Created Window"
 	windowRenamedMessage   = "Renamed Window: "
 	paneRenamedMessage     = "Renamed Pane: "
@@ -514,14 +519,20 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 	// A canonical delete has a durable, human-readable result. Preserve its
 	// first summary line on the client before the clicked pane disappears.
 	if action == "kill" {
-		summary := firstPaneMenuResultLine(result)
-		if summary == "" {
-			summary = "delete pane completed"
+		// The summary is the canonical delete's own projection line, so this
+		// layer does not fix its length: the cascade count and the kind
+		// spellings are the delete route's. Every summary measured so far fits
+		// a conventional terminal, and that is a fact about those deletes, not
+		// an invariant of this line -- so it is fitted like any other variable
+		// line, and the constant below still costs no width read.
+		message := paneMenuDeletedMessage
+		if summary := firstPaneMenuResultLine(result); summary != "" {
+			message = fitLineToClient(context.Background(), c.runner, strings.TrimSpace(*client), paneMenuSummaryHead, summary)
 		}
 		// The delete committed, so the seam takes it from here: the Pane is gone
 		// whether or not its summary reaches the clicking client
 		// (committed_result.go).
-		c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuKill, strings.TrimSpace(*client), "projmux "+summary)
+		c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuKill, strings.TrimSpace(*client), message)
 		return nil
 	}
 	// A committed split writes stderr only for its split start notice, which
@@ -534,9 +545,14 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 		c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), splitFocusFailureLine(focusErr, notice, readClientLineWidth(context.Background(), c.runner, strings.TrimSpace(*client))))
 		return nil
 	}
+	// The notice rides on the success line, and the resume seam writes one
+	// holder per Agent that opened the conversation, so it has no bound of its
+	// own. It is fitted to the clicking client the way windowCreatedLine fits
+	// the same disclosure; with nothing to disclose the line is the constant
+	// itself, byte for byte, and costs no width read.
 	message := paneMenuCreatedMessage
 	if notice != "" {
-		message += ": " + notice
+		message = fitLineToClient(context.Background(), c.runner, strings.TrimSpace(*client), paneMenuCreatedMessage+": ", notice)
 	}
 	c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), message)
 	return nil

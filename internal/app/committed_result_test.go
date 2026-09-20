@@ -526,3 +526,54 @@ func committedResultLineShowsALine(line string) bool {
 	}
 	return false
 }
+
+// TestEveryCommittedResultRowIsDrivenByAWidthSurface is C-2: the closed set of
+// result-line call sites and the width contract that bounds them stop being two
+// lists that happen to agree.
+//
+// committedResultDisplaySites() names every place this layer puts a line on a
+// client. clientBoundsSurfaces() drives lines through their real routes and
+// measures them against the client that pressed the key. Until this assertion
+// existed, nothing connected the two: a producer could be registered in the
+// ledger and measured by nothing, and client_failure_line_bounds_test.go could
+// be deleted outright while `go test ./internal/app/` stayed green.
+//
+// It is deliberately in this file rather than in that one. An assertion living
+// inside the file it protects disappears with it, which is the failure mode
+// this closes. Here, deleting that file takes clientBoundsSurfaces() with it
+// and this file no longer compiles -- the strongest form the enforcement has,
+// because the compiler runs before any test does.
+//
+// Transport rows are the two shared display helpers. They carry no line of
+// their own, so their callers are what a surface drives.
+func TestEveryCommittedResultRowIsDrivenByAWidthSurface(t *testing.T) {
+	t.Parallel()
+
+	rows := committedResultDisplaySites()
+	driven := make([]int, len(rows))
+	for _, surface := range clientBoundsSurfaces() {
+		claimed := 0
+		for i, row := range rows {
+			if row.File == surface.ledgerFile && row.Snippet == surface.ledgerSnippet {
+				driven[i]++
+				claimed++
+			}
+		}
+		if claimed != 1 {
+			t.Errorf("width surface %q claims %d ledger rows as %s %q, want exactly one: name the row it drives byte for byte",
+				surface.name, claimed, surface.ledgerFile, surface.ledgerSnippet)
+		}
+	}
+	for i, row := range rows {
+		switch {
+		case row.Kind == committedResultTransport:
+			if driven[i] != 0 {
+				t.Errorf("transport row %s %q is claimed by %d width surfaces; a transport carries no line of its own, its callers do",
+					row.File, row.Snippet, driven[i])
+			}
+		case driven[i] == 0:
+			t.Errorf("ledger row %s %q puts a line on a client that no width surface drives; add one to clientBoundsSurfaces()",
+				row.File, row.Snippet)
+		}
+	}
+}

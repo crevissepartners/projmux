@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strconv"
@@ -13,16 +14,23 @@ import (
 )
 
 // Contract C-1 for the whole of the interactive tmux adapter layer: every
-// failure line it puts on a client is fitted to that client, and the cause
-// survives the fit.
+// variable line it puts on a client is fitted to that client, and what the
+// line was for survives the fit.
 //
-// The producers below are the failure rows of committedResultDisplaySites() --
-// the pane menu's refusal and its kept split, the shared Window-intent refusal
-// and the committed Window that could not be shown, the split funnel's kept
-// split and the canonical create's refusal. Each is driven through its own
-// route, because a projection that fits proves nothing about a producer that
-// never calls it. The shared Window-intent row is driven once per intent it
-// carries: one line there is the failure of a create, two renames and a delete.
+// The file is named for the failure lines it was written for, and the tests
+// below keep those names, but the set is wider than that now: the producers
+// here are *every* non-transport row of committedResultDisplaySites(), success
+// and notice lines included. A committed split's start notice, a committed
+// delete's summary and a committed pane-menu split's notice are as unbounded as
+// any refusal -- the resume seam writes one holder per Agent -- and tmux clips
+// all of them the same way. Each is driven through its own route, because a
+// projection that fits proves nothing about a producer that never calls it. The
+// shared Window-intent row is driven once per intent it carries: one line there
+// is the failure of a create, two renames and a delete.
+//
+// committed_result_test.go asserts that this list covers that closed set, so a
+// row with no surface here fails there -- and deleting this file stops that
+// file compiling rather than quietly retiring the whole contract.
 //
 // Two line shapes are checked, not one. Most carry tmux's own stderr at the end
 // of their reason, so fitting keeps both of its ends. The kept-split and
@@ -125,10 +133,17 @@ func clientBoundsSplitCommand(t *testing.T, runner *recordingTmuxRunner, creator
 	return cmd
 }
 
-// clientBoundsSurface is one failure-line producer and what its line has to
+// clientBoundsSurface is one client-line producer and what its line has to
 // keep.
 type clientBoundsSurface struct {
 	name string
+	// ledgerFile and ledgerSnippet name the committedResultDisplaySites() row
+	// this surface drives, byte for byte as that row spells them. They are what
+	// committed_result_test.go maps the closed set onto: a row no surface names
+	// has no width test, and a surface that names no row is measuring something
+	// the ledger does not know about.
+	ledgerFile    string
+	ledgerSnippet string
 	// head leads the line and is never cut.
 	head string
 	// noticeBehindCause is true for the shapes whose cause leads a disclosure
@@ -147,7 +162,8 @@ type clientBoundsSurface struct {
 // paneMenuBoundsSurface is one pane-menu action refused before committing.
 func paneMenuBoundsSurface(action, label string) clientBoundsSurface {
 	return clientBoundsSurface{
-		name: "pane menu " + label + " refused",
+		name:       "pane menu " + label + " refused",
+		ledgerFile: "tmux.go", ledgerSnippet: "return c.displayPaneMenuMessage(strings.TrimSpace(*client), fitLineToClient(",
 		head: "projmux " + label + " failed: ",
 		drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
 			t.Helper()
@@ -166,7 +182,8 @@ func paneMenuBoundsSurface(action, label string) clientBoundsSurface {
 // finishWindowIntent's failure half.
 func windowIntentBoundsSurface(label string, argv []string, wire func(*tmuxCommand, string)) clientBoundsSurface {
 	return clientBoundsSurface{
-		name: "Window intent " + label + " refused",
+		name:       "Window intent " + label + " refused",
+		ledgerFile: "tmux.go", ledgerSnippet: "return c.displayPaneMenuMessage(strings.TrimSpace(client), fitLineToClient(",
 		head: "projmux " + label + " failed: ",
 		drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
 			t.Helper()
@@ -177,14 +194,16 @@ func windowIntentBoundsSurface(label string, argv []string, wire func(*tmuxComma
 	}
 }
 
-// clientBoundsSurfaces is the closed set of failure-line producers, in the
-// order committedResultDisplaySites() registers them.
+// clientBoundsSurfaces is the closed set of client-line producers, in the
+// order committedResultDisplaySites() registers them. Every non-transport row
+// of that ledger is here; committed_result_test.go is what says so.
 func clientBoundsSurfaces() []clientBoundsSurface {
 	return []clientBoundsSurface{
 		// The split funnel's kept split: the focus error leads, the split start
 		// notice rides behind it.
 		{
-			name: "split funnel kept a split it could not focus",
+			name:       "split funnel kept a split it could not focus",
+			ledgerFile: "ai.go", ledgerSnippet: "c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitFocus",
 			head: paneCreatedUnfocusedMessage, noticeBehindCause: true,
 			causeLead: "read the Window of Pane %42: ",
 			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
@@ -199,10 +218,30 @@ func clientBoundsSurfaces() []clientBoundsSurface {
 				}
 			},
 		},
+		// The split funnel's committed split: it says nothing at all unless the
+		// create seam wrote a start notice, and then that notice is the whole
+		// of the line behind the head.
+		{
+			name:       "split funnel showed a committed split's start notice",
+			ledgerFile: "ai.go", ledgerSnippet: "c.showCommittedSplitResult(diagnostics.SurfaceSiteSplitNotice",
+			head: splitNoticeHead,
+			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
+				t.Helper()
+				// An empty committed Pane id is create's inherited-target path:
+				// the focus step has nothing to move, so the notice is the only
+				// line this split shows.
+				cmd := clientBoundsSplitCommand(t, runner, &clientBoundsCreator{notice: reason})
+				if err := cmd.createShellPane(canonicalProducerDirectShell, "right"); err != nil {
+					t.Fatalf("createShellPane() error = %v", err)
+				}
+			},
+		},
 		// The canonical create's refusal, the one line this layer shows without
 		// passing it through tmuxLiteralMessage.
 		{
-			name: "canonical create refused", head: canonicalCreateFailureHead, unescaped: true,
+			name:       "canonical create refused",
+			ledgerFile: "ai.go", ledgerSnippet: `c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", reason)`,
+			head: canonicalCreateFailureHead, unescaped: true,
 			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
 				t.Helper()
 				cmd := clientBoundsSplitCommand(t, runner, &clientBoundsCreator{err: errors.New(reason)})
@@ -214,10 +253,32 @@ func clientBoundsSurfaces() []clientBoundsSurface {
 		paneMenuBoundsSurface("split-right", "Horizontal Split"),
 		paneMenuBoundsSurface("split-down", "Vertical Split"),
 		paneMenuBoundsSurface("kill", "Kill"),
+		// The pane menu's committed delete: the Pane is gone, and the canonical
+		// route's own summary of what went with it is all that is left. This
+		// layer does not own that summary's length -- the cascade count and the
+		// kind spellings are the delete route's -- so the fixture is what says
+		// the bound holds whatever that route hands over.
+		{
+			name:       "pane menu kill kept the committed delete's summary",
+			ledgerFile: "tmux.go", ledgerSnippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuKill",
+			head: paneMenuSummaryHead,
+			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
+				t.Helper()
+				cmd := &tmuxCommand{runner: runner,
+					paneMenuDelete: func(_ string, stdout, _ io.Writer) error {
+						// Only the first projection line reaches the client.
+						_, _ = io.WriteString(stdout, reason+"\npane/log uid=pan-log\n")
+						return nil
+					},
+				}
+				_ = cmd.Run([]string{"pane-menu", "--client", clientBoundsClient, "kill", "%19"}, io.Discard, io.Discard)
+			},
+		},
 		// The pane menu's kept split: the same two-cause shape as the split
 		// funnel, reached by a different producer through a different transport.
 		{
-			name: "pane menu kept a split it could not focus",
+			name:       "pane menu kept a split it could not focus",
+			ledgerFile: "tmux.go", ledgerSnippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), splitFocusFailureLine(",
 			head: paneCreatedUnfocusedMessage, noticeBehindCause: true,
 			causeLead: "read the Window of Pane %42: ",
 			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
@@ -233,10 +294,28 @@ func clientBoundsSurfaces() []clientBoundsSurface {
 				_ = cmd.Run([]string{"pane-menu", "--client", clientBoundsClient, "split-right", "%17"}, io.Discard, io.Discard)
 			},
 		},
+		// The pane menu's committed and focused split: the success constant,
+		// carrying whatever the create seam disclosed behind it.
+		{
+			name:       "pane menu split carried a committed split's start notice",
+			ledgerFile: "tmux.go", ledgerSnippet: "c.showCommittedIntentResult(diagnostics.SurfaceSitePaneMenuSplit, strings.TrimSpace(*client), message)",
+			head: paneMenuCreatedMessage + ": ",
+			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
+				t.Helper()
+				cmd := &tmuxCommand{runner: runner,
+					paneMenuCreate: func(_ agentPaneIntent, _, stderr io.Writer) (createdPaneRuntime, error) {
+						_, _ = io.WriteString(stderr, reason)
+						return createdPaneRuntime{}, nil
+					},
+				}
+				_ = cmd.Run([]string{"pane-menu", "--client", clientBoundsClient, "split-right", "%17"}, io.Discard, io.Discard)
+			},
+		},
 		// The committed Window the pressing client could not be moved onto: the
 		// move error leads, the create's own disclosure rides behind it.
 		{
-			name: "Window committed and the client could not be moved onto it",
+			name:       "Window committed and the client could not be moved onto it",
+			ledgerFile: "tmux.go", ledgerSnippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, line)",
 			head: windowCreatedUnshownMessage, noticeBehindCause: true,
 			causeLead: `focus: switch-client to "$1": `,
 			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
@@ -253,20 +332,28 @@ func clientBoundsSurfaces() []clientBoundsSurface {
 				_ = cmd.Run([]string{"window-create", "--client", clientBoundsClient, "--anchor", "%9"}, io.Discard, io.Discard)
 			},
 		},
-		// The one success line of this layer that is not a bounded constant: a
-		// committed Window create discloses what it could not carry over, and
-		// tmux clips that at the client's edge with no elision of its own.
+		// A Window create that committed nothing at all: the picker could not be
+		// asked, so the reason is whatever asking failed with.
+		//
+		// client_line_fit_test.go drives this same producer and asserts more
+		// than width -- the exact tmux argv as well. It stays there; this
+		// surface exists so the ledger mapping below is a structural check with
+		// no row exempted, and one duplicated width row is cheap.
 		{
-			name: "Window committed with a disclosure", head: windowCreatedMessage + ": ",
+			name:       "Window create committed nothing",
+			ledgerFile: "tmux.go", ledgerSnippet: "return c.displayPaneMenuMessage(client, notCreatedLine(reason, readClientLineWidth(",
+			head: windowNotCreatedHead,
 			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
 				t.Helper()
-				clients := recordedTmuxCallKey("tmux", "list-clients", "-F", "#{client_name}"+focusFieldSeparator+"#{client_session}")
-				runner.outputs[clients] = clientBoundsClient + focusFieldSeparator + "$1\n"
 				cmd := &tmuxCommand{runner: runner,
-					windowCreate: func(_ windowCreateIntent, _, stderr io.Writer) (createdWindowRuntime, error) {
-						_, _ = io.WriteString(stderr, reason)
-						return createdWindowRuntime{sessionID: "$1", windowID: "@5"}, nil
+					// The route checks its create seam is configured before it
+					// asks anything; asking is what fails here, so the seam is
+					// wired and never reached.
+					windowCreate: func(windowCreateIntent, io.Writer, io.Writer) (createdWindowRuntime, error) {
+						t.Fatal("the Window create ran after the picker could not be asked")
+						return createdWindowRuntime{}, nil
 					},
+					launchChoose: func(string, string) launchChoice { return launchChoice{problem: reason} },
 				}
 				_ = cmd.Run([]string{"window-create", "--client", clientBoundsClient, "--anchor", "%9"}, io.Discard, io.Discard)
 			},
@@ -289,6 +376,26 @@ func clientBoundsSurfaces() []clientBoundsSurface {
 			func(cmd *tmuxCommand, reason string) {
 				cmd.windowDelete = func(string, io.Writer, io.Writer) error { return errors.New(reason) }
 			}),
+		// The Window create that committed and was shown: a bounded constant,
+		// disclosing what it could not carry over. tmux clips that disclosure at
+		// the client's edge with no elision of its own.
+		{
+			name:       "Window committed with a disclosure",
+			ledgerFile: "tmux.go", ledgerSnippet: "c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, strings.TrimSpace(client), success)",
+			head: windowCreatedMessage + ": ",
+			drive: func(t *testing.T, runner *recordingTmuxRunner, reason string) {
+				t.Helper()
+				clients := recordedTmuxCallKey("tmux", "list-clients", "-F", "#{client_name}"+focusFieldSeparator+"#{client_session}")
+				runner.outputs[clients] = clientBoundsClient + focusFieldSeparator + "$1\n"
+				cmd := &tmuxCommand{runner: runner,
+					windowCreate: func(_ windowCreateIntent, _, stderr io.Writer) (createdWindowRuntime, error) {
+						_, _ = io.WriteString(stderr, reason)
+						return createdWindowRuntime{sessionID: "$1", windowID: "@5"}, nil
+					},
+				}
+				_ = cmd.Run([]string{"window-create", "--client", clientBoundsClient, "--anchor", "%9"}, io.Discard, io.Discard)
+			},
+		},
 	}
 }
 
@@ -420,6 +527,220 @@ func TestKeptSplitAndUnshownWindowLinesKeepTheCauseAheadOfTheDisclosure(t *testi
 		alone := fitClientCauseFirstLine(paneCreatedUnfocusedMessage, cause, "", width)
 		if !strings.HasPrefix(got, alone) {
 			t.Fatalf("at width %d the notice displaced the cause: %q does not start with %q", width, got, alone)
+		}
+	}
+}
+
+// clientBoundsConstantSurface is one committed line that says nothing at all
+// unless its route had something to disclose.
+type clientBoundsConstantSurface struct {
+	name string
+	// want is the whole line when there is nothing to disclose, or "" for the
+	// route that then shows no line at all.
+	want  string
+	drive func(t *testing.T, runner *recordingTmuxRunner, disclosure string)
+}
+
+// clientBoundsConstantSurfaces are the three committed lines this contract
+// added a width read to. The read is what they now cost, so the rule that
+// bounds it is here: a route with nothing to disclose pays nothing.
+func clientBoundsConstantSurfaces() []clientBoundsConstantSurface {
+	return []clientBoundsConstantSurface{
+		{
+			name: "split funnel with no start notice",
+			drive: func(t *testing.T, runner *recordingTmuxRunner, disclosure string) {
+				t.Helper()
+				cmd := clientBoundsSplitCommand(t, runner, &clientBoundsCreator{notice: disclosure})
+				if err := cmd.createShellPane(canonicalProducerDirectShell, "right"); err != nil {
+					t.Fatalf("createShellPane() error = %v", err)
+				}
+			},
+		},
+		{
+			name: "pane menu kill with no delete projection", want: paneMenuDeletedMessage,
+			drive: func(t *testing.T, runner *recordingTmuxRunner, disclosure string) {
+				t.Helper()
+				cmd := &tmuxCommand{runner: runner,
+					paneMenuDelete: func(_ string, stdout, _ io.Writer) error {
+						_, _ = io.WriteString(stdout, disclosure)
+						return nil
+					},
+				}
+				_ = cmd.Run([]string{"pane-menu", "--client", clientBoundsClient, "kill", "%19"}, io.Discard, io.Discard)
+			},
+		},
+		{
+			name: "pane menu split with no start notice", want: paneMenuCreatedMessage,
+			drive: func(t *testing.T, runner *recordingTmuxRunner, disclosure string) {
+				t.Helper()
+				cmd := &tmuxCommand{runner: runner,
+					paneMenuCreate: func(_ agentPaneIntent, _, stderr io.Writer) (createdPaneRuntime, error) {
+						_, _ = io.WriteString(stderr, disclosure)
+						return createdPaneRuntime{}, nil
+					},
+				}
+				_ = cmd.Run([]string{"pane-menu", "--client", clientBoundsClient, "split-right", "%17"}, io.Discard, io.Discard)
+			},
+		},
+	}
+}
+
+// TestACommittedLineWithNothingToDiscloseReadsNoClientWidth is the trade-off
+// half of C-1: fitting costs one `#{client_width}` read per line, and a
+// bounded constant must not pay it.
+//
+// It is also what keeps the e2e assertions on "Created Pane" true. Those four
+// surfaces are successful splits with nothing to say, so the line they wait for
+// is the constant byte for byte -- a fit that ran anyway could only make it
+// something else.
+func TestACommittedLineWithNothingToDiscloseReadsNoClientWidth(t *testing.T) {
+	t.Parallel()
+
+	for _, surface := range clientBoundsConstantSurfaces() {
+		for _, disclosure := range []string{"", "   ", "\n", " \n\t "} {
+			t.Run(surface.name+"/"+strconv.Quote(disclosure), func(t *testing.T) {
+				t.Parallel()
+
+				runner := clientBoundsRunner(80)
+				surface.drive(t, runner, disclosure)
+
+				reads, lines := clientBoundsCalls(runner.calls, clientBoundsClient)
+				if reads != 0 {
+					t.Fatalf("client width reads = %d, want none: there was nothing to fit", reads)
+				}
+				if surface.want == "" {
+					if len(lines) != 0 {
+						t.Fatalf("client lines = %q, want none", lines)
+					}
+					return
+				}
+				if len(lines) != 1 || clientBoundsRendered(lines[0], true) != surface.want {
+					t.Fatalf("client lines = %q, want exactly one %q", lines, surface.want)
+				}
+			})
+		}
+	}
+}
+
+// clientBoundsResumeHolder is one Agent in the disclosure's middle, spelled the
+// way inheritedResumeLaunchValues spells it.
+func clientBoundsResumeHolder(index int) string {
+	return fmt.Sprintf("agent/lead-ship-notice-bounds-%02d (uid:agent-%02dwuq3zue5gzkt2jgla)", index, index)
+}
+
+// clientBoundsResumeDisclosure is the resume seam's launch-value disclosure for
+// holders Agents, byte for byte the sentence inheritedResumeLaunchValues builds:
+// the provider and conversation with the reason token at its front, one holder
+// per Agent in its middle, and what they disagreed about at its end. It grows
+// with the holders, which is why the line that carries it has no bound of its
+// own.
+func clientBoundsResumeDisclosure(holders int) string {
+	names := make([]string, 0, holders)
+	for index := range holders {
+		names = append(names, clientBoundsResumeHolder(index))
+	}
+	return fmt.Sprintf("%s conversation %s opened without inherited launch values (%s): %s record different %s",
+		aiModeClaude, "b3cbaa25-bd88-4f8a-b236-26e760ce0e61", launchValuesReasonAmbiguous,
+		strings.Join(names, ", "), ambiguousLaunchValueSubject(aiModeClaude))
+}
+
+// clientBoundsNoticeSurfaces are the two producers that carry that disclosure.
+func clientBoundsNoticeSurfaces() []clientBoundsSurface {
+	var out []clientBoundsSurface
+	for _, surface := range clientBoundsSurfaces() {
+		if strings.Contains(surface.name, "start notice") {
+			out = append(out, surface)
+		}
+	}
+	return out
+}
+
+// TestTheResumeDisclosureLosesItsHoldersAndNotItsEnds is the half of C-1 that
+// says which part of a disclosure is worth keeping.
+//
+// The sentence is built front, middle, end: the reason token and the
+// conversation lead it, one holder per Agent fills its middle, and what those
+// holders disagreed about ends it. The middle is the part that grows without
+// bound and the part an operator can do least with, so middle elision is not a
+// coincidence here -- it drops exactly the holders.
+//
+// What survives is a budget, not a promise of particular words. A conventional
+// terminal has 35 cells for each end of a sentence whose front clause alone is
+// 96, so at 80 and 120 cells both ends are themselves clipped; the widths are
+// asserted at all three anyway, because the rule under test is that the line
+// never exceeds its client and never keeps the middle over the ends.
+func TestTheResumeDisclosureLosesItsHoldersAndNotItsEnds(t *testing.T) {
+	t.Parallel()
+
+	const holders = 12
+	notice := clientBoundsResumeDisclosure(holders)
+	subject := "record different " + ambiguousLaunchValueSubject(aiModeClaude)
+	if !strings.HasSuffix(notice, subject) || !strings.Contains(notice, launchValuesReasonAmbiguous) {
+		t.Fatalf("fixture %q is not the disclosure this contract is about", notice)
+	}
+	// The front clause is everything through the reason token, and each end of
+	// a fitted line gets half of what the head and the elision leave. So the
+	// width at which the token reads as itself is twice that clause, and it is
+	// derived rather than picked: a guessed width silently stops proving this
+	// the moment the sentence changes.
+	lead := notice[:strings.Index(notice, "("+launchValuesReasonAmbiguous+")")+len(launchValuesReasonAmbiguous)+2]
+	wide := 2*projmuxpicker.VisibleLen(lead) + projmuxpicker.VisibleLen(paneMenuCreatedMessage+": ") + 1
+	surfaces := clientBoundsNoticeSurfaces()
+	if len(surfaces) != 2 {
+		t.Fatalf("disclosure-carrying surfaces = %d, want the split funnel's and the pane menu's", len(surfaces))
+	}
+	for _, surface := range surfaces {
+		for _, width := range append(append([]int{}, clientBoundsWidths...), wide) {
+			t.Run(surface.name+"/"+strconv.Itoa(width), func(t *testing.T) {
+				t.Parallel()
+
+				runner := clientBoundsRunner(width)
+				surface.drive(t, runner, notice)
+
+				reads, lines := clientBoundsCalls(runner.calls, clientBoundsClient)
+				if len(lines) != 1 || reads != 1 {
+					t.Fatalf("client lines = %q and width reads = %d, want one of each", lines, reads)
+				}
+				line := clientBoundsRendered(lines[0], !surface.unescaped)
+				t.Logf("%d cells: %q", projmuxpicker.VisibleLen(line), line)
+				if cells := projmuxpicker.VisibleLen(line); cells > width {
+					t.Fatalf("line %q is %d cells on a %d-cell client", line, cells, width)
+				}
+				body, led := strings.CutPrefix(line, surface.head)
+				if !led {
+					t.Fatalf("line %q does not lead with the whole head %q", line, surface.head)
+				}
+				front, back, clipped := strings.Cut(body, clientLineElision)
+				if !clipped || strings.Contains(back, clientLineElision) {
+					t.Fatalf("line %q, want exactly one elision for a %d-cell disclosure", line, projmuxpicker.VisibleLen(notice))
+				}
+				if !strings.HasPrefix(notice, front) {
+					t.Fatalf("line %q does not keep the front of the disclosure", line)
+				}
+				if back == "" || !strings.HasSuffix(notice, back) {
+					t.Fatalf("line %q ends %q, which is not the end of the disclosure", line, back)
+				}
+				if width < wide {
+					// The middle is what went: on a client this narrow not one
+					// holder survives whole, however many of them the seam wrote.
+					for index := range holders {
+						if holder := clientBoundsResumeHolder(index); strings.Contains(line, holder) {
+							t.Fatalf("line %q kept holder %q while clipping the ends of the sentence", line, holder)
+						}
+					}
+					return
+				}
+				// Given the cells for it, both ends read as themselves. What a
+				// narrower client loses is the middle first and then the ends
+				// from the inside out; it never loses an end while keeping the
+				// middle, which is what the prefix and suffix checks above say
+				// at every width.
+				for _, want := range []string{launchValuesReasonAmbiguous, "record different"} {
+					if !strings.Contains(line, want) {
+						t.Fatalf("line %q lost %q on a %d-cell client", line, want, width)
+					}
+				}
+			})
 		}
 	}
 }

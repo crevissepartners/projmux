@@ -96,6 +96,19 @@ type fakeTmuxClient struct {
 // client_failure_line_bounds_test.go, not here.
 const fakeTmuxClientWidth = 400
 
+// splitFunnelWideClientRead is that same rule for the split funnel's own read
+// seam. The funnel reads the pressing client's width through readCommand, and a
+// fixture that models no clients at all answers nil -- which readClientLineWidth
+// has to take as a conventional 80-cell terminal. Modelling no client must not
+// turn into a narrow one, so these fixtures answer the width read the way
+// fakeTmux does and leave every other read as the empty answer they rely on.
+func splitFunnelWideClientRead(_ context.Context, _ string, args ...string) ([]byte, error) {
+	if clientLineWidthRead(args) {
+		return []byte(strconv.Itoa(fakeTmuxClientWidth) + "\n"), nil
+	}
+	return nil, nil
+}
+
 // attachClient models a client attached to session.
 func (f *fakeTmux) attachClient(name string, session *fakeTmuxSession) {
 	f.clients = append(f.clients, &fakeTmuxClient{name: name, session: session.id, width: fakeTmuxClientWidth})
