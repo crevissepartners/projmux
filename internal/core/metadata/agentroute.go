@@ -180,7 +180,7 @@ func ResolveAgentRoute(reg Registry, agentUID string) (AgentRouteRef, string) {
 			binding.RegistrationGeneration != binding.Registration.Authority.RegistrationGeneration ||
 			binding.RegistrationSessionID != binding.Registration.Authority.SessionID ||
 			binding.Process != binding.Registration.Authority.Process || !binding.Registration.Ready {
-			return AgentRouteRef{}, "Claude registration lease is unavailable"
+			return AgentRouteRef{}, ClaudeRegistrationUnavailableReason
 		}
 		ref.authority = binding.Registration.Authority
 	default:

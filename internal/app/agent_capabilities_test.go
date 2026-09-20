@@ -134,10 +134,21 @@ func TestAgentCapabilitiesClaudeMessageCellsReflectMissingRegistrationLease(t *t
 	if projection.Runtime == nil || projection.Runtime.Coordination == nil || projection.Runtime.Coordination.Eligible {
 		t.Fatalf("coordination eligibility = %#v", projection.Runtime)
 	}
+	// This harness's activation never bound a Claude process, which is the
+	// never-registered shape. Its recovery is the hook install plus a new
+	// SessionStart: the reply-only resume and the qualify command this
+	// assertion used to require were both measured against a Running Agent
+	// with no lease and both were refused, so naming them here was the
+	// product telling operators to run commands that cannot succeed.
 	recovery := projection.Runtime.Coordination.Recovery
-	if !strings.Contains(recovery, "exit normally without interrupting") || !strings.Contains(recovery, "exact current Codex source") ||
-		!strings.Contains(recovery, "agent resume uid:"+h.agentUID+" --dialogue-reply-only") || strings.Contains(recovery, "--evidence") || strings.Contains(recovery, "agent integrate") {
+	if !strings.Contains(recovery, "projmux agent integrate claude") || !strings.Contains(recovery, "SessionStart") ||
+		!strings.Contains(recovery, "uid:"+h.agentUID) || strings.Contains(recovery, "--dialogue-reply-only") ||
+		strings.Contains(recovery, "agent message qualify") || strings.Contains(recovery, "--evidence") {
 		t.Fatalf("coordination recovery is not actionable for the same Agent: %q", recovery)
+	}
+	if !strings.HasPrefix(projection.Runtime.Coordination.Reason, coremetadata.ClaudeRegistrationUnavailableReason+"; ") ||
+		!strings.Contains(projection.Runtime.Coordination.Reason, "never registered") {
+		t.Fatalf("coordination reason does not name the shape: %q", projection.Runtime.Coordination.Reason)
 	}
 	for _, entry := range projection.Capabilities {
 		if entry.Action != "message.send" && entry.Action != "message.status" {

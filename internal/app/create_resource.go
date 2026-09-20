@@ -775,6 +775,9 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	if err := c.confirmAgentActivations(activationTargets); err != nil {
 		return err
 	}
+	if err := c.warnUnregisteredClaudeActivations(activationTargets, stderr); err != nil {
+		return err
+	}
 	creator.reportSkip(stderr)
 	receipt := createResultsReceipt(coremetadata.KindWindow, results)
 	if openedAgent.Metadata.UID != "" {

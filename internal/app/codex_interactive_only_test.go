@@ -578,8 +578,23 @@ func TestClaudeAndAntigravityLifecycleAndHookContractAreUnchangedByTheNativeGate
 			agentsBefore := len(store.registry.Agents)
 
 			stdout, stderr, err := runRoute(t, create, "agent", "--provider", provider, "--project", "alpha", "--all-windows", "-o", "pane-id", "--", "fan-out prompt")
-			if err != nil || stderr != "" || len(strings.Fields(stdout)) != 2 {
+			if err != nil || len(strings.Fields(stdout)) != 2 {
 				t.Fatalf("%s fan-out stdout=%q stderr=%q err=%v", provider, stdout, stderr, err)
+			}
+			// These fake Claude activations never register, which is exactly
+			// what create now says out loud on stderr. The create still
+			// succeeds and still returns both pane ids, which is what this
+			// test is about; a Claude create that stayed silent about a
+			// missing registration is the defect, not the contract.
+			wantWarnings := 0
+			if provider == aiModeClaude {
+				wantWarnings = 2
+			}
+			if got := strings.Count(stderr, "no Claude registration lease"); got != wantWarnings {
+				t.Fatalf("%s fan-out stderr = %q, want %d registration warnings", provider, stderr, wantWarnings)
+			}
+			if strings.Count(stderr, "\n") != wantWarnings {
+				t.Fatalf("%s fan-out stderr carries more than the registration warnings: %q", provider, stderr)
 			}
 			if got := len(store.registry.Agents) - agentsBefore; got != 2 {
 				t.Fatalf("%s fan-out created %d Agents, want one per resolved Window", provider, got)

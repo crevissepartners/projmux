@@ -153,6 +153,15 @@ func projectClaudeCoordinationEligibilityAt(registry coremetadata.Registry, agen
 	if reason != "" {
 		projection.Reason = reason
 		projection.Recovery = recovery
+		// A missing registration is three different situations with three
+		// different next actions, and the generic recovery above is executable
+		// in none of them: `agent resume` refuses a Running Agent and
+		// `agent message qualify` needs the lease that is missing. Say which
+		// shape this is and what actually re-registers it.
+		if shape := classifyAgentClaudeRegistration(registry, agent); reason == coremetadata.ClaudeRegistrationUnavailableReason && shape.Diagnosis() != "" {
+			projection.Reason = reason + "; " + claudeRegistrationDiagnosis(agent, shape)
+			projection.Recovery = claudeRegistrationNextAction(shape, agent.Metadata.UID)
+		}
 		return projection
 	}
 	if registryPath == "" || !probeClaudeRegistrationLease(registryPath, route) {

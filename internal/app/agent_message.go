@@ -108,7 +108,10 @@ func claudeRouteRefusalPrefix(role string, err error) string {
 func (r liveAgentMessageRouteResolver) Resolve(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
 	route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
 	if reason != "" {
-		return coremetadata.AgentRouteRef{}, errors.New(reason)
+		// A missing Claude registration has three causes with three different
+		// next actions. The reason keeps its exact bytes and the shape is
+		// appended, so this stays readable to anything already matching on it.
+		return coremetadata.AgentRouteRef{}, errors.New(explainClaudeRouteReason(registry, agent, reason))
 	}
 	if route.Authority().Provider() == string(aiprovider.Claude) {
 		if outcome := r.registrationReady(route); outcome != claudeProbeReady {

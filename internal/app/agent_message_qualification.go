@@ -105,7 +105,11 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	}
 	route, reason := coremetadata.ResolveAgentRoute(registry, target.Metadata.UID)
 	if reason != "" || !probeClaudeRegistrationLease(c.messagePaths.registryPath, route) {
-		return fmt.Errorf("%s: exact Claude registration lease is unavailable", spelling)
+		refusal := fmt.Sprintf("%s: exact Claude registration lease is unavailable", spelling)
+		if explanation := claudeRegistrationExplanation(target, classifyAgentClaudeRegistration(registry, target)); explanation != "" {
+			refusal += "; " + explanation
+		}
+		return errors.New(refusal)
 	}
 	coordinationTarget, ok := claudeTargetForRoute(route)
 	if !ok {

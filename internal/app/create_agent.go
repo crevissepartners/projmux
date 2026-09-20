@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -520,6 +521,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	if err := c.confirmAgentActivations(activationTargets); err != nil {
 		return err
 	}
+	if err := c.warnUnregisteredClaudeActivations(activationTargets, stderr); err != nil {
+		return err
+	}
 	creator.reportSkip(stderr)
 	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindAgent, results,
 		createPlannedReceipt(coremetadata.KindAgent, results, selectedWindowUIDs))
@@ -622,6 +626,79 @@ func activationUnconfirmedDiagnostic(target agentActivationTarget, reason string
 		builder.WriteString(step)
 	}
 	return builder.String()
+}
+
+// Registration arrives on the provider's own SessionStart hook, which is not
+// ordered against the activation acknowledgement this create already waited
+// for. A short grace therefore separates "the hook is a moment behind" from
+// "the hook never ran", and only the second is worth a warning. The create
+// itself never fails on this: registration is the messaging lane, and a Pane
+// that works for its operator is not a failed create.
+// They are variables, not constants, so a test can run the whole loop without
+// spending its wall clock; nothing outside tests reassigns them.
+var (
+	claudeRegistrationCreateGrace        = 2 * time.Second
+	claudeRegistrationCreatePollInterval = 100 * time.Millisecond
+	claudeRegistrationCreateSleep        = time.Sleep
+)
+
+// warnUnregisteredClaudeActivations reports every acknowledged Claude
+// activation that finished with no registration lease.
+//
+// Before this existed the state was silent: the Agent came up, looked healthy
+// in every projection, and only refused when someone finally sent it a message
+// -- which for an unattended worker could be hours later, or never. Saying it
+// at create time is the cheapest place to say it.
+func (c *createCommand) warnUnregisteredClaudeActivations(targets []agentActivationTarget, stderr io.Writer) error {
+	if len(targets) == 0 || c.store == nil || c.store.load == nil {
+		return nil
+	}
+	remaining := targets
+	var warnings []string
+	for deadline := time.Now().Add(claudeRegistrationCreateGrace); ; {
+		registry, err := c.store.load()
+		if err != nil {
+			// The resources exist and the create succeeded; a Registry read
+			// that fails here is not a reason to fail it retroactively.
+			return nil
+		}
+		var pending []agentActivationTarget
+		warnings = warnings[:0]
+		for _, target := range remaining {
+			agent, ok := registry.Agent(target.agentUID)
+			if !ok || agent.Spec.Provider != string(aiprovider.Claude) ||
+				agent.Status.PaneRef != target.paneUID {
+				continue
+			}
+			shape := classifyAgentClaudeRegistration(registry, *agent)
+			if shape == coremetadata.ClaudeRegistrationReady {
+				continue
+			}
+			pending = append(pending, target)
+			warnings = append(warnings, unregisteredClaudeActivationWarning(target, *agent, shape))
+		}
+		remaining = pending
+		if len(remaining) == 0 || !time.Now().Before(deadline) {
+			break
+		}
+		claudeRegistrationCreateSleep(claudeRegistrationCreatePollInterval)
+	}
+	for _, warning := range warnings {
+		if _, err := fmt.Fprintln(stderr, warning); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unregisteredClaudeActivationWarning states what is live, what is missing,
+// what it costs, and what fixes it -- in that order, so an operator who reads
+// only the first clause still learns that nothing was rolled back.
+func unregisteredClaudeActivationWarning(target agentActivationTarget, agent coremetadata.Agent, shape coremetadata.ClaudeRegistrationShape) string {
+	return fmt.Sprintf(
+		"create agent: warning: agent/%s uid:%s is live in Pane %s but activation finished with no Claude registration lease, so `projmux agent message send` to it will be refused; %s",
+		target.agentName, target.agentUID, target.paneID,
+		shape.Diagnosis()+"; "+claudeRegistrationNextAction(shape, agent.Metadata.UID))
 }
 
 type agentLaunchOutcomeRow struct {
