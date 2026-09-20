@@ -158,7 +158,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err := requireClaudeLaunchOptions(spelling, provider, flags); err != nil {
 		return err
 	}
-	if err := requireClaudePersona(spelling, provider, flags); err != nil {
+	if err := requirePersonaLane(spelling, provider, flags); err != nil {
 		return err
 	}
 	if err := requireClaudeDialogueMode(provider, flags.dialogueReplyOnly, flags.payload); err != nil {
@@ -419,7 +419,10 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					return MapMetadataError(err)
 				}
 				nativeCtx, cancel := prepareNativeContext(ctx)
-				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workWorkspace, prompt, work.activation.Generation)
+				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, codexNativeCreateInput{
+					Workspace: workWorkspace, DeveloperInstructions: flags.personaLaunch.content,
+					Prompt: prompt, RequestKey: work.activation.Generation,
+				})
 				cancel()
 				switch {
 				case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
@@ -770,7 +773,14 @@ func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace
 		var title string
 		var argv []string
 		var err error
+		// Only Claude is given its persona on the command line. A Codex
+		// persona rides thread/start instead, so it must not reach the Claude
+		// options launcher -- which refuses every other provider outright --
+		// and the plain launch below is the one the native create replaces.
 		personaFile := flags.personaLaunch.snapshot.Path
+		if provider != aiModeClaude {
+			personaFile = ""
+		}
 		switch {
 		case flags.model != "" || flags.effort != "" || personaFile != "":
 			launcher, ok := c.agents.(claudeOptionsAgentLauncher)

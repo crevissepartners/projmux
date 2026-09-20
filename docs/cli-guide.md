@@ -1718,7 +1718,7 @@ plain Agent on purpose; it is Codex-only and equivalent on `create agent
 multi-operand payloads, `agent resume`, Claude, and Antigravity are unaffected.
 See [Codex Native-Required Create Migration](codex-native-required-migration.md).
 
-A Claude Agent can be given a persona: `create agent --provider claude
+An Agent can be given a persona: `create agent --provider claude
 --persona <name>` (and `create claude --persona <name>`) appends the stored
 persona to the new session's system prompt through Claude's
 `--append-system-prompt-file`; it never replaces the system prompt, so Claude
@@ -1735,11 +1735,33 @@ snapshot again, found from the recorded digest and never from the persona file,
 so editing or deleting the persona file later never changes an existing Agent.
 If the snapshot is gone, the resume still proceeds without the persona and
 discloses one `persona-unavailable` line (on stderr for `agent resume`, among
-the replay notices for Continue). `--persona` is Claude-only: another
-provider, or `--dialogue-reply-only`, refuses with `persona-provider-unsupported`,
-and a missing, oversized, or badly named persona refuses with
-`persona-not-found`, `persona-too-large`, or `persona-name-invalid`, all with
-zero Registry, tmux, and snapshot writes.
+the replay notices for Continue). A missing, oversized, or badly named persona
+refuses with `persona-not-found`, `persona-too-large`, or
+`persona-name-invalid`, all with zero Registry, tmux, and snapshot writes.
+
+A Codex Agent can be given a persona too, on one lane: a create that carries a
+prompt (`create agent --provider codex --persona <name> -- <prompt>`, and
+`create codex --persona <name> -- <prompt>`). That is the lane that opens a
+thread of its own, and starting the thread is the only moment Codex accepts a
+persona: the create sends the snapshot content as the thread's
+`developerInstructions`, and the shared app server records it once as the
+thread's `developer` message. The content goes over that connection and
+nowhere else -- never onto a command line, where `ps` would publish it -- and
+the create records the same `projmux.io/persona` and `projmux.io/persona-digest`
+annotations Claude records. From then on the thread carries the persona
+itself: `agent resume`, Continue/topology replay, and a resume picked from the
+Codex catalog re-send nothing and disclose nothing, because nothing was lost.
+A conversation opened from the resume picker inherits the two persona keys
+from the Agents that already record it, so the new Agent reports the persona
+its thread is running; it inherits no other launch value. A Codex Agent's
+persona cannot be changed afterwards: the instructions are fixed when the
+thread starts, `agent persona attach|detach` stays Claude-only, and starting
+over means a new Agent.
+
+Every other `--persona` create refuses with `persona-provider-unsupported` and
+zero Registry, tmux, and snapshot writes: a Codex create with no prompt or with
+`--interactive-only` (its plain lane would have to spell the persona into
+argv), `--dialogue-reply-only`, and any other provider.
 
 An existing Claude Agent can take on a persona later, or drop it:
 `projmux agent persona attach <agent-ref> <persona>` and
@@ -1805,7 +1827,10 @@ on `agent resume`. Inheritance happens only when every such Agent records the
 same values; if they disagree, nothing is inherited and one
 `launch-values-ambiguous` notice names them. The creator, topic, and
 labels of those Agents are never inherited, and they keep their conversation
-and annotations. Codex and Antigravity picker selections inherit nothing.
+and annotations. A Codex picker selection inherits the two persona keys under
+the same agreement rule and nothing else -- the snapshot mode and the effort
+are Claude launch options -- and it changes no argv, because the thread
+already carries the persona. Antigravity picker selections inherit nothing.
 
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`

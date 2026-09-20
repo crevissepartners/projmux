@@ -275,26 +275,44 @@ func TestResumeUsesTheStartTimePersonaSnapshotNotTheEditedFile(t *testing.T) {
 	assertOriginal(t, "topology replay", work.argv)
 }
 
-// TestResumeNeverPassesAPersonaToAnotherProvider pins that the persona stays
-// Claude only on resume: a Codex Agent that somehow carries the annotations
-// gets its unchanged argv and the persona-unavailable disclosure.
+// TestResumeNeverPassesAPersonaToAnotherProvider is the resume notice table
+// for a non-Claude Agent carrying the persona annotations.
+//
+// No provider but Claude takes a persona on the resume command line, so the
+// argv is the unchanged one in every row. What differs is the disclosure.
+// Codex says nothing: its persona is the developer instructions its thread was
+// started with, upstream replays them on every resume, and nothing was lost --
+// a persona-unavailable line there would report a working persona as broken.
+// Antigravity keeps the line, because for it the persona really is dropped.
 func TestResumeNeverPassesAPersonaToAnotherProvider(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
 	withPersona, _ := createPersonaForResume(t, planner, "go-reviewer", []byte(personaResumeContent))
 	workspace := coremetadata.AgentWorkspace{CWD: "/work/owner"}
 
-	plain, err := planner.PlanAgentResume(aiModeCodex, workspace, resumeFixtureConversation, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	launch, err := planner.PlanAgentResume(aiModeCodex, workspace, resumeFixtureConversation, withPersona)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(launch.argv, plain.argv) {
-		t.Fatalf("codex resume with persona annotations argv = %q, want the unchanged %q", launch.argv, plain.argv)
-	}
-	if notice := launch.personaNotice("reviewer"); !strings.Contains(notice, persona.ReasonUnavailable) {
-		t.Fatalf("codex resume with persona annotations notice = %q, want %s", notice, persona.ReasonUnavailable)
+	for _, test := range []struct {
+		provider, conversation string
+		wantNotice             bool
+	}{
+		{provider: aiModeCodex, conversation: resumeFixtureConversation, wantNotice: false},
+		{provider: aiModeAntigravity, conversation: personaResumeConversation, wantNotice: true},
+	} {
+		plain, err := planner.PlanAgentResume(test.provider, workspace, test.conversation, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		launch, err := planner.PlanAgentResume(test.provider, workspace, test.conversation, withPersona)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(launch.argv, plain.argv) {
+			t.Fatalf("%s resume with persona annotations argv = %q, want the unchanged %q",
+				test.provider, launch.argv, plain.argv)
+		}
+		assertNoPersonaContent(t, launch.argv, personaResumeContent)
+		notice := launch.personaNotice("reviewer")
+		if got := strings.Contains(notice, persona.ReasonUnavailable); got != test.wantNotice {
+			t.Fatalf("%s resume with persona annotations notice = %q, want %s present = %v",
+				test.provider, notice, persona.ReasonUnavailable, test.wantNotice)
+		}
 	}
 }

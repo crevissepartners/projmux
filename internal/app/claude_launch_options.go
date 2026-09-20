@@ -81,10 +81,18 @@ func claudeResumeSnapshotArgs(mode string, annotations map[string]string) []stri
 }
 
 // personaLaunch is the persona one Agent create starts with: the stored name,
-// and the snapshot the provider is given. The zero value means no persona.
+// the snapshot the provider is given, and that snapshot's content. The zero
+// value means no persona.
+//
+// Both forms of the same bytes are kept because the two providers take the
+// persona differently and neither should have to read the snapshot back:
+// Claude is given the snapshot path on its command line, and Codex is given
+// the content itself as the thread's developer instructions, because putting
+// it in argv would publish it to every reader of `ps`.
 type personaLaunch struct {
 	name     string
 	snapshot persona.Snapshot
+	content  string
 }
 
 // withAnnotations adds the two keys that link the new Agent to its persona to
@@ -147,23 +155,39 @@ func claudeResumeEffort(mode string, annotations map[string]string) (effort, inv
 	return value, "", false
 }
 
-// requireClaudePersona refuses --persona where it would be ignored: another
-// provider, or the reply-only activation, which has its own fixed launch. Like
-// requireClaudeLaunchOptions it is an argv-only refusal, so it lands before the
-// persona file is read and before any snapshot is written.
-func requireClaudePersona(spelling, provider string, flags resourceCreateFlags) error {
+// requirePersonaLane refuses --persona on every lane that cannot carry one.
+//
+// Claude takes a persona on every create: it is a file path on the command
+// line. Codex takes one only on the native fresh lane, where the content is
+// sent to the shared endpoint as the thread's developer instructions; its
+// plain lane would have to spell the content into argv, where `ps` publishes
+// it, so it refuses instead. Every other provider, and the reply-only
+// activation with its own fixed launch, refuse as before.
+//
+// Like requireClaudeLaunchOptions it is an argv-only refusal, so it lands
+// before the persona file is read and before any snapshot is written.
+func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) error {
 	if flags.persona == "" {
 		return nil
-	}
-	if provider != aiModeClaude {
-		return usageError(fmt.Sprintf("%s --persona applies only to --provider %s (%s); nothing was created",
-			spelling, aiModeClaude, persona.ReasonProviderUnsupported))
 	}
 	if flags.dialogueReplyOnly {
 		return usageError(fmt.Sprintf("%s --persona cannot be combined with --%s (%s); nothing was created",
 			spelling, claudeDialogueReplyOnlyFlag, persona.ReasonProviderUnsupported))
 	}
-	return nil
+	switch {
+	case provider == aiModeClaude:
+		return nil
+	case provider == aiModeCodex && nativeCodexFreshCreateRequired(provider, flags):
+		// The native fresh lane is the only Codex create that opens a thread of
+		// its own, and thread/start is the only moment a persona can be given.
+		return nil
+	case provider == aiModeCodex:
+		return usageError(fmt.Sprintf("%s --persona applies to --provider %s only on a create with a prompt (%s); nothing was created",
+			spelling, aiModeCodex, persona.ReasonProviderUnsupported))
+	default:
+		return usageError(fmt.Sprintf("%s --persona applies only to --provider %s and --provider %s (%s); nothing was created",
+			spelling, aiModeClaude, aiModeCodex, persona.ReasonProviderUnsupported))
+	}
 }
 
 // preparePersonaLaunch resolves the named persona and writes its snapshot.
@@ -190,5 +214,5 @@ func (c *createCommand) preparePersonaLaunch(spelling, name string) (personaLaun
 	if err != nil {
 		return personaLaunch{}, fmt.Errorf("%s --persona: %w; nothing was created", spelling, err)
 	}
-	return personaLaunch{name: loaded.Name, snapshot: snapshot}, nil
+	return personaLaunch{name: loaded.Name, snapshot: snapshot, content: string(loaded.Content)}, nil
 }

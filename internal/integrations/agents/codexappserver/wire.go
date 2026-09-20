@@ -93,6 +93,13 @@ type wireTurn struct {
 type threadStartParams struct {
 	CWD                   string   `json:"cwd,omitempty"`
 	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`
+	// DeveloperInstructions is the persona the thread is started with. Upstream
+	// records it once as the thread's `developer` message, so it is a
+	// start-only field: thread/resume neither records nor applies one, which is
+	// why threadResumeParams has no counterpart. It carries omitempty because a
+	// thread started without a persona must send the exact request it sent
+	// before this field existed -- the key itself absent, not an empty string.
+	DeveloperInstructions string `json:"developerInstructions,omitempty"`
 }
 
 type threadResumeParams struct {

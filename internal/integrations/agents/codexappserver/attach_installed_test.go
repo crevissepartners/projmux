@@ -85,7 +85,7 @@ func TestInstalledIsolatedPreTurnBootstrapSmoke(t *testing.T) {
 	t.Logf("attach authority=%s lifecycle=%s ownership=%s version=%s",
 		authority.Attach, authority.Lifecycle, health.ManagerOwnership, health.VersionRelation)
 
-	binding, err := creator.StartThread(ctx, fixture.Workspace, nil)
+	binding, err := creator.StartThread(ctx, fixture.Workspace, nil, "")
 	if err != nil {
 		_ = creator.Close()
 		t.Fatalf("pre-turn thread/start: %v", err)

@@ -81,7 +81,7 @@ func TestExperimentalInitializeGatesAdditionalRootsOnTheWire(t *testing.T) {
 		if !client.ExperimentalAPI() {
 			t.Fatal("experimental capability was not recorded on the connection")
 		}
-		if _, err := client.StartThread(ctx, "/work/project", []string{"/work/extra", " ", "/work/second"}); err != nil {
+		if _, err := client.StartThread(ctx, "/work/project", []string{"/work/extra", " ", "/work/second"}, ""); err != nil {
 			t.Fatal(err)
 		}
 		frames := collect()
@@ -113,7 +113,7 @@ func TestExperimentalInitializeGatesAdditionalRootsOnTheWire(t *testing.T) {
 		}
 		for name, call := range map[string]func() error{
 			methodThreadStart: func() error {
-				_, err := client.StartThread(ctx, "/work/project", []string{"/work/extra"})
+				_, err := client.StartThread(ctx, "/work/project", []string{"/work/extra"}, "")
 				return err
 			},
 			methodThreadResume: func() error {
@@ -127,7 +127,7 @@ func TestExperimentalInitializeGatesAdditionalRootsOnTheWire(t *testing.T) {
 			}
 		}
 		// An empty root list is always allowed and still reaches the wire.
-		if _, err := client.StartThread(ctx, "/work/project", []string{" "}); err != nil {
+		if _, err := client.StartThread(ctx, "/work/project", []string{" "}, ""); err != nil {
 			t.Fatal(err)
 		}
 		frames := collect()

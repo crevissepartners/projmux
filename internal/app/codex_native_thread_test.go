@@ -42,10 +42,11 @@ type fakeNativeThreadController struct {
 }
 
 type fakeNativeCreate struct {
-	route      codexNativeEndpointRoute
-	workspace  coremetadata.AgentWorkspace
-	prompt     string
-	generation string
+	route        codexNativeEndpointRoute
+	workspace    coremetadata.AgentWorkspace
+	instructions string
+	prompt       string
+	generation   string
 }
 
 type fakeNativeResume struct {
@@ -59,7 +60,7 @@ type orderedNativeThreadClient struct {
 	closeErr error
 }
 
-func (c *orderedNativeThreadClient) StartThread(context.Context, string, []string) (codexappserver.ThreadBinding, error) {
+func (c *orderedNativeThreadClient) StartThread(context.Context, string, []string, string) (codexappserver.ThreadBinding, error) {
 	*c.events = append(*c.events, "thread/start")
 	return codexappserver.ThreadBinding{ThreadID: "thread-production-order"}, nil
 }
@@ -118,13 +119,16 @@ func (f *fakeNativeThreadController) Resolve(_ context.Context, endpoint coremet
 	return resolved, f.resolveErr
 }
 
-func (f *fakeNativeThreadController) Create(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, generation string) (codexappserver.ThreadBinding, error) {
-	f.creates = append(f.creates, fakeNativeCreate{route: route, workspace: workspace, prompt: prompt, generation: generation})
+func (f *fakeNativeThreadController) Create(_ context.Context, route codexNativeEndpointRoute, input codexNativeCreateInput) (codexappserver.ThreadBinding, error) {
+	f.creates = append(f.creates, fakeNativeCreate{
+		route: route, workspace: input.Workspace, instructions: input.DeveloperInstructions,
+		prompt: input.Prompt, generation: input.RequestKey,
+	})
 	binding := f.createBinding
 	if binding.ThreadID == "" && f.createErr == nil {
 		f.nextThread++
 		binding.ThreadID = fmt.Sprintf("thread-native-test-%d", f.nextThread)
-		if prompt != "" {
+		if input.Prompt != "" {
 			binding.TurnID = fmt.Sprintf("turn-native-test-%d", f.nextThread)
 		}
 	}
@@ -166,7 +170,7 @@ func TestPayloadFreeNativeCreateClosesCreatorBeforeIndependentDurableResumeBarri
 		},
 	}
 	binding, err := controller.Create(context.Background(), nativeTestRoute("generation-production-order", coremetadata.CodexGenerationCurrent),
-		coremetadata.AgentWorkspace{CWD: "/work/project"}, "", "generation-request")
+		codexNativeCreateInput{Workspace: coremetadata.AgentWorkspace{CWD: "/work/project"}, RequestKey: "generation-request"})
 	if err != nil || binding.ThreadID != "thread-production-order" || binding.TurnID != "" {
 		t.Fatalf("binding=%+v err=%v", binding, err)
 	}
@@ -206,7 +210,7 @@ func TestPayloadFreeDurableResumeBarrierKeepsDefaultAndPrivateRoutesExact(t *tes
 				},
 			}
 			binding, err := controller.Create(context.Background(), test.route,
-				coremetadata.AgentWorkspace{CWD: "/work/project"}, "", "generation-request")
+				codexNativeCreateInput{Workspace: coremetadata.AgentWorkspace{CWD: "/work/project"}, RequestKey: "generation-request"})
 			if err != nil || binding.ThreadID != "thread-production-order" {
 				t.Fatalf("binding=%+v err=%v", binding, err)
 			}

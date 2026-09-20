@@ -122,8 +122,9 @@ func claudeLaunchBundle(personaAnnotations map[string]string, effort string) map
 // TestResumePickerLaunchValueLookupTable is the lookup table of what a picked
 // conversation inherits: holders 0/1/2, bundles equal or different (an absent
 // key differs from a present one), a Codex or other-conversation Agent never
-// counting for Claude, holders anywhere in the Registry counting, and a
-// non-Claude pick inheriting nothing.
+// counting for Claude, holders anywhere in the Registry counting, a Codex pick
+// inheriting its two persona keys and nothing else, and any other provider
+// inheriting nothing.
 func TestResumePickerLaunchValueLookupTable(t *testing.T) {
 	t.Parallel()
 	const id = "0b6f3f0e-6c2d-4c1e-9a55-7d1f2c3b4a59"
@@ -142,6 +143,12 @@ func TestResumePickerLaunchValueLookupTable(t *testing.T) {
 	emptyEffort[coremetadata.AnnotationAgentEffort] = ""
 	highEffort := maps.Clone(bundle)
 	highEffort[coremetadata.AnnotationAgentEffort] = "high"
+	otherPersona := maps.Clone(bundle)
+	otherPersona[coremetadata.AnnotationAgentPersona] = "go-writer"
+	codexPersonaBundle := map[string]string{
+		coremetadata.AnnotationAgentPersona:       "go-reviewer",
+		coremetadata.AnnotationAgentPersonaDigest: "sha256:abc",
+	}
 
 	type holder struct {
 		uid, window, provider, conversation string
@@ -177,7 +184,13 @@ func TestResumePickerLaunchValueLookupTable(t *testing.T) {
 		{name: "another conversation does not count", provider: aiModeClaude, holders: []holder{
 			{"agt-a", "win-a", aiModeClaude, id, bundle}, {"agt-b", "win-a", aiModeClaude, "another-conversation", highEffort}}, want: bundle},
 		{name: "only a Codex holder", provider: aiModeClaude, holders: []holder{{"agt-codex", "win-a", aiModeCodex, id, bundle}}},
-		{name: "a Codex pick inherits nothing", provider: aiModeCodex, holders: []holder{{"agt-codex", "win-a", aiModeCodex, id, bundle}}},
+		{name: "a Codex pick inherits only the persona keys", provider: aiModeCodex,
+			holders: []holder{{"agt-codex", "win-a", aiModeCodex, id, bundle}}, want: codexPersonaBundle},
+		{name: "a Codex pick ignores a snapshot-mode and effort disagreement", provider: aiModeCodex, holders: []holder{
+			{"agt-codex", "win-a", aiModeCodex, id, bundle}, {"agt-codex-b", "win-b", aiModeCodex, id, highEffort}},
+			want: codexPersonaBundle},
+		{name: "a Codex pick is ambiguous when the personas differ", provider: aiModeCodex, holders: []holder{
+			{"agt-a", "win-a", aiModeCodex, id, bundle}, {"agt-b", "win-b", aiModeCodex, id, otherPersona}}, ambiguous: true},
 		{name: "an Antigravity pick inherits nothing", provider: aiModeAntigravity, holders: []holder{{"agt-agy", "win-a", aiModeAntigravity, id, bundle}}},
 	} {
 		registry := coremetadata.NewRegistry()
@@ -195,7 +208,7 @@ func TestResumePickerLaunchValueLookupTable(t *testing.T) {
 		if gotAmbiguous := strings.Contains(notice, "("+launchValuesReasonAmbiguous+")"); gotAmbiguous != test.ambiguous {
 			t.Errorf("%s: notice %q, want ambiguous=%t", test.name, notice, test.ambiguous)
 		}
-		if test.ambiguous && (!strings.HasPrefix(notice, "claude conversation "+id+" ") ||
+		if test.ambiguous && (!strings.HasPrefix(notice, test.provider+" conversation "+id+" ") ||
 			!strings.Contains(notice, "agent/agt-a (uid:agt-a), agent/agt-b (uid:agt-b)")) {
 			t.Errorf("%s: notice %q does not open with the conversation (and no projmux: prefix) and name both holders in uid order", test.name, notice)
 		}
@@ -406,19 +419,32 @@ func TestResumePickerInheritedValuesSurviveTheNewAgentsOwnResume(t *testing.T) {
 	}
 }
 
-// TestResumePickerOfCodexOrAntigravityInheritsNothing pins that inheritance
-// is Claude-only: a same-provider holder of the picked conversation carrying
-// every launch-value key changes neither the argv nor the stored Agent.
-func TestResumePickerOfCodexOrAntigravityInheritsNothing(t *testing.T) {
+// TestResumePickerOfCodexOrAntigravityInheritsNothingButTheCodexPersona pins
+// what each non-Claude provider carries over from a same-provider holder of
+// the picked conversation that records every launch-value key.
+//
+// The argv never changes: no provider but Claude takes a launch value on its
+// resume command line. Antigravity records nothing either. Codex records the
+// two persona keys and only those -- the thread it is rejoining was started
+// with those developer instructions, so the new Agent should give the same
+// answer to "which persona is this conversation running" as the Agents that
+// already hold it. The snapshot mode and the effort are Claude launch options
+// with no Codex meaning and stay behind.
+func TestResumePickerOfCodexOrAntigravityInheritsNothingButTheCodexPersona(t *testing.T) {
 	t.Parallel()
 	bundle := claudeLaunchBundle(map[string]string{
 		coremetadata.AnnotationAgentPersona: "go-reviewer", coremetadata.AnnotationAgentPersonaDigest: "sha256:0",
 	}, "low")
 	for _, test := range []struct {
 		provider, conversation, source string
+		wantAnnotations                map[string]string
 	}{
-		{aiModeCodex, resumeFixtureConversation, aisessions.SourceCodexRollout},
-		{aiModeAntigravity, personaResumeConversation, ""},
+		{provider: aiModeCodex, conversation: resumeFixtureConversation, source: aisessions.SourceCodexRollout,
+			wantAnnotations: map[string]string{
+				coremetadata.AnnotationAgentPersona:       "go-reviewer",
+				coremetadata.AnnotationAgentPersonaDigest: "sha256:0",
+			}},
+		{provider: aiModeAntigravity, conversation: personaResumeConversation},
 	} {
 		control := newPickerLaunchValuesFixture(t, nil)
 		controlAgent, controlArgv, _ := control.pick(t, false, test.provider, test.conversation, test.source)
@@ -429,8 +455,13 @@ func TestResumePickerOfCodexOrAntigravityInheritsNothing(t *testing.T) {
 		if !slices.Equal(argv, controlArgv) {
 			t.Fatalf("%s: argv = %q, want the control %q", test.provider, argv, controlArgv)
 		}
-		if got, want := agentRecord(t, agent), agentRecord(t, controlAgent); got != want || agent.Metadata.Annotations != nil {
-			t.Fatalf("%s: stored Agent:\n got %s\nwant %s", test.provider, got, want)
+		if !maps.Equal(agent.Metadata.Annotations, test.wantAnnotations) {
+			t.Fatalf("%s: stored annotations = %v, want %v", test.provider, agent.Metadata.Annotations, test.wantAnnotations)
+		}
+		if test.wantAnnotations == nil {
+			if got, want := agentRecord(t, agent), agentRecord(t, controlAgent); got != want {
+				t.Fatalf("%s: stored Agent:\n got %s\nwant %s", test.provider, got, want)
+			}
 		}
 		if stderr != "" {
 			t.Fatalf("%s: stderr = %q, want nothing", test.provider, stderr)

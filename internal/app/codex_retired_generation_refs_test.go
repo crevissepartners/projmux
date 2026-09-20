@@ -639,7 +639,7 @@ func TestCodexJournalNeverDecidesNativeRoute(t *testing.T) {
 		}
 	}
 	workspace := coremetadata.AgentWorkspace{CWD: home}
-	binding, err := controller.Create(context.Background(), current, workspace, "", "generation-1")
+	binding, err := controller.Create(context.Background(), current, codexNativeCreateInput{Workspace: workspace, RequestKey: "generation-1"})
 	if err != nil || binding.ThreadID != "thread-production-order" {
 		t.Fatalf("create with durable guard = %+v, %v", binding, err)
 	}

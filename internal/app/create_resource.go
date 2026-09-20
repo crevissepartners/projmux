@@ -100,10 +100,11 @@ type resourceCreateFlags struct {
 	// as an Agent annotation so every resume can pass it again.
 	model  string
 	effort string
-	// persona names a stored persona the new Claude Agent starts with, and
-	// personaLaunch is what preparePersonaLaunch resolved it to. Only the
-	// snapshot path reaches the provider; the name and digest are recorded
-	// as Agent annotations.
+	// persona names a stored persona the new Agent starts with, and
+	// personaLaunch is what preparePersonaLaunch resolved it to. Claude is
+	// given the snapshot path and Codex the snapshot content, as the thread's
+	// developer instructions; either way the name and digest are recorded as
+	// Agent annotations and the content never reaches argv.
 	persona       string
 	personaLaunch personaLaunch
 	// resumeConversation is set by the Projmux split UI's resume selection and by
@@ -413,7 +414,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			"codex only: launch a plain interactive CLI Agent with no native thread binding")
 		fs.StringVar(&out.model, "model", "", "claude only: model alias or full name the new session runs")
 		fs.StringVar(&out.effort, "effort", "", "claude only: effort level: "+strings.Join(claudeEffortLevels, "|"))
-		fs.StringVar(&out.persona, "persona", "", "claude only: stored persona appended to the new session's system prompt; manage personas with projmux persona")
+		fs.StringVar(&out.persona, "persona", "", "stored persona the new session starts with; claude always, codex only with a prompt; manage personas with projmux persona")
 	}
 	if pane {
 		fs.Var(&out.windows, "window", "repeatable Window selector: <name> or uid:<uid>")

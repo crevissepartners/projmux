@@ -165,6 +165,14 @@ func (c *aiCommand) resumePersonaSnapshot(mode string, annotations map[string]st
 	if name == "" {
 		return "", nil
 	}
+	if mode == aiModeCodex {
+		// A Codex persona is the developer instructions its thread was started
+		// with, and the thread replays them on every resume -- upstream neither
+		// records nor applies a persona given to thread/resume. So there is
+		// nothing to re-pass and nothing was lost: no argv, and no notice,
+		// which would otherwise report a working persona as unavailable.
+		return "", nil
+	}
 	if mode != aiModeClaude {
 		return "", &persona.Error{Reason: persona.ReasonUnavailable, Name: name,
 			Detail: "is not re-passed: a persona applies only to --provider " + aiModeClaude}

@@ -984,11 +984,13 @@ func (c *createCommand) openIntentAgent(
 	if err != nil {
 		return intentAgentOpened{}, err
 	}
-	// A picked Claude conversation that Registry Agents already recorded
-	// launches with the launch values they agree on, read before this
-	// create's own Agent records the conversation.
+	// A picked conversation that Registry Agents already recorded launches
+	// with the launch values they agree on, read before this create's own
+	// Agent records the conversation. Which keys those are is the provider's
+	// answer (resumeLaunchValueKeysFor); a provider that inherits none is
+	// left exactly as it was.
 	var notices []string
-	if provider == aiModeClaude && strings.TrimSpace(flags.resumeConversation) != "" {
+	if len(resumeLaunchValueKeysFor(provider)) > 0 && strings.TrimSpace(flags.resumeConversation) != "" {
 		var notice string
 		flags.resumeLaunchValues, notice = inheritedResumeLaunchValues(working, provider, flags.resumeConversation)
 		if notice != "" {
@@ -1053,7 +1055,10 @@ func (c *createCommand) openIntentAgent(
 		}
 		prompt, _ := nativePrompt(flags.payload)
 		nativeCtx, cancel := prepareNativeContext(ctx)
-		prepared, nativeErr := c.codexNative.Create(nativeCtx, plan.nativeRoute, workspace, prompt, activation.Generation)
+		prepared, nativeErr := c.codexNative.Create(nativeCtx, plan.nativeRoute, codexNativeCreateInput{
+			Workspace: workspace, DeveloperInstructions: flags.personaLaunch.content,
+			Prompt: prompt, RequestKey: activation.Generation,
+		})
 		cancel()
 		switch {
 		case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":

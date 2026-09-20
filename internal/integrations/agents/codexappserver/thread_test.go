@@ -317,7 +317,7 @@ func TestNativeCreateSendsOnePromptAndReturnsExactThreadTurn(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	binding, err := client.StartThread(ctx, "/work/project", nil)
+	binding, err := client.StartThread(ctx, "/work/project", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

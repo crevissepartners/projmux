@@ -25,7 +25,7 @@ type codexNativeThreadController interface {
 	Current(context.Context) (codexNativeEndpointRoute, error)
 	CatalogRoutes(context.Context) ([]codexNativeEndpointRoute, error)
 	Resolve(context.Context, coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error)
-	Create(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, string) (codexappserver.ThreadBinding, error)
+	Create(context.Context, codexNativeEndpointRoute, codexNativeCreateInput) (codexappserver.ThreadBinding, error)
 	Resume(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) (codexappserver.ThreadBinding, error)
 	CanFallback(error) bool
 }
@@ -55,8 +55,25 @@ func newCodexNativeThreadController(stateDir string) defaultCodexNativeThreadCon
 	return defaultCodexNativeThreadController{stateDir: stateDir}
 }
 
+// codexNativeCreateInput is everything one native fresh create sends to the
+// shared endpoint. It is a struct rather than three trailing strings because
+// DeveloperInstructions, Prompt and RequestKey are all free text and only
+// their names tell them apart.
+//
+// DeveloperInstructions is the persona snapshot content the thread is started
+// with. Empty means the create sends no such field at all, which is what every
+// create did before a Codex Agent could have a persona. It is start-only: a
+// thread keeps the instructions it was started with, and resume re-sends
+// nothing (see (*aiCommand).resumePersonaSnapshot).
+type codexNativeCreateInput struct {
+	Workspace             coremetadata.AgentWorkspace
+	DeveloperInstructions string
+	Prompt                string
+	RequestKey            string
+}
+
 type codexNativeThreadClient interface {
-	StartThread(context.Context, string, []string) (codexappserver.ThreadBinding, error)
+	StartThread(context.Context, string, []string, string) (codexappserver.ThreadBinding, error)
 	StartTurn(context.Context, string, string, string) (string, error)
 	BootstrapThread(context.Context, string, string, []string) (codexappserver.ThreadSnapshot, error)
 	Close() error
@@ -357,10 +374,11 @@ func dialCodexRetiredGenerationSocket(ctx context.Context, socketPath string) bo
 	return true
 }
 
-func (controller defaultCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, requestKey string) (codexappserver.ThreadBinding, error) {
+func (controller defaultCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, input codexNativeCreateInput) (codexappserver.ThreadBinding, error) {
 	if !route.valid() || route.State != codexgeneration.StateCurrent {
 		return codexappserver.ThreadBinding{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
+	workspace := input.Workspace
 	client, err := controller.openRoute(ctx, route, len(workspace.AdditionalWritableRoots) > 0)
 	if err != nil {
 		return codexappserver.ThreadBinding{}, err
@@ -371,11 +389,11 @@ func (controller defaultCodexNativeThreadController) Create(ctx context.Context,
 			_ = client.Close()
 		}
 	}()
-	binding, err := client.StartThread(ctx, workspace.CWD, workspace.AdditionalWritableRoots)
+	binding, err := client.StartThread(ctx, workspace.CWD, workspace.AdditionalWritableRoots, input.DeveloperInstructions)
 	if err != nil {
 		return binding, err
 	}
-	if prompt == "" {
+	if input.Prompt == "" {
 		// Closing a default-route client also reaps its owned stdio proxy and may
 		// report that local child exit. That cleanup result says nothing about
 		// whether the shared endpoint persisted the exact thread. The fresh
@@ -384,7 +402,7 @@ func (controller defaultCodexNativeThreadController) Create(ctx context.Context,
 		closed = true
 		return binding, controller.awaitDurableResume(ctx, route, workspace, binding.ThreadID)
 	}
-	binding.TurnID, err = client.StartTurn(ctx, binding.ThreadID, prompt, requestKey)
+	binding.TurnID, err = client.StartTurn(ctx, binding.ThreadID, input.Prompt, input.RequestKey)
 	return binding, err
 }
 
