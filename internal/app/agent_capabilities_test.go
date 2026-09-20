@@ -292,3 +292,149 @@ func TestGenericStatusAndTopicStayProviderIndependentIncludingEmptyProvider(t *t
 		}
 	}
 }
+
+// withClaudeCoordinationProbes states the outcome of the two live probes the
+// coordination projection consults, so one table row can name a branch instead
+// of standing up the socket pair that branch would otherwise need.
+func withClaudeCoordinationProbes(t *testing.T, lease, qualified bool) {
+	t.Helper()
+	previousLease, previousQualification := probeClaudeLease, probeClaudeQualification
+	probeClaudeLease = func(string, coremetadata.AgentRouteRef) bool { return lease }
+	probeClaudeQualification = func(string, coremetadata.AgentRouteRef) bool { return qualified }
+	t.Cleanup(func() { probeClaudeLease, probeClaudeQualification = previousLease, previousQualification })
+}
+
+// claudeCoordinationBranchCases is every refusing branch of
+// projectClaudeCoordinationEligibilityAt, one row each.
+//
+// The three are different situations and used to share one recovery sentence.
+// #1114 split the first one apart by registration shape; the other two still
+// read from the generic string, which named `agent resume --dialogue-reply-only`
+// to Agents that were Running and therefore refused it. Each row states the
+// host truth its branch needs and the phrases its own state can honestly run.
+var claudeCoordinationBranchCases = []struct {
+	name         string
+	registered   bool
+	lease        bool
+	qualified    bool
+	registryPath string
+	reason       string
+	wants        []string
+	rejects      []string
+}{
+	{
+		name:         "missing registration",
+		registryPath: "/nonexistent/registry.json",
+		reason:       coremetadata.ClaudeRegistrationUnavailableReason,
+		// Branch 1 is #1114's. It is here to prove the three branches stay
+		// distinct, and it must keep passing without being edited.
+		wants:   []string{"projmux agent integrate claude", "SessionStart"},
+		rejects: []string{"--dialogue-reply-only", "agent message qualify"},
+	},
+	{
+		name:         "lease probe did not answer",
+		registered:   true,
+		registryPath: "/nonexistent/registry.json",
+		reason:       "Claude registration lease is stale or unavailable",
+		// The registration is in the Registry; only the probe failed. The next
+		// action is a retry and a liveness read, never a session restart.
+		wants:   []string{"projmux agent capabilities uid:", "after about a minute", "Do not re-register or restart"},
+		rejects: []string{"--dialogue-reply-only", "projmux agent resume", "agent message qualify"},
+	},
+	{
+		name:         "unqualified for the running version",
+		registered:   true,
+		lease:        true,
+		registryPath: "/nonexistent/registry.json",
+		reason:       "Claude coordination is unqualified for the exact running provider version",
+		// The lease is ready, so qualify is callable -- it refuses only on a
+		// missing lease. What has to go is the `otherwise` tail behind it.
+		wants:   []string{"projmux agent message qualify uid:", "--confirm-isolated-provider-push", "exact current Codex source"},
+		rejects: []string{"--dialogue-reply-only", "projmux agent resume", "--evidence"},
+	},
+}
+
+// TestClaudeCoordinationBranchesNameActionsTheirOwnStateCanRun is the contract
+// the three branches now hold: a distinct reason, a non-empty recovery, and no
+// command that the state the recovery is printed for would refuse.
+func TestClaudeCoordinationBranchesNameActionsTheirOwnStateCanRun(t *testing.T) {
+	reasons := map[string]string{}
+	recoveries := map[string]string{}
+	for _, testCase := range claudeCoordinationBranchCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			withClaudeShapeLiveness(t, true)
+			withClaudeCoordinationProbes(t, testCase.lease, testCase.qualified)
+			registry, agent := claudeShapeFixture(t, testCase.registered, testCase.registered, false)
+			_, routeReason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
+			if testCase.registered != (routeReason == "") {
+				t.Fatalf("fixture reached the wrong branch: registered=%t routeReason=%q", testCase.registered, routeReason)
+			}
+			projection := projectClaudeCoordinationEligibilityAt(registry, agent, testCase.registryPath)
+			if projection == nil || projection.Eligible {
+				t.Fatalf("coordination projection = %#v", projection)
+			}
+			if !strings.HasPrefix(projection.Reason, testCase.reason) {
+				t.Fatalf("reason %q does not start with %q", projection.Reason, testCase.reason)
+			}
+			if projection.Recovery == "" {
+				t.Fatal("a refused branch has no recovery")
+			}
+			for _, want := range testCase.wants {
+				if !strings.Contains(projection.Recovery, want) {
+					t.Fatalf("recovery does not name %q: %q", want, projection.Recovery)
+				}
+			}
+			for _, reject := range testCase.rejects {
+				if strings.Contains(projection.Recovery, reject) {
+					t.Fatalf("recovery names %q, which this state refuses: %q", reject, projection.Recovery)
+				}
+			}
+			if other, ok := reasons[projection.Reason]; ok {
+				t.Fatalf("branches %q and %q refuse identically: %q", other, testCase.name, projection.Reason)
+			}
+			if other, ok := recoveries[projection.Recovery]; ok {
+				t.Fatalf("branches %q and %q share a recovery: %q", other, testCase.name, projection.Recovery)
+			}
+			reasons[projection.Reason] = testCase.name
+			recoveries[projection.Recovery] = testCase.name
+		})
+	}
+	if len(reasons) != len(claudeCoordinationBranchCases) || len(recoveries) != len(claudeCoordinationBranchCases) {
+		t.Fatalf("got %d reasons and %d recoveries for %d branches", len(reasons), len(recoveries), len(claudeCoordinationBranchCases))
+	}
+}
+
+// TestClaudeCoordinationLeaseProbeRecoveryIsNotTheUnqualifiedOne holds the one
+// thing a shared fix would quietly get wrong. The lease-probe branch has a
+// registration in the Registry and the unqualified branch has a ready lease, so
+// they need different next actions; copying one into the other would send an
+// operator to re-register a session that is registered, or to qualify through a
+// lease that just failed to answer.
+func TestClaudeCoordinationLeaseProbeRecoveryIsNotTheUnqualifiedOne(t *testing.T) {
+	withClaudeShapeLiveness(t, true)
+	registry, agent := claudeShapeFixture(t, true, true, false)
+
+	withClaudeCoordinationProbes(t, false, false)
+	lease := projectClaudeCoordinationEligibilityAt(registry, agent, "/nonexistent/registry.json")
+	withClaudeCoordinationProbes(t, true, false)
+	unqualified := projectClaudeCoordinationEligibilityAt(registry, agent, "/nonexistent/registry.json")
+
+	if lease.Recovery == unqualified.Recovery {
+		t.Fatalf("the lease-probe and unqualified branches share one recovery: %q", lease.Recovery)
+	}
+	if !strings.Contains(lease.Recovery, "still holds this Agent's registration") {
+		t.Fatalf("the lease-probe recovery does not say the registration is present: %q", lease.Recovery)
+	}
+	if !strings.Contains(unqualified.Recovery, "registration lease is ready") {
+		t.Fatalf("the unqualified recovery does not say the lease is ready: %q", unqualified.Recovery)
+	}
+	// A recovery that stops at the callable command leaves the operator with
+	// nothing when its precondition does not hold, which is the whole defect in
+	// smaller form. Both branches have to name the way out of that too.
+	if !strings.Contains(lease.Recovery, agent.Status.PaneRef) {
+		t.Fatalf("the lease-probe recovery does not name the Pane to read: %q", lease.Recovery)
+	}
+	if !strings.Contains(unqualified.Recovery, "no command qualifies it in place") {
+		t.Fatalf("the unqualified recovery does not say what happens with no reply-only profile: %q", unqualified.Recovery)
+	}
+}

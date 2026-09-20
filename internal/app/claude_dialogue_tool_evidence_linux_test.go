@@ -174,10 +174,19 @@ func TestAgentCapabilitiesClaudeUnqualifiedRecoveryUsesCurrentPublicProfile(t *t
 		t.Fatal("live registration baseline is missing")
 	}
 	projection := projectClaudeCoordinationEligibilityAt(registry, *agent, fixture.registryPath)
+	// This assertion used to require the recovery to name `agent resume
+	// uid:X --dialogue-reply-only`, which pinned the defect rather than the
+	// contract: this branch is reached with the Agent Running, and resume
+	// refuses a Running Agent. Qualify is the opposite case and stays required
+	// -- it refuses only on a missing lease, and the lease probe above passed.
 	if projection.Eligible || !strings.Contains(projection.Reason, "unqualified") || !strings.Contains(projection.Recovery, "reply-only profile ready") ||
-		!strings.Contains(projection.Recovery, "agent resume uid:"+agent.Metadata.UID+" --dialogue-reply-only") ||
 		!strings.Contains(projection.Recovery, "agent message qualify uid:"+agent.Metadata.UID+" --confirm-isolated-provider-push") || strings.Contains(projection.Recovery, "--evidence") {
 		t.Fatal("unqualified activation recovery does not use the current public guard/evidence path")
+	}
+	for _, refused := range []string{"--dialogue-reply-only", "projmux agent resume"} {
+		if strings.Contains(projection.Recovery, refused) {
+			t.Fatalf("live unqualified recovery still names %q, which a Running Agent refuses: %q", refused, projection.Recovery)
+		}
 	}
 	after, err := os.ReadFile(fixture.registryPath)
 	if err != nil || !bytes.Equal(before, after) {
