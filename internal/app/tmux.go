@@ -592,14 +592,32 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 		}
 		return c.finishWindowNotCreated(pressing, reason)
 	}
+	// A committed Window create writes stderr only for what it could not carry
+	// over -- the resume seam's launch-value, persona and effort notices. They
+	// ride on the one line this route owes the client instead of replacing it,
+	// exactly as the pane-menu split already carries its own notice.
+	notice := strings.TrimSpace(actionErr.String())
 	// Now show it. A human asked for this Window, so the client that pressed
 	// the key moves onto it. A failed move keeps the Window.
 	if moveErr := c.moveIntentClientToCreatedWindow(context.Background(), pressing, created); moveErr != nil {
 		line := windowCreatedUnshownMessage + strings.TrimSpace(moveErr.Error())
+		if notice != "" {
+			line = strings.Join(strings.Fields(line+"; "+notice), " ")
+		}
 		c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, pressing, line)
 		return nil
 	}
-	return c.finishWindowIntent(pressing, "Create Window", windowCreatedMessage, "", nil)
+	return c.finishWindowIntent(pressing, "Create Window", windowCreatedLine(notice), "", nil)
+}
+
+// windowCreatedLine is the success line of a committed Window create: the
+// bounded constant, carrying whatever that create could not carry over. With
+// nothing to disclose it is the constant itself, byte for byte.
+func windowCreatedLine(notice string) string {
+	if notice = strings.TrimSpace(notice); notice == "" {
+		return windowCreatedMessage
+	}
+	return windowCreatedMessage + ": " + notice
 }
 
 // finishWindowNotCreated shows the one line of a Window create that committed
@@ -776,6 +794,11 @@ func (c *tmuxCommand) finishWindowIntent(client, label, success, detail string, 
 	}
 	// The intent committed. Its bounded success line is the last thing this route
 	// owes the client, and it is not what the route reports (committed_result.go).
+	// A committed intent that has something to disclose puts it in the success
+	// line it hands over -- windowCreatedLine does that for the Window create --
+	// rather than through detail, which stays the failure half's parameter: this
+	// branch is shared with the renames and the Window delete, and they pass
+	// their canonical route's stderr here too.
 	c.showCommittedIntentResult(diagnostics.SurfaceSiteWindowIntent, strings.TrimSpace(client), success)
 	return nil
 }
