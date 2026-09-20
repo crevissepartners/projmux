@@ -35,6 +35,20 @@ const (
 	ReasonOperatorOriginTargetNotClaude = "operator-origin-target-not-claude"
 )
 
+// Stable reason tokens naming which class of envelope rule a refusal broke.
+// A sender acts on the class, not on the exact field: a payload is split or
+// re-encoded, a route is re-resolved, a correlation is re-read from the
+// original, and a shape that does not qualify as an envelope at all is a
+// caller bug. Every refusal in this package and in the adapters that return
+// ErrInvalidEnvelope carries one, so no refusal leaves a reader guessing.
+const (
+	ReasonPayloadTooLarge      = "envelope-payload-too-large"
+	ReasonPayloadInvalid       = "envelope-payload-invalid"
+	ReasonRouteInvalid         = "envelope-route-invalid"
+	ReasonCorrelationInvalid   = "envelope-correlation-invalid"
+	ReasonQualificationInvalid = "envelope-qualification-invalid"
+)
+
 var (
 	ErrInvalidEnvelope = errors.New("invalid Agent message envelope")
 	ErrRetryMismatch   = errors.New("agent message retry does not match the immutable envelope")
@@ -47,6 +61,17 @@ var (
 	// envelope path is Claude's alone.
 	ErrOperatorOriginTargetNotClaude = fmt.Errorf("%w: %s", ErrInvalidEnvelope, ReasonOperatorOriginTargetNotClaude)
 )
+
+// EnvelopeRefusal wraps ErrInvalidEnvelope with the class of rule that broke
+// and the detail a reader needs to act on it. Wrapping rather than replacing
+// keeps errors.Is(err, ErrInvalidEnvelope) true for every caller that already
+// judges a refusal that way.
+func EnvelopeRefusal(reason, detail string) error {
+	if detail == "" {
+		return fmt.Errorf("%w: %s", ErrInvalidEnvelope, reason)
+	}
+	return fmt.Errorf("%w: %s: %s", ErrInvalidEnvelope, reason, detail)
+}
 
 type Authority struct {
 	Kind       string `json:"kind"`
@@ -148,23 +173,75 @@ func (e Envelope) Operator() bool {
 // input has no source route, targets Claude only, carries OperatorAuthority,
 // and is never a reply. A mixed shape is refused either way.
 func (e Envelope) Validate() error {
-	if e.Version != Version || !ValidRef(e.MessageRef) || !ValidRef(e.ConversationRef) ||
-		(e.ReplyTo != "" && !ValidRef(e.ReplyTo)) || !e.Target.Valid() ||
-		!validPayload(e.Payload) || e.AcceptedAt.IsZero() || e.Deadline.IsZero() ||
-		!e.Deadline.After(e.AcceptedAt) || e.Deadline.Sub(e.AcceptedAt) > MaxTTL {
-		return ErrInvalidEnvelope
+	if err := e.validateShape(); err != nil {
+		return err
 	}
 	if e.Origin == (Origin{}) {
-		if !e.Source.Valid() || e.Authority != PeerAuthority() {
-			return ErrInvalidEnvelope
+		if !e.Source.Valid() {
+			return EnvelopeRefusal(ReasonRouteInvalid, "source route is not a valid Agent route")
+		}
+		if e.Authority != PeerAuthority() {
+			return EnvelopeRefusal(ReasonQualificationInvalid, "an Agent envelope carries peer authority")
 		}
 		return nil
 	}
-	if !e.Origin.Operator() || e.Source != (Route{}) || e.ReplyTo != "" || e.Authority != OperatorAuthority() {
-		return ErrInvalidEnvelope
+	if !e.Origin.Operator() {
+		return EnvelopeRefusal(ReasonQualificationInvalid, "origin is neither the Agent origin nor operator input")
+	}
+	if e.Source != (Route{}) {
+		return EnvelopeRefusal(ReasonRouteInvalid, "operator input carries no source route")
+	}
+	if e.ReplyTo != "" {
+		return EnvelopeRefusal(ReasonCorrelationInvalid, "operator input is never a reply")
+	}
+	if e.Authority != OperatorAuthority() {
+		return EnvelopeRefusal(ReasonQualificationInvalid, "operator input carries operator authority")
 	}
 	if e.Target.Provider != "claude" {
 		return ErrOperatorOriginTargetNotClaude
+	}
+	return nil
+}
+
+// validateShape judges the fields both an Agent envelope and operator input
+// must satisfy, in the order they were judged when one condition covered them
+// all. Each arm names its own class so a refused sender is told which rule it
+// broke instead of that some rule was.
+func (e Envelope) validateShape() error {
+	if e.Version != Version {
+		return EnvelopeRefusal(ReasonQualificationInvalid, fmt.Sprintf("version=%d supported=%d", e.Version, Version))
+	}
+	if !ValidRef(e.MessageRef) {
+		return EnvelopeRefusal(ReasonCorrelationInvalid, "messageRef is not a valid ref")
+	}
+	if !ValidRef(e.ConversationRef) {
+		return EnvelopeRefusal(ReasonCorrelationInvalid, "conversationRef is not a valid ref")
+	}
+	if e.ReplyTo != "" && !ValidRef(e.ReplyTo) {
+		return EnvelopeRefusal(ReasonCorrelationInvalid, "replyTo is not a valid ref")
+	}
+	if !e.Target.Valid() {
+		return EnvelopeRefusal(ReasonRouteInvalid, "target route is not a valid Agent route")
+	}
+	if err := payloadRefusal(e.Payload); err != nil {
+		return err
+	}
+	return e.validateLifetime()
+}
+
+// validateLifetime judges the acceptedAt/deadline pair that bounds an
+// envelope's life.
+func (e Envelope) validateLifetime() error {
+	switch {
+	case e.AcceptedAt.IsZero():
+		return EnvelopeRefusal(ReasonQualificationInvalid, "acceptedAt is unset")
+	case e.Deadline.IsZero():
+		return EnvelopeRefusal(ReasonQualificationInvalid, "deadline is unset")
+	case !e.Deadline.After(e.AcceptedAt):
+		return EnvelopeRefusal(ReasonQualificationInvalid, "deadline is not after acceptedAt")
+	case e.Deadline.Sub(e.AcceptedAt) > MaxTTL:
+		return EnvelopeRefusal(ReasonQualificationInvalid,
+			fmt.Sprintf("ttl=%s limit=%s", e.Deadline.Sub(e.AcceptedAt), MaxTTL))
 	}
 	return nil
 }
@@ -206,7 +283,7 @@ func ValidateReply(original, reply Envelope) error {
 	}
 	if reply.ReplyTo != original.MessageRef || reply.ConversationRef != original.ConversationRef ||
 		reply.MessageRef == original.MessageRef || !reply.Source.Same(original.Target) || !reply.Target.Same(original.Source) {
-		return fmt.Errorf("%w: reply route or conversation mismatch", ErrInvalidEnvelope)
+		return EnvelopeRefusal(ReasonCorrelationInvalid, "reply route or conversation mismatch")
 	}
 	return nil
 }
@@ -236,8 +313,22 @@ func validProvider(value string) bool {
 	}
 }
 
-func validPayload(value string) bool {
-	return value != "" && len(value) <= MaxPayloadBytes && utf8.ValidString(value) && !strings.ContainsRune(value, '\x00')
+// payloadRefusal names which payload rule broke. Size carries the limit and
+// the actual value because splitting the body is the one action a sender can
+// take, and it cannot take it without both numbers.
+func payloadRefusal(value string) error {
+	switch {
+	case value == "":
+		return EnvelopeRefusal(ReasonPayloadInvalid, "payload is empty")
+	case len(value) > MaxPayloadBytes:
+		return EnvelopeRefusal(ReasonPayloadTooLarge,
+			fmt.Sprintf("payloadBytes=%d limitBytes=%d", len(value), MaxPayloadBytes))
+	case !utf8.ValidString(value):
+		return EnvelopeRefusal(ReasonPayloadInvalid, "payload is not valid UTF-8")
+	case strings.ContainsRune(value, '\x00'):
+		return EnvelopeRefusal(ReasonPayloadInvalid, "payload contains a NUL rune")
+	}
+	return nil
 }
 
 type State string

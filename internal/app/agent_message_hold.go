@@ -119,7 +119,7 @@ func defaultHeldMessageRelease() heldMessageRelease {
 // never waited for.
 func launchAgentMessageRelease(agentUID string) error {
 	if !coremessage.ValidRef(agentUID) {
-		return coremessage.ErrInvalidEnvelope
+		return coremessage.EnvelopeRefusal(coremessage.ReasonRouteInvalid, "release target Agent uid is not a valid ref")
 	}
 	binary, err := os.Executable()
 	if err != nil {

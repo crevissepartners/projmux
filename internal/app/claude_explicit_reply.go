@@ -44,7 +44,8 @@ func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, regist
 ) (string, bool, error) {
 	target, ok := claudeTargetForRoute(source)
 	if !ok {
-		return "", false, coremessage.ErrInvalidEnvelope
+		return "", false, coremessage.EnvelopeRefusal(coremessage.ReasonRouteInvalid,
+			"the reply source route names no Claude coordination target")
 	}
 	ctx, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
@@ -96,7 +97,8 @@ func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envel
 	// lane that half worked and reported no reason for the half that did not.
 	if b == nil || b.store == nil || coremessage.ValidateReply(original, reply) != nil ||
 		!original.Deadline.After(time.Now()) || !b.Current(reply) {
-		return false, coremessage.ErrInvalidEnvelope
+		return false, coremessage.EnvelopeRefusal(coremessage.ReasonCorrelationInvalid,
+			"the reply does not correlate with a live original on the current route")
 	}
 	_, created, err := b.store.PutReply(original.MessageRef, reply.MessageRef, reply.Payload, reply.Source,
 		reply.Target, reply.AcceptedAt, reply.Deadline)

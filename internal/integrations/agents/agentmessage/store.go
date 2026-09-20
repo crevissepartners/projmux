@@ -211,7 +211,8 @@ func (s *Store) PutAccepted(envelope coremessage.Envelope, adapter string) (Reco
 			Target: envelope.Target, ObservedAt: envelope.AcceptedAt,
 		})
 		if !changed {
-			return coremessage.ErrInvalidEnvelope
+			return coremessage.EnvelopeRefusal(coremessage.ReasonQualificationInvalid,
+				"the accept event is not admissible for this envelope")
 		}
 		out = Record{Envelope: envelope, Delivery: delivery, Adapter: adapter}
 		state.Records = append(state.Records, out)
@@ -238,7 +239,7 @@ func adapterForTarget(target coremessage.Route) string {
 // diagnostic evidence only; PutReply decides retry admission under one lock.
 func (s *Store) Reply(originalRef string) (Record, bool, error) {
 	if originalRef == "" {
-		return Record{}, false, coremessage.ErrInvalidEnvelope
+		return Record{}, false, coremessage.EnvelopeRefusal(coremessage.ReasonCorrelationInvalid, "originalRef is empty")
 	}
 	var out Record
 	var found bool
@@ -336,7 +337,8 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 		delivery, changed := coremessage.Reduce(coremessage.Delivery{}, envelope, coremessage.Event{Kind: coremessage.EventAccept,
 			MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: envelope.AcceptedAt})
 		if !changed {
-			return coremessage.ErrInvalidEnvelope
+			return coremessage.EnvelopeRefusal(coremessage.ReasonQualificationInvalid,
+				"the accept event is not admissible for this reply envelope")
 		}
 		out = Record{Envelope: envelope, Delivery: delivery, Adapter: adapterForTarget(envelope.Target)}
 		state.Records = append(state.Records, out)
@@ -480,11 +482,12 @@ func matchingRecord(state *diskState, envelope coremessage.Envelope, adapter str
 			continue
 		}
 		if record.Adapter != adapter || !record.Envelope.SameRetry(envelope) {
-			return nil, coremessage.ErrInvalidEnvelope
+			return nil, coremessage.EnvelopeRefusal(coremessage.ReasonCorrelationInvalid,
+				"a stored record with this messageRef has a different adapter or envelope")
 		}
 		return record, nil
 	}
-	return nil, coremessage.ErrInvalidEnvelope
+	return nil, coremessage.EnvelopeRefusal(coremessage.ReasonCorrelationInvalid, "no stored record has this messageRef")
 }
 
 // Status expires an unclaimed pre-handoff record at its broker deadline. A
@@ -505,7 +508,8 @@ func (s *Store) Status(messageRef string, now time.Time) (Record, bool, error) {
 // processing, reply, user input, or app-server history mutation.
 func (s *Store) Claim(target coremessage.Route, now time.Time) (Record, bool, error) {
 	if !target.Valid() {
-		return Record{}, false, coremessage.ErrInvalidEnvelope
+		return Record{}, false, coremessage.EnvelopeRefusal(coremessage.ReasonRouteInvalid,
+			"claim target is not a valid Agent route")
 	}
 	var out Record
 	var claimed bool

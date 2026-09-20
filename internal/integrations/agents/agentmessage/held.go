@@ -65,7 +65,7 @@ func (s *Store) LockTargetRelease(agentUID string, wait time.Duration) (func(), 
 		return nil, errors.New("agent message store path is empty")
 	}
 	if !coremessage.ValidRef(agentUID) {
-		return nil, coremessage.ErrInvalidEnvelope
+		return nil, coremessage.EnvelopeRefusal(coremessage.ReasonRouteInvalid, "release target Agent uid is not a valid ref")
 	}
 	dir := filepath.Dir(s.path)
 	if err := localstate.EnsurePrivateDir(dir); err != nil {

@@ -499,13 +499,19 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			return fmt.Errorf("%s: %w", spelling, c.replyCorrelationRefusal(replyTo, "explicit-reply-deadline-expired"))
 		}
 		if err := coremessage.ValidateReply(original.Envelope, envelope); err != nil {
-			return fmt.Errorf("%s: %w; %w", spelling, err, c.replyCorrelationRefusal(replyTo, "invalid-explicit-reply-correlation"))
+			return fmt.Errorf("%s: %w; %w", spelling, err, c.replyCorrelationRefusal(replyTo, explicitReplyRefusalReason(envelope)))
 		}
 	}
+	// The envelope is judged before any provider work. The store refuses the
+	// same shapes on its own first line, so returning here changes no durable
+	// state; it keeps the cause next to the send that caused it instead of
+	// letting a downstream reader restate it.
+	if err := envelope.Validate(); err != nil {
+		return fmt.Errorf("%s: refused before acceptance: %w", spelling, err)
+	}
 	// A Claude target's push frame is judged here, before any receipt exists.
-	// An invalid envelope keeps the store's own refusal below.
 	claudeContentBytes := 0
-	if target.Spec.Provider == string(aiprovider.Claude) && envelope.Validate() == nil {
+	if target.Spec.Provider == string(aiprovider.Claude) {
 		render, renderErr := c.claudeSendFrameRender(targetRoute, envelope)
 		if renderErr != nil {
 			return fmt.Errorf("%s: claude push frame unavailable before acceptance: %w", spelling, renderErr)
@@ -602,6 +608,17 @@ func agentMessageReceiptFailureAction(receipt agentMessageReceipt, claudeContent
 			claudeContentBytes)
 	}
 	return agentMessageSendFailureAction(receipt.Delivery, claudeContentBytes)
+}
+
+// explicitReplyRefusalReason keeps a refused reply from naming correlation
+// when the reply envelope itself is what broke. The correlation token sends a
+// reader to --reply-to and previousRef, where a payload over the envelope
+// limit is not to be found.
+func explicitReplyRefusalReason(reply coremessage.Envelope) string {
+	if reply.Validate() != nil {
+		return "invalid-explicit-reply-envelope"
+	}
+	return "invalid-explicit-reply-correlation"
 }
 
 func (c *agentCommand) replyCorrelationRefusal(originalRef, reason string) error {

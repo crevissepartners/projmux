@@ -355,15 +355,15 @@ func probeCodexMessageAuthority(stateDir string, authority coremetadata.CodexRou
 
 func (b *liveClaudeDialogueBroker) MarkHandoff(envelope coremessage.Envelope) error {
 	if !b.Current(envelope) {
-		return coremessage.ErrInvalidEnvelope
+		return coremessage.EnvelopeRefusal(coremessage.ReasonRouteInvalid, "the envelope route is no longer current")
 	}
 	_, _, err := b.pushStore.MarkHandoffMatching(envelope, "claude-coordination")
 	return err
 }
 
 func (b *liveClaudeDialogueBroker) MarkDelivered(envelope coremessage.Envelope, observedAt time.Time) error {
-	if envelope.Validate() != nil {
-		return coremessage.ErrInvalidEnvelope
+	if err := envelope.Validate(); err != nil {
+		return err
 	}
 	record, _, err := b.pushStore.ApplyMatching(envelope, "claude-coordination", coremessage.Event{Kind: coremessage.EventDeliver,
 		MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: observedAt.UTC()})
@@ -371,7 +371,8 @@ func (b *liveClaudeDialogueBroker) MarkDelivered(envelope coremessage.Envelope, 
 		return err
 	}
 	if record.Delivery.State != coremessage.StateDelivered {
-		return coremessage.ErrInvalidEnvelope
+		return coremessage.EnvelopeRefusal(coremessage.ReasonQualificationInvalid,
+			"the delivery did not reach delivered: state="+string(record.Delivery.State))
 	}
 	return nil
 }
