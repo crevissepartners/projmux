@@ -832,14 +832,15 @@ while true; do
   lifecycle_sibling_writes_during_retry="$(grep -Fxc 'thread-sibling|turn/steer' "$lifecycle_fixture_state/provider-writes" || true)"
   if [[ "$lifecycle_sibling_writes_during_retry" != "$lifecycle_sibling_writes_before" ]] ||
     [[ -s "$lifecycle_root/sibling-replacement-steer.out" ]] ||
-    ! grep -Fq '(turn-state-unavailable)' "$lifecycle_root/sibling-replacement-steer.err" ||
-    grep -Eo '\([a-z][a-z0-9-]*\)' "$lifecycle_root/sibling-replacement-steer.err" | grep -Fvx '(turn-state-unavailable)' >/dev/null; then
+    ! grep -Eq '\((turn-state-unavailable|lifecycle-retry|lifecycle-busy)\)' "$lifecycle_root/sibling-replacement-steer.err" ||
+    grep -Eo '\([a-z][a-z0-9-]*\)' "$lifecycle_root/sibling-replacement-steer.err" |
+      grep -Ev '^\((turn-state-unavailable|lifecycle-retry|lifecycle-busy)\)$' >/dev/null; then
     echo "healthy sibling native steer failed outside bounded fresh-state retry" >&2
     cat "$lifecycle_root/sibling-replacement-steer.err" >&2
     exit 1
   fi
   if ((SECONDS >= lifecycle_sibling_steer_deadline)); then
-    echo "healthy sibling native steer remained turn-state-unavailable after its replacement barrier" >&2
+    echo "healthy sibling native steer remained in turn-state-unavailable/lifecycle-retry/lifecycle-busy after its replacement barrier" >&2
     cat "$lifecycle_root/sibling-replacement-steer.err" >&2
     exit 1
   fi
@@ -865,9 +866,9 @@ assert_lifecycle_sibling_semantics "sibling replacement steer"
 # the shared connection, then require exactly one target-qualified write. The
 # replacement observer's owned snapshot may still hold the broker's bounded
 # same-thread lifecycle retry fence. Fresh start admission exposes that exact
-# read refusal as turn-state-unavailable with zero mutation, so retry the same
-# request on that typed result only; the polling interval is pacing, never turn
-# state authority.
+# read refusal as turn-state-unavailable, lifecycle-retry, or lifecycle-busy
+# with zero mutation, so retry the same request on those typed results only;
+# the polling interval is pacing, never turn state authority.
 lifecycle_target_starts_before="$(grep -Fxc 'thread-phase3|turn/start' "$lifecycle_fixture_state/provider-writes" || true)"
 lifecycle_target_start_deadline="$((SECONDS + 10))"
 lifecycle_target_start_attempts=0
@@ -879,13 +880,15 @@ while true; do
   lifecycle_target_starts_during_retry="$(grep -Fxc 'thread-phase3|turn/start' "$lifecycle_fixture_state/provider-writes" || true)"
   if [[ "$lifecycle_target_starts_during_retry" != "$lifecycle_target_starts_before" ]] ||
     [[ -s "$lifecycle_root/target-e2-start.out" ]] ||
-    ! grep -Fq '(turn-state-unavailable)' "$lifecycle_root/target-e2-start.err"; then
+    ! grep -Eq '\((turn-state-unavailable|lifecycle-retry|lifecycle-busy)\)' "$lifecycle_root/target-e2-start.err" ||
+    grep -Eo '\([a-z][a-z0-9-]*\)' "$lifecycle_root/target-e2-start.err" |
+      grep -Ev '^\((turn-state-unavailable|lifecycle-retry|lifecycle-busy)\)$' >/dev/null; then
     echo "target same-Agent exact native start failed outside bounded fresh-state retry" >&2
     cat "$lifecycle_root/target-e2-start.err" >&2
     exit 1
   fi
   if ((SECONDS >= lifecycle_target_start_deadline)); then
-    echo "target same-Agent exact native start remained turn-state-unavailable after replacement epoch" >&2
+    echo "target same-Agent exact native start remained in turn-state-unavailable/lifecycle-retry/lifecycle-busy after replacement epoch" >&2
     cat "$lifecycle_root/target-e2-start.err" >&2
     exit 1
   fi
