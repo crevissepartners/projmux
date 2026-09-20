@@ -127,7 +127,7 @@ verbatim:
 
 | source | codes |
 | --- | --- |
-| Codex control (`refusedControl`) | `stale-epoch`, `stale-binding`, `unavailable`, `stale-turn`, `turn-state-unavailable`, `turn-in-progress`, `protocol-error`, `no-active-turn`, `invalid-operation`, `ambiguous-request`, `unsafe-decision`, `timeout` |
+| Codex control (`refusedControl`) | `stale-epoch`, `stale-binding`, `unavailable`, `stale-turn`, `turn-state-unavailable`, `lifecycle-retry`, `lifecycle-busy`, `turn-in-progress`, `protocol-error`, `no-active-turn`, `invalid-operation`, `ambiguous-request`, `unsafe-decision`, `timeout` |
 | focus result `reason` | `session-unresolved`, `no-attached-client`, `pane-id-unresolved`, … |
 | message delivery | `delivery.state` / `delivery.reason` in `details` |
 
