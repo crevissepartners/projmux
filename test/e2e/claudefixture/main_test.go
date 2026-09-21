@@ -18,6 +18,16 @@ import (
 // hands to this fixture through PROJMUX_FAKE_CLAUDE_OBSERVED_FRAMES.
 const observedFrameCorpus = "../../../internal/app/testdata/claude-dialogue-observed-frames.json"
 
+// The producer of the coordination frame content. coordinationContent has to
+// declare the same top level keys, and neither struct can be imported here, so
+// TestCoordinationContentDeclaresExactlyTheProducerFrameKeys reads this one
+// from source.
+const (
+	producerCoordinationFrameFile = "../../../internal/app/claude_push_hub.go"
+	producerCoordinationFrameType = "claudeProviderCoordinationContent"
+	fixtureCoordinationFrameType  = "coordinationContent"
+)
+
 // fixtureEnvelopeVocabulary is the frame vocabulary this fixture legitimately
 // spells for its own synthetic events. Every other key or type value that a
 // dropped corpus frame carries must reach the stream only from the corpus.
@@ -224,4 +234,127 @@ func TestCoordinationContentDecodesEveryFrameShape(t *testing.T) {
 			t.Fatalf("operator source = %v", content.Source)
 		}
 	}
+}
+
+// TestCoordinationContentDeclaresExactlyTheProducerFrameKeys compares the top
+// level JSON key names of the producer frame with the ones coordinationContent
+// declares. decodeExact rejects unknown fields, so a key added on one side
+// alone stops this fixture at its first frame, and the failure L20 then raises
+// names helper availability rather than the key. Both sides are derived, never
+// listed here: a third copy of the key set would be the same defect one layer
+// up. The producer is read with go/ast because both structs are unexported and
+// this fixture is package main, so one test binary cannot import them both.
+// Only the key name is compared; tag options such as omitempty leave a key out
+// of a frame, and a missing key never breaks a strict decode.
+func TestCoordinationContentDeclaresExactlyTheProducerFrameKeys(t *testing.T) {
+	producer, fixture := producerCoordinationFrameKeys(t), fixtureCoordinationFrameKeys(t)
+	if only := keysMissingFrom(producer, fixture); len(only) > 0 {
+		t.Errorf("%s declares %s and %s does not: decodeExact rejects those keys as unknown fields, so %s has to declare them too",
+			producerCoordinationFrameType, strings.Join(only, " "), fixtureCoordinationFrameType, fixtureCoordinationFrameType)
+	}
+	if only := keysMissingFrom(fixture, producer); len(only) > 0 {
+		t.Errorf("%s declares %s and %s does not: the producer no longer emits those keys, so %s is decoding a frame shape that is gone",
+			fixtureCoordinationFrameType, strings.Join(only, " "), producerCoordinationFrameType, fixtureCoordinationFrameType)
+	}
+}
+
+// keysMissingFrom returns the sorted keys of declared that other lacks.
+func keysMissingFrom(declared, other []string) []string {
+	var missing []string
+	for _, key := range declared {
+		if !slices.Contains(other, key) {
+			missing = append(missing, key)
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+// fixtureCoordinationFrameKeys reads the fixture side by reflection.
+func fixtureCoordinationFrameKeys(t *testing.T) []string {
+	t.Helper()
+	frame := reflect.TypeFor[coordinationContent]()
+	var keys []string
+	for i := range frame.NumField() {
+		field := frame.Field(i)
+		if field.Anonymous {
+			t.Fatalf("%s embeds %s, so its keys are not this struct's own and the comparison cannot read them",
+				fixtureCoordinationFrameType, field.Name)
+		}
+		if key, encoded := jsonFrameKey(field.Tag.Get("json"), field.Name); encoded {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		t.Fatalf("%s declares no JSON key, so this comparison would pass against any producer", fixtureCoordinationFrameType)
+	}
+	return keys
+}
+
+// producerCoordinationFrameKeys reads the producer side from source. Every way
+// this read can come back empty is a t.Fatal: an unreadable file, a renamed
+// type or a tagless struct would otherwise turn the comparison into a check
+// that always passes, which is worse than not having one.
+func producerCoordinationFrameKeys(t *testing.T) []string {
+	t.Helper()
+	files := token.NewFileSet()
+	source, err := parser.ParseFile(files, producerCoordinationFrameFile, nil, 0)
+	if err != nil {
+		t.Fatalf("producer coordination frame is unreadable at %s: %v", producerCoordinationFrameFile, err)
+	}
+	var keys []string
+	declared, tagged := false, 0
+	ast.Inspect(source, func(node ast.Node) bool {
+		spec, ok := node.(*ast.TypeSpec)
+		if !ok || spec.Name.Name != producerCoordinationFrameType {
+			return true
+		}
+		structure, ok := spec.Type.(*ast.StructType)
+		if !ok {
+			t.Fatalf("%s: %s is not a struct", files.Position(spec.Pos()), producerCoordinationFrameType)
+		}
+		declared = true
+		for _, field := range structure.Fields.List {
+			if len(field.Names) != 1 {
+				t.Fatalf("%s: %s declares an embedded or grouped field, so the comparison cannot read its keys one by one",
+					files.Position(field.Pos()), producerCoordinationFrameType)
+			}
+			tag := ""
+			if field.Tag != nil {
+				tagged++
+				value, err := strconv.Unquote(field.Tag.Value)
+				if err != nil {
+					t.Fatalf("%s: unquote %s: %v", files.Position(field.Tag.Pos()), field.Tag.Value, err)
+				}
+				tag = reflect.StructTag(value).Get("json")
+			}
+			if key, encoded := jsonFrameKey(tag, field.Names[0].Name); encoded {
+				keys = append(keys, key)
+			}
+		}
+		return false
+	})
+	if !declared {
+		t.Fatalf("%s declares no %s, so this comparison read nothing", producerCoordinationFrameFile, producerCoordinationFrameType)
+	}
+	if tagged == 0 {
+		t.Fatalf("%s carries no json tag, so the read found something other than the frame struct", producerCoordinationFrameType)
+	}
+	if len(keys) == 0 {
+		t.Fatalf("%s declares no JSON key, so this comparison would pass against any fixture", producerCoordinationFrameType)
+	}
+	return keys
+}
+
+// jsonFrameKey returns the top level key a struct field encodes to, and false
+// when encoding/json omits the field entirely.
+func jsonFrameKey(tag, field string) (string, bool) {
+	if tag == "-" {
+		return "", false
+	}
+	key, _, _ := strings.Cut(tag, ",")
+	if key == "" {
+		key = field
+	}
+	return key, true
 }
