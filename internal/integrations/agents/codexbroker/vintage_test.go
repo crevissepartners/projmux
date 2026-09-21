@@ -166,3 +166,45 @@ func TestBrokerRuntimeDrainsWhenItsOwnImageWasReplaced(t *testing.T) {
 		assertNoRuntimeArtifacts(t, discovery)
 	})
 }
+
+// TestDrainRefusesTheLifecycleReadOfALiveBinding is the mechanism the refusal
+// wording rests on: during a drain a live binding keeps its turn writes but
+// loses its lifecycle reads, because those two travel over different sessions.
+//
+// Submit rides the shared connection this binding already handshook. A
+// lifecycle read opens its own request-owned connection instead, so it arrives
+// at the handshake drain gate as if it were a stranger and is refused with the
+// same drain-required a fresh bind gets. Nothing above this layer can tell the
+// two refusals apart unless this one keeps its own token all the way up.
+func TestDrainRefusesTheLifecycleReadOfALiveBinding(t *testing.T) {
+	discovery := newRuntimeDiscovery(t)
+	var replaced atomic.Bool
+	host, _, _ := startVintageHost(t, discovery, &replaced)
+	live := dialTestClient(t, discovery, ProtocolRange{})
+	binding, fence := boundRemote(t, live, "thread-one")
+
+	// Before the install the same read is served.
+	if _, err := binding.ReadLifecycleSnapshot(t.Context(), fence); RefusalOf(err) == RefusalDrainRequired {
+		t.Fatalf("lifecycle read before the publication = %v, want no drain refusal", err)
+	}
+
+	// The install publishes a new image under this runtime, and the next
+	// arriving client puts it into the drain.
+	replaced.Store(true)
+	if _, err := Dial(t.Context(), discovery, DialConfig{}); RefusalOf(err) != RefusalDrainRequired {
+		t.Fatalf("Dial() after a publication = %v, want drain-required", err)
+	}
+	if !host.Stats().Draining {
+		t.Fatal("a superseded runtime did not enter a drain")
+	}
+
+	// The turn write still passes: it never meets the gate.
+	if outcome, err := binding.Submit(t.Context(), fence, Mutation{Method: "turn/steer"}); err != nil ||
+		outcome != MutationApplied {
+		t.Fatalf("live Submit during a drain: %s, %v", outcome, err)
+	}
+	// The lifecycle read does not, and says which refusal it is.
+	if _, err := binding.ReadLifecycleSnapshot(t.Context(), fence); RefusalOf(err) != RefusalDrainRequired {
+		t.Fatalf("lifecycle read during a drain = %v (%s), want drain-required", err, RefusalOf(err))
+	}
+}

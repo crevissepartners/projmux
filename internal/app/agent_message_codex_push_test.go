@@ -12,6 +12,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
 
 // countingControlBindingLookup makes binding resolutions countable, so a test
@@ -198,7 +199,7 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 			wantCalls: 1, wantBindings: 1,
 		},
 	}
-	for _, code := range []string{"stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable", "lifecycle-retry", "lifecycle-busy"} {
+	for _, code := range []string{"stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable", "lifecycle-retry", "lifecycle-busy", "drain-required"} {
 		cases = append(cases, pushCase{
 			name:      "delivery known-zero " + code,
 			responses: map[string]agentControlResponse{agentControlOpDeliver: refusal(code)},
@@ -328,7 +329,7 @@ func TestCodexCoordinationPushLegacyFallbackClassifiesAndStops(t *testing.T) {
 			{name: "binding refusal", err: &exactAgentControlBindingError{Reason: "fixture binding refusal"}},
 		}
 		for _, code := range []string{"stale-epoch", "stale-binding", "unavailable", "turn-state-unavailable",
-			"lifecycle-retry", "lifecycle-busy", "invalid-operation", "stale-turn", "no-active-turn",
+			"lifecycle-retry", "lifecycle-busy", "drain-required", "invalid-operation", "stale-turn", "no-active-turn",
 			"turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code", ""} {
 			unknown := slices.Contains([]string{"turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code", ""}, code) ||
 				(operation == agentControlOpStart && code == "no-active-turn") ||
@@ -578,4 +579,27 @@ func receiptStateAndReason(t *testing.T, stdout string) (string, string) {
 	t.Helper()
 	fields := receiptFields(t, stdout)
 	return fields[1], fields[2]
+}
+
+// TestClassifyCodexTurnPushCountsADrainAsRefusedNotUnknown is the consumer half
+// of C-1. Splitting the refusal token is only safe if every closed set that
+// reads it already knows the new member.
+//
+// classifyCodexTurnPush holds two of them, one for start and one shared by
+// deliver and steer. A code neither set names falls to the ambiguous default,
+// so adding drain-required upstream without adding it here would have turned a
+// refusal the broker proved pre-write into "the outcome cannot be known" -- a
+// strictly worse answer than the one this Task set out to improve.
+func TestClassifyCodexTurnPushCountsADrainAsRefusedNotUnknown(t *testing.T) {
+	t.Parallel()
+
+	for _, operation := range []string{agentControlOpStart, agentControlOpDeliver, agentControlOpSteer} {
+		outcome := classifyCodexTurnPush(operation, refusal(string(codexbroker.RefusalDrainRequired)), nil)
+		if outcome.delivered || outcome.unknown || outcome.reason != codexPushRefusedReason || outcome.err == nil {
+			t.Errorf("%s drain-required outcome = %+v, want a known-zero refusal with a cause", operation, outcome)
+		}
+		if outcome.steer {
+			t.Errorf("%s drain-required outcome asks for a steer retry; a drain does not clear on retry", operation)
+		}
+	}
 }

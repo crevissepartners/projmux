@@ -117,14 +117,33 @@ func waitCodexLifecycleRetry(ctx context.Context) error {
 	}
 }
 
-func lifecycleReadRefusal(err error) (string, bool) {
+const (
+	// lifecycleReadRefusedReason is what the two admission refusals say: the
+	// endpoint or the one-second retry window would not serve this read yet,
+	// and the next attempt is expected to.
+	lifecycleReadRefusedReason = "fresh exact turn state read was refused"
+	// lifecycleDrainRefusedReason is what a drain says instead. A lifecycle
+	// read opens its own request-owned connection, so it meets the handshake
+	// drain gate that an already-bound turn write never passes through; the
+	// refusal therefore outlives every retry until the install's replacement
+	// takes over. Saying so is the whole difference an operator can act on.
+	lifecycleDrainRefusedReason = "an install drain refused the fresh exact turn state read"
+)
+
+// lifecycleReadRefusal folds a lifecycle read error into the closed token the
+// caller reports and the words that say why the read did not happen. The
+// admission refusals and a drain are told apart here rather than at the three
+// call sites, so neither can drift into the other's wording.
+func lifecycleReadRefusal(err error) (string, string, bool) {
 	switch codexbroker.RefusalOf(err) {
 	case codexbroker.RefusalLifecycleRetry:
-		return string(codexbroker.RefusalLifecycleRetry), true
+		return string(codexbroker.RefusalLifecycleRetry), lifecycleReadRefusedReason, true
 	case codexbroker.RefusalLifecycleBusy:
-		return string(codexbroker.RefusalLifecycleBusy), true
+		return string(codexbroker.RefusalLifecycleBusy), lifecycleReadRefusedReason, true
+	case codexbroker.RefusalDrainRequired:
+		return string(codexbroker.RefusalDrainRequired), lifecycleDrainRefusedReason, true
 	default:
-		return "", false
+		return "", "", false
 	}
 }
 
@@ -223,8 +242,8 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 			return refusedControl("stale-turn", "thread is not idle; new turn write refused")
 		}
 		snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
-		if code, ok := lifecycleReadRefusal(err); ok {
-			return refusedControl(code, "fresh exact turn state read was refused; new turn write refused")
+		if code, reason, ok := lifecycleReadRefusal(err); ok {
+			return refusedControl(code, reason+"; new turn write refused")
 		}
 		if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
 			return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; new turn write refused")
@@ -260,8 +279,8 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 		}
 		expectedTurnID := e.turnID
 		snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
-		if code, ok := lifecycleReadRefusal(err); ok {
-			return refusedControl(code, "fresh exact turn state read was refused; steer write refused")
+		if code, reason, ok := lifecycleReadRefusal(err); ok {
+			return refusedControl(code, reason+"; steer write refused")
 		}
 		if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
 			return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; steer write refused")
@@ -323,8 +342,8 @@ func (e *codexControlEpoch) deliver(ctx context.Context, request agentControlReq
 		}
 		snapshot, err = e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
 	}
-	if code, ok := lifecycleReadRefusal(err); ok {
-		return refusedControl(code, "fresh exact turn state read was refused; turn write refused")
+	if code, reason, ok := lifecycleReadRefusal(err); ok {
+		return refusedControl(code, reason+"; turn write refused")
 	}
 	if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
 		return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; turn write refused")

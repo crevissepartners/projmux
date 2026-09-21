@@ -685,9 +685,11 @@ type codexTurnPushOutcome struct {
 }
 
 // classifyCodexTurnPush reads the refusal code, never the response text, and
-// classifies per operation. A Go error from callControl is split the same way:
-// the typed binding refusal is proved pre-transport, anything else may already
-// have reached the provider.
+// classifies per operation. Both closed sets carry drain-required: a lifecycle
+// read that met an install drain is refused before any provider write, so
+// leaving it out would turn a proved refusal into an unknown outcome. A Go
+// error from callControl is split the same way: the typed binding refusal is
+// proved pre-transport, anything else may already have reached the provider.
 func classifyCodexTurnPush(operation string, response agentControlResponse, callErr error) codexTurnPushOutcome {
 	if callErr != nil {
 		var bindingErr *exactAgentControlBindingError
@@ -706,13 +708,13 @@ func classifyCodexTurnPush(operation string, response agentControlResponse, call
 			case "turn-in-progress":
 				return codexTurnPushOutcome{steer: true, reason: codexPushRefusedReason, err: err}
 			case "stale-epoch", "stale-binding", "unavailable", "stale-turn", "turn-state-unavailable",
-				"lifecycle-retry", "lifecycle-busy", "invalid-operation":
+				"lifecycle-retry", "lifecycle-busy", "drain-required", "invalid-operation":
 				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
 			}
 		case agentControlOpDeliver, agentControlOpSteer:
 			switch response.Code {
 			case "stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable",
-				"lifecycle-retry", "lifecycle-busy", "invalid-operation":
+				"lifecycle-retry", "lifecycle-busy", "drain-required", "invalid-operation":
 				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
 			}
 			// Unlike start's pre-write stale-turn, deliver and steer can return

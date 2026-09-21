@@ -835,3 +835,81 @@ func TestExactAgentControlCanonicalLabelsAreLocalized(t *testing.T) {
 		}
 	}
 }
+
+// TestExactAgentControlTellsAnInstallDrainFromTheTurnStateWindow is C-1: the
+// two refusals an operator meets during an install stop reading the same.
+//
+// Before this, a lifecycle read that met a draining broker fell through
+// lifecycleReadRefusal's default and was reported as turn-state-unavailable --
+// byte for byte what the one-second turn-state window reports. The two call
+// for opposite things. The window clears on the next attempt; the drain lasts
+// until the last binding is released, so retrying is the one thing that cannot
+// work. The operator's only signal is the line, so the line has to differ.
+//
+// All three lifecycle-read sites are held, because the seam is shared and a
+// message built at the call site could drift back into the shared wording.
+func TestExactAgentControlTellsAnInstallDrainFromTheTurnStateWindow(t *testing.T) {
+	identity := phase6Identity()
+	active := activeWithThreadState(codexappserver.ThreadStateActive)
+	idle := codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}
+	sites := []struct {
+		name      string
+		operation string
+		opening   codexappserver.LifecycleSnapshot
+	}{
+		{"start", agentControlOpStart, idle},
+		{"steer", agentControlOpSteer, active},
+		{"deliver", agentControlOpDeliver, active},
+	}
+
+	refuse := func(t *testing.T, opening codexappserver.LifecycleSnapshot, operation string,
+		readErr error,
+	) (agentControlResponse, *fakeExactControlWire) {
+		t.Helper()
+		wire := &fakeExactControlWire{snapshotErr: readErr}
+		epoch := newCodexControlEpoch(wire, identity, "epoch-1", opening, func(codexLifecycleIdentity) bool { return true })
+		epoch.retryWait = func(context.Context) error { return nil }
+		response := epoch.Handle(t.Context(), agentControlRequest{
+			Operation: operation, Identity: identity, Epoch: "epoch-1", Text: "input",
+		})
+		if response.OK || wire.writes() != 0 {
+			t.Fatalf("%s response = %+v, writes = %d, want a refusal that wrote nothing", operation, response, wire.writes())
+		}
+		return response, wire
+	}
+
+	for _, site := range sites {
+		t.Run(site.name, func(t *testing.T) {
+			drained, _ := refuse(t, site.opening, site.operation,
+				&codexbroker.BrokerError{Refusal: codexbroker.RefusalDrainRequired})
+			line := drained.Error().Error()
+			if drained.Code != string(codexbroker.RefusalDrainRequired) {
+				t.Fatalf("drain refusal code = %q, want drain-required", drained.Code)
+			}
+			if !strings.Contains(drained.Message, "install drain") || !strings.Contains(line, "drain-required") {
+				t.Fatalf("drain refusal line = %q, want it to name the install drain and carry drain-required", line)
+			}
+
+			// The one-second turn-state window and the generic unavailable
+			// state keep their own wording and never borrow the drain's.
+			for _, other := range []struct {
+				name string
+				err  error
+			}{
+				{"lifecycle-retry", &codexbroker.BrokerError{Refusal: codexbroker.RefusalLifecycleRetry}},
+				{"lifecycle-busy", &codexbroker.BrokerError{Refusal: codexbroker.RefusalLifecycleBusy}},
+				{"turn-state-unavailable", errors.New("private upstream detail")},
+			} {
+				response, _ := refuse(t, site.opening, site.operation, other.err)
+				if response.Code == string(codexbroker.RefusalDrainRequired) ||
+					strings.Contains(response.Error().Error(), "drain-required") ||
+					strings.Contains(response.Message, "install drain") {
+					t.Fatalf("%s refusal = %q, want no drain wording", other.name, response.Error())
+				}
+				if response.Code == drained.Code || response.Message == drained.Message {
+					t.Fatalf("%s refusal is indistinguishable from the drain: %q", other.name, response.Error())
+				}
+			}
+		})
+	}
+}

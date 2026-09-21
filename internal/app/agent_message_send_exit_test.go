@@ -321,7 +321,7 @@ func TestAgentMessageSendCodexTargetTerminalFailureExitsNonzeroUnderTheSameJudgm
 
 func TestClassifyCodexTurnPushNeverReturnsUndeliveredWithoutCause(t *testing.T) {
 	codes := []string{"turn-in-progress", "stale-epoch", "stale-binding", "unavailable", "stale-turn", "turn-state-unavailable",
-		"lifecycle-retry", "lifecycle-busy", "invalid-operation", "no-active-turn", "turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code", ""}
+		"lifecycle-retry", "lifecycle-busy", "drain-required", "invalid-operation", "no-active-turn", "turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code", ""}
 	for _, operation := range []string{agentControlOpDeliver, agentControlOpStart, agentControlOpSteer} {
 		responses := map[string]agentControlResponse{"zero response": {}}
 		for _, code := range codes {
