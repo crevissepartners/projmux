@@ -15,10 +15,11 @@ import (
 	"time"
 
 	corefocus "github.com/crevissepartners/projmux/internal/core/focus"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // focusExitNotResolved is the exit code emitted when an explicit target cannot
@@ -50,6 +51,9 @@ type focusCommand struct {
 	stderr            io.Writer
 	notifierOnce      func(stderr io.Writer) focusNotifier
 	notifyStoreFn     func() (notifyStore, error)
+	// loadRegistry reads the resource Registry for a canonical request that
+	// carries a `uid:` selector. It is never called on the name path.
+	loadRegistry func() (coremetadata.Registry, error)
 }
 
 type focusOptions struct {
@@ -103,6 +107,7 @@ func newFocusCommand(recorders ...*diagnostics.LifecycleRecorder) *focusCommand 
 		lookupEnv:     os.Getenv,
 		homeDir:       os.UserHomeDir,
 		notifyStoreFn: defaultStatusNotifyStore,
+		loadRegistry:  loadResourceRegistry,
 	}
 	cmd.notifierOnce = func(stderr io.Writer) focusNotifier {
 		// Reuse the existing notifier chain (WSL toast, notify-send, hook).
@@ -161,8 +166,16 @@ func (c *focusCommand) dispatch(opts focusOptions, stdout, stderr io.Writer) (ru
 	}
 
 	socket := c.resolveSocket(opts.Socket)
+	var resolvedTarget string
+	var err error
+	if focusNavUsesUID(opts) {
+		// A `uid:` selector names a Registry resource, so its Project also
+		// names the socket; resolveUIDNavigation owns that socket rule.
+		resolvedTarget, socket, err = c.resolveUIDNavigation(context.Background(), opts)
+	} else {
+		resolvedTarget, err = c.resolveNavigationTarget(context.Background(), socket, opts)
+	}
 	diagnosticsSocket = socket
-	resolvedTarget, err := c.resolveNavigationTarget(context.Background(), socket, opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return err
@@ -309,10 +322,13 @@ func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {
 // parseCanonicalFocusArgs parses one `focus project|window|pane <ref>`
 // invocation into the shared focus request.
 //
-// The refs are runtime coordinates: a Project ref names its live tmux session,
-// and the Window and Pane refs name a window and a pane inside it. Each kind
-// requires the scope above it, because a Window ref alone does not identify a
-// target. Nothing here reads or writes the resource registry and nothing here
+// An unprefixed ref is a runtime coordinate: a Project ref names its live tmux
+// session, and the Window and Pane refs name a window and a pane inside it.
+// Such a ref requires the scope above it, because a Window name alone does not
+// identify a target. A `uid:` ref names one Registry resource, which carries
+// its own ownerRef scope, so --project and --window become optional for it;
+// the Registry is consulted later, by resolveUIDNavigation, and only when some
+// position carries `uid:`. Parsing itself reads nothing and nothing here
 // creates a runtime.
 func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focusOptions, error) {
 	spelling := "focus " + kind
@@ -351,8 +367,14 @@ func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focu
 	}
 	// A canonical ref names one resource. Accepting a raw `session:window.pane`
 	// coordinate here would quietly reintroduce the legacy target grammar under
-	// a kind that promises something narrower.
-	if strings.ContainsAny(ref, ":.") {
+	// a kind that promises something narrower. A `uid:` selector is not a
+	// coordinate: its value is checked by the shared selector grammar instead.
+	uidRef := strings.HasPrefix(ref, selector.UIDPrefix)
+	if uidRef {
+		if _, err := selector.ParseRef(focusMetadataKind(kind), ref); err != nil {
+			return focusOptions{}, err
+		}
+	} else if strings.ContainsAny(ref, ":.") {
 		return focusOptions{}, usageError(fmt.Sprintf(
 			"%s takes one %s reference, not a session:window.pane coordinate; machine-owned raw coordinates use `projmux internal focus --target`", spelling, kind))
 	}
@@ -361,18 +383,31 @@ func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focu
 	opts.NavRef = ref
 	opts.NavProject = strings.TrimSpace(project)
 	opts.NavWindow = strings.TrimSpace(window)
+	for _, scope := range []struct {
+		kind  coremetadata.Kind
+		value string
+	}{{coremetadata.KindProject, opts.NavProject}, {coremetadata.KindWindow, opts.NavWindow}} {
+		if !strings.HasPrefix(scope.value, selector.UIDPrefix) {
+			continue
+		}
+		if _, err := selector.ParseRef(scope.kind, scope.value); err != nil {
+			return focusOptions{}, err
+		}
+	}
 	switch kind {
 	case "project":
-		opts.Target = ref
+		if !uidRef {
+			opts.Target = ref
+		}
 	case "window":
-		if opts.NavProject == "" {
+		if opts.NavProject == "" && !uidRef {
 			return focusOptions{}, usageError(spelling + " requires --project <ref>")
 		}
 	case "pane":
-		if opts.NavProject == "" {
+		if opts.NavProject == "" && !uidRef {
 			return focusOptions{}, usageError(spelling + " requires --project <ref>")
 		}
-		if opts.NavWindow == "" {
+		if opts.NavWindow == "" && !uidRef {
 			return focusOptions{}, usageError(spelling + " requires --window <ref>")
 		}
 	}
@@ -381,6 +416,9 @@ func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focu
 
 // resolveNavigationTarget turns a canonical `focus <kind> <ref>` request into the
 // tmux coordinate the shared dispatch understands.
+//
+// This is the name path: it never reads the Registry. A request carrying a
+// `uid:` selector goes through resolveUIDNavigation instead.
 //
 // Every lookup here is a read: list-windows and list-panes only report the live
 // inventory. A reference that matches nothing, or matches more than one live
@@ -416,8 +454,7 @@ func navWindowRef(opts focusOptions) string {
 // resolveLiveWindow maps a Window name (or a raw `@id`) to the live tmux window
 // id inside one session.
 func (c *focusCommand) resolveLiveWindow(ctx context.Context, socket, session, ref string) (string, error) {
-	format := strings.Join([]string{"#{window_id}", "#{window_name}", "#{@" + strings.TrimPrefix(tmuxopts.WindowName, "@") + "}"}, focusFieldSeparator)
-	rows, err := c.listTargets(ctx, socket, "list-windows", session, format)
+	rows, err := c.listTargets(ctx, socket, "list-windows", session, focusWindowListFormat())
 	if err != nil {
 		return "", newFocusNotResolved("window %q in session %q: %v", ref, session, err)
 	}
@@ -427,8 +464,7 @@ func (c *focusCommand) resolveLiveWindow(ctx context.Context, socket, session, r
 // resolveLivePane maps a Pane name (or a raw `%id`) to the live tmux pane id
 // inside one window.
 func (c *focusCommand) resolveLivePane(ctx context.Context, socket, session, windowID, ref string) (string, error) {
-	format := strings.Join([]string{"#{pane_id}", "#{@" + strings.TrimPrefix(tmuxopts.PaneName, "@") + "}"}, focusFieldSeparator)
-	rows, err := c.listTargets(ctx, socket, "list-panes", session+":"+windowID, format)
+	rows, err := c.listTargets(ctx, socket, "list-panes", session+":"+windowID, focusPaneListFormat())
 	if err != nil {
 		return "", newFocusNotResolved("pane %q in %s:%s: %v", ref, session, windowID, err)
 	}

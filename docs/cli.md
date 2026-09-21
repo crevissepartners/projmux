@@ -1795,7 +1795,9 @@ Allowed effects:
 ```
 projmux focus project <ref>
 projmux focus window <ref> {--project <ref> | -p <ref>}
+projmux focus window uid:<uid> [--project <ref> | -p <ref>]
 projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>}
+projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]
 ```
 
 Subcommands:
@@ -1829,6 +1831,8 @@ Allowed effects:
 projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
 ```
 
+`<ref>` is the live tmux session name, or `uid:<uid>` for a Registry Project, which resolves to its `status.session.name`. A `uid:` ref uses the Project's recorded socket; an explicit `--socket` naming another server exits 2. The resolved session must still be live.
+
 ### `projmux focus window`
 
 Move the current client to an already-live Window in an exact live root session; never materializes
@@ -1848,7 +1852,12 @@ Allowed effects:
 
 ```
 projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]
+projmux focus window uid:<uid> [--project <ref> | -p <ref>] [--socket <path>] [--client <tty>] [--json]
 ```
+
+A plain `<ref>` is a live window name or `@id` and requires `--project`. `uid:<uid>` names a Registry Window, which resolves to its `status.runtimeID` inside its owning Project's session, so `--project` is optional; when given it must be that Project (`uid:` or its session name) or the route exits 2. `--project uid:<uid>` also works with a plain `<ref>`.
+
+A `uid:` resolution uses the Project's recorded socket; an explicit `--socket` naming another server exits 2. The resolved window must still be live.
 
 ### `projmux focus pane`
 
@@ -1869,7 +1878,12 @@ Allowed effects:
 
 ```
 projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]
+projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>] [--socket <path>] [--json]
 ```
+
+A plain `<ref>` is a live pane name or `%id` and requires `--project` and `--window`. `uid:<uid>` names a Registry Pane, which resolves to its `status.activation.runtimeID` inside its owning Window and Project, so both flags are optional; when given they must match that owner chain or the route exits 2. `--project` and `--window` also accept `uid:<uid>` with a plain `<ref>`.
+
+A `uid:` resolution uses the Project's recorded socket; an explicit `--socket` naming another server exits 2. The resolved pane must still be live.
 
 ## `projmux get`
 
