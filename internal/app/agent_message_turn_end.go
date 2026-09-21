@@ -167,10 +167,12 @@ func (c *agentCommand) endBlockedClaudeTurn(target coremetadata.Agent) bool {
 	return c.commitClaudeTurnEnd(target, blocked) == nil
 }
 
-// commitClaudeTurnEnd writes response_complete from the provider hook source,
-// Registry state only, as one compare-and-set: only while the Agent is still
-// Running on the same Pane and still carries the very blocked observation the
-// transcript was judged against.
+// commitClaudeTurnEnd writes response_complete from the provider hook source as
+// one compare-and-set: only while the Agent is still Running on the same Pane
+// and still carries the very blocked observation the transcript was judged
+// against. A committed turn end is then projected onto the managed Pane, so the
+// badge the operator reads does not stay on the answered dialog until the next
+// hook writes it.
 func (c *agentCommand) commitClaudeTurnEnd(target coremetadata.Agent, blocked coremetadata.AgentInteraction) error {
 	if c == nil || c.store == nil || c.store.update == nil {
 		return errors.New("agent registry mutation is not configured")
@@ -181,15 +183,31 @@ func (c *agentCommand) commitClaudeTurnEnd(target coremetadata.Agent, blocked co
 	}
 	mutator.Now = c.messageClock
 	uid := target.Metadata.UID
+	var committed coremetadata.Agent
 	_, err := c.store.update(func(working *coremetadata.Registry) error {
 		current, ok := working.Agent(uid)
 		if !ok || current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != target.Status.PaneRef ||
 			current.Status.Interaction.Kind != blocked.Kind || !current.Status.Interaction.ObservedAt.Equal(blocked.ObservedAt) {
 			return errClaudeTurnEndChanged
 		}
-		_, err := mutator.SetAgentInteraction(working, uid, coremetadata.InteractionResponseComplete,
+		updated, err := mutator.SetAgentInteraction(working, uid, coremetadata.InteractionResponseComplete,
 			string(coremetadata.InteractionSourceProviderHook))
-		return err
+		if err != nil {
+			return err
+		}
+		committed = updated.Clone()
+		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// The Registry commit is the result; the badge is its projection. A failed
+	// projection is dropped rather than returned: the release is detached with
+	// no standard stream, so nothing would read the error, and returning it
+	// would tell endBlockedClaudeTurn the turn had not ended although it was
+	// committed, which would keep held messages waiting on a dialog that is
+	// already gone. A Pane the mirror cannot find, and a release that inherited
+	// no TMUX, leave the badge to the next interaction writer.
+	_ = c.mirrorAgentInteraction(committed, coremetadata.InteractionResponseComplete)
+	return nil
 }

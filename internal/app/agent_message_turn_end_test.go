@@ -469,3 +469,100 @@ func TestClaudeTurnEndedAfterReadsOnlyTheTurnShape(t *testing.T) {
 		})
 	}
 }
+
+// paneRef is the managed Pane the fixture Agent is bound to, which is the
+// Pane a committed turn end is projected onto.
+func (f *holdFixture) paneRef(t *testing.T) string {
+	t.Helper()
+	agent, ok := f.registry.Agent(f.claudeUID)
+	if !ok {
+		t.Fatal("claude agent fixture missing")
+	}
+	return agent.Status.PaneRef
+}
+
+// Acceptance 1 and 3: a turn end the release commits is projected onto the
+// managed Pane at once, so the badge does not wait for the next hook. Every
+// projection answer -- no mirror, a Pane the mirror cannot find, a mirror that
+// fails its write -- leaves the commit and the push that follows it intact.
+func TestAgentMessageReleaseTurnEndProjectsTheCommittedBadge(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mirror *fakeAgentMutationMirror
+		want   []string // mirror calls, with the Pane uid filled in
+	}{
+		{name: "projected onto the managed pane", mirror: &fakeAgentMutationMirror{target: "%9"},
+			want: []string{"find %s", "status %9 response_complete"}},
+		{name: "no mirror outside tmux"},
+		{name: "pane not found", mirror: &fakeAgentMutationMirror{}, want: []string{"find %s"}},
+		{name: "mirror lookup fails", mirror: &fakeAgentMutationMirror{lookupErr: errors.New("tmux is gone")},
+			want: []string{"find %s"}},
+		{name: "mirror write fails", mirror: &fakeAgentMutationMirror{target: "%9", writeErr: errors.New("set-option failed")},
+			want: []string{"find %s", "status %9 response_complete"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newHoldFixture(t)
+			f.installFakeSleep()
+			blockedAt := f.now
+			f.bindTranscript(t, holdTranscriptPath)
+			f.setInteraction(t, coremetadata.InteractionApprovalRequired)
+			f.transcript = claudeTranscript(claudeDeniedTurn(blockedAt.Add(-time.Minute), blockedAt, blockedAt,
+				blockedAt.Add(time.Second))...)
+			if tc.mirror != nil {
+				f.cmd.mirror = tc.mirror
+			}
+			const ref = "message-turn-end-badge"
+			f.putHeld(t, ref, f.now.Add(-time.Second), f.now.Add(time.Hour))
+
+			if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.delivery(t, ref); got.State != coremessage.StateDelivered || !slices.Equal(f.adapter.submits, []string{ref}) {
+				t.Fatalf("record = %+v submits=%v, want the held record delivered after the commit", got, f.adapter.submits)
+			}
+			if got := f.interaction(t); got.Kind != coremetadata.InteractionResponseComplete ||
+				got.Source != string(coremetadata.InteractionSourceProviderHook) || f.registryWrites != 1 {
+				t.Fatalf("interaction = %+v writes=%d, want one provider-hook response_complete", got, f.registryWrites)
+			}
+			if tc.mirror == nil {
+				return
+			}
+			want := make([]string, 0, len(tc.want))
+			for _, call := range tc.want {
+				want = append(want, strings.Replace(call, "%s", f.paneRef(t), 1))
+			}
+			if !slices.Equal(tc.mirror.calls, want) {
+				t.Fatalf("mirror calls = %v, want %v", tc.mirror.calls, want)
+			}
+		})
+	}
+}
+
+// A commit the compare-and-set refuses writes no badge: the Pane still shows
+// the observation the Registry still carries.
+func TestAgentMessageReleaseTurnEndProjectsNothingWhenTheCommitIsRefused(t *testing.T) {
+	f := newHoldFixture(t)
+	f.installFakeSleep()
+	blockedAt := f.now
+	f.bindTranscript(t, holdTranscriptPath)
+	f.setInteraction(t, coremetadata.InteractionApprovalRequired)
+	f.transcript = claudeTranscript(claudeDeniedTurn(blockedAt.Add(-time.Minute), blockedAt, blockedAt, blockedAt.Add(time.Second))...)
+	mirror := &fakeAgentMutationMirror{target: "%9"}
+	f.cmd.mirror = mirror
+	const ref = "message-turn-end-badge-race"
+	f.putHeld(t, ref, f.now.Add(-time.Second), f.now.Add(time.Hour))
+	newer := blockedAt.Add(2 * time.Second)
+	f.beforeUpdate = func(working *coremetadata.Registry) {
+		f.beforeUpdate = nil
+		for _, registry := range []*coremetadata.Registry{working, f.registry} {
+			agent, _ := registry.Agent(f.claudeUID)
+			agent.Status.Interaction.ObservedAt = newer
+		}
+	}
+	if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	if len(mirror.calls) != 0 || f.registryWrites != 0 {
+		t.Fatalf("mirror calls = %v writes=%d, want no projection over a refused commit", mirror.calls, f.registryWrites)
+	}
+}
