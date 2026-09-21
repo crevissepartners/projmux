@@ -43,6 +43,13 @@ type observedSideFrame struct {
 	Frame map[string]any
 }
 
+// providerAuthFrame is the auth line the producer writes before its one user
+// frame.
+type providerAuthFrame struct {
+	Type  string `json:"type"`
+	Token string `json:"token"`
+}
+
 type providerFrame struct {
 	Type    string `json:"type"`
 	Message struct {
@@ -198,10 +205,7 @@ func receiveFrame(listener *net.UnixListener, token string) (providerFrame, erro
 	}
 	defer connection.Close()
 	reader := bufio.NewReader(io.LimitReader(connection, 16<<10))
-	var auth struct {
-		Type  string `json:"type"`
-		Token string `json:"token"`
-	}
+	var auth providerAuthFrame
 	authLine, err := reader.ReadBytes('\n')
 	if err != nil || decodeExact(authLine, &auth) != nil || auth.Type != "auth" || auth.Token != token {
 		return providerFrame{}, errors.New("invalid auth line")
