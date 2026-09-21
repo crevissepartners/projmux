@@ -872,6 +872,115 @@ func TestClaudeUnblockCommitLaunchesReleaseOnlyWithHeldMessages(t *testing.T) {
 	}
 }
 
+// Test group 8: a message held after the release listed for the last time is
+// handed off to a fresh release when the window ends, because the launch its
+// own hold made is the one that gave up on this release's lock. A record the
+// release did list is not handed off, so an open dialog cannot chain window
+// after window.
+func TestAgentMessageReleaseHandsOffAMessageHeldWhileTheWindowClosed(t *testing.T) {
+	// holdLateArrival blocks the target on one held record and, once the
+	// release is watching it, holds a second record the release never listed.
+	holdLateArrival := func(t *testing.T, f *holdFixture) {
+		t.Helper()
+		f.installFakeSleep()
+		f.putHeld(t, "message-window-first", f.now.Add(-time.Minute), f.now.Add(time.Hour))
+		f.setInteraction(t, coremetadata.InteractionApprovalRequired)
+		late := false
+		f.onWait = func() {
+			if late {
+				return
+			}
+			late = true
+			f.putHeld(t, "message-window-late", f.now, f.now.Add(time.Hour))
+		}
+	}
+	t.Run("the late record is delivered without a hook or a new send", func(t *testing.T) {
+		f := newHoldFixture(t)
+		holdLateArrival(t, f)
+		// The hand-off launch stands in for the detached release the live
+		// launcher starts. It runs after the unlock, so it takes the same
+		// per-target lock and finishes the work this release stopped on.
+		f.cmd.messageRelease = func(agentUID string) error {
+			f.launches = append(f.launches, agentUID)
+			f.setInteraction(t, coremetadata.InteractionInProgress)
+			return f.cmd.releaseHeldMessages(agentUID)
+		}
+		if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(f.launches, []string{f.claudeUID}) {
+			t.Fatalf("launches = %v, want exactly one hand-off for the late record", f.launches)
+		}
+		if want := []string{"message-window-first", "message-window-late"}; !slices.Equal(f.adapter.submits, want) {
+			t.Fatalf("release pushed %v, want %v", f.adapter.submits, want)
+		}
+		for _, ref := range []string{"message-window-first", "message-window-late"} {
+			if got := f.delivery(t, ref); got.State != coremessage.StateDelivered {
+				t.Fatalf("%s = %+v, want delivered", ref, got)
+			}
+		}
+	})
+	t.Run("the window still bounds the release that hands off", func(t *testing.T) {
+		f := newHoldFixture(t)
+		holdLateArrival(t, f)
+		if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+			t.Fatal(err)
+		}
+		if got := sumHoldWaits(f.waits); got != agentMessageReleaseRetryWindow {
+			t.Fatalf("watched %v, want the whole %v window", got, agentMessageReleaseRetryWindow)
+		}
+		if !slices.Equal(f.launches, []string{f.claudeUID}) {
+			t.Fatalf("launches = %v, want exactly one hand-off", f.launches)
+		}
+		if got := f.delivery(t, "message-window-first"); got.State != coremessage.StateHeld {
+			t.Fatalf("first = %+v, want still held by the release that stopped", got)
+		}
+	})
+	t.Run("an open dialog alone hands off nothing", func(t *testing.T) {
+		f := newHoldFixture(t)
+		f.installFakeSleep()
+		f.putHeld(t, "message-window-only", f.now.Add(-time.Minute), f.now.Add(time.Hour))
+		f.setInteraction(t, coremetadata.InteractionApprovalRequired)
+		if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.launches) != 0 {
+			t.Fatalf("launches = %v, want none: a dialog that stays open must not open a second window", f.launches)
+		}
+		if got := sumHoldWaits(f.waits); got != agentMessageReleaseRetryWindow {
+			t.Fatalf("watched %v, want the whole %v window", got, agentMessageReleaseRetryWindow)
+		}
+	})
+	t.Run("a record queued behind the stopped one hands off nothing", func(t *testing.T) {
+		f := newHoldFixture(t)
+		f.installFakeSleep()
+		f.putHeld(t, "message-window-a", f.now.Add(-2*time.Minute), f.now.Add(time.Hour))
+		f.putHeld(t, "message-window-b", f.now.Add(-time.Minute), f.now.Add(time.Hour))
+		f.setInteraction(t, coremetadata.InteractionApprovalRequired)
+		if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.launches) != 0 {
+			t.Fatalf("launches = %v, want none: the queued record was listed, so it is not a lost launch", f.launches)
+		}
+	})
+	t.Run("the hand-off release does not hand off the same record again", func(t *testing.T) {
+		f := newHoldFixture(t)
+		f.installFakeSleep()
+		// The state the hand-off release starts from: both records held and
+		// listed by it from the first pass, the dialog still open.
+		f.putHeld(t, "message-window-first", f.now.Add(-time.Minute), f.now.Add(time.Hour))
+		f.putHeld(t, "message-window-late", f.now.Add(-time.Second), f.now.Add(time.Hour))
+		f.setInteraction(t, coremetadata.InteractionApprovalRequired)
+		if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.launches) != 0 {
+			t.Fatalf("launches = %v, want none: the chain ends at the release the hand-off started", f.launches)
+		}
+	})
+}
+
 func TestAgentMessageReleaseRouteIsPlumbingOnly(t *testing.T) {
 	if shouldRunLegacyHookMigrations([]string{"internal", agentMessageReleaseRoute, "--agent", "uid:agent-01"}) {
 		t.Fatal("the detached release attempted automatic settings migration")

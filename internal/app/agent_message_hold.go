@@ -229,6 +229,9 @@ const (
 // release ends with the record still held, and no later record overtakes it.
 // After a pass it lists again under the same lock, so a message held while
 // this release was running is not left for a release that already gave up.
+// A window that ends stops before that listing, so it lists once more under
+// the lock instead and hands the target to a fresh release when it finds a
+// record it never listed.
 func (c *agentCommand) releaseHeldMessages(agentUID string) error {
 	lister, listOK := c.messageStore.(agentMessageHeldLister)
 	locker, lockOK := c.messageStore.(agentMessageReleaseLocker)
@@ -239,13 +242,26 @@ func (c *agentCommand) releaseHeldMessages(agentUID string) error {
 	if err != nil {
 		return err
 	}
+	handOff := false
+	// The hand-off release is launched after this one unlocks, so it does not
+	// spend its lock wait queueing behind the release that handed off to it.
+	// Deferred calls run last in, first out, so this one runs after unlock.
+	defer func() {
+		if handOff && c.messageRelease != nil {
+			_ = c.messageRelease(agentUID)
+		}
+	}()
 	defer unlock()
+	listed := map[string]bool{}
 	attempted := map[string]bool{}
 	var windowEnd time.Time
 	for {
 		held, err := lister.HeldFor(agentUID)
 		if err != nil {
 			return err
+		}
+		for _, record := range held {
+			listed[record.Envelope.MessageRef] = true
 		}
 		progressed := false
 		for i, record := range held {
@@ -256,6 +272,9 @@ func (c *agentCommand) releaseHeldMessages(agentUID string) error {
 			progressed = true
 			outcome, err := c.judgeHeldMessage(record, held[i:], &windowEnd)
 			if err != nil || outcome != heldReleaseDone {
+				if outcome == heldReleaseStop {
+					handOff = heldSinceListed(lister, agentUID, listed)
+				}
 				return err
 			}
 		}
@@ -263,6 +282,26 @@ func (c *agentCommand) releaseHeldMessages(agentUID string) error {
 			return nil
 		}
 	}
+}
+
+// heldSinceListed reports whether the target has a held record that listed
+// does not name. Such a record was held while this release was running, so the
+// launch its own hold made is the one that gave up on this release's lock and
+// nothing else is waiting to pick it up. A record this release did list is not
+// handed off: it is only queued behind the record whose window just ended, and
+// handing it off would open window after window for the same open dialog,
+// which is what the window bounds.
+func heldSinceListed(lister agentMessageHeldLister, agentUID string, listed map[string]bool) bool {
+	held, err := lister.HeldFor(agentUID)
+	if err != nil {
+		return false
+	}
+	for _, record := range held {
+		if !listed[record.Envelope.MessageRef] {
+			return true
+		}
+	}
+	return false
 }
 
 // judgeHeldMessage judges one held record and, while it cannot be pushed yet,
