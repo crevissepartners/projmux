@@ -28,6 +28,19 @@ const (
 	fixtureCoordinationFrameType  = "coordinationContent"
 )
 
+// The producer of the auth line and the user frame that receiveFrame decodes
+// with decodeExact. providerAuthFrame and providerFrame have to declare the
+// same keys, the keys under the user frame's message included, so the same
+// comparison reads these from source too.
+const (
+	producerProviderFrameFile     = "../../../internal/app/claude_provider_push.go"
+	producerProviderAuthFrameType = "claudeProviderAuthFrame"
+	fixtureProviderAuthFrameType  = "providerAuthFrame"
+	producerProviderUserFrameType = "claudeProviderUserFrame"
+	fixtureProviderUserFrameType  = "providerFrame"
+	providerUserFrameMessageKey   = "message"
+)
+
 // fixtureEnvelopeVocabulary is the frame vocabulary this fixture legitimately
 // spells for its own synthetic events. Every other key or type value that a
 // dropped corpus frame carries must reach the stream only from the corpus.
@@ -247,15 +260,73 @@ func TestCoordinationContentDecodesEveryFrameShape(t *testing.T) {
 // Only the key name is compared; tag options such as omitempty leave a key out
 // of a frame, and a missing key never breaks a strict decode.
 func TestCoordinationContentDeclaresExactlyTheProducerFrameKeys(t *testing.T) {
-	producer, fixture := producerCoordinationFrameKeys(t), fixtureCoordinationFrameKeys(t)
+	producer, _ := producerFrameFields(t, producerCoordinationFrameFile, producerCoordinationFrameType)
+	fixture, _ := fixtureFrameFields(t, fixtureCoordinationFrameType, reflect.TypeFor[coordinationContent]())
+	compareFrameKeys(t, "", producerCoordinationFrameType, producer, fixtureCoordinationFrameType, fixture)
+}
+
+// TestProviderAuthFrameDeclaresExactlyTheProducerFrameKeys holds the auth line
+// to the same comparison: receiveFrame decodes it with decodeExact before the
+// user frame, so a key on one side alone ends the round trip at "invalid auth
+// line" rather than at the key.
+func TestProviderAuthFrameDeclaresExactlyTheProducerFrameKeys(t *testing.T) {
+	producer, _ := producerFrameFields(t, producerProviderFrameFile, producerProviderAuthFrameType)
+	fixture, _ := fixtureFrameFields(t, fixtureProviderAuthFrameType, reflect.TypeFor[providerAuthFrame]())
+	compareFrameKeys(t, "", producerProviderAuthFrameType, producer, fixtureProviderAuthFrameType, fixture)
+}
+
+// TestProviderUserFrameDeclaresExactlyTheProducerFrameKeys holds the user frame
+// to the same comparison, and then its message, because decodeExact rejects an
+// unknown nested key as well. Only message is compared one level down: no other
+// field is followed, so a new nested struct is compared only once a test names
+// it here.
+func TestProviderUserFrameDeclaresExactlyTheProducerFrameKeys(t *testing.T) {
+	producer, producerTypes := producerFrameFields(t, producerProviderFrameFile, producerProviderUserFrameType)
+	fixture, fixtureTypes := fixtureFrameFields(t, fixtureProviderUserFrameType, reflect.TypeFor[providerFrame]())
+	compareFrameKeys(t, "", producerProviderUserFrameType, producer, fixtureProviderUserFrameType, fixture)
+
+	producerMessage, declared := producerTypes[providerUserFrameMessageKey]
+	if !declared {
+		t.Fatalf("%s declares no %s key, so the comparison cannot read the keys under it",
+			producerProviderUserFrameType, providerUserFrameMessageKey)
+	}
+	named, ok := producerMessage.(*ast.Ident)
+	if !ok {
+		t.Fatalf("%s.%s is not a named type of %s, so the comparison cannot read its keys",
+			producerProviderUserFrameType, providerUserFrameMessageKey, producerProviderFrameFile)
+	}
+	fixtureMessage, declared := fixtureTypes[providerUserFrameMessageKey]
+	if !declared {
+		t.Fatalf("%s declares no %s key, so the comparison cannot read the keys under it",
+			fixtureProviderUserFrameType, providerUserFrameMessageKey)
+	}
+	fixtureMessageName := fixtureProviderUserFrameType + "." + providerUserFrameMessageKey
+	producer, _ = producerFrameFields(t, producerProviderFrameFile, named.Name)
+	fixture, _ = fixtureFrameFields(t, fixtureMessageName, fixtureMessage)
+	compareFrameKeys(t, providerUserFrameMessageKey+".", named.Name, producer, fixtureMessageName, fixture)
+}
+
+// compareFrameKeys reports each key that only one side declares, naming the
+// keys with path in front of them.
+func compareFrameKeys(t *testing.T, path, producerType string, producer []string, fixtureType string, fixture []string) {
+	t.Helper()
 	if only := keysMissingFrom(producer, fixture); len(only) > 0 {
 		t.Errorf("%s declares %s and %s does not: decodeExact rejects those keys as unknown fields, so %s has to declare them too",
-			producerCoordinationFrameType, strings.Join(only, " "), fixtureCoordinationFrameType, fixtureCoordinationFrameType)
+			producerType, joinFrameKeys(path, only), fixtureType, fixtureType)
 	}
 	if only := keysMissingFrom(fixture, producer); len(only) > 0 {
 		t.Errorf("%s declares %s and %s does not: the producer no longer emits those keys, so %s is decoding a frame shape that is gone",
-			fixtureCoordinationFrameType, strings.Join(only, " "), producerCoordinationFrameType, fixtureCoordinationFrameType)
+			fixtureType, joinFrameKeys(path, only), producerType, fixtureType)
 	}
+}
+
+// joinFrameKeys spells keys as paths from the top level frame.
+func joinFrameKeys(path string, keys []string) string {
+	spelled := make([]string, len(keys))
+	for i, key := range keys {
+		spelled[i] = path + key
+	}
+	return strings.Join(spelled, " ")
 }
 
 // keysMissingFrom returns the sorted keys of declared that other lacks.
@@ -270,54 +341,61 @@ func keysMissingFrom(declared, other []string) []string {
 	return missing
 }
 
-// fixtureCoordinationFrameKeys reads the fixture side by reflection.
-func fixtureCoordinationFrameKeys(t *testing.T) []string {
+// fixtureFrameFields reads the fixture side by reflection. It returns the keys
+// and, by key, the Go type each one decodes into.
+func fixtureFrameFields(t *testing.T, name string, frame reflect.Type) ([]string, map[string]reflect.Type) {
 	t.Helper()
-	frame := reflect.TypeFor[coordinationContent]()
+	if frame.Kind() != reflect.Struct {
+		t.Fatalf("%s is not a struct", name)
+	}
 	var keys []string
+	types := map[string]reflect.Type{}
 	for i := range frame.NumField() {
 		field := frame.Field(i)
 		if field.Anonymous {
 			t.Fatalf("%s embeds %s, so its keys are not this struct's own and the comparison cannot read them",
-				fixtureCoordinationFrameType, field.Name)
+				name, field.Name)
 		}
 		if key, encoded := jsonFrameKey(field.Tag.Get("json"), field.Name); encoded {
 			keys = append(keys, key)
+			types[key] = field.Type
 		}
 	}
 	if len(keys) == 0 {
-		t.Fatalf("%s declares no JSON key, so this comparison would pass against any producer", fixtureCoordinationFrameType)
+		t.Fatalf("%s declares no JSON key, so this comparison would pass against any producer", name)
 	}
-	return keys
+	return keys, types
 }
 
-// producerCoordinationFrameKeys reads the producer side from source. Every way
-// this read can come back empty is a t.Fatal: an unreadable file, a renamed
-// type or a tagless struct would otherwise turn the comparison into a check
-// that always passes, which is worse than not having one.
-func producerCoordinationFrameKeys(t *testing.T) []string {
+// producerFrameFields reads the producer side from source. Every way this read
+// can come back empty is a t.Fatal: an unreadable file, a renamed type or a
+// tagless struct would otherwise turn the comparison into a check that always
+// passes, which is worse than not having one. It returns the keys and, by key,
+// the type expression each one is declared with.
+func producerFrameFields(t *testing.T, file, name string) ([]string, map[string]ast.Expr) {
 	t.Helper()
 	files := token.NewFileSet()
-	source, err := parser.ParseFile(files, producerCoordinationFrameFile, nil, 0)
+	source, err := parser.ParseFile(files, file, nil, 0)
 	if err != nil {
-		t.Fatalf("producer coordination frame is unreadable at %s: %v", producerCoordinationFrameFile, err)
+		t.Fatalf("producer frame %s is unreadable at %s: %v", name, file, err)
 	}
 	var keys []string
+	types := map[string]ast.Expr{}
 	declared, tagged := false, 0
 	ast.Inspect(source, func(node ast.Node) bool {
 		spec, ok := node.(*ast.TypeSpec)
-		if !ok || spec.Name.Name != producerCoordinationFrameType {
+		if !ok || spec.Name.Name != name {
 			return true
 		}
 		structure, ok := spec.Type.(*ast.StructType)
 		if !ok {
-			t.Fatalf("%s: %s is not a struct", files.Position(spec.Pos()), producerCoordinationFrameType)
+			t.Fatalf("%s: %s is not a struct", files.Position(spec.Pos()), name)
 		}
 		declared = true
 		for _, field := range structure.Fields.List {
 			if len(field.Names) != 1 {
 				t.Fatalf("%s: %s declares an embedded or grouped field, so the comparison cannot read its keys one by one",
-					files.Position(field.Pos()), producerCoordinationFrameType)
+					files.Position(field.Pos()), name)
 			}
 			tag := ""
 			if field.Tag != nil {
@@ -330,24 +408,25 @@ func producerCoordinationFrameKeys(t *testing.T) []string {
 			}
 			if key, encoded := jsonFrameKey(tag, field.Names[0].Name); encoded {
 				keys = append(keys, key)
+				types[key] = field.Type
 			}
 		}
 		return false
 	})
 	if !declared {
-		t.Fatalf("%s declares no %s, so this comparison read nothing", producerCoordinationFrameFile, producerCoordinationFrameType)
+		t.Fatalf("%s declares no %s, so this comparison read nothing", file, name)
 	}
 	if tagged == 0 {
-		t.Fatalf("%s carries no json tag, so the read found something other than the frame struct", producerCoordinationFrameType)
+		t.Fatalf("%s carries no json tag, so the read found something other than the frame struct", name)
 	}
 	if len(keys) == 0 {
-		t.Fatalf("%s declares no JSON key, so this comparison would pass against any fixture", producerCoordinationFrameType)
+		t.Fatalf("%s declares no JSON key, so this comparison would pass against any fixture", name)
 	}
-	return keys
+	return keys, types
 }
 
-// jsonFrameKey returns the top level key a struct field encodes to, and false
-// when encoding/json omits the field entirely.
+// jsonFrameKey returns the key a struct field encodes to, and false when
+// encoding/json omits the field entirely.
 func jsonFrameKey(tag, field string) (string, bool) {
 	if tag == "-" {
 		return "", false
