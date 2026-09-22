@@ -113,9 +113,6 @@ func TestEveryConfigPathSymbolDeclaresItsLayer(t *testing.T) {
 		}
 	}
 	for _, item := range settingItems {
-		if item.Shape == SettingBrowserKeys {
-			continue
-		}
 		tied := false
 		for name, value := range consts {
 			if value == item.File && (isPathSymbolName(name) || name == "GlobalConfigFileName") {
@@ -206,7 +203,7 @@ func TestSettingDeclarationIsWellFormed(t *testing.T) {
 		}
 		names[item.Name] = true
 		switch item.Layer {
-		case LayerCentral, LayerTUI, LayerWeb, LayerBrowser:
+		case LayerCentral, LayerTUI:
 		default:
 			t.Errorf("setting %q has unknown layer %q", item.Name, item.Layer)
 		}
@@ -252,7 +249,7 @@ func TestConfigFrontLoadersReportEveryRead(t *testing.T) {
 		t.Helper()
 		var got []string
 		for _, read := range reads {
-			if read.Item.Shape == 0 || (read.Item.Layer != LayerTUI && read.Item.Layer != LayerWeb) {
+			if read.Item.Shape == 0 || read.Item.Layer != LayerTUI {
 				t.Errorf("%s: reported %q, which is not a declared front setting", label, read.Item.Name)
 			}
 			got = append(got, read.Item.Name)
@@ -276,9 +273,6 @@ func TestConfigFrontLoadersReportEveryRead(t *testing.T) {
 	expect("badge", AIBadgeStyleFileName)
 	_, _, _ = LoadRuntimeDiagnosticsVisibilityFile(paths.RuntimeDiagnosticsVisibilityFile())
 	expect("runtime diagnostics", RuntimeDiagnosticsVisibilityFileName)
-	_, _ = LoadWebSettingsFile(paths.WebSettingsFile(), nil)
-	expect("web settings", WebSettingsFileName)
-
 	NoteFrontRead(KeymapFileName, paths.KeymapFile())
 	NoteFrontRead(SettingConfigTheme, paths.GlobalConfigFile())
 	expect("app-side names", KeymapFileName, SettingConfigTheme)
@@ -311,7 +305,7 @@ func TestPickerDisplayPurposeCoversOnlyThemeAndKeymap(t *testing.T) {
 	defer restore()
 
 	for _, item := range settingItems {
-		if item.Layer != LayerTUI && item.Layer != LayerWeb {
+		if item.Layer != LayerTUI {
 			continue
 		}
 		reads = nil
@@ -361,17 +355,15 @@ func TestPathSymbolsKeepTheirPaths(t *testing.T) {
 var docsLayerNames = map[string]SettingLayer{
 	"central": LayerCentral,
 	"TUI":     LayerTUI,
-	"WEB":     LayerWeb,
-	"browser": LayerBrowser,
 }
 
 // docsLayerQualifiers are code spans in the Where column that qualify the
 // names after them instead of naming a setting: config.toml holds keys of
-// the central and TUI layers, and the browser keys live in localStorage.
-var docsLayerQualifiers = map[string]bool{GlobalConfigFileName: true, "localStorage": true}
+// both the central and TUI layers.
+var docsLayerQualifiers = map[string]bool{GlobalConfigFileName: true}
 
 // TestConfigurationDocsLayerTableMatchesTheDeclaration holds the "Settings live
-// in four layers" table in docs/configuration.md to settingItems, both ways:
+// in two layers" table in docs/configuration.md to settingItems, both ways:
 // every declared setting appears in its layer's row, and every name in a row
 // is declared with that layer.
 func TestConfigurationDocsLayerTableMatchesTheDeclaration(t *testing.T) {
@@ -380,9 +372,9 @@ func TestConfigurationDocsLayerTableMatchesTheDeclaration(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	_, after, ok := strings.Cut(text, "Settings live in four layers:")
+	_, after, ok := strings.Cut(text, "Settings live in two layers:")
 	if !ok {
-		t.Fatal(`docs/configuration.md has no "Settings live in four layers:" table`)
+		t.Fatal(`docs/configuration.md has no "Settings live in two layers:" table`)
 	}
 	rows := map[SettingLayer][]string{}
 	span := regexp.MustCompile("`([^`]+)`")

@@ -155,7 +155,6 @@ type App struct {
 	tmux         *tmuxCommand
 	update       *updateCommand
 	usage        *usagecmd.Command
-	web          *webCommand
 	welcome      *welcomeCommand
 	window       *windowCommand
 	// lookupEnv and interactiveRunner are the two seams the generated
@@ -273,7 +272,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	createCmd.notify = notifyCmd
 	// Every create transaction on this graph -- the typed routes, the split UI
 	// through ai.panes, the UI new Window, and `agent resume` -- records its
-	// create.outcome here. A nil recorder (the web API) records nothing.
+	// create.outcome here. A nil recorder records nothing.
 	createCmd.outcomes = recorder.Create()
 	// `create agent` consumes the AI command through the narrow provider-launch
 	// seam only. There is no raw-argv half left: every create kind is
@@ -418,7 +417,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		tmux:               tmuxCmd,
 		update:             update,
 		usage:              usageCmd,
-		web:                newWebCommand(),
 		welcome:            newWelcomeCommand(update),
 		window:             windowCmd,
 	}
@@ -540,7 +538,6 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"switch":     a.switcher,
 		"unregister": unregister,
 		"update":     a.update,
-		"web":        a.web,
 		"welcome":    a.welcome,
 		"window":     a.window,
 	}

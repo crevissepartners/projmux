@@ -1104,102 +1104,20 @@ The CPU delta cache is internal state at
 CPU reference samples older than 30 seconds are ignored and replaced on the
 next refresh.
 
-## Web Settings (web.toml)
+## Setting Layers
 
-The web UI keeps its own settings layer in one file:
-
-```text
-~/.config/projmux/web.toml     # $XDG_CONFIG_HOME/projmux/web.toml when set
-```
-
-A *front* setting changed in the web UI is written to `web.toml` only; no TUI
-or central file is touched and no tmux config is regenerated. The web reads each
-front setting as `web.toml value ?? the layer it belongs to ?? built-in
-default`, so a key the web never changed keeps following the TUI or central
-value. The TUI, the keybinding splits and the CLI never read `web.toml`. The
-file does not exist until the first web change; there is nothing to migrate.
-
-Settings live in four layers:
+Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
 | central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
-| WEB | `web.toml` | the web's own values for front settings |
-| browser | `localStorage` `projmux.web.*` | per-browser conveniences, never read by the server |
 
-`[ai] split_cwd_from` in `config.toml` is the central default the TUI reads; the
-web reads it when `web.toml` has no `[ai] split_cwd_from`.
+TUI is the front layer: only the front entry points (`settings`, `shell`,
+`switch`, `config render|apply|edit` and the internal namespace) read it. Every
+other public route reads the central layer alone, except that a route opening a
+picker may read that picker's theme and keys to paint it.
 
-Front settings, by web API key (`PATCH /api/v1/web/settings`), with their place
-in `web.toml` and the layer they fall back to:
-
-| API key | `web.toml` | Falls back to |
-| --- | --- | --- |
-| `ai.splitCwdFrom` | `[ai] split_cwd_from = "project"\|"pane"` | `config.toml` `[ai] split_cwd_from` |
-| `statusbar.notifications` | `[statusbar] notifications = true\|false` | `statusbar-visibility-notifications-hud` |
-| `statusbar.project` | `[statusbar] project` | `statusbar-visibility-project` |
-| `statusbar.working-directory` | `[statusbar] working_directory` | `statusbar-visibility-working-directory` |
-| `statusbar.git` | `[statusbar] git` | `statusbar-visibility-git` |
-| `statusbar.clock` | `[statusbar] clock` | `statusbar-visibility-clock` |
-| `statusbar.usage` | `[statusbar.usage] visible` | `statusbar-visibility-agent-usage-hud` |
-| `statusbar.usage.<provider>` | `[statusbar.usage.<provider>] visible` | `statusbar-visibility-agent-usage-provider-<provider>` |
-| `statusbar.usage.<provider>.<window>` | `[statusbar.usage.<provider>] <window>` | `statusbar-visibility-agent-usage-window-<provider>-<window>` |
-
-Every usage node that has children is a table naming itself `visible`, so the
-file stays valid TOML. `<provider>` and `<window>` are the usage HUD
-capabilities (`claude`, `codex`; `5h`, `weekly`), spelled in lower case. Usage
-leaves overlay one by one and keep the TUI's effective rules: a provider that
-is off hides its windows, and a window with no value anywhere uses its own
-default (Codex `5h` is off).
-
-Example:
-
-```toml
-[ai]
-split_cwd_from = "pane"
-
-[statusbar]
-git = false
-clock = false
-
-[statusbar.usage]
-visible = true
-
-[statusbar.usage.codex]
-5h = true
-```
-
-A web split resolves its start directory as: the request's `cwdFrom`, then the
-owner Project's `.projmux/config.toml`, then `web.toml`, then the global
-`config.toml`, then `project`. A Project's own config still beats a web change.
-
-The file is a strict TOML subset: `#` comments, `[table]` headers of bare keys,
-and `key = "string"` or `key = true|false` with bare keys. A key this build
-does not know, including a provider or window the HUD does not have, is
-skipped: its value is not checked or applied, and the next web change writes it
-back under the same table. A newer projmux can add keys without an older one
-refusing the file.
-
-A value of the wrong kind for a known key, a repeated key or table, arrays of
-tables, dotted or quoted keys, multi-line strings, a missing value, and an
-unknown key whose path collides with a table or key this build uses (for
-example `[statusbar]` `usage = false`, where `statusbar.usage` is a table) are
-errors that name the file and line, for example
-`~/.config/projmux/web.toml:2: key "statusbar.git" must be true or false`.
-While `web.toml` has such an error, the web settings and status bar reads
-answer `409 refused` with that message, a web change is refused without
-rewriting the file, and the web usage HUD reports it instead of drawing cells.
-
-The web writes the whole file on every change: a 0600 temp file in the same
-directory, fsynced, then renamed over `web.toml`, in a fixed key order. A
-reader sees the previous file or the new one, never a partial write. Skipped
-keys are kept, but comments you add by hand on their own lines are not kept by
-the next web change.
-
-Enabled providers (`ai.provider.<id>`), `locale` and `statusbar.resources` are
-central: the web saves them to their central files, as the TUI Settings does,
-and never to `web.toml`.
 
 ## Rare Tunables
 

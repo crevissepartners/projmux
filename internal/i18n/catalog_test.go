@@ -66,7 +66,6 @@ func TestDefaultCatalogKoKRCompletesRequiredMigratedSurfaces(t *testing.T) {
 		"update.",
 		"install.replacement.",
 		"help.",
-		"web.",
 	})
 	missing := DefaultCatalog().MissingLocaleKeys(Locale("ko-KR"), required)
 	if len(missing) > 0 {

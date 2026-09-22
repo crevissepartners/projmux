@@ -9,16 +9,13 @@ import (
 // Settings live in layers. This file is the one place that says which layer a
 // setting under ConfigDir belongs to:
 //
-//   - central: product behavior every surface shares (the TUI, the web, the
-//     CLI). Any route may read it.
+//   - central: product behavior every surface shares (the TUI, the CLI). Any
+//     route may read it.
 //   - TUI: how the terminal looks and launches.
-//   - WEB: the web's own values for front settings (web.toml).
-//   - browser: per-browser conveniences in localStorage; the server never
-//     reads them.
 //
-// TUI and WEB are the front layers. Only the front entry points (settings,
-// web, shell, switch, config render|apply|edit and the internal namespace)
-// read them; every other public route reads the central layer alone, except
+// TUI is the front layer. Only the front entry points (settings, shell,
+// switch, config render|apply|edit and the internal namespace) read it; every
+// other public route reads the central layer alone, except
 // that a route that opens a picker may read that picker's theme and keys to
 // paint it (FrontReadPickerDisplay). Every front read is reported to the
 // observer below before the file is opened, so a test can hold a route to
@@ -34,8 +31,6 @@ type SettingLayer string
 const (
 	LayerCentral SettingLayer = "central"
 	LayerTUI     SettingLayer = "TUI"
-	LayerWeb     SettingLayer = "WEB"
-	LayerBrowser SettingLayer = "browser"
 )
 
 // SettingShape is how one declared setting is stored.
@@ -53,9 +48,6 @@ const (
 	// file holds keys of more than one layer, so its layer is declared per key
 	// set, never for the file.
 	SettingConfigKeys
-	// SettingBrowserKeys is browser localStorage keys starting with File. It
-	// is not a file; it is declared so the docs table and this one agree.
-	SettingBrowserKeys
 )
 
 // SettingItem is one declared setting.
@@ -67,10 +59,10 @@ type SettingItem struct {
 	Layer SettingLayer
 	Shape SettingShape
 	// File is the path symbol the setting is tied to: the *FileName or
-	// *DirName constant (the prefix constant for a family, GlobalConfigFileName
-	// for a key set, the key prefix for browser keys).
+	// *DirName constant (the prefix constant for a family,
+	// GlobalConfigFileName for a key set).
 	File string
-	// Doc is how docs/configuration.md's "Settings live in four layers" table
+	// Doc is how docs/configuration.md's "Settings live in two layers" table
 	// lists the setting in its layer's row. Several items may share one Doc
 	// spelling (`statusbar-visibility-*`).
 	Doc string
@@ -93,10 +85,6 @@ const (
 	// its storage (persona.DirName); the name is repeated here only so the
 	// layer is declared in this one table, and a test holds the two equal.
 	PersonasDirName = "personas"
-
-	// WebBrowserStoragePrefix is the localStorage key prefix of the web
-	// client's per-browser conveniences.
-	WebBrowserStoragePrefix = "projmux.web."
 )
 
 // settingItems is the declaration. Adding a setting file is adding its path
@@ -148,12 +136,6 @@ var settingItems = []SettingItem{
 	declareKeys(SettingConfigTheme, LayerTUI, "[theme]"),
 	declareKeys(SettingConfigUINativeKeys, LayerTUI, "[ui] native_keys"),
 	declareKeys(SettingConfigAIResume, LayerTUI, "[ai] resume_*"),
-
-	// WEB.
-	declareFile(WebSettingsFileName, LayerWeb, ""),
-
-	// browser.
-	{Name: WebBrowserStoragePrefix + "*", Layer: LayerBrowser, Shape: SettingBrowserKeys, File: WebBrowserStoragePrefix, Doc: WebBrowserStoragePrefix + "*"},
 }
 
 func declareFile(name string, layer SettingLayer, doc string) SettingItem {
@@ -234,7 +216,7 @@ const (
 // read, so the exemption cannot widen past these two.
 var pickerDisplayItems = []string{SettingConfigTheme, KeymapFileName}
 
-// FrontRead is one read of a front-layer (TUI or WEB) setting.
+// FrontRead is one read of a front-layer (TUI) setting.
 type FrontRead struct {
 	// Item is the declared setting read. A reader handed a path this
 	// declaration does not name reports an item with Name set to the path's

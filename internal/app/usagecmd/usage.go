@@ -1570,12 +1570,6 @@ func isHUDPlaceholder(s usage.Snapshot) bool {
 	return s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != usage.WindowContext && s.Window != usage.WindowQuota
 }
 
-// FallbackProvenance reports whether the HUD marks snapshot as read from the
-// fallback source.
-func FallbackProvenance(snapshot usage.Snapshot) bool {
-	return compactModelFallbackProvenance(snapshot)
-}
-
 func (c *Command) hudVisibilityConfigPaths() (config.Paths, error) {
 	home := strings.TrimSpace(c.env("HOME"))
 	if home == "" {

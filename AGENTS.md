@@ -17,7 +17,6 @@ git merge-base --is-ancestor origin/main HEAD
 make fmt
 make fix
 make test
-make web-check                         # only when the web client changed
 
 # publish: re-run the base check right before pushing
 git fetch origin main

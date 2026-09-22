@@ -26,11 +26,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-WEB_UI_DIR ?= internal/web/_ui
-WEB_DIST_DIR ?= internal/web/dist
-NPM ?= npm
-
-.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs web-build web-check test smoke-assert-contract build-vcs-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -78,22 +74,6 @@ docs:
 	@$(GO) run ./internal/tools/gendocs > $(DOCS_REFERENCE).tmp
 	@mv $(DOCS_REFERENCE).tmp $(DOCS_REFERENCE)
 	@echo ">> regenerated $(DOCS_REFERENCE)"
-
-# web-build rebuilds the embedded browser client from $(WEB_UI_DIR) into
-# $(WEB_DIST_DIR). The build output is committed, so `go build` and the release
-# matrix never need Node; this target is the only place that does.
-web-build:
-	cd $(WEB_UI_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run check && $(NPM) run build
-
-# web-check fails when the committed client differs from a fresh build of its
-# source: a changed or missing file, or a stray one left in the dist directory.
-web-check: web-build
-	@if [ -n "$$(git status --porcelain -- $(WEB_DIST_DIR))" ]; then \
-		git status --short -- $(WEB_DIST_DIR); \
-		echo ">> $(WEB_DIST_DIR) is stale; run \"make web-build\" and commit the result"; \
-		exit 1; \
-	fi
-	@echo ">> $(WEB_DIST_DIR) matches $(WEB_UI_DIR)"
 
 fmt:
 	@if [ -n "$(GO_FILES)" ]; then \

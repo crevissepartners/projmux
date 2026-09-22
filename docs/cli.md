@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 190 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 189 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -91,7 +91,6 @@ projmux <command> [args...]
 | [`projmux switch`](#projmux-switch) | shortcut | Pick a project and compose create project with open project |
 | [`projmux unregister`](#projmux-unregister) | canonical | Unregister Projects from the Registry while preserving runtime and files |
 | [`projmux update`](#projmux-update) | canonical | Check installer-aware release update status |
-| [`projmux web`](#projmux-web) | shortcut | Serve the HTTP API and browser client |
 | [`projmux welcome`](#projmux-welcome) | shortcut | Reprint the shell welcome guide |
 | [`projmux window`](#projmux-window) | canonical | Open recent window navigation surfaces |
 | [`projmux help`](#projmux-help) | canonical | Show bootstrap help |
@@ -3532,31 +3531,6 @@ Allowed effects:
 ```
 projmux update apply
 ```
-
-## `projmux web`
-
-Serve the HTTP API and browser client
-
-Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux web [--addr 127.0.0.1:8787] [--socket PATH|-] [-v]
-```
-
-Every request on the TCP listener needs the start token, a fresh random value printed once at start in the URL `http://<addr>/?token=<token>`. Opening that URL stores the token in an HttpOnly, SameSite=Strict cookie and redirects to the same address without it; other clients send `Authorization: Bearer <token>`. A request without the token is refused with 401 `unauthorized`.
-
-The unix socket needs no token: its owner-only file mode is its access control.
 
 ## `projmux welcome`
 

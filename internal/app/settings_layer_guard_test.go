@@ -24,18 +24,18 @@ import (
 )
 
 // settingsFrontEntryRoutes are the front entry points: the only routes that
-// may read a front-layer (TUI or WEB) setting. A top-level name covers the
-// whole route; a two-word name covers that sub-route alone. Every other
-// public route reads the central layer only.
+// may read a front-layer (TUI) setting. A top-level name covers the whole
+// route; a two-word name covers that sub-route alone. Every other public
+// route reads the central layer only.
 var settingsFrontEntryRoutes = []string{
-	"settings", "web", "shell", "switch",
+	"settings", "shell", "switch",
 	"config render", "config apply", "config edit",
 	"internal",
 }
 
 // isFrontLayer reports whether only the front entry points may read layer.
 func isFrontLayer(layer config.SettingLayer) bool {
-	return layer == config.LayerTUI || layer == config.LayerWeb
+	return layer == config.LayerTUI
 }
 
 func isSettingsFrontEntryRoute(path ...string) bool {
@@ -494,7 +494,6 @@ func (e *settingsLayerGuardEnv) seedFrontFiles(t *testing.T) {
 		p.RuntimeDiagnosticsVisibilityFile():                         "always",
 		p.TmuxAISplitModeFile():                                      "shell\n",
 		p.KeymapFile():                                               "schema_version = 2\n\n[bindings.\"project-sidebar.toggle\"]\nkeys = [\"M-1\"]\n",
-		p.WebSettingsFile():                                          "[statusbar]\ngit = false\nclock = false\n",
 		p.GlobalConfigFile():                                         "[theme]\naccent = \"#ff00ff\"\n\n[ui]\nnative_keys = false\n\n[ai]\nresume_picker_limit = 7\nresume_scan_depth = 3\n",
 	}
 	seeded := map[string]bool{}
@@ -569,7 +568,7 @@ func (e *settingsLayerGuardEnv) run(recorder *frontReadRecorder, argv []string) 
 
 // TestSettingsLayerGuardPublicRoutesReadNoFrontSetting runs every public route
 // outside the front entry points in-process and asserts, at the config seam,
-// that none of them read a TUI or WEB setting. Routes may fail in this
+// that none of them read a TUI setting. Routes may fail in this
 // environment (there is no tmux); the assertion is the count of front reads,
 // attributed to the route that ran.
 //
