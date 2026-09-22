@@ -442,6 +442,21 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	if err := r.launcher.RequireAgentEnabled(plan.provider); err != nil {
 		return err
 	}
+	// Resume is selector-authoritative, so it binds the app's logical route
+	// without an anchor Pane. `agent resume <ref>` has already resolved one
+	// exact Agent through the selector engine's exact-one cell, and planAgentResume
+	// has proven that Agent's owning Window and that Window's stored
+	// anchorPaneRef; the split target is that stored anchor, not whatever Pane
+	// the operator happens to be standing in. Requiring an inherited or typed
+	// `%N` on top of it blocked the one invocation resume exists for -- reviving
+	// an Agent whose own Pane is, by definition, already gone -- and it blocked
+	// it with a containment refusal about a socket and a server that were both
+	// correct. Physical socket, ownership marker, server generation and the
+	// typed object guards below are all unchanged: what is dropped is only the
+	// requirement that the caller supply an anchor Pane by typing or inheriting
+	// one. A standalone server still gets none of this: it keeps requiring the
+	// inherited $/@/% receipt.
+	r.create.selectRuntimeAuthority(true)
 	// The provider resume argv is the only argv this route can produce. If the
 	// stored conversation id cannot be rendered into one -- malformed, wrong
 	// shape for the provider, provider binary absent -- the route stops here,

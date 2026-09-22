@@ -2969,10 +2969,10 @@ func TestNativePrivateActivationAnchorNegativeAuthorityMatrixIsFirstWriteZero(t 
 		logical     string
 		want        string
 	}{
-		{name: "stale Pane", privatePane: "%999", want: "reobserve inherited anchor"},
+		{name: "unreadable anchor row", privatePane: "%999", want: "reobserve inherited anchor"},
 		{name: "malformed Pane", privatePane: "pane-nine", want: "private producer anchor"},
 		{name: "wrong server path", receiptPath: "/tmp/projmux-route/foreign.sock", want: "inherited socket drifted"},
-		{name: "stale server PID", receiptPID: "999999", want: "containment drifted"},
+		{name: "stale server PID", receiptPID: "999999", want: "server generation was replaced"},
 		{name: "foreign ownership marker", appMarker: "0", want: "not app-owned"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -3130,10 +3130,14 @@ func TestDetachedExplicitAnchorBindsExactAppRouteWithoutAmbientEnvironment(t *te
 func TestDetachedExplicitAnchorAuthorityNegativeMatrixIsFirstWriteZero(t *testing.T) {
 	for _, test := range []struct {
 		name, pane, receiptPath, receiptPID, appMarker, want string
+		blankReceipt                                         bool
 	}{
-		{name: "stale Pane", pane: "%999", want: "reobserve explicit anchor"},
-		{name: "wrong socket", pane: "%8", receiptPath: "/tmp/projmux-route/foreign.sock", want: "containment drifted"},
-		{name: "wrong server PID", pane: "%8", receiptPID: "9999", want: "containment drifted"},
+		{name: "unreadable anchor row", pane: "%999", want: "reobserve explicit anchor"},
+		// The Pane is gone and tmux says so the way tmux actually says it:
+		// exit 0, server columns present, $/@/% blank.
+		{name: "absent anchor pane", pane: "%999", blankReceipt: true, want: "anchor pane %999 no longer exists"},
+		{name: "wrong socket", pane: "%8", receiptPath: "/tmp/projmux-route/foreign.sock", want: "answers on socket"},
+		{name: "wrong server PID", pane: "%8", receiptPID: "9999", want: "server generation was replaced"},
 		{name: "foreign ownership", pane: "%8", appMarker: "0", want: "not app-owned"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -3157,7 +3161,10 @@ func TestDetachedExplicitAnchorAuthorityNegativeMatrixIsFirstWriteZero(t *testin
 				recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", runtimeMutationSocketNameOption): defaultAppSocket + "\n",
 				receiptKey: strings.Join([]string{receiptPath, receiptPID, "$1", "@2", test.pane}, tmuxRowSepFormat) + "\n",
 			}}
-			if test.name == "stale Pane" {
+			if test.blankReceipt {
+				runner.outputs[receiptKey] = strings.Join([]string{receiptPath, receiptPID, "", "", ""}, tmuxRowSepFormat) + "\n"
+			}
+			if test.name == "unreadable anchor row" {
 				runner.errors = map[string]error{receiptKey: errors.New("can't find pane")}
 			}
 			_, err := resolveInvocationRuntimeMutationRouteWithAnchor(context.Background(), runner, func(string) string { return "" }, test.pane)

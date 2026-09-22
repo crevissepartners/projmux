@@ -367,7 +367,13 @@ the inherited exact route and Pane containment. An explicit resource scope
 binds the selected app resource route without letting unrelated inherited
 `TMUX`/`TMUX_PANE` choose or change the resource target; exact Project plus
 `--create-window` therefore uses the validated app logical `-L` route on its
-first attempt, with no `env -u` workaround. Runtime safety remains independent
+first attempt, with no `env -u` workaround. `agent resume` binds the same way,
+and for the same reason: the Agent it rebinds is one exact reference and the
+Pane it splits is that Agent's Window's stored `spec.anchorPaneRef`, so no
+anchor Pane has to be typed or inherited to name a target that is already
+named. Unsetting `TMUX` is not a substitute for either — it selects the
+detached branch, which asks for an explicit `--anchor %N` instead of asking for
+less. Runtime safety remains independent
 and may refuse before mutation. An inherited app-owned `TMUX` socket/PID stays
 route evidence: projmux validates its exact `-S` path, ownership/logical
 markers, logical `-L` alias, and PID while ignoring unrelated `TMUX_PANE`
