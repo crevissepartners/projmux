@@ -35,6 +35,7 @@ func LoadAgentQuestionWindowSecondsFile(path string) (int, error) {
 	if strings.TrimSpace(path) == "" {
 		return DefaultAgentQuestionWindowSeconds, nil
 	}
+	// #nosec G304 -- path is the resolved projmux configuration file supplied by the caller.
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
