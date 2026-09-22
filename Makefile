@@ -26,7 +26,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -122,7 +122,7 @@ deadcode-contract:
 vet:
 	$(GO) vet ./...
 
-test: deadcode-contract release-contract ci-contract smoke-assert-contract build-vcs-contract e2e-admission-contract e2e-pipe-contract e2e-terminal-line-contract
+test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract e2e-admission-contract e2e-pipe-contract e2e-terminal-line-contract
 	$(GO) test ./...
 
 smoke-assert-contract:
@@ -137,6 +137,11 @@ release-contract:
 ci-contract:
 	python3 -m unittest discover -s test -p 'ci_workflow_contract_test.py'
 	python3 -m unittest discover -s test -p 'agent_dialogue*_test.py'
+
+# The reviewed security baselines have one pin. This keeps a second copy from
+# coming back, and proves a changed baseline still fails the gate.
+security-pin-contract:
+	python3 -m unittest discover -s test -p 'security_pin_contract_test.py'
 
 test-integration:
 	scripts/test-integration-docker.sh

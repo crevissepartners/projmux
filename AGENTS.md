@@ -123,7 +123,9 @@ Branch protection:
 - `make security` runs three groups in parallel; CI runs each as its own job: `make security-go` (govulncheck, gosec), `make security-static` (staticcheck), `make security-policy` (gitleaks, actionlint, shellcheck).
 - `make security-tools` installs the Go-based scanners at the versions pinned in `.security/security-tools.versions`.
 - gosec and staticcheck findings are compared with the reviewed baselines `.security/gosec-baseline.json` and `.security/staticcheck-baseline.json`. A finding beyond its baseline count fails the gate.
-- `.security/security-current-findings.json` pins the current finding counts and the baseline hashes. A change to either must update it.
+- `.security/security-current-findings.json` pins the current finding counts and the baseline digests. **It is the only place a reviewed baseline digest is defined.** Change a baseline file and you change this pin in the same commit, or the gate fails.
+- Never restate a baseline digest anywhere else. Consumers resolve it through `scripts/security-baseline-pin.py`, and `make security-pin-contract` (part of `make test`) fails on a second copy. A copy in `test/security-contract.sh` drifted from the real file for four days in 2026-09 because no job ran the gate that would have caught it.
+- `make security-contract` is that gate: scanner parity, gitleaks history range, evidence typing, the stable aggregate, and actionlint. CI runs it as the job `Security / Contract gate`, which fans into the aggregate `Test`.
 - gitleaks uses `.gitleaks.toml`. Never commit credentials or tokens.
 
 ## Compatibility

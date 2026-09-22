@@ -65,16 +65,18 @@ for fragment in required_fragments:
     if fragment not in security:
         raise SystemExit(f"security contract: scanner/rule/baseline fragment missing: {fragment}")
 
-baseline_expectations = {
-    ".security/gosec-baseline.json": "a44238062f13b5528f93c636fcb9a07f6c7b286739907d67b8bc346f67b40ebe",
-    ".security/staticcheck-baseline.json": "e1f21fb077fe07cb7d55863728a7ded9479b1cab7d437154a5517f993d0e791d",
-}
-baseline_digests = {}
-for name, expected in baseline_expectations.items():
-    digest = hashlib.sha256((root / name).read_bytes()).hexdigest()
-    if digest != expected:
-        raise SystemExit(f"security contract: reviewed baseline changed: {name}")
-    baseline_digests[name] = digest
+# The reviewed baseline digests have exactly one definition:
+# .security/security-current-findings.json. This contract resolves them through
+# the shared module instead of restating them, because the second copy that used
+# to live here drifted unnoticed from 2026-09-18 while no CI job ran the gate.
+pin = subprocess.run(
+    [sys.executable, "scripts/security-baseline-pin.py", "--root", str(root)],
+    capture_output=True,
+    text=True,
+)
+if pin.returncode != 0:
+    raise SystemExit(pin.stderr.strip() or "security contract: reviewed baseline pin unresolved")
+baseline_digests = json.loads(pin.stdout)
 
 packages = subprocess.check_output(
     ["go", "list", "-f", "{{.ImportPath}}", "./..."], text=True
@@ -87,10 +89,6 @@ current = json.loads(
 package_digest = hashlib.sha256(package_bytes).hexdigest()
 if len(packages) != current["package_count"] or package_digest != current["package_set_sha256"]:
     raise SystemExit("security contract: canonical ./... package set differs from controlled pre-split parity")
-for name, digest in baseline_digests.items():
-    scanner = "gosec" if "gosec" in name else "staticcheck"
-    if current["scanners"][scanner]["baseline_sha256"] != digest:
-        raise SystemExit(f"security contract: {scanner} parity baseline digest differs")
 artifact = {
     "schema": "projmux.security.parity-contract.v1",
     "scanner_inventory": [
@@ -113,9 +111,13 @@ import pathlib
 import re
 
 workflow = pathlib.Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-for job in ("security-go", "security-static", "security-policy"):
+for job in ("security-go", "security-static", "security-policy", "security-contract"):
     if not re.search(rf"^  {re.escape(job)}:\n", workflow, re.MULTILINE):
         raise SystemExit(f"security contract: missing scanner child job {job}")
+# This gate is only a contract while some job runs it. It referenced zero jobs
+# until 2026-09-22, and a broken pin stayed invisible for four days.
+if "run: make security-contract" not in workflow:
+    raise SystemExit("security contract: no CI job runs make security-contract")
 if len(re.findall(r"^  security-(?:go|static|policy):\n", workflow, re.MULTILINE)) != 3:
     raise SystemExit("security contract: scanner topology is not exactly three-way")
 required = (
