@@ -24,11 +24,6 @@ const (
 	// claudeQuestionHookRoute is the hidden `internal` route Claude Code runs
 	// as a PreToolUse hook for AskUserQuestion.
 	claudeQuestionHookRoute = "claude-question-hook"
-	// claudeQuestionWindow is how long the hook holds one question open for a
-	// command-line answer before it gives the question back to Claude Code's
-	// own prompt. It is deliberately not a setting; the installed hook timeout
-	// is derived from it.
-	claudeQuestionWindow = 300 * time.Second
 	// claudeQuestionPoll is how often the waiting hook rereads its record.
 	claudeQuestionPoll = 250 * time.Millisecond
 	// claudeQuestionGiveUp is how long past the deadline a hook that cannot
@@ -37,6 +32,31 @@ const (
 	// claudeQuestionPayloadLimit bounds the PreToolUse payload the hook reads.
 	claudeQuestionPayloadLimit = 1 << 20
 )
+
+// claudeQuestionWindow is how long the hook holds one question open for a
+// command-line answer before it gives the question back to Claude Code's own
+// prompt. It is the central agent-question-window-seconds setting (60..3600,
+// default 900); an out-of-range or broken value, and a config directory that
+// cannot be resolved, read as the default.
+//
+// The installed hook timeout is derived from it when `projmux agent integrate
+// claude` runs, not when the hook runs. A window raised without re-running
+// integrate outlasts the installed timeout: Claude Code's SIGTERM at that
+// timeout cancels the wait, which prints nothing, so the question goes on to
+// the ordinary prompt.
+func claudeQuestionWindow() time.Duration {
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return config.DefaultAgentQuestionWindowSeconds * time.Second
+	}
+	return claudeQuestionWindowFromPaths(paths)
+}
+
+// claudeQuestionWindowFromPaths reads the question window under paths.
+func claudeQuestionWindowFromPaths(paths config.Paths) time.Duration {
+	seconds, _ := config.LoadAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile())
+	return time.Duration(seconds) * time.Second
+}
 
 // claudeQuestionHook holds one AskUserQuestion tool call open until its
 // question set is answered through `projmux agent question answer`, and then
@@ -52,11 +72,12 @@ const (
 //
 // The not-opted-in path runs for every question of every Claude session with
 // the hook installed, so it reads one payload and the Registry file and
-// nothing else: no tmux, no store, no migration.
+// nothing else: no tmux, no store, no migration, no setting. The window is
+// resolved only once the Agent is known to be opted in.
 type claudeQuestionHook struct {
 	loadRegistry func() (coremetadata.Registry, error)
 	store        func() (*agentquestion.Store, error)
-	window       time.Duration
+	window       func() time.Duration
 	poll         time.Duration
 	newID        func() (string, error)
 	now          func() time.Time
@@ -159,12 +180,16 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 	if err != nil {
 		return
 	}
+	window := config.DefaultAgentQuestionWindowSeconds * time.Second
+	if h.window != nil {
+		window = h.window()
+	}
 	created := h.now().UTC()
 	record, err := store.Create(agentquestion.Record{
 		ID: id, AgentUID: agent.Metadata.UID, PaneUID: paneUID,
 		SessionID: payload.SessionID, ToolUseID: payload.ToolUseID,
 		Questions: json.RawMessage(rawQuestions),
-		CreatedAt: created, Deadline: created.Add(h.window),
+		CreatedAt: created, Deadline: created.Add(window),
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "projmux: question not recorded: %v\n", err)

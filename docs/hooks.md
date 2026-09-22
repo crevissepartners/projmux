@@ -702,9 +702,9 @@ catalog `install` field for installed hook events.
 `projmux agent integrate claude` also installs one `PreToolUse` entry with
 `"matcher": "AskUserQuestion"` that runs
 `projmux internal claude-question-hook` (marker
-`projmux-managed:claude-question:v1`, `"timeout": 315`). Unlike the ingest
-command its stdout is not discarded, because that is where an answer is handed
-to Claude Code. Re-running the integration keeps exactly one such entry,
+`projmux-managed:claude-question:v1`, `"timeout"` the answer window plus 15
+seconds, `915` by default). Unlike the ingest command its stdout is not
+discarded, because that is where an answer is handed to Claude Code. Re-running the integration keeps exactly one such entry,
 `--remove` deletes it, and `config apply` never adds or changes it.
 
 The hook does nothing unless the Claude Agent that asks was opted in:
@@ -718,9 +718,12 @@ For every other Agent, and for a subagent's question, the hook prints nothing
 and exits at once, so Claude Code shows its usual question prompt.
 
 For an opted-in Agent the hook records the question and holds the tool call
-open for up to 300 seconds. While it waits, Claude Code shows the hook's status
-message instead of the question prompt; pressing Esc cancels the wait and
-declines the question. Answer it from any shell:
+open for the answer window: 900 seconds unless
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds`
+holds another value in 60–3600 (see
+[configuration.md](configuration.md#agent-question-window)). While it waits,
+Claude Code shows the hook's status message instead of the question prompt;
+pressing Esc cancels the wait and declines the question. Answer it from any shell:
 
 ```sh
 projmux agent question list <agent-ref> [-o json]
@@ -739,9 +742,13 @@ changes nothing and names one reason token: `question-not-found`,
 `question-closed`, `question-invalid-answer`, `question-channel-off`, or
 `question-provider-unsupported`.
 
-If nobody answers within 300 seconds, the question expires and Claude Code
-shows its own prompt as usual. `agent question disable` also hands every
-question the Agent is still holding back to that prompt immediately. Records
+If nobody answers within the window, the question expires and Claude Code
+shows its own prompt as usual. The installed timeout is read from the window
+when `projmux agent integrate claude` runs; raise the window without
+re-running it and Claude Code ends the hook at the older, shorter timeout,
+which also gives the question back to its own prompt. `agent question
+disable` also hands every question the Agent is still holding back to that
+prompt immediately. Records
 live in `<state dir>/agent-questions/` and settled ones are kept for a day.
 
 ## Antigravity Hook Ingest

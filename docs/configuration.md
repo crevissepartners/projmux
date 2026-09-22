@@ -729,6 +729,24 @@ set-option -g @projmux_projdir /path/to/repos
 An env `PROJMUX_PROJDIR` value takes priority over the tmux option. The tmux
 option takes priority over the saved projdir file.
 
+## Agent Question Window
+
+The Claude question hook holds an opted-in Agent's `AskUserQuestion` open for
+a command-line answer for a seconds window stored at:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds
+```
+
+The value is integer seconds, default `900`, and must lie in `60`–`3600`. A
+value outside that range, or a file that does not hold one integer, reads as
+`900`. It applies only to Agents opted in with `projmux agent question enable`.
+The installed Claude Code hook `timeout` is this window plus 15 seconds, written
+when `projmux agent integrate claude` runs, so after changing the file re-run
+`projmux agent integrate claude`. Without that, Claude Code still ends the hook
+at the old timeout, and the question goes back to the ordinary prompt then.
+See [hooks.md](hooks.md#answering-askuserquestion-from-the-command-line).
+
 ## Notifications
 
 When `PROJMUX_NOTIFY_HOOK` is unset, projmux uses:
@@ -1110,7 +1128,7 @@ Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 TUI is the front layer: only the front entry points (`settings`, `shell`,

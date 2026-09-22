@@ -227,6 +227,17 @@ func validAIHookAction(action string) bool {
 }
 
 func (c *aiCommand) aiHookCatalogOverridePath(provider string) (string, error) {
+	paths, err := c.aiConfigPaths()
+	if err != nil {
+		return "", err
+	}
+	return paths.AIHookCatalogOverrideFile(provider), nil
+}
+
+// aiConfigPaths resolves the config directory from the command's own
+// environment and home directory, so integration reads the same files a test
+// with a fake HOME or XDG_CONFIG_HOME prepared.
+func (c *aiCommand) aiConfigPaths() (config.Paths, error) {
 	configHome := strings.TrimSpace(c.env("XDG_CONFIG_HOME"))
 	if configHome == "" {
 		homeDir := c.homeDir
@@ -235,9 +246,9 @@ func (c *aiCommand) aiHookCatalogOverridePath(provider string) (string, error) {
 		}
 		home, err := homeDir()
 		if err != nil {
-			return "", fmt.Errorf("resolve home directory: %w", err)
+			return config.Paths{}, fmt.Errorf("resolve home directory: %w", err)
 		}
 		configHome = filepath.Join(home, ".config")
 	}
-	return config.DefaultPaths(configHome, "").AIHookCatalogOverrideFile(provider), nil
+	return config.DefaultPaths(configHome, ""), nil
 }

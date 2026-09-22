@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 )
@@ -38,6 +40,8 @@ type questionFixture struct {
 	store     *agentquestion.Store
 	command   *agentCommand
 	opened    int
+	// windowCalls counts how often the hook resolved its answer window.
+	windowCalls int
 }
 
 func newQuestionFixture(t *testing.T, enabled bool) *questionFixture {
@@ -70,10 +74,13 @@ func (f *questionFixture) hook(window time.Duration) claudeQuestionHook {
 			f.opened++
 			return f.store, nil
 		},
-		window: window,
-		poll:   10 * time.Millisecond,
-		newID:  agentquestion.NewID,
-		now:    time.Now,
+		window: func() time.Duration {
+			f.windowCalls++
+			return window
+		},
+		poll:  10 * time.Millisecond,
+		newID: agentquestion.NewID,
+		now:   time.Now,
 	}
 }
 
@@ -152,6 +159,163 @@ func TestClaudeQuestionHookExpiresSilentlyAndRefusesALateAnswer(t *testing.T) {
 	}
 }
 
+// TestClaudeQuestionHookDeadlineIsExactlyTheConfiguredWindow holds the
+// expiry boundary: the record's deadline is the resolved window after its
+// creation, an answer inside the window wins, and a question left past it
+// expires with nothing printed.
+func TestClaudeQuestionHookDeadlineIsExactlyTheConfiguredWindow(t *testing.T) {
+	t.Parallel()
+
+	const window = 400 * time.Millisecond
+	t.Run("answered before the deadline", func(t *testing.T) {
+		t.Parallel()
+		fixture := newQuestionFixture(t, true)
+		id, done := fixture.startHook(t, context.Background(), window)
+		record, _, _ := fixture.store.Get(id)
+		if got := record.Deadline.Sub(record.CreatedAt); got != window {
+			t.Fatalf("deadline - created = %s, want %s", got, window)
+		}
+		if _, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, id, "--option", "1=make", "--option", "2=main"); err != nil {
+			t.Fatalf("answer inside the window: %v", err)
+		}
+		if got := waitHookOutput(t, done); !strings.Contains(got, `"permissionDecision":"allow"`) {
+			t.Fatalf("answered hook printed %q", got)
+		}
+		if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
+			t.Fatalf("state = %s, want answered", record.State)
+		}
+	})
+	t.Run("unanswered past the deadline", func(t *testing.T) {
+		t.Parallel()
+		fixture := newQuestionFixture(t, true)
+		started := time.Now()
+		id, done := fixture.startHook(t, context.Background(), window)
+		if got := waitHookOutput(t, done); got != "" {
+			t.Fatalf("expired hook printed %q", got)
+		}
+		if elapsed := time.Since(started); elapsed < window {
+			t.Fatalf("hook gave the question back after %s, before the %s window", elapsed, window)
+		}
+		record, _, _ := fixture.store.Get(id)
+		if record.State != agentquestion.StateExpired || record.Deadline.Sub(record.CreatedAt) != window {
+			t.Fatalf("record = %s deadline-created=%s, want expired after %s", record.State, record.Deadline.Sub(record.CreatedAt), window)
+		}
+	})
+}
+
+// TestClaudeQuestionWindowReadsTheSettingAndFallsBackToTheDefault holds the
+// resolver: no file is the 900 second default, an in-range value is taken,
+// and anything else reads as the default.
+func TestClaudeQuestionWindowReadsTheSettingAndFallsBackToTheDefault(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		content string
+		want    time.Duration
+	}{
+		{name: "no file", want: 900 * time.Second},
+		{name: "in range", content: "120\n", want: 120 * time.Second},
+		{name: "below the minimum", content: "59", want: 900 * time.Second},
+		{name: "above the maximum", content: "3601", want: 900 * time.Second},
+		{name: "garbage", content: "fifteen minutes", want: 900 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			paths := config.DefaultPaths(t.TempDir(), t.TempDir())
+			if test.content != "" {
+				if err := os.MkdirAll(paths.ConfigDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(paths.AgentQuestionWindowSecondsFile(), []byte(test.content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := claudeQuestionWindowFromPaths(paths); got != test.want {
+				t.Fatalf("window = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+// TestClaudeQuestionHookResolvesTheWindowOnceWhenOptedIn is the opted-in side
+// of the no-extra-read rule: the window is resolved exactly once per question.
+func TestClaudeQuestionHookResolvesTheWindowOnceWhenOptedIn(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	_, done := fixture.startHook(t, ctx, time.Minute)
+	cancel()
+	waitHookOutput(t, done)
+	if fixture.windowCalls != 1 {
+		t.Fatalf("window resolved %d times, want 1", fixture.windowCalls)
+	}
+}
+
+// TestClaudeQuestionHookInstalledTimeoutShorterThanTheWindowEndsWithNoDecision
+// stands in for a window raised without re-running integrate: Claude Code's
+// SIGTERM at the older installed timeout cancels the wait long before the
+// window, and the hook prints nothing and closes the record.
+func TestClaudeQuestionHookInstalledTimeoutShorterThanTheWindowEndsWithNoDecision(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	id, done := fixture.startHook(t, ctx, 900*time.Second)
+	if got := waitHookOutput(t, done); got != "" {
+		t.Fatalf("canceled hook printed %q", got)
+	}
+	record, _, _ := fixture.store.Get(id)
+	if record.State != agentquestion.StateClosed || record.Deadline.Sub(record.CreatedAt) != 900*time.Second {
+		t.Fatalf("record = %s deadline-created=%s, want closed with a 900s window", record.State, record.Deadline.Sub(record.CreatedAt))
+	}
+}
+
+// TestClaudeQuestionHookStoreFailuresGiveTheQuestionBack holds that a store
+// that cannot be opened, or a question that cannot be recorded, ends in no
+// decision rather than a failed hook.
+func TestClaudeQuestionHookStoreFailuresGiveTheQuestionBack(t *testing.T) {
+	t.Parallel()
+
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		store  func() (*agentquestion.Store, error)
+		stderr string
+	}{
+		{name: "store unavailable", store: func() (*agentquestion.Store, error) { return nil, errors.New("no state dir") }, stderr: "question store unavailable"},
+		{name: "create fails", store: func() (*agentquestion.Store, error) {
+			return agentquestion.NewStoreAt(filepath.Join(blocker, "agent-questions", "questions.json")), nil
+		}, stderr: "question not recorded"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newQuestionFixture(t, true)
+			hook := fixture.hook(time.Minute)
+			hook.store = test.store
+			var stdout, stderr bytes.Buffer
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				hook.run(context.Background(), []string{"--pane=" + questionTestPane}, strings.NewReader(questionTestPayload("PreToolUse", "AskUserQuestion")), &stdout, &stderr)
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the hook did not return")
+			}
+			if stdout.Len() != 0 || !strings.Contains(stderr.String(), test.stderr) {
+				t.Fatalf("stdout=%q stderr=%q, want no decision and %q", stdout.String(), stderr.String(), test.stderr)
+			}
+		})
+	}
+}
+
 func TestClaudeQuestionHookCanceledClosesSilentlyAndRefusesALateAnswer(t *testing.T) {
 	t.Parallel()
 
@@ -223,6 +387,11 @@ func TestClaudeQuestionHookStaysSilentAndOpensNoStoreOutsideItsCase(t *testing.T
 			}
 			if stdout.Len() != 0 || stderr.Len() != 0 || fixture.opened != 0 {
 				t.Fatalf("stdout=%q stderr=%q store opened %d times", stdout.String(), stderr.String(), fixture.opened)
+			}
+			// The not-opted-in path reads the payload and the Registry
+			// only; the window setting is not resolved.
+			if fixture.windowCalls != 0 {
+				t.Fatalf("window resolved %d times outside the hook's case", fixture.windowCalls)
 			}
 			if _, err := os.Stat(filepath.Dir(fixture.store.Path())); !os.IsNotExist(err) {
 				t.Fatalf("store directory stat err = %v, want not exist", err)

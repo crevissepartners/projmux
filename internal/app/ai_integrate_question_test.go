@@ -55,7 +55,7 @@ func TestAIIntegrateClaudeInstallsOneQuestionEntryAndRemoveRestoresTheFileBytes(
 	entry := entries[0]
 	hook := entry["hooks"].([]any)[0].(map[string]any)
 	if entry["matcher"] != "AskUserQuestion" || len(entry["hooks"].([]any)) != 1 || hook["type"] != "command" ||
-		hook["timeout"] != float64(315) || hook["statusMessage"] != claudeQuestionStatusMessage ||
+		hook["timeout"] != float64(915) || hook["statusMessage"] != claudeQuestionStatusMessage ||
 		hook["command"] != "exec projmux internal claude-question-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} 2>/dev/null # projmux-managed:claude-question:v1" {
 		t.Fatalf("question entry = %#v", entry)
 	}
@@ -84,6 +84,44 @@ func TestAIIntegrateClaudeInstallsOneQuestionEntryAndRemoveRestoresTheFileBytes(
 	}
 	if got := readCodexTestFile(t, path); got != original {
 		t.Fatalf("remove did not restore the original bytes:\n--- got ---\n%s--- want ---\n%s", got, original)
+	}
+}
+
+// TestAIIntegrateClaudeQuestionTimeoutFollowsTheWindowSetting holds that the
+// installed timeout is the window read at integration plus the margin, and
+// that an out-of-range window installs the default's timeout.
+func TestAIIntegrateClaudeQuestionTimeoutFollowsTheWindowSetting(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		content string
+		want    float64
+	}{
+		{name: "no setting", want: 915},
+		{name: "setting 120", content: "120\n", want: 135},
+		{name: "setting out of range", content: "3601\n", want: 915},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			cmd := testAICommand(home)
+			cmd.readFile = os.ReadFile
+			if test.content != "" {
+				writeCodexTestFile(t, filepath.Join(home, ".config", "projmux", "agent-question-window-seconds"), test.content)
+			}
+			if err := cmd.Run([]string{"integrate", "claude"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, claudeSettingsRelativePath)
+			entries := claudeQuestionEntries(t, readClaudeSettingsTestFile(t, path))
+			if len(entries) != 1 {
+				t.Fatalf("question entries = %d, want 1", len(entries))
+			}
+			if got := entries[0]["hooks"].([]any)[0].(map[string]any)["timeout"]; got != test.want {
+				t.Fatalf("timeout = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 
