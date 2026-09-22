@@ -216,6 +216,19 @@ func renameResourceEffects() *AllowedEffects {
 	)
 }
 
+// labelResourceEffects is one metadata.labels write.
+//
+// Every resource axis stays unchanged, and that is the contract rather than an
+// omission: a label is classification, so it moves no identity, no reserved
+// name, no owner edge, no desired state, no runtime, and no client. It is the
+// same tuple `agent topic` carries, the other route that writes a metadata map
+// and nothing else. The one thing the write does change -- which resources a
+// `--selector` resolves -- is not an axis, because the axes describe what
+// happened to the graph, not which queries would now match it.
+func labelResourceEffects() *AllowedEffects {
+	return unchangedEffects(CardinalityExactOne)
+}
+
 // unregisterProjectEffects removes the Registry subtree and preserves
 // everything outside it, runtime included.
 func unregisterProjectEffects() *AllowedEffects {
@@ -1546,6 +1559,41 @@ var routes = []Route{
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "validate", Invocation: InvocationNatural, Summary: "Validate lifecycle hook config", Canonical: []string{"hook validate"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "trust", Invocation: InvocationNatural, Summary: "Trust the current project hook config", Canonical: []string{"hook trust"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "untrust", Invocation: InvocationNatural, Summary: "Revoke project hook config trust", Canonical: []string{"hook untrust"}},
+		},
+	},
+	{
+		// The post-creation writer for `metadata.labels`, the one classification
+		// field `--selector` reads. `create --label` writes the same field at
+		// creation and keeps its exact behavior; this route is what makes that
+		// field editable afterwards rather than a property fixed for the life of
+		// the resource.
+		//
+		// The operand grammar is Kubernetes': `key=value` sets, `key=` sets the
+		// empty string, and `key-` removes. The resource model this CLI already
+		// projects is the same shape -- apiVersion, kind, metadata.labels,
+		// metadata.annotations, ownerRef, spec, status -- so borrowing a second
+		// spelling for the same idea would cost the consistency and buy nothing.
+		// What is deliberately not borrowed is Kubernetes' value policy: a label
+		// value here has no length or character-set rule, because `create
+		// --label` has none and two writers of one field must not disagree.
+		Effects:        unchangedEffects(CardinalityUnchanged),
+		Name:           "label",
+		Invocation:     InvocationRefusal,
+		CanonicalOrder: 14,
+		Summary:        "Set or remove Projmux resource metadata.labels after creation",
+		Disposition:    DispositionCanonical,
+		Usage: []string{
+			"projmux label project [<ref>] <key=value|key->... [--project <ref> | -p <ref>]",
+			"projmux label window [<ref>] <key=value|key->... [--project <ref> | -p <ref>]",
+			"projmux label pane [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
+			"projmux label agent [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
+		},
+		Canonical: []string{"label project", "label window", "label pane", "label agent"},
+		Children: []Route{
+			{Effects: labelResourceEffects(), Name: "project", Invocation: InvocationNatural, Summary: "Set or remove Project labels; with no selector inside tmux, the active Project", CanonicalSummary: "Set or remove Project labels", Aliases: []string{"projects"}, Usage: []string{"projmux label project [<ref>] <key=value|key->... [--project <ref> | -p <ref>]"}, Canonical: []string{"label project"}},
+			{Effects: labelResourceEffects(), Name: "window", Invocation: InvocationNatural, Summary: "Set or remove Window labels; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window", CanonicalSummary: "Set or remove Window labels", Aliases: []string{"windows"}, Usage: []string{"projmux label window [<ref>] <key=value|key->... [--project <ref> | -p <ref>]"}, Canonical: []string{"label window"}},
+			{Effects: labelResourceEffects(), Name: "pane", Invocation: InvocationNatural, Summary: "Set or remove Pane labels; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane", CanonicalSummary: "Set or remove Pane labels", Aliases: []string{"panes"}, Usage: []string{"projmux label pane [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"label pane"}},
+			{Effects: labelResourceEffects(), Name: "agent", Invocation: InvocationNatural, Summary: "Set or remove Agent labels within the active Project or ControlSession without changing its name, topic, provider, or managed Pane", CanonicalSummary: "Set or remove Agent labels", Aliases: []string{"agents"}, Usage: []string{"projmux label agent [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"label agent"}},
 		},
 	},
 	{

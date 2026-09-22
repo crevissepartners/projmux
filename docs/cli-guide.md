@@ -97,8 +97,9 @@ invocation context. Mixed Registry/Runtime pickers keep KIND in both profiles.
 Wide stdout preserves full values at every terminal width. See [Column profiles](column-profiles.md)
 for the exact per-kind matrix and migration from the previous default output.
 
-The resource routes (`get`, `describe`, `create`, `rename`, `rebind`, `delete`,
-`agent resume`) address stored resources through one shared selector grammar.
+The resource routes (`get`, `describe`, `create`, `rename`, `label`, `rebind`,
+`delete`, `agent resume`) address stored resources through one shared selector
+grammar.
 
 The grammar in one paragraph: a value is either `uid:<uid>` or a bare
 `metadata.name`. There is no bare-uid form, values are never split on commas,
@@ -478,6 +479,42 @@ live object claims the UID, the command exits nonzero, states that Registry data
 already committed, and names the same public reconcile route as the retry. A
 valid unique Project UID wins over the old path after rebind; unknown and
 duplicate UID claims remain fail-closed.
+
+### Labels after creation
+
+`projmux label project|window|pane|agent` writes `metadata.labels` on exactly
+one resolved resource. It is the post-creation half of `create --label`, which
+keeps its exact behavior: the same field, written by two routes at two moments.
+A label change has no live projection at all -- no tmux option, no tab, no pane
+title -- so the Registry commit is the whole operation and there is nothing to
+converge afterwards.
+
+The operand grammar is Kubernetes': `key=value` sets a label, `key=` sets it to
+the empty string, and `key-` removes it. Set and remove operands may be mixed in
+one invocation, and a key named twice is refused rather than resolved by argv
+order.
+
+Two properties follow from that grammar and are worth stating outright:
+
+- **Shape decides what a positional token is, never the Registry.** A token
+  carrying `=` is always a label operand, and it can never be a resource name
+  anyway, because `=` is not a legal name rune. A token ending in `-` is always
+  a removal. A resource whose `metadata.name` happens to end in `-` is therefore
+  addressed by `uid:<uid>` or by its scope flag rather than positionally.
+- **There is no `--overwrite` guard and no value policy.** Setting a key that
+  already holds a value overwrites it, and removing a key that is absent
+  succeeds and changes nothing; both report the resulting label set. A label
+  value has no length or character-set rule here, unlike in Kubernetes. The
+  syntax is borrowed; the value constraints deliberately are not, because
+  `create --label` has never had them and one field must not have two contracts
+  depending on which route wrote it.
+
+What belongs in a label is decided by one question: is this a value you will
+ever filter on? `--selector key=value` reads labels and only labels, so
+classification that selects (`role=epic-owner`, `phase=task-0`) belongs there.
+A value that is unique per resource -- a link, an artifact path -- fills the
+selector space with keys nothing will ever match and belongs in an annotation
+instead.
 
 ### Agent topic, interaction, activation, and workspace
 

@@ -113,6 +113,7 @@ type App struct {
 	focus       *focusCommand
 	get         *getCommand
 	hook        *hookCommand
+	label       *labelCommand
 	persona     *personaCommand
 	internal    *internalCommand
 	rebind      *rebindCommand
@@ -383,6 +384,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		focus:              focusCmd,
 		get:                getCmd,
 		hook:               newHookCommand(),
+		label:              newLabelCommand(),
 		persona:            newPersonaCommand(),
 		internal:           internalCmd,
 		rebind:             newRebindCommand(),
@@ -507,8 +509,9 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			name: "focus", target: a.focus, allowedFirst: focusKinds,
 			replacement: func([]string) string { return "`projmux focus project|window|pane ...`" },
 		},
-		"get":  a.get,
-		"hook": a.hook,
+		"get":   a.get,
+		"hook":  a.hook,
+		"label": a.label,
 		// The hidden internal plumbing namespace. It aliases the machine-invoked
 		// routes below so generated tmux config, tmux hooks, and popup payloads
 		// can emit one namespace instead of eight top-level tokens.

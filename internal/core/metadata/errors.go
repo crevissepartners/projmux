@@ -28,6 +28,10 @@ var (
 	// ErrInvalidPhase marks an Agent phase value or transition that is not in
 	// the closed lifecycle model.
 	ErrInvalidPhase = errors.New("invalid agent phase")
+	// ErrInvalidLabel marks a label write whose key cannot be stored: an empty
+	// key, or one the same write both sets and removes. It says nothing about
+	// label *values*, which this package deliberately leaves unconstrained.
+	ErrInvalidLabel = errors.New("invalid resource label")
 	// ErrInvalidRegistry marks a registry that violates a structural invariant.
 	ErrInvalidRegistry = errors.New("invalid resource registry")
 	// ErrSchemaTooNew marks a registry envelope newer than this build. It is

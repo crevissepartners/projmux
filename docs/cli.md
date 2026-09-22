@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 189 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 194 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -72,6 +72,7 @@ projmux <command> [args...]
 | [`projmux focus`](#projmux-focus) | canonical | Move the current client to a live resource |
 | [`projmux get`](#projmux-get) | canonical | Read Projmux resources by selector |
 | [`projmux hook`](#projmux-hook) | canonical | List, edit, validate, and trust lifecycle hook config |
+| [`projmux label`](#projmux-label) | canonical | Set or remove Projmux resource metadata.labels after creation |
 | [`projmux notification`](#projmux-notification) | canonical | Manage pending notification workflow state |
 | [`projmux open`](#projmux-open) | canonical | Open a Project runtime and move the current client to it |
 | [`projmux persona`](#projmux-persona) | canonical | List, show, edit, set, and delete Agent persona files |
@@ -2310,6 +2311,133 @@ Allowed effects:
 ```
 projmux hook untrust
 ```
+
+## `projmux label`
+
+Set or remove Projmux resource metadata.labels after creation
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux label project [<ref>] <key=value|key->... [--project <ref> | -p <ref>]
+projmux label window [<ref>] <key=value|key->... [--project <ref> | -p <ref>]
+projmux label pane [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux label agent [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux label project`](#projmux-label-project) | Set or remove Project labels; with no selector inside tmux, the active Project |
+| [`projmux label window`](#projmux-label-window) | Set or remove Window labels; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window |
+| [`projmux label pane`](#projmux-label-pane) | Set or remove Pane labels; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane |
+| [`projmux label agent`](#projmux-label-agent) | Set or remove Agent labels within the active Project or ControlSession without changing its name, topic, provider, or managed Pane |
+
+Canonical spelling: `projmux label project`, `projmux label window`, `projmux label pane`, `projmux label agent`
+
+### `projmux label project`
+
+Set or remove Project labels; with no selector inside tmux, the active Project
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux label project [<ref>] <key=value|key->... [--project <ref> | -p <ref>]
+```
+
+Aliases: `projects`
+
+### `projmux label window`
+
+Set or remove Window labels; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux label window [<ref>] <key=value|key->... [--project <ref> | -p <ref>]
+```
+
+Aliases: `windows`
+
+### `projmux label pane`
+
+Set or remove Pane labels; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux label pane [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+```
+
+Aliases: `panes`
+
+### `projmux label agent`
+
+Set or remove Agent labels within the active Project or ControlSession without changing its name, topic, provider, or managed Pane
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux label agent [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+```
+
+Aliases: `agents`
 
 ## `projmux notification`
 
