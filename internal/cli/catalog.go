@@ -1953,18 +1953,6 @@ var routes = []Route{
 	},
 	{
 		Effects:     unchangedEffects(CardinalityUnchanged),
-		Name:        "web",
-		Invocation:  InvocationNatural,
-		Summary:     "Serve the HTTP API and browser client",
-		Disposition: DispositionShortcut,
-		Usage:       []string{"projmux web [--addr 127.0.0.1:8787] [--socket PATH|-] [-v]"},
-		Notes: []string{
-			"Every request on the TCP listener needs the start token, a fresh random value printed once at start in the URL `http://<addr>/?token=<token>`. Opening that URL stores the token in an HttpOnly, SameSite=Strict cookie and redirects to the same address without it; other clients send `Authorization: Bearer <token>`. A request without the token is refused with 401 `unauthorized`.",
-			"The unix socket needs no token: its owner-only file mode is its access control.",
-		},
-	},
-	{
-		Effects:     unchangedEffects(CardinalityUnchanged),
 		Name:        "welcome",
 		Invocation:  InvocationNatural,
 		Summary:     "Reprint the shell welcome guide",

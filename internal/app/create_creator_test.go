@@ -468,35 +468,6 @@ func TestIntentCreateFromAnAgentPaneNeverRecordsTheCreator(t *testing.T) {
 	}
 }
 
-// TestWebCreatesNeverObserveOrRecordTheCreator is owner ruling 3's web half.
-// The web API runs the create handler in-process with the web server's
-// environment and parent chain, so its app withdraws the observation seam.
-func TestWebCreatesNeverObserveOrRecordTheCreator(t *testing.T) {
-	t.Parallel()
-	if newCreateCommand().processAncestors == nil {
-		t.Fatal("the CLI create command has no creator observation seam")
-	}
-	if app := webCLIApp(); app.create == nil || app.create.processAncestors != nil {
-		t.Fatal("the web app's create command still observes the creator")
-	}
-
-	fx := newCreatorFixture(t)
-	fx.command.withoutCreatorProvenance()
-	before := fx.agentUIDs()
-	stdout, stderr, err := runRoute(t, fx.command,
-		"agent", "--provider", "claude", "--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "-o", "json")
-	if err != nil || stderr != "" || stdout == "" {
-		t.Fatalf("web-shaped create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
-	}
-	if agents, _ := fx.newAgentsSince(t, before); len(agents) != 1 {
-		t.Fatalf("new Agents = %d, want 1", len(agents))
-	}
-	assertNoCreatorKeysAnywhere(t, fx.store)
-	if got := creatorQueryCount(fx.tmux); got != 0 {
-		t.Fatalf("web-shaped create issued %d creator queries, want 0", got)
-	}
-}
-
 func TestProcessAncestryWalksTheRealProcChainToTheParent(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "linux" {

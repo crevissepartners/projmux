@@ -91,9 +91,8 @@ Registry lock is held, and a journal failure never changes the create's
 result, exit status, stdout, or stderr. It does not replace the invocation's
 `command.outcome`, and it does not count guard reads or time individual
 guards. The generated Window rename also runs through the same transaction
-and is not recorded, because it is not a create. The web API runs creates
-without a recorder, so web-initiated creates are not recorded either. Every
-other event family rejects `lock_held_ms` and the `create` component.
+and is not recorded, because it is not a create. Every other event family
+rejects `lock_held_ms` and the `create` component.
 
 projmux no longer emits `session-state.outcome` records. Project snapshots
 were removed, and the retained `internal tmux autosave-session-state` route is

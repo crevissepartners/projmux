@@ -436,7 +436,7 @@ Identity and naming:
   silent. These keys are provenance, not
   authentication, like a message `--source`. An absent key does not mean a
   human created the Agent: UI intent creates (picker, pane menu, `ai split`,
-  launch choice), web API creates, and creates a Codex Agent issues (its
+  launch choice) and creates a Codex Agent issues (its
   commands run under the app-server, not below the Pane's process) leave them
   empty, and nothing backfills older Agents.
 

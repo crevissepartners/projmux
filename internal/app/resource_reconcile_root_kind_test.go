@@ -104,11 +104,6 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "audits Project session projections and roots; the control-root invariants it needs live in Registry.Validate",
 	},
 	{
-		File: "internal/app/web_backend.go", Func: "webBackend.Projects",
-		Source: "Registry", Verdict: rootKindProjectOnly,
-		Why: "the web API lists Project resources the way `get projects` does; a ControlSession is not a web API resource",
-	},
-	{
 		File: "internal/app/pin_authority.go", Func: "projectRefsOf",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "a pin is uid-or-path and both spellings need a root; pins.KindProject is the only managed pin kind",
@@ -437,14 +432,14 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 	for verdict, want := range map[rootKindVerdict]int{
 		rootKindBoth:        19,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 25,
+		rootKindProjectOnly: 24,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 46; got != want {
+	if got, want := len(rootKindProjectionSites), 45; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

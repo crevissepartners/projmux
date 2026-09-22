@@ -113,15 +113,6 @@ func (p creatorProvenance) reportSkip(stderr io.Writer) {
 	_, _ = fmt.Fprintf(stderr, creatorNotRecordedDiagnosticFmt, p.skip)
 }
 
-// withoutCreatorProvenance withdraws the observation seam. A create run
-// in-process on behalf of another caller -- the web API -- inherits that
-// server's environment and parent chain, which say nothing about who asked.
-func (c *createCommand) withoutCreatorProvenance() {
-	if c != nil {
-		c.processAncestors = nil
-	}
-}
-
 // observeCreator runs the creator checks against the transaction's working
 // Registry, which reconcile has already refreshed. It never fails the create.
 func (c *createCommand) observeCreator(ctx context.Context, working *coremetadata.Registry) creatorProvenance {

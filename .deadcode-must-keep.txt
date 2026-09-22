@@ -93,6 +93,7 @@ PreviousPane	Direction-bound entry point of cyclePane retained as the test seam 
 PreviousWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
 PromptLineWithCursor	Default-theme cursor prompt entry point retained as the picker prompt seam over QueryWithCursorAndTheme.
 QualificationResult.Validate	Phase 0 strict generation qualification consistency check is retained for installed receipts.
+ReadArchive	Lock-free reader of the agent message store and reclaim log, retained as the archive read contract its own read_test.go suite enters directly; the in-repo product consumer left with the web layer.
 ReadLifecycleSnapshotOn	The shared requester lifecycle decoder remains a compatibility seam and the independent differential oracle for the owned bounded reader.
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
 RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.
@@ -126,7 +127,6 @@ TeardownObservations	The closed teardown-observation catalog is called by the pr
 Text.Locale	Resolved-locale accessor retained as the test seam that pins the live catalog fallback resolution.
 UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
-WebSettings.Skipped	Public list of the web.toml entries this build skipped (line and dotted key), retained as the reporting surface for a web settings screen; web layer consumer pending.
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
@@ -140,6 +140,7 @@ codexHooksBlock	Default-events entry point of codexHooksBlockForEvents retained 
 committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
+decodeHistory	Per-generation reclaim log decoder reached only through ReadArchive, retained with it so the skipped-line accounting stays under test.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 formatRelativeAge	Fallback-locale entry point of formatRelativeAgeLocale retained as the status notify age bucket seam.
 formatStatusNotify	Fallback-locale entry point of formatStatusNotifyWithLiveLocale retained as the status notify width tier seam.
@@ -167,6 +168,7 @@ openReadyThreadClient	The default-endpoint client helper remains behind installe
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
+readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.
 remoteNewTMUXArgs	Test-only installed qualification argv allowlist is retained to prove remote-new starts without a prompt, resume operand, or send-keys path.
 removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
 renderNativeInteractive	Cursor-at-end entry point of renderNativeInteractiveWithCursor retained as the native picker frame golden seam.

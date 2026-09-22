@@ -134,7 +134,24 @@ def metadata(tool: str, generated: list[dict[str, Any]]) -> dict[str, Any]:
                 "rule": "multiple",
                 "scope": "15 findings still current from the 47 the 2026-07-29 audit reviewed",
                 "reason": "reviewed per rule, path, message, source fingerprint, and maximum count",
-            }
+            },
+            {
+                "rule": "ST1005",
+                "scope": "internal/app materialize.go, rename.go and settings_keybindings.go: error strings opening with Pane, Window or Settings",
+                "reason": (
+                    "Reviewed 2026-09-22 when the web layer left the repository. The strings are byte-identical "
+                    "to the ones that passed on main; only their reporting changed. ST1005 exempts a capitalized "
+                    "first word when that word names a type or function of the same package "
+                    "(honnef.co/go/tools stylecheck/st1005: objNames is built from the package's IR type members "
+                    "and SrcFuncs, and SrcFuncs carries a method under its bare name). internal/app used to "
+                    "declare the methods webBackend.Pane, webBackend.Window and webBackend.Settings, which "
+                    "silently exempted these nine unrelated strings; deleting the web files removed the "
+                    "exemption. Measured: adding stub methods of those three names to the package takes "
+                    "internal/app from 12 ST1005 findings back to 3. Pane, Window and Settings are Projmux "
+                    "resource kinds and are capitalized on purpose, as the reviewed ai_integrate.go 'Claude ...' "
+                    "rows already are, so the strings stand and the findings are recorded here."
+                ),
+            },
         ]
     return {
         "schema": 1,
