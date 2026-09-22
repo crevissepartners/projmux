@@ -53,9 +53,10 @@ const (
 	claudeQuestionHookCommand   = "exec projmux internal " + claudeQuestionHookRoute + aiHookPaneArgument + " 2>/dev/null # " + claudeQuestionManagedMarker
 	// claudeQuestionHookMatcher limits the entry to the one tool it answers.
 	claudeQuestionHookMatcher = "AskUserQuestion"
-	// claudeQuestionHookTimeout outlasts the answer window, so the hook, not
-	// Claude Code's timeout, is what ends an unanswered wait.
-	claudeQuestionHookTimeout = claudeQuestionWindow + 15*time.Second
+	// claudeQuestionHookTimeoutMargin is how far the installed hook timeout
+	// outlasts the answer window read at integration, so the hook, not Claude
+	// Code's timeout, is what ends an unanswered wait.
+	claudeQuestionHookTimeoutMargin = 15 * time.Second
 	// claudeQuestionStatusMessage is what Claude Code shows while the hook
 	// holds the question.
 	claudeQuestionStatusMessage = "Question held for a projmux answer (projmux agent question answer); Esc declines"
@@ -465,7 +466,11 @@ func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordina
 		// The question channel rides on explicit integration only, like the
 		// coordination callbacks above. It holds nothing open for an Agent that
 		// was not opted in with `projmux agent question enable`.
-		hooks["PreToolUse"] = append(claudeHookEntrySlice(hooks["PreToolUse"]), claudeQuestionManagedEntry())
+		paths, err := c.aiConfigPaths()
+		if err != nil {
+			return claudeHookPlan{}, err
+		}
+		hooks["PreToolUse"] = append(claudeHookEntrySlice(hooks["PreToolUse"]), claudeQuestionManagedEntry(claudeQuestionWindowFromPaths(paths)))
 	}
 	next, err := encodeClaudeSettings(settings)
 	if err != nil {
@@ -1161,15 +1166,16 @@ func claudeHookEntryIsHooksAndMatcherOnly(entry map[string]any) bool {
 
 // claudeQuestionManagedEntry is the AskUserQuestion PreToolUse entry. Its
 // command's stdout is not discarded: an answered question's decision is printed
-// there.
-func claudeQuestionManagedEntry() map[string]any {
+// there. Its timeout is window plus claudeQuestionHookTimeoutMargin, in whole
+// seconds.
+func claudeQuestionManagedEntry(window time.Duration) map[string]any {
 	return map[string]any{
 		"matcher": claudeQuestionHookMatcher,
 		"hooks": []any{
 			map[string]any{
 				"type":          "command",
 				"command":       claudeQuestionHookCommand,
-				"timeout":       int(claudeQuestionHookTimeout / time.Second),
+				"timeout":       int((window + claudeQuestionHookTimeoutMargin) / time.Second),
 				"statusMessage": claudeQuestionStatusMessage,
 			},
 		},
