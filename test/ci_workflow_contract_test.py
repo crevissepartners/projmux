@@ -176,6 +176,76 @@ class CIWorkflowContractTest(unittest.TestCase):
                         if outcome != "success":
                             self.assertIn(f"unit={outcome}", completed.stderr)
 
+    def test_security_contract_gate_runs_behind_the_stable_aggregate(self) -> None:
+        # The contract gate pins the reviewed security baselines. Until this job
+        # existed no CI job referenced `make security-contract`, so the gate
+        # failed silently for four days while PRs merged past it.
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        contract = workflow_job(workflow, "security-contract")
+        self.assertIn("    name: Security / Contract gate\n", contract)
+        self.assertNotIn("continue-on-error:", contract)
+        self.assertNotRegex(contract, r"(?m)^    if:")
+        self.assertEqual(
+            step_script(workflow_step(contract, "Run the security contract gate")).strip(),
+            "make security-contract",
+        )
+        # The gate reinstalls the pinned scanners into a throwaway directory, so
+        # it needs the same restore cache and toolchain the scanner jobs use.
+        self.assertIn("uses: actions/setup-go@", contract)
+        self.assertIn("go-version-file: go.mod", contract)
+        self.assertIn(
+            "hashFiles('.security/security-tools.versions')", contract
+        )
+        self.assertEqual(
+            step_script(workflow_step(contract, "Verify pinned security tools")).strip(),
+            "make security-tools",
+        )
+        # Only one job may write the shared tool cache; this one restores only.
+        self.assertNotIn("uses: actions/cache/save@", contract)
+
+        aggregate = workflow_job(workflow, "test")
+        self.assertIn("      - security-contract\n", aggregate)
+        self.assertIn("--required security-contract ", aggregate)
+
+        # Required display names are owned by the `main-protect` ruleset. The
+        # new job is an addition, never a rename or a split of those five.
+        for job, name in {
+            "fmt": "Format",
+            "unit": "Unit Tests",
+            "npm-pack": "NPM Packages",
+            "integration": "Integration Tests",
+            "e2e-tests": "E2E Tests",
+        }.items():
+            self.assertIn(f"    name: {name}\n", workflow_job(workflow, job))
+            self.assertNotEqual(job, "security-contract")
+
+    def test_security_contract_failure_makes_the_stable_aggregate_red(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        aggregate = workflow_job(workflow, "test")
+        aggregate_script = step_script(
+            workflow_step(aggregate, "Require every child to succeed")
+        )
+        children = re.findall(r"^      - ([\w-]+)$", aggregate, re.MULTILINE)
+        self.assertIn("security-contract", children)
+        for outcome in ("failure", "skipped", "cancelled"):
+            with self.subTest(security_contract=outcome):
+                results = {
+                    child: {
+                        "result": outcome if child == "security-contract" else "success"
+                    }
+                    for child in children
+                }
+                completed = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", aggregate_script],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, "REQUIRED_RESULTS": json.dumps(results)},
+                )
+                self.assertEqual(completed.returncode, 1, completed.stderr)
+                self.assertIn(f"security-contract={outcome}", completed.stderr)
+
     def test_installed_codex_schedule_is_a_separate_fail_closed_matrix(self) -> None:
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         workflow = (ROOT / ".github/workflows/installed-codex.yml").read_text(
