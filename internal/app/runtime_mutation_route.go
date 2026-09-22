@@ -142,6 +142,80 @@ func parseInheritedTmuxReceipt(value string) (inheritedTmuxReceipt, error) {
 	return inheritedTmuxReceipt{SocketPath: pathTarget.Value, ServerPID: parts[1], ClientID: parts[2]}, nil
 }
 
+// runtimeMutationAnchorScope names the invocation shape one anchor row is
+// reobserved for. It selects only the wording of a refusal: both routes prove
+// the same containment.
+type runtimeMutationAnchorScope struct {
+	// observation names the read in a transport failure, keeping the existing
+	// `reobserve <observation>` wording of each route.
+	observation string
+	// subject names the anchor in a containment refusal.
+	subject string
+}
+
+var (
+	inheritedRuntimeMutationAnchorScope = runtimeMutationAnchorScope{
+		observation: "inherited anchor", subject: "inherited invocation",
+	}
+	explicitRuntimeMutationAnchorScope = runtimeMutationAnchorScope{
+		observation: "explicit anchor", subject: "explicit anchor",
+	}
+)
+
+// observeRuntimeMutationAnchorRow reobserves one anchor pane on an already
+// proven server and either returns its exact $/@/% receipt or names why there
+// is none.
+//
+// The proof is unchanged: authority still requires the observed socket path,
+// the observed server generation, and an exact $/@/% receipt naming the same
+// pane. What is split is the refusal. tmux answers `display-message -t %N` for
+// a pane that no longer exists with rc=0, filling the server columns and
+// leaving $/@/% blank, so a single equality chain reports the commonest cause
+// -- the anchor pane is gone -- with the wording of the rarest one, containment
+// drift, and sends the reader to inspect a socket and a server generation that
+// are both correct. The three causes the row can actually tell apart now say
+// which one happened: a foreign socket, a replaced server generation, and an
+// absent anchor pane.
+func observeRuntimeMutationAnchorRow(
+	ctx context.Context,
+	routed tmuxCommandRunner,
+	scope runtimeMutationAnchorScope,
+	expectedSocketPath, serverPID, paneID string,
+) (sessionID, windowID string, err error) {
+	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", tmuxRowFormat(
+		"#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}"))
+	if err != nil {
+		return "", "", fmt.Errorf("runtime mutation route: reobserve %s: %w", scope.observation, err)
+	}
+	rows := splitTmuxRows(string(out), 5)
+	if len(rows) != 1 {
+		return "", "", fmt.Errorf(
+			"runtime mutation route: %s anchor pane %s returned no single containment row", scope.subject, paneID)
+	}
+	row := rows[0]
+	if row[0] != expectedSocketPath {
+		return "", "", fmt.Errorf(
+			"runtime mutation route: %s anchor pane %s answers on socket %q, not the proven socket %q",
+			scope.subject, paneID, row[0], expectedSocketPath)
+	}
+	if row[1] != serverPID {
+		return "", "", fmt.Errorf(
+			"runtime mutation route: %s server generation was replaced: anchor pane %s answers pid %s, the proven generation is pid %s",
+			scope.subject, paneID, row[1], serverPID)
+	}
+	// An absent pane is the one answer tmux gives without failing: the server
+	// columns above already matched, and every object column is blank.
+	if row[2] == "" && row[3] == "" && row[4] == "" {
+		return "", "", fmt.Errorf(
+			"runtime mutation route: %s anchor pane %s no longer exists on the proven server", scope.subject, paneID)
+	}
+	if exactTmuxHandle(row[2], "$") == "" || exactTmuxHandle(row[3], "@") == "" || row[4] != paneID {
+		return "", "", fmt.Errorf(
+			"runtime mutation route: %s socket/pid/pane containment drifted", scope.subject)
+	}
+	return row[2], row[3], nil
+}
+
 func observeInheritedRuntimeMutationAuthority(
 	ctx context.Context,
 	routed tmuxCommandRunner,
@@ -151,18 +225,13 @@ func observeInheritedRuntimeMutationAuthority(
 	if exactTmuxHandle(paneID, "%") == "" {
 		return nil, errors.New("runtime mutation route: inherited invocation requires exact TMUX_PANE authority")
 	}
-	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", tmuxRowFormat(
-		"#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}"))
+	sessionID, windowID, err := observeRuntimeMutationAnchorRow(
+		ctx, routed, inheritedRuntimeMutationAnchorScope, receipt.SocketPath, receipt.ServerPID, paneID)
 	if err != nil {
-		return nil, fmt.Errorf("runtime mutation route: reobserve inherited anchor: %w", err)
-	}
-	rows := splitTmuxRows(string(out), 5)
-	if len(rows) != 1 || rows[0][0] != receipt.SocketPath || rows[0][1] != receipt.ServerPID ||
-		exactTmuxHandle(rows[0][2], "$") == "" || exactTmuxHandle(rows[0][3], "@") == "" || rows[0][4] != paneID {
-		return nil, errors.New("runtime mutation route: inherited invocation socket/pid/pane containment drifted")
+		return nil, err
 	}
 	return &runtimeMutationRouteAuthority{
-		Class: class, ServerPID: receipt.ServerPID, SessionID: rows[0][2], WindowID: rows[0][3], PaneID: rows[0][4],
+		Class: class, ServerPID: receipt.ServerPID, SessionID: sessionID, WindowID: windowID, PaneID: paneID,
 	}, nil
 }
 
@@ -178,19 +247,14 @@ func observeExplicitAppAnchorAuthority(
 	if exactTmuxHandle(paneID, "%") == "" {
 		return nil, errors.New("runtime mutation route: detached invocation requires an exact --anchor %N")
 	}
-	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", tmuxRowFormat(
-		"#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}"))
+	sessionID, windowID, err := observeRuntimeMutationAnchorRow(
+		ctx, routed, explicitRuntimeMutationAnchorScope, expectedSocketPath, serverPID, paneID)
 	if err != nil {
-		return nil, fmt.Errorf("runtime mutation route: reobserve explicit anchor: %w", err)
-	}
-	rows := splitTmuxRows(string(out), 5)
-	if len(rows) != 1 || rows[0][0] != expectedSocketPath || rows[0][1] != serverPID ||
-		exactTmuxHandle(rows[0][2], "$") == "" || exactTmuxHandle(rows[0][3], "@") == "" || rows[0][4] != paneID {
-		return nil, errors.New("runtime mutation route: explicit anchor socket/pid/pane containment drifted")
+		return nil, err
 	}
 	return &runtimeMutationRouteAuthority{
 		Class: runtimeMutationRouteApp, ServerPID: serverPID,
-		SessionID: rows[0][2], WindowID: rows[0][3], PaneID: rows[0][4],
+		SessionID: sessionID, WindowID: windowID, PaneID: paneID,
 	}, nil
 }
 

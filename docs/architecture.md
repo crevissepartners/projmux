@@ -1863,7 +1863,10 @@ Plan-only runtime mutation boundary:
   arbitrary Pane as invocation evidence. Generated popup/menu producers pass an exact Pane anchor which is
   reobserved on that same socket rather than trusting a targetless current
   Pane. Before a stage writes, the same `-S` runner refuses path, generation,
-  class, or containment drift. Only a create-session
+  class, or containment drift, and names which of them happened: tmux answers a
+  `display-message -t %N` for a Pane that is gone with exit 0 and blank
+  `$N`/`@N`/`%N` columns, so an absent anchor Pane is reported as absent rather
+  than as drift on a socket and a server generation that both still match. Only a create-session
   stage may accept the typed no-server observation, because its explicit route
   and absent-session ownership preflight are the facts required to create the
   first server.
