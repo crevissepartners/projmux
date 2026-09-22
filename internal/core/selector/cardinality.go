@@ -35,6 +35,7 @@ const (
 	VerbAttach   Verb = "attach"
 	VerbFocus    Verb = "focus"
 	VerbRename   Verb = "rename"
+	VerbLabel    Verb = "label"
 	VerbRebind   Verb = "rebind"
 	VerbDelete   Verb = "delete"
 	// VerbResume is the Agent-domain resume workflow. It is spelled
@@ -113,6 +114,15 @@ var matrix = map[Target]Cardinality{
 	{Verb: VerbRename, Kind: metadata.KindPane}:    CardinalityExactOne,
 	{Verb: VerbRename, Kind: metadata.KindAgent}:   CardinalityExactOne,
 	{Verb: VerbRebind, Kind: metadata.KindProject}: CardinalityExactOne,
+
+	// label addresses exactly one resource per invocation. It is not a fan-out
+	// even though labels are what `--selector` reads: relabelling a resolved
+	// set at once is the shape kubectl grew its --overwrite guard for, and this
+	// route deliberately does not have that shape.
+	{Verb: VerbLabel, Kind: metadata.KindProject}: CardinalityExactOne,
+	{Verb: VerbLabel, Kind: metadata.KindWindow}:  CardinalityExactOne,
+	{Verb: VerbLabel, Kind: metadata.KindPane}:    CardinalityExactOne,
+	{Verb: VerbLabel, Kind: metadata.KindAgent}:   CardinalityExactOne,
 
 	// create resolves an exact-one Project scope, fans out over its resolved
 	// parent Windows, and anchors on exactly one Pane inside each of them.

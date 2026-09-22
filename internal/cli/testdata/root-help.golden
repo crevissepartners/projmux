@@ -13,6 +13,7 @@ Commands:
   focus     Move the current client to a live resource
   get       Read Projmux resources by selector
   hook      List, edit, validate, and trust lifecycle hook config
+  label     Set or remove Projmux resource metadata.labels after creation
   notification  Manage pending notification workflow state
   open      Open a Project runtime and move the current client to it
   persona   List, show, edit, set, and delete Agent persona files

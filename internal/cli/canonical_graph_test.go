@@ -15,7 +15,10 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `agent question enable|disable|list|answer`
+// The baseline last moved when `label project|window|pane|agent` joined the
+// graph: four rows that write `metadata.labels` after creation, the field
+// `--selector` reads and that `create --label` could previously only set once.
+// Before that, it moved when `agent question enable|disable|list|answer`
 // joined the Agent domain: four rows that opt a Claude Agent into answering its
 // AskUserQuestion prompts from the command line, list them with a json
 // projection, and answer one. Before that, it moved when `agent persona
@@ -58,7 +61,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "e1983674529cfbcdaaa69d11e4d96fa19b522fdfbf39077580986092d6fffda8"
+	const want = "d9de088ee56fcbbfc0c5f4a8e43e39997b408208a6f0023c2f5308ce2bf334cb"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

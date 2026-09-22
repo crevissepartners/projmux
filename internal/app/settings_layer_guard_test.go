@@ -125,6 +125,11 @@ var settingsLayerGuardArgv = [][]string{
 	{"hook", "trust"},
 	{"hook", "untrust"},
 
+	{"label", "project", "alpha", "role=guard"},
+	{"label", "window", "w1", "role=guard", "-p", "alpha"},
+	{"label", "pane", "p1", "role=guard", "-p", "alpha"},
+	{"label", "agent", "alpha-agent", "role=guard"},
+
 	{"notification", "ack", "--all"},
 	{"notification", "reconcile", "--json"},
 
