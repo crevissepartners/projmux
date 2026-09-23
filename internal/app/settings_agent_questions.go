@@ -49,7 +49,10 @@ func agentQuestionAnsweringLabelLocale(locale i18n.Locale, answering config.Agen
 func agentQuestionWindowLabelLocale(locale i18n.Locale, seconds int) string {
 	switch seconds {
 	case config.UnlimitedAgentQuestionWindowSeconds:
-		return localizeText(locale, agentQuestionWindowUnlimitedKey, "Unlimited — until answered (at most 2147468s, about 24.8 days)")
+		// The numbers come from the constant so the label cannot drift from it.
+		days := (seconds + 86400/2) / 86400
+		return strings.NewReplacer("{seconds}", strconv.Itoa(seconds), "{days}", strconv.Itoa(days)).
+			Replace(localizeText(locale, agentQuestionWindowUnlimitedKey, "Unlimited — until answered (at most {seconds}s, about {days} days)"))
 	case config.DefaultAgentQuestionWindowSeconds:
 		return strings.NewReplacer("{seconds}", strconv.Itoa(seconds)).Replace(localizeText(locale, agentQuestionWindowDefaultKey, "{seconds}s (default)"))
 	}

@@ -60,7 +60,7 @@ func TestSettingsAgentQuestionsCopyIsExactInBothLocales(t *testing.T) {
 			perAgent:  "To change one Agent only, run projmux agent question enable <agent>.",
 			wayOne:    "Claude Code prompt (way 1, default)",
 			wayTwo:    "projmux popup (way 2)",
-			unlimited: "Unlimited — until answered (at most 2147468s, about 24.8 days)",
+			unlimited: "Unlimited — until answered (at most 604785s, about 7 days)",
 			def:       "900s (default)", sixty: "60s",
 		},
 		{
@@ -69,7 +69,7 @@ func TestSettingsAgentQuestionsCopyIsExactInBothLocales(t *testing.T) {
 			perAgent:  "Agent 하나만 바꾸려면 projmux agent question enable <agent>를 실행하세요.",
 			wayOne:    "Claude Code 기본 프롬프트 (방식 1, 기본값)",
 			wayTwo:    "projmux popup (방식 2)",
-			unlimited: "무제한 — 답할 때까지 (최대 2147468초, 약 24.8일)",
+			unlimited: "무제한 — 답할 때까지 (최대 604785초, 약 7일)",
 			def:       "900초 (기본값)", sixty: "60초",
 		},
 	} {
@@ -268,7 +268,7 @@ func TestSettingsAgentQuestionWindowReachesTheNextQuestionWithoutIntegrate(t *te
 	}{
 		{name: "120s", seconds: 120, want: 120 * time.Second},
 		{name: "3600s", seconds: 3600, want: time.Hour},
-		{name: "unlimited", seconds: config.UnlimitedAgentQuestionWindowSeconds, want: 2147468 * time.Second},
+		{name: "unlimited", seconds: config.UnlimitedAgentQuestionWindowSeconds, want: 604785 * time.Second},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

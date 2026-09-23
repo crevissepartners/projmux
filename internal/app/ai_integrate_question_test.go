@@ -134,8 +134,8 @@ func TestAIIntegrateClaudeQuestionTimeoutIsTheFixedCeiling(t *testing.T) {
 			if len(entries) != 1 {
 				t.Fatalf("question entries = %d, want 1", len(entries))
 			}
-			if got := entries[0]["hooks"].([]any)[0].(map[string]any)["timeout"]; got != float64(2147483) {
-				t.Fatalf("timeout = %v, want the 2147483s ceiling", got)
+			if got := entries[0]["hooks"].([]any)[0].(map[string]any)["timeout"]; got != float64(604800) {
+				t.Fatalf("timeout = %v, want the 604800s ceiling", got)
 			}
 		})
 	}

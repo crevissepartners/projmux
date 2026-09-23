@@ -32,7 +32,7 @@ func TestLoadAgentQuestionWindowSecondsFile(t *testing.T) {
 		{name: "fraction", content: "12.5", want: 900},
 		{name: "unlimited", content: "unlimited\n", want: UnlimitedAgentQuestionWindowSeconds},
 		{name: "unlimited in any case with whitespace", content: "  Unlimited \n", want: UnlimitedAgentQuestionWindowSeconds},
-		{name: "unlimited as seconds is out of range", content: "2147468", want: 900},
+		{name: "unlimited as seconds is out of range", content: "604785", want: 900},
 		{name: "unreadable directory", dir: true, want: 900},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -127,16 +127,19 @@ func TestLoadAgentQuestionAnsweringFile(t *testing.T) {
 }
 
 // TestAgentQuestionTimeoutConstantsHoldTheirDerivation pins the hook timeout
-// ceiling to the largest whole-second value a signed 32-bit millisecond timer
-// holds, and Unlimited to that ceiling less the margin, so the hook still ends
-// the longest wait before Claude Code does.
+// ceiling to seven days, inside a signed 32-bit millisecond timer, and
+// Unlimited to that ceiling less the margin, so the hook still ends the
+// longest wait before Claude Code does.
 func TestAgentQuestionTimeoutConstantsHoldTheirDerivation(t *testing.T) {
 	t.Parallel()
 
-	if want := (1<<31 - 1) / 1000; AgentQuestionHookTimeoutSeconds != want {
+	if want := 7 * 24 * 3600; AgentQuestionHookTimeoutSeconds != want {
 		t.Fatalf("hook timeout = %d, want %d", AgentQuestionHookTimeoutSeconds, want)
 	}
-	if AgentQuestionHookTimeoutSeconds != 2147483 || UnlimitedAgentQuestionWindowSeconds != 2147468 {
+	if int64(AgentQuestionHookTimeoutSeconds)*1000 > 1<<31-1 {
+		t.Fatalf("hook timeout %ds does not fit a signed 32-bit millisecond timer", AgentQuestionHookTimeoutSeconds)
+	}
+	if AgentQuestionHookTimeoutSeconds != 604800 || UnlimitedAgentQuestionWindowSeconds != 604785 {
 		t.Fatalf("hook timeout = %d, unlimited = %d", AgentQuestionHookTimeoutSeconds, UnlimitedAgentQuestionWindowSeconds)
 	}
 	if UnlimitedAgentQuestionWindowSeconds+AgentQuestionHookTimeoutMarginSeconds != AgentQuestionHookTimeoutSeconds {

@@ -32,21 +32,24 @@ const AgentQuestionWindowUnlimitedWord = "unlimited"
 // The installed Claude question hook timeout and the window it bounds. This
 // file is their single authority.
 //
-// Claude Code has no "no timeout" hook value: an omitted timeout is its short
-// default, and 0 or a negative value drops the hook entry, so it never runs.
-// The installed timeout is therefore the fixed ceiling
-// AgentQuestionHookTimeoutSeconds, independent of the window file:
-// floor((2^31-1) ms / 1000), the largest whole-second value a signed 32-bit
-// millisecond timer holds, since Claude Code runs on a JS runtime. With the
+// Claude Code has no "no timeout" hook value: an omitted timeout is its 600
+// second default, and 0 or a negative value drops the hook entry, so it never
+// runs. The installed timeout is therefore the fixed ceiling
+// AgentQuestionHookTimeoutSeconds, independent of the window file. With the
 // timeout fixed, a changed window applies to the next question without
 // re-running `projmux agent integrate claude`.
+//
+// The ceiling is the safety net for a stuck hook, and this hook has no
+// recover. Seven days is 168 times the longest bounded window (3600 seconds),
+// so it never cuts a normal window, while a broken hook is reclaimed within a
+// week. 604800000 ms still fits a signed 32-bit millisecond timer.
 //
 // AgentQuestionHookTimeoutMarginSeconds is how far that timeout outlasts the
 // longest window, so the hook, not Claude Code's SIGTERM, is what ends an
 // unanswered wait. Unlimited is the longest window that keeps the margin,
-// 2147468 seconds (about 24.8 days).
+// 604785 seconds (about 7 days).
 const (
-	AgentQuestionHookTimeoutSeconds       = 2147483
+	AgentQuestionHookTimeoutSeconds       = 7 * 24 * 60 * 60
 	AgentQuestionHookTimeoutMarginSeconds = 15
 	UnlimitedAgentQuestionWindowSeconds   = AgentQuestionHookTimeoutSeconds - AgentQuestionHookTimeoutMarginSeconds
 )
