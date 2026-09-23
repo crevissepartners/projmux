@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -21,7 +22,6 @@ const (
 	// claudeQuestionPickerRoute is the hidden `internal` route the way-2
 	// question popup runs: the projmux picker for one recorded question set.
 	claudeQuestionPickerRoute = "claude-question-picker"
-	claudeQuestionPopupTitle  = "Claude question"
 	claudeQuestionPopupWidth  = "80%"
 	claudeQuestionPopupHeight = "70%"
 	// claudeQuestionPopupStopWait bounds how long a finished hook waits for
@@ -35,6 +35,38 @@ const (
 // errClaudeQuestionPopupPanic stands for a popup goroutine that panicked: the
 // popup is treated as ended, which gives a still-waiting question back.
 var errClaudeQuestionPopupPanic = errors.New("question popup panicked")
+
+// Catalog keys of the question popup's own chrome. The question text, option
+// labels, record ids, and reason tokens it shows are data and stay verbatim.
+const (
+	keyClaudeQuestionTitle           i18n.Key = "agent.question.picker.title"
+	keyClaudeQuestionTitleProgress   i18n.Key = "agent.question.picker.title_progress"
+	keyClaudeQuestionFooterSingle    i18n.Key = "agent.question.picker.footer_single"
+	keyClaudeQuestionFooterMulti     i18n.Key = "agent.question.picker.footer_multi"
+	keyClaudeQuestionDone            i18n.Key = "agent.question.picker.done"
+	keyClaudeQuestionOther           i18n.Key = "agent.question.picker.other"
+	keyClaudeQuestionDoneNeedsOption i18n.Key = "agent.question.picker.done_needs_option"
+	keyClaudeQuestionTextPrompt      i18n.Key = "agent.question.picker.text_prompt"
+	keyClaudeQuestionTextFooter      i18n.Key = "agent.question.picker.text_footer"
+	keyClaudeQuestionAnswerNotUsed   i18n.Key = "agent.question.picker.answer_not_used"
+)
+
+// claudeQuestionText resolves the popup's chrome for one locale, the way the
+// resource inspector resolves its own: a catalog key with the English text as
+// the fallback, and named placeholders for the data it carries.
+type claudeQuestionText struct{ locale i18n.Locale }
+
+func (t claudeQuestionText) value(key i18n.Key, fallback string) string {
+	return localizeText(t.locale, key, fallback)
+}
+
+func (t claudeQuestionText) format(key i18n.Key, fallback string, replacements ...string) string {
+	return strings.NewReplacer(replacements...).Replace(t.value(key, fallback))
+}
+
+func (t claudeQuestionText) title() string {
+	return t.value(keyClaudeQuestionTitle, "Claude question")
+}
 
 // claudeQuestionPopupTarget names one popup: the client it is drawn on, the
 // Pane it is placed over, and the record its picker answers.
@@ -111,7 +143,7 @@ func (p tmuxClaudeQuestionPopup) Open(ctx context.Context, target claudeQuestion
 	if err != nil {
 		return err
 	}
-	args, err := buildClaudeQuestionPopupArgs(binaryPath, target)
+	args, err := buildClaudeQuestionPopupArgs(binaryPath, claudeQuestionText{locale: settingsLocale()}.title(), target)
 	if err != nil {
 		return err
 	}
@@ -129,7 +161,7 @@ func (p tmuxClaudeQuestionPopup) Close(ctx context.Context, client string) error
 
 // buildClaudeQuestionPopupArgs spells the blocking display-popup that runs the
 // picker route. Everything the picker needs travels as argv.
-func buildClaudeQuestionPopupArgs(binaryPath string, target claudeQuestionPopupTarget) ([]string, error) {
+func buildClaudeQuestionPopupArgs(binaryPath, title string, target claudeQuestionPopupTarget) ([]string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
 	if binaryPath == "" {
 		return nil, errors.New("question popup binary path is required")
@@ -151,7 +183,7 @@ func buildClaudeQuestionPopupArgs(binaryPath string, target claudeQuestionPopupT
 		CloseBehavior: inttmux.PopupCloseOnExit,
 		Width:         claudeQuestionPopupWidth,
 		Height:        claudeQuestionPopupHeight,
-		Title:         claudeQuestionPopupTitle,
+		Title:         title,
 	})
 }
 
@@ -257,6 +289,7 @@ func runClaudeQuestionPicker(args []string, stdout, stderr io.Writer) error {
 	picker := claudeQuestionPicker{
 		store:  agentquestion.NewStoreAt(strings.TrimSpace(*storePath)),
 		runner: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		text:   claudeQuestionText{locale: settingsLocale()},
 		out:    stdout,
 		pause:  time.Sleep,
 	}
@@ -270,6 +303,7 @@ func runClaudeQuestionPicker(args []string, stdout, stderr io.Writer) error {
 type claudeQuestionPicker struct {
 	store  *agentquestion.Store
 	runner intpicker.Runner
+	text   claudeQuestionText
 	out    io.Writer
 	pause  func(time.Duration)
 }
@@ -290,7 +324,7 @@ func (p claudeQuestionPicker) run(questionID, agentUID string) error {
 		_, _ = p.store.Close(record.ID)
 		return err
 	}
-	selections, ok, err := collectClaudeQuestionSelections(p.runner, questions)
+	selections, ok, err := collectClaudeQuestionSelections(p.runner, p.text, questions)
 	if err != nil || !ok {
 		_, _ = p.store.Close(record.ID)
 		return err
@@ -301,11 +335,11 @@ func (p claudeQuestionPicker) run(questionID, agentUID string) error {
 		return err
 	}
 	if _, err := p.store.Answer(record.ID, agentUID, answers); err != nil {
-		reason, detail := questionStoreRefusal(err)
+		reason, _ := questionStoreRefusal(err)
 		if reason == "" {
-			reason, detail = "question-store-error", err.Error()
+			reason = "question-store-error"
 		}
-		p.notice(fmt.Sprintf("question %s %s (%s); this answer was not used", record.ID, detail, reason))
+		p.notice(p.text.format(keyClaudeQuestionAnswerNotUsed, "Question {id}: this answer was not used ({reason}).", "{id}", record.ID, "{reason}", reason))
 	}
 	return nil
 }
@@ -328,10 +362,10 @@ const (
 
 // collectClaudeQuestionSelections asks every question in order and returns one
 // Selection per question index. ok is false when the operator canceled.
-func collectClaudeQuestionSelections(runner intpicker.Runner, questions []agentquestion.Question) (map[int]agentquestion.Selection, bool, error) {
+func collectClaudeQuestionSelections(runner intpicker.Runner, text claudeQuestionText, questions []agentquestion.Question) (map[int]agentquestion.Selection, bool, error) {
 	selections := make(map[int]agentquestion.Selection, len(questions))
 	for index, question := range questions {
-		selection, ok, err := askClaudeQuestion(runner, index, len(questions), question)
+		selection, ok, err := askClaudeQuestion(runner, text, index, len(questions), question)
 		if err != nil || !ok {
 			return nil, false, err
 		}
@@ -345,16 +379,16 @@ func collectClaudeQuestionSelections(runner intpicker.Runner, questions []agentq
 // and ends on the Done row, which needs at least one option. The "Other" row
 // asks for free text; Esc there, or empty text, goes back to the options.
 // Esc on the options cancels the whole question set.
-func askClaudeQuestion(runner intpicker.Runner, index, count int, question agentquestion.Question) (agentquestion.Selection, bool, error) {
+func askClaudeQuestion(runner intpicker.Runner, text claudeQuestionText, index, count int, question agentquestion.Question) (agentquestion.Selection, bool, error) {
 	chosen := make([]bool, len(question.Options))
 	cursor, notice := 0, ""
-	title := fmt.Sprintf("%s %d/%d", claudeQuestionPopupTitle, index+1, count)
+	title := text.format(keyClaudeQuestionTitleProgress, "Claude question {index}/{count}", "{index}", strconv.Itoa(index+1), "{count}", strconv.Itoa(count))
 	if header := strings.TrimSpace(question.Header); header != "" {
 		title += " - " + terminaltext.EscapeControls(header)
 	}
-	footer := "Enter: choose  Esc: give the question back to Claude"
+	footer := text.value(keyClaudeQuestionFooterSingle, "Enter: choose  Esc: give the question back to Claude")
 	if question.MultiSelect {
-		footer = "Enter: toggle, then Done  Esc: give the question back to Claude"
+		footer = text.value(keyClaudeQuestionFooterMulti, "Enter: toggle, then Done  Esc: give the question back to Claude")
 	}
 	for {
 		items := make([]intpicker.Item, 0, len(question.Options)+2)
@@ -373,9 +407,9 @@ func askClaudeQuestion(runner intpicker.Runner, index, count int, question agent
 			items = append(items, intpicker.Item{Label: label, Value: claudeQuestionOptionTag + strconv.Itoa(position)})
 		}
 		if question.MultiSelect {
-			items = append(items, intpicker.Item{Label: "Done", Value: claudeQuestionDoneValue})
+			items = append(items, intpicker.Item{Label: text.value(keyClaudeQuestionDone, "Done"), Value: claudeQuestionDoneValue})
 		}
-		items = append(items, intpicker.Item{Label: "Other / type an answer", Value: claudeQuestionOtherValue})
+		items = append(items, intpicker.Item{Label: text.value(keyClaudeQuestionOther, "Other / type an answer"), Value: claudeQuestionOtherValue})
 		header := terminaltext.EscapeControls(question.Question)
 		if notice != "" {
 			header += "\n" + notice
@@ -399,12 +433,12 @@ func askClaudeQuestion(runner intpicker.Runner, index, count int, question agent
 		notice = ""
 		switch value := result.Value; {
 		case value == claudeQuestionOtherValue:
-			text, ok, err := askClaudeQuestionText(runner, title, question)
+			answer, ok, err := askClaudeQuestionText(runner, text, title, question)
 			if err != nil {
 				return agentquestion.Selection{}, false, err
 			}
 			if ok {
-				return agentquestion.Selection{Text: text, HasText: true}, true, nil
+				return agentquestion.Selection{Text: answer, HasText: true}, true, nil
 			}
 			cursor = len(items) - 1
 		case value == claudeQuestionDoneValue:
@@ -417,7 +451,7 @@ func askClaudeQuestion(runner intpicker.Runner, index, count int, question agent
 			if len(labels) != 0 {
 				return agentquestion.Selection{Labels: labels}, true, nil
 			}
-			notice = "Choose at least one option before Done."
+			notice = text.value(keyClaudeQuestionDoneNeedsOption, "Choose at least one option before Done.")
 			cursor = len(question.Options)
 		case strings.HasPrefix(value, claudeQuestionOptionTag):
 			position, err := strconv.Atoi(strings.TrimPrefix(value, claudeQuestionOptionTag))
@@ -435,21 +469,21 @@ func askClaudeQuestion(runner intpicker.Runner, index, count int, question agent
 
 // askClaudeQuestionText reads one free-text answer. ok is false for Esc and
 // for empty text.
-func askClaudeQuestionText(runner intpicker.Runner, title string, question agentquestion.Question) (string, bool, error) {
+func askClaudeQuestionText(runner intpicker.Runner, text claudeQuestionText, title string, question agentquestion.Question) (string, bool, error) {
 	result, err := runner.Run(intpicker.Options{
 		UI:          "claude-question-text",
 		Title:       title,
 		Header:      terminaltext.EscapeControls(question.Question),
-		Prompt:      "Answer > ",
-		Footer:      "Enter: use this answer  Esc: back to the options",
+		Prompt:      text.value(keyClaudeQuestionTextPrompt, "Answer > "),
+		Footer:      text.value(keyClaudeQuestionTextFooter, "Enter: use this answer  Esc: back to the options"),
 		AcceptQuery: true,
 	})
 	if err != nil {
 		return "", false, err
 	}
-	text := strings.TrimSpace(result.Query)
-	if result.Closed || text == "" {
+	answer := strings.TrimSpace(result.Query)
+	if result.Closed || answer == "" {
 		return "", false, nil
 	}
-	return text, true, nil
+	return answer, true, nil
 }

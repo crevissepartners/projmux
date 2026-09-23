@@ -16,6 +16,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
@@ -167,7 +168,7 @@ func TestCollectClaudeQuestionSelectionsAssemblesEveryAnswerShape(t *testing.T) 
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			runner := &scriptedQuestionPicker{steps: test.steps}
-			selections, ok, err := collectClaudeQuestionSelections(runner, test.questions)
+			selections, ok, err := collectClaudeQuestionSelections(runner, claudeQuestionText{locale: i18n.FallbackLocale}, test.questions)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -193,7 +194,7 @@ func TestCollectClaudeQuestionSelectionsAssemblesEveryAnswerShape(t *testing.T) 
 	t.Run("rows and notices", func(t *testing.T) {
 		t.Parallel()
 		runner := &scriptedQuestionPicker{steps: steps(pickRow("Done"), pickRow("make"), pickRow("Done"))}
-		if _, ok, err := collectClaudeQuestionSelections(runner, []agentquestion.Question{multi}); err != nil || !ok {
+		if _, ok, err := collectClaudeQuestionSelections(runner, claudeQuestionText{locale: i18n.FallbackLocale}, []agentquestion.Question{multi}); err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
 		labels := func(options intpicker.Options) []string {
@@ -213,7 +214,7 @@ func TestCollectClaudeQuestionSelectionsAssemblesEveryAnswerShape(t *testing.T) 
 			t.Fatalf("rows after a toggle = %q at %d", got, runner.runs[2].InitialIndex)
 		}
 		described := &scriptedQuestionPicker{steps: steps(pickRow("main"))}
-		if _, _, err := collectClaudeQuestionSelections(described, []agentquestion.Question{single}); err != nil {
+		if _, _, err := collectClaudeQuestionSelections(described, claudeQuestionText{locale: i18n.FallbackLocale}, []agentquestion.Question{single}); err != nil {
 			t.Fatal(err)
 		}
 		if got := labels(described.runs[0]); got[1] != "dev - the integration branch" || !described.runs[0].DisableSearch {
@@ -226,7 +227,7 @@ func TestCollectClaudeQuestionSelectionsAssemblesEveryAnswerShape(t *testing.T) 
 		failing := &scriptedQuestionPicker{steps: steps(func(intpicker.Options) (intpicker.Result, error) {
 			return intpicker.Result{}, errors.New("no tty")
 		})}
-		if _, ok, err := collectClaudeQuestionSelections(failing, []agentquestion.Question{single}); err == nil || ok {
+		if _, ok, err := collectClaudeQuestionSelections(failing, claudeQuestionText{locale: i18n.FallbackLocale}, []agentquestion.Question{single}); err == nil || ok {
 			t.Fatalf("ok=%v err=%v, want the picker error", ok, err)
 		}
 	})
@@ -240,7 +241,7 @@ func steps(list ...func(intpicker.Options) (intpicker.Result, error)) []func(int
 // fixture's two-question set with the given steps.
 func (f *questionFixture) picker(list ...func(intpicker.Options) (intpicker.Result, error)) (claudeQuestionPicker, *bytes.Buffer) {
 	var out bytes.Buffer
-	return claudeQuestionPicker{store: f.store, runner: &scriptedQuestionPicker{steps: list}, out: &out, pause: func(time.Duration) {}}, &out
+	return claudeQuestionPicker{store: f.store, runner: &scriptedQuestionPicker{steps: list}, text: claudeQuestionText{locale: i18n.FallbackLocale}, out: &out, pause: func(time.Duration) {}}, &out
 }
 
 // runPickerInPopup makes the fake popup run the picker route with steps, the
@@ -643,7 +644,7 @@ func TestClaudeQuestionViewingClientPicksTheMostRecentTerminalClient(t *testing.
 func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
 	t.Parallel()
 
-	args, err := buildClaudeQuestionPopupArgs("/opt/pm x/projmux", claudeQuestionPopupTarget{
+	args, err := buildClaudeQuestionPopupArgs("/opt/pm x/projmux", claudeQuestionText{locale: i18n.FallbackLocale}.title(), claudeQuestionPopupTarget{
 		Client: "/dev/pts/3", PaneID: "%7", QuestionID: "question-0123456789abcdef", AgentUID: "agt-1", StorePath: "/state/agent-questions/questions.json",
 	})
 	if err != nil {
@@ -654,7 +655,7 @@ func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args =\n%q\nwant\n%q", args, want)
 	}
-	if _, err := buildClaudeQuestionPopupArgs("/bin/projmux", claudeQuestionPopupTarget{PaneID: "%7"}); err == nil {
+	if _, err := buildClaudeQuestionPopupArgs("/bin/projmux", "Claude question", claudeQuestionPopupTarget{PaneID: "%7"}); err == nil {
 		t.Fatal("a popup without a client was built")
 	}
 	if shouldRunLegacyHookMigrations([]string{"internal", claudeQuestionPickerRoute, "--question", "q"}) {
@@ -818,4 +819,69 @@ func exitIfClaudeQuestionPickerChild() {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// TestClaudeQuestionPickerChromeResolvesInBothLocales holds the popup chrome
+// in the catalog: every key has an English entry equal to the fallback the
+// code carries and a distinct Korean entry, the rendered picker shows the
+// Korean chrome while Claude's question and labels stay verbatim, and the
+// lost-race notice keeps its id and reason token as data.
+func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
+	t.Parallel()
+
+	fallbacks := map[i18n.Key]string{
+		keyClaudeQuestionTitle:           "Claude question",
+		keyClaudeQuestionTitleProgress:   "Claude question {index}/{count}",
+		keyClaudeQuestionFooterSingle:    "Enter: choose  Esc: give the question back to Claude",
+		keyClaudeQuestionFooterMulti:     "Enter: toggle, then Done  Esc: give the question back to Claude",
+		keyClaudeQuestionDone:            "Done",
+		keyClaudeQuestionOther:           "Other / type an answer",
+		keyClaudeQuestionDoneNeedsOption: "Choose at least one option before Done.",
+		keyClaudeQuestionTextPrompt:      "Answer > ",
+		keyClaudeQuestionTextFooter:      "Enter: use this answer  Esc: back to the options",
+		keyClaudeQuestionAnswerNotUsed:   "Question {id}: this answer was not used ({reason}).",
+	}
+	ko := i18n.Locale("ko-KR")
+	for key, fallback := range fallbacks {
+		en, err := i18n.NewLocalizer(i18n.FallbackLocale).Text(key)
+		if err != nil || en.String() != fallback {
+			t.Errorf("%s en = %q (%v), want %q", key, en.String(), err, fallback)
+		}
+		korean, err := i18n.NewLocalizer(ko).Text(key)
+		if err != nil || korean.Locale() != ko || korean.String() == fallback {
+			t.Errorf("%s ko = %q from %s (%v), want a Korean entry", key, korean.String(), korean.Locale(), err)
+		}
+		for _, placeholder := range []string{"{index}", "{count}", "{id}", "{reason}"} {
+			if strings.Contains(fallback, placeholder) != strings.Contains(korean.String(), placeholder) {
+				t.Errorf("%s ko %q does not carry %s like the English text", key, korean.String(), placeholder)
+			}
+		}
+	}
+
+	question := agentquestion.Question{Question: "Which tools?", Header: "Build", MultiSelect: true, Options: []agentquestion.Option{{Label: "make"}}}
+	runner := &scriptedQuestionPicker{steps: steps(pickRow("완료"), pickRow("make"), pickRow("기타"), pressEsc, pickRow("완료"))}
+	selections, ok, err := collectClaudeQuestionSelections(runner, claudeQuestionText{locale: ko}, []agentquestion.Question{question})
+	if err != nil || !ok || selections[0].Labels[0] != "make" {
+		t.Fatalf("selections = %#v, %v, %v", selections, ok, err)
+	}
+	first := runner.runs[0]
+	if first.Title != "Claude 질문 1/1 - Build" || first.Footer != "Enter: 선택 전환 후 완료  Esc: 질문을 Claude에게 돌려주기" || first.Header != "Which tools?" {
+		t.Fatalf("ko chrome title=%q footer=%q header=%q", first.Title, first.Footer, first.Header)
+	}
+	if got := []string{first.Items[0].Label, first.Items[1].Label, first.Items[2].Label}; !reflect.DeepEqual(got, []string{"[ ] make", "완료", "기타 / 직접 입력"}) {
+		t.Fatalf("ko rows = %q", got)
+	}
+	if !strings.Contains(runner.runs[1].Header, "완료하기 전에 옵션을 하나 이상 선택하세요.") {
+		t.Fatalf("ko notice header = %q", runner.runs[1].Header)
+	}
+	if text := runner.runs[3]; text.Prompt != "답변 > " || text.Footer != "Enter: 이 답변 사용  Esc: 옵션으로 돌아가기" {
+		t.Fatalf("ko free-text prompt=%q footer=%q", text.Prompt, text.Footer)
+	}
+	notice := claudeQuestionText{locale: ko}.format(keyClaudeQuestionAnswerNotUsed, "", "{id}", "question-0123456789abcdef", "{reason}", questionReasonNotPending)
+	if notice != "질문 question-0123456789abcdef: 이 답변은 사용되지 않았습니다 (question-not-pending)." {
+		t.Fatalf("ko notice = %q", notice)
+	}
+	if got := (claudeQuestionText{locale: ko}).title(); got != "Claude 질문" {
+		t.Fatalf("ko popup title = %q", got)
+	}
 }
