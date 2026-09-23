@@ -107,6 +107,7 @@ var settingItems = []SettingItem{
 	declareFile(DesktopNotifyModeFileName, LayerCentral, ""),
 	declareFile(AINotifyDedupeSecondsFileName, LayerCentral, ""),
 	declareFile(AgentQuestionWindowSecondsFileName, LayerCentral, ""),
+	declareFile(AgentQuestionAnsweringFileName, LayerCentral, ""),
 	declareFile(AIHookActionsFileName, LayerCentral, ""),
 	declareFile(AISemanticPoliciesFileName, LayerCentral, ""),
 	declareFile(LiveResourcesFileName, LayerCentral, ""),

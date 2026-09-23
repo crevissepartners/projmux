@@ -42,6 +42,12 @@ type questionFixture struct {
 	opened    int
 	// windowCalls counts how often the hook resolved its answer window.
 	windowCalls int
+	// answering is what the hook's answering resolver returns; empty is way 1.
+	// answeringCalls counts how often the hook resolved it.
+	answering      config.AgentQuestionAnswering
+	answeringCalls int
+	// popup is the hook's popup seam; nil opens none.
+	popup claudeQuestionPopup
 }
 
 func newQuestionFixture(t *testing.T, enabled bool) *questionFixture {
@@ -74,13 +80,19 @@ func (f *questionFixture) hook(window time.Duration) claudeQuestionHook {
 			f.opened++
 			return f.store, nil
 		},
+		answering: func() config.AgentQuestionAnswering {
+			f.answeringCalls++
+			return config.NormalizeAgentQuestionAnswering(string(f.answering))
+		},
 		window: func() time.Duration {
 			f.windowCalls++
 			return window
 		},
-		poll:  10 * time.Millisecond,
-		newID: agentquestion.NewID,
-		now:   time.Now,
+		popup:      f.popup,
+		poll:       10 * time.Millisecond,
+		clientPoll: 5 * time.Millisecond,
+		newID:      agentquestion.NewID,
+		now:        time.Now,
 	}
 }
 
@@ -359,13 +371,25 @@ func TestClaudeQuestionHookDisableHandsTheQuestionBack(t *testing.T) {
 func TestClaudeQuestionHookStaysSilentAndOpensNoStoreOutsideItsCase(t *testing.T) {
 	t.Parallel()
 
+	// Every case but the confirmed, not-opted-in Agent must stay out of the
+	// answering setting too; the setting says way 2 there, so a read would
+	// show up as an opened store as well.
 	for _, test := range []struct {
 		name    string
 		enabled bool
 		args    []string
 		payload string
+		// answeringReads is how often the answering setting may be read.
+		answeringReads int
 	}{
-		{name: "channel off", args: []string{"--pane=" + questionTestPane}, payload: questionTestPayload("PreToolUse", "AskUserQuestion")},
+		{name: "channel off", args: []string{"--pane=" + questionTestPane}, payload: questionTestPayload("PreToolUse", "AskUserQuestion"), answeringReads: 1},
+		{name: "channel off in another tool", args: []string{"--pane=" + questionTestPane}, payload: questionTestPayload("PreToolUse", "Bash")},
+		{name: "channel off in another event", args: []string{"--pane=" + questionTestPane}, payload: questionTestPayload("PostToolUse", "AskUserQuestion")},
+		{name: "channel off on an unknown pane", args: []string{"--pane=pan-nowhere"}, payload: questionTestPayload("PreToolUse", "AskUserQuestion")},
+		{name: "channel off on a shell pane", args: []string{"--pane=pan-alpha-zsh"}, payload: questionTestPayload("PreToolUse", "AskUserQuestion")},
+		{name: "channel off with no pane and an unknown session", args: []string{"--pane="}, payload: questionTestPayload("PreToolUse", "AskUserQuestion")},
+		{name: "channel off in a subagent", args: []string{"--pane=" + questionTestPane}, payload: strings.Replace(questionTestPayload("PreToolUse", "AskUserQuestion"), `"session_id"`, `"agent_type":"Explore","session_id"`, 1)},
+		{name: "channel off with a malformed payload", args: []string{"--pane=" + questionTestPane}, payload: `{"hook_event_name":`},
 		{name: "another tool", enabled: true, args: []string{"--pane=" + questionTestPane}, payload: questionTestPayload("PreToolUse", "Bash")},
 		{name: "another event", enabled: true, args: []string{"--pane=" + questionTestPane}, payload: questionTestPayload("PostToolUse", "AskUserQuestion")},
 		{name: "unknown pane", enabled: true, args: []string{"--pane=pan-nowhere"}, payload: questionTestPayload("PreToolUse", "AskUserQuestion")},
@@ -379,6 +403,11 @@ func TestClaudeQuestionHookStaysSilentAndOpensNoStoreOutsideItsCase(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			fixture := newQuestionFixture(t, test.enabled)
+			if test.answeringReads == 0 {
+				fixture.answering = config.AgentQuestionAnsweringProjmux
+			}
+			popup := newFakeQuestionPopup("client-1")
+			fixture.popup = popup
 			var stdout, stderr bytes.Buffer
 			started := time.Now()
 			fixture.hook(time.Minute).run(context.Background(), test.args, strings.NewReader(test.payload), &stdout, &stderr)
@@ -392,6 +421,12 @@ func TestClaudeQuestionHookStaysSilentAndOpensNoStoreOutsideItsCase(t *testing.T
 			// only; the window setting is not resolved.
 			if fixture.windowCalls != 0 {
 				t.Fatalf("window resolved %d times outside the hook's case", fixture.windowCalls)
+			}
+			if fixture.answeringCalls != test.answeringReads {
+				t.Fatalf("answering setting read %d times, want %d", fixture.answeringCalls, test.answeringReads)
+			}
+			if views, opens, _ := popup.counts(); views != 0 || opens != 0 {
+				t.Fatalf("popup looked for a client %d times and opened %d times, want neither", views, opens)
 			}
 			if _, err := os.Stat(filepath.Dir(fixture.store.Path())); !os.IsNotExist(err) {
 				t.Fatalf("store directory stat err = %v, want not exist", err)

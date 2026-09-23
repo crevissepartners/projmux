@@ -107,6 +107,10 @@ type agentCommand struct {
 	// questionStore opens the AskUserQuestion answer store `agent question`
 	// reads and settles; nil refuses.
 	questionStore func() (*agentquestion.Store, error)
+	// questionAnswering reads the central agent-question-answering setting
+	// `agent question answer` consults for an Agent that is not opted in;
+	// nil is way 1.
+	questionAnswering func() config.AgentQuestionAnswering
 	// lookupEnv reads the ambient tmux Pane that `agent persona` refuses to
 	// restart from, and the inherited $TMUX its stop routes through.
 	lookupEnv func(string) string
@@ -138,6 +142,9 @@ func newAgentCommand() *agentCommand {
 		lookupEnv:      os.Getenv,
 		messageRelease: launchAgentMessageRelease,
 		questionStore:  defaultAgentQuestionStore,
+		// Resolved only by `agent question answer` for an Agent that is not
+		// opted in.
+		questionAnswering: claudeQuestionAnswering,
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		command.messagePaths = defaultAgentMessagePaths(paths)

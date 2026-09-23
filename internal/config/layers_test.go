@@ -283,6 +283,7 @@ func TestConfigFrontLoadersReportEveryRead(t *testing.T) {
 	_, _ = LoadProjectHooksFile(paths.ProjectHooksFile())
 	_, _ = LoadAINotifyDedupeSecondsFileDefault(paths.AINotifyDedupeSecondsFile(), 0)
 	_, _ = LoadAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile())
+	_, _ = LoadAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile())
 	_, _ = LoadAIHookActionsFile(paths.AIHookActionsFile())
 	_, _ = LoadAISemanticPoliciesFile(paths.AISemanticPoliciesFile())
 	expect("central loaders")

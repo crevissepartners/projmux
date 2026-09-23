@@ -697,38 +697,70 @@ Codex and are managed from `Settings > Notifications > Agent event behavior`.
 They only affect ingest delivery; `projmux agent integrate claude` still uses the
 catalog `install` field for installed hook events.
 
-### Answering AskUserQuestion From The Command Line
+### Answering AskUserQuestion In projmux
 
 `projmux agent integrate claude` also installs one `PreToolUse` entry with
 `"matcher": "AskUserQuestion"` that runs
 `projmux internal claude-question-hook` (marker
 `projmux-managed:claude-question:v1`, `"timeout"` the answer window plus 15
 seconds, `915` by default). Unlike the ingest command its stdout is not
-discarded, because that is where an answer is handed to Claude Code. Re-running the integration keeps exactly one such entry,
-`--remove` deletes it, and `config apply` never adds or changes it.
+discarded, because that is where an answer is handed to Claude Code.
+Re-running the integration keeps exactly one such entry, `--remove` deletes
+it, and `config apply` never adds or changes it.
 
-The hook does nothing unless the Claude Agent that asks was opted in:
+A question is answered one of two ways:
+
+| Way | When | What happens |
+| --- | --- | --- |
+| 1: Claude Code's prompt (default) | the Agent is not opted in and `agent-question-answering` is not `projmux` | the hook prints nothing and exits at once; Claude Code shows its usual question prompt |
+| 2: projmux | the Agent is opted in, or `agent-question-answering` is `projmux` | the hook records the question, opens a projmux picker popup, and takes the first answer from the popup or the command line |
+
+The Agent's own switch wins over the setting, so an opted-in Agent is always
+way 2:
 
 ```sh
 projmux agent question enable <agent-ref>
 projmux agent question disable <agent-ref>
 ```
 
-For every other Agent, and for a subagent's question, the hook prints nothing
-and exits at once, so Claude Code shows its usual question prompt.
+The setting is the central
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering` file (see
+[configuration.md](configuration.md#agent-question-answering)). The hook reads
+it only after the Registry shows that the question comes from a projmux
+Claude Agent's own conversation; a session projmux did not start, and a
+subagent's question, are always way 1 and never read it.
 
-For an opted-in Agent the hook records the question and holds the tool call
-open for the answer window: 900 seconds unless
-`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds`
+In way 2 the hook holds the tool call open for the answer window: 900 seconds
+unless `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds`
 holds another value in 60–3600 (see
-[configuration.md](configuration.md#agent-question-window)). While it waits,
-Claude Code shows the hook's status message instead of the question prompt;
-pressing Esc cancels the wait and declines the question. Answer it from any shell:
+[configuration.md](configuration.md#agent-question-window)). The window binds
+only in way 2; way 1 never waits. While it waits, Claude Code shows the hook's
+status message instead of the question prompt.
+
+The hook opens a tmux popup on the client that is viewing the Agent's Pane (the
+most recently used one when several are) and runs the projmux picker in it,
+one question at a time. Enter picks an option of a single-select question; on
+a multi-select question Enter toggles an option and `Done` finishes, with at
+least one option chosen; `Other / type an answer` takes free text. When no
+client is viewing the Pane the hook keeps waiting and looks again about once a
+second, and opens the popup when a client starts viewing it. Nothing is drawn
+on Claude Code's own terminal.
+
+Pressing Esc in the popup gives the question back: the record is closed and
+Claude Code shows its own prompt. So does a popup that cannot be opened or
+that ends without answering. Pressing Esc in Claude Code itself cancels the
+wait and declines the question.
+
+The same question can be answered from any shell:
 
 ```sh
 projmux agent question list <agent-ref> [-o json]
 projmux agent question answer <agent-ref> <question-id> --option 1=<label> --index 2=<n> --text 3=<free text>
 ```
+
+Whichever answer lands first wins. An answer from the command line closes the
+popup, and a popup answer that arrives after it is refused as
+`question-not-pending`.
 
 Questions are numbered from 1 in the order Claude asked them, and so are the
 options of each question. `--option <n>=<label>` picks an option by its exact
@@ -739,17 +771,21 @@ occurrences, which are joined with `", "` in option order; a single-select
 question takes exactly one. Every question needs an answer. A refused answer
 changes nothing and names one reason token: `question-not-found`,
 `question-not-pending` (already answered), `question-expired`,
-`question-closed`, `question-invalid-answer`, `question-channel-off`, or
-`question-provider-unsupported`.
+`question-closed`, `question-invalid-answer`, `question-channel-off` (way 1),
+or `question-provider-unsupported`.
 
-If nobody answers within the window, the question expires and Claude Code
-shows its own prompt as usual. The installed timeout is read from the window
-when `projmux agent integrate claude` runs; raise the window without
-re-running it and Claude Code ends the hook at the older, shorter timeout,
-which also gives the question back to its own prompt. `agent question
+If nobody answers within the window, the question expires, the popup closes,
+and Claude Code shows its own prompt as usual. The installed timeout is read
+from the window when `projmux agent integrate claude` runs; raise the window
+without re-running it and Claude Code ends the hook at the older, shorter
+timeout, which also gives the question back to its own prompt. `agent question
 disable` also hands every question the Agent is still holding back to that
-prompt immediately. Records
-live in `<state dir>/agent-questions/` and settled ones are kept for a day.
+prompt immediately. Records live in `<state dir>/agent-questions/` and settled
+ones are kept for a day.
+
+The hook never blocks the tool: every failure, and even a crash inside the
+hook, ends with no output and exit status 0, which Claude Code reads as no
+decision.
 
 ## Antigravity Hook Ingest
 

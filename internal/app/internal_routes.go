@@ -122,6 +122,10 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		// installs. It prints a decision only for an answered question and
 		// otherwise nothing, and always exits 0.
 		return runClaudeQuestionHook(rest, os.Stdin, stdout, stderr)
+	case claudeQuestionPickerRoute:
+		// The way-2 question popup the hook opens on the client viewing the
+		// Agent's Pane. It answers or closes one recorded question set.
+		return runClaudeQuestionPicker(rest, stdout, stderr)
 	case "claude-message-reply":
 		return runClaudeMessageReply(rest)
 	case "claude-message-boundary":
