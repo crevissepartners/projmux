@@ -57,8 +57,9 @@ type agentQuestionRequest struct {
 //
 // `enable` and `disable` set and clear the Agent's question channel
 // annotation. While it is set, the PreToolUse hook `agent integrate claude`
-// installs holds each question open for a bounded window and records it;
-// `list` shows those records and `answer` settles one. `disable` also closes
+// installs holds each question open for a bounded window and records it, as it
+// also does for every Agent while the central agent-question-answering setting
+// is `projmux`; `list` shows those records and `answer` settles one. `disable` also closes
 // every question the Agent still holds open, which hands each back to Claude
 // Code's own prompt at once.
 func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) error {
@@ -93,7 +94,9 @@ func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) erro
 	case "list":
 		return c.listQuestions(request, agent, stdout)
 	default:
-		if !coremetadata.QuestionChannelEnabled(agent) {
+		// The same resolution the hook makes: an Agent that is not opted in
+		// still takes answers while the central setting is way 2.
+		if !claudeQuestionAnsweredByProjmux(agent, c.questionAnswering) {
 			return refuse(questionReasonChannelOff, "is not opted in; run `projmux agent question enable` first")
 		}
 		return c.answerQuestion(request, agent, refuse, stdout)

@@ -729,10 +729,30 @@ set-option -g @projmux_projdir /path/to/repos
 An env `PROJMUX_PROJDIR` value takes priority over the tmux option. The tmux
 option takes priority over the saved projdir file.
 
+## Agent Question Answering
+
+How a Claude Agent's `AskUserQuestion` is answered is one word stored at:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering
+```
+
+| Value | Way | Meaning |
+| --- | --- | --- |
+| `claude` (default) | 1 | Claude Code shows its own question prompt; projmux stays out of it |
+| `projmux` | 2 | projmux records the question, opens its picker in a popup on the client viewing the Agent's Pane, and `projmux agent question answer` answers the same question |
+
+The value is read case-insensitively with surrounding whitespace ignored. A
+missing, empty, or unreadable file, and any other value, is way 1. An Agent
+opted in with `projmux agent question enable` is way 2 whatever the file
+says. The setting applies only to questions from a projmux Claude Agent's own
+conversation; other Claude sessions and subagents always get way 1. See
+[hooks.md](hooks.md#answering-askuserquestion-in-projmux).
+
 ## Agent Question Window
 
-The Claude question hook holds an opted-in Agent's `AskUserQuestion` open for
-a command-line answer for a seconds window stored at:
+In way 2 the Claude question hook holds the `AskUserQuestion` open for an
+answer for a seconds window stored at:
 
 ```text
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds
@@ -740,12 +760,13 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds
 
 The value is integer seconds, default `900`, and must lie in `60`–`3600`. A
 value outside that range, or a file that does not hold one integer, reads as
-`900`. It applies only to Agents opted in with `projmux agent question enable`.
+`900`. It applies only in way 2 (see
+[Agent Question Answering](#agent-question-answering)); way 1 never waits.
 The installed Claude Code hook `timeout` is this window plus 15 seconds, written
 when `projmux agent integrate claude` runs, so after changing the file re-run
 `projmux agent integrate claude`. Without that, Claude Code still ends the hook
 at the old timeout, and the question goes back to the ordinary prompt then.
-See [hooks.md](hooks.md#answering-askuserquestion-from-the-command-line).
+See [hooks.md](hooks.md#answering-askuserquestion-in-projmux).
 
 ## Notifications
 
@@ -1128,7 +1149,7 @@ Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 TUI is the front layer: only the front entry points (`settings`, `shell`,

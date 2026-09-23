@@ -31,6 +31,9 @@ const (
 	claudeQuestionGiveUp = 5 * time.Second
 	// claudeQuestionPayloadLimit bounds the PreToolUse payload the hook reads.
 	claudeQuestionPayloadLimit = 1 << 20
+	// claudeQuestionClientPoll is how often a way-2 hook with no popup open
+	// looks for a tmux client viewing the Agent's Pane.
+	claudeQuestionClientPoll = time.Second
 )
 
 // claudeQuestionWindow is how long the hook holds one question open for a
@@ -58,29 +61,71 @@ func claudeQuestionWindowFromPaths(paths config.Paths) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// claudeQuestionAnswering is the central agent-question-answering setting:
+// way 1 (Claude Code's own prompt) unless the file names way 2. A config
+// directory that cannot be resolved, like any unreadable or unknown value,
+// reads as way 1.
+func claudeQuestionAnswering() config.AgentQuestionAnswering {
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return config.AgentQuestionAnsweringClaude
+	}
+	return claudeQuestionAnsweringFromPaths(paths)
+}
+
+// claudeQuestionAnsweringFromPaths reads the answering way under paths.
+func claudeQuestionAnsweringFromPaths(paths config.Paths) config.AgentQuestionAnswering {
+	answering, _ := config.LoadAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile())
+	return answering
+}
+
+// claudeQuestionAnsweredByProjmux resolves which way answers a confirmed
+// projmux Claude Agent's question: the Agent's own question channel annotation
+// is way 2 without reading anything else; otherwise the central setting
+// decides, read once. A nil resolver is way 1.
+func claudeQuestionAnsweredByProjmux(agent coremetadata.Agent, answering func() config.AgentQuestionAnswering) bool {
+	if coremetadata.QuestionChannelEnabled(agent) {
+		return true
+	}
+	return answering != nil && answering() == config.AgentQuestionAnsweringProjmux
+}
+
 // claudeQuestionHook holds one AskUserQuestion tool call open until its
-// question set is answered through `projmux agent question answer`, and then
-// answers the tool call with Claude Code's documented PreToolUse decision:
-// permissionDecision "allow" with updatedInput carrying the original questions
-// and the answers.
+// question set is answered, and then answers the tool call with Claude Code's
+// documented PreToolUse decision: permissionDecision "allow" with updatedInput
+// carrying the original questions and the answers.
+//
+// It holds a question only in way 2: the Agent is opted in with `projmux agent
+// question enable`, or the central agent-question-answering setting is
+// `projmux`. Then it records the question, opens a projmux picker in a tmux
+// popup on the client viewing the Agent's Pane (when one is, or as soon as one
+// is), and waits for that picker or `projmux agent question answer`, whichever
+// answers the record first.
 //
 // Whatever else happens, it prints nothing and succeeds, which Claude Code
 // reads as "no decision": the question goes on to the ordinary prompt. That is
-// the outcome for every event it does not own, every Agent that is not opted
-// in, every error, an answer window that runs out, and a cancellation. It never
-// exits with the blocking status.
+// way 1, and the outcome for every event it does not own, every error, an
+// answer window that runs out, a popup that is canceled, fails to open, or
+// ends without answering, and a cancellation. It never exits with the blocking
+// status.
 //
-// The not-opted-in path runs for every question of every Claude session with
-// the hook installed, so it reads one payload and the Registry file and
-// nothing else: no tmux, no store, no migration, no setting. The window is
-// resolved only once the Agent is known to be opted in.
+// Way 1 runs for every question of every Claude session with the hook
+// installed, so it reads one payload, the Registry file, and, only once the
+// Registry confirms a projmux Claude Agent that is not opted in, the one
+// answering setting: no tmux, no store, no migration. The window is resolved
+// only in way 2.
 type claudeQuestionHook struct {
 	loadRegistry func() (coremetadata.Registry, error)
 	store        func() (*agentquestion.Store, error)
+	answering    func() config.AgentQuestionAnswering
 	window       func() time.Duration
-	poll         time.Duration
-	newID        func() (string, error)
-	now          func() time.Time
+	// popup opens the way-2 picker; nil never opens one, and the question is
+	// then answered from the command line only.
+	popup      claudeQuestionPopup
+	poll       time.Duration
+	clientPoll time.Duration
+	newID      func() (string, error)
+	now        func() time.Time
 }
 
 func defaultClaudeQuestionHook() claudeQuestionHook {
@@ -92,11 +137,14 @@ func defaultClaudeQuestionHook() claudeQuestionHook {
 			}
 			return intmetadata.NewDefaultStore(paths).LoadReadOnly()
 		},
-		store:  defaultAgentQuestionStore,
-		window: claudeQuestionWindow,
-		poll:   claudeQuestionPoll,
-		newID:  agentquestion.NewID,
-		now:    time.Now,
+		store:      defaultAgentQuestionStore,
+		answering:  claudeQuestionAnswering,
+		window:     claudeQuestionWindow,
+		popup:      defaultClaudeQuestionPopup(),
+		poll:       claudeQuestionPoll,
+		clientPoll: claudeQuestionClientPoll,
+		newID:      agentquestion.NewID,
+		now:        time.Now,
 	}
 }
 
@@ -115,9 +163,25 @@ func defaultAgentQuestionStore() (*agentquestion.Store, error) {
 // fires, and SIGINT/SIGHUP cancel the wait instead of killing the process, so
 // the record is closed before it exits.
 func runClaudeQuestionHook(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return runClaudeQuestionHookWith(defaultClaudeQuestionHook, args, stdin, stdout, stderr)
+}
+
+// runClaudeQuestionHookWith is runClaudeQuestionHook with the hook it builds
+// injected. Everything from building the hook to writing the decision runs
+// under one recover: an unrecovered Go panic exits with status 2, and Claude
+// Code reads a PreToolUse exit 2 as blocking the tool. Way 1 runs for every
+// Claude question, so a panic there would block questions of sessions that
+// never opted into anything. A recovered panic prints nothing and succeeds,
+// which is no decision; the run itself closes a record it already created.
+func runClaudeQuestionHookWith(newHook func() claudeQuestionHook, args []string, stdin io.Reader, stdout, stderr io.Writer) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = nil
+		}
+	}()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer stop()
-	defaultClaudeQuestionHook().run(ctx, args, stdin, stdout, stderr)
+	newHook().run(ctx, args, stdin, stdout, stderr)
 	return nil
 }
 
@@ -167,8 +231,13 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 		return
 	}
 	agent, paneUID, ok := claudeQuestionAgent(registry, strings.TrimSpace(*paneRef), strings.TrimSpace(payload.SessionID))
-	if !ok || !coremetadata.QuestionChannelEnabled(agent) {
+	if !ok || !claudeQuestionAnsweredByProjmux(agent, h.answering) {
 		return
+	}
+	// The popup is placed by the Agent Pane's live tmux handle.
+	var paneID string
+	if pane, found := registry.Pane(paneUID); found {
+		paneID = strings.TrimSpace(pane.Status.Activation.RuntimeID)
 	}
 
 	store, err := h.openStore()
@@ -195,7 +264,15 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 		fmt.Fprintf(stderr, "projmux: question not recorded: %v\n", err)
 		return
 	}
-	answered, ok := h.wait(ctx, store, record)
+	// A panic past this point still hands the question back: the record is
+	// closed before the panic goes on to the process entry's recover.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			_, _ = store.Close(record.ID)
+			panic(recovered)
+		}
+	}()
+	answered, ok := h.wait(ctx, store, record, paneID)
 	if !ok {
 		return
 	}
@@ -218,7 +295,13 @@ func (h claudeQuestionHook) openStore() (*agentquestion.Store, error) {
 // under the store lock, so an answer racing the deadline or a cancellation
 // resolves one way only: the returned record is answered exactly when the
 // store recorded the answer.
-func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store, record agentquestion.Record) (agentquestion.Record, bool) {
+//
+// While it waits it keeps one popup picker open on the client viewing paneID.
+// No such client is not a failure: the wait goes on for a command-line answer
+// and looks again every clientPoll. A popup that ends while the record still
+// waits (Esc, a failed open, a crashed picker) closes the record, which gives
+// the question back; whatever ends the wait first closes a popup still open.
+func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, paneID string) (agentquestion.Record, bool) {
 	poll := h.poll
 	if poll <= 0 {
 		poll = claudeQuestionPoll
@@ -227,6 +310,9 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 	defer ticker.Stop()
 	deadline := time.NewTimer(time.Until(record.Deadline))
 	defer deadline.Stop()
+	popup := newClaudeQuestionPopupDriver(h.popup, h.clientPoll, paneID, store, record)
+	defer popup.stop()
+	popup.maybeOpen(ctx)
 	for {
 		var step func(string) (agentquestion.Record, error)
 		select {
@@ -237,6 +323,12 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 			return agentquestion.Record{}, false
 		case <-deadline.C:
 			step = store.Settle
+		case <-popup.ended:
+			// The picker answers or closes the record itself; one that ended
+			// with the record still waiting is given back here. Close returns
+			// the record as it stands, so a picker answer is kept.
+			popup.markEnded()
+			step = store.Close
 		case <-ticker.C:
 			current, found, err := store.Get(record.ID)
 			switch {
@@ -248,7 +340,11 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 				continue
 			case !found:
 				return agentquestion.Record{}, false
+			case current.State == agentquestion.StateWaiting && popup.finished:
+				// The popup ended but closing the record failed; try again.
+				step = store.Close
 			case current.State == agentquestion.StateWaiting:
+				popup.maybeOpen(ctx)
 				continue
 			case current.State == agentquestion.StateExpired:
 				step = store.Settle

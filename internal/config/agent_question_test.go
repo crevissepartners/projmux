@@ -61,3 +61,63 @@ func TestLoadAgentQuestionWindowSecondsFile(t *testing.T) {
 		t.Fatalf("empty path = %d, %v; want the default and no error", got, err)
 	}
 }
+
+// TestLoadAgentQuestionAnsweringFile holds the answering setting: only the
+// way-2 word is way 2, and every other content, a missing file, and an
+// unreadable one are way 1.
+func TestLoadAgentQuestionAnsweringFile(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		content string
+		missing bool
+		dir     bool
+		want    AgentQuestionAnswering
+	}{
+		{name: "missing", missing: true, want: AgentQuestionAnsweringClaude},
+		{name: "empty", content: "", want: AgentQuestionAnsweringClaude},
+		{name: "whitespace only", content: " \n\t", want: AgentQuestionAnsweringClaude},
+		{name: "claude", content: "claude", want: AgentQuestionAnsweringClaude},
+		{name: "projmux", content: "projmux", want: AgentQuestionAnsweringProjmux},
+		{name: "projmux with surrounding whitespace", content: "  projmux\n", want: AgentQuestionAnsweringProjmux},
+		{name: "uppercase projmux", content: "PROJMUX", want: AgentQuestionAnsweringProjmux},
+		{name: "uppercase claude", content: "Claude", want: AgentQuestionAnsweringClaude},
+		{name: "on is not a way", content: "on", want: AgentQuestionAnsweringClaude},
+		{name: "a way number is not a way", content: "2", want: AgentQuestionAnsweringClaude},
+		{name: "garbage", content: "projmux please", want: AgentQuestionAnsweringClaude},
+		{name: "unreadable directory", dir: true, want: AgentQuestionAnsweringClaude},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			path := DefaultPaths(t.TempDir(), "").AgentQuestionAnsweringFile()
+			switch {
+			case test.dir:
+				if err := os.MkdirAll(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			case !test.missing:
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(test.content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := LoadAgentQuestionAnsweringFile(path)
+			if got != test.want {
+				t.Fatalf("answering = %q (err %v), want %q", got, err, test.want)
+			}
+			if test.dir != (err != nil) {
+				t.Fatalf("err = %v, want an error only for an unreadable file", err)
+			}
+		})
+	}
+
+	if got, err := LoadAgentQuestionAnsweringFile(""); got != AgentQuestionAnsweringClaude || err != nil {
+		t.Fatalf("empty path = %q, %v; want way 1 and no error", got, err)
+	}
+	if paths := DefaultPaths(t.TempDir(), ""); paths.AgentQuestionAnsweringFile() != filepath.Join(paths.ConfigDir, AgentQuestionAnsweringFileName) {
+		t.Fatalf("path = %q", paths.AgentQuestionAnsweringFile())
+	}
+}

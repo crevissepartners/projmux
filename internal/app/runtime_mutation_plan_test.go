@@ -3533,6 +3533,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"focus.go:listSessionInventory:variable-argv":                                     "runtime.observation",
 		"focus.go:listClients:variable-argv":                                              "runtime.observation",
 		"hook_trust_popup.go:runTmuxHookTrustPopup:variable-argv":                         "popup.display",
+		"claude_question_popup.go:Open:variable-argv":                                     "popup.display",
 		"notify.go:focusNotification:variable-argv":                                       "notification.focus",
 		"runtime_diagnostics.go:socketPath:variable-argv":                                 "runtime.observation",
 		"status.go:readTrimmed:variable-argv":                                             "runtime.observation",
