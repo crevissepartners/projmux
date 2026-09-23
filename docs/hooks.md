@@ -702,13 +702,16 @@ catalog `install` field for installed hook events.
 `projmux agent integrate claude` also installs one `PreToolUse` entry with
 `"matcher": "AskUserQuestion"` that runs
 `projmux internal claude-question-hook` (marker
-`projmux-managed:claude-question:v1`, `"timeout"` the fixed ceiling `2147483`
-seconds, which outlasts every answer window including `unlimited`). Unlike the
+`projmux-managed:claude-question:v1`, `"timeout"` the fixed ceiling `604800`
+seconds (7 days), which outlasts every answer window including `unlimited`;
+it is the safety net for a stuck hook, which has no recover, and is 168 times
+the longest bounded window, so it never cuts a normal one). Unlike the
 ingest command its stdout is not discarded, because that is where an answer is
 handed to Claude Code. Re-running the integration keeps exactly one such entry,
 `--remove` deletes it, and `config apply` never adds or changes it. An entry
-installed by an older projmux carries the old window-plus-15-seconds timeout
-(`915` by default); run `projmux agent integrate claude` once after upgrading
+installed by an older projmux carries an old timeout, the window plus 15
+seconds (`915` by default) or the earlier, longer ceiling of about 25 days;
+run `projmux agent integrate claude` once after upgrading
 to rewrite it to the ceiling.
 
 A question is answered one of two ways:

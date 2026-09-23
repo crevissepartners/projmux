@@ -765,22 +765,25 @@ Set it from `projmux settings` > AI > Agent questions > Wait window (presets
 the file. The value is integer seconds, default `900`, in `60`–`3600`, or the
 word `unlimited` (case-insensitive), which holds the question until it is
 answered. Claude Code has no "no timeout" hook value, so `unlimited` is
-effectively capped at `2147468` seconds (about 24.8 days): the installed hook
+effectively capped at `604785` seconds (about 7 days): the installed hook
 timeout ceiling less the 15 second margin that lets the hook, not Claude Code,
 end the wait. A value outside the range, or a file that holds neither one
 integer nor `unlimited`, reads as `900`; a projmux older than the word also
 reads `unlimited` as `900`. It applies only in way 2 (see
 [Agent Question Answering](#agent-question-answering)); way 1 never waits.
 
-The installed Claude Code hook `timeout` is the fixed ceiling `2147483`
-seconds, the largest whole-second value a signed 32-bit millisecond timer
-holds, and does not depend on this file. The hook rereads the window for every
+The installed Claude Code hook `timeout` is the fixed ceiling `604800` seconds
+(7 days) and does not depend on this file. The ceiling is the safety net for a
+stuck hook, and this hook has no recover: 7 days is 168 times the longest
+window (3600 seconds), so it never cuts a normal window, while a broken hook is
+reclaimed within a week. The hook rereads the window for every
 question, so a changed window applies to the next question without re-running
 `projmux agent integrate claude`.
 
-Hooks installed by an older projmux carry the old timeout (the window read at
-integration plus 15 seconds, `915` by default). After installing this version,
-run `projmux agent integrate claude` once to rewrite that entry to the
+Hooks installed by an older projmux carry an old timeout: the window read at
+integration plus 15 seconds (`915` by default), or the earlier, longer
+ceiling of about 25 days. After installing this version, run
+`projmux agent integrate claude` once to rewrite either entry to the
 ceiling; until then Claude Code still ends the hook at the old timeout and a
 longer window gives the question back to the ordinary prompt then.
 See [hooks.md](hooks.md#answering-askuserquestion-in-projmux).
