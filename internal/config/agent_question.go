@@ -167,6 +167,7 @@ func saveAgentQuestionFile(path, fileName, what, content string) error {
 	}
 
 	dir := filepath.Dir(path)
+	// #nosec G301 -- the projmux config directory keeps the 0755 mode its sibling settings files are created under.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create %s directory: %w", what, err)
 	}
@@ -181,12 +182,13 @@ func saveAgentQuestionFile(path, fileName, what, content string) error {
 	}()
 
 	if _, err := tmp.WriteString(content + "\n"); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("write %s temp file: %w", what, err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close %s temp file: %w", what, err)
 	}
+	// #nosec G302 -- a readable one-word setting like its siblings (SaveAIBadgeStyleFile); it holds no secret.
 	if err := os.Chmod(tmpName, 0o644); err != nil {
 		return fmt.Errorf("chmod %s temp file: %w", what, err)
 	}
