@@ -2552,7 +2552,10 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 	if hasEntryValue(root, settingsAINotifyDiagnostics) {
 		t.Fatalf("AI root entries = %#v, want Notify integrations moved to Notifications", root)
 	}
-	if got, want := len(root), 5; got != want {
+	if !hasEntryValue(root, settingsAIAgentQuestions) {
+		t.Fatalf("AI root entries = %#v, want Agent questions row", root)
+	}
+	if got, want := len(root), 6; got != want {
 		t.Fatalf("AI root entries = %#v, want back row plus AI detail rows", root)
 	}
 	for _, want := range []string{

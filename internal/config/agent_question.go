@@ -22,15 +22,46 @@ const (
 	MaxAgentQuestionWindowSeconds     = 3600
 )
 
+// AgentQuestionWindowUnlimitedWord is the file word for a window that lasts
+// until the question is answered. It is read case-insensitively with
+// surrounding whitespace trimmed. A projmux binary older than the word reads
+// it as the 900 second default, since it is not an integer: downgrading never
+// breaks the hook, it only shortens the wait.
+const AgentQuestionWindowUnlimitedWord = "unlimited"
+
+// The installed Claude question hook timeout and the window it bounds. This
+// file is their single authority.
+//
+// Claude Code has no "no timeout" hook value: an omitted timeout is its short
+// default, and 0 or a negative value drops the hook entry, so it never runs.
+// The installed timeout is therefore the fixed ceiling
+// AgentQuestionHookTimeoutSeconds, independent of the window file:
+// floor((2^31-1) ms / 1000), the largest whole-second value a signed 32-bit
+// millisecond timer holds, since Claude Code runs on a JS runtime. With the
+// timeout fixed, a changed window applies to the next question without
+// re-running `projmux agent integrate claude`.
+//
+// AgentQuestionHookTimeoutMarginSeconds is how far that timeout outlasts the
+// longest window, so the hook, not Claude Code's SIGTERM, is what ends an
+// unanswered wait. Unlimited is the longest window that keeps the margin,
+// 2147468 seconds (about 24.8 days).
+const (
+	AgentQuestionHookTimeoutSeconds       = 2147483
+	AgentQuestionHookTimeoutMarginSeconds = 15
+	UnlimitedAgentQuestionWindowSeconds   = AgentQuestionHookTimeoutSeconds - AgentQuestionHookTimeoutMarginSeconds
+)
+
 func (p Paths) AgentQuestionWindowSecondsFile() string {
 	return filepath.Join(p.ConfigDir, AgentQuestionWindowSecondsFileName)
 }
 
-// LoadAgentQuestionWindowSecondsFile returns the saved question window. It
-// always returns a usable value: the default for an empty path, a missing or
-// unreadable file, and content that is not one integer in
-// MinAgentQuestionWindowSeconds..MaxAgentQuestionWindowSeconds. A read error
-// other than a missing file is also returned, alongside the default.
+// LoadAgentQuestionWindowSecondsFile returns the saved question window. The
+// unlimited word reads as UnlimitedAgentQuestionWindowSeconds. It always
+// returns a usable value: the default for an empty path, a missing or
+// unreadable file, and content that is neither the unlimited word nor one
+// integer in MinAgentQuestionWindowSeconds..MaxAgentQuestionWindowSeconds. A
+// read error other than a missing file is also returned, alongside the
+// default.
 func LoadAgentQuestionWindowSecondsFile(path string) (int, error) {
 	if strings.TrimSpace(path) == "" {
 		return DefaultAgentQuestionWindowSeconds, nil
@@ -43,11 +74,32 @@ func LoadAgentQuestionWindowSecondsFile(path string) (int, error) {
 		}
 		return DefaultAgentQuestionWindowSeconds, fmt.Errorf("read agent question window seconds file: %w", err)
 	}
-	seconds, err := strconv.Atoi(strings.TrimSpace(string(content)))
+	text := strings.TrimSpace(string(content))
+	if strings.EqualFold(text, AgentQuestionWindowUnlimitedWord) {
+		return UnlimitedAgentQuestionWindowSeconds, nil
+	}
+	seconds, err := strconv.Atoi(text)
 	if err != nil || seconds < MinAgentQuestionWindowSeconds || seconds > MaxAgentQuestionWindowSeconds {
 		return DefaultAgentQuestionWindowSeconds, nil
 	}
 	return seconds, nil
+}
+
+// SaveAgentQuestionWindowSecondsFile saves the question window. Seconds in
+// MinAgentQuestionWindowSeconds..MaxAgentQuestionWindowSeconds are written as
+// the integer, and UnlimitedAgentQuestionWindowSeconds as the unlimited word;
+// any other value is refused and nothing is written.
+func SaveAgentQuestionWindowSecondsFile(path string, seconds int) error {
+	content := ""
+	switch {
+	case seconds == UnlimitedAgentQuestionWindowSeconds:
+		content = AgentQuestionWindowUnlimitedWord
+	case seconds >= MinAgentQuestionWindowSeconds && seconds <= MaxAgentQuestionWindowSeconds:
+		content = strconv.Itoa(seconds)
+	default:
+		return fmt.Errorf("agent question window %d must be %d..%d seconds or %s", seconds, MinAgentQuestionWindowSeconds, MaxAgentQuestionWindowSeconds, AgentQuestionWindowUnlimitedWord)
+	}
+	return saveAgentQuestionFile(path, AgentQuestionWindowSecondsFileName, "agent question window seconds", content)
 }
 
 // AgentQuestionAnsweringFileName names how a Claude Agent's AskUserQuestion is
@@ -98,4 +150,50 @@ func LoadAgentQuestionAnsweringFile(path string) (AgentQuestionAnswering, error)
 		return AgentQuestionAnsweringClaude, fmt.Errorf("read agent question answering file: %w", err)
 	}
 	return NormalizeAgentQuestionAnswering(string(content)), nil
+}
+
+// SaveAgentQuestionAnsweringFile saves the answering way, normalized first, so
+// the file only ever holds one of the two words.
+func SaveAgentQuestionAnsweringFile(path string, value AgentQuestionAnswering) error {
+	value = NormalizeAgentQuestionAnswering(string(value))
+	return saveAgentQuestionFile(path, AgentQuestionAnsweringFileName, "agent question answering", string(value))
+}
+
+// saveAgentQuestionFile writes one line the way SaveAIBadgeStyleFile does: a
+// temp file in the same directory, chmod 0644, then an atomic rename.
+func saveAgentQuestionFile(path, fileName, what, content string) error {
+	if strings.TrimSpace(path) == "" {
+		return ErrHomeDirRequired
+	}
+
+	dir := filepath.Dir(path)
+	// #nosec G301 -- the projmux config directory keeps the 0755 mode its sibling settings files are created under.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create %s directory: %w", what, err)
+	}
+
+	tmp, err := os.CreateTemp(dir, fileName+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create %s temp file: %w", what, err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+
+	if _, err := tmp.WriteString(content + "\n"); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write %s temp file: %w", what, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close %s temp file: %w", what, err)
+	}
+	// #nosec G302 -- a readable one-word setting like its siblings (SaveAIBadgeStyleFile); it holds no secret.
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return fmt.Errorf("chmod %s temp file: %w", what, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename %s temp file: %w", what, err)
+	}
+	return nil
 }

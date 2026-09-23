@@ -266,9 +266,10 @@ func TestClaudeQuestionHookResolvesTheWindowOnceWhenOptedIn(t *testing.T) {
 }
 
 // TestClaudeQuestionHookInstalledTimeoutShorterThanTheWindowEndsWithNoDecision
-// stands in for a window raised without re-running integrate: Claude Code's
-// SIGTERM at the older installed timeout cancels the wait long before the
-// window, and the hook prints nothing and closes the record.
+// stands in for an entry an older projmux installed with window plus the
+// margin, before integrate rewrote it to the fixed ceiling: Claude Code's
+// SIGTERM at that older timeout cancels the wait long before the window, and
+// the hook prints nothing and closes the record.
 func TestClaudeQuestionHookInstalledTimeoutShorterThanTheWindowEndsWithNoDecision(t *testing.T) {
 	t.Parallel()
 

@@ -742,7 +742,9 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering
 | `claude` (default) | 1 | Claude Code shows its own question prompt; projmux stays out of it |
 | `projmux` | 2 | projmux records the question, opens its picker in a popup on the client viewing the Agent's Pane, and `projmux agent question answer` answers the same question |
 
-The value is read case-insensitively with surrounding whitespace ignored. A
+Set it from `projmux settings` > AI > Agent questions > Answering, or write
+the file. The setting applies to every Claude Agent on this machine. The value
+is read case-insensitively with surrounding whitespace ignored. A
 missing, empty, or unreadable file, and any other value, is way 1. An Agent
 opted in with `projmux agent question enable` is way 2 whatever the file
 says. The setting applies only to questions from a projmux Claude Agent's own
@@ -758,14 +760,29 @@ answer for a seconds window stored at:
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds
 ```
 
-The value is integer seconds, default `900`, and must lie in `60`–`3600`. A
-value outside that range, or a file that does not hold one integer, reads as
-`900`. It applies only in way 2 (see
+Set it from `projmux settings` > AI > Agent questions > Wait window (presets
+60, 300, 600, 900, 1800, 3600 seconds, Unlimited, or custom seconds), or write
+the file. The value is integer seconds, default `900`, in `60`–`3600`, or the
+word `unlimited` (case-insensitive), which holds the question until it is
+answered. Claude Code has no "no timeout" hook value, so `unlimited` is
+effectively capped at `2147468` seconds (about 24.8 days): the installed hook
+timeout ceiling less the 15 second margin that lets the hook, not Claude Code,
+end the wait. A value outside the range, or a file that holds neither one
+integer nor `unlimited`, reads as `900`; a projmux older than the word also
+reads `unlimited` as `900`. It applies only in way 2 (see
 [Agent Question Answering](#agent-question-answering)); way 1 never waits.
-The installed Claude Code hook `timeout` is this window plus 15 seconds, written
-when `projmux agent integrate claude` runs, so after changing the file re-run
-`projmux agent integrate claude`. Without that, Claude Code still ends the hook
-at the old timeout, and the question goes back to the ordinary prompt then.
+
+The installed Claude Code hook `timeout` is the fixed ceiling `2147483`
+seconds, the largest whole-second value a signed 32-bit millisecond timer
+holds, and does not depend on this file. The hook rereads the window for every
+question, so a changed window applies to the next question without re-running
+`projmux agent integrate claude`.
+
+Hooks installed by an older projmux carry the old timeout (the window read at
+integration plus 15 seconds, `915` by default). After installing this version,
+run `projmux agent integrate claude` once to rewrite that entry to the
+ceiling; until then Claude Code still ends the hook at the old timeout and a
+longer window gives the question back to the ordinary prompt then.
 See [hooks.md](hooks.md#answering-askuserquestion-in-projmux).
 
 ## Notifications

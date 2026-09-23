@@ -702,11 +702,14 @@ catalog `install` field for installed hook events.
 `projmux agent integrate claude` also installs one `PreToolUse` entry with
 `"matcher": "AskUserQuestion"` that runs
 `projmux internal claude-question-hook` (marker
-`projmux-managed:claude-question:v1`, `"timeout"` the answer window plus 15
-seconds, `915` by default). Unlike the ingest command its stdout is not
-discarded, because that is where an answer is handed to Claude Code.
-Re-running the integration keeps exactly one such entry, `--remove` deletes
-it, and `config apply` never adds or changes it.
+`projmux-managed:claude-question:v1`, `"timeout"` the fixed ceiling `2147483`
+seconds, which outlasts every answer window including `unlimited`). Unlike the
+ingest command its stdout is not discarded, because that is where an answer is
+handed to Claude Code. Re-running the integration keeps exactly one such entry,
+`--remove` deletes it, and `config apply` never adds or changes it. An entry
+installed by an older projmux carries the old window-plus-15-seconds timeout
+(`915` by default); run `projmux agent integrate claude` once after upgrading
+to rewrite it to the ceiling.
 
 A question is answered one of two ways:
 
@@ -775,10 +778,10 @@ changes nothing and names one reason token: `question-not-found`,
 or `question-provider-unsupported`.
 
 If nobody answers within the window, the question expires, the popup closes,
-and Claude Code shows its own prompt as usual. The installed timeout is read
-from the window when `projmux agent integrate claude` runs; raise the window
-without re-running it and Claude Code ends the hook at the older, shorter
-timeout, which also gives the question back to its own prompt. `agent question
+and Claude Code shows its own prompt as usual. The hook reads the window for
+every question and the installed timeout is the fixed ceiling, so a window
+changed in `projmux settings` or in the file applies to the next question
+without re-running `projmux agent integrate claude`. `agent question
 disable` also hands every question the Agent is still holding back to that
 prompt immediately. Records live in `<state dir>/agent-questions/` and settled
 ones are kept for a day.

@@ -27,6 +27,9 @@ global.ai.enabled-providers|parent=global.ai|value=ai-enabled-agents|axis=1|nav=
 global.ai.resume-picker|parent=global.ai|value=ai-resume-picker|axis=1|nav=View|entry=navigation|owner=ai|label=Agent Resume Picker|key=settings.text.agent_resume_picker
 global.ai.resume-picker.limit|parent=global.ai.resume-picker|value=ai-resume-picker-limit|axis=1|nav=Choice|entry=navigation|owner=ai|label=Picker limit|key=settings.text.ai_resume_picker_limit_row
 global.ai.resume-picker.depth|parent=global.ai.resume-picker|value=ai-resume-picker-depth|axis=1|nav=Choice|entry=navigation|owner=ai|label=Scan depth|key=settings.text.ai_resume_picker_depth_row
+global.ai.agent-questions|parent=global.ai|value=ai-agent-questions|axis=1|nav=View|entry=navigation|owner=ai|label=Agent questions|key=settings.text.agent_questions
+global.ai.agent-questions.answering|parent=global.ai.agent-questions|value=ai-agent-question-answering|axis=1|nav=Choice|entry=navigation|owner=ai|label=Answering|key=settings.text.agent_question_answering_row
+global.ai.agent-questions.window|parent=global.ai.agent-questions|value=ai-agent-question-window|axis=1|nav=Choice|entry=navigation|owner=ai|label=Wait window|key=settings.text.agent_question_window_row
 global.notifications|parent=global|value=section:notifications|axis=1|nav=View|entry=navigation|owner=root|label=Notifications|key=settings.root.notifications
 global.notifications.desktop-delivery|parent=global.notifications|value=notifications:desktop|axis=1|nav=View|entry=navigation|owner=notifications|label=Desktop delivery|key=settings.text.desktop_delivery
 global.notifications.desktop-delivery.dedupe|parent=global.notifications.desktop-delivery|value=notifications:ai-dedupe|axis=1|nav=Choice|entry=navigation|owner=notifications|label=Dedupe window|key=settings.text.dedupe_window

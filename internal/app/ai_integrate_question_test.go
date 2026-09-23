@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 // claudeQuestionEntries returns the PreToolUse matcher entries that carry the
@@ -55,7 +58,7 @@ func TestAIIntegrateClaudeInstallsOneQuestionEntryAndRemoveRestoresTheFileBytes(
 	entry := entries[0]
 	hook := entry["hooks"].([]any)[0].(map[string]any)
 	if entry["matcher"] != "AskUserQuestion" || len(entry["hooks"].([]any)) != 1 || hook["type"] != "command" ||
-		hook["timeout"] != float64(915) || hook["statusMessage"] != claudeQuestionStatusMessage ||
+		hook["timeout"] != float64(config.AgentQuestionHookTimeoutSeconds) || hook["statusMessage"] != claudeQuestionStatusMessage ||
 		hook["command"] != "exec projmux internal claude-question-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} 2>/dev/null # projmux-managed:claude-question:v1" {
 		t.Fatalf("question entry = %#v", entry)
 	}
@@ -87,20 +90,33 @@ func TestAIIntegrateClaudeInstallsOneQuestionEntryAndRemoveRestoresTheFileBytes(
 	}
 }
 
-// TestAIIntegrateClaudeQuestionTimeoutFollowsTheWindowSetting holds that the
-// installed timeout is the window read at integration plus the margin, and
-// that an out-of-range window installs the default's timeout.
-func TestAIIntegrateClaudeQuestionTimeoutFollowsTheWindowSetting(t *testing.T) {
+// TestAIIntegrateClaudeQuestionTimeoutIsTheFixedCeiling holds that the
+// installed timeout is the fixed ceiling whatever the window file says, so a
+// window changed later applies to the next question without re-integrating,
+// and that the ceiling outlasts every window by at least the margin.
+func TestAIIntegrateClaudeQuestionTimeoutIsTheFixedCeiling(t *testing.T) {
 	t.Parallel()
+
+	if got, want := claudeQuestionHookTimeoutMargin, time.Duration(config.AgentQuestionHookTimeoutMarginSeconds)*time.Second; got != want || got != 15*time.Second {
+		t.Fatalf("margin = %s, want the config margin %s (15s)", got, want)
+	}
+	ceiling := time.Duration(config.AgentQuestionHookTimeoutSeconds) * time.Second
+	if ceiling < config.MaxAgentQuestionWindowSeconds*time.Second+claudeQuestionHookTimeoutMargin {
+		t.Fatalf("ceiling %s does not outlast the longest bounded window plus the margin", ceiling)
+	}
+	if ceiling != config.UnlimitedAgentQuestionWindowSeconds*time.Second+claudeQuestionHookTimeoutMargin {
+		t.Fatalf("ceiling %s is not Unlimited plus the margin", ceiling)
+	}
 
 	for _, test := range []struct {
 		name    string
 		content string
-		want    float64
 	}{
-		{name: "no setting", want: 915},
-		{name: "setting 120", content: "120\n", want: 135},
-		{name: "setting out of range", content: "3601\n", want: 915},
+		{name: "no setting"},
+		{name: "setting 60", content: "60\n"},
+		{name: "setting 3600", content: "3600\n"},
+		{name: "setting unlimited", content: "unlimited\n"},
+		{name: "setting out of range", content: "3601\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -118,10 +134,56 @@ func TestAIIntegrateClaudeQuestionTimeoutFollowsTheWindowSetting(t *testing.T) {
 			if len(entries) != 1 {
 				t.Fatalf("question entries = %d, want 1", len(entries))
 			}
-			if got := entries[0]["hooks"].([]any)[0].(map[string]any)["timeout"]; got != test.want {
-				t.Fatalf("timeout = %v, want %v", got, test.want)
+			if got := entries[0]["hooks"].([]any)[0].(map[string]any)["timeout"]; got != float64(2147483) {
+				t.Fatalf("timeout = %v, want the 2147483s ceiling", got)
 			}
 		})
+	}
+}
+
+// TestAIIntegrateClaudeRewritesAnOlderQuestionTimeoutToTheCeiling is the
+// one-time migration: an entry an older projmux installed with window plus the
+// margin is replaced, not duplicated, by the entry carrying the ceiling, and
+// the user's own PreToolUse hook stays.
+func TestAIIntegrateClaudeRewritesAnOlderQuestionTimeoutToTheCeiling(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	if err := cmd.Run([]string{"integrate", "claude"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, claudeSettingsRelativePath)
+	settings := readClaudeSettingsTestFile(t, path)
+	hooks := settings["hooks"].(map[string]any)
+	hooks["PreToolUse"] = append(hooks["PreToolUse"].([]any), map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "echo keep-bash"}}})
+	for _, entry := range claudeQuestionEntries(t, settings) {
+		entry["hooks"].([]any)[0].(map[string]any)["timeout"] = float64(915)
+	}
+	older, err := encodeClaudeSettings(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, path, older)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "claude"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	rewritten := readCodexTestFile(t, path)
+	if rewritten == older || strings.Contains(stdout.String(), "no changes") {
+		t.Fatalf("integrate left the older timeout in place; stdout=%q", stdout.String())
+	}
+	entries := claudeQuestionEntries(t, readClaudeSettingsTestFile(t, path))
+	if len(entries) != 1 {
+		t.Fatalf("question entries = %d, want exactly 1:\n%s", len(entries), rewritten)
+	}
+	if got := entries[0]["hooks"].([]any)[0].(map[string]any)["timeout"]; got != float64(config.AgentQuestionHookTimeoutSeconds) {
+		t.Fatalf("timeout = %v, want the ceiling", got)
+	}
+	if !strings.Contains(rewritten, "echo keep-bash") || strings.Contains(rewritten, `"timeout": 915`) {
+		t.Fatalf("rewritten settings:\n%s", rewritten)
 	}
 }
 

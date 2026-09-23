@@ -108,6 +108,7 @@ const (
 	settingsNavAIProviders         = "global.ai.enabled-providers"
 	settingsNavAISplitCWD          = "global.ai.split-cwd"
 	settingsNavAIResumePicker      = "global.ai.resume-picker"
+	settingsNavAIQuestions         = "global.ai.agent-questions"
 	settingsNavNotifications       = "global.notifications"
 	settingsNavNotifyDesktop       = "global.notifications.desktop-delivery"
 	settingsNavNotifyProviders     = "global.notifications.provider-integrations"
@@ -203,6 +204,11 @@ var settingsNodeCatalog = []settingsNavNode{
 	{ID: settingsNavAIResumePicker + ".new-action", Parent: settingsNavAIResumePicker, Label: "New action label", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue, Note: "Create New Agent"},
 	{ID: settingsNavAIResumePicker + ".limit", Parent: settingsNavAIResumePicker, Label: "Picker limit", LabelKey: "settings.text.ai_resume_picker_limit_row", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsAIResumePickerLimit, Owner: settingsOwnerAI},
 	{ID: settingsNavAIResumePicker + ".depth", Parent: settingsNavAIResumePicker, Label: "Scan depth", LabelKey: "settings.text.ai_resume_picker_depth_row", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsAIResumePickerDepth, Owner: settingsOwnerAI},
+	{ID: settingsNavAIQuestions, Parent: settingsNavAI, Label: "Agent questions", LabelKey: "settings.text.agent_questions", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsAIAgentQuestions, Owner: settingsOwnerAI, Note: "every Claude Agent on this machine"},
+	{ID: settingsNavAIQuestions + ".scope", Parent: settingsNavAIQuestions, Label: "Scope / Cost", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue, Note: "each question waits in a projmux popup for the wait window"},
+	{ID: settingsNavAIQuestions + ".per-agent", Parent: settingsNavAIQuestions, Label: "One Agent", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue, Note: "projmux agent question enable <agent>"},
+	{ID: settingsNavAIQuestions + ".answering", Parent: settingsNavAIQuestions, Label: "Answering", LabelKey: "settings.text.agent_question_answering_row", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsAIAgentQuestionAnswering, Owner: settingsOwnerAI, Note: "Claude Code prompt (way 1) / projmux popup (way 2)"},
+	{ID: settingsNavAIQuestions + ".window", Parent: settingsNavAIQuestions, Label: "Wait window", LabelKey: "settings.text.agent_question_window_row", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsAIAgentQuestionWindow, Owner: settingsOwnerAI, Note: "60s..3600s / Unlimited"},
 
 	// Notifications --------------------------------------------------------
 	{ID: settingsNavNotifications, Parent: settingsNavScopeGlobal, Label: "Notifications", LabelKey: "settings.root.notifications", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsSectionNotifications, Owner: settingsOwnerRoot},
