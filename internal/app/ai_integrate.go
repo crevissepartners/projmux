@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/config"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
@@ -54,9 +55,9 @@ const (
 	// claudeQuestionHookMatcher limits the entry to the one tool it answers.
 	claudeQuestionHookMatcher = "AskUserQuestion"
 	// claudeQuestionHookTimeoutMargin is how far the installed hook timeout
-	// outlasts the answer window read at integration, so the hook, not Claude
-	// Code's timeout, is what ends an unanswered wait.
-	claudeQuestionHookTimeoutMargin = 15 * time.Second
+	// outlasts the longest answer window (Unlimited), so the hook, not Claude
+	// Code's timeout, is what ends an unanswered wait. config owns the value.
+	claudeQuestionHookTimeoutMargin = config.AgentQuestionHookTimeoutMarginSeconds * time.Second
 	// claudeQuestionStatusMessage is what Claude Code shows while the hook
 	// holds the question.
 	claudeQuestionStatusMessage = "Question held for a projmux answer (projmux agent question answer); Esc declines"
@@ -466,11 +467,7 @@ func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordina
 		// The question channel rides on explicit integration only, like the
 		// coordination callbacks above. It holds nothing open for an Agent that
 		// was not opted in with `projmux agent question enable`.
-		paths, err := c.aiConfigPaths()
-		if err != nil {
-			return claudeHookPlan{}, err
-		}
-		hooks["PreToolUse"] = append(claudeHookEntrySlice(hooks["PreToolUse"]), claudeQuestionManagedEntry(claudeQuestionWindowFromPaths(paths)))
+		hooks["PreToolUse"] = append(claudeHookEntrySlice(hooks["PreToolUse"]), claudeQuestionManagedEntry())
 	}
 	next, err := encodeClaudeSettings(settings)
 	if err != nil {
@@ -1166,16 +1163,20 @@ func claudeHookEntryIsHooksAndMatcherOnly(entry map[string]any) bool {
 
 // claudeQuestionManagedEntry is the AskUserQuestion PreToolUse entry. Its
 // command's stdout is not discarded: an answered question's decision is printed
-// there. Its timeout is window plus claudeQuestionHookTimeoutMargin, in whole
-// seconds.
-func claudeQuestionManagedEntry(window time.Duration) map[string]any {
+// there. Its timeout is the fixed ceiling config.AgentQuestionHookTimeoutSeconds,
+// never read from the window file: the hook rereads the window for every
+// question and ends the wait itself, so a changed window applies to the next
+// question without re-running integrate. An entry an older projmux installed
+// with window plus the margin is removed by its marker and rewritten with the
+// ceiling on the next integrate.
+func claudeQuestionManagedEntry() map[string]any {
 	return map[string]any{
 		"matcher": claudeQuestionHookMatcher,
 		"hooks": []any{
 			map[string]any{
 				"type":          "command",
 				"command":       claudeQuestionHookCommand,
-				"timeout":       int((window + claudeQuestionHookTimeoutMargin) / time.Second),
+				"timeout":       config.AgentQuestionHookTimeoutSeconds,
 				"statusMessage": claudeQuestionStatusMessage,
 			},
 		},

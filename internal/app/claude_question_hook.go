@@ -39,14 +39,17 @@ const (
 // claudeQuestionWindow is how long the hook holds one question open for a
 // command-line answer before it gives the question back to Claude Code's own
 // prompt. It is the central agent-question-window-seconds setting (60..3600,
-// default 900); an out-of-range or broken value, and a config directory that
-// cannot be resolved, read as the default.
+// or the unlimited word, default 900); an out-of-range or broken value, and a
+// config directory that cannot be resolved, read as the default.
 //
-// The installed hook timeout is derived from it when `projmux agent integrate
-// claude` runs, not when the hook runs. A window raised without re-running
-// integrate outlasts the installed timeout: Claude Code's SIGTERM at that
-// timeout cancels the wait, which prints nothing, so the question goes on to
-// the ordinary prompt.
+// It is read for every question, and the installed hook timeout is the fixed
+// ceiling config.AgentQuestionHookTimeoutSeconds, which outlasts every window,
+// so a changed window applies to the next question without re-running
+// `projmux agent integrate claude`. Only an entry an older projmux installed
+// still carries the timeout that projmux derived from the window at
+// integration; there Claude Code's SIGTERM at that timeout cancels a longer
+// wait, which prints nothing, so the question goes on to the ordinary prompt,
+// until integrate runs once and rewrites the entry.
 func claudeQuestionWindow() time.Duration {
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {

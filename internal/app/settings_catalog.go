@@ -133,6 +133,8 @@ var settingsDynamicEntryCatalog = []struct {
 	{settingsActionPrefixAIResumeLimit, "", settingsActionMeta("Agent Resume Picker", "settings.text.agent_resume_picker", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAIResumeDepth, "", settingsActionMeta("Scan depth", "settings.text.ai_resume_picker_depth_row", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAISplitCWD, "", settingsActionMeta("New splits start in", "settings.text.split_cwd_from_row", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAIQuestionAnswering, "", settingsActionMeta("Answering", "settings.text.agent_question_answering_row", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAIQuestionWindow, "", settingsActionMeta("Wait window", "settings.text.agent_question_window_row", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAIHookProvider, settingsNavNotifyAgentEvents + ".item", settingsNavigationMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAIHookEvent, settingsNavNotifyAgentEvents + ".item.event", settingsNavigationMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAIHookSet, "", settingsActionMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
@@ -254,6 +256,10 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			value == settingsAIResumePicker || value == settingsAIResumePickerLimit ||
 			value == settingsAIResumePickerDepth || value == settingsAISplitCWDFrom ||
 			value == settingsAINotifyDiagnostics ||
+			value == settingsAIAgentQuestions || value == settingsAIAgentQuestionAnswering ||
+			value == settingsAIAgentQuestionWindow ||
+			strings.HasPrefix(value, settingsActionPrefixAIQuestionAnswering) ||
+			strings.HasPrefix(value, settingsActionPrefixAIQuestionWindow) ||
 			strings.HasPrefix(value, settingsActionPrefixAI) ||
 			strings.HasPrefix(value, settingsActionPrefixAISplitCWD) ||
 			strings.HasPrefix(value, settingsActionPrefixAIEnabledAgent) ||
@@ -347,22 +353,25 @@ const (
 	settingsActionPrefixAIResumeLimit      = "ai-resume-limit:"
 	settingsActionPrefixAIResumeDepth      = "ai-resume-depth:"
 	settingsActionPrefixAISplitCWD         = "ai-split-cwd:"
-	settingsActionPrefixAIHookProvider     = "ai-hook-provider:"
-	settingsActionPrefixAIHookEvent        = "ai-hook-event:"
-	settingsActionPrefixAIHookSet          = "ai-hook-set:"
-	settingsActionPrefixAISemanticEvent    = "ai-semantic-event:"
-	settingsActionPrefixAISemanticSet      = "ai-semantic-set:"
-	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
-	settingsActionPrefixHooks              = "project-hooks:"
-	settingsActionPrefixLiveResources      = "live-resources:"
-	settingsActionPrefixHUDVisibility      = "statusbar-visibility:"
-	settingsActionPrefixKeymap             = "keymap:"
-	settingsActionPrefixKeymapCategory     = "keymap-category:"
-	settingsActionPrefixKeymapSurface      = "keymap-surface:"
-	settingsActionPrefixWorkdirItem        = "workdir-item:"
-	settingsActionPrefixPinItem            = "pin-item:"
-	settingsActionPrefixCandidatePinItem   = "candidate-pin-item:"
-	settingsActionPrefixHookEvent          = "hook-event:"
+	// The Agent questions choosers: the answering way and the wait window.
+	settingsActionPrefixAIQuestionAnswering = "ai-question-answering:"
+	settingsActionPrefixAIQuestionWindow    = "ai-question-window:"
+	settingsActionPrefixAIHookProvider      = "ai-hook-provider:"
+	settingsActionPrefixAIHookEvent         = "ai-hook-event:"
+	settingsActionPrefixAIHookSet           = "ai-hook-set:"
+	settingsActionPrefixAISemanticEvent     = "ai-semantic-event:"
+	settingsActionPrefixAISemanticSet       = "ai-semantic-set:"
+	settingsActionPrefixDesktopNotifyMode   = "desktop-notify-mode:"
+	settingsActionPrefixHooks               = "project-hooks:"
+	settingsActionPrefixLiveResources       = "live-resources:"
+	settingsActionPrefixHUDVisibility       = "statusbar-visibility:"
+	settingsActionPrefixKeymap              = "keymap:"
+	settingsActionPrefixKeymapCategory      = "keymap-category:"
+	settingsActionPrefixKeymapSurface       = "keymap-surface:"
+	settingsActionPrefixWorkdirItem         = "workdir-item:"
+	settingsActionPrefixPinItem             = "pin-item:"
+	settingsActionPrefixCandidatePinItem    = "candidate-pin-item:"
+	settingsActionPrefixHookEvent           = "hook-event:"
 	// settingsActionPrefixRuntimeDiagnostics owns the Projects sidebar
 	// Runtime diagnostics visibility choice.
 	settingsActionPrefixRuntimeDiagnostics = "runtime-diagnostics:"
@@ -403,6 +412,9 @@ const (
 	settingsAIResumePickerLimit                = "ai-resume-picker-limit"
 	settingsAIResumePickerDepth                = "ai-resume-picker-depth"
 	settingsAISplitCWDFrom                     = "ai-split-cwd-from"
+	settingsAIAgentQuestions                   = "ai-agent-questions"
+	settingsAIAgentQuestionAnswering           = "ai-agent-question-answering"
+	settingsAIAgentQuestionWindow              = "ai-agent-question-window"
 	settingsAINotifyDiagnostics                = "ai-notify-diagnostics"
 	settingsNotificationsDesktop               = "notifications:desktop"
 	settingsNotificationsAIDedupe              = "notifications:ai-dedupe"

@@ -94,6 +94,14 @@ step, never a silent no-op.
   - `Agent Resume Picker [View]` — states that resume targets an existing Agent
     in the `Offline` or `Failed` phase and that its new action is
     `Create New Agent`, then the picker limit and scan depth.
+  - `Agent questions [View]` — two read-only rows state the cost (every
+    Claude Agent on this machine; each question waits in a projmux popup for
+    the wait window) and the per-Agent alternative
+    (`projmux agent question enable <agent>`), then `Answering [Choice]`
+    (Claude Code prompt, way 1, default / projmux popup, way 2) and
+    `Wait window [Choice]` (60s–3600s presets, custom seconds, or Unlimited).
+    Both write the central files the question hook rereads per question, so a
+    change applies to the next question with no integrate run.
 - **Notifications** — the persistent Notification queue and how it is delivered.
   Live Pane attention is a presentation concern and lives under Appearance.
   - `Desktop delivery [View]` — effective sender/source, `Delivery mode`
