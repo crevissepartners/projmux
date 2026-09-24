@@ -47,10 +47,6 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 			if err := c.runAIResumePickerSection(stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsAIAgentQuestions:
-			if err := c.runAIAgentQuestionsSection(stdout, stderr); err != nil {
-				return err
-			}
 		case strings.HasPrefix(action, settingsActionPrefixAI):
 			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
@@ -453,11 +449,6 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 			Label:     settingsNodeRowLabelLocale(locale, settingsNavAIResumePicker, settingsGlyphOpen, settingsColorType, c.aiResumePickerSummary()),
 			Value:     settingsAIResumePicker,
 			SearchKey: "agent resume picker limit sessions resume_picker_limit scan depth cwd resume_scan_depth offline failed",
-		},
-		intpickercompat.Entry{
-			Label:     settingsNodeRowLabelLocale(locale, settingsNavAIQuestions, settingsGlyphOpen, settingsColorType, c.agentQuestionsSummary()),
-			Value:     settingsAIAgentQuestions,
-			SearchKey: "agent questions answering AskUserQuestion question wait window timeout unlimited projmux popup claude code prompt",
 		},
 	)
 	if c.appServerHealth != nil {

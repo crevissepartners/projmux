@@ -762,8 +762,8 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering
 | `claude` (default) | 1 | Claude Code shows its own question prompt; projmux stays out of it |
 | `projmux` | 2 | projmux records the question, opens its picker in a popup on the client viewing the Agent's Pane, and `projmux agent question answer` answers the same question |
 
-Set it from `projmux settings` > AI > Agent questions > Answering, or write
-the file. The setting applies to every Claude Agent on this machine. The value
+Set it with `projmux config agent-questions --answering <claude|projmux>`,
+or write the file. The setting applies to every Claude Agent on this machine. The value
 is read case-insensitively with surrounding whitespace ignored. A
 missing, empty, or unreadable file, and any other value, is way 1. An Agent
 opted in with `projmux agent question enable` is way 2 whatever the file
@@ -780,9 +780,8 @@ answer for a seconds window stored at:
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds
 ```
 
-Set it from `projmux settings` > AI > Agent questions > Wait window (presets
-60, 300, 600, 900, 1800, 3600 seconds, Unlimited, or custom seconds), or write
-the file. The value is integer seconds, default `900`, in `60`–`3600`, or the
+Set it with `projmux config agent-questions --window <seconds|unlimited>`, or
+write the file. The value is integer seconds, default `900`, in `60`–`3600`, or the
 word `unlimited` (case-insensitive), which holds the question until it is
 answered. Claude Code has no "no timeout" hook value, so `unlimited` is
 effectively capped at `604785` seconds (about 7 days): the installed hook

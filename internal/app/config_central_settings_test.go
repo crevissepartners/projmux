@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
@@ -91,6 +94,63 @@ func TestConfigAgentQuestionsSetThenShowMatchesHookLoaders(t *testing.T) {
 	}
 	if seconds, _ := config.LoadAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile()); seconds != 120 {
 		t.Fatalf("hook window = %d, want 120", seconds)
+	}
+}
+
+// TestConfigAgentQuestionsWindowReachesTheNextQuestionWithoutIntegrate is the
+// no-re-integrate guarantee: a window stored with `config agent-questions` is
+// what the hook's own resolver reads for the next question, Unlimited
+// included, and that question's record deadline is created with it. Nothing
+// integrates between the store and the question.
+func TestConfigAgentQuestionsWindowReachesTheNextQuestionWithoutIntegrate(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		window string
+		want   time.Duration
+	}{
+		{window: "120", want: 120 * time.Second},
+		{window: "3600", want: time.Hour},
+		{window: config.AgentQuestionWindowUnlimitedWord, want: 604785 * time.Second},
+	} {
+		t.Run(test.window, func(t *testing.T) {
+			t.Parallel()
+			cmd := centralSettingsTestCommand(t)
+			_, paths := centralSettingsFiles(t, cmd)
+			if got := claudeQuestionWindowFromPaths(paths); got != 900*time.Second {
+				t.Fatalf("window before the store = %s, want the default", got)
+			}
+			runConfigRoute(t, cmd, "agent-questions", "--window", test.window)
+			if got := claudeQuestionWindowFromPaths(paths); got != test.want {
+				t.Fatalf("hook window after the store = %s, want %s", got, test.want)
+			}
+
+			fixture := newQuestionFixture(t, true)
+			hook := fixture.hook(0)
+			hook.window = func() time.Duration { return claudeQuestionWindowFromPaths(paths) }
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan string, 1)
+			go func() {
+				var stdout bytes.Buffer
+				hook.run(ctx, []string{"--pane=" + questionTestPane}, strings.NewReader(questionTestPayload("PreToolUse", "AskUserQuestion")), &stdout, &bytes.Buffer{})
+				done <- stdout.String()
+			}()
+			var id string
+			for deadline := time.Now().Add(5 * time.Second); id == ""; time.Sleep(5 * time.Millisecond) {
+				if records, err := fixture.store.List(questionTestAgent); err == nil && len(records) == 1 {
+					id = records[0].ID
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the hook never recorded its question")
+				}
+			}
+			cancel()
+			waitHookOutput(t, done)
+			record, _, _ := fixture.store.Get(id)
+			if got := record.Deadline.Sub(record.CreatedAt); got != test.want {
+				t.Fatalf("record window = %s, want %s", got, test.want)
+			}
+		})
 	}
 }
 
