@@ -388,6 +388,78 @@ func TestClaudeQuestionHookWayTwoAnswersFromThePopup(t *testing.T) {
 	}
 }
 
+// TestClaudeQuestionHookPopupAnswerReadBeforePopupEnds fixes the ordering:
+// the ticker reads the picker's answer while Open is still running, then the
+// popup ends before the hook can process that read. Cleanup must not Close a
+// popup that has already ended on its own.
+func TestClaudeQuestionHookPopupAnswerReadBeforePopupEnds(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, false)
+	fixture.answering = config.AgentQuestionAnsweringProjmux
+	popup := newFakeQuestionPopup("client-1")
+	fixture.popup = popup
+	pickerAnswered := make(chan error, 1)
+	releasePopup := make(chan struct{})
+	popupReturned := make(chan struct{})
+	popup.open = func(_ context.Context, target claudeQuestionPopupTarget, _ <-chan struct{}) error {
+		picker, _ := fixture.picker(pickRow("make"), pickRow("Done"), pickRow("main"))
+		err := picker.run(target.QuestionID, target.AgentUID)
+		pickerAnswered <- err
+		<-releasePopup
+		close(popupReturned)
+		return err
+	}
+	answerRead := make(chan struct{})
+	allowRead := make(chan struct{})
+	hook := fixture.hook(time.Minute)
+	hook.readRecord = func(store *agentquestion.Store, id string) (agentquestion.Record, bool, error) {
+		current, found, err := store.Get(id)
+		if err == nil && found && current.State == agentquestion.StateAnswered {
+			close(answerRead)
+			<-allowRead
+		}
+		return current, found, err
+	}
+	done := make(chan string, 1)
+	go func() {
+		var stdout bytes.Buffer
+		hook.run(context.Background(), []string{"--pane=" + questionTestPane}, strings.NewReader(questionTestPayload("PreToolUse", "AskUserQuestion")), &stdout, &bytes.Buffer{})
+		done <- stdout.String()
+	}()
+	target := popup.waitOpened(t)
+	select {
+	case err := <-pickerAnswered:
+		if err != nil {
+			t.Fatalf("picker answer: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("picker did not answer")
+	}
+	select {
+	case <-answerRead:
+	case <-time.After(10 * time.Second):
+		t.Fatal("ticker did not read the picker answer")
+	}
+	close(releasePopup)
+	select {
+	case <-popupReturned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("popup did not end after its answer")
+	}
+	close(allowRead)
+	wantAnswer := `"answers":{"Which branch?":"main","Which build tool?":"make"}`
+	if got := waitHookOutput(t, done); !strings.Contains(got, wantAnswer) {
+		t.Fatalf("decision = %q, want picker answer %s", got, wantAnswer)
+	}
+	if _, _, closes := popup.counts(); closes != 0 {
+		t.Fatalf("popup Close called %d times after Answer -> ticker read -> popup ended, want 0", closes)
+	}
+	if target.Client != "client-1" {
+		t.Fatalf("popup client = %q, want client-1", target.Client)
+	}
+}
+
 // TestClaudeQuestionHookCommandLineAnswerWinsAndClosesThePopup is the race:
 // the command line answers while the popup's picker is still open, the hook
 // closes the popup and returns that answer, and the picker's own answer that

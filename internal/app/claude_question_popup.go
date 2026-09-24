@@ -252,13 +252,25 @@ func (d *claudeQuestionPopupDriver) markEnded() {
 	}
 }
 
-// stop closes a popup that is still open, waits a bounded moment for it to
-// end, and releases it. It is safe to call more than once.
-func (d *claudeQuestionPopupDriver) stop() {
+// stop lets an answered popup finish on its own before closing it. The answer
+// may have reached the store before the picker process exits, while a command-
+// line answer leaves that picker open and still needs a Close. The wait is
+// bounded for that case. It is safe to call more than once.
+func (d *claudeQuestionPopupDriver) stop(answered bool) {
 	if !d.open {
 		return
 	}
 	ended := d.ended
+	if answered {
+		// Open may have returned already even though wait selected the
+		// answer first. In that case Close could hit a later popup.
+		select {
+		case <-ended:
+			d.markEnded()
+			return
+		case <-time.After(claudeQuestionPopupStopWait):
+		}
+	}
 	func() {
 		defer func() { _ = recover() }()
 		ctx, cancel := context.WithTimeout(context.Background(), claudeQuestionPopupStopWait)
