@@ -116,13 +116,35 @@ func (p creatorProvenance) reportSkip(stderr io.Writer) {
 // observeCreator runs the creator checks against the transaction's working
 // Registry, which reconcile has already refreshed. It never fails the create.
 func (c *createCommand) observeCreator(ctx context.Context, working *coremetadata.Registry) creatorProvenance {
-	if c == nil || c.processAncestors == nil || c.lookupEnv == nil || working == nil {
+	if c == nil {
+		return creatorProvenance{}
+	}
+	return observePaneChainActor(ctx, c.lookupEnv, c.processAncestors, working,
+		func(ctx context.Context, paneID, _ string) (int, string) { return c.confirmCreatorAnchor(ctx, paneID) })
+}
+
+// paneChainAnchorConfirm is the one server-side step of the pane-chain
+// judgment: prove the ambient `%N` is the Registry Pane paneUID on the exact
+// server the calling operation addresses, and return that Pane's process id.
+// A non-empty second result is a creatorSkip* token.
+type paneChainAnchorConfirm func(ctx context.Context, paneID, paneUID string) (int, string)
+
+// observePaneChainActor is the pane-chain judgment creation provenance and
+// deletion records share. Its four steps run cheapest first: the ambient `%N`
+// read from the unmasked environment, the in-memory Registry round trip, the
+// injected server confirmation, and the bounded /proc descent. Only the server
+// confirmation differs between callers, because each one proves the Pane on
+// its own route. It never fails the operation that asks.
+func observePaneChainActor(ctx context.Context, lookupEnv func(string) string, processAncestors func() ([]int, error),
+	working *coremetadata.Registry, confirm paneChainAnchorConfirm,
+) creatorProvenance {
+	if processAncestors == nil || lookupEnv == nil || working == nil || confirm == nil {
 		return creatorProvenance{}
 	}
 	// The same ambient order the route resolver reads, but on the unmasked
 	// environment and with no explicit route anchor: an explicit target masks
 	// the ambient Pane for route authority, not for provenance.
-	paneID, err := resolveRuntimeMutationAnchorPane(c.lookupEnv, "")
+	paneID, err := resolveRuntimeMutationAnchorPane(lookupEnv, "")
 	if err != nil {
 		return creatorProvenance{skip: creatorSkipAnchorInvalid}
 	}
@@ -133,11 +155,11 @@ func (c *createCommand) observeCreator(ctx context.Context, working *coremetadat
 	if skip != "" {
 		return creatorProvenance{skip: skip}
 	}
-	panePID, skip := c.confirmCreatorAnchor(ctx, paneID)
+	panePID, skip := confirm(ctx, paneID, paneUID)
 	if skip != "" {
 		return creatorProvenance{skip: skip}
 	}
-	chain, err := c.processAncestors()
+	chain, err := processAncestors()
 	if !slices.Contains(chain, panePID) {
 		if err != nil || len(chain) == 0 {
 			return creatorProvenance{skip: creatorSkipProcessUnobservable}

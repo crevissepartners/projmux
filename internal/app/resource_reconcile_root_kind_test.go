@@ -99,6 +99,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "resolves an Agent workspace against Project roots; a ControlSession has no root to offer",
 	},
 	{
+		File: "internal/app/deletion_record.go", Func: "deletionAffectedBetween",
+		Source: "Registry", Verdict: rootKindBoth,
+		Why: "a deletion record's affected set diffs every resource of both root kinds and all descendants before and after the commit",
+	},
+	{
 		File: "internal/app/doctor_registry.go", Func: "doctorCommand.evaluateRegistryInvariants",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "audits Project session projections and roots; the control-root invariants it needs live in Registry.Validate",
@@ -430,7 +435,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 		counts[site.Verdict]++
 	}
 	for verdict, want := range map[rootKindVerdict]int{
-		rootKindBoth:        19,
+		rootKindBoth:        20,
 		rootKindPaired:      2,
 		rootKindProjectOnly: 24,
 		rootKindGap:         0,
@@ -439,7 +444,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 45; got != want {
+	if got, want := len(rootKindProjectionSites), 46; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

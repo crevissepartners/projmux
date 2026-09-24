@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 // deleteKinds lists the kind spellings `delete` implements, in help order, each
@@ -64,19 +65,44 @@ type deleteCommand struct {
 	// It is reobserved with the inherited socket/pid instead of being written
 	// into the process-global TMUX_PANE environment.
 	routeAnchor string
+	// via is the route that reached this delete, for its deletion record. The
+	// zero value is the CLI; the generated UI keys set deletionViaUI.
+	via deletionVia
+	// processAncestors and actorRunner are the deletion record's pane-chain
+	// actor seams: this process's parent chain, and the tmux runner that
+	// confirms the ambient Pane on this delete's own route. Either nil leaves
+	// the actor unjudged.
+	processAncestors func() ([]int, error)
+	actorRunner      tmuxCommandRunner
 }
 
 func newDeleteCommand() *deleteCommand {
 	return &deleteCommand{
-		store:          newResourceStore(),
-		confirm:        newConfirmer(),
-		resolveKinds:   deleteRegistryKinds,
-		activeTarget:   defaultActiveTargetLookup(),
-		windows:        newTmuxWindowDeleteRuntime(),
-		panes:          newTmuxPaneDeleteRuntime(),
-		lookupEnv:      os.Getenv,
-		newOperationID: newCreateOperationID,
+		store:            newResourceStore(),
+		confirm:          newConfirmer(),
+		resolveKinds:     deleteRegistryKinds,
+		activeTarget:     defaultActiveTargetLookup(),
+		windows:          newTmuxWindowDeleteRuntime(),
+		panes:            newTmuxPaneDeleteRuntime(),
+		lookupEnv:        os.Getenv,
+		newOperationID:   newCreateOperationID,
+		processAncestors: processAncestry,
+		actorRunner:      inttmux.ExecRunner{},
 	}
+}
+
+// deletionVia is the record's route; the zero value is the CLI.
+func (c *deleteCommand) deletionVia() deletionVia {
+	if c.via == "" {
+		return deletionViaCLI
+	}
+	return c.via
+}
+
+// observeDeletionActor judges this delete's actor on route against the
+// pre-commit working Registry.
+func (c *deleteCommand) observeDeletionActor(route tmuxTransport, working *coremetadata.Registry) DeletionActor {
+	return observeDeletionActor(context.Background(), c.deletionVia(), c.lookupEnv, c.processAncestors, c.actorRunner, route, working)
 }
 
 // deleteWholeSetFlag is the explicit whole-registry spelling of the destructive
@@ -316,7 +342,11 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 	plan.Implicit = implicit && !*all
 	plan.ExactUID = explicitUIDTargetRefs(flags.targetRefs())
 	if kind == coremetadata.KindProject {
-		return c.runProjectUnregister(verb, spelling, plan, resolution, *dryRun, *yes, stdout, stderr)
+		// Project unregister has no live half, so its route is resolved only to
+		// judge the deletion record's actor, and an unresolvable one is simply
+		// unproven rather than a refusal.
+		actorRoute := lenientDeletionRoute(deleteSocketFlags{socket: *socket, socketPath: *socketPath}, c.lookupEnv)
+		return c.runProjectUnregister(verb, spelling, plan, resolution, actorRoute, *dryRun, *yes, stdout, stderr)
 	}
 
 	target, err := resolveDeleteTarget(spelling, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, c.lookupEnv)
@@ -401,10 +431,15 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 	var killedPanes []paneLiveDeleteTarget
 	paneTombstoned := false
 	var replacementReceipt paneReplacementReceipt
+	var actor DeletionActor
+	var affected []DeletionAffected
 	if err := c.store.mutate(kind, resolution.UIDs(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 		if current := buildDeletePlan(*working, kind, resolution).signature(); current != approved {
 			return fmt.Errorf("%s: the cascade plan changed between preflight and execution; nothing was deleted", spelling)
 		}
+		// The actor is judged here, against the pre-commit Registry and before
+		// any kill: a delete can remove the actor's own Pane.
+		actor = c.observeDeletionActor(target, working)
 		var preparedDelete coremetadata.Registry
 		if kind == coremetadata.KindWindow {
 			currentLive, err := c.windows.preflight(context.Background(), *working, plan)
@@ -493,6 +528,7 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 				}
 			}
 		}
+		affected = deletionAffectedBetween(*working, preparedDelete)
 		*working = preparedDelete
 		return nil
 	}); err != nil {
@@ -536,6 +572,10 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		}
 		return withdrawIntent(err)
 	}
+	// The record follows the durable commit and precedes the result and any
+	// queued self-kill, which can end this process.
+	recordDeletion(c.store, newDeletionRecord(childDeletionOperation(kind), operationID, c.deletionVia(), actor,
+		deletionTargetsOf(plan), affected), stderr)
 	writeResult := func() error {
 		if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, false, selfTarget); err != nil {
 			return err
@@ -586,7 +626,7 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 // stderr line and one receipt warning, which is the whole meaning of
 // "behavior-preserving alias": the bytes on stdout, the Registry writes, and the
 // preserved runtime are identical.
-func (c *deleteCommand) runProjectUnregister(verb, spelling string, plan deletePlan, resolution selector.Resolution, dryRun, yes bool, stdout, stderr io.Writer) error {
+func (c *deleteCommand) runProjectUnregister(verb, spelling string, plan deletePlan, resolution selector.Resolution, actorRoute tmuxTransport, dryRun, yes bool, stdout, stderr io.Writer) error {
 	deprecated := verb == deleteVerbDelete
 	if deprecated {
 		warnDeprecatedProjectDeleteAlias(stderr)
@@ -601,10 +641,13 @@ func (c *deleteCommand) runProjectUnregister(verb, spelling string, plan deleteP
 		return err
 	}
 	oldUIDs := resolution.UIDs()
+	var actor DeletionActor
+	var affected []DeletionAffected
 	if err := c.store.mutate(coremetadata.KindProject, oldUIDs, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 		if current := buildDeletePlan(*working, coremetadata.KindProject, resolution).signature(); current != plan.signature() {
 			return errors.New("delete project: the unregister plan changed between preflight and execution; nothing was deleted")
 		}
+		actor = c.observeDeletionActor(actorRoute, working)
 		candidate := working.Clone()
 		for _, uid := range oldUIDs {
 			project, ok := working.Project(uid)
@@ -629,11 +672,22 @@ func (c *deleteCommand) runProjectUnregister(verb, spelling string, plan deleteP
 		if err := candidate.Validate(); err != nil {
 			return err
 		}
+		affected = deletionAffectedBetween(*working, candidate)
 		*working = candidate
 		return nil
 	}); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "registry-unregister", strings.Join(oldUIDs, ","), "", err)
 	}
+	operation := deletionOperationUnregisterProject
+	if deprecated {
+		operation = deletionOperationDeleteProject
+	}
+	// Unregister writes no intentional termination receipt, so its record gets
+	// its own operation id, minted the same way; a failed mint only costs the
+	// record.
+	operationID, _ := c.mintOperationID()
+	recordDeletion(c.store, newDeletionRecord(operation, operationID, c.deletionVia(), actor,
+		deletionTargetsOf(plan), affected), stderr)
 	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, false, false); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-write", strings.Join(oldUIDs, ","), "", err)
 	}
@@ -664,6 +718,19 @@ func explicitUIDTargetRefs(refs []string) bool {
 		}
 	}
 	return true
+}
+
+// childDeletionOperation is the deletion record operation of a Window, Pane,
+// or Agent delete.
+func childDeletionOperation(kind coremetadata.Kind) string {
+	switch kind {
+	case coremetadata.KindPane:
+		return deletionOperationDeletePane
+	case coremetadata.KindAgent:
+		return deletionOperationDeleteAgent
+	default:
+		return deletionOperationDeleteWindow
+	}
 }
 
 // mintOperationID labels one delete's intentional termination receipt.

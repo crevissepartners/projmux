@@ -31,6 +31,8 @@ type pruneAgentCommand struct {
 	store   *resourceStore
 	now     func() time.Time
 	observe pruneAgentObservation
+	// actor holds the deletion record's pane-chain actor seams.
+	actor pruneDeletionActor
 }
 
 func newPruneAgentCommand() *pruneAgentCommand {
@@ -38,6 +40,7 @@ func newPruneAgentCommand() *pruneAgentCommand {
 		store:   newResourceStore(),
 		now:     time.Now,
 		observe: runtimeReaderObservation(newRuntimeDiagnosticsReader(nil)),
+		actor:   newPruneDeletionActor(),
 	}
 }
 
@@ -225,6 +228,8 @@ func (c *pruneAgentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	approved := plan.signature()
+	var actor DeletionActor
+	var affected []DeletionAffected
 	// No uid precheck is passed to mutate: the locked re-selection below compares
 	// the complete plan, which already refuses a candidate that disappeared, and
 	// it does so with the one refusal this route promises.
@@ -242,15 +247,23 @@ func (c *pruneAgentCommand) Run(args []string, stdout, stderr io.Writer) error {
 			if current.signature() != approved {
 				return fmt.Errorf("%s: the candidate set changed between the listing and the locked re-selection; nothing was deleted", spelling)
 			}
+			actor = c.actor.observe(working)
+			before := working.Clone()
 			for _, candidate := range plan.candidates {
 				if err := mutator.DeleteAgent(working, candidate.UID); err != nil {
 					return err
 				}
 			}
+			affected = deletionAffectedBetween(before, *working)
 			return nil
 		}); err != nil {
 		return err
 	}
+	targets := make([]DeletionTarget, 0, len(plan.candidates))
+	for _, candidate := range plan.candidates {
+		targets = append(targets, DeletionTarget{Kind: string(coremetadata.KindAgent), UID: candidate.UID, Name: candidate.Name})
+	}
+	c.actor.record(c.store, deletionOperationPruneAgent, actor, targets, affected, stderr)
 	return writePruneAgentPlan(stdout, spelling, criteria, plan, false)
 }
 
