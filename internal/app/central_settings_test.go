@@ -139,25 +139,29 @@ func saveCentralSettingDirect(t *testing.T, kind centralSettingKind, homeDir fun
 	}
 }
 
-// saveCentralSettingThroughTUI stores value through the settings command.
-func saveCentralSettingThroughTUI(t *testing.T, kind centralSettingKind, homeDir func() (string, error), lookupEnv func(string) string, value string) error {
+// saveCentralSettingThroughFront stores value through the user-facing front
+// for kind: the settings command for the locale, and `projmux config
+// agent-questions` for the two question settings, which Settings no longer
+// shows.
+func saveCentralSettingThroughFront(t *testing.T, kind centralSettingKind, homeDir func() (string, error), lookupEnv func(string) string, value string) error {
 	t.Helper()
-	cmd := &settingsCommand{
-		homeDir:    homeDir,
-		lookupEnv:  lookupEnv,
-		runCommand: func(string, ...string) error { return nil },
-	}
-	switch kind {
-	case centralSettingLocale:
+	if kind == centralSettingLocale {
+		cmd := &settingsCommand{
+			homeDir:    homeDir,
+			lookupEnv:  lookupEnv,
+			runCommand: func(string, ...string) error { return nil },
+		}
 		return cmd.setGlobalLocale(value)
-	case centralSettingAnswering:
-		return cmd.setAgentQuestionAnswering(config.AgentQuestionAnswering(value), &bytes.Buffer{})
-	default:
-		return cmd.setAgentQuestionWindowSeconds(centralSettingWindowValue(t, value), &bytes.Buffer{})
 	}
+	flag := "--answering"
+	if kind == centralSettingWindow {
+		flag = "--window"
+	}
+	_, _, err := runRoute(t, &configCommand{homeDir: homeDir, lookupEnv: lookupEnv}, "agent-questions", flag, value)
+	return err
 }
 
-func TestCentralSettingsStoreTheSameBytesAsTheSettingsCommand(t *testing.T) {
+func TestCentralSettingsStoreTheSameBytesAsTheirFronts(t *testing.T) {
 	t.Parallel()
 
 	unlimited := config.AgentQuestionWindowUnlimitedWord
@@ -199,7 +203,7 @@ func TestCentralSettingsStoreTheSameBytesAsTheSettingsCommand(t *testing.T) {
 				save func(*testing.T, centralSettingKind, func() (string, error), func(string) string, string) error
 			}{
 				{name: "central", save: saveCentralSettingDirect},
-				{name: "settings command", save: saveCentralSettingThroughTUI},
+				{name: "front", save: saveCentralSettingThroughFront},
 			}
 			stored := make([][]byte, len(fronts))
 			for i, front := range fronts {
@@ -248,7 +252,7 @@ func TestCentralSettingsStoreTheSameBytesAsTheSettingsCommand(t *testing.T) {
 				stored[i] = data
 			}
 			if !bytes.Equal(stored[0], stored[1]) {
-				t.Fatalf("stored bytes differ:\ncentral          %q\nsettings command %q", stored[0], stored[1])
+				t.Fatalf("stored bytes differ:\ncentral %q\nfront   %q", stored[0], stored[1])
 			}
 		})
 	}

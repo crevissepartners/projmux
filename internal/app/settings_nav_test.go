@@ -830,9 +830,6 @@ func TestSettingsRenderedRowsMapOntoNavigationCatalog(t *testing.T) {
 		"project sidebar":       cmd.projectSidebarEntries(),
 		"ai":                    cmd.aiRootEntries(),
 		"ai resume picker":      cmd.aiResumePickerEntries(),
-		"ai agent questions":    cmd.aiAgentQuestionsEntries(),
-		"ai question answering": cmd.aiAgentQuestionAnsweringEntries(),
-		"ai question window":    cmd.aiAgentQuestionWindowEntries(),
 		"notifications":         cmd.notificationsEntries(),
 		"desktop delivery":      cmd.desktopNotifyEntries(),
 		"provider integrations": cmd.notifyDiagnosticCollectionEntries(cmd.notifyProviderDiagnostics()),
@@ -1314,9 +1311,6 @@ func settingsNavAllRenderedEntries(t *testing.T, cmd *settingsCommand) []intpick
 	all = append(all, cmd.projectSidebarEntries()...)
 	all = append(all, cmd.aiRootEntries()...)
 	all = append(all, cmd.aiResumePickerEntries()...)
-	all = append(all, cmd.aiAgentQuestionsEntries()...)
-	all = append(all, cmd.aiAgentQuestionAnsweringEntries()...)
-	all = append(all, cmd.aiAgentQuestionWindowEntries()...)
 	all = append(all, cmd.aiEnabledAgentEntries()...)
 	all = append(all, cmd.notificationsEntries()...)
 	all = append(all, cmd.desktopNotifyEntries()...)

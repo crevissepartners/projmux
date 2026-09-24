@@ -2552,10 +2552,14 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 	if hasEntryValue(root, settingsAINotifyDiagnostics) {
 		t.Fatalf("AI root entries = %#v, want Notify integrations moved to Notifications", root)
 	}
-	if !hasEntryValue(root, settingsAIAgentQuestions) {
-		t.Fatalf("AI root entries = %#v, want Agent questions row", root)
+	// Agent question answering is set with `projmux config agent-questions`,
+	// not from Settings.
+	for _, entry := range root {
+		if strings.Contains(entry.Value, "question") {
+			t.Fatalf("AI root entries = %#v, want no Agent questions row", root)
+		}
 	}
-	if got, want := len(root), 6; got != want {
+	if got, want := len(root), 5; got != want {
 		t.Fatalf("AI root entries = %#v, want back row plus AI detail rows", root)
 	}
 	for _, want := range []string{

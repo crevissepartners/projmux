@@ -799,9 +799,9 @@ or `question-provider-unsupported`.
 If nobody answers within the window, the question expires, the popup closes,
 and Claude Code shows its own prompt as usual. The hook reads the window for
 every question and the installed timeout is the fixed ceiling, so a window
-changed in `projmux settings` or in the file applies to the next question
-without re-running `projmux agent integrate claude`. `agent question
-disable` also hands every question the Agent is still holding back to that
+changed with `projmux config agent-questions` or in the file applies to the
+next question without re-running `projmux agent integrate claude`. `agent
+question disable` also hands every question the Agent is still holding back to that
 prompt immediately. Records live in `<state dir>/agent-questions/` and settled
 ones are kept for a day.
 

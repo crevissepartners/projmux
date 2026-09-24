@@ -65,7 +65,7 @@ func (c *configCommand) runLocale(args []string, stdout, stderr io.Writer) error
 // The answering way is checked against its two words here because
 // config.NormalizeAgentQuestionAnswering reads any other word as way 1: that
 // suits a hook reading a file, not an operator typing a value. The window
-// takes the same spellings as the Settings custom row: whole seconds in
+// takes whole seconds in
 // config.MinAgentQuestionWindowSeconds..config.MaxAgentQuestionWindowSeconds,
 // or config.AgentQuestionWindowUnlimitedWord.
 //
@@ -144,6 +144,21 @@ func knownAgentQuestionAnswering(value string) (config.AgentQuestionAnswering, e
 
 func agentQuestionWindowSpellings() string {
 	return fmt.Sprintf("%d..%d seconds or %s", config.MinAgentQuestionWindowSeconds, config.MaxAgentQuestionWindowSeconds, config.AgentQuestionWindowUnlimitedWord)
+}
+
+// parseAgentQuestionWindow reads one `--window` value: the unlimited word, or
+// whole seconds in config.MinAgentQuestionWindowSeconds..
+// config.MaxAgentQuestionWindowSeconds.
+func parseAgentQuestionWindow(raw string) (int, error) {
+	text := strings.TrimSpace(raw)
+	if strings.EqualFold(text, config.AgentQuestionWindowUnlimitedWord) {
+		return config.UnlimitedAgentQuestionWindowSeconds, nil
+	}
+	seconds, err := strconv.Atoi(text)
+	if err != nil || seconds < config.MinAgentQuestionWindowSeconds || seconds > config.MaxAgentQuestionWindowSeconds {
+		return 0, fmt.Errorf("agent question window %q must be %d..%d seconds", raw, config.MinAgentQuestionWindowSeconds, config.MaxAgentQuestionWindowSeconds)
+	}
+	return seconds, nil
 }
 
 // agentQuestionWindowWord prints a window the way `--window` accepts it.
