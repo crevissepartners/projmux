@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 205 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 210 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -77,6 +77,7 @@ projmux <command> [args...]
 | [`projmux open`](#projmux-open) | canonical | Open a Project runtime and move the current client to it |
 | [`projmux instructions`](#projmux-instructions) | canonical | List, show, edit, set, and delete Agent instruction files |
 | [`projmux persona`](#projmux-persona) | compatibility | List, show, edit, set, and delete Agent persona files |
+| [`projmux profile`](#projmux-profile) | canonical | List, show, set, and delete named Agent profiles |
 | [`projmux pin`](#projmux-pin) | canonical | Manage pinned project directories |
 | [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects and Agents |
 | [`projmux quit`](#projmux-quit) | shortcut | Quit the app-owned projmux tmux runtime |
@@ -2989,6 +2990,125 @@ projmux persona delete <name> --yes
 ```
 
 Canonical spelling: `projmux instructions delete`
+
+## `projmux profile`
+
+List, show, set, and delete named Agent profiles
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux profile list
+projmux profile show <name>
+projmux profile set <name> [--file <path> | -]
+projmux profile delete <name> --yes
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux profile list`](#projmux-profile-list) | List every built-in and stored profile with its source, roles, digest, and validity |
+| [`projmux profile show`](#projmux-profile-show) | Print one profile's content exactly as stored or built in |
+| [`projmux profile set`](#projmux-profile-set) | Validate one profile from a file or stdin and write it only when valid |
+| [`projmux profile delete`](#projmux-profile-delete) | Delete one stored profile file; built-in profiles cannot be deleted |
+
+Canonical spelling: `projmux profile list`, `projmux profile show`, `projmux profile set`, `projmux profile delete`
+
+### `projmux profile list`
+
+List every built-in and stored profile with its source, roles, digest, and validity
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux profile list
+```
+
+### `projmux profile show`
+
+Print one profile's content exactly as stored or built in
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux profile show <name>
+```
+
+### `projmux profile set`
+
+Validate one profile from a file or stdin and write it only when valid
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux profile set <name> [--file <path> | -]
+```
+
+### `projmux profile delete`
+
+Delete one stored profile file; built-in profiles cannot be deleted
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux profile delete <name> --yes
+```
 
 ## `projmux pin`
 

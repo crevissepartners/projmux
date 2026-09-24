@@ -153,6 +153,11 @@ var settingsLayerGuardArgv = [][]string{
 	{"persona", "edit", "reviewer"},
 	{"persona", "delete", "reviewer", "--yes"},
 
+	{"profile", "list"},
+	{"profile", "set", "reviewer", "--file", "{tmp}/profile.toml"},
+	{"profile", "show", "reviewer"},
+	{"profile", "delete", "reviewer", "--yes"},
+
 	{"pin", "project", "list"},
 
 	{"prune", "agent", "--older-than", "720h"},
@@ -481,6 +486,9 @@ func newSettingsLayerGuardEnv(t *testing.T) *settingsLayerGuardEnv {
 	env.paths = paths
 	env.seedFrontFiles(t)
 	if err := os.WriteFile(filepath.Join(env.tmp, "persona.md"), []byte("You review.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(env.tmp, "profile.toml"), []byte("effort = \"high\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return env
