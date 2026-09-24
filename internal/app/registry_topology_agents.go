@@ -66,6 +66,9 @@ type registryTopologyAgentPlan struct {
 	// released rows, chosen by selectAgentPaneNameHandoff. Empty means the new
 	// Pane gets its automatic name.
 	paneName string
+	// resumed is the planned resume launch; materialization records the
+	// digest of the profile it re-applied, if any.
+	resumed agentResumeLaunch
 }
 
 // decideTopologyAgentContinueEligibility admits only a current managed activation
@@ -393,6 +396,7 @@ func planTopologyAgentReplay(
 		plan.notices = append(plan.notices, notice)
 	}
 	work.conversationID, work.title, work.argv = decision.conversationID, launch.title, launch.argv
+	work.resumed = launch
 	return work, true
 }
 
@@ -449,6 +453,9 @@ func replayTopologyWindowAgents(
 		}
 		if err != nil {
 			return nil, MapMetadataError(err)
+		}
+		if err := recordResumedProfileDigest(registry, mutator, replay.agent.Metadata.UID, replay.resumed); err != nil {
+			return nil, err
 		}
 		activation, err := issuePaneActivation(newGeneration, registry, mutator, pane.Metadata.UID, replay.agent.Metadata.UID, operationID)
 		if err != nil {

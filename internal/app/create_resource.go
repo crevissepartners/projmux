@@ -108,6 +108,12 @@ type resourceCreateFlags struct {
 	persona       string
 	personaOption string
 	personaLaunch personaLaunch
+	// profile is the spelled --profile: a profile name, "none" for no profile
+	// and no role mapping, or "" when it was not spelled (a `role` label may
+	// then select one). profileLaunch is what resolveCreateProfile resolved,
+	// the zero value meaning no profile.
+	profile       string
+	profileLaunch profileLaunch
 	// resumeConversation is set by the Projmux split UI's resume selection and by
 	// nothing else. It is deliberately not a parsed flag: no public spelling of
 	// `create` accepts it, so an operator cannot reach a resume through the create
@@ -418,6 +424,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.StringVar(&out.effort, "effort", "", "claude only: effort level: "+strings.Join(claudeEffortLevels, "|"))
 		fs.StringVar(&out.persona, "instructions", "", "stored instructions the new session starts with; claude always, codex only with a prompt; manage with projmux instructions")
 		fs.StringVar(&legacyPersona, "persona", "", "alias of --instructions")
+		fs.StringVar(&out.profile, "profile", "", "named Agent profile the new session starts with; none turns off role mapping; manage with projmux profile")
 	}
 	if pane {
 		fs.Var(&out.windows, "window", "repeatable Window selector: <name> or uid:<uid>")
@@ -456,8 +463,11 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		out.personaOption = "instructions"
 	}
 	cwdFromSet := false
+	profileSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "profile":
+			profileSet = true
 		case "provider":
 			out.providerSet = true
 		case "cwd":
@@ -466,6 +476,9 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			cwdFromSet = true
 		}
 	})
+	if profileSet && strings.TrimSpace(out.profile) == "" {
+		return resourceCreateFlags{}, usageError(spelling + " --profile requires a profile name, or none; nothing was created")
+	}
 	if len(out.projects) > 1 {
 		return resourceCreateFlags{}, usageError(spelling +
 			" accepts at most one --project <ref>; an omitted --project takes the active tmux runtime's managed Project")

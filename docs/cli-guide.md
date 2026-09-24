@@ -1882,6 +1882,50 @@ instruction keys under the same agreement rule and nothing else -- the snapshot 
 are Claude launch options -- and it changes no argv, because the thread
 already carries the instructions. Antigravity picker selections inherit nothing.
 
+### Agent profiles at create
+
+`create agent --profile <name>` (and the provider shortcuts) starts the Agent
+from a [profile](configuration.md#agent-profiles). Without `--profile`, a
+`--label role=<role>` selects the one valid profile whose `roles` lists that
+role; a role no profile lists selects none. A role that several profiles list
+(`profile-role-claimed`) refuses the create: remove the role from all but one
+of the listed profiles, or pass `--profile none`. `--profile none` applies no
+profile and does no role mapping. The label is read only at creation. A profile
+that is missing, or that `profile list` marks invalid -- including
+`profile-role-claimed` -- refuses the create with exit 2 and its reason token,
+whether it is named with `--profile` or selected by a role.
+
+An explicit flag wins over the profile item it overlaps: `--instructions` or
+`--persona` over `instructions`, `--model` over `model`, `--effort` over
+`effort`. The profile's instructions go through the same path as
+`--instructions` (snapshot and `projmux.io/persona*` annotations, and the same
+Codex lane rule), and its effort is recorded as `projmux.io/effort`. On
+Claude, `allow` and `deny` are passed as `--settings <snapshot>`. Claude does
+not get `sandbox` (`claude-sandbox-bash-only`: its sandbox confines only Bash)
+or `approval` (`claude-no-matching-permission-mode`). Any other provider
+refuses a profile that sets a permission
+(`profile-permissions-unsupported-provider`) and does not take `model` or
+`effort` (`provider-option-unsupported`). The reply-only activation refuses a
+profile (`profile-lane-unsupported`).
+
+The Agent records `projmux.io/profile` and `projmux.io/profile-digest`. The
+result names the profile and each item that was not applied, with its reason:
+`profile name=<name> digest=<digest>` and `profile-not-applied item=<item>
+provider=<provider> reason=<token>` lines after the receipt line, a `profile`
+object (`name`, `digest`, `notApplied`) in `-o receipt`, and the same lines on
+stderr for the other projections. Items replaced by a flag are disclosed as
+`overridden-by-flag`. A create that applies no profile prints exactly what it
+printed before.
+
+Every Claude resume of such an Agent -- `agent resume`, Continue/topology
+replay, and the resume picker -- re-reads the profile by name, passes its
+current rules as `--settings`, and records the new digest. A profile that is
+gone or invalid -- including one now marked `profile-role-claimed` -- refuses
+the resume (`profile-resume-unavailable`, naming the underlying reason); there is no
+resume without its permissions. The model is still not passed again. A resume
+picker selection inherits the profile when every Agent recording the
+conversation records the same one, and refuses when they disagree.
+
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`
 and `projmux create pane --placement right -o pane-id` each print exactly the
@@ -2308,7 +2352,8 @@ A profile is a named set of Agent start settings -- instructions, model,
 effort, roles, and permissions -- kept in `<config dir>/profiles/<name>.toml`.
 The file format and vocabulary are in
 [Configuration](configuration.md#agent-profiles). These commands store and
-validate profiles only; creating or resuming an Agent does not read them yet.
+validate profiles; `create agent --profile <name>` applies one (see
+[Agent profiles at create](#agent-profiles-at-create)).
 
 - `list` prints `NAME SOURCE ROLES DIGEST VALID` for every profile. `SOURCE` is
   `builtin` or `user`, and `DIGEST` is `sha256:<hex>` over the file bytes. A

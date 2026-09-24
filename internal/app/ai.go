@@ -2287,6 +2287,13 @@ func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.Agen
 // path). The options go before the workspace arguments, so Claude's variadic
 // --add-dir cannot take them.
 func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error) {
+	return c.PlanAgentLaunchWithSettings(provider, workspace, payload, model, effort, personaFile, "")
+}
+
+// PlanAgentLaunchWithSettings is PlanAgentLaunchWithOptions that also passes
+// a profile's Claude settings snapshot as --settings. An empty settingsFile
+// adds nothing, which is exactly PlanAgentLaunchWithOptions.
+func (c *aiCommand) PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error) {
 	if normalizeAIMode(provider) != aiModeClaude {
 		return "", nil, fmt.Errorf("provider %q does not accept --model, --effort, or --persona", provider)
 	}
@@ -2294,7 +2301,8 @@ func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coreme
 	if err != nil {
 		return "", nil, err
 	}
-	extra = append(claudeLaunchOptionArgs(model, effort, personaFile), extra...)
+	options := append(claudeLaunchOptionArgs(model, effort, personaFile), claudeSettingsArgs(settingsFile)...)
+	extra = append(options, extra...)
 	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
 	if err != nil {
 		return "", nil, err

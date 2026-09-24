@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -161,12 +162,29 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err := requirePersonaLane(spelling, provider, flags); err != nil {
 		return err
 	}
+	if err := requireProfileLane(spelling, flags); err != nil {
+		return err
+	}
 	if err := requireClaudeDialogueMode(provider, flags.dialogueReplyOnly, flags.payload); err != nil {
 		return err
 	}
 	if flags.dialogueReplyOnly {
 		if _, ok := c.agents.(claudeDialogueLauncher); !ok {
 			return errors.New("claude reply-only launcher is unavailable")
+		}
+	}
+	// The profile is resolved after every argv-only refusal, since it reads
+	// the profile files. What it merges into the flags is then held to the
+	// same lane checks an explicit flag is.
+	if err := c.resolveCreateProfile(spelling, provider, &flags); err != nil {
+		return err
+	}
+	if flags.profileLaunch.active() {
+		if err := requireClaudeLaunchOptions(spelling, provider, flags); err != nil {
+			return err
+		}
+		if err := requirePersonaLane(spelling, provider, flags); err != nil {
+			return err
 		}
 	}
 	return c.createAgent(spelling, provider, flags, shape, stdout, stderr)
@@ -209,6 +227,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		if flags.personaLaunch, err = c.preparePersonaLaunch(spelling, flags.persona, flags.personaOption); err != nil {
 			return err
 		}
+	}
+	if err := c.prepareProfileSettings(spelling, provider, &flags); err != nil {
+		return err
 	}
 	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
 
@@ -337,7 +358,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,
-				Annotations: withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(creator.annotations())),
+				Annotations: flags.profileLaunch.withAnnotations(withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(creator.annotations()))),
 				Workspace:   workspace,
 				Activation:  activationStateForPayload(flags.payload),
 				OperationID: operationID,
@@ -528,8 +549,16 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		return err
 	}
 	creator.reportSkip(stderr)
-	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindAgent, results,
-		createPlannedReceipt(coremetadata.KindAgent, results, selectedWindowUIDs))
+	receipt := createPlannedReceipt(coremetadata.KindAgent, results, selectedWindowUIDs)
+	receipt.Profile = flags.profileLaunch.receipt()
+	if mode != cli.OutputModeDefault && mode != cli.OutputModeReceipt {
+		// These projections have no room for the disclosure, so it goes to
+		// stderr instead of being dropped.
+		if err := writeProfileDisclosure(stderr, receipt.Profile); err != nil {
+			return err
+		}
+	}
+	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindAgent, results, receipt)
 }
 
 type agentActivationTarget struct {
@@ -778,10 +807,19 @@ func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace
 		// options launcher -- which refuses every other provider outright --
 		// and the plain launch below is the one the native create replaces.
 		personaFile := flags.personaLaunch.snapshot.Path
+		settingsFile := flags.profileLaunch.settings
 		if provider != aiModeClaude {
-			personaFile = ""
+			personaFile, settingsFile = "", ""
 		}
 		switch {
+		case settingsFile != "":
+			// Only a profile with allow or deny rules reaches this launcher,
+			// so every other create keeps exactly the launch it had.
+			launcher, ok := c.agents.(claudeSettingsAgentLauncher)
+			if !ok {
+				return "", nil, agentResumeLaunch{}, errors.New("create agent: the Claude profile launcher is not configured")
+			}
+			title, argv, err = launcher.PlanAgentLaunchWithSettings(provider, workspace, flags.payload, flags.model, flags.effort, personaFile, settingsFile)
 		case flags.model != "" || flags.effort != "" || personaFile != "":
 			launcher, ok := c.agents.(claudeOptionsAgentLauncher)
 			if !ok {

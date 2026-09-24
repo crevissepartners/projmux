@@ -60,6 +60,11 @@ type agentResumeLaunch struct {
 	// itself be empty.
 	effortInvalid string
 	effortSkipped bool
+	// profileName and profileDigest are the profile this launch re-applied
+	// and the digest of the content it applied, both empty when the Agent
+	// records no profile. Every consumer records the digest on the Agent.
+	profileName   string
+	profileDigest string
 }
 
 // personaNotice is the one-line disclosure of a persona the resume could not
@@ -111,6 +116,12 @@ func (l agentResumeLaunch) effortNotice(label string) string {
 // effort on resume. A recorded value Claude would not take is skipped and
 // disclosed, never a failed resume. The model is not re-passed: Claude
 // restores it itself.
+//
+// A Claude Agent created with a profile is resumed with that profile's
+// current permissions: the profile is re-read by name, its settings snapshot
+// rebuilt and passed as --settings, and the launch reports the digest it
+// applied. A profile that is gone or invalid fails the resume with
+// profile-resume-unavailable; there is no resume without its permissions.
 func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error) {
 	mode := normalizeAIMode(provider)
 	resumeArgv, err := resumeArgsForAgent(mode, conversationID)
@@ -143,7 +154,12 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 	// after them, for the same reason.
 	effort, effortInvalid, effortSkipped := claudeResumeEffort(mode, annotations)
 	personaFile, personaUnavailable := c.resumePersonaSnapshot(mode, annotations)
-	if prefix := append(claudeLaunchOptionArgs("", effort, personaFile), claudeResumeSnapshotArgs(mode, annotations)...); len(prefix) > 0 {
+	profileName, profileDigest, settingsFile, err := c.resumeProfileSettings(mode, annotations)
+	if err != nil {
+		return agentResumeLaunch{}, err
+	}
+	prefix := append(claudeLaunchOptionArgs("", effort, personaFile), claudeSettingsArgs(settingsFile)...)
+	if prefix = append(prefix, claudeResumeSnapshotArgs(mode, annotations)...); len(prefix) > 0 {
 		workspaceArgs = append(prefix, workspaceArgs...)
 	}
 	resumeArgv = append(resumeArgv[:1], append(workspaceArgs, resumeArgv[1:]...)...)
@@ -154,6 +170,7 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 	return agentResumeLaunch{
 		title: plan.title, argv: plan.commandArgs, personaUnavailable: personaUnavailable,
 		effortInvalid: effortInvalid, effortSkipped: effortSkipped,
+		profileName: profileName, profileDigest: profileDigest,
 	}, nil
 }
 
@@ -473,6 +490,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var title string
 	var launchArgv []string
 	var personaNotice, effortNotice string
+	var resumed agentResumeLaunch
 	var err error
 	if plan.provider == aiModeCodex {
 		nativeCtx, cancel := prepareNativeContext(context.Background())
@@ -486,17 +504,21 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		}
 		title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, plan.conversationID)
 	} else {
-		if plan.dialogueReplyOnly {
+		if plan.dialogueReplyOnly && plan.annotations[coremetadata.AnnotationAgentProfile] != "" {
+			// The reply-only launch is fixed and cannot carry a profile's
+			// permissions, so it is refused rather than resumed without them.
+			err = &profileResumeError{name: plan.annotations[coremetadata.AnnotationAgentProfile], reason: profileReasonLaneUnsupported,
+				detail: "the reply-only activation cannot carry a profile"}
+		} else if plan.dialogueReplyOnly {
 			launcher, ok := r.launcher.(claudeDialogueLauncher)
 			if !ok {
 				return errors.New("claude reply-only resume launcher is unavailable")
 			}
 			title, launchArgv, err = launcher.PlanClaudeDialogueLaunch(workspace, plan.conversationID)
 		} else {
-			var launch agentResumeLaunch
-			launch, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID, plan.annotations)
-			title, launchArgv = launch.title, launch.argv
-			personaNotice, effortNotice = launch.personaNotice(plan.agentName), launch.effortNotice(plan.agentName)
+			resumed, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID, plan.annotations)
+			title, launchArgv = resumed.title, resumed.argv
+			personaNotice, effortNotice = resumed.personaNotice(plan.agentName), resumed.effortNotice(plan.agentName)
 		}
 	}
 	if err != nil {
@@ -557,6 +579,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// Persist the normalized effective workspace for legacy Agents whose
 		// pre-Phase6 spec was empty, before any runtime object is created.
 		agent.Spec.Workspace = workspace
+		// The profile this launch re-applied is recorded with the digest of
+		// the content it applied, in the same transaction.
+		if err := recordResumedProfileDigest(working, mutator, plan.agentUID, resumed); err != nil {
+			return err
+		}
 
 		// Name handoff. The new managed Pane carries the non-automatic name of
 		// the Agent's old Pane row that selectAgentPaneNameHandoff picks, and

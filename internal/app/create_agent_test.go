@@ -1758,6 +1758,7 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			fs.String("effort", "", "")
 			fs.String("instructions", "", "")
 			fs.String("persona", "", "")
+			fs.String("profile", "", "")
 			fs.String("name", "", "")
 			fs.Var(&out.labels, "label", "")
 			fs.String("output", "", "")
