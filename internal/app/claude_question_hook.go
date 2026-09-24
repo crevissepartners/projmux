@@ -127,6 +127,7 @@ type claudeQuestionHook struct {
 	popup      claudeQuestionPopup
 	poll       time.Duration
 	clientPoll time.Duration
+	readRecord func(*agentquestion.Store, string) (agentquestion.Record, bool, error)
 	newID      func() (string, error)
 	now        func() time.Time
 }
@@ -304,7 +305,11 @@ func (h claudeQuestionHook) openStore() (*agentquestion.Store, error) {
 // and looks again every clientPoll. A popup that ends while the record still
 // waits (Esc, a failed open, a crashed picker) closes the record, which gives
 // the question back; whatever ends the wait first closes a popup still open.
-func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, paneID string) (agentquestion.Record, bool) {
+func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, paneID string) (result agentquestion.Record, answered bool) {
+	read := h.readRecord
+	if read == nil {
+		read = func(store *agentquestion.Store, id string) (agentquestion.Record, bool, error) { return store.Get(id) }
+	}
 	poll := h.poll
 	if poll <= 0 {
 		poll = claudeQuestionPoll
@@ -314,7 +319,7 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 	deadline := time.NewTimer(time.Until(record.Deadline))
 	defer deadline.Stop()
 	popup := newClaudeQuestionPopupDriver(h.popup, h.clientPoll, paneID, store, record)
-	defer popup.stop()
+	defer func() { popup.stop(answered) }()
 	popup.maybeOpen(ctx)
 	for {
 		var step func(string) (agentquestion.Record, error)
@@ -333,7 +338,7 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 			popup.markEnded()
 			step = store.Close
 		case <-ticker.C:
-			current, found, err := store.Get(record.ID)
+			current, found, err := read(store, record.ID)
 			switch {
 			case err != nil && time.Now().After(record.Deadline.Add(claudeQuestionGiveUp)):
 				// A store that stays unreadable past the window gives the
