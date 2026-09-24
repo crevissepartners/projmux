@@ -22,8 +22,16 @@ const (
 	// claudeQuestionPickerRoute is the hidden `internal` route the way-2
 	// question popup runs: the projmux picker for one recorded question set.
 	claudeQuestionPickerRoute = "claude-question-picker"
+	// claudeQuestionPopupWidth and claudeQuestionPopupHeight are the popup's
+	// share of the client, and the size used when the client size is unknown.
 	claudeQuestionPopupWidth  = "80%"
 	claudeQuestionPopupHeight = "70%"
+	// claudeQuestionPopupMinWidth and claudeQuestionPopupMinHeight are the
+	// smallest popup in cells: a small client gets a popup big enough to show
+	// a wrapped question (or the whole client), and a large client keeps
+	// 80% x 70%.
+	claudeQuestionPopupMinWidth  = 72
+	claudeQuestionPopupMinHeight = 22
 	// claudeQuestionPopupStopWait bounds how long a finished hook waits for
 	// the popup it closes to report that it ended.
 	claudeQuestionPopupStopWait = 2 * time.Second
@@ -143,12 +151,41 @@ func (p tmuxClaudeQuestionPopup) Open(ctx context.Context, target claudeQuestion
 	if err != nil {
 		return err
 	}
-	args, err := buildClaudeQuestionPopupArgs(binaryPath, claudeQuestionText{locale: settingsLocale()}.title(), target)
+	clientSize, sizeErr := p.runner.Run(ctx, "tmux", "display-message", "-p", "-c", strings.TrimSpace(target.Client), "#{client_width} #{client_height}")
+	size := claudeQuestionPopupSizeFor(string(clientSize), sizeErr)
+	args, err := buildClaudeQuestionPopupArgs(binaryPath, claudeQuestionText{locale: settingsLocale()}.title(), target, size)
 	if err != nil {
 		return err
 	}
 	_, err = p.runner.Run(ctx, "tmux", args...)
 	return err
+}
+
+// claudeQuestionPopupSize is the display-popup -w and -h values.
+type claudeQuestionPopupSize struct{ Width, Height string }
+
+// claudeQuestionPopupSizeFor turns a "<cols> <rows>" client size reply into
+// the popup size: 80% x 70% of the client, rounded down as tmux rounds a
+// percentage, but at least claudeQuestionPopupMinWidth x
+// claudeQuestionPopupMinHeight and never more than the client. A failed or
+// unreadable reply keeps the percentages, so sizing never fails the popup.
+func claudeQuestionPopupSizeFor(reply string, err error) claudeQuestionPopupSize {
+	fallback := claudeQuestionPopupSize{Width: claudeQuestionPopupWidth, Height: claudeQuestionPopupHeight}
+	if err != nil {
+		return fallback
+	}
+	fields := strings.Fields(reply)
+	if len(fields) != 2 {
+		return fallback
+	}
+	cols, colsErr := strconv.Atoi(fields[0])
+	rows, rowsErr := strconv.Atoi(fields[1])
+	if colsErr != nil || rowsErr != nil || cols <= 0 || rows <= 0 {
+		return fallback
+	}
+	width := min(cols, max(cols*80/100, claudeQuestionPopupMinWidth))
+	height := min(rows, max(rows*70/100, claudeQuestionPopupMinHeight))
+	return claudeQuestionPopupSize{Width: strconv.Itoa(width), Height: strconv.Itoa(height)}
 }
 
 func (p tmuxClaudeQuestionPopup) Close(ctx context.Context, client string) error {
@@ -161,7 +198,7 @@ func (p tmuxClaudeQuestionPopup) Close(ctx context.Context, client string) error
 
 // buildClaudeQuestionPopupArgs spells the blocking display-popup that runs the
 // picker route. Everything the picker needs travels as argv.
-func buildClaudeQuestionPopupArgs(binaryPath, title string, target claudeQuestionPopupTarget) ([]string, error) {
+func buildClaudeQuestionPopupArgs(binaryPath, title string, target claudeQuestionPopupTarget, size claudeQuestionPopupSize) ([]string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
 	if binaryPath == "" {
 		return nil, errors.New("question popup binary path is required")
@@ -181,8 +218,8 @@ func buildClaudeQuestionPopupArgs(binaryPath, title string, target claudeQuestio
 		Client:        strings.TrimSpace(target.Client),
 		Target:        strings.TrimSpace(target.PaneID),
 		CloseBehavior: inttmux.PopupCloseOnExit,
-		Width:         claudeQuestionPopupWidth,
-		Height:        claudeQuestionPopupHeight,
+		Width:         size.Width,
+		Height:        size.Height,
 		Title:         title,
 	})
 }

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -736,7 +737,7 @@ func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
 
 	args, err := buildClaudeQuestionPopupArgs("/opt/pm x/projmux", claudeQuestionText{locale: i18n.FallbackLocale}.title(), claudeQuestionPopupTarget{
 		Client: "/dev/pts/3", PaneID: "%7", QuestionID: "question-0123456789abcdef", AgentUID: "agt-1", StorePath: "/state/agent-questions/questions.json",
-	})
+	}, claudeQuestionPopupSize{Width: "80%", Height: "70%"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -745,12 +746,84 @@ func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args =\n%q\nwant\n%q", args, want)
 	}
-	if _, err := buildClaudeQuestionPopupArgs("/bin/projmux", "Claude question", claudeQuestionPopupTarget{PaneID: "%7"}); err == nil {
+	if _, err := buildClaudeQuestionPopupArgs("/bin/projmux", "Claude question", claudeQuestionPopupTarget{PaneID: "%7"}, claudeQuestionPopupSize{Width: "80%", Height: "70%"}); err == nil {
 		t.Fatal("a popup without a client was built")
 	}
 	if shouldRunLegacyHookMigrations([]string{"internal", claudeQuestionPickerRoute, "--question", "q"}) {
 		t.Fatal("the picker route runs the automatic hook migration")
 	}
+}
+
+func TestClaudeQuestionPopupSizeKeepsAMinimumOnSmallClients(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		reply string
+		err   error
+		want  claudeQuestionPopupSize
+	}{
+		{reply: "120 40\n", want: claudeQuestionPopupSize{Width: "96", Height: "28"}},
+		{reply: "60 24\n", want: claudeQuestionPopupSize{Width: "60", Height: "22"}},
+		{reply: "200 60\n", want: claudeQuestionPopupSize{Width: "160", Height: "42"}},
+		{reply: "40 16\n", want: claudeQuestionPopupSize{Width: "40", Height: "16"}},
+		{reply: "120 40\n", err: errors.New("no client"), want: claudeQuestionPopupSize{Width: "80%", Height: "70%"}},
+		{reply: "\n", want: claudeQuestionPopupSize{Width: "80%", Height: "70%"}},
+		{reply: "wide 40\n", want: claudeQuestionPopupSize{Width: "80%", Height: "70%"}},
+		{reply: "0 0\n", want: claudeQuestionPopupSize{Width: "80%", Height: "70%"}},
+	} {
+		if got := claudeQuestionPopupSizeFor(test.reply, test.err); got != test.want {
+			t.Fatalf("size for %q (%v) = %+v, want %+v", test.reply, test.err, got, test.want)
+		}
+	}
+}
+
+func TestClaudeQuestionPopupOpenSizesThePopupFromTheClient(t *testing.T) {
+	t.Parallel()
+
+	target := claudeQuestionPopupTarget{Client: "/dev/pts/3", PaneID: "%7", QuestionID: "question-1", AgentUID: "agt-1", StorePath: "/state/questions.json"}
+	for _, test := range []struct {
+		name          string
+		reply         string
+		err           error
+		width, height string
+	}{
+		{name: "small client", reply: "60 24\n", width: "60", height: "22"},
+		{name: "size query fails", err: errors.New("no such client"), width: "80%", height: "70%"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &popupSizeTmuxRunner{reply: test.reply, err: test.err}
+			popup := tmuxClaudeQuestionPopup{runner: runner, executable: func() (string, error) { return "/bin/projmux", nil }}
+			if err := popup.Open(context.Background(), target); err != nil {
+				t.Fatal(err)
+			}
+			if len(runner.calls) != 2 {
+				t.Fatalf("tmux calls = %q, want the size query and the popup", runner.calls)
+			}
+			if want := []string{"tmux", "display-message", "-p", "-c", "/dev/pts/3", "#{client_width} #{client_height}"}; !reflect.DeepEqual(runner.calls[0], want) {
+				t.Fatalf("size query = %q, want %q", runner.calls[0], want)
+			}
+			args := runner.calls[1]
+			if index := slices.Index(args, "-w"); args[1] != "display-popup" || index < 0 || args[index+1] != test.width || args[index+3] != test.height {
+				t.Fatalf("popup args = %q, want -w %s -h %s", args, test.width, test.height)
+			}
+		})
+	}
+}
+
+// popupSizeTmuxRunner answers the client size query and records every call.
+type popupSizeTmuxRunner struct {
+	reply string
+	err   error
+	calls [][]string
+}
+
+func (r *popupSizeTmuxRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, append([]string{name}, args...))
+	if len(args) > 0 && args[0] == "display-message" {
+		return []byte(r.reply), r.err
+	}
+	return nil, nil
 }
 
 // noCallTmuxRunner records any tmux call and fails it.
