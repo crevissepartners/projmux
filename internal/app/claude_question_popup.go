@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
@@ -44,10 +45,19 @@ const (
 // popup is treated as ended, which gives a still-waiting question back.
 var errClaudeQuestionPopupPanic = errors.New("question popup panicked")
 
+// errClaudeQuestionPopupNotShown stands for a popup tmux never drew. A client
+// that already shows a popup or another overlay takes a second display-popup
+// with status 0 and never runs its command, so the picker never started: the
+// question still waits, and the hook tries again later instead of giving it
+// back.
+var errClaudeQuestionPopupNotShown = errors.New("question popup was not shown")
+
 // Catalog keys of the question popup's own chrome. The question text, option
 // labels, record ids, and reason tokens it shows are data and stay verbatim.
 const (
 	keyClaudeQuestionTitle           i18n.Key = "agent.question.picker.title"
+	keyClaudeQuestionTitleFrom       i18n.Key = "agent.question.picker.title_from"
+	keyClaudeQuestionTitleFromAt     i18n.Key = "agent.question.picker.title_from_at"
 	keyClaudeQuestionTitleProgress   i18n.Key = "agent.question.picker.title_progress"
 	keyClaudeQuestionFooterSingle    i18n.Key = "agent.question.picker.footer_single"
 	keyClaudeQuestionFooterMulti     i18n.Key = "agent.question.picker.footer_multi"
@@ -76,19 +86,67 @@ func (t claudeQuestionText) title() string {
 	return t.value(keyClaudeQuestionTitle, "Claude question")
 }
 
+// popupTitle names the Agent that asks, and where it runs, in the popup's
+// border title: the popup may open over any Window, so the title is what tells
+// the operator whose question it is. Nothing known keeps the plain title.
+func (t claudeQuestionText) popupTitle(asker claudeQuestionAsker) string {
+	agent, location := strings.TrimSpace(asker.Agent), strings.TrimSpace(asker.Location)
+	switch {
+	case agent == "":
+		return t.title()
+	case location == "":
+		return t.format(keyClaudeQuestionTitleFrom, "Claude question from {agent}", "{agent}", agent)
+	default:
+		return t.format(keyClaudeQuestionTitleFromAt, "Claude question from {agent} ({location})", "{agent}", agent, "{location}", location)
+	}
+}
+
+// claudeQuestionAsker is who asks a question: the Agent's name and its
+// <Project>/<Window> location, as far as the Registry knows them.
+type claudeQuestionAsker struct {
+	Agent    string
+	Location string
+}
+
+// claudeQuestionAskerOf names agent from the Registry: its metadata name (its
+// uid when it has none), and the names of its owner Window and that Window's
+// Project, keeping whichever of the two is known.
+func claudeQuestionAskerOf(registry coremetadata.Registry, agent coremetadata.Agent) claudeQuestionAsker {
+	asker := claudeQuestionAsker{Agent: strings.TrimSpace(agent.Metadata.Name)}
+	if asker.Agent == "" {
+		asker.Agent = strings.TrimSpace(agent.Metadata.UID)
+	}
+	window, ok := registry.Window(agent.Metadata.OwnerUID())
+	if !ok {
+		return asker
+	}
+	parts := make([]string, 0, 2)
+	if project, ok := registry.Project(window.Metadata.OwnerUID()); ok && strings.TrimSpace(project.Metadata.Name) != "" {
+		parts = append(parts, strings.TrimSpace(project.Metadata.Name))
+	}
+	if name := strings.TrimSpace(window.Metadata.Name); name != "" {
+		parts = append(parts, name)
+	}
+	asker.Location = strings.Join(parts, "/")
+	return asker
+}
+
 // claudeQuestionPopupTarget names one popup: the client it is drawn on, the
-// Pane it is placed over, and the record its picker answers.
+// Pane it is placed over, the record its picker answers, and who asks.
 type claudeQuestionPopupTarget struct {
 	Client     string
 	PaneID     string
 	QuestionID string
 	AgentUID   string
 	StorePath  string
+	Asker      claudeQuestionAsker
 }
 
-// claudeQuestionPopup is the tmux side of way 2. ViewingClient names a client
-// whose active Pane is paneID, or "" when none is. Open draws the picker popup
-// and returns when it ends. Close closes the popup on client.
+// claudeQuestionPopup is the tmux side of way 2. ViewingClient names the
+// terminal client the operator used most recently, whatever it shows, or ""
+// when there is none; paneID only breaks a tie. Open draws the picker popup and
+// returns when it ends, with errClaudeQuestionPopupNotShown when tmux never
+// drew it. Close closes the popup on client.
 type claudeQuestionPopup interface {
 	ViewingClient(ctx context.Context, paneID string) (string, error)
 	Open(ctx context.Context, target claudeQuestionPopupTarget) error
@@ -99,21 +157,31 @@ type claudeQuestionPopup interface {
 // which is the server of the Agent Pane Claude Code runs in, through the same
 // plain `tmux` runner the hook-trust popup uses. Its output is captured, so
 // nothing is drawn on Claude Code's terminal.
+//
+// newMarker makes the empty file the picker writes once it runs, which is how
+// Open tells a popup that showed from one tmux never drew; nil makes it in the
+// temporary directory.
 type tmuxClaudeQuestionPopup struct {
 	runner     tmuxRunner
 	executable func() (string, error)
 	lookupEnv  func(string) string
+	newMarker  func() (string, error)
 }
 
 func defaultClaudeQuestionPopup() claudeQuestionPopup {
 	return tmuxClaudeQuestionPopup{runner: inttmux.ExecRunner{}, executable: rawExecutablePath, lookupEnv: os.Getenv}
 }
 
-// ViewingClient picks, among the terminal clients whose active Pane is paneID,
-// the one used most recently. In list-clients, #{pane_id} is the active Pane
+// ViewingClient picks the terminal client of the Agent's tmux server that the
+// operator used most recently, by #{client_activity} (the last input), so the
+// popup opens on the terminal they are looking at, whatever Pane, Window, or
+// session it shows. #{client_flags} cannot tell: without focus events every
+// client reads as focused. On a tie the client whose active Pane is paneID
+// wins, then the first listed. In list-clients, #{pane_id} is the active Pane
 // of the client's current Window; tmux 3.6 expands #{client_active_pane} to
-// nothing, so that spelling would never find a client. A control-mode client cannot draw a popup and is
-// never picked. Without $TMUX there is no server to ask.
+// nothing. A control-mode client cannot draw a popup and is never picked.
+// Without $TMUX there is no server to ask; clients of other servers are never
+// seen.
 func (p tmuxClaudeQuestionPopup) ViewingClient(ctx context.Context, paneID string) (string, error) {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" || p.runner == nil || p.lookupEnv == nil || strings.TrimSpace(p.lookupEnv("TMUX")) == "" {
@@ -129,15 +197,16 @@ func (p tmuxClaudeQuestionPopup) ViewingClient(ctx context.Context, paneID strin
 // claudeQuestionViewingClient reads list-clients rows of name, active Pane,
 // control-mode flag, and activity.
 func claudeQuestionViewingClient(rows, paneID string) string {
-	best, bestActivity := "", int64(-1)
+	best, bestActivity, bestOnPane := "", int64(-1), false
 	for line := range strings.SplitSeq(strings.TrimRight(rows, "\r\n"), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 4 || strings.TrimSpace(fields[0]) == "" || strings.TrimSpace(fields[1]) != paneID || strings.TrimSpace(fields[2]) == "1" {
+		if len(fields) != 4 || strings.TrimSpace(fields[0]) == "" || strings.TrimSpace(fields[2]) == "1" {
 			continue
 		}
 		activity, _ := strconv.ParseInt(strings.TrimSpace(fields[3]), 10, 64)
-		if activity > bestActivity {
-			best, bestActivity = strings.TrimSpace(fields[0]), activity
+		onPane := strings.TrimSpace(fields[1]) == paneID
+		if activity > bestActivity || (activity == bestActivity && onPane && !bestOnPane) {
+			best, bestActivity, bestOnPane = strings.TrimSpace(fields[0]), activity, onPane
 		}
 	}
 	return best
@@ -151,14 +220,46 @@ func (p tmuxClaudeQuestionPopup) Open(ctx context.Context, target claudeQuestion
 	if err != nil {
 		return err
 	}
-	clientSize, sizeErr := p.runner.Run(ctx, "tmux", "display-message", "-p", "-c", strings.TrimSpace(target.Client), "#{client_width} #{client_height}")
-	size := claudeQuestionPopupSizeFor(string(clientSize), sizeErr)
-	args, err := buildClaudeQuestionPopupArgs(binaryPath, claudeQuestionText{locale: settingsLocale()}.title(), target, size)
+	newMarker := p.newMarker
+	if newMarker == nil {
+		newMarker = newClaudeQuestionShownMarker
+	}
+	marker, err := newMarker()
 	if err != nil {
 		return err
 	}
-	_, err = p.runner.Run(ctx, "tmux", args...)
-	return err
+	defer func() { _ = os.Remove(marker) }()
+	clientSize, sizeErr := p.runner.Run(ctx, "tmux", "display-message", "-p", "-c", strings.TrimSpace(target.Client), "#{client_width} #{client_height}")
+	size := claudeQuestionPopupSizeFor(string(clientSize), sizeErr)
+	args, err := buildClaudeQuestionPopupArgs(binaryPath, claudeQuestionText{locale: settingsLocale()}.popupTitle(target.Asker), marker, target, size)
+	if err != nil {
+		return err
+	}
+	if _, err := p.runner.Run(ctx, "tmux", args...); err != nil {
+		return err
+	}
+	// A popup that ran its picker left a byte in the marker. None means tmux
+	// took the popup without drawing it, which it does while the client shows
+	// another popup.
+	if info, err := os.Stat(marker); err != nil || info.Size() == 0 {
+		return errClaudeQuestionPopupNotShown
+	}
+	return nil
+}
+
+// newClaudeQuestionShownMarker makes an empty marker file in the temporary
+// directory and returns its absolute path.
+func newClaudeQuestionShownMarker() (string, error) {
+	file, err := os.CreateTemp("", "projmux-question-shown-*")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
 }
 
 // claudeQuestionPopupSize is the display-popup -w and -h values.
@@ -197,8 +298,11 @@ func (p tmuxClaudeQuestionPopup) Close(ctx context.Context, client string) error
 }
 
 // buildClaudeQuestionPopupArgs spells the blocking display-popup that runs the
-// picker route. Everything the picker needs travels as argv.
-func buildClaudeQuestionPopupArgs(binaryPath, title string, target claudeQuestionPopupTarget, size claudeQuestionPopupSize) ([]string, error) {
+// picker route. Everything the picker needs travels as argv; shown, when set,
+// is the marker the picker writes as it starts. tmux expands the -T title as a
+// format, so the title's `#` is doubled and its control characters escaped: an
+// Agent, Project, or Window name is data.
+func buildClaudeQuestionPopupArgs(binaryPath, title, shown string, target claudeQuestionPopupTarget, size claudeQuestionPopupSize) ([]string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
 	if binaryPath == "" {
 		return nil, errors.New("question popup binary path is required")
@@ -206,26 +310,33 @@ func buildClaudeQuestionPopupArgs(binaryPath, title string, target claudeQuestio
 	if strings.TrimSpace(target.Client) == "" || strings.TrimSpace(target.QuestionID) == "" || strings.TrimSpace(target.AgentUID) == "" || strings.TrimSpace(target.StorePath) == "" {
 		return nil, errors.New("question popup needs a client, a question, an Agent, and a store")
 	}
-	command := strings.Join([]string{
+	words := []string{
 		tmuxShellQuote(binaryPath),
 		"internal",
 		claudeQuestionPickerRoute,
 		"--question", tmuxShellQuote(target.QuestionID),
 		"--agent", tmuxShellQuote(target.AgentUID),
 		"--store", tmuxShellQuote(target.StorePath),
-	}, " ")
+	}
+	if shown = strings.TrimSpace(shown); shown != "" {
+		words = append(words, "--shown", tmuxShellQuote(shown))
+	}
+	command := strings.Join(words, " ")
 	return inttmux.BuildDisplayPopupArgs(command, inttmux.PopupOptions{
 		Client:        strings.TrimSpace(target.Client),
 		Target:        strings.TrimSpace(target.PaneID),
 		CloseBehavior: inttmux.PopupCloseOnExit,
 		Width:         size.Width,
 		Height:        size.Height,
-		Title:         title,
+		Title:         strings.ReplaceAll(terminaltext.EscapeControls(title), "#", "##"),
 	})
 }
 
 // claudeQuestionPopupDriver keeps at most one popup open for one waiting
-// record, and never a second one after the first has ended.
+// record, and never a second one after the first has shown and ended. A popup
+// tmux never drew does not count: the driver looks for a client again after
+// its interval, so questions of several Agents on one client show one at a
+// time, each once the popup before it closes.
 type claudeQuestionPopupDriver struct {
 	popup    claudeQuestionPopup
 	interval time.Duration
@@ -238,20 +349,20 @@ type claudeQuestionPopupDriver struct {
 	cancel   context.CancelFunc
 }
 
-func newClaudeQuestionPopupDriver(popup claudeQuestionPopup, interval time.Duration, paneID string, store *agentquestion.Store, record agentquestion.Record) *claudeQuestionPopupDriver {
+func newClaudeQuestionPopupDriver(popup claudeQuestionPopup, interval time.Duration, paneID string, asker claudeQuestionAsker, store *agentquestion.Store, record agentquestion.Record) *claudeQuestionPopupDriver {
 	if interval <= 0 {
 		interval = claudeQuestionClientPoll
 	}
 	return &claudeQuestionPopupDriver{
 		popup:    popup,
 		interval: interval,
-		target:   claudeQuestionPopupTarget{PaneID: strings.TrimSpace(paneID), QuestionID: record.ID, AgentUID: record.AgentUID, StorePath: store.Path()},
+		target:   claudeQuestionPopupTarget{PaneID: strings.TrimSpace(paneID), QuestionID: record.ID, AgentUID: record.AgentUID, StorePath: store.Path(), Asker: asker},
 	}
 }
 
-// maybeOpen opens the popup on the client viewing the Pane, looking at most
-// once per interval. Not finding one, or failing to ask, is left for the next
-// look.
+// maybeOpen opens the popup on the client the operator used last, looking at
+// most once per interval. Not finding one, or failing to ask, is left for the
+// next look.
 func (d *claudeQuestionPopupDriver) maybeOpen(ctx context.Context) {
 	if d.popup == nil || d.target.PaneID == "" || d.open || d.finished {
 		return
@@ -268,7 +379,11 @@ func (d *claudeQuestionPopupDriver) maybeOpen(ctx context.Context) {
 	target := d.target
 	target.Client = strings.TrimSpace(client)
 	d.target = target
-	openCtx, cancel := context.WithCancel(ctx)
+	// The popup outlives a canceled wait: Open ending because its tmux
+	// command was killed would read as a popup that ended on its own, which
+	// stop never closes, and would leave it on the client. stop closes it,
+	// and markEnded cancels this context.
+	openCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	ended := make(chan error, 1)
 	d.ended, d.open, d.cancel = ended, true, cancel
 	go func() {
@@ -289,15 +404,32 @@ func (d *claudeQuestionPopupDriver) markEnded() {
 	}
 }
 
+// markNotShown records that tmux never drew the popup, so none is open and
+// the next look may open one again.
+func (d *claudeQuestionPopupDriver) markNotShown() {
+	d.ended, d.open = nil, false
+	if d.cancel != nil {
+		d.cancel()
+	}
+}
+
 // stop lets an answered popup finish on its own before closing it. The answer
 // may have reached the store before the picker process exits, while a command-
 // line answer leaves that picker open and still needs a Close. The wait is
-// bounded for that case. It is safe to call more than once.
+// bounded for that case. A popup that already ended, shown or not, is never
+// closed: Close closes whatever popup the client shows, which may be another
+// question's or the operator's own. It is safe to call more than once.
 func (d *claudeQuestionPopupDriver) stop(answered bool) {
 	if !d.open {
 		return
 	}
 	ended := d.ended
+	select {
+	case <-ended:
+		d.markEnded()
+		return
+	default:
+	}
 	if answered {
 		// Open may have returned already even though wait selected the
 		// answer first. In that case Close could hit a later popup.
@@ -328,9 +460,13 @@ func runClaudeQuestionPicker(args []string, stdout, stderr io.Writer) error {
 	questionID := fs.String("question", "", "question record id")
 	agentUID := fs.String("agent", "", "uid of the Agent that asked")
 	storePath := fs.String("store", "", "question store file")
+	shown := fs.String("shown", "", "marker file to write once the popup runs")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// First of all, tell the hook the popup showed. The flag is optional, so
+	// a hook from before it still runs this picker.
+	markClaudeQuestionPopupShown(*shown)
 	if fs.NArg() != 0 || strings.TrimSpace(*questionID) == "" || strings.TrimSpace(*agentUID) == "" || strings.TrimSpace(*storePath) == "" {
 		return usageError("internal " + claudeQuestionPickerRoute + " requires --question <id> --agent <uid> --store <path>")
 	}
@@ -343,6 +479,21 @@ func runClaudeQuestionPicker(args []string, stdout, stderr io.Writer) error {
 		pause:  time.Sleep,
 	}
 	return picker.run(strings.TrimSpace(*questionID), strings.TrimSpace(*agentUID))
+}
+
+// markClaudeQuestionPopupShown writes one byte to the marker the hook made.
+// It never creates the file: a path that is gone is left alone.
+func markClaudeQuestionPopupShown(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0) // #nosec G304 -- the empty marker the hook made for this popup; opened write-only, never created.
+	if err != nil {
+		return
+	}
+	_, _ = file.Write([]byte{'1'})
+	_ = file.Close()
 }
 
 // claudeQuestionPicker asks one recorded question set with the native picker

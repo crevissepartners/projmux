@@ -210,6 +210,13 @@ func (c *realTmuxQuestionClient) waitFor(t *testing.T, mark int, text string) in
 	}
 }
 
+// drewSince reports whether the client's terminal drew text since mark.
+func (c *realTmuxQuestionClient) drewSince(mark int, text string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return bytes.Contains(c.screen[max(mark-c.dropped, 0):], []byte(text))
+}
+
 func (c *realTmuxQuestionClient) mark() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -251,8 +258,15 @@ func (s realTmuxQuestionServer) questionFixture(t *testing.T) (*questionFixture,
 	return fixture, hook
 }
 
+// startRealTmuxQuestionHook runs one more hook and returns the id of the
+// question it records.
 func startRealTmuxQuestionHook(t *testing.T, fixture *questionFixture, hook claudeQuestionHook) (string, <-chan string) {
 	t.Helper()
+	before, _ := fixture.store.List(questionTestAgent)
+	known := map[string]bool{}
+	for _, record := range before {
+		known[record.ID] = true
+	}
 	done := make(chan string, 1)
 	go func() {
 		var stdout bytes.Buffer
@@ -260,8 +274,11 @@ func startRealTmuxQuestionHook(t *testing.T, fixture *questionFixture, hook clau
 		done <- stdout.String()
 	}()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
-		if records, err := fixture.store.List(questionTestAgent); err == nil && len(records) == 1 {
-			return records[0].ID, done
+		records, _ := fixture.store.List(questionTestAgent)
+		for _, record := range records {
+			if !known[record.ID] {
+				return record.ID, done
+			}
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the hook never recorded its question")
@@ -367,5 +384,121 @@ func TestClaudeQuestionPopupRealTmuxEscGivesTheQuestionBack(t *testing.T) {
 	}
 	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateClosed {
 		t.Fatalf("state = %s, want closed", record.State)
+	}
+}
+
+// answerRealTmuxQuestionPicker answers the fixture's two questions in the
+// popup on client with keys: "make", then "main".
+func answerRealTmuxQuestionPicker(t *testing.T, client *realTmuxQuestionClient, mark int) {
+	t.Helper()
+	mark = client.waitFor(t, mark, "Which build tool?")
+	client.keys(t, "\r")
+	mark = client.waitFor(t, mark, "[x] make")
+	client.keys(t, "\x0e", "\x0e", "\x0e", "\r")
+	client.waitFor(t, mark, "Which branch?")
+	client.keys(t, "\r")
+}
+
+func waitRealTmuxQuestionHook(t *testing.T, done <-chan string) string {
+	t.Helper()
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(20 * time.Second):
+		t.Fatal("the hook did not return")
+		return ""
+	}
+}
+
+// TestClaudeQuestionPopupRealTmuxOpensOnAClientViewingAnotherWindow is the
+// operator looking at another Window: the popup opens on their client anyway,
+// its title names the asking Agent and its Project/Window, the picker answers
+// the question, and the popup does not come back once it closed.
+func TestClaudeQuestionPopupRealTmuxOpensOnAClientViewingAnotherWindow(t *testing.T) {
+	server := startRealTmuxQuestionServer(t)
+	client := server.attach(t)
+	if out, err := server.tmux("new-window", "-t", "qa", "/bin/sh"); err != nil {
+		t.Fatalf("open a second Window: %v: %s", err, out)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		viewed, err := server.tmux("list-clients", "-F", "#{pane_id}")
+		if err == nil && strings.HasPrefix(viewed, "%") && viewed != server.paneID {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the client still views %q, want a Pane other than the Agent's %s", viewed, server.paneID)
+		}
+	}
+	fixture, hook := server.questionFixture(t)
+	title := claudeQuestionText{locale: settingsLocale()}.popupTitle(claudeQuestionAsker{Agent: "codex", Location: "alpha/main"})
+	mark := client.mark()
+	id, done := startRealTmuxQuestionHook(t, fixture, hook)
+
+	client.waitFor(t, mark, title)
+	answerRealTmuxQuestionPicker(t, client, mark)
+	if got := waitRealTmuxQuestionHook(t, done); !strings.Contains(got, `"answers":{"Which branch?":"main","Which build tool?":"make"}`) {
+		t.Fatalf("decision = %q, want the popup answer", got)
+	}
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
+		t.Fatalf("state = %s, want answered", record.State)
+	}
+
+	// The popup is gone for good: keys reach the viewed Window's shell, and
+	// the title is not drawn again.
+	after := client.mark()
+	marker := filepath.Join(server.root, "popup-closed")
+	client.keys(t, "touch "+marker+"\r")
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("keys never reached the shell: the popup is still open")
+		}
+	}
+	time.Sleep(time.Second)
+	if client.drewSince(after, title) {
+		t.Fatal("the popup came back after it closed")
+	}
+}
+
+// TestClaudeQuestionPopupRealTmuxQueuesASecondQuestionOnOneClient is two
+// questions for one client: tmux will not draw a second popup over the first,
+// so the second question keeps waiting, and its popup shows once the first is
+// answered and closed.
+func TestClaudeQuestionPopupRealTmuxQueuesASecondQuestionOnOneClient(t *testing.T) {
+	server := startRealTmuxQuestionServer(t)
+	client := server.attach(t)
+	fixture, hook := server.questionFixture(t)
+	mark := client.mark()
+	first, firstDone := startRealTmuxQuestionHook(t, fixture, hook)
+	client.waitFor(t, mark, "Which build tool?")
+
+	second, secondDone := startRealTmuxQuestionHook(t, fixture, hook)
+	// Several looks at 100ms each meet the first popup.
+	time.Sleep(time.Second)
+	select {
+	case got := <-secondDone:
+		t.Fatalf("the second hook returned %q while the first popup was open", got)
+	default:
+	}
+	if record, _, _ := fixture.store.Get(second); record.State != agentquestion.StateWaiting {
+		t.Fatalf("second state = %s, want waiting behind the first popup", record.State)
+	}
+
+	answerRealTmuxQuestionPicker(t, client, mark)
+	if got := waitRealTmuxQuestionHook(t, firstDone); !strings.Contains(got, `"permissionDecision":"allow"`) {
+		t.Fatalf("first decision = %q", got)
+	}
+	if record, _, _ := fixture.store.Get(first); record.State != agentquestion.StateAnswered {
+		t.Fatalf("first state = %s, want answered", record.State)
+	}
+
+	answerRealTmuxQuestionPicker(t, client, client.mark())
+	if got := waitRealTmuxQuestionHook(t, secondDone); !strings.Contains(got, `"answers":{"Which branch?":"main","Which build tool?":"make"}`) {
+		t.Fatalf("second decision = %q, want the answer from its own popup", got)
+	}
+	if record, _, _ := fixture.store.Get(second); record.State != agentquestion.StateAnswered {
+		t.Fatalf("second state = %s, want answered", record.State)
 	}
 }

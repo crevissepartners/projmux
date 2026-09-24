@@ -23,8 +23,9 @@ import (
 )
 
 // fakeQuestionPopup stands in for tmux. ViewingClient hands out clients in
-// order, repeating the last. Open records its target and runs open, which by
-// default blocks until Close or the hook's context ends.
+// order, repeating the last. Open records its target, reports it on opened
+// while that has room, and runs open, which by default blocks until Close or
+// the hook's context ends.
 type fakeQuestionPopup struct {
 	mu      sync.Mutex
 	clients []string
@@ -60,7 +61,10 @@ func (p *fakeQuestionPopup) Open(ctx context.Context, target claudeQuestionPopup
 	p.targets = append(p.targets, target)
 	open := p.open
 	p.mu.Unlock()
-	p.opened <- target
+	select {
+	case p.opened <- target:
+	default:
+	}
 	if open != nil {
 		return open(ctx, target, p.closed)
 	}
@@ -377,8 +381,9 @@ func TestClaudeQuestionHookWayOneReadsTheSettingOnceAndOpensNothing(t *testing.T
 }
 
 // TestClaudeQuestionHookWayTwoAnswersFromThePopup is way 2 from the global
-// setting: the question is recorded, the popup opens on the viewing client
-// over the Agent's Pane, and its picker answer is the tool result.
+// setting: the question is recorded, the popup opens on the client the
+// operator used last, placed over the Agent's Pane and titled with the asking
+// Agent, and its picker answer is the tool result.
 func TestClaudeQuestionHookWayTwoAnswersFromThePopup(t *testing.T) {
 	t.Parallel()
 
@@ -394,16 +399,16 @@ func TestClaudeQuestionHookWayTwoAnswersFromThePopup(t *testing.T) {
 		t.Fatalf("decision =\n%s\nwant\n%s", got, want)
 	}
 	target := popup.waitOpened(t)
-	if target != (claudeQuestionPopupTarget{Client: "/dev/pts/9", PaneID: "%7", QuestionID: id, AgentUID: questionTestAgent, StorePath: fixture.store.Path()}) {
+	if target != (claudeQuestionPopupTarget{Client: "/dev/pts/9", PaneID: "%7", QuestionID: id, AgentUID: questionTestAgent, StorePath: fixture.store.Path(), Asker: claudeQuestionAsker{Agent: "codex", Location: "alpha/main"}}) {
 		t.Fatalf("popup target = %#v", target)
 	}
 	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
 		t.Fatalf("state = %s, want answered", record.State)
 	}
 	// The popup ended on its own, so the hook does not close it again: a
-	// later popup on that client is not its to close.
-	if _, _, closes := popup.counts(); closes != 0 {
-		t.Fatalf("popup closed %d times after it ended on its own", closes)
+	// later popup on that client is not its to close. Nor does it open again.
+	if _, opens, closes := popup.counts(); closes != 0 || opens != 1 {
+		t.Fatalf("popup opened %d and closed %d times after it ended on its own, want 1 and 0", opens, closes)
 	}
 }
 
@@ -624,13 +629,17 @@ func TestClaudeQuestionHookFailurePathsGiveTheQuestionBack(t *testing.T) {
 			if len(records) != 1 || records[0].State != agentquestion.StateClosed {
 				t.Fatalf("records = %#v, want one closed", records)
 			}
+			// A popup that showed and ended is never opened again.
+			if _, opens, _ := popup.counts(); opens != 1 {
+				t.Fatalf("popup opened %d times, want 1", opens)
+			}
 		})
 	}
 }
 
-// TestClaudeQuestionHookWaitsForAViewingClient is no client viewing the Pane:
-// the hook keeps waiting, looks again, and opens the popup once a client
-// views the Pane; an answer from the popup then settles it.
+// TestClaudeQuestionHookWaitsForAViewingClient is no client attached: the hook
+// keeps waiting, looks again, and opens the popup once a client attaches; an
+// answer from the popup then settles it.
 func TestClaudeQuestionHookWaitsForAViewingClient(t *testing.T) {
 	t.Parallel()
 
@@ -666,6 +675,130 @@ func TestClaudeQuestionHookWithNoClientExpiresToTheWidget(t *testing.T) {
 	}
 	if views, opens, _ := popup.counts(); views < 2 || opens != 0 {
 		t.Fatalf("views=%d opens=%d, want repeated looks and no popup", views, opens)
+	}
+}
+
+// notShownThen makes the fake popup report a popup tmux never drew for its
+// first count opens, and run then from there on.
+func (p *fakeQuestionPopup) notShownThen(count int, then func(ctx context.Context, target claudeQuestionPopupTarget, closed <-chan struct{}) error) {
+	calls := 0
+	p.open = func(ctx context.Context, target claudeQuestionPopupTarget, closed <-chan struct{}) error {
+		calls++
+		if calls <= count || then == nil {
+			return errClaudeQuestionPopupNotShown
+		}
+		return then(ctx, target, closed)
+	}
+}
+
+// TestClaudeQuestionHookRetriesAPopupThatNeverShowed is a client that already
+// shows a popup, say another Agent's question: tmux takes the display-popup
+// without drawing it. The record keeps waiting, the hook tries again, and the
+// popup that finally shows answers the question. Nothing is closed.
+func TestClaudeQuestionHookRetriesAPopupThatNeverShowed(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, false)
+	fixture.answering = config.AgentQuestionAnsweringProjmux
+	popup := newFakeQuestionPopup("client-1")
+	popup.opened = make(chan claudeQuestionPopupTarget, 8)
+	fixture.popup = popup
+	popup.notShownThen(2, func(_ context.Context, target claudeQuestionPopupTarget, _ <-chan struct{}) error {
+		if record, _, _ := fixture.store.Get(target.QuestionID); record.State != agentquestion.StateWaiting {
+			return errors.New("the record stopped waiting while the popup could not show: " + string(record.State))
+		}
+		picker, _ := fixture.picker(pickRow("make"), pickRow("Done"), pickRow("dev"))
+		return picker.run(target.QuestionID, target.AgentUID)
+	})
+	id, done := fixture.startHook(t, context.Background(), time.Minute)
+	if got := waitHookOutput(t, done); !strings.Contains(got, `"answers":{"Which branch?":"dev","Which build tool?":"make"}`) {
+		t.Fatalf("decision = %q, want the answer from the popup that showed", got)
+	}
+	if _, opens, closes := popup.counts(); opens != 3 || closes != 0 {
+		t.Fatalf("opens=%d closes=%d, want two popups that never showed, one that did, and no Close", opens, closes)
+	}
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
+		t.Fatalf("state = %s, want answered", record.State)
+	}
+}
+
+// TestClaudeQuestionHookCommandLineAnswerWhileThePopupCannotShow is a question
+// whose popup never gets drawn: it waits, a command-line answer ends the wait,
+// and the hook sends no Close, which would shut whatever popup the client does
+// show.
+func TestClaudeQuestionHookCommandLineAnswerWhileThePopupCannotShow(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, false)
+	fixture.answering = config.AgentQuestionAnsweringProjmux
+	fixture.command.questionAnswering = func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux }
+	popup := newFakeQuestionPopup("client-1")
+	popup.opened = make(chan claudeQuestionPopupTarget, 64)
+	popup.notShownThen(0, nil)
+	fixture.popup = popup
+	id, done := fixture.startHook(t, context.Background(), time.Minute)
+	popup.waitOpened(t)
+	popup.waitOpened(t)
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateWaiting {
+		t.Fatalf("state = %s, want waiting while the popup cannot show", record.State)
+	}
+	if _, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, id, "--option", "1=make", "--option", "2=main"); err != nil {
+		t.Fatalf("command-line answer: %v", err)
+	}
+	if got := waitHookOutput(t, done); !strings.Contains(got, `"answers":{"Which branch?":"main","Which build tool?":"make"}`) {
+		t.Fatalf("decision = %q, want the command-line answer", got)
+	}
+	if _, _, closes := popup.counts(); closes != 0 {
+		t.Fatalf("popup closed %d times, want none for a popup that never showed", closes)
+	}
+}
+
+// TestClaudeQuestionPopupDriverStopLeavesAnEndedPopupAlone is stop meeting a
+// popup that already ended, whether the wait saw it or not: it sends no Close,
+// since the client may show another popup by now, and never reopens.
+func TestClaudeQuestionPopupDriverStopLeavesAnEndedPopupAlone(t *testing.T) {
+	t.Parallel()
+
+	for _, answered := range []bool{false, true} {
+		for _, end := range []error{nil, errClaudeQuestionPopupNotShown} {
+			popup := newFakeQuestionPopup("client-1")
+			ended := make(chan error, 1)
+			ended <- end
+			driver := &claudeQuestionPopupDriver{popup: popup, interval: time.Millisecond, target: claudeQuestionPopupTarget{Client: "client-1", PaneID: "%7"}, ended: ended, open: true}
+			driver.stop(answered)
+			if _, opens, closes := popup.counts(); closes != 0 || opens != 0 || driver.open || !driver.finished {
+				t.Fatalf("answered=%v end=%v: opens=%d closes=%d open=%v finished=%v", answered, end, opens, closes, driver.open, driver.finished)
+			}
+			driver.maybeOpen(context.Background())
+			if _, opens, _ := popup.counts(); opens != 0 || driver.open {
+				t.Fatalf("answered=%v end=%v: a stopped driver opened a popup", answered, end)
+			}
+		}
+	}
+}
+
+// TestClaudeQuestionAskerNamesTheAgentAndItsLocation reads who asks from the
+// Registry: the Agent's name, then its Project and Window names as far as
+// they are known.
+func TestClaudeQuestionAskerNamesTheAgentAndItsLocation(t *testing.T) {
+	t.Parallel()
+
+	registry := newQuestionFixture(t, false).resources.registry
+	agent, _ := registry.Agent(questionTestAgent)
+	if got := claudeQuestionAskerOf(registry, *agent); got != (claudeQuestionAsker{Agent: "codex", Location: "alpha/main"}) {
+		t.Fatalf("asker = %+v, want codex at alpha/main", got)
+	}
+	noProject := registry.Clone()
+	window, _ := noProject.Window(agent.Metadata.OwnerUID())
+	window.Metadata.OwnerRef = nil
+	if got := claudeQuestionAskerOf(noProject, *agent); got != (claudeQuestionAsker{Agent: "codex", Location: "main"}) {
+		t.Fatalf("asker without a Project = %+v, want codex at main", got)
+	}
+	orphan := agent.Clone()
+	orphan.Metadata.OwnerRef = nil
+	orphan.Metadata.Name = ""
+	if got := claudeQuestionAskerOf(registry, orphan); got != (claudeQuestionAsker{Agent: questionTestAgent}) {
+		t.Fatalf("asker without a Window or name = %+v, want the uid alone", got)
 	}
 }
 
@@ -709,21 +842,47 @@ func TestClaudeQuestionHookDeadlineAndCancelCloseAnOpenPopup(t *testing.T) {
 	}
 }
 
+// TestClaudeQuestionViewingClientPicksTheMostRecentTerminalClient holds the
+// client choice: the terminal client with the latest input wins whatever it
+// shows, a tie goes to the client showing the Agent's Pane and then to the
+// first listed, and a control-mode client is never picked.
 func TestClaudeQuestionViewingClientPicksTheMostRecentTerminalClient(t *testing.T) {
 	t.Parallel()
 
-	rows := strings.Join([]string{
-		"/dev/pts/1\t%7\t0\t100",
-		"/dev/pts/2\t%7\t0\t300",
-		"control-1\t%7\t1\t900",
-		"/dev/pts/3\t%8\t0\t999",
-		"malformed",
-	}, "\n") + "\n"
-	if got := claudeQuestionViewingClient(rows, "%7"); got != "/dev/pts/2" {
-		t.Fatalf("client = %q, want /dev/pts/2", got)
-	}
-	if got := claudeQuestionViewingClient(rows, "%9"); got != "" {
-		t.Fatalf("client = %q, want none", got)
+	for _, test := range []struct {
+		name string
+		rows []string
+		want string
+	}{
+		{name: "most recent wins while it shows another Pane", rows: []string{
+			"/dev/pts/1\t%7\t0\t100",
+			"/dev/pts/2\t%7\t0\t300",
+			"control-1\t%7\t1\t900",
+			"/dev/pts/3\t%8\t0\t999",
+			"malformed",
+		}, want: "/dev/pts/3"},
+		{name: "a tie goes to the Agent Pane's client", rows: []string{
+			"/dev/pts/1\t%8\t0\t500",
+			"/dev/pts/2\t%7\t0\t500",
+			"/dev/pts/3\t%9\t0\t500",
+		}, want: "/dev/pts/2"},
+		{name: "a tie away from the Agent Pane goes to the first listed", rows: []string{
+			"/dev/pts/1\t%8\t0\t500",
+			"/dev/pts/2\t%9\t0\t500",
+			"/dev/pts/3\t%7\t0\t400",
+		}, want: "/dev/pts/1"},
+		{name: "control mode is skipped", rows: []string{
+			"control-1\t%7\t1\t900",
+			"/dev/pts/1\t%8\t0\t100",
+		}, want: "/dev/pts/1"},
+		{name: "only control mode", rows: []string{"control-1\t%7\t1\t900"}},
+		{name: "no rows", rows: nil},
+		{name: "no name", rows: []string{"\t%7\t0\t900"}},
+	} {
+		rows := strings.Join(test.rows, "\n") + "\n"
+		if got := claudeQuestionViewingClient(rows, "%7"); got != test.want {
+			t.Errorf("%s: client = %q, want %q", test.name, got, test.want)
+		}
 	}
 	runner := &noCallTmuxRunner{}
 	popup := tmuxClaudeQuestionPopup{runner: runner, lookupEnv: func(string) string { return "" }}
@@ -735,9 +894,10 @@ func TestClaudeQuestionViewingClientPicksTheMostRecentTerminalClient(t *testing.
 func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
 	t.Parallel()
 
-	args, err := buildClaudeQuestionPopupArgs("/opt/pm x/projmux", claudeQuestionText{locale: i18n.FallbackLocale}.title(), claudeQuestionPopupTarget{
+	target := claudeQuestionPopupTarget{
 		Client: "/dev/pts/3", PaneID: "%7", QuestionID: "question-0123456789abcdef", AgentUID: "agt-1", StorePath: "/state/agent-questions/questions.json",
-	}, claudeQuestionPopupSize{Width: "80%", Height: "70%"})
+	}
+	args, err := buildClaudeQuestionPopupArgs("/opt/pm x/projmux", claudeQuestionText{locale: i18n.FallbackLocale}.title(), "", target, claudeQuestionPopupSize{Width: "80%", Height: "70%"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -746,7 +906,22 @@ func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args =\n%q\nwant\n%q", args, want)
 	}
-	if _, err := buildClaudeQuestionPopupArgs("/bin/projmux", "Claude question", claudeQuestionPopupTarget{PaneID: "%7"}, claudeQuestionPopupSize{Width: "80%", Height: "70%"}); err == nil {
+	// The asker is named in the title, which tmux expands as a format: a `#`
+	// in a name is doubled and a control character escaped. The marker
+	// travels as --shown.
+	target.Asker = claudeQuestionAsker{Agent: "fix#1", Location: "alpha/ma\x1bin"}
+	title := claudeQuestionText{locale: i18n.FallbackLocale}.popupTitle(target.Asker)
+	args, err = buildClaudeQuestionPopupArgs("/bin/projmux", title, "/tmp/projmux-question-shown-1", target, claudeQuestionPopupSize{Width: "80%", Height: "70%"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index := slices.Index(args, "-T"); index < 0 || args[index+1] != `Claude question from fix##1 (alpha/ma\x1bin)` {
+		t.Fatalf("args = %q, want the escaped asker title", args)
+	}
+	if command := args[len(args)-1]; !strings.HasSuffix(command, " --shown '/tmp/projmux-question-shown-1'") {
+		t.Fatalf("command = %q, want the --shown marker", command)
+	}
+	if _, err := buildClaudeQuestionPopupArgs("/bin/projmux", "Claude question", "", claudeQuestionPopupTarget{PaneID: "%7"}, claudeQuestionPopupSize{Width: "80%", Height: "70%"}); err == nil {
 		t.Fatal("a popup without a client was built")
 	}
 	if shouldRunLegacyHookMigrations([]string{"internal", claudeQuestionPickerRoute, "--question", "q"}) {
@@ -792,7 +967,7 @@ func TestClaudeQuestionPopupOpenSizesThePopupFromTheClient(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			runner := &popupSizeTmuxRunner{reply: test.reply, err: test.err}
+			runner := &popupSizeTmuxRunner{reply: test.reply, err: test.err, show: true}
 			popup := tmuxClaudeQuestionPopup{runner: runner, executable: func() (string, error) { return "/bin/projmux", nil }}
 			if err := popup.Open(context.Background(), target); err != nil {
 				t.Fatal(err)
@@ -811,11 +986,90 @@ func TestClaudeQuestionPopupOpenSizesThePopupFromTheClient(t *testing.T) {
 	}
 }
 
+// TestClaudeQuestionPopupOpenTellsAPopupThatNeverShowed holds the marker: a
+// popup whose picker wrote it showed, one that left it empty never did, a
+// failed display-popup is that failure, and the marker is always removed.
+func TestClaudeQuestionPopupOpenTellsAPopupThatNeverShowed(t *testing.T) {
+	t.Parallel()
+
+	target := claudeQuestionPopupTarget{Client: "/dev/pts/3", PaneID: "%7", QuestionID: "question-1", AgentUID: "agt-1", StorePath: "/state/questions.json"}
+	popupFailed := errors.New("exit status 127")
+	for _, test := range []struct {
+		name     string
+		show     bool
+		popupErr error
+		want     error
+	}{
+		{name: "shown", show: true},
+		{name: "never shown", want: errClaudeQuestionPopupNotShown},
+		{name: "display-popup failed", popupErr: popupFailed, want: popupFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			var marker string
+			runner := &popupSizeTmuxRunner{reply: "120 40\n", show: test.show, popupErr: test.popupErr}
+			popup := tmuxClaudeQuestionPopup{
+				runner:     runner,
+				executable: func() (string, error) { return "/bin/projmux", nil },
+				newMarker: func() (string, error) {
+					marker = filepath.Join(dir, "shown")
+					return marker, os.WriteFile(marker, nil, 0o600)
+				},
+			}
+			if err := popup.Open(context.Background(), target); !errors.Is(err, test.want) {
+				t.Fatalf("Open = %v, want %v", err, test.want)
+			}
+			if got := popupShownMarker(runner.calls[len(runner.calls)-1]); got != marker {
+				t.Fatalf("--shown = %q, want %q", got, marker)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("marker stat err = %v, want it removed", err)
+			}
+		})
+	}
+}
+
+// TestClaudeQuestionPickerWritesTheShownMarkerFirst holds the picker side:
+// --shown is written before the route even checks its other flags, and the
+// route still runs without it, as an older hook invokes it.
+func TestClaudeQuestionPickerWritesTheShownMarkerFirst(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	marker := filepath.Join(dir, "shown")
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runClaudeQuestionPicker([]string{"--shown", marker}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("the route ran without a question")
+	}
+	if data, err := os.ReadFile(marker); err != nil || len(data) == 0 {
+		t.Fatalf("marker = %q (%v), want it written before the flags are checked", data, err)
+	}
+	// A marker that is gone is not created again.
+	gone := filepath.Join(dir, "gone")
+	store := filepath.Join(dir, "questions.json")
+	if err := runClaudeQuestionPicker([]string{"--question", "question-1", "--agent", "agt-1", "--store", store, "--shown", gone}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("picker with a missing marker: %v", err)
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Fatalf("missing marker stat err = %v, want it still missing", err)
+	}
+	if err := runClaudeQuestionPicker([]string{"--question", "question-1", "--agent", "agt-1", "--store", store}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("picker without --shown: %v", err)
+	}
+}
+
 // popupSizeTmuxRunner answers the client size query and records every call.
+// With show set, display-popup writes the --shown marker the way the picker
+// does when tmux draws the popup; popupErr is what display-popup returns.
 type popupSizeTmuxRunner struct {
-	reply string
-	err   error
-	calls [][]string
+	reply    string
+	err      error
+	show     bool
+	popupErr error
+	calls    [][]string
 }
 
 func (r *popupSizeTmuxRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -823,7 +1077,19 @@ func (r *popupSizeTmuxRunner) Run(_ context.Context, name string, args ...string
 	if len(args) > 0 && args[0] == "display-message" {
 		return []byte(r.reply), r.err
 	}
-	return nil, nil
+	if len(args) > 0 && args[0] == "display-popup" && r.show {
+		markClaudeQuestionPopupShown(popupShownMarker(args))
+	}
+	return nil, r.popupErr
+}
+
+// popupShownMarker is the --shown path in a display-popup's command.
+func popupShownMarker(args []string) string {
+	_, marker, found := strings.Cut(args[len(args)-1], " --shown ")
+	if !found {
+		return ""
+	}
+	return strings.Trim(marker, "'")
 }
 
 // noCallTmuxRunner records any tmux call and fails it.
@@ -994,6 +1260,8 @@ func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
 
 	fallbacks := map[i18n.Key]string{
 		keyClaudeQuestionTitle:           "Claude question",
+		keyClaudeQuestionTitleFrom:       "Claude question from {agent}",
+		keyClaudeQuestionTitleFromAt:     "Claude question from {agent} ({location})",
 		keyClaudeQuestionTitleProgress:   "Claude question {index}/{count}",
 		keyClaudeQuestionFooterSingle:    "Enter: choose  Esc: give the question back to Claude",
 		keyClaudeQuestionFooterMulti:     "Enter: toggle, then Done  Esc: give the question back to Claude",
@@ -1014,7 +1282,7 @@ func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
 		if err != nil || korean.Locale() != ko || korean.String() == fallback {
 			t.Errorf("%s ko = %q from %s (%v), want a Korean entry", key, korean.String(), korean.Locale(), err)
 		}
-		for _, placeholder := range []string{"{index}", "{count}", "{id}", "{reason}"} {
+		for _, placeholder := range []string{"{index}", "{count}", "{id}", "{reason}", "{agent}", "{location}"} {
 			if strings.Contains(fallback, placeholder) != strings.Contains(korean.String(), placeholder) {
 				t.Errorf("%s ko %q does not carry %s like the English text", key, korean.String(), placeholder)
 			}
@@ -1046,5 +1314,20 @@ func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
 	}
 	if got := (claudeQuestionText{locale: ko}).title(); got != "Claude 질문" {
 		t.Fatalf("ko popup title = %q", got)
+	}
+	for _, test := range []struct {
+		asker  claudeQuestionAsker
+		locale i18n.Locale
+		want   string
+	}{
+		{asker: claudeQuestionAsker{Agent: "codex", Location: "alpha/main"}, locale: i18n.FallbackLocale, want: "Claude question from codex (alpha/main)"},
+		{asker: claudeQuestionAsker{Agent: "codex"}, locale: i18n.FallbackLocale, want: "Claude question from codex"},
+		{asker: claudeQuestionAsker{}, locale: i18n.FallbackLocale, want: "Claude question"},
+		{asker: claudeQuestionAsker{Agent: "codex", Location: "alpha/main"}, locale: ko, want: "codex의 Claude 질문 (alpha/main)"},
+		{asker: claudeQuestionAsker{Agent: "codex"}, locale: ko, want: "codex의 Claude 질문"},
+	} {
+		if got := (claudeQuestionText{locale: test.locale}).popupTitle(test.asker); got != test.want {
+			t.Errorf("%s popup title for %+v = %q, want %q", test.locale, test.asker, got, test.want)
+		}
 	}
 }

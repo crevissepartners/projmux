@@ -32,7 +32,7 @@ const (
 	// claudeQuestionPayloadLimit bounds the PreToolUse payload the hook reads.
 	claudeQuestionPayloadLimit = 1 << 20
 	// claudeQuestionClientPoll is how often a way-2 hook with no popup open
-	// looks for a tmux client viewing the Agent's Pane.
+	// looks for a tmux client to open it on.
 	claudeQuestionClientPoll = time.Second
 )
 
@@ -101,9 +101,10 @@ func claudeQuestionAnsweredByProjmux(agent coremetadata.Agent, answering func() 
 // It holds a question only in way 2: the Agent is opted in with `projmux agent
 // question enable`, or the central agent-question-answering setting is
 // `projmux`. Then it records the question, opens a projmux picker in a tmux
-// popup on the client viewing the Agent's Pane (when one is, or as soon as one
-// is), and waits for that picker or `projmux agent question answer`, whichever
-// answers the record first.
+// popup on the client the operator used last (when one is attached, or as soon
+// as one is, and once any popup already on it closes), titled with the asking
+// Agent and its Project/Window, and waits for that picker or `projmux agent
+// question answer`, whichever answers the record first.
 //
 // Whatever else happens, it prints nothing and succeeds, which Claude Code
 // reads as "no decision": the question goes on to the ordinary prompt. That is
@@ -276,7 +277,7 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 			panic(recovered)
 		}
 	}()
-	answered, ok := h.wait(ctx, store, record, paneID)
+	answered, ok := h.wait(ctx, store, record, paneID, claudeQuestionAskerOf(registry, agent))
 	if !ok {
 		return
 	}
@@ -300,12 +301,16 @@ func (h claudeQuestionHook) openStore() (*agentquestion.Store, error) {
 // resolves one way only: the returned record is answered exactly when the
 // store recorded the answer.
 //
-// While it waits it keeps one popup picker open on the client viewing paneID.
-// No such client is not a failure: the wait goes on for a command-line answer
-// and looks again every clientPoll. A popup that ends while the record still
-// waits (Esc, a failed open, a crashed picker) closes the record, which gives
-// the question back; whatever ends the wait first closes a popup still open.
-func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, paneID string) (result agentquestion.Record, answered bool) {
+// While it waits it keeps one popup picker, placed over paneID and titled with
+// asker, open on the client the operator used last. No client is not a
+// failure: the wait goes on for a command-line answer and looks again every
+// clientPoll. Neither is a popup tmux never drew, because that client already
+// showed a popup: the record keeps waiting and the next look tries again, so
+// questions queue on a client and show one at a time. A popup that did show
+// and ends while the record still waits (Esc, a failed open, a crashed picker)
+// closes the record, which gives the question back, and is never opened again;
+// whatever ends the wait first closes a popup still open.
+func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, paneID string, asker claudeQuestionAsker) (result agentquestion.Record, answered bool) {
 	read := h.readRecord
 	if read == nil {
 		read = func(store *agentquestion.Store, id string) (agentquestion.Record, bool, error) { return store.Get(id) }
@@ -318,7 +323,7 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 	defer ticker.Stop()
 	deadline := time.NewTimer(time.Until(record.Deadline))
 	defer deadline.Stop()
-	popup := newClaudeQuestionPopupDriver(h.popup, h.clientPoll, paneID, store, record)
+	popup := newClaudeQuestionPopupDriver(h.popup, h.clientPoll, paneID, asker, store, record)
 	defer func() { popup.stop(answered) }()
 	popup.maybeOpen(ctx)
 	for {
@@ -331,7 +336,13 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 			return agentquestion.Record{}, false
 		case <-deadline.C:
 			step = store.Settle
-		case <-popup.ended:
+		case err := <-popup.ended:
+			if errors.Is(err, errClaudeQuestionPopupNotShown) {
+				// No picker ran, so the record is untouched and still
+				// waits; the next look after the interval tries again.
+				popup.markNotShown()
+				continue
+			}
 			// The picker answers or closes the record itself; one that ended
 			// with the record still waiting is given back here. Close returns
 			// the record as it stands, so a picker answer is kept.

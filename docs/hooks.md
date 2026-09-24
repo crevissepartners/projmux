@@ -743,14 +743,23 @@ holds another value in 60–3600 (see
 only in way 2; way 1 never waits. While it waits, Claude Code shows the hook's
 status message instead of the question prompt.
 
-The hook opens a tmux popup on the client that is viewing the Agent's Pane (the
-most recently used one when several are) and runs the projmux picker in it,
-one question at a time. Enter picks an option of a single-select question; on
-a multi-select question Enter toggles an option and `Done` finishes, with at
-least one option chosen; `Other / type an answer` takes free text. When no
-client is viewing the Pane the hook keeps waiting and looks again about once a
-second, and opens the popup when a client starts viewing it. Nothing is drawn
-on Claude Code's own terminal.
+The hook opens a tmux popup right away on the terminal you are looking at: the
+client of the Agent's tmux server that you used most recently, whatever
+Session, Window, or Pane it shows. Clients of other tmux servers are not
+considered. The popup's title names the asking Agent and its Project/Window,
+for example `Claude question from reviewer (alpha/main)`, and it runs the projmux
+picker, one question at a time. Enter picks an option of a single-select
+question; on a multi-select question Enter toggles an option and `Done`
+finishes, with at least one option chosen; `Other / type an answer` takes free
+text. When no client is attached the hook keeps waiting and looks again about
+once a second, and opens the popup when one attaches. Nothing is drawn on
+Claude Code's own terminal.
+
+Questions show one at a time per client. tmux does not draw a popup over
+another one, so a question that arrives while that client already shows a
+popup (another Agent's question, or any other popup) keeps waiting and shows
+once that popup closes. A popup that tmux did not draw is tried again, never
+counted as ended.
 
 A long question wraps inside the popup instead of being cut, and a line break
 in the question starts a new line. The popup is 80% × 70% of the client, but at
@@ -759,9 +768,10 @@ client smaller than that is the question shortened with `…` so the options sta
 reachable; the full text is available from `projmux agent question list`.
 
 Pressing Esc in the popup gives the question back: the record is closed and
-Claude Code shows its own prompt. So does a popup that cannot be opened or
-that ends without answering. Pressing Esc in Claude Code itself cancels the
-wait and declines the question.
+Claude Code shows its own prompt. So does a popup that fails to open or that
+ends without answering after it showed; once shown and closed, a question's
+popup is not opened again. Pressing Esc in Claude Code itself cancels the wait
+and declines the question.
 
 The same question can be answered from any shell:
 
