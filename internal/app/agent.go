@@ -182,7 +182,9 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "resume":
 		return c.runResume(rest, stdout, stderr)
 	case "persona":
-		return c.runPersona(rest, stdout, stderr)
+		return c.runPersona(rest, "persona", stdout, stderr)
+	case "instructions":
+		return c.runPersona(rest, "instructions", stdout, stderr)
 	case "turn":
 		return c.runTurn(rest, stdout, stderr)
 	case "approval":

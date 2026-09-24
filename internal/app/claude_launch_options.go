@@ -166,9 +166,13 @@ func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) er
 	if flags.persona == "" {
 		return nil
 	}
+	option := flags.personaOption
+	if option == "" {
+		option = "persona"
+	}
 	if flags.dialogueReplyOnly {
-		return usageError(fmt.Sprintf("%s --persona cannot be combined with --%s (%s); nothing was created",
-			spelling, claudeDialogueReplyOnlyFlag, persona.ReasonProviderUnsupported))
+		return usageError(fmt.Sprintf("%s --%s cannot be combined with --%s (%s); nothing was created",
+			spelling, option, claudeDialogueReplyOnlyFlag, persona.ReasonProviderUnsupported))
 	}
 	switch {
 	case provider == aiModeClaude:
@@ -178,11 +182,11 @@ func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) er
 		// its own, and thread/start is the only moment a persona can be given.
 		return nil
 	case provider == aiModeCodex:
-		return usageError(fmt.Sprintf("%s --persona applies to --provider %s only on a create with a prompt (%s); nothing was created",
-			spelling, aiModeCodex, persona.ReasonProviderUnsupported))
+		return usageError(fmt.Sprintf("%s --%s applies to --provider %s only on a create with a prompt (%s); nothing was created",
+			spelling, option, aiModeCodex, persona.ReasonProviderUnsupported))
 	default:
-		return usageError(fmt.Sprintf("%s --persona applies only to --provider %s and --provider %s (%s); nothing was created",
-			spelling, aiModeClaude, aiModeCodex, persona.ReasonProviderUnsupported))
+		return usageError(fmt.Sprintf("%s --%s applies only to --provider %s and --provider %s (%s); nothing was created",
+			spelling, option, aiModeClaude, aiModeCodex, persona.ReasonProviderUnsupported))
 	}
 }
 
@@ -193,22 +197,26 @@ func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) er
 // named refuses with its reason token while nothing exists, and a snapshot
 // that cannot be written refuses the same way. A later failure can leave the
 // snapshot behind, which is harmless: it is content addressed.
-func (c *createCommand) preparePersonaLaunch(spelling, name string) (personaLaunch, error) {
+func (c *createCommand) preparePersonaLaunch(spelling, name string, optionNames ...string) (personaLaunch, error) {
+	option := "persona"
+	if len(optionNames) > 0 && optionNames[0] != "" {
+		option = optionNames[0]
+	}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
-		return personaLaunch{}, fmt.Errorf("%s --persona: %w; nothing was created", spelling, err)
+		return personaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
 	}
 	store := persona.NewDefaultStore(paths)
 	loaded, err := store.Load(name)
 	if err != nil {
 		if persona.ReasonOf(err) != "" {
-			return personaLaunch{}, usageError(fmt.Sprintf("%s --persona: %v; nothing was created", spelling, err))
+			return personaLaunch{}, usageError(fmt.Sprintf("%s --%s: %v; nothing was created", spelling, option, err))
 		}
-		return personaLaunch{}, fmt.Errorf("%s --persona: %w; nothing was created", spelling, err)
+		return personaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
 	}
 	snapshot, err := store.WriteSnapshot(loaded.Content)
 	if err != nil {
-		return personaLaunch{}, fmt.Errorf("%s --persona: %w; nothing was created", spelling, err)
+		return personaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
 	}
 	return personaLaunch{name: loaded.Name, snapshot: snapshot, content: string(loaded.Content)}, nil
 }

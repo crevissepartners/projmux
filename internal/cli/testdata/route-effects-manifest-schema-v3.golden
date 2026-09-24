@@ -3,6 +3,9 @@ route=agent identity=unchanged address=unchanged topology=unchanged desired-stat
 route=agent status identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent topic identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent resume identity=reused|created address=unchanged|allocated topology=unchanged|established desired-state=unchanged|created runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
+route=agent instructions identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=agent instructions attach identity=unchanged|reused address=unchanged topology=unchanged|replaced desired-state=unchanged|replaced runtime=unchanged|materialized focus=unchanged cardinality=exact-one domain-effect=null
+route=agent instructions detach identity=unchanged|reused address=unchanged topology=unchanged|replaced desired-state=unchanged|replaced runtime=unchanged|materialized focus=unchanged cardinality=exact-one domain-effect=null
 route=agent persona identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent persona attach identity=unchanged|reused address=unchanged topology=unchanged|replaced desired-state=unchanged|replaced runtime=unchanged|materialized focus=unchanged cardinality=exact-one domain-effect=null
 route=agent persona detach identity=unchanged|reused address=unchanged topology=unchanged|replaced desired-state=unchanged|replaced runtime=unchanged|materialized focus=unchanged cardinality=exact-one domain-effect=null
@@ -97,6 +100,12 @@ route=notification ack identity=unchanged address=unchanged topology=unchanged d
 route=notification reconcile identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=open identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=open project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized|already-live focus=moved-current-client cardinality=exact-one domain-effect=null
+route=instructions identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=instructions list identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=instructions show identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=instructions edit identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=instructions set identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=instructions delete identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=persona identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=persona list identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=persona show identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null

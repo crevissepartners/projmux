@@ -808,7 +808,7 @@ var routes = []Route{
 			"projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]",
 			"projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent persona attach", "agent persona detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -833,14 +833,30 @@ var routes = []Route{
 				// persona annotations changed in between. The Agent keeps its
 				// uid and its provider conversation.
 				Effects:    unchangedEffects(CardinalityExactOne),
+				Name:       "instructions",
+				Invocation: InvocationExplicit,
+				Summary:    "Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation",
+				Usage:      []string{"projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]", "projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
+				Canonical:  []string{"agent instructions attach", "agent instructions detach"},
+				Children: []Route{
+					{Effects: personaAgentEffects(), Name: "attach", Invocation: InvocationExplicit, Summary: "Give one exact Claude Agent an instruction and restart it on the same conversation", Usage: []string{"projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"}, Canonical: []string{"agent instructions attach"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: personaAgentEffects(), Name: "detach", Invocation: InvocationExplicit, Summary: "Take the instructions off one exact Claude Agent and restart it on the same conversation", Usage: []string{"projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"}, Canonical: []string{"agent instructions detach"}, Outputs: []OutputMode{OutputModeJSON}},
+				},
+			},
+			{
+				// Attach and detach are `delete pane` on a Running Agent's
+				// managed Pane followed by the `agent resume` rebind, with the
+				// persona annotations changed in between. The Agent keeps its
+				// uid and its provider conversation.
+				Effects:    unchangedEffects(CardinalityExactOne),
 				Name:       "persona",
 				Invocation: InvocationExplicit,
 				Summary:    "Attach or detach a persona on one exact Claude Agent and resume it on the same conversation",
 				Usage:      []string{"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]", "projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
-				Canonical:  []string{"agent persona attach", "agent persona detach"},
+				Canonical:  []string{"agent instructions attach", "agent instructions detach"},
 				Children: []Route{
-					{Effects: personaAgentEffects(), Name: "attach", Invocation: InvocationExplicit, Summary: "Give one exact Claude Agent a persona and restart it on the same conversation", Usage: []string{"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"}, Canonical: []string{"agent persona attach"}, Outputs: []OutputMode{OutputModeJSON}},
-					{Effects: personaAgentEffects(), Name: "detach", Invocation: InvocationExplicit, Summary: "Take the persona off one exact Claude Agent and restart it on the same conversation", Usage: []string{"projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"}, Canonical: []string{"agent persona detach"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: personaAgentEffects(), Name: "attach", Invocation: InvocationExplicit, Summary: "Give one exact Claude Agent a persona and restart it on the same conversation", Usage: []string{"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"}, Canonical: []string{"agent instructions attach"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: personaAgentEffects(), Name: "detach", Invocation: InvocationExplicit, Summary: "Take the persona off one exact Claude Agent and restart it on the same conversation", Usage: []string{"projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"}, Canonical: []string{"agent instructions detach"}, Outputs: []OutputMode{OutputModeJSON}},
 				},
 			},
 			{
@@ -1091,8 +1107,8 @@ var routes = []Route{
 			"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
 			"projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 			"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
-			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--persona <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
-			"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--persona <name>] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+			"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--instructions <name> | --persona <name>] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create claude|antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]",
 		},
@@ -1175,7 +1191,7 @@ var routes = []Route{
 				Summary:          "Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required",
 				CanonicalSummary: "Create an Agent and its managed Pane",
 				Usage: []string{
-					"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--persona <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+					"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 				},
 				Outputs:   receiptOutputModes,
 				Canonical: []string{"create agent"},
@@ -1194,7 +1210,7 @@ var routes = []Route{
 				Invocation: InvocationNatural,
 				Summary:    "Provider shortcut for create agent --provider codex",
 				Usage: []string{
-					"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--persona <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+					"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--instructions <name> | --persona <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
 				Outputs:          receiptOutputModes,
@@ -1206,7 +1222,7 @@ var routes = []Route{
 				Invocation: InvocationNatural,
 				Summary:    "Provider shortcut for create agent --provider claude",
 				Usage: []string{
-					"projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--persona <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+					"projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
 				Outputs:          receiptOutputModes,
@@ -1645,17 +1661,44 @@ var routes = []Route{
 		},
 	},
 	{
+		// Instructions are files, not Registry resources: their content extends a
+		// new Claude Agent's system prompt at `create agent --instructions`.
+		// Like `hook` and `config` they are a noun-first group, because the
+		// get/create/delete verbs are Registry resource grammar. Changing
+		// instructions changes no resource, so every effect axis is unchanged.
+		Effects:        unchangedEffects(CardinalityUnchanged),
+		Name:           "instructions",
+		Invocation:     InvocationRefusal,
+		CanonicalOrder: 29,
+		Summary:        "List, show, edit, set, and delete Agent instruction files",
+		Disposition:    DispositionCanonical,
+		Usage: []string{
+			"projmux instructions list",
+			"projmux instructions show <name>",
+			"projmux instructions edit <name>",
+			"projmux instructions set <name> [--file <path> | -]",
+			"projmux instructions delete <name> --yes",
+		},
+		Canonical: []string{"instructions list", "instructions show", "instructions edit", "instructions set", "instructions delete"},
+		Children: []Route{
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "List every stored instructions with their digest, size, and modification time", CanonicalSummary: "List stored instructions", Usage: []string{"projmux instructions list"}, Canonical: []string{"instructions list"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "show", Invocation: InvocationExplicit, Summary: "Print one instruction's content exactly as stored", Usage: []string{"projmux instructions show <name>"}, Canonical: []string{"instructions show"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationExplicit, Summary: "Edit one instruction in $EDITOR or $VISUAL, creating it when missing", CanonicalSummary: "Edit one instruction in $EDITOR", Usage: []string{"projmux instructions edit <name>"}, Canonical: []string{"instructions edit"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "set", Invocation: InvocationExplicit, Summary: "Write one instruction from a file or stdin without an editor", CanonicalSummary: "Write one instruction from a file or stdin", Usage: []string{"projmux instructions set <name> [--file <path> | -]"}, Canonical: []string{"instructions set"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one instruction file; Agents already started with it keep their snapshot", CanonicalSummary: "Delete one instruction file", Usage: []string{"projmux instructions delete <name> --yes"}, Canonical: []string{"instructions delete"}},
+		},
+	},
+	{
 		// Personas are files, not Registry resources: the text a new Claude
 		// Agent's system prompt is extended with at `create agent --persona`.
 		// Like `hook` and `config` they are a noun-first group, because the
 		// get/create/delete verbs are Registry resource grammar. Writing a
 		// persona changes no resource, so every effect axis is unchanged.
-		Effects:        unchangedEffects(CardinalityUnchanged),
-		Name:           "persona",
-		Invocation:     InvocationRefusal,
-		CanonicalOrder: 29,
-		Summary:        "List, show, edit, set, and delete Agent persona files",
-		Disposition:    DispositionCanonical,
+		Effects:     unchangedEffects(CardinalityUnchanged),
+		Name:        "persona",
+		Invocation:  InvocationRefusal,
+		Summary:     "List, show, edit, set, and delete Agent persona files",
+		Disposition: DispositionCompatibility,
 		Usage: []string{
 			"projmux persona list",
 			"projmux persona show <name>",
@@ -1663,13 +1706,13 @@ var routes = []Route{
 			"projmux persona set <name> [--file <path> | -]",
 			"projmux persona delete <name> --yes",
 		},
-		Canonical: []string{"persona list", "persona show", "persona edit", "persona set", "persona delete"},
+		Canonical: []string{"instructions list", "instructions show", "instructions edit", "instructions set", "instructions delete"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "List every stored persona with its digest, size, and modification time", CanonicalSummary: "List stored personas", Usage: []string{"projmux persona list"}, Canonical: []string{"persona list"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "show", Invocation: InvocationExplicit, Summary: "Print one persona's content exactly as stored", Usage: []string{"projmux persona show <name>"}, Canonical: []string{"persona show"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationExplicit, Summary: "Edit one persona in $EDITOR or $VISUAL, creating it when missing", CanonicalSummary: "Edit one persona in $EDITOR", Usage: []string{"projmux persona edit <name>"}, Canonical: []string{"persona edit"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "set", Invocation: InvocationExplicit, Summary: "Write one persona from a file or stdin without an editor", CanonicalSummary: "Write one persona from a file or stdin", Usage: []string{"projmux persona set <name> [--file <path> | -]"}, Canonical: []string{"persona set"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one persona file; Agents already started with it keep their snapshot", CanonicalSummary: "Delete one persona file", Usage: []string{"projmux persona delete <name> --yes"}, Canonical: []string{"persona delete"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "List every stored persona with its digest, size, and modification time", Usage: []string{"projmux persona list"}, Canonical: []string{"instructions list"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "show", Invocation: InvocationExplicit, Summary: "Print one persona's content exactly as stored", Usage: []string{"projmux persona show <name>"}, Canonical: []string{"instructions show"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationExplicit, Summary: "Edit one persona in $EDITOR or $VISUAL, creating it when missing", Usage: []string{"projmux persona edit <name>"}, Canonical: []string{"instructions edit"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "set", Invocation: InvocationExplicit, Summary: "Write one persona from a file or stdin without an editor", Usage: []string{"projmux persona set <name> [--file <path> | -]"}, Canonical: []string{"instructions set"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one persona file; Agents already started with it keep their snapshot", Usage: []string{"projmux persona delete <name> --yes"}, Canonical: []string{"instructions delete"}},
 		},
 	},
 	{

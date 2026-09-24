@@ -206,7 +206,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		return err
 	}
 	if flags.persona != "" {
-		if flags.personaLaunch, err = c.preparePersonaLaunch(spelling, flags.persona); err != nil {
+		if flags.personaLaunch, err = c.preparePersonaLaunch(spelling, flags.persona, flags.personaOption); err != nil {
 			return err
 		}
 	}

@@ -1761,56 +1761,63 @@ plain Agent on purpose; it is Codex-only and equivalent on `create agent
 multi-operand payloads, `agent resume`, Claude, and Antigravity are unaffected.
 See [Codex Native-Required Create Migration](codex-native-required-migration.md).
 
-An Agent can be given a persona: `create agent --provider claude
---persona <name>` (and `create claude --persona <name>`) appends the stored
-persona to the new session's system prompt through Claude's
+An Agent can be given named instructions: `create agent --provider claude
+--instructions <name>` (and `create claude --instructions <name>`) appends the
+stored content to the new session's system prompt through Claude's
 `--append-system-prompt-file`; it never replaces the system prompt, so Claude
-Code's own tool instructions stay. Personas are files in
-`<config dir>/personas/<name>.md` (by default `~/.config/projmux/personas/`),
-at most 64 KiB each, managed with `projmux persona list|show|edit|set|delete`
-(`edit` opens `$EDITOR`, then `$VISUAL`; `set <name> --file <path>` or `-` is
-the non-interactive write). A persona's content is fixed when it is given: the create
-copies the content to a content-addressed snapshot
-`<state dir>/personas/sha256-<hex>.md`, passes only that path on the Claude
-command line, and records `projmux.io/persona` and `projmux.io/persona-digest`
-on the Agent. `agent resume` and Continue/topology replay pass that same
-snapshot again, found from the recorded digest and never from the persona file,
-so editing or deleting the persona file later never changes an existing Agent.
-If the snapshot is gone, the resume still proceeds without the persona and
-discloses one `persona-unavailable` line (on stderr for `agent resume`, among
-the replay notices for Continue). A missing, oversized, or badly named persona
-refuses with `persona-not-found`, `persona-too-large`, or
-`persona-name-invalid`, all with zero Registry, tmux, and snapshot writes.
+Code's own tool instructions stay. Manage the files with `projmux instructions
+list|show|edit|set|delete` (`edit` opens `$EDITOR`, then `$VISUAL`; `set
+<name> --file <path>` or `-` writes without an editor). The former `projmux
+persona` commands and `--persona <name>` remain aliases for the same files.
+Both names read and write `<config dir>/personas/<name>.md` (by default
+`~/.config/projmux/personas/`), with a 64 KiB limit. They do not create an
+`instructions/` directory.
 
-A Codex Agent can be given a persona too, on one lane: a create that carries a
-prompt (`create agent --provider codex --persona <name> -- <prompt>`, and
-`create codex --persona <name> -- <prompt>`). That is the lane that opens a
-thread of its own, and starting the thread is the only moment Codex accepts a
-persona: the create sends the snapshot content as the thread's
-`developerInstructions`, and the shared app server records it once as the
+The content is fixed when an Agent starts: create copies it to the existing
+content-addressed snapshot `<state dir>/personas/sha256-<hex>.md`, passes only
+that path on the Claude command line, and records the existing
+`projmux.io/persona` and `projmux.io/persona-digest` keys on the Agent. The
+new and old CLI names use the same digest and keys. `agent resume` and
+Continue/topology replay pass that snapshot again, found from the recorded
+digest rather than the editable file, so editing or deleting the file does
+not change an existing Agent. An Agent with the old keys and snapshot resumes
+without migration. If the snapshot is gone, resume proceeds without the
+instructions and discloses one `persona-unavailable` line (on stderr for
+`agent resume`, among the replay notices for Continue). Missing, oversized,
+or badly named files refuse with the stable `persona-not-found`,
+`persona-too-large`, or `persona-name-invalid` reason and write no Registry,
+tmux, or snapshot state.
+
+A Codex Agent can be given named instructions on a create with a prompt
+(`create agent --provider codex --instructions <name> -- <prompt>`, or
+`create codex --instructions <name> -- <prompt>`). This lane opens a thread of
+its own. Codex accepts the instructions when that thread starts: create sends
+the snapshot content as the thread's `developerInstructions`, and the shared app server records it once as the
 thread's `developer` message. The content goes over that connection and
 nowhere else -- never onto a command line, where `ps` would publish it -- and
 the create records the same `projmux.io/persona` and `projmux.io/persona-digest`
-annotations Claude records. From then on the thread carries the persona
-itself: `agent resume`, Continue/topology replay, and a resume picked from the
-Codex catalog re-send nothing and disclose nothing, because nothing was lost.
-A conversation opened from the resume picker inherits the two persona keys
-from the Agents that already record it, so the new Agent reports the persona
-its thread is running; it inherits no other launch value. A Codex Agent's
-persona cannot be changed afterwards: the instructions are fixed when the
-thread starts, `agent persona attach|detach` stays Claude-only, and starting
+annotations Claude records. From then on the thread carries the instructions: `agent resume`,
+Continue/topology replay, and a resume picked from the Codex catalog re-send
+nothing and disclose nothing, because nothing was lost.
+A conversation opened from the resume picker inherits the two stored
+instruction keys from Agents that already record it, so the new Agent reports
+the instructions its thread is running; it inherits no other launch value. A
+Codex Agent's instructions cannot be changed afterwards: the instructions are fixed when the
+thread starts, `agent instructions attach|detach` stays Claude-only, and starting
 over means a new Agent.
 
-Every other `--persona` create refuses with `persona-provider-unsupported` and
-zero Registry, tmux, and snapshot writes: a Codex create with no prompt or with
-`--interactive-only` (its plain lane would have to spell the persona into
+Every other `--instructions` or `--persona` create refuses with
+`persona-provider-unsupported` and zero Registry, tmux, and snapshot writes:
+a Codex create with no prompt or with `--interactive-only` (its plain lane would have to spell the instructions into
 argv), `--dialogue-reply-only`, and any other provider.
 
-An existing Claude Agent can take on a persona later, or drop it:
-`projmux agent persona attach <agent-ref> <persona>` and
-`projmux agent persona detach <agent-ref>` (both with `[--project <ref>]
-[--window <ref>] [--yes] [--dry-run] [-o json]`). The Agent keeps its uid and
-its provider conversation. A Running Agent's managed Pane is closed through
+An existing Claude Agent can attach named instructions later, or detach them:
+`projmux agent instructions attach <agent-ref> <name>` and
+`projmux agent instructions detach <agent-ref>` (both with `[--project <ref>]
+[--window <ref>] [--yes] [--dry-run] [-o json]`). The old
+`agent persona attach|detach` spellings remain aliases. Both names operate on
+the same Agent keys, snapshot, and digest. The Agent keeps its uid and provider
+conversation. A Running Agent's managed Pane is closed through
 `delete pane`, which leaves it Offline, and the Agent is resumed through the
 same rebind `agent resume` uses, on a new managed Pane; an Offline or Failed
 Agent is only resumed. Before that the command writes the snapshot and records
@@ -1819,7 +1826,7 @@ Agent is only resumed. Before that the command writes the snapshot and records
 the first two). The last key is sticky and makes every later resume of that
 Agent pass `--system-prompt-snapshot off`: Claude records the system prompt of
 a conversation's first request and replays that record on resume, so without
-it a persona attached after the conversation started would be ignored on the
+it instructions attached after the conversation started would be ignored on the
 next resume. In steady state that costs little: each resume re-creates a
 byte-identical system prompt, so the prompt cache still hits and the extra cost
 is a few dozen cache-creation tokens per resume (measured +4 to +45); after the
@@ -1829,18 +1836,18 @@ interaction is not `idle` or
 `response_complete` -- `unknown` included -- is refused with
 `persona-agent-busy` unless `--yes` confirms cutting its turn, and `--dry-run`
 (`-o json` for scripts) reports the target, its interaction, the current and
-new persona, and whether that confirmation is required without changing
+new instructions, and whether that confirmation is required without changing
 anything. The Agent owning the Pane the command runs in is refused with
 `persona-self-target`; an Agent with no stored conversation is refused with
-`persona-no-conversation`. Attaching the persona an Agent already runs with,
+`persona-no-conversation`. Attaching the instructions an Agent already runs with,
 same name and same content digest, reports `unchanged` and restarts nothing;
-after the persona file is edited the digest differs and the attach restarts
+after the instructions file is edited the digest differs and the attach restarts
 with the new snapshot. Outside tmux the stop needs `--socket <name>` or
 `--socket-path <absolute>`, exactly as `delete pane` does. Refusals leave no
 snapshot, Registry, or Pane change. If the resume fails after the stop, the
 Agent stays Offline with its new annotations and stderr prints the
 `projmux agent resume uid:<agent> --project uid:<project> --window uid:<window>`
-command that finishes the job with the persona. If closing the managed Pane
+command that finishes the job with the instructions. If closing the managed Pane
 reports an error, the command checks whether that Pane is still alive: if it
 is, the previous annotations are restored; if it is already closed, the new
 annotations are kept and the resume proceeds with a warning on stderr (a failed
@@ -1850,8 +1857,8 @@ annotations are restored and stderr prints the command to re-run.
 A Claude Agent created with `--effort <level>` records it as `projmux.io/effort`
 on the Agent, because Claude does not restore a conversation's effort on
 resume. Every resume passes it again as `--effort <level>`: `agent resume`,
-Continue/topology replay, and the restart of `agent persona attach|detach`. A
-recorded value that is not one of `low`, `medium`, `high`, `xhigh`, or `max` is
+Continue/topology replay, and the restart of `agent instructions
+attach|detach`. A recorded value that is not one of `low`, `medium`, `high`, `xhigh`, or `max` is
 skipped, the resume still proceeds, and one `effort-invalid` line is disclosed
 where a `persona-unavailable` line would be. The model given with `--model` is
 not recorded or passed again: Claude restores the conversation's model itself
@@ -1860,8 +1867,8 @@ made in the session.
 
 A Claude conversation opened from the resume picker creates a new Agent, and
 when Agents in the Registry already record that conversation (in any Project or
-Window, live or not) the new Agent inherits their launch values: the persona
-and its snapshot (`projmux.io/persona`, `projmux.io/persona-digest`), the
+Window, live or not) the new Agent inherits their launch values: the named
+instructions and their snapshot (`projmux.io/persona`, `projmux.io/persona-digest`), the
 system prompt snapshot mode (`projmux.io/system-prompt-snapshot`), and the
 effort (`projmux.io/effort`). It launches with them and records them, so its own
 later resumes behave like theirs; a snapshot that is gone or an effort Claude
@@ -1870,10 +1877,10 @@ on `agent resume`. Inheritance happens only when every such Agent records the
 same values; if they disagree, nothing is inherited and one
 `launch-values-ambiguous` notice names them. The creator, topic, and
 labels of those Agents are never inherited, and they keep their conversation
-and annotations. A Codex picker selection inherits the two persona keys under
-the same agreement rule and nothing else -- the snapshot mode and the effort
+and annotations. A Codex picker selection inherits the two stored
+instruction keys under the same agreement rule and nothing else -- the snapshot mode and the effort
 are Claude launch options -- and it changes no argv, because the thread
-already carries the persona. Antigravity picker selections inherit nothing.
+already carries the instructions. Antigravity picker selections inherit nothing.
 
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`

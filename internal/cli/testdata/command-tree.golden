@@ -12,6 +12,7 @@ focus hidden=false disableFlagParsing=true args=true children=0
 get hidden=false disableFlagParsing=true args=true children=0
 help hidden=false disableFlagParsing=true args=true children=0
 hook hidden=false disableFlagParsing=true args=true children=0
+instructions hidden=false disableFlagParsing=true args=true children=0
 internal hidden=true disableFlagParsing=true args=true children=0
 label hidden=false disableFlagParsing=true args=true children=0
 notification hidden=false disableFlagParsing=true args=true children=0

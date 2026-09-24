@@ -64,6 +64,8 @@ var settingsLayerGuardArgv = [][]string{
 	{"agent", "status", "get", "alpha-agent"},
 	{"agent", "topic", "get", "alpha-agent"},
 	{"agent", "resume", "alpha-agent"},
+	{"agent", "instructions", "attach", "alpha-agent", "reviewer", "--dry-run", "-o", "json"},
+	{"agent", "instructions", "detach", "alpha-agent", "--dry-run", "-o", "json"},
 	{"agent", "persona", "attach", "alpha-agent", "reviewer", "--dry-run", "-o", "json"},
 	{"agent", "persona", "detach", "alpha-agent", "--dry-run", "-o", "json"},
 	{"agent", "turn", "start", "alpha-agent", "--", "hello"},
@@ -134,6 +136,12 @@ var settingsLayerGuardArgv = [][]string{
 	{"notification", "reconcile", "--json"},
 
 	{"open", "project", "alpha"},
+
+	{"instructions", "list"},
+	{"instructions", "set", "reviewer", "--file", "{tmp}/persona.md"},
+	{"instructions", "show", "reviewer"},
+	{"instructions", "edit", "reviewer"},
+	{"instructions", "delete", "reviewer", "--yes"},
 
 	{"persona", "list"},
 	{"persona", "set", "reviewer", "--file", "{tmp}/persona.md"},

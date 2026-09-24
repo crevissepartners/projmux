@@ -195,4 +195,8 @@ func TestParseReviewTargetIsClosedAndDefaultsToUncommitted(t *testing.T) {
 	if _, err := parseReviewTarget("main", "abc", ""); err == nil {
 		t.Fatal("multiple review target flags succeeded")
 	}
+	if got, err := parseReviewTarget("", "", "review only this diff"); err != nil ||
+		got != (corecap.ReviewTarget{Kind: corecap.ReviewCustom, Value: "review only this diff"}) {
+		t.Fatalf("inline review instructions = %#v, %v", got, err)
+	}
 }
