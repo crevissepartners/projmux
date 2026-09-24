@@ -59,23 +59,14 @@ func agentQuestionWindowLabelLocale(locale i18n.Locale, seconds int) string {
 	return strings.NewReplacer("{seconds}", strconv.Itoa(seconds)).Replace(localizeText(locale, agentQuestionWindowSecondsKey, "{seconds}s"))
 }
 
-// currentAgentQuestionAnswering and currentAgentQuestionWindowSeconds read the
-// same files, through the same loaders, the question hook reads.
+// currentAgentQuestionAnswering and currentAgentQuestionWindowSeconds read
+// the central settings, the same files the question hook reads.
 func (c *settingsCommand) currentAgentQuestionAnswering() config.AgentQuestionAnswering {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return config.AgentQuestionAnsweringClaude
-	}
-	return claudeQuestionAnsweringFromPaths(paths)
+	return loadCentralAgentQuestionAnswering(c.homeDir, c.lookupEnv)
 }
 
 func (c *settingsCommand) currentAgentQuestionWindowSeconds() int {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return config.DefaultAgentQuestionWindowSeconds
-	}
-	seconds, _ := config.LoadAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile())
-	return seconds
+	return loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)
 }
 
 // agentQuestionsSummary is the AI root row tail: both current values.
@@ -358,14 +349,10 @@ func (c *settingsCommand) runAIAgentQuestionWindowCustom(stdout, stderr io.Write
 // setAgentQuestionAnswering writes the central answering file. An Agent opted
 // in with `projmux agent question enable` stays way 2 whatever is saved here.
 func (c *settingsCommand) setAgentQuestionAnswering(way config.AgentQuestionAnswering, stdout io.Writer) error {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	way, err := saveCentralAgentQuestionAnswering(c.homeDir, c.lookupEnv, way)
 	if err != nil {
 		return err
 	}
-	if err := config.SaveAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile(), way); err != nil {
-		return err
-	}
-	way = config.NormalizeAgentQuestionAnswering(string(way))
 	if _, err := fmt.Fprintf(stdout, "Agent question answering: %s\n", way); err != nil {
 		return err
 	}
@@ -379,11 +366,7 @@ func (c *settingsCommand) setAgentQuestionAnswering(way config.AgentQuestionAnsw
 // hook timeout is a fixed ceiling, so the next question already waits this
 // long; nothing is re-integrated.
 func (c *settingsCommand) setAgentQuestionWindowSeconds(seconds int, stdout io.Writer) error {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return err
-	}
-	if err := config.SaveAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile(), seconds); err != nil {
+	if err := saveCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv, seconds); err != nil {
 		return err
 	}
 	shown := strconv.Itoa(seconds) + "s"
