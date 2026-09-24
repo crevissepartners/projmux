@@ -1066,10 +1066,12 @@ The saved values are `on` or `off` in these files:
 ~/.config/projmux/statusbar-visibility-agent-usage-window-codex-weekly
 ```
 
-Missing, empty, and invalid values resolve to `on` except the Codex `5h`
-window, whose ambient HUD default is `off`; an explicit saved `on` restores it.
-Settings shows whether the effective value came from `saved` or `default` and
-marks an invalid saved value as ignored. Saving a toggle regenerates the app
+Missing, empty, and invalid values fall back to the
+[central status bar default](#central-status-bar-defaults) for that file, and
+without one resolve to `on` except the Codex `5h` window, whose ambient HUD
+default is `off`; an explicit saved `on` restores it. Settings shows whether
+the effective value came from `saved`, `central`, or `default` and marks an
+invalid saved value as ignored. Saving a toggle regenerates the app
 and standalone tmux output, and Settings source-reloads the generated app config
 when it is running inside tmux.
 
@@ -1109,8 +1111,11 @@ Their global saved values are `on` or `off` in:
 ~/.config/projmux/statusbar-visibility-settings-launcher
 ```
 
-Missing, empty, and invalid values resolve to `on`; Settings reports the
-effective value and whether it came from `saved` or `default`. Each save is an
+Missing, empty, and invalid values fall back to the
+[central status bar default](#central-status-bar-defaults) for that file, and
+without one resolve to `on`; the settings launcher has no central default.
+Settings reports the effective value and whether it came from `saved`,
+`central`, or `default`. Each save is an
 atomic 0600 replacement, regenerates both app and standalone output, and
 source-loads the generated app config when Settings is inside tmux. Off removes
 the complete segment, including its mouse range and owned spacing. Working
@@ -1121,6 +1126,54 @@ keybinding entry remain.
 Resources intentionally does not use one of these visibility files. Its
 existing `~/.config/projmux/live-resources` value is the only enabled source
 and controls both the segment and sampler/cache mutation.
+
+## Central Status Bar Defaults
+
+The status bar visibility files above, except the settings launcher, have a
+central default layer under them in:
+
+```text
+~/.config/projmux/statusbar-defaults.json
+```
+
+It holds `on` or `off` per visibility file, keyed by the file name without its
+`statusbar-visibility-` prefix (`clock`, `agent-usage-window-codex-5h`):
+
+```json
+{
+  "visibility": {
+    "clock": "off"
+  }
+}
+```
+
+A visibility value resolves in this order: a valid value in the file above,
+then its central default, then the built-in default. Values other than `on` or
+`off` in the central file are ignored.
+
+Nothing edits the central file yet. `projmux config apply` fills it once from
+the valid values of the visibility files, so it starts out matching what the
+status bar shows:
+
+- Once. A record at
+  `${XDG_STATE_HOME:-~/.local/state}/projmux/statusbar-defaults-seeded` marks
+  the copy done, and later applies copy nothing, whatever the visibility files
+  say by then. The two copies may drift apart after that.
+- Per key, never overwriting. A central value already stored stays.
+- Valid values only. A missing, empty, or invalid visibility file copies
+  nothing, so that key keeps following the built-in default.
+
+When it copies anything, the apply prints one
+`seeded central status bar defaults: copied N TUI value(s)` line. A failure is
+reported on the same line, never fails the apply, and writes no record, so the
+next apply tries again. Deleting both the central file and the record makes the
+next apply copy again.
+
+`make install` and `projmux update apply` run `projmux config apply`, so an
+install through either copies right away. A plain `npm install -g projmux` runs
+no install script, so it copies on the next `projmux config apply`. Until then
+the central file is empty and the status bar is unchanged, because the
+visibility files still decide.
 
 ## Live System Resources
 
@@ -1169,7 +1222,7 @@ Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 Named Agent instructions continue to use the central `personas/` directory. The `projmux instructions` and legacy `projmux persona` commands read and write the same files.

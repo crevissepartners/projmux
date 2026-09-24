@@ -148,6 +148,10 @@ genericTeardownRefusal	The generic refusal constructor is retained inside the pu
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
+loadCentralAgentUsageVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
+loadCentralStatusbarHUDVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
+loadCentralStatusbarLeaf	Shared body of the receiver-less central status bar readers retained with them for web/dev (reader-first).
+loadCentralStatusbarRowOneVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 nativeAppendPartialNextItemLines	Default-theme entry point of nativeAppendPartialNextItemLinesWithTheme retained as the partial multiline item seam.
 nativeInteractiveItemLines	Default-theme entry point over InteractiveRowLines retained as the multiline selection seam.
 nativeInteractiveListLines	Default-theme entry point over InteractiveListLines retained as the interactive list line seam.

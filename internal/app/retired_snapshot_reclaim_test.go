@@ -246,6 +246,7 @@ func TestConfigApplyReclaimWithNothingToReclaimPrintsNothing(t *testing.T) {
 	f := newReclaimFixture(t)
 	reclaimWrite(t, filepath.Join(f.configDir, "unrelated-note"), "keep\n")
 	reclaimWrite(t, filepath.Join(f.stateDir, "registry.json"), "{}")
+	markCentralStatusbarSeeded(t, f.stateDir)
 	before := reclaimTree(t, filepath.Join(f.home, ".config"))
 	stateBefore := reclaimTree(t, filepath.Join(f.home, ".local"))
 
@@ -272,6 +273,7 @@ func TestConfigApplyReclaimWithOnlyUnexpectedEntriesPrintsNothing(t *testing.T) 
 	reclaimSymlink(t, outside, filepath.Join(f.configDir, "sessionstate-autosave"))
 	reclaimWrite(t, filepath.Join(projects, "one", "other"), "x")
 	reclaimWrite(t, filepath.Join(projects, "stray-file"), "x")
+	markCentralStatusbarSeeded(t, f.stateDir)
 	// The first apply also writes generated/tmux.conf under home, so compare
 	// the reclaimed trees and the symlink target only.
 	roots := []string{filepath.Join(f.home, ".local"), filepath.Join(f.home, ".config"), filepath.Dir(outside)}

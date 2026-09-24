@@ -30,6 +30,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"off":                               "settings.text.state_off_word",
 	"on":                                "settings.text.state_on_word",
 	"default":                           "settings.text.default_source",
+	"central":                           "settings.text.central_source",
 	"{active} of {total} events have a command":          "settings.text.automation_lifecycle_summary",
 	"current {current}, latest {latest}":                 "settings.text.about_updates_summary",
 	"scan roots; scanning never registers a Project":     "settings.desc.additional_discovery_roots",

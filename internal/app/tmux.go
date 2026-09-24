@@ -1635,6 +1635,9 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	c.reclaimRetiredCodexGenerationFiles(stdout)
 	// So did the retired closed-Project startup setting.
 	c.reclaimRetiredSidebarStartupFile(stdout)
+	// Seed the central status bar defaults from the TUI files, once, at the
+	// same point and under the same never-fail rule.
+	c.seedCentralStatusbarDefaults(stdout)
 
 	resolved := ""
 	var err error
