@@ -81,7 +81,7 @@ func loadStatusbarHUDVisibilityState(homeDir func() (string, error), lookupEnv f
 	if !ok {
 		return config.DefaultStatusbarVisibilityState()
 	}
-	state, err := config.LoadStatusbarVisibilityFile(path)
+	state, err := config.LoadLayeredStatusbarVisibility(path, paths.StatusbarDefaultsFile(), config.StatusbarVisibilityOn)
 	if err != nil {
 		return config.DefaultStatusbarVisibilityState()
 	}
@@ -198,12 +198,7 @@ func loadAgentUsageVisibilityState(homeDir func() (string, error), lookupEnv fun
 	if !ok {
 		return defaultState
 	}
-	var state config.StatusbarVisibilityState
-	if hasWindow {
-		state, err = config.LoadStatusbarVisibilityFileWithDefault(path, window.DefaultVisibility)
-	} else {
-		state, err = config.LoadStatusbarVisibilityFile(path)
-	}
+	state, err := config.LoadLayeredStatusbarVisibility(path, paths.StatusbarDefaultsFile(), defaultState.Effective)
 	if err != nil {
 		return defaultState
 	}

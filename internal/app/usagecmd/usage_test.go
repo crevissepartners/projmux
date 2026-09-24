@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -2500,5 +2501,53 @@ func TestUsageStatusVisibilityFiltersAfterCollectionAndLeavesExplicitCLIStateLos
 	state, err := store.LoadState()
 	if err != nil || len(state.Snapshots) != 1 {
 		t.Fatalf("cache after visibility = %#v, %v", state, err)
+	}
+}
+
+// TestHUDVisibilityPreferencesFallBackToTheCentralDefaults holds the
+// `internal status usage` loader to the same order as Settings: a TUI value,
+// then the central default, then the capability default.
+func TestHUDVisibilityPreferencesFallBackToTheCentralDefaults(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := filepath.Join(home, "config")
+	c := New(nil)
+	c.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "XDG_CONFIG_HOME":
+			return configHome
+		}
+		return ""
+	}
+	paths, err := config.Homes{HomeDir: home, ConfigHome: configHome}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.ConfigDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	central := `{"visibility":{"agent-usage-provider-claude":"off","agent-usage-window-codex-5h":"on","agent-usage-window-codex-weekly":"off"}}`
+	if err := os.WriteFile(paths.StatusbarDefaultsFile(), []byte(central), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prefs := c.loadHUDVisibilityPreferences()
+	if prefs.providers["claude"] || !prefs.providers["codex"] {
+		t.Fatalf("providers = %v, want claude off from central and codex on by default", prefs.providers)
+	}
+	if !prefs.windows["codex"][usage.Window5h] || prefs.windows["codex"][usage.WindowWeekly] {
+		t.Fatalf("codex windows = %v, want 5h on and weekly off from central", prefs.windows["codex"])
+	}
+	if err := config.SaveStatusbarVisibilityFile(paths.StatusbarAgentUsageWindowVisibilityFile("codex", "5h"), config.StatusbarVisibilityOff); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveStatusbarVisibilityFile(paths.StatusbarAgentUsageProviderVisibilityFile("claude"), config.StatusbarVisibilityOn); err != nil {
+		t.Fatal(err)
+	}
+	prefs = c.loadHUDVisibilityPreferences()
+	if !prefs.providers["claude"] || prefs.windows["codex"][usage.Window5h] {
+		t.Fatalf("TUI values did not win over central: providers=%v codex=%v", prefs.providers, prefs.windows["codex"])
 	}
 }

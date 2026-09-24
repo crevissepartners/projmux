@@ -102,7 +102,7 @@ func loadStatusbarRowOneVisibilityState(homeDir func() (string, error), lookupEn
 	if !ok {
 		return config.DefaultStatusbarVisibilityState()
 	}
-	state, err := config.LoadStatusbarVisibilityFile(path)
+	state, err := config.LoadLayeredStatusbarVisibility(path, paths.StatusbarDefaultsFile(), config.StatusbarVisibilityOn)
 	if err != nil {
 		return config.DefaultStatusbarVisibilityState()
 	}

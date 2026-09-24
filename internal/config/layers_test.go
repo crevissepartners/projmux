@@ -17,12 +17,13 @@ import (
 // settings, each with the reason. Every other *FileName, *DirName and
 // *FilePrefix constant must be tied to a row of the declaration.
 var nonSettingPathSymbols = map[string]string{
-	"AppName":                     "the projmux directory name itself, not a setting",
-	"PreviewStateFileName":        "state under StateDir, not a setting",
-	"LiveResourcesSampleFileName": "state under StateDir, not a setting",
-	"PostCreateHookFileName":      "a script inside the declared hooks/ directory",
-	"PostAttachHookFileName":      "a script inside the declared hooks/ directory",
-	"PreCreateHookFileName":       "a script inside the declared hooks/ directory",
+	"AppName":                            "the projmux directory name itself, not a setting",
+	"PreviewStateFileName":               "state under StateDir, not a setting",
+	"LiveResourcesSampleFileName":        "state under StateDir, not a setting",
+	"StatusbarDefaultsSeedStateFileName": "state under StateDir, not a setting",
+	"PostCreateHookFileName":             "a script inside the declared hooks/ directory",
+	"PostAttachHookFileName":             "a script inside the declared hooks/ directory",
+	"PreCreateHookFileName":              "a script inside the declared hooks/ directory",
 }
 
 // packagePathSymbols returns every string constant of this package's non-test
@@ -124,7 +125,7 @@ func TestEveryConfigPathSymbolDeclaresItsLayer(t *testing.T) {
 		}
 	}
 
-	stateOnly := map[string]bool{"PreviewStateFileName": true, "LiveResourcesSampleFileName": true}
+	stateOnly := map[string]bool{"PreviewStateFileName": true, "LiveResourcesSampleFileName": true, "StatusbarDefaultsSeedStateFileName": true}
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
@@ -286,6 +287,8 @@ func TestConfigFrontLoadersReportEveryRead(t *testing.T) {
 	_, _ = LoadAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile())
 	_, _ = LoadAIHookActionsFile(paths.AIHookActionsFile())
 	_, _ = LoadAISemanticPoliciesFile(paths.AISemanticPoliciesFile())
+	_, _ = LoadStatusbarDefaults(paths.StatusbarDefaultsFile())
+	_, _ = LoadCentralStatusbarVisibility(paths.StatusbarDefaultsFile(), paths.StatusbarGitVisibilityFile(), StatusbarVisibilityOn)
 	expect("central loaders")
 
 	restore()

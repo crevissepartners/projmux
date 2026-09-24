@@ -1530,10 +1530,10 @@ func (c *Command) loadHUDVisibilityPreferences() hudVisibilityPreferences {
 	}
 	for _, provider := range capabilities {
 		model := strings.ToLower(strings.TrimSpace(provider.Model))
-		providerState, err := config.LoadStatusbarVisibilityFile(paths.StatusbarAgentUsageProviderVisibilityFile(string(provider.ID)))
+		providerState, err := config.LoadLayeredStatusbarVisibility(paths.StatusbarAgentUsageProviderVisibilityFile(string(provider.ID)), paths.StatusbarDefaultsFile(), config.StatusbarVisibilityOn)
 		prefs.providers[model] = err != nil || providerState.Effective == config.StatusbarVisibilityOn
 		for _, window := range provider.Windows {
-			state, err := config.LoadStatusbarVisibilityFileWithDefault(paths.StatusbarAgentUsageWindowVisibilityFile(string(provider.ID), window.Key), window.DefaultVisibility)
+			state, err := config.LoadLayeredStatusbarVisibility(paths.StatusbarAgentUsageWindowVisibilityFile(string(provider.ID), window.Key), paths.StatusbarDefaultsFile(), window.DefaultVisibility)
 			if err == nil {
 				prefs.windows[model][window.Window] = state.Effective == config.StatusbarVisibilityOn
 			}

@@ -239,6 +239,7 @@ func TestConfigApplyCodexReclaimSecondRunIsQuietNoOp(t *testing.T) {
 func TestConfigApplyCodexReclaimWithNothingToReclaimPrintsNothing(t *testing.T) {
 	f := newCodexReclaimFixture(t)
 	reclaimWrite(t, filepath.Join(f.stateDir, "registry.json"), "{}")
+	markCentralStatusbarSeeded(t, f.stateDir)
 	before := reclaimTree(t, f.stateDir)
 
 	if lines := f.apply(t); len(lines) != 0 {

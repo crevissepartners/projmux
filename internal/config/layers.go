@@ -111,6 +111,7 @@ var settingItems = []SettingItem{
 	declareFile(AIHookActionsFileName, LayerCentral, ""),
 	declareFile(AISemanticPoliciesFileName, LayerCentral, ""),
 	declareFile(LiveResourcesFileName, LayerCentral, ""),
+	declareFile(StatusbarDefaultsFileName, LayerCentral, ""),
 	declareDir(AIHooksDirName, LayerCentral),
 	declareDir(PersonasDirName, LayerCentral),
 	// The global lifecycle hook scripts (post-create, post-attach,
