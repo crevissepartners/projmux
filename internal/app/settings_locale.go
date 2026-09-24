@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/i18n"
-	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -137,36 +136,12 @@ func (c *settingsCommand) localeEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) currentGlobalLocaleSetting() (setting string, source string, err error) {
-	path, err := c.globalConfigPath()
-	if err != nil {
-		return i18n.LocaleSettingAuto, "", err
-	}
-	cfg, err := hooks.LoadGlobalConfig(path)
-	if err != nil {
-		return i18n.LocaleSettingAuto, path, err
-	}
-	setting = strings.TrimSpace(cfg.UI.Locale)
-	if setting == "" {
-		setting = i18n.LocaleSettingAuto
-	}
-	return setting, path, nil
+	return loadCentralLocaleSetting(c.homeDir, c.lookupEnv)
 }
 
 func (c *settingsCommand) setGlobalLocale(value string) error {
-	value = strings.TrimSpace(value)
-	switch value {
-	case i18n.LocaleSettingAuto, string(i18n.FallbackLocale), "ko-KR":
-	default:
-		return fmt.Errorf("unsupported locale setting: %s", value)
-	}
-	path, err := c.globalConfigPath()
+	value, err := saveCentralLocale(c.homeDir, c.lookupEnv, value)
 	if err != nil {
-		return err
-	}
-	if _, err := hooks.UpdateGlobalConfig(path, func(cfg *hooks.ProjectConfig) error {
-		cfg.UI.Locale = value
-		return nil
-	}); err != nil {
 		return err
 	}
 	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
