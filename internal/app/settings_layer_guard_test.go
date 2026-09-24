@@ -88,6 +88,10 @@ var settingsLayerGuardArgv = [][]string{
 
 	{"config", "providers"},
 	{"config", "providers", "--enable", "codex"},
+	{"config", "locale"},
+	{"config", "locale", "--set", "ko-KR"},
+	{"config", "agent-questions"},
+	{"config", "agent-questions", "--answering", "projmux", "--window", "unlimited"},
 
 	{"delete", "project", "alpha", "--dry-run"},
 	{"delete", "window", "w1", "-p", "alpha", "--dry-run"},

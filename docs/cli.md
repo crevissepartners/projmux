@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 203 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 205 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -63,7 +63,7 @@ projmux <command> [args...]
 | [`projmux agent`](#projmux-agent) | canonical | Manage Agent state, messages, waits, capabilities, integrations, and account usage |
 | [`projmux attention`](#projmux-attention) | canonical | View and manage live tmux pane attention state |
 | [`projmux attach`](#projmux-attach) | canonical | Enter a Project runtime from outside tmux |
-| [`projmux config`](#projmux-config) | canonical | Edit AI split-mode and enabled-provider settings; render or apply generated tmux configuration |
+| [`projmux config`](#projmux-config) | canonical | Edit AI split-mode, enabled-provider, locale, and agent-question settings; render or apply generated tmux configuration |
 | [`projmux create`](#projmux-create) | canonical | Create Projmux resources |
 | [`projmux delete`](#projmux-delete) | canonical | Delete Projmux resources with an explicit cascade plan |
 | [`projmux describe`](#projmux-describe) | canonical | Describe one Projmux resource |
@@ -1047,7 +1047,7 @@ projmux attach project <ref>
 
 ## `projmux config`
 
-Edit AI split-mode and enabled-provider settings; render or apply generated tmux configuration
+Edit AI split-mode, enabled-provider, locale, and agent-question settings; render or apply generated tmux configuration
 
 Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
@@ -1065,6 +1065,8 @@ Allowed effects:
 ```
 projmux config edit [--get|--set <mode>]
 projmux config providers [--enable <id>|--disable <id>]
+projmux config locale [--set <value>]
+projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]
 projmux config render standalone|app [--bin <path>]
 projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
 ```
@@ -1075,10 +1077,12 @@ Subcommands:
 | --- | --- |
 | [`projmux config edit`](#projmux-config-edit) | Edit the AI split-mode configuration |
 | [`projmux config providers`](#projmux-config-providers) | List AI providers as enabled or disabled; --enable or --disable changes one |
+| [`projmux config locale`](#projmux-config-locale) | Show the [ui] locale setting and its config.toml; --set stores a new one |
+| [`projmux config agent-questions`](#projmux-config-agent-questions) | Show how Claude agent questions are answered and how long they wait; --answering or --window changes them |
 | [`projmux config render`](#projmux-config-render) | Print a generated tmux config to stdout; writes nothing |
 | [`projmux config apply`](#projmux-config-apply) | Write the generated app tmux config and reload the live projmux server |
 
-Canonical spelling: `projmux config edit`, `projmux config providers`, `projmux config render`, `projmux config apply`
+Canonical spelling: `projmux config edit`, `projmux config providers`, `projmux config locale`, `projmux config agent-questions`, `projmux config render`, `projmux config apply`
 
 ### `projmux config edit`
 
@@ -1122,6 +1126,51 @@ Allowed effects:
 projmux config providers
 projmux config providers --enable <id>
 projmux config providers --disable <id>
+```
+
+### `projmux config locale`
+
+Show the [ui] locale setting and its config.toml; --set stores a new one
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config locale
+projmux config locale --set <value>
+```
+
+### `projmux config agent-questions`
+
+Show how Claude agent questions are answered and how long they wait; --answering or --window changes them
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config agent-questions
+projmux config agent-questions --answering <claude|projmux>
+projmux config agent-questions --window <seconds|unlimited>
 ```
 
 ### `projmux config render`

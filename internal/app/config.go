@@ -8,7 +8,7 @@ import (
 )
 
 // configSubcommands lists the public config-domain routes, in help order.
-var configSubcommands = []string{"edit", "providers", "render", "apply"}
+var configSubcommands = []string{"edit", "providers", "locale", "agent-questions", "render", "apply"}
 
 // configRenderArtifacts lists the two generated artifacts `config render` can
 // print, in help order.
@@ -37,6 +37,10 @@ var configRenderArtifacts = []string{"standalone", "app"}
 // `config providers` is the one route here that is not a forwarder: it lists
 // and changes the enabled-providers policy directly, through the same writer
 // the Settings "Enabled providers" toggle uses (see config_providers.go).
+// `config locale` and `config agent-questions` are not forwarders either: they
+// show and store the central `[ui] locale`, agent-question answering way, and
+// agent-question window through the central settings API the Settings rows
+// also call (see config_central_settings.go).
 //
 // The artifact is a positional token, not a flag. That is what keeps this node
 // the same dumb forwarder every other namespace in the tree is: dispatch reads
@@ -67,7 +71,8 @@ type configCommand struct {
 	ai   rawArgvCommand
 
 	// homeDir and lookupEnv locate the enabled-providers policy file for
-	// `config providers`. Nil falls back to the process environment.
+	// `config providers` and the central settings for `config locale` and
+	// `config agent-questions`. Nil falls back to the process environment.
 	homeDir   func() (string, error)
 	lookupEnv func(string) string
 }
@@ -87,6 +92,10 @@ func (c *configCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.ai, "config edit", "ai", []string{"settings"}, rest, stdout, stderr)
 	case "providers":
 		return c.runProviders(rest, stdout, stderr)
+	case "locale":
+		return c.runLocale(rest, stdout, stderr)
+	case "agent-questions":
+		return c.runAgentQuestions(rest, stdout, stderr)
 	case "render":
 		return c.runRender(rest, stdout, stderr)
 	case "apply":

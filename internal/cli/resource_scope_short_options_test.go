@@ -15,7 +15,7 @@ func TestResourceScopeHelpAdvertisesLongAndShortOptionsTogether(t *testing.T) {
 		if strings.Contains(usage, "--project") && !strings.Contains(usage, "-p <ref>") {
 			t.Errorf("%s usage advertises --project without -p: %q", spelling, usage)
 		}
-		if strings.Contains(usage, "--window") && !strings.Contains(usage, "projmux agent usage") && !strings.Contains(usage, "-w <ref>") {
+		if strings.Contains(usage, "--window") && !isNonResourceWindowUsage(usage) && !strings.Contains(usage, "-w <ref>") {
 			t.Errorf("%s usage advertises resource --window without -w: %q", spelling, usage)
 		}
 		if strings.Contains(usage, "--all-projects") && !strings.Contains(usage, "-A") {
@@ -52,6 +52,33 @@ func TestNonResourceWindowHelpDoesNotAcquireTheResourceAlias(t *testing.T) {
 	joined := strings.Join(route.Usage, "\n")
 	if !strings.Contains(joined, "--window <name>") || strings.Contains(joined, "[-w") || strings.Contains(joined, "| -w") {
 		t.Fatalf("agent usage help changed its non-resource Window filter: %q", joined)
+	}
+}
+
+// nonResourceWindowUsages are the routes whose --window is not the resource
+// scope flag: `agent usage` filters by Window name, and `config
+// agent-questions` sets the agent question wait window in seconds.
+var nonResourceWindowUsages = []string{"projmux agent usage", "projmux config agent-questions"}
+
+func isNonResourceWindowUsage(usage string) bool {
+	for _, prefix := range nonResourceWindowUsages {
+		if strings.Contains(usage, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestConfigAgentQuestionsWindowHelpDoesNotAcquireTheResourceAlias(t *testing.T) {
+	t.Parallel()
+
+	_, route, ok := Resolve([]string{"config", "agent-questions"})
+	if !ok {
+		t.Fatal("config agent-questions route is missing")
+	}
+	joined := strings.Join(route.Usage, "\n")
+	if !strings.Contains(joined, "--window <seconds|unlimited>") || strings.Contains(joined, "[-w") || strings.Contains(joined, "| -w") || strings.Contains(joined, " -w ") {
+		t.Fatalf("config agent-questions help changed its non-resource wait window: %q", joined)
 	}
 }
 

@@ -1008,19 +1008,27 @@ var routes = []Route{
 		// disabled-provider refusal names it. It shares the Settings toggle's
 		// writer, and like `edit` it rewrites a saved setting rather than any
 		// resource, so it declares the same unchanged effects.
+		//
+		// `locale` and `agent-questions` are the CLI doors onto the central
+		// settings every front shares: `[ui] locale`, and the way and window
+		// the Claude question hook reads. They show the current value bare and
+		// store through the same central writer the Settings rows use, so they
+		// too declare unchanged effects.
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "config",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 21,
-		Summary:        "Edit AI split-mode and enabled-provider settings; render or apply generated tmux configuration",
+		Summary:        "Edit AI split-mode, enabled-provider, locale, and agent-question settings; render or apply generated tmux configuration",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux config edit [--get|--set <mode>]",
 			"projmux config providers [--enable <id>|--disable <id>]",
+			"projmux config locale [--set <value>]",
+			"projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]",
 			"projmux config render standalone|app [--bin <path>]",
 			"projmux config apply [--bin <path>] [--config <path>] [--socket <name>]",
 		},
-		Canonical: []string{"config edit", "config providers", "config render", "config apply"},
+		Canonical: []string{"config edit", "config providers", "config locale", "config agent-questions", "config render", "config apply"},
 		Children: []Route{
 			{
 				Effects:    unchangedEffects(CardinalityUnchanged),
@@ -1042,6 +1050,31 @@ var routes = []Route{
 					"projmux config providers --disable <id>",
 				},
 				Canonical: []string{"config providers"},
+			},
+			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
+				Name:             "locale",
+				Invocation:       InvocationNatural,
+				Summary:          "Show the [ui] locale setting and its config.toml; --set stores a new one",
+				CanonicalSummary: "Show or change the [ui] locale setting",
+				Usage: []string{
+					"projmux config locale",
+					"projmux config locale --set <value>",
+				},
+				Canonical: []string{"config locale"},
+			},
+			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
+				Name:             "agent-questions",
+				Invocation:       InvocationNatural,
+				Summary:          "Show how Claude agent questions are answered and how long they wait; --answering or --window changes them",
+				CanonicalSummary: "Show or change how agent questions are answered and how long they wait",
+				Usage: []string{
+					"projmux config agent-questions",
+					"projmux config agent-questions --answering <claude|projmux>",
+					"projmux config agent-questions --window <seconds|unlimited>",
+				},
+				Canonical: []string{"config agent-questions"},
 			},
 			{
 				Effects:          unchangedEffects(CardinalityUnchanged),
