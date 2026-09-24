@@ -442,7 +442,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				nativeCtx, cancel := prepareNativeContext(ctx)
 				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, codexNativeCreateInput{
 					Workspace: workWorkspace, DeveloperInstructions: flags.personaLaunch.content,
-					Prompt: prompt, RequestKey: work.activation.Generation,
+					Policy: flags.profileLaunch.codexPolicy, Prompt: prompt, RequestKey: work.activation.Generation,
 				})
 				cancel()
 				switch {

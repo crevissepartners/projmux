@@ -1294,6 +1294,14 @@ rules are written as a Claude settings file,
 started with `--settings <that file>`. Each resume writes it again from the
 current profile.
 
+When a profile with `sandbox` or `approval` is applied to a Codex Agent, they
+are sent as the Codex thread's `sandbox` and `approvalPolicy` on
+`thread/start` and on every native `thread/resume`: `read-only`,
+`workspace-write`, and `full-access` become `read-only`, `workspace-write`, and
+`danger-full-access`; the approval values are sent as spelled. The thread's
+answer must report the same policy, or the create or resume is refused
+(`codex-thread-policy-mismatch`). `allow` and `deny` are not given to Codex.
+
 ## Setting Layers
 
 Settings live in two layers:

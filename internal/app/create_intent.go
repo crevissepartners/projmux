@@ -1055,8 +1055,18 @@ func (c *createCommand) openIntentAgent(
 	var title string
 	var launchArgv []string
 	var resumeLaunch agentResumeLaunch
+	var nativePolicy codexappserver.ThreadPolicy
 	if !plan.freshNativeCreate && !plan.nativeCatalogResume {
 		title, launchArgv, resumeLaunch, err = c.planAgentPaneLaunchWithResume(provider, workspace, flags)
+		if err != nil {
+			return intentAgentOpened{}, err
+		}
+	} else if plan.nativeCatalogResume {
+		// The inherited profile is re-read by name before the Agent exists,
+		// exactly as `agent resume` re-reads the one an Agent records: its
+		// current policy rides thread/resume, and resumeLaunch carries the
+		// digest withResumedProfileDigest records on the new Agent.
+		resumeLaunch, nativePolicy, err = c.codexResumeProfile(flags.resumeLaunchValues)
 		if err != nil {
 			return intentAgentOpened{}, err
 		}
@@ -1117,7 +1127,7 @@ func (c *createCommand) openIntentAgent(
 		nativeCtx, cancel := prepareNativeContext(ctx)
 		prepared, nativeErr := c.codexNative.Create(nativeCtx, plan.nativeRoute, codexNativeCreateInput{
 			Workspace: workspace, DeveloperInstructions: flags.personaLaunch.content,
-			Prompt: prompt, RequestKey: activation.Generation,
+			Policy: flags.profileLaunch.codexPolicy, Prompt: prompt, RequestKey: activation.Generation,
 		})
 		cancel()
 		switch {
@@ -1144,7 +1154,7 @@ func (c *createCommand) openIntentAgent(
 		}
 	} else if plan.nativeCatalogResume {
 		nativeCtx, cancel := prepareNativeContext(ctx)
-		prepared, nativeErr := c.codexNative.Resume(nativeCtx, plan.nativeRoute, workspace, flags.resumeConversation)
+		prepared, nativeErr := c.codexNative.Resume(nativeCtx, plan.nativeRoute, workspace, flags.resumeConversation, nativePolicy)
 		cancel()
 		switch {
 		case nativeErr == nil:

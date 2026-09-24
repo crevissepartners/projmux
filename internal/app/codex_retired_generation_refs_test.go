@@ -42,8 +42,8 @@ type retiredRefsNativeController struct {
 	resumes []fakeNativeResume
 }
 
-func (c *retiredRefsNativeController) Resume(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
-	c.resumes = append(c.resumes, fakeNativeResume{route: route, workspace: workspace, threadID: threadID})
+func (c *retiredRefsNativeController) Resume(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string, policy codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error) {
+	c.resumes = append(c.resumes, fakeNativeResume{route: route, workspace: workspace, threadID: threadID, policy: policy})
 	return codexappserver.ThreadBinding{ThreadID: threadID}, nil
 }
 

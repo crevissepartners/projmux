@@ -625,7 +625,7 @@ func settleCodexTurn(ctx context.Context, t *testing.T, workspace, threadID stri
 		t.Fatalf("attach to settle the created turn: %v", err)
 	}
 	defer client.Close()
-	if _, err := client.ResumeThread(ctx, threadID, workspace, nil); err != nil {
+	if _, err := client.ResumeThread(ctx, threadID, workspace, nil, codexappserver.ThreadPolicy{}); err != nil {
 		t.Fatalf("resume the created thread to settle its turn: %v", err)
 	}
 	deadline := time.Now().Add(2 * time.Minute)

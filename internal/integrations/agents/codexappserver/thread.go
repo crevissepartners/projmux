@@ -80,7 +80,7 @@ func StartDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots [
 		return ThreadBinding{}, unsupportedRootsError(
 			fmt.Errorf("%w: %w: additional writable roots", ErrUnsupported, ErrExperimentalRequired))
 	}
-	binding, err := client.StartThread(ctx, cwd, requestedRoots, "")
+	binding, err := client.StartThread(ctx, cwd, requestedRoots, "", ThreadPolicy{})
 	if err != nil {
 		if negotiate && errors.Is(err, ErrUnsupported) {
 			return ThreadBinding{}, unsupportedRootsError(err)
@@ -126,7 +126,7 @@ func ResumeDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots 
 		return ThreadBinding{}, err
 	}
 	defer client.Close()
-	binding, err := client.ResumeThread(ctx, threadID, cwd, roots)
+	binding, err := client.ResumeThread(ctx, threadID, cwd, roots, ThreadPolicy{})
 	if err != nil {
 		return ThreadBinding{}, &ThreadActionError{Reason: "thread-resume-failed", SafeFallback: true, err: err}
 	}
@@ -172,7 +172,17 @@ func openReadyThreadClient(ctx context.Context, projmuxVersion string, experimen
 // It is the only moment it can be given: upstream writes it into the thread as
 // a `developer` message here and every later resume replays that message, so a
 // thread started with none never sends the field at all.
-func (c *Client) StartThread(ctx context.Context, cwd string, roots []string, developerInstructions string) (ThreadBinding, error) {
+//
+// policy is the sandbox and approval the thread is started with. A value
+// outside the request vocabulary is refused before the wire. Each requested
+// field is then held against the effective policy the answer reports, and a
+// difference is a *PolicyMismatchError: the thread exists, but it is not the
+// thread that was asked for, and no caller may launch it as if it were. A zero
+// policy sends neither key and checks nothing.
+func (c *Client) StartThread(ctx context.Context, cwd string, roots []string, developerInstructions string, policy ThreadPolicy) (ThreadBinding, error) {
+	if err := policy.validate(); err != nil {
+		return ThreadBinding{}, err
+	}
 	workspaceRoots, err := c.negotiatedRoots(roots)
 	if err != nil {
 		return ThreadBinding{}, err
@@ -181,12 +191,16 @@ func (c *Client) StartThread(ctx context.Context, cwd string, roots []string, de
 	if err := c.Request(ctx, methodThreadStart, threadStartParams{
 		CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots,
 		DeveloperInstructions: developerInstructions,
+		Sandbox:               policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy,
 	}, &result); err != nil {
 		return ThreadBinding{}, err
 	}
 	threadID := strings.TrimSpace(result.Thread.ID)
 	if threadID == "" {
 		return ThreadBinding{}, fmt.Errorf("%w: thread/start returned no thread id", ErrProtocol)
+	}
+	if err := checkThreadPolicy(methodThreadStart, policy, result); err != nil {
+		return ThreadBinding{}, err
 	}
 	return ThreadBinding{ThreadID: threadID}, nil
 }
@@ -199,10 +213,21 @@ func (c *Client) StartThread(ctx context.Context, cwd string, roots []string, de
 // on a connection whose initialize negotiated that capability. A connection
 // that did not negotiate it is refused before the wire with the same typed
 // unsupported error upstream would have produced after the round trip.
-func (c *Client) ResumeThread(ctx context.Context, threadID, cwd string, roots []string) (ThreadBinding, error) {
+//
+// policy is re-sent on the request exactly as StartThread sends it. Upstream
+// applies it only when this resume loads the thread; a thread that is already
+// loaded keeps the policy it runs with and ignores the fields. So the answer
+// is checked the same way StartThread checks it, and a requested field the
+// thread does not run with is a *PolicyMismatchError. The durable-resume
+// barrier, the bootstrap subscription, and the default resume all pass a zero
+// policy, so their requests stay byte-identical.
+func (c *Client) ResumeThread(ctx context.Context, threadID, cwd string, roots []string, policy ThreadPolicy) (ThreadBinding, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return ThreadBinding{}, fmt.Errorf("%w: resume thread is empty", ErrProtocol)
+	}
+	if err := policy.validate(); err != nil {
+		return ThreadBinding{}, err
 	}
 	if !c.ExperimentalAPI() {
 		return ThreadBinding{}, fmt.Errorf("%w: %w: thread/resume excludeTurns", ErrUnsupported, ErrExperimentalRequired)
@@ -214,12 +239,16 @@ func (c *Client) ResumeThread(ctx context.Context, threadID, cwd string, roots [
 	var result threadResult
 	if err := c.Request(ctx, methodThreadResume, threadResumeParams{
 		ThreadID: threadID, CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots, ExcludeTurns: true,
+		Sandbox: policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy,
 	}, &result); err != nil {
 		return ThreadBinding{}, err
 	}
 	returned := strings.TrimSpace(result.Thread.ID)
 	if returned == "" || returned != threadID {
 		return ThreadBinding{}, fmt.Errorf("%w: thread/resume returned a different thread", ErrProtocol)
+	}
+	if err := checkThreadPolicy(methodThreadResume, policy, result); err != nil {
+		return ThreadBinding{}, err
 	}
 	return ThreadBinding{ThreadID: returned}, nil
 }

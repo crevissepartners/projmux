@@ -1902,11 +1902,21 @@ An explicit flag wins over the profile item it overlaps: `--instructions` or
 Codex lane rule), and its effort is recorded as `projmux.io/effort`. On
 Claude, `allow` and `deny` are passed as `--settings <snapshot>`. Claude does
 not get `sandbox` (`claude-sandbox-bash-only`: its sandbox confines only Bash)
-or `approval` (`claude-no-matching-permission-mode`). Any other provider
-refuses a profile that sets a permission
-(`profile-permissions-unsupported-provider`) and does not take `model` or
-`effort` (`provider-option-unsupported`). The reply-only activation refuses a
-profile (`profile-lane-unsupported`).
+or `approval` (`claude-no-matching-permission-mode`).
+
+Codex applies `sandbox` and `approval` only on a create with a prompt, the
+native lane that starts its own app-server thread: they are sent on
+`thread/start` as the thread's `sandbox` (`full-access` is sent as
+`danger-full-access`) and `approvalPolicy`, and the thread's answer must report
+exactly that policy. A thread that reports another one refuses the create
+(`codex-thread-policy-mismatch`); nothing falls back to a launch without it.
+Codex does not get `allow` or `deny` (`codex-command-rules-unsupported`), nor
+`model` or `effort` (`provider-option-unsupported`). A Codex create without a
+prompt, or with `--interactive-only`, refuses a profile that sets any
+permission (`profile-permissions-unsupported-provider`). Any other provider
+refuses such a profile the same way and does not take `model` or `effort`
+(`provider-option-unsupported`). The reply-only activation refuses a profile
+(`profile-lane-unsupported`).
 
 The Agent records `projmux.io/profile` and `projmux.io/profile-digest`. The
 result names the profile and each item that was not applied, with its reason:
@@ -1925,6 +1935,18 @@ the resume (`profile-resume-unavailable`, naming the underlying reason); there i
 resume without its permissions. The model is still not passed again. A resume
 picker selection inherits the profile when every Agent recording the
 conversation records the same one, and refuses when they disagree.
+
+A native Codex resume of such an Agent -- `agent resume`, and a resume picker
+selection of an app-server thread -- re-reads the profile by name the same
+way, sends its current `sandbox` and `approval` on `thread/resume`, and
+records the new digest. A thread that is already loaded keeps the policy it
+runs with, so a resume whose answer reports another policy is refused
+(`codex-thread-policy-mismatch`) and nothing is committed. Continue/topology
+replay and a resume picker rollout row resume Codex as `codex resume <id>`,
+which cannot carry a policy: when the Agent's profile now sets any permission
+they refuse (`profile-resume-unavailable`, `profile-lane-unsupported`), and a
+profile without permissions resumes as before. An Agent without a profile
+sends exactly the request it sent before.
 
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`

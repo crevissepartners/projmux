@@ -44,7 +44,7 @@ func (c *Client) BootstrapThread(ctx context.Context, threadID, cwd string, root
 	if threadID == "" {
 		return ThreadSnapshot{}, fmt.Errorf("%w: bootstrap requires thread id", ErrProtocol)
 	}
-	binding, err := c.ResumeThread(ctx, threadID, cwd, roots)
+	binding, err := c.ResumeThread(ctx, threadID, cwd, roots, ThreadPolicy{})
 	if err != nil {
 		return ThreadSnapshot{}, err
 	}

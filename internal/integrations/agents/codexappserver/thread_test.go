@@ -317,7 +317,7 @@ func TestNativeCreateSendsOnePromptAndReturnsExactThreadTurn(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	binding, err := client.StartThread(ctx, "/work/project", nil, "")
+	binding, err := client.StartThread(ctx, "/work/project", nil, "", ThreadPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestNativeResumeUsesStoredThreadAndCreatesZeroThreads(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	binding, err := client.ResumeThread(ctx, "thread-stored", "/work/project", nil)
+	binding, err := client.ResumeThread(ctx, "thread-stored", "/work/project", nil, ThreadPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestNativeResumeRefusesAnUnnegotiatedConnectionBeforeTheWire(t *testing.T) 
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err := client.ResumeThread(ctx, "thread-stored", "/work/project", nil)
+	_, err := client.ResumeThread(ctx, "thread-stored", "/work/project", nil, ThreadPolicy{})
 	if !errors.Is(err, ErrExperimentalRequired) || !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("unnegotiated resume = %v, want a typed unsupported refusal", err)
 	}
