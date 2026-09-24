@@ -532,6 +532,53 @@ Termination evidence transport:
   receipt is the post-delete diagnostic: source, classification, observed time,
   Pane/Agent uid, generation, and wait status only. No command, pane content,
   prompt, transcript, or provider payload is recorded.
+- Deletion records: every explicit deletion that commits its Registry
+  transaction appends exactly one JSON line to
+  `<state>/deletion-records.jsonl`, next to `termination-receipts.jsonl` and the
+  Registry it changed (`${XDG_STATE_HOME:-$HOME/.local/state}/projmux` by default). The writers are
+  `delete window|pane|agent`, `unregister project` and its deprecated alias
+  `delete project`, and `prune agent|project --yes`. The line is
+  `{"schemaVersion":1,"at","operation","operationID","via","actor":{"agentUID","paneUID","basis"},"targets":[{"kind","uid","name"}],"affected":[{"kind","uid","name","action"}]}`,
+  where `at` is RFC 3339 UTC; `operation` is one of `delete-window`,
+  `delete-pane`, `delete-agent`, `unregister-project`, `delete-project`,
+  `prune-agent`, `prune-project`; `operationID` is the delete's intentional
+  termination receipt id, or one minted the same way for unregister and prune;
+  and `via` is `cli`, `ui` (the generated Pane and Window delete keys), or
+  `prune`. `targets` are what the operator named; `affected` is every
+  Project, Window, Agent, and Pane present before the commit and absent after
+  it (targets included), ordered by kind and then uid, each with action
+  `deleted`.
+- The actor is the same pane-chain judgment creator provenance uses, run
+  against the pre-commit Registry inside the delete's own transaction, so a
+  delete that removes its own Agent still names it. `basis` is `pane-chain`
+  when it succeeds, creation's skip token otherwise (`anchor-invalid`,
+  `anchor-pane-unregistered`, `anchor-pane-ambiguous`, `caller-pane-not-agent`,
+  `pane-ref-mismatch`, `anchor-server-unproven`, `anchor-query-failed`,
+  `anchor-server-mismatch`, `anchor-pane-mismatch`,
+  `process-chain-unobservable`, `not-pane-descendant`), and empty when there
+  was no ambient Pane. The server step is the delete's own: one
+  `display-message -t %N` through the route the delete addresses must answer
+  with the `$TMUX` socket and server pid, the same `%N`, and the Registry
+  Pane's mirrored uid. `prune` has no socket flags and judges on the inherited
+  `$TMUX`; `unregister project` judges on its `--socket`/`--socket-path` or
+  `$TMUX`. A `ui` deletion is never judged and records an empty actor.
+- **An empty actor does not mean a human ran the deletion.** The record is
+  provenance, not authentication.
+- The file is appended with one framed `O_APPEND` write and `fsync`, like the
+  termination journal, and is never truncated, rotated, or read back by
+  projmux. It is written after the commit and before the result is printed or
+  a self-targeted kill is queued. A record that cannot be written never fails
+  or changes the delete: stdout and the exit code are unchanged and stderr gets
+  exactly one `deletion not recorded: <token>` line, where token is
+  `state-dir-unavailable`, `append-failed`, or `operation-id-unavailable`.
+  `--dry-run`, a refusal, a declined confirmation, and a failed commit write
+  nothing.
+- Non-guarantees: automatic lifecycle teardown (exit reconciliation), internal
+  row cleanup (resume handoff, topology replay, initial shell retirement,
+  rollback, Project fresh start), and the supervisor's process-exit path write
+  no deletion record. A delete issued by a Codex Agent's command runs under the
+  app-server rather than below the Pane's process and records
+  `not-pane-descendant`. There is no retention policy and no reader CLI.
 - The supervisor resolves its state paths from the pane's own inherited
   environment, which is the tmux **server's** environment rather than the
   environment of the CLI call that created the pane. That is the correct

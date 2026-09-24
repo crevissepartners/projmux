@@ -834,6 +834,8 @@ func deleteExactPaneThroughCommand(command *deleteCommand, lookup activeTargetLo
 	anchorPaneID string, stdout, stderr io.Writer,
 ) error {
 	command.routeAnchor = exactTmuxHandle(strings.TrimSpace(anchorPaneID), "%")
+	// A human pressed the key: the deletion record says so and judges no actor.
+	command.via = deletionViaUI
 	registry, err := command.store.load()
 	if err != nil {
 		return MapMetadataError(err)
@@ -952,6 +954,8 @@ func (c *tmuxCommand) runDeleteConfirmIntent(args []string, stdout, stderr io.Wr
 // canonical `delete window --yes` on that uid.
 func deleteWindowThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writer) error {
 	command := newDeleteCommand()
+	// A human pressed the key: the deletion record says so and judges no actor.
+	command.via = deletionViaUI
 	registry, err := command.store.load()
 	if err != nil {
 		return MapMetadataError(err)

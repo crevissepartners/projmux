@@ -31,10 +31,12 @@ type pruneProjectCandidate struct {
 type pruneProjectCommand struct {
 	store *resourceStore
 	now   func() time.Time
+	// actor holds the deletion record's pane-chain actor seams.
+	actor pruneDeletionActor
 }
 
 func newPruneProjectCommand() *pruneProjectCommand {
-	return &pruneProjectCommand{store: newResourceStore(), now: time.Now}
+	return &pruneProjectCommand{store: newResourceStore(), now: time.Now, actor: newPruneDeletionActor()}
 }
 
 func (c *pruneProjectCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -99,6 +101,8 @@ func (c *pruneProjectCommand) Run(args []string, stdout, stderr io.Writer) error
 	for _, candidate := range candidates {
 		uids = append(uids, candidate.UID)
 	}
+	var actor DeletionActor
+	var affected []DeletionAffected
 	if err := c.store.mutate(coremetadata.KindProject, uids,
 		func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 			// Re-observe and re-select inside the lock: a root that came back
@@ -116,15 +120,23 @@ func (c *pruneProjectCommand) Run(args []string, stdout, stderr io.Writer) error
 					return fmt.Errorf("%s: project %q no longer matches --missing --older-than; nothing was deleted", spelling, uid)
 				}
 			}
+			actor = c.actor.observe(working)
+			before := working.Clone()
 			for _, uid := range uids {
 				if err := mutator.DeleteProject(working, uid); err != nil {
 					return err
 				}
 			}
+			affected = deletionAffectedBetween(before, *working)
 			return nil
 		}); err != nil {
 		return err
 	}
+	targets := make([]DeletionTarget, 0, len(candidates))
+	for _, candidate := range candidates {
+		targets = append(targets, DeletionTarget{Kind: string(coremetadata.KindProject), UID: candidate.UID, Name: candidate.Name})
+	}
+	c.actor.record(c.store, deletionOperationPruneProject, actor, targets, affected, stderr)
 	return writePruneProjectPlan(stdout, spelling, candidates, false)
 }
 

@@ -38,6 +38,11 @@ type resourceStore struct {
 	update           func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
 	updateConvergent func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
 	mutator          func() coremetadata.Mutator
+	// stateDir is the state root the Registry above lives under. Explicit
+	// deletions append their deletion record there, next to the Registry they
+	// changed. A store with no state root (an in-memory Registry) has nowhere
+	// such a record belongs, so nil records nothing.
+	stateDir func() (string, error)
 }
 
 func newResourceStore() *resourceStore {
@@ -46,6 +51,7 @@ func newResourceStore() *resourceStore {
 		snapshot: snapshotResourceRegistry,
 		update:   updateResourceRegistry,
 		mutator:  intmetadata.DefaultMutator,
+		stateDir: defaultResourceStateDir,
 		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
 			paths, err := config.DefaultPathsFromEnv()
 			if err != nil {
@@ -91,6 +97,17 @@ func (s *resourceStore) converge(apply func(*coremetadata.Registry, coremetadata
 		return nil
 	})
 	return changed, MapMetadataError(err)
+}
+
+// defaultResourceStateDir is the state root newResourceStore's Registry is
+// resolved under: the same DefaultPathsFromEnv every default load and update
+// above resolves.
+func defaultResourceStateDir() (string, error) {
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return "", fmt.Errorf("resolve projmux state paths: %w", err)
+	}
+	return paths.StateDir, nil
 }
 
 // updateResourceRegistry applies one transaction to the resource registry.
