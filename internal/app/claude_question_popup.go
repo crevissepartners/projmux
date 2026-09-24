@@ -422,7 +422,7 @@ func askClaudeQuestion(runner intpicker.Runner, text claudeQuestionText, index, 
 			items = append(items, intpicker.Item{Label: text.value(keyClaudeQuestionDone, "Done"), Value: claudeQuestionDoneValue})
 		}
 		items = append(items, intpicker.Item{Label: text.value(keyClaudeQuestionOther, "Other / type an answer"), Value: claudeQuestionOtherValue})
-		header := terminaltext.EscapeControls(question.Question)
+		header := claudeQuestionHeaderText(question.Question)
 		if notice != "" {
 			header += "\n" + notice
 		}
@@ -432,6 +432,7 @@ func askClaudeQuestion(runner intpicker.Runner, text claudeQuestionText, index, 
 			Title:           title,
 			Header:          header,
 			Footer:          footer,
+			WrapHeader:      true,
 			DisableSearch:   true,
 			InitialIndex:    cursor,
 			InitialIndexSet: true,
@@ -485,7 +486,8 @@ func askClaudeQuestionText(runner intpicker.Runner, text claudeQuestionText, tit
 	result, err := runner.Run(intpicker.Options{
 		UI:          "claude-question-text",
 		Title:       title,
-		Header:      terminaltext.EscapeControls(question.Question),
+		Header:      claudeQuestionHeaderText(question.Question),
+		WrapHeader:  true,
 		Prompt:      text.value(keyClaudeQuestionTextPrompt, "Answer > "),
 		Footer:      text.value(keyClaudeQuestionTextFooter, "Enter: use this answer  Esc: back to the options"),
 		AcceptQuery: true,
@@ -498,4 +500,15 @@ func askClaudeQuestionText(runner intpicker.Runner, text claudeQuestionText, tit
 		return "", false, nil
 	}
 	return answer, true, nil
+}
+
+// claudeQuestionHeaderText escapes control characters in a question for the
+// picker header but keeps its line breaks, so a multi-line question wraps as
+// separate paragraphs instead of showing a literal \n.
+func claudeQuestionHeaderText(question string) string {
+	lines := strings.Split(strings.ReplaceAll(question, "\r\n", "\n"), "\n")
+	for index, line := range lines {
+		lines[index] = terminaltext.EscapeControls(line)
+	}
+	return strings.Join(lines, "\n")
 }

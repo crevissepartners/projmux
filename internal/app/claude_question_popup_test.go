@@ -222,6 +222,24 @@ func TestCollectClaudeQuestionSelectionsAssemblesEveryAnswerShape(t *testing.T) 
 		}
 	})
 
+	t.Run("the question wraps in both pickers", func(t *testing.T) {
+		t.Parallel()
+		long := agentquestion.Question{Question: "Which branch should the release train use?\nThe freeze starts \x1b[31mtomorrow.", Options: []agentquestion.Option{{Label: "main"}}}
+		runner := &scriptedQuestionPicker{steps: steps(pickRow("Other"), typeAnswer("feature"))}
+		if _, ok, err := collectClaudeQuestionSelections(runner, claudeQuestionText{locale: i18n.FallbackLocale}, []agentquestion.Question{long}); err != nil || !ok {
+			t.Fatalf("ok=%v err=%v", ok, err)
+		}
+		want := "Which branch should the release train use?\nThe freeze starts \\x1b[31mtomorrow."
+		for index, run := range runner.runs {
+			if !run.WrapHeader || run.Header != want {
+				t.Fatalf("run %d (%s) WrapHeader=%v header=%q, want wrapped %q", index, run.UI, run.WrapHeader, run.Header, want)
+			}
+		}
+		if len(runner.runs) != 2 || runner.runs[1].UI != "claude-question-text" {
+			t.Fatalf("runs = %d, want the question picker and the free-text picker", len(runner.runs))
+		}
+	})
+
 	t.Run("a picker error ends the set", func(t *testing.T) {
 		t.Parallel()
 		failing := &scriptedQuestionPicker{steps: steps(func(intpicker.Options) (intpicker.Result, error) {

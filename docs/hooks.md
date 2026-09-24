@@ -752,6 +752,12 @@ client is viewing the Pane the hook keeps waiting and looks again about once a
 second, and opens the popup when a client starts viewing it. Nothing is drawn
 on Claude Code's own terminal.
 
+A long question wraps inside the popup instead of being cut, and a line break
+in the question starts a new line. The popup keeps its size, 80% × 70% of the
+client. On a very small client the question is shortened with `…` so the
+options stay reachable; the full text is available from
+`projmux agent question list`.
+
 Pressing Esc in the popup gives the question back: the record is closed and
 Claude Code shows its own prompt. So does a popup that cannot be opened or
 that ends without answering. Pressing Esc in Claude Code itself cancels the

@@ -1591,6 +1591,135 @@ func TestNativeInteractiveSeparatesSearchHeaderFromList(t *testing.T) {
 	}
 }
 
+func nativeWrapHeaderTestOptions(header string) Options {
+	items := []Item{{Label: "alpha", Value: "a"}, {Label: "bravo", Value: "b"}, {Label: "charlie", Value: "c"}, {Label: "delta", Value: "d"}}
+	return Options{
+		UI: "claude-question", Title: "Claude question 1/1", Header: header, Items: items,
+		Footer: "Enter: choose  Esc: give the question back to Claude", DisableSearch: true, WrapHeader: true,
+	}
+}
+
+func nativeFrameLines(frame string) []string {
+	lines := strings.Split(strings.TrimRight(stripANSISequences(frame), "\r\n"), "\n")
+	for index, line := range lines {
+		lines[index] = strings.TrimRight(line, "\r")
+	}
+	return lines
+}
+
+func TestNativeWrapHeaderShowsWholeQuestionWithinWidth(t *testing.T) {
+	t.Parallel()
+	english := "Which deployment strategy should we use for the new billing service rollout given that the database migration must finish first and the old workers still read the legacy queue?"
+	korean := "새 결제 서비스를 배포할 때 데이터베이스 마이그레이션이 먼저 끝나야 하고 기존 워커가 아직 예전 큐를 읽고 있다면 어떤 배포 전략을 써야 할까요?"
+	for _, header := range []string{english, korean} {
+		for _, cols := range []int{100, 30} {
+			t.Run(fmt.Sprintf("%d-%s", cols, string([]rune(header)[:3])), func(t *testing.T) {
+				t.Parallel()
+				options := nativeWrapHeaderTestOptions(header)
+				layout := nativeLayout{Rows: 30, Cols: cols}
+				content := nativeContentLayoutForOptions(layout, options)
+				for _, line := range nativeWrappedHeaderLines(options, content) {
+					if width := projmuxpicker.VisibleLen(line); width > content.Cols {
+						t.Fatalf("header row %q is %d cells, want at most %d", line, width, content.Cols)
+					}
+				}
+				lines := nativeFrameLines(nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, layout))
+				if len(lines) != layout.Rows {
+					t.Fatalf("frame lines = %d, want %d", len(lines), layout.Rows)
+				}
+				for _, line := range lines {
+					if width := projmuxpicker.VisibleLen(line); width > cols {
+						t.Fatalf("frame line %q is %d cells, want at most %d", line, width, cols)
+					}
+				}
+				text := strings.Join(lines, " ")
+				for word := range strings.FieldsSeq(header) {
+					if !strings.Contains(text, word) {
+						t.Fatalf("wrapped frame lost word %q: %q", word, text)
+					}
+				}
+				if strings.Contains(text, "…") {
+					t.Fatalf("header was capped with room to spare: %q", text)
+				}
+				for _, item := range options.Items {
+					if !strings.Contains(text, item.Label) {
+						t.Fatalf("wrapped frame lost item %q: %q", item.Label, text)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestNativeWrapHeaderKeepsParagraphs(t *testing.T) {
+	t.Parallel()
+	got := nativeWrapText("first line\n\nChoose at least one option before Done.", 20)
+	want := []string{"first line", "", "Choose at least one", "option before Done."}
+	if !slices.Equal(got, want) {
+		t.Fatalf("nativeWrapText() = %q, want %q", got, want)
+	}
+	if got := nativeWrapText("abcdefghijklmnopqrstuvwxyz", 10); !slices.Equal(got, []string{"abcdefghij", "klmnopqrst", "uvwxyz"}) {
+		t.Fatalf("nativeWrapText(long word) = %q", got)
+	}
+	if got := nativeWrapText("가나다라마바사", 6); !slices.Equal(got, []string{"가나다", "라마바", "사"}) {
+		t.Fatalf("nativeWrapText(wide word) = %q", got)
+	}
+}
+
+func TestNativeWrapHeaderCapKeepsListRows(t *testing.T) {
+	t.Parallel()
+	header := strings.Repeat("Should the rollout wait for the migration before switching traffic? ", 8)
+	options := nativeWrapHeaderTestOptions(header)
+	layout := nativeLayout{Rows: 14, Cols: 30}
+	content := nativeContentLayoutForOptions(layout, options)
+	headerLines := nativeWrappedHeaderLines(options, content)
+	if last := headerLines[len(headerLines)-1]; !strings.HasSuffix(last, "…") {
+		t.Fatalf("capped header last row = %q, want trailing …", last)
+	}
+	if got := nativeListLimit(options, content, "", 0, false); got < nativeWrapHeaderMinListRows {
+		t.Fatalf("list limit = %d under a capped header, want at least %d", got, nativeWrapHeaderMinListRows)
+	}
+	text := strings.Join(nativeFrameLines(nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, layout)), "\n")
+	if !strings.Contains(text, "…") || !strings.Contains(text, "alpha") || !strings.Contains(text, "charlie") {
+		t.Fatalf("capped frame = %q, want … and the first list rows", text)
+	}
+	// The last option stays reachable by moving the cursor onto it.
+	text = strings.Join(nativeFrameLines(nativeInteractiveFrame(options, options.Items, "", 0, 3, 0, layout)), "\n")
+	if !strings.Contains(text, "delta") {
+		t.Fatalf("frame with cursor on the last option = %q, want delta visible", text)
+	}
+}
+
+func TestNativeWrapHeaderMouseSelectsItemBelowWrappedHeader(t *testing.T) {
+	t.Parallel()
+	options := nativeWrapHeaderTestOptions(strings.Repeat("Which option fits this long wrapped question best? ", 3))
+	layout := nativeLayout{Rows: 24, Cols: 30}
+	lines := nativeFrameLines(nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, layout))
+	row := slices.IndexFunc(lines, func(line string) bool { return strings.Contains(line, "charlie") })
+	if row < 0 {
+		t.Fatalf("frame has no charlie row: %q", lines)
+	}
+	if got, ok := nativeMouseItemIndex(options, options.Items, 0, layout, 4, row+1); !ok || got != 2 {
+		t.Fatalf("mouse on charlie row %d = (%d, %v), want (2, true)", row+1, got, ok)
+	}
+}
+
+func TestNativeHeaderWithoutWrapStaysOneLine(t *testing.T) {
+	t.Parallel()
+	header := "Which deployment strategy should we use for the new billing service rollout given the migration?"
+	options := nativeWrapHeaderTestOptions(header)
+	options.WrapHeader = false
+	layout := nativeLayout{Rows: 24, Cols: 30}
+	lines := nativeFrameLines(nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, layout))
+	text := strings.Join(lines, "\n")
+	if strings.Contains(text, "migration") || !strings.Contains(text, "Which") {
+		t.Fatalf("unwrapped header frame = %q, want one truncated header row", text)
+	}
+	if got, want := nativeChromeLineCountForLayout(options, nativeContentLayoutForOptions(layout, options)), nativeChromeLineCount(options); got != want {
+		t.Fatalf("chrome lines without WrapHeader = %d, want %d", got, want)
+	}
+}
+
 func TestNativeInteractiveKoreanSearchEmptyAndFooterFitWidth(t *testing.T) {
 	t.Setenv("LANG", "ko_KR.UTF-8")
 
