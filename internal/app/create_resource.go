@@ -106,6 +106,7 @@ type resourceCreateFlags struct {
 	// developer instructions; either way the name and digest are recorded as
 	// Agent annotations and the content never reaches argv.
 	persona       string
+	personaOption string
 	personaLaunch personaLaunch
 	// resumeConversation is set by the Projmux split UI's resume selection and by
 	// nothing else. It is deliberately not a parsed flag: no public spelling of
@@ -399,6 +400,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	var legacyPersona string
 	fs.Var(&out.projects, "project", "at-most-one Project scope: <name> or uid:<uid>; defaults to the active tmux runtime's managed Project")
 	fs.Var(&out.projects, "p", "at-most-one Project scope: <name> or uid:<uid> (alias of --project)")
 	if shape.initialProvider {
@@ -414,7 +416,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			"codex only: launch a plain interactive CLI Agent with no native thread binding")
 		fs.StringVar(&out.model, "model", "", "claude only: model alias or full name the new session runs")
 		fs.StringVar(&out.effort, "effort", "", "claude only: effort level: "+strings.Join(claudeEffortLevels, "|"))
-		fs.StringVar(&out.persona, "persona", "", "stored persona the new session starts with; claude always, codex only with a prompt; manage personas with projmux persona")
+		fs.StringVar(&out.persona, "instructions", "", "stored instructions the new session starts with; claude always, codex only with a prompt; manage with projmux instructions")
+		fs.StringVar(&legacyPersona, "persona", "", "alias of --instructions")
 	}
 	if pane {
 		fs.Var(&out.windows, "window", "repeatable Window selector: <name> or uid:<uid>")
@@ -443,6 +446,14 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	}
 	if fs.NArg() != 0 {
 		return resourceCreateFlags{}, usageError(fmt.Sprintf("%s does not accept positional arguments; got %q", spelling, fs.Arg(0)))
+	}
+	if out.persona != "" && legacyPersona != "" {
+		return resourceCreateFlags{}, usageError(spelling + " accepts only one of --instructions and --persona")
+	}
+	if legacyPersona != "" {
+		out.persona, out.personaOption = legacyPersona, "persona"
+	} else if out.persona != "" {
+		out.personaOption = "instructions"
 	}
 	cwdFromSet := false
 	fs.Visit(func(f *flag.Flag) {

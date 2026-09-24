@@ -101,8 +101,8 @@ type agentPersonaRequest struct {
 // keeps the new annotations and the run goes on to the resume, with a warning.
 // When liveness cannot be observed the previous annotations are restored and
 // the command to re-run is printed.
-func (c *agentCommand) runPersona(args []string, stdout, stderr io.Writer) error {
-	request, err := parseAgentPersonaArgs(args, stderr)
+func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.Writer) error {
+	request, err := parseAgentPersonaArgs(args, noun, stderr)
 	if err != nil {
 		return err
 	}
@@ -130,6 +130,9 @@ func (c *agentCommand) runPersona(args []string, stdout, stderr io.Writer) error
 		provider = coremetadata.NormalizeProvider(target.Status.SessionRef.Provider)
 	}
 	if provider != aiModeClaude {
+		if noun == "instructions" {
+			return refuse(persona.ReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; named instructions apply only to --provider %s", target.Spec.Provider, aiModeClaude))
+		}
 		return refuse(persona.ReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; a persona applies only to --provider %s", target.Spec.Provider, aiModeClaude))
 	}
 	if target.Status.SessionRef.Empty() || strings.TrimSpace(target.Status.SessionRef.ConversationID()) == "" {
@@ -137,6 +140,10 @@ func (c *agentCommand) runPersona(args []string, stdout, stderr io.Writer) error
 	}
 	running := target.Status.Phase == coremetadata.PhaseRunning
 	if !running && !slices.Contains(resumableAgentPhases, target.Status.Phase) {
+		if noun == "instructions" {
+			return refuse(personaReasonNoConversation, fmt.Sprintf("is %s; instructions are attached only to a %s, %s, or %s Agent",
+				target.Status.Phase, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
+		}
 		return refuse(personaReasonNoConversation, fmt.Sprintf("is %s; a persona is attached only to a %s, %s, or %s Agent",
 			target.Status.Phase, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
 	}
@@ -264,7 +271,7 @@ func (c *agentCommand) runPersona(args []string, stdout, stderr io.Writer) error
 		}
 	}
 	if err := c.resumePersonaAgent(request.spelling, target.Metadata.UID, forward, stderr); err != nil {
-		fmt.Fprintf(stderr, "projmux: agent/%s records %s but did not resume: %v\n", target.Metadata.Name, describePersonaAnnotations(want), err)
+		fmt.Fprintf(stderr, "projmux: agent/%s records %s but did not resume: %v\n", target.Metadata.Name, describePersonaAnnotations(want, noun), err)
 		fmt.Fprintf(stderr, "projmux: recover with: %s\n", personaRecoveryCommand(registry, target))
 		return fmt.Errorf("%s: agent/%s is %s with its new persona annotations and needs `agent resume`: %w",
 			request.spelling, target.Metadata.Name, coremetadata.PhaseOffline, err)
@@ -284,17 +291,17 @@ func (c *agentCommand) runPersona(args []string, stdout, stderr io.Writer) error
 // parseAgentPersonaArgs parses `attach <agent-ref> <persona>` and
 // `detach <agent-ref>` with their flags. The Agent reference is required:
 // this is a restart command, so it never falls back to the active Pane.
-func parseAgentPersonaArgs(args []string, stderr io.Writer) (agentPersonaRequest, error) {
+func parseAgentPersonaArgs(args []string, noun string, stderr io.Writer) (agentPersonaRequest, error) {
 	if len(args) == 0 || (args[0] != "attach" && args[0] != "detach") {
-		return agentPersonaRequest{}, usageError("agent persona requires attach or detach")
+		return agentPersonaRequest{}, usageError("agent " + noun + " requires attach or detach")
 	}
-	request := agentPersonaRequest{action: args[0], spelling: "agent persona " + args[0]}
+	request := agentPersonaRequest{action: args[0], spelling: "agent " + noun + " " + args[0]}
 	fs := flag.NewFlagSet(request.spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	request.flags = resourceQueryFlags{kind: coremetadata.KindAgent}
 	request.flags.register(fs)
 	fs.BoolVar(&request.yes, "yes", false, "restart the Agent even when its interaction shows a turn in progress or unknown")
-	fs.BoolVar(&request.dryRun, "dry-run", false, "report the target, its interaction, and the persona change without changing anything")
+	fs.BoolVar(&request.dryRun, "dry-run", false, "report the target, its interaction, and the "+noun+" change without changing anything")
 	fs.StringVar(&request.socket.socket, "socket", "", "exact tmux socket name (tmux -L) the managed Pane of a Running Agent is closed on")
 	fs.StringVar(&request.socket.socketPath, "socket-path", "", "exact absolute tmux socket path (tmux -S) the managed Pane of a Running Agent is closed on")
 	var output string
@@ -309,6 +316,9 @@ func parseAgentPersonaArgs(args []string, stderr io.Writer) (agentPersonaRequest
 	}
 	want := 2
 	shape := "<agent-ref> <persona>"
+	if noun == "instructions" {
+		shape = "<agent-ref> <name>"
+	}
 	if request.action == "detach" {
 		want, shape = 1, "<agent-ref>"
 	}
@@ -553,11 +563,11 @@ func personaCommandWord(value string) string {
 	return shellQuote(value)
 }
 
-func describePersonaAnnotations(annotations coremetadata.AgentPersonaAnnotations) string {
+func describePersonaAnnotations(annotations coremetadata.AgentPersonaAnnotations, noun string) string {
 	if annotations.Persona == "" {
-		return "no persona"
+		return "no " + noun
 	}
-	return fmt.Sprintf("persona %s (%s)", annotations.Persona, annotations.PersonaDigest)
+	return fmt.Sprintf("%s %s (%s)", noun, annotations.Persona, annotations.PersonaDigest)
 }
 
 // writeAgentPersonaResult prints one result as JSON or as one line.
@@ -565,13 +575,17 @@ func writeAgentPersonaResult(stdout io.Writer, request agentPersonaRequest, resu
 	if request.json {
 		return json.NewEncoder(stdout).Encode(result)
 	}
-	change := describePersonaAnnotations(coremetadata.AgentPersonaAnnotations{Persona: result.NewPersona, PersonaDigest: result.NewPersonaDigest})
+	noun := "persona"
+	if strings.HasPrefix(request.spelling, "agent instructions ") {
+		noun = "instructions"
+	}
+	change := describePersonaAnnotations(coremetadata.AgentPersonaAnnotations{Persona: result.NewPersona, PersonaDigest: result.NewPersonaDigest}, noun)
 	switch result.Outcome {
 	case personaOutcomeUnchanged:
 		_, err := fmt.Fprintf(stdout, "agent/%s unchanged: already running with %s and --system-prompt-snapshot off\n", result.AgentName, change)
 		return err
 	case personaOutcomeWouldRestart, personaOutcomeWouldResume:
-		currentPersona := describePersonaAnnotations(coremetadata.AgentPersonaAnnotations{Persona: result.CurrentPersona, PersonaDigest: result.CurrentPersonaDigest})
+		currentPersona := describePersonaAnnotations(coremetadata.AgentPersonaAnnotations{Persona: result.CurrentPersona, PersonaDigest: result.CurrentPersonaDigest}, noun)
 		_, err := fmt.Fprintf(stdout,
 			"%s: agent/%s uid=%s phase=%s interaction=%s from %s to %s; would %s it on the same conversation; confirmation-required=%t\ndry-run: nothing was changed\n",
 			request.spelling, result.AgentName, result.AgentUID, result.Phase, result.Interaction, currentPersona, change,
@@ -582,7 +596,7 @@ func writeAgentPersonaResult(stdout io.Writer, request agentPersonaRequest, resu
 		if request.action == "detach" {
 			verb = "detached"
 		}
-		_, err := fmt.Fprintf(stdout, "agent/%s persona %s: now %s; %s on the same conversation\n", result.AgentName, verb, change, result.Outcome)
+		_, err := fmt.Fprintf(stdout, "agent/%s %s %s: now %s; %s on the same conversation\n", result.AgentName, noun, verb, change, result.Outcome)
 		return err
 	}
 }

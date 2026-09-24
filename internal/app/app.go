@@ -99,27 +99,28 @@ func IsUsageError(err error) bool {
 
 // App wires the CLI entrypoints to concrete command handlers.
 type App struct {
-	lifecycle   *diagnostics.LifecycleRecorder
-	agent       *agentCommand
-	ai          *aiCommand
-	attention   *attentionCommand
-	create      *createCommand
-	attach      *attachCommand
-	config      *configCommand
-	delete      *deleteCommand
-	describe    *describeCommand
-	doctor      *doctorCommand
-	diagnostics *diagnosticsCommand
-	focus       *focusCommand
-	get         *getCommand
-	hook        *hookCommand
-	label       *labelCommand
-	persona     *personaCommand
-	internal    *internalCommand
-	rebind      *rebindCommand
-	reconcile   *resourceReconcileCommand
-	rename      *renameCommand
-	runtime     *runtimeCommand
+	lifecycle    *diagnostics.LifecycleRecorder
+	agent        *agentCommand
+	ai           *aiCommand
+	attention    *attentionCommand
+	create       *createCommand
+	attach       *attachCommand
+	config       *configCommand
+	delete       *deleteCommand
+	describe     *describeCommand
+	doctor       *doctorCommand
+	diagnostics  *diagnosticsCommand
+	focus        *focusCommand
+	get          *getCommand
+	hook         *hookCommand
+	label        *labelCommand
+	persona      *personaCommand
+	instructions *personaCommand
+	internal     *internalCommand
+	rebind       *rebindCommand
+	reconcile    *resourceReconcileCommand
+	rename       *renameCommand
+	runtime      *runtimeCommand
 	// runtimeDiagnostics is the Runtime diagnostics escape hatch handler, held
 	// beside the namespace so the narrow fixtures that rebuild `runtime` can
 	// still reach it.
@@ -386,6 +387,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		hook:               newHookCommand(),
 		label:              newLabelCommand(),
 		persona:            newPersonaCommand(),
+		instructions:       newInstructionsCommand(),
 		internal:           internalCmd,
 		rebind:             newRebindCommand(),
 		reconcile:          reconcileCmd,
@@ -518,6 +520,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"internal":     internal,
 		"notification": a.notification,
 		"persona":      a.persona,
+		"instructions": a.instructions,
 		"pin": legacyRouteGate{
 			name: "pin", target: a.pin, allowedFirst: []string{"project"},
 			replacement: func([]string) string { return "`projmux pin project ...`" },

@@ -123,6 +123,39 @@ func TestCreateClaudeAgentWithPersonaLaunchesTheSnapshotAndAnnotatesTheAgent(t *
 	}
 }
 
+func TestCreateClaudeAgentWithInstructionsUsesLegacySnapshotAndAnnotations(t *testing.T) {
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, launcher := newTestAgentCreateCommand(t, store, tmux)
+	personas, snapshotDir := personaTestHome(t, create)
+	content := []byte("same Claude system prompt bytes\n")
+	if _, err := personas.Write("reviewer", content); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runRoute(t, create,
+		"agent", "--provider", "claude", "--instructions", "reviewer",
+		"--project", "alpha", "--window", "review", "--", "review this"); err != nil {
+		t.Fatal(err)
+	}
+	digest := persona.Digest(content)
+	path, err := personas.SnapshotPath(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(path, snapshotDir) || len(launcher.plans) != 1 || launcher.plans[0].personaFile != path {
+		t.Fatalf("Claude snapshot = %q, launch = %+v", path, launcher.plans)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("legacy snapshot bytes = %q, %v", got, err)
+	}
+	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
+	if agent.Metadata.Annotations[coremetadata.AnnotationAgentPersona] != "reviewer" ||
+		agent.Metadata.Annotations[coremetadata.AnnotationAgentPersonaDigest] != digest ||
+		len(agent.Metadata.Annotations) != 2 {
+		t.Fatalf("legacy annotations = %v", agent.Metadata.Annotations)
+	}
+}
+
 // TestClaudePersonaLaunchPutsOnlyTheSnapshotPathBeforeTheWorkspace pins the
 // real launcher's argv: the path goes with --model/--effort, ahead of Claude's
 // variadic --add-dir, and nothing else is added.

@@ -138,6 +138,13 @@ func assertNoPersonaContent(t *testing.T, argv []string, contents ...string) {
 func TestAgentResumeRepassesThePersonaSnapshot(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
 	withPersona, snapshotPath := createPersonaForResume(t, planner, "go-reviewer", []byte(personaResumeContent))
+	// This is the pre-rename file and annotation fixture. The new CLI reads
+	// that file, while resume continues to resolve its recorded snapshot.
+	instructions := &personaCommand{noun: "instructions", homeDir: planner.homeDir, lookupEnv: planner.lookupEnv}
+	var shown bytes.Buffer
+	if err := instructions.Run([]string{"show", "go-reviewer"}, &shown, &bytes.Buffer{}); err != nil || shown.String() != personaResumeContent {
+		t.Fatalf("instructions show over legacy file = %q, %v", shown.String(), err)
+	}
 
 	// (c) No annotation: the argv is exactly the pre-persona resume argv.
 	_, plain, plainStderr := resumeClaudeAgentWithAnnotations(t, planner, nil)

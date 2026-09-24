@@ -262,6 +262,34 @@ func TestAgentPersonaAttachRestartsAnIdleRunningClaudeAgentWithThePersonaOnTheSa
 	}
 }
 
+func TestAgentInstructionsAttachAndLegacyDetachUseTheSameSnapshot(t *testing.T) {
+	f := newPersonaAttachFixture(t)
+	f.writePersona(t, "go-reviewer", personaResumeContent)
+	stdout, stderr, err := runRoute(t, f.command, "instructions", "attach", "uid:"+personaAttachAgent, "go-reviewer")
+	if err != nil || stderr != "" || !strings.Contains(stdout, "instructions attached") {
+		t.Fatalf("new attach stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	attached := f.assertRestartedOnTheSameConversation(t, personaAttachPane)
+	digest := persona.Digest([]byte(personaResumeContent))
+	if attached.Metadata.Annotations[coremetadata.AnnotationAgentPersona] != "go-reviewer" ||
+		attached.Metadata.Annotations[coremetadata.AnnotationAgentPersonaDigest] != digest {
+		t.Fatalf("legacy annotation pair = %v", attached.Metadata.Annotations)
+	}
+	snapshot := f.snapshotPath(t, personaResumeContent)
+	if got := f.lastArgvTail(t); !slices.Contains(got, snapshot) {
+		t.Fatalf("new attach did not resume with legacy snapshot: %v", got)
+	}
+	f.setInteraction(coremetadata.InteractionIdle)
+	f.deletes.killed = nil
+	f.tmux.calls = nil
+	if _, _, err := runRoute(t, f.command, "persona", "detach", "uid:"+personaAttachAgent); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.agent(t).Metadata.Annotations; len(got) != 1 || got[coremetadata.AnnotationAgentSystemPromptSnapshot] != coremetadata.SystemPromptSnapshotOff {
+		t.Fatalf("legacy detach annotations = %v", got)
+	}
+}
+
 // TestSystemPromptSnapshotOffReachesBothResumeConsumers is acceptance 2: the
 // resume seam adds `--system-prompt-snapshot off` for exactly the Claude
 // Agents that record it, on `agent resume` and on Continue/topology replay,

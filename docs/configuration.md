@@ -1172,6 +1172,8 @@ Settings live in two layers:
 | central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
+Named Agent instructions continue to use the central `personas/` directory. The `projmux instructions` and legacy `projmux persona` commands read and write the same files.
+
 TUI is the front layer: only the front entry points (`settings`, `shell`,
 `switch`, `config render|apply|edit` and the internal namespace) read it. Every
 other public route reads the central layer alone, except that a route opening a

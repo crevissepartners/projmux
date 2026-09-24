@@ -48,6 +48,8 @@ func TestCreateCodexAgentWithPersonaSendsItAsDeveloperInstructions(t *testing.T)
 	}{
 		{name: "canonical", args: []string{"agent", "--provider", "codex", "--persona", "reviewer"}},
 		{name: "provider shortcut", args: []string{"codex", "--persona", "reviewer"}},
+		{name: "instructions canonical", args: []string{"agent", "--provider", "codex", "--instructions", "reviewer"}},
+		{name: "instructions shortcut", args: []string{"codex", "--instructions", "reviewer"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			create, store, tmux, native, personas := newCodexPersonaCreate(t)

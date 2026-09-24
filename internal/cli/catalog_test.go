@@ -47,23 +47,25 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 36 {
-		t.Fatalf("public route count = %d, want 36", public)
+	if public != 37 {
+		t.Fatalf("public route count = %d, want 37", public)
 	}
 	if hidden != 1 {
 		t.Fatalf("hidden route count = %d, want 1", hidden)
 	}
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical: 29,
-		DispositionShortcut:  7,
+		DispositionCanonical:     29,
+		DispositionShortcut:      7,
+		DispositionCompatibility: 1,
 	}
 	if !reflect.DeepEqual(publicTally, wantPublicTally) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)
 	}
 	wantTally := map[Disposition]int{
-		DispositionCanonical: 29,
-		DispositionShortcut:  7,
-		DispositionInternal:  1,
+		DispositionCanonical:     29,
+		DispositionShortcut:      7,
+		DispositionCompatibility: 1,
+		DispositionInternal:      1,
 	}
 	if !reflect.DeepEqual(tally, wantTally) {
 		t.Fatalf("disposition tally = %v, want %v", tally, wantTally)
@@ -94,7 +96,7 @@ var exactTransportRoots = []string{"reconcile", "get", "runtime", "delete"}
 // by running `delete pane` on its managed Pane, and passes --socket and
 // --socket-path through unchanged, so it needs exactly the flags `delete`
 // needs outside tmux and no other routing rule.
-var exactTransportRoutes = []string{"agent persona"}
+var exactTransportRoutes = []string{"agent instructions", "agent persona"}
 
 // exactTransportUsage reports whether one usage line spells an exact
 // transport route, which a parent namespace's usage list repeats.

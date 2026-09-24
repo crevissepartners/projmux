@@ -34,6 +34,39 @@ func runPersona(cmd *personaCommand, args ...string) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
+func TestInstructionsAndPersonaCommandsShareTheStoredFile(t *testing.T) {
+	cmd, dir := newPersonaTestCommand(t, nil, "original instructions\n")
+	instructions := *cmd
+	instructions.noun = "instructions"
+	if _, _, err := runPersona(cmd, "set", "reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := runPersona(&instructions, "show", "reviewer")
+	if err != nil || got != "original instructions\n" {
+		t.Fatalf("instructions show = %q, %v", got, err)
+	}
+	instructions.stdin = strings.NewReader("updated instructions\n")
+	if _, _, err := runPersona(&instructions, "set", "reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = runPersona(cmd, "show", "reviewer")
+	if err != nil || got != "updated instructions\n" {
+		t.Fatalf("persona show after instructions set = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "reviewer.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "instructions")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("new instructions directory exists: %v", err)
+	}
+	if _, _, err := runPersona(&instructions, "delete", "reviewer", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runPersona(cmd, "show", "reviewer"); persona.ReasonOf(err) != persona.ReasonNotFound {
+		t.Fatalf("legacy show after instructions delete = %v", err)
+	}
+}
+
 // TestPersonaSetListShowRoundTripIsByteIdentical is C-3 acceptance 1: after
 // `persona set reviewer --file x.md`, list names it and show prints x.md's
 // exact bytes, from <ConfigDir>/personas/reviewer.md at 0600.
