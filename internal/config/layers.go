@@ -85,6 +85,11 @@ const (
 	// its storage (persona.DirName); the name is repeated here only so the
 	// layer is declared in this one table, and a test holds the two equal.
 	PersonasDirName = "personas"
+
+	// ProfilesDirName is the Agent profile file directory. internal/core/profile
+	// owns its storage (profile.DirName); the name is repeated here only so the
+	// layer is declared in this one table, and a test holds the two equal.
+	ProfilesDirName = "profiles"
 )
 
 // settingItems is the declaration. Adding a setting file is adding its path
@@ -115,6 +120,7 @@ var settingItems = []SettingItem{
 	declareFile(StatusbarDefaultsFileName, LayerCentral, ""),
 	declareDir(AIHooksDirName, LayerCentral),
 	declareDir(PersonasDirName, LayerCentral),
+	declareDir(ProfilesDirName, LayerCentral),
 	// The global lifecycle hook scripts (post-create, post-attach,
 	// pre-create) are the hook contract, which is product behavior.
 	declareDir(HooksDirName, LayerCentral),

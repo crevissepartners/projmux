@@ -2295,6 +2295,37 @@ servers before installing current bindings. If the current keymap assigns `C-t`
 to another action, that current action is bound after cleanup and remains the
 owner.
 
+## profile
+
+```
+projmux profile list
+projmux profile show <name>
+projmux profile set <name> [--file <path> | -]
+projmux profile delete <name> --yes
+```
+
+A profile is a named set of Agent start settings -- instructions, model,
+effort, roles, and permissions -- kept in `<config dir>/profiles/<name>.toml`.
+The file format and vocabulary are in
+[Configuration](configuration.md#agent-profiles). These commands store and
+validate profiles only; creating or resuming an Agent does not read them yet.
+
+- `list` prints `NAME SOURCE ROLES DIGEST VALID` for every profile. `SOURCE` is
+  `builtin` or `user`, and `DIGEST` is `sha256:<hex>` over the file bytes. A
+  file that fails validation stays listed as `no (<reason>)` and does not hide
+  the others.
+- `show` prints the stored bytes exactly, or the built-in text.
+- `set` validates the whole file first and writes it atomically (0600) only
+  when it is valid; `-` or no `--file` reads stdin. A refusal exits 2, prints
+  one stable reason (`profile-syntax-invalid`, `profile-key-unknown`,
+  `profile-table-unknown`, `profile-value-invalid`,
+  `profile-instructions-not-found`, `profile-role-duplicate`,
+  `profile-role-claimed`, `profile-name-invalid`, `profile-name-reserved`, or
+  `profile-too-large`), and leaves any existing file unchanged.
+- `delete` removes a user file. A missing profile is `profile-not-found` (exit
+  1); the built-in `readonly` cannot be deleted (`profile-builtin`, exit 2), but
+  a user `readonly.toml` that replaces it can.
+
 ## config
 
 ```

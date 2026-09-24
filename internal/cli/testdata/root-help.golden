@@ -18,6 +18,7 @@ Commands:
   open      Open a Project runtime and move the current client to it
   instructions  List, show, edit, set, and delete Agent instruction files
   persona   List, show, edit, set, and delete Agent persona files
+  profile   List, show, set, and delete named Agent profiles
   pin       Manage pinned project directories
   prune     Prune stale Projects and Agents
   quit      Quit the app-owned projmux tmux runtime

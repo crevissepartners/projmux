@@ -116,6 +116,7 @@ type App struct {
 	label        *labelCommand
 	persona      *personaCommand
 	instructions *personaCommand
+	profile      *profileCommand
 	internal     *internalCommand
 	rebind       *rebindCommand
 	reconcile    *resourceReconcileCommand
@@ -388,6 +389,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		label:              newLabelCommand(),
 		persona:            newPersonaCommand(),
 		instructions:       newInstructionsCommand(),
+		profile:            newProfileCommand(),
 		internal:           internalCmd,
 		rebind:             newRebindCommand(),
 		reconcile:          reconcileCmd,
@@ -521,6 +523,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"notification": a.notification,
 		"persona":      a.persona,
 		"instructions": a.instructions,
+		"profile":      a.profile,
 		"pin": legacyRouteGate{
 			name: "pin", target: a.pin, allowedFirst: []string{"project"},
 			replacement: func([]string) string { return "`projmux pin project ...`" },

@@ -19,6 +19,7 @@ notification hidden=false disableFlagParsing=true args=true children=0
 open hidden=false disableFlagParsing=true args=true children=0
 persona hidden=false disableFlagParsing=true args=true children=0
 pin hidden=false disableFlagParsing=true args=true children=0
+profile hidden=false disableFlagParsing=true args=true children=0
 prune hidden=false disableFlagParsing=true args=true children=0
 quit hidden=false disableFlagParsing=true args=true children=0
 rebind hidden=false disableFlagParsing=true args=true children=0

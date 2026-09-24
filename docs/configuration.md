@@ -1236,13 +1236,63 @@ The CPU delta cache is internal state at
 CPU reference samples older than 30 seconds are ignored and replaced on the
 next refresh.
 
+## Agent Profiles
+
+An Agent profile is a named set of Agent start settings stored at
+`<config dir>/profiles/<name>.toml` (by default `~/.config/projmux/profiles/`).
+Manage profiles with `projmux profile list|show|set|delete`. Profiles are only
+stored and validated; no command applies one to an Agent yet.
+
+A profile file is a strict subset of TOML:
+
+- blank lines and `#` comments, on their own line or after a value;
+- top-level `key = value` lines with a bare key;
+- at most one `[permissions]` table; every key after it belongs to that table;
+- values that are double-quoted strings or arrays of them. The only escapes are
+  `\"` and `\\`; tabs, other control characters, and line breaks inside a
+  string are refused. An array may span lines, hold comments, and end with a
+  trailing comma.
+
+Everything else is refused: unknown keys or tables, a second `[permissions]`, a
+key given twice, quoted or dotted keys, literal or multi-line strings, numbers,
+booleans, and inline tables. The file limit is 64 KiB.
+
+| Key | Value |
+| --- | --- |
+| `instructions` | the name of stored instructions (`projmux instructions list`); the file must exist |
+| `model` | a Claude model alias or name, the same shape `create --model` accepts |
+| `effort` | `low`, `medium`, `high`, `xhigh`, or `max` |
+| `roles` | array of role names; each non-empty, without surrounding whitespace, listed once, and not listed by another valid profile |
+| `[permissions]` `sandbox` | `read-only`, `workspace-write`, or `full-access` |
+| `[permissions]` `approval` | `never`, `on-request`, or `untrusted` |
+| `[permissions]` `allow`, `deny` | arrays of Claude permission rules: a tool name (`[A-Za-z][A-Za-z0-9_-]*`) optionally followed by one non-empty `(...)` specifier, such as `Edit`, `Bash(git status *)`, `Read(./docs/**)`, `WebFetch(domain:example.com)`, or `mcp__srv__tool` |
+
+```toml
+instructions = "reviewer"
+model = "opus"
+effort = "high"
+roles = ["review"]
+
+[permissions]
+sandbox = "workspace-write"
+approval = "on-request"
+allow = ["Bash(git status *)", "Read(./docs/**)"]
+deny = ["WebFetch(domain:example.com)"]
+```
+
+Profile names follow the instructions name rule, and `none` is reserved. One
+profile is built in: `readonly` sets `sandbox = "read-only"`, `approval =
+"never"`, and denies `Edit`, `Write`, and `NotebookEdit`; it lists no roles. A
+user file named `readonly.toml` replaces it, and deleting that file brings the
+built-in back. The built-in itself cannot be deleted.
+
 ## Setting Layers
 
 Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 Named Agent instructions continue to use the central `personas/` directory. The `projmux instructions` and legacy `projmux persona` commands read and write the same files.
