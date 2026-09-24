@@ -981,6 +981,12 @@ func TestReadOnlyRoutesNeverRewriteTheKeymap(t *testing.T) {
 	// Pin the installer so the update preview is deterministic and never probes
 	// the real install layout.
 	t.Setenv("PROJMUX_INSTALLER", "npm")
+	// `agent usage` is the one route here that execs a provider: the Codex
+	// usage adapter probes `codex app-server proxy` and `daemon version`, then
+	// runs `codex app-server daemon start`. With the real codex on PATH that
+	// installed a release under this HOME and left its managed daemon running
+	// after the test, so the route gets recording stand-ins instead.
+	record := fakeProviderBinaries(t)
 
 	for _, args := range [][]string{
 		{"help"},
@@ -994,9 +1000,13 @@ func TestReadOnlyRoutesNeverRewriteTheKeymap(t *testing.T) {
 		{"update", "apply", "--dry-run"},
 	} {
 		var stdout, stderr bytes.Buffer
+		before := len(providerInvocations(t, record))
 		// The exit status is not the assertion. A usage error is a perfectly
 		// good read; what matters is that nothing on disk moved.
 		_ = Run(args, &stdout, &stderr)
+		if calls := providerInvocations(t, record); len(calls) > before {
+			t.Logf("%v invoked a provider: %q", args, calls[before:])
+		}
 
 		if got := readFile(t, keymap); got != original {
 			t.Fatalf("%v rewrote the keymap:\ngot:  %q\nwant: %q", args, got, original)
@@ -1005,6 +1015,7 @@ func TestReadOnlyRoutesNeverRewriteTheKeymap(t *testing.T) {
 			t.Fatalf("%v created keymap backups %v", args, backups)
 		}
 	}
+	assertNoProcessRunsFrom(t, home)
 }
 
 // TestUpdateDryRunPreviewsTheMigrationStageWithoutPromisingADiff pins the
