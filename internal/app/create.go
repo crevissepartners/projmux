@@ -69,6 +69,13 @@ type claudeOptionsAgentLauncher interface {
 	PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error)
 }
 
+// claudeSettingsAgentLauncher is claudeOptionsAgentLauncher for a Claude Agent
+// created with a profile whose permissions are launched as a settings
+// snapshot (settingsFile). A create without one never reaches it.
+type claudeSettingsAgentLauncher interface {
+	PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error)
+}
+
 // createCommand implements the canonical `create` verb.
 //
 // Every kind reaches one parser and one product model. There is no dispatch

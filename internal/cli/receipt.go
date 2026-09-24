@@ -175,6 +175,40 @@ type OperationReceipt struct {
 	AffectedUIDs          []ReceiptResource    `json:"affectedUIDs"`
 	CompatibilityWarnings []string             `json:"compatibilityWarnings"`
 	DomainEffect          *ReceiptDomainEffect `json:"domainEffect"`
+	// Profile is the named Agent profile a create applied, and the items of
+	// it that were not applied. It is absent from every receipt of an
+	// operation that applied no profile, so those stay byte-identical.
+	Profile *ReceiptProfile `json:"profile,omitempty"`
+}
+
+// ReceiptProfile is the profile one Agent create applied: its name, the
+// digest of the content applied, and every item that was not applied, in
+// profile order. An applied item is not listed.
+type ReceiptProfile struct {
+	Name       string               `json:"name"`
+	Digest     string               `json:"digest"`
+	NotApplied []ReceiptProfileItem `json:"notApplied"`
+}
+
+// ReceiptProfileItem is one profile item that was not applied, the provider
+// it was not applied on, and the stable reason token saying why.
+type ReceiptProfileItem struct {
+	Item     string `json:"item"`
+	Provider string `json:"provider"`
+	Reason   string `json:"reason"`
+}
+
+// HumanLines is the human disclosure of the applied profile: one line naming
+// it, then one line per item that was not applied. It is empty for nil.
+func (p *ReceiptProfile) HumanLines() []string {
+	if p == nil {
+		return nil
+	}
+	lines := []string{"profile name=" + p.Name + " digest=" + p.Digest}
+	for _, item := range p.NotApplied {
+		lines = append(lines, "profile-not-applied item="+item.Item+" provider="+item.Provider+" reason="+item.Reason)
+	}
+	return lines
 }
 
 // NewReceipt returns a receipt with the versioned envelope and the non-nil
@@ -320,10 +354,18 @@ func (r OperationReceipt) HumanLine() string {
 	return line
 }
 
-// WriteHuman writes the default human projection.
+// WriteHuman writes the default human projection: the receipt line, then the
+// profile disclosure when the operation applied a profile.
 func (r OperationReceipt) WriteHuman(w io.Writer) error {
-	_, err := fmt.Fprintln(w, r.HumanLine())
-	return err
+	if _, err := fmt.Fprintln(w, r.HumanLine()); err != nil {
+		return err
+	}
+	for _, line := range r.Profile.HumanLines() {
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WriteJSON writes the `-o receipt` projection: one indented JSON document

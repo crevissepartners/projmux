@@ -1239,8 +1239,9 @@ next refresh.
 
 An Agent profile is a named set of Agent start settings stored at
 `<config dir>/profiles/<name>.toml` (by default `~/.config/projmux/profiles/`).
-Manage profiles with `projmux profile list|show|set|delete`. Profiles are only
-stored and validated; no command applies one to an Agent yet.
+Manage profiles with `projmux profile list|show|set|delete`, and start an
+Agent from one with `projmux create agent --profile <name>` or a `role` label
+(see [CLI guide](cli-guide.md#agent-profiles-at-create)).
 
 A profile file is a strict subset of TOML:
 
@@ -1284,6 +1285,14 @@ profile is built in: `readonly` sets `sandbox = "read-only"`, `approval =
 "never"`, and denies `Edit`, `Write`, and `NotebookEdit`; it lists no roles. A
 user file named `readonly.toml` replaces it, and deleting that file brings the
 built-in back. The built-in itself cannot be deleted.
+
+When a profile with `allow` or `deny` rules is applied to a Claude Agent, its
+rules are written as a Claude settings file,
+`{"permissions":{"allow":[...],"deny":[...]}}` (an empty list left out), to
+`${XDG_STATE_HOME:-~/.local/state}/projmux/profile-settings/sha256-<hex>.json`
+(directory 0700, file 0600, named by the sha256 of the bytes), and Claude is
+started with `--settings <that file>`. Each resume writes it again from the
+current profile.
 
 ## Setting Layers
 

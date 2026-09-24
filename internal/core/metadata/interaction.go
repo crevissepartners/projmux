@@ -173,6 +173,32 @@ func (m Mutator) SetAgentPersona(reg *Registry, agentUID string, want AgentPerso
 	return agent.Clone(), nil
 }
 
+// SetAgentProfileDigest records the digest of the profile content a resume
+// just applied to one existing Agent. The Agent must already record the
+// profile name, and the digest is replaced in place, so the name/digest pair
+// is never broken. Every other annotation is left as it was.
+func (m Mutator) SetAgentProfileDigest(reg *Registry, agentUID, name, digest string) (Agent, error) {
+	const op = "set agent profile digest"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	name = strings.TrimSpace(name)
+	digest = strings.TrimSpace(digest)
+	if name == "" || digest == "" {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "profile %q and digest %q must both be set", name, digest)
+	}
+	if recorded := agent.Metadata.Annotations[AnnotationAgentProfile]; recorded != name {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "agent %q records profile %q, not %q", agentUID, recorded, name)
+	}
+	if agent.Metadata.Annotations[AnnotationAgentProfileDigest] == digest {
+		return agent.Clone(), nil
+	}
+	agent.Metadata.Annotations[AnnotationAgentProfileDigest] = digest
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // SetAgentActivation records bounded launch acknowledgement metadata.
 func (m Mutator) SetAgentActivation(reg *Registry, agentUID string, state AgentActivationState, source, reason string) (Agent, error) {
 	const op = "set agent activation"

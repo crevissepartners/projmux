@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
@@ -884,6 +885,14 @@ func (c *createCommand) prepareIntentAgent(provider string, flags resourceCreate
 		return intentAgentPlan{}, errors.New("create agent: the provider launcher is not configured")
 	}
 	plan := intentAgentPlan{provider: provider, flags: flags}
+	// A fresh UI Agent follows the profile rules of `create agent`: the same
+	// resolution, precedence, lane checks, and snapshots. A resume-picker
+	// create inherits the profile of the conversation instead (openIntentAgent).
+	if strings.TrimSpace(flags.resumeConversation) == "" {
+		if err := c.prepareIntentProfile(provider, &plan.flags); err != nil {
+			return intentAgentPlan{}, err
+		}
+	}
 	nativeLaunchCapable := false
 	plan.nativeLauncher, nativeLaunchCapable = c.resumes.(codexNativeAgentLauncher)
 	plan.nativeLifecycle, plan.nativeLifecycleCapable = c.resumes.(codexNativeLifecycleStarter)
@@ -942,6 +951,35 @@ func (c *createCommand) prepareIntentAgent(provider string, flags resourceCreate
 	return plan, nil
 }
 
+// prepareIntentProfile resolves the profile of one fresh UI Agent answer and
+// writes its snapshots, exactly as runResourceAgent and createAgent do for the
+// typed command. An answer that resolves no profile is left untouched.
+func (c *createCommand) prepareIntentProfile(provider string, flags *resourceCreateFlags) error {
+	if err := requireProfileLane(canonicalCreateAgent, *flags); err != nil {
+		return err
+	}
+	if err := c.resolveCreateProfile(canonicalCreateAgent, provider, flags); err != nil {
+		return err
+	}
+	if !flags.profileLaunch.active() {
+		return nil
+	}
+	if err := requireClaudeLaunchOptions(canonicalCreateAgent, provider, *flags); err != nil {
+		return err
+	}
+	if err := requirePersonaLane(canonicalCreateAgent, provider, *flags); err != nil {
+		return err
+	}
+	if flags.persona != "" {
+		launch, err := c.preparePersonaLaunch(canonicalCreateAgent, flags.persona, flags.personaOption)
+		if err != nil {
+			return err
+		}
+		flags.personaLaunch = launch
+	}
+	return c.prepareProfileSettings(canonicalCreateAgent, provider, flags)
+}
+
 // openIntentAgent creates one planned UI Agent inside the caller's
 // transaction: the Agent and its Pane in the working Registry, the resume
 // identity the answer already carries, the Codex native thread when the lane is
@@ -997,6 +1035,23 @@ func (c *createCommand) openIntentAgent(
 			notices = append(notices, notice)
 		}
 	}
+	// The profile of the picked conversation is inherited on its own terms:
+	// holders that disagree refuse, because resuming without the profile would
+	// drop its permissions.
+	if strings.TrimSpace(flags.resumeConversation) != "" {
+		inherited, err := inheritedResumeProfile(working, provider, flags.resumeConversation)
+		if err != nil {
+			return intentAgentOpened{}, usageError(canonicalCreateAgent + ": " + err.Error())
+		}
+		if inherited != nil {
+			merged := maps.Clone(flags.resumeLaunchValues)
+			if merged == nil {
+				merged = make(map[string]string, len(inherited))
+			}
+			maps.Copy(merged, inherited)
+			flags.resumeLaunchValues = merged
+		}
+	}
 	var title string
 	var launchArgv []string
 	var resumeLaunch agentResumeLaunch
@@ -1006,9 +1061,13 @@ func (c *createCommand) openIntentAgent(
 			return intentAgentOpened{}, err
 		}
 	}
+	annotations := flags.resumeLaunchValues
+	if flags.profileLaunch.active() {
+		annotations = flags.profileLaunch.withAnnotations(withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(annotations)))
+	}
 	agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
 		Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,
-		Annotations: flags.resumeLaunchValues,
+		Annotations: withResumedProfileDigest(annotations, resumeLaunch),
 	})
 	if err != nil {
 		return intentAgentOpened{}, MapMetadataError(err)
@@ -1018,6 +1077,7 @@ func (c *createCommand) openIntentAgent(
 			notices = append(notices, notice)
 		}
 	}
+	notices = append(notices, flags.profileLaunch.notices()...)
 	// A resume-picker selection already carries provider-owned conversation
 	// identity before the provider starts. Persist that exact normalized
 	// identity now, in the same transaction that owns the Agent and Pane,

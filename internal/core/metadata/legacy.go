@@ -522,6 +522,26 @@ const (
 	AnnotationAgentPersonaDigest = "projmux.io/persona-digest"
 )
 
+// AnnotationAgentProfile and AnnotationAgentProfileDigest link an Agent to the
+// named profile it was created with: the profile name and the sha256:<hex>
+// digest of the exact profile content that was last applied to its provider
+// session. They are a pair: both are present or both are absent. Both are
+// written only by the create transaction that launched the provider with that
+// profile, and never on the Pane.
+//
+// A resume is the one other writer, and only of the digest: every Claude
+// resume re-reads the profile by name, launches with its current permissions,
+// and records the digest of the content it applied. A profile that is gone or
+// invalid refuses the resume rather than resuming without its permissions.
+//
+// A resume-picker create is such a create transaction: when the Agents that
+// already recorded the picked Claude conversation agree on the profile name,
+// it launches the new Agent with that profile and records the pair.
+const (
+	AnnotationAgentProfile       = "projmux.io/profile"
+	AnnotationAgentProfileDigest = "projmux.io/profile-digest"
+)
+
 // AnnotationAgentSystemPromptSnapshot records how a resumed Claude session
 // treats its system prompt. The only value is SystemPromptSnapshotOff, which
 // makes every resume pass `--system-prompt-snapshot off`. Claude records the
