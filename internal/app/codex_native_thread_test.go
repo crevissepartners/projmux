@@ -45,6 +45,7 @@ type fakeNativeCreate struct {
 	route        codexNativeEndpointRoute
 	workspace    coremetadata.AgentWorkspace
 	instructions string
+	policy       codexappserver.ThreadPolicy
 	prompt       string
 	generation   string
 }
@@ -53,6 +54,7 @@ type fakeNativeResume struct {
 	route     codexNativeEndpointRoute
 	workspace coremetadata.AgentWorkspace
 	threadID  string
+	policy    codexappserver.ThreadPolicy
 }
 
 type orderedNativeThreadClient struct {
@@ -60,7 +62,7 @@ type orderedNativeThreadClient struct {
 	closeErr error
 }
 
-func (c *orderedNativeThreadClient) StartThread(context.Context, string, []string, string) (codexappserver.ThreadBinding, error) {
+func (c *orderedNativeThreadClient) StartThread(context.Context, string, []string, string, codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error) {
 	*c.events = append(*c.events, "thread/start")
 	return codexappserver.ThreadBinding{ThreadID: "thread-production-order"}, nil
 }
@@ -121,7 +123,7 @@ func (f *fakeNativeThreadController) Resolve(_ context.Context, endpoint coremet
 
 func (f *fakeNativeThreadController) Create(_ context.Context, route codexNativeEndpointRoute, input codexNativeCreateInput) (codexappserver.ThreadBinding, error) {
 	f.creates = append(f.creates, fakeNativeCreate{
-		route: route, workspace: input.Workspace, instructions: input.DeveloperInstructions,
+		route: route, workspace: input.Workspace, instructions: input.DeveloperInstructions, policy: input.Policy,
 		prompt: input.Prompt, generation: input.RequestKey,
 	})
 	binding := f.createBinding
@@ -135,8 +137,8 @@ func (f *fakeNativeThreadController) Create(_ context.Context, route codexNative
 	return binding, f.createErr
 }
 
-func (f *fakeNativeThreadController) Resume(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
-	f.resumes = append(f.resumes, fakeNativeResume{route: route, workspace: workspace, threadID: threadID})
+func (f *fakeNativeThreadController) Resume(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string, policy codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error) {
+	f.resumes = append(f.resumes, fakeNativeResume{route: route, workspace: workspace, threadID: threadID, policy: policy})
 	return f.resumeBinding, f.resumeErr
 }
 

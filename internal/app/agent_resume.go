@@ -491,18 +491,27 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var launchArgv []string
 	var personaNotice, effortNotice string
 	var resumed agentResumeLaunch
+	var nativePolicy codexappserver.ThreadPolicy
 	var err error
 	if plan.provider == aiModeCodex {
-		nativeCtx, cancel := prepareNativeContext(context.Background())
-		nativeRoute, err = resolveCodexNativeResumeRoute(nativeCtx, r.create.codexNative, plan.ref, "uid:"+plan.agentUID)
-		cancel()
-		if err != nil {
-			return nativeResumePreparationRefusal(spelling, err)
+		// The profile the Agent records is re-read by name before anything
+		// else, so a profile that is gone or invalid refuses with zero writes
+		// and zero provider calls. Its current sandbox and approval ride the
+		// thread/resume below, and resumed carries the digest the transaction
+		// records -- the same record a Claude resume makes.
+		resumed, nativePolicy, err = r.create.codexResumeProfile(plan.annotations)
+		if err == nil {
+			nativeCtx, cancel := prepareNativeContext(context.Background())
+			nativeRoute, err = resolveCodexNativeResumeRoute(nativeCtx, r.create.codexNative, plan.ref, "uid:"+plan.agentUID)
+			cancel()
+			if err != nil {
+				return nativeResumePreparationRefusal(spelling, err)
+			}
+			if !nativeLaunchCapable {
+				return nativeResumePreparationRefusal(spelling, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+			}
+			title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, plan.conversationID)
 		}
-		if !nativeLaunchCapable {
-			return nativeResumePreparationRefusal(spelling, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
-		}
-		title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, plan.conversationID)
 	} else {
 		if plan.dialogueReplyOnly && plan.annotations[coremetadata.AnnotationAgentProfile] != "" {
 			// The reply-only launch is fixed and cannot carry a profile's
@@ -639,7 +648,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 				return nativeResumePreparationRefusal(spelling, bindCodexResumeAgentRef(routeErr, "uid:"+plan.agentUID))
 			}
 			nativeCtx, cancel := prepareNativeContext(ctx)
-			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID)
+			// A thread that answers with another policy than the profile's is
+			// a *PolicyMismatchError, never a safe fallback: it lands in the
+			// default arm and the whole transaction rolls back.
+			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID, nativePolicy)
 			cancel()
 			switch {
 			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) == strings.TrimSpace(plan.conversationID):

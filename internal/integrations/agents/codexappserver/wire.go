@@ -100,6 +100,13 @@ type threadStartParams struct {
 	// thread started without a persona must send the exact request it sent
 	// before this field existed -- the key itself absent, not an empty string.
 	DeveloperInstructions string `json:"developerInstructions,omitempty"`
+	// Sandbox and ApprovalPolicy are the thread policy a named profile asks
+	// for, already spelled in the wire vocabulary (see ThreadPolicy). Both
+	// carry omitempty for the reason DeveloperInstructions does: a thread
+	// started without a policy must send the exact request it sent before
+	// these fields existed, so the upstream configuration keeps deciding.
+	Sandbox        string `json:"sandbox,omitempty"`
+	ApprovalPolicy string `json:"approvalPolicy,omitempty"`
 }
 
 type threadResumeParams struct {
@@ -107,10 +114,25 @@ type threadResumeParams struct {
 	CWD                   string   `json:"cwd,omitempty"`
 	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`
 	ExcludeTurns          bool     `json:"excludeTurns"`
+	// Sandbox and ApprovalPolicy re-send a profile's thread policy on a cold
+	// resume. Unlike a persona they are resume fields upstream: a thread that
+	// is not loaded is loaded with them. A thread that is already loaded
+	// ignores them, which is why the answer is checked rather than trusted
+	// (see checkThreadPolicy). omitempty keeps every resume without a policy
+	// byte-identical to the request it sent before these fields existed.
+	Sandbox        string `json:"sandbox,omitempty"`
+	ApprovalPolicy string `json:"approvalPolicy,omitempty"`
 }
 
+// threadResult is the part of a thread/start or thread/resume answer projmux
+// reads. Sandbox and ApprovalPolicy are the thread's effective policy, kept
+// raw: they are read only when a policy was requested, so an answer that
+// lacks them, or spells them in a shape projmux does not know, still decodes
+// for every caller that asked for none.
 type threadResult struct {
-	Thread wireThread `json:"thread"`
+	Thread         wireThread      `json:"thread"`
+	Sandbox        json.RawMessage `json:"sandbox"`
+	ApprovalPolicy json.RawMessage `json:"approvalPolicy"`
 }
 
 type threadListParams struct {

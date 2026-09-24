@@ -9,8 +9,10 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // Reason tokens of applying a named profile to an Agent. They are stable
@@ -32,8 +34,14 @@ const (
 	// provider that takes neither.
 	profileReasonProviderOptionUnsupported = "provider-option-unsupported"
 	// profileReasonPermissionsUnsupported refuses a profile with any
-	// permission on a provider that cannot apply permissions yet.
+	// permission on a provider, or a Codex lane, that cannot apply
+	// permissions.
 	profileReasonPermissionsUnsupported = "profile-permissions-unsupported-provider"
+	// profileReasonCodexCommandRulesUnsupported is a profile `allow` or
+	// `deny` a Codex Agent is not given. They are Claude permission rules;
+	// Codex has no per-thread rule list a create could hand them to, and the
+	// profile's sandbox and approval are what bound a Codex thread.
+	profileReasonCodexCommandRulesUnsupported = "codex-command-rules-unsupported"
 	// profileReasonLaneUnsupported refuses a profile on the reply-only
 	// activation, whose launch is fixed.
 	profileReasonLaneUnsupported = "profile-lane-unsupported"
@@ -54,18 +62,22 @@ const (
 	profileItemEffort       = "effort"
 	profileItemSandbox      = "permissions.sandbox"
 	profileItemApproval     = "permissions.approval"
+	profileItemAllow        = "permissions.allow"
+	profileItemDeny         = "permissions.deny"
 )
 
 // profileLaunch is the profile one Agent create applies: its name, the
 // digest of the content applied, the checked content, the Claude settings
-// snapshot its allow and deny rules are launched with, and every item that is
+// snapshot its allow and deny rules are launched with, the Codex thread
+// policy its sandbox and approval are started with, and every item that is
 // not applied. The zero value means no profile.
 type profileLaunch struct {
-	name       string
-	digest     string
-	spec       profile.Spec
-	settings   string
-	notApplied []cli.ReceiptProfileItem
+	name        string
+	digest      string
+	spec        profile.Spec
+	settings    string
+	codexPolicy codexappserver.ThreadPolicy
+	notApplied  []cli.ReceiptProfileItem
 }
 
 func (p profileLaunch) active() bool { return p.name != "" }
@@ -144,8 +156,15 @@ func (c *createCommand) profileStore() (profile.Store, error) {
 // An explicit flag wins over the profile item it overlaps: --instructions or
 // --persona over `instructions`, --model over `model`, --effort over
 // `effort`. A replaced item is disclosed, as is every item the provider does
-// not take. Permissions come only from the profile, and a provider other than
-// Claude refuses a profile that sets any.
+// not take. Permissions come only from the profile.
+//
+// Claude applies allow and deny and discloses sandbox and approval. Codex
+// applies sandbox and approval only on the native fresh lane
+// (nativeCodexFreshCreateRequired), the one Codex create that starts its own
+// thread: they become the thread/start policy, and the thread's answer is
+// held to them. allow and deny are disclosed there as not applied. Every
+// other Codex lane, and every other provider, refuses a profile that sets any
+// permission rather than create the Agent without it.
 //
 // It reads files and writes none: the settings snapshot is written by
 // prepareProfileSettings, later, next to the persona snapshot.
@@ -190,11 +209,28 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 			spelling, option, name, claudeDialogueReplyOnlyFlag, profileReasonLaneUnsupported))
 	}
 	claude := provider == aiModeClaude
-	if !claude && spec.Permissions.HasPermissions() {
+	codexNative := nativeCodexFreshCreateRequired(provider, *flags)
+	switch {
+	case claude, codexNative, !spec.Permissions.HasPermissions():
+	case provider == aiModeCodex:
+		return usageError(fmt.Sprintf("%s %s: profile %q sets permissions, which --provider %s applies only on a create with a prompt (%s); nothing was created",
+			spelling, option, name, provider, profileReasonPermissionsUnsupported))
+	default:
 		return usageError(fmt.Sprintf("%s %s: profile %q sets permissions, which --provider %s cannot apply (%s); nothing was created",
 			spelling, option, name, provider, profileReasonPermissionsUnsupported))
 	}
 	launch := profileLaunch{name: loaded.Name, digest: loaded.Digest, spec: spec}
+	if codexNative {
+		if launch.codexPolicy, err = codexThreadPolicy(spec.Permissions); err != nil {
+			return usageError(fmt.Sprintf("%s %s: profile %q: %v; nothing was created", spelling, option, name, err))
+		}
+		if len(spec.Permissions.Allow) > 0 {
+			launch.skip(profileItemAllow, provider, profileReasonCodexCommandRulesUnsupported)
+		}
+		if len(spec.Permissions.Deny) > 0 {
+			launch.skip(profileItemDeny, provider, profileReasonCodexCommandRulesUnsupported)
+		}
+	}
 	if spec.Instructions != "" {
 		if flags.persona != "" {
 			launch.skip(profileItemInstructions, provider, profileReasonOverriddenByFlag)
@@ -229,6 +265,39 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 	}
 	flags.profileLaunch = launch
 	return nil
+}
+
+// codexThreadPolicy spells a profile's sandbox and approval in the Codex
+// thread/start and thread/resume vocabulary. The profile says `full-access`
+// where Codex says `danger-full-access`; every other value is spelled the
+// same. An absent value stays absent, so a profile without either maps to the
+// zero policy and the request carries neither key. allow and deny have no
+// Codex counterpart and are not part of the policy.
+func codexThreadPolicy(perms profile.Permissions) (codexappserver.ThreadPolicy, error) {
+	var policy codexappserver.ThreadPolicy
+	switch perms.Sandbox {
+	case "":
+	case "read-only":
+		policy.Sandbox = codexappserver.SandboxReadOnly
+	case "workspace-write":
+		policy.Sandbox = codexappserver.SandboxWorkspaceWrite
+	case "full-access":
+		policy.Sandbox = codexappserver.SandboxDangerFullAccess
+	default:
+		return codexappserver.ThreadPolicy{}, fmt.Errorf("sandbox %q has no Codex thread sandbox", perms.Sandbox)
+	}
+	switch perms.Approval {
+	case "":
+	case "never":
+		policy.ApprovalPolicy = codexappserver.ApprovalNever
+	case "on-request":
+		policy.ApprovalPolicy = codexappserver.ApprovalOnRequest
+	case "untrusted":
+		policy.ApprovalPolicy = codexappserver.ApprovalUntrusted
+	default:
+		return codexappserver.ThreadPolicy{}, fmt.Errorf("approval %q has no Codex approval policy", perms.Approval)
+	}
+	return policy, nil
 }
 
 // roleProfile returns the name of the one valid profile that lists role, ""
@@ -317,24 +386,15 @@ func (e *profileResumeError) Error() string {
 	return fmt.Sprintf("%s: profile %q cannot be applied again (%s): %s", profileReasonResumeUnavailable, e.name, e.reason, e.detail)
 }
 
-// resumeProfileSettings re-reads the profile a resumed Claude Agent records,
-// by name, and writes the settings snapshot of its current permissions. It
-// returns the profile name, the digest of the content applied, and the
-// snapshot path ("" when the profile has no allow or deny rule). An Agent
-// without the annotation, and any provider but Claude, get nothing, so their
-// resume argv stays byte-identical. A profile that is gone or invalid is a
-// profile-resume-unavailable refusal.
-func (c *aiCommand) resumeProfileSettings(mode string, annotations map[string]string) (name, digest, settings string, err error) {
-	name = annotations[coremetadata.AnnotationAgentProfile]
-	if mode != aiModeClaude || name == "" {
-		return "", "", "", nil
-	}
-	refuse := func(reason, detail string) (string, string, string, error) {
-		return "", "", "", &profileResumeError{name: name, reason: reason, detail: detail}
-	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+// resolveRecordedProfile re-reads, by name, the profile an Agent records, the
+// way a create resolves an explicit --profile. A profile that is gone or that
+// `profile list` would mark invalid -- a role-claimed one included -- is a
+// profile-resume-unavailable refusal carrying the store's own reason.
+func resolveRecordedProfile(homeDir func() (string, error), lookupEnv func(string) string, name string) (config.Paths, profile.Profile, profile.Spec, error) {
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
-		return refuse(profile.ReasonNotFound, "the profile cannot be located: "+err.Error())
+		return config.Paths{}, profile.Profile{}, profile.Spec{}, &profileResumeError{name: name, reason: profile.ReasonNotFound,
+			detail: "the profile cannot be located: " + err.Error()}
 	}
 	loaded, spec, err := profile.NewDefaultStore(paths).Resolve(name)
 	if err != nil {
@@ -342,13 +402,78 @@ func (c *aiCommand) resumeProfileSettings(mode string, annotations map[string]st
 		if reason == "" {
 			reason = profile.ReasonValueInvalid
 		}
-		return refuse(reason, err.Error())
+		return config.Paths{}, profile.Profile{}, profile.Spec{}, &profileResumeError{name: name, reason: reason, detail: err.Error()}
+	}
+	return paths, loaded, spec, nil
+}
+
+// resumeProfileSettings re-reads the profile a resumed Agent records, by
+// name, on the provider-CLI resume lane.
+//
+// For Claude it writes the settings snapshot of the profile's current
+// permissions and returns the profile name, the digest of the content
+// applied, and the snapshot path ("" when the profile has no allow or deny
+// rule).
+//
+// For Codex this lane is `codex resume <id>`, which topology replay and a
+// rollout row of the resume picker launch. It has no way to carry a sandbox or
+// an approval -- only the native lane's thread/resume does -- so a profile
+// whose current content sets any permission refuses with profile-lane-
+// unsupported rather than resume the Agent without them. A profile without
+// permissions resumes exactly as before and records nothing: nothing of it
+// is applied here.
+//
+// An Agent without the annotation, and any other provider, get nothing, so
+// their resume argv stays byte-identical. A profile that is gone or invalid
+// is a profile-resume-unavailable refusal.
+func (c *aiCommand) resumeProfileSettings(mode string, annotations map[string]string) (name, digest, settings string, err error) {
+	name = annotations[coremetadata.AnnotationAgentProfile]
+	if name == "" || (mode != aiModeClaude && mode != aiModeCodex) {
+		return "", "", "", nil
+	}
+	paths, loaded, spec, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name)
+	if err != nil {
+		return "", "", "", err
+	}
+	if mode == aiModeCodex {
+		if spec.Permissions.HasPermissions() {
+			return "", "", "", &profileResumeError{name: name, reason: profileReasonLaneUnsupported,
+				detail: "the Codex CLI resume lane cannot carry profile permissions; only a native app-server thread can be resumed with them"}
+		}
+		return "", "", "", nil
 	}
 	settings, err = profile.WriteSettingsSnapshot(paths.StateDir, spec.Permissions)
 	if err != nil {
-		return refuse(profile.ReasonValueInvalid, err.Error())
+		return "", "", "", &profileResumeError{name: name, reason: profile.ReasonValueInvalid, detail: err.Error()}
 	}
 	return loaded.Name, loaded.Digest, settings, nil
+}
+
+// codexResumeProfile re-reads, by name, the profile a natively resumed Codex
+// Agent records and returns the thread policy its current content asks for,
+// together with a launch naming the profile and the digest of that content,
+// which the caller records once the resume commits. Like the Claude resume it
+// applies the profile as it is now, not as it was at creation: an edited
+// sandbox or approval reaches the thread on its next cold resume.
+//
+// An Agent without the annotation gets the zero policy and an empty launch,
+// so its thread/resume request stays byte-identical. A profile that is gone or
+// invalid refuses with profile-resume-unavailable; there is no resume that
+// drops its permissions.
+func (c *createCommand) codexResumeProfile(annotations map[string]string) (agentResumeLaunch, codexappserver.ThreadPolicy, error) {
+	name := annotations[coremetadata.AnnotationAgentProfile]
+	if name == "" {
+		return agentResumeLaunch{}, codexappserver.ThreadPolicy{}, nil
+	}
+	_, loaded, spec, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name)
+	if err != nil {
+		return agentResumeLaunch{}, codexappserver.ThreadPolicy{}, err
+	}
+	policy, err := codexThreadPolicy(spec.Permissions)
+	if err != nil {
+		return agentResumeLaunch{}, codexappserver.ThreadPolicy{}, &profileResumeError{name: name, reason: profile.ReasonValueInvalid, detail: err.Error()}
+	}
+	return agentResumeLaunch{profileName: loaded.Name, profileDigest: loaded.Digest}, policy, nil
 }
 
 // withResumedProfileDigest returns annotations with the profile digest the
@@ -377,16 +502,20 @@ func recordResumedProfileDigest(registry *coremetadata.Registry, mutator coremet
 }
 
 // inheritedResumeProfile is the profile pair a resume-picker create of one
-// Claude conversation inherits from the Agents that already recorded it. When
-// every holder records the same profile name, the new Agent records that
-// profile and its resume applies it; the digest is refreshed by that resume.
+// Claude or Codex conversation inherits from the Agents that already recorded
+// it. When every holder records the same profile name, the new Agent records
+// that profile and its resume applies it; the digest is refreshed by that
+// resume.
 // Holders that disagree about the profile refuse the create: picking one, or
 // none, could launch the conversation without the permissions it runs with.
-// Any other provider, and a conversation no holder records a profile for,
+// A Codex conversation inherits on the same terms: its native catalog resume
+// re-sends the profile's current policy (codexResumeProfile), and its rollout
+// resume refuses a profile with permissions (resumeProfileSettings). Any
+// other provider, and a conversation no holder records a profile for,
 // inherits nothing.
 func inheritedResumeProfile(registry *coremetadata.Registry, provider, conversation string) (map[string]string, error) {
 	conversation = strings.TrimSpace(conversation)
-	if registry == nil || provider != aiModeClaude || conversation == "" {
+	if registry == nil || (provider != aiModeClaude && provider != aiModeCodex) || conversation == "" {
 		return nil, nil
 	}
 	holders := registry.AgentsRecordingConversation(pickerResumeSessionObservation(provider, conversation))

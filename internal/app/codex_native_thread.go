@@ -26,7 +26,10 @@ type codexNativeThreadController interface {
 	CatalogRoutes(context.Context) ([]codexNativeEndpointRoute, error)
 	Resolve(context.Context, coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error)
 	Create(context.Context, codexNativeEndpointRoute, codexNativeCreateInput) (codexappserver.ThreadBinding, error)
-	Resume(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) (codexappserver.ThreadBinding, error)
+	// Resume loads one stored thread with the thread policy the Agent's
+	// profile holds now. A zero policy sends the request every resume sent
+	// before a profile could carry one.
+	Resume(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error)
 	CanFallback(error) bool
 }
 
@@ -65,15 +68,22 @@ func newCodexNativeThreadController(stateDir string) defaultCodexNativeThreadCon
 // create did before a Codex Agent could have a persona. It is start-only: a
 // thread keeps the instructions it was started with, and resume re-sends
 // nothing (see (*aiCommand).resumePersonaSnapshot).
+//
+// Policy is the sandbox and approval of the Agent's profile, in the wire
+// vocabulary (codexThreadPolicy). The zero value sends neither key, which is
+// every create without a profile or with a profile that sets neither. Unlike
+// the persona it is not start-only: every native resume re-sends the policy
+// the profile holds then, and the answer is checked each time.
 type codexNativeCreateInput struct {
 	Workspace             coremetadata.AgentWorkspace
 	DeveloperInstructions string
+	Policy                codexappserver.ThreadPolicy
 	Prompt                string
 	RequestKey            string
 }
 
 type codexNativeThreadClient interface {
-	StartThread(context.Context, string, []string, string) (codexappserver.ThreadBinding, error)
+	StartThread(context.Context, string, []string, string, codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error)
 	StartTurn(context.Context, string, string, string) (string, error)
 	BootstrapThread(context.Context, string, string, []string) (codexappserver.ThreadSnapshot, error)
 	Close() error
@@ -389,7 +399,7 @@ func (controller defaultCodexNativeThreadController) Create(ctx context.Context,
 			_ = client.Close()
 		}
 	}()
-	binding, err := client.StartThread(ctx, workspace.CWD, workspace.AdditionalWritableRoots, input.DeveloperInstructions)
+	binding, err := client.StartThread(ctx, workspace.CWD, workspace.AdditionalWritableRoots, input.DeveloperInstructions, input.Policy)
 	if err != nil {
 		return binding, err
 	}
@@ -438,7 +448,7 @@ func (controller defaultCodexNativeThreadController) openRoute(ctx context.Conte
 	return openCodexNativeRoute(ctx, route, experimental)
 }
 
-func (defaultCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
+func (defaultCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string, policy codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error) {
 	if !route.valid() {
 		return codexappserver.ThreadBinding{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
@@ -447,7 +457,7 @@ func (defaultCodexNativeThreadController) Resume(ctx context.Context, route code
 		return codexappserver.ThreadBinding{}, err
 	}
 	defer client.Close()
-	return client.ResumeThread(ctx, threadID, workspace.CWD, workspace.AdditionalWritableRoots)
+	return client.ResumeThread(ctx, threadID, workspace.CWD, workspace.AdditionalWritableRoots, policy)
 }
 
 func openCodexNativeRoute(ctx context.Context, route codexNativeEndpointRoute, experimental bool) (*codexappserver.Client, error) {

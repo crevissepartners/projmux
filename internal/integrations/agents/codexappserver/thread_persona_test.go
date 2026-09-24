@@ -38,7 +38,7 @@ func TestThreadStartCarriesDeveloperInstructionsOnlyWhenGiven(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
-			binding, err := client.StartThread(ctx, "/work/project", nil, test.instructions)
+			binding, err := client.StartThread(ctx, "/work/project", nil, test.instructions, ThreadPolicy{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -81,7 +81,7 @@ func TestThreadResumeNeverCarriesDeveloperInstructions(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := client.ResumeThread(ctx, "thread-persona", "/work/project", nil); err != nil {
+	if _, err := client.ResumeThread(ctx, "thread-persona", "/work/project", nil, ThreadPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	methods, rawParams := collect()

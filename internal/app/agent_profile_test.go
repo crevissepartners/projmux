@@ -504,66 +504,6 @@ func TestCreateResultsWithoutAProfileAreByteIdentical(t *testing.T) {
 	}
 }
 
-// TestCodexRefusesAProfileWithAnyPermission is acceptance 6: a provider other
-// than Claude refuses a profile carrying any permission, with its stable
-// token and nothing created; a permission-free profile applies and discloses
-// the model and effort Codex does not take, and its instructions follow the
-// persona lane rule --instructions follows.
-func TestCodexRefusesAProfileWithAnyPermission(t *testing.T) {
-	t.Parallel()
-	f := newProfileFixture(t)
-	f.writeProfile(t, "sandboxed", "[permissions]\nsandbox = \"read-only\"\n")
-	f.writeProfile(t, "approving", "[permissions]\napproval = \"never\"\n")
-	f.writeProfile(t, "allowing", "[permissions]\nallow = [\"Read\"]\n")
-	for _, name := range []string{"readonly", "sandboxed", "approving", "allowing"} {
-		for _, provider := range []string{aiModeCodex, aiModeAntigravity} {
-			args := []string{"agent", "--provider", provider, "--profile", name, "--project", "alpha", "--window", "review"}
-			if provider == aiModeCodex {
-				args = append(args, "--interactive-only")
-			}
-			stdout, _, err := runRoute(t, f.create, args...)
-			if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), profileReasonPermissionsUnsupported) || stdout != "" {
-				t.Fatalf("%s --profile %s = %v (stdout %q), want a %s refusal", provider, name, err, stdout, profileReasonPermissionsUnsupported)
-			}
-		}
-	}
-	if len(f.launcher.argv) != 0 || len(f.store.registry.Agents) != 2 {
-		t.Fatalf("refused creates launched %d and left %d Agents", len(f.launcher.argv), len(f.store.registry.Agents))
-	}
-
-	digest := f.writeProfile(t, "tuned", "model = \"opus\"\neffort = \"high\"\n")
-	stdout, _, err := runRoute(t, f.create, "agent", "--provider", "codex", "--profile", "tuned", "--interactive-only",
-		"--project", "alpha", "--window", "review")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tail := f.onlyArgvTail(t, aiModeCodex); slices.Contains(tail, "--model") || slices.Contains(tail, "opus") {
-		t.Fatalf("codex exec argv tail = %q carries the profile model", tail)
-	}
-	for _, line := range []string{
-		"profile-not-applied item=model provider=codex reason=" + profileReasonProviderOptionUnsupported,
-		"profile-not-applied item=effort provider=codex reason=" + profileReasonProviderOptionUnsupported,
-	} {
-		if !strings.Contains(stdout, line+"\n") {
-			t.Fatalf("stdout = %q, want %q", stdout, line)
-		}
-	}
-	agent := f.createdAgent(t)
-	if agent.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != digest || agent.Metadata.Annotations[coremetadata.AnnotationAgentEffort] != "" {
-		t.Fatalf("codex Agent annotations = %v, want the profile pair and no effort", agent.Metadata.Annotations)
-	}
-
-	if _, err := f.personas.Write("go-reviewer", []byte("x\n")); err != nil {
-		t.Fatal(err)
-	}
-	f.writeProfile(t, "instructed", "instructions = \"go-reviewer\"\n")
-	_, _, err = runRoute(t, f.create, "agent", "--provider", "codex", "--profile", "instructed", "--interactive-only",
-		"--project", "alpha", "--window", "review", "--name", "instructed")
-	if err == nil || !strings.Contains(err.Error(), persona.ReasonProviderUnsupported) {
-		t.Fatalf("codex plain lane with profile instructions = %v, want the %s refusal --instructions gets", err, persona.ReasonProviderUnsupported)
-	}
-}
-
 // TestUICreateResolvesTheProfileLikeTheTypedCreate is requirement 9: the UI
 // Agent answer resolves, merges, and snapshots a profile exactly like
 // `create agent`, refuses the same conflicts, and a resume-picker answer does
