@@ -155,6 +155,11 @@ type Options struct {
 	// mode: a navigable swatch grid with a live preview instead of the list
 	// filter/preview machinery. Purely additive; ignored by list pickers.
 	ColorGrid bool
+	// WrapHeader soft-wraps Header to the content width instead of cutting it
+	// to one line per paragraph. The wrapped header is capped so a few list
+	// rows stay visible; a capped header ends with "…". Ignored by the
+	// color-grid mode.
+	WrapHeader bool
 	// Recorder turns the navigation/search surface into a purpose-built
 	// continuous one-to-four-stroke recorder while retaining this native
 	// picker's input reader and lifecycle. It is ignored by the color-grid mode.
@@ -1383,7 +1388,7 @@ func nativeMouseItemIndex(options Options, items []Item, selected int, layout na
 		return selected, false
 	}
 
-	listStart := nativeListStartLine(options)
+	listStart := nativeListStartLine(options, contentLayout)
 	listRow := contentRow - listStart
 	if listRow < 0 {
 		return selected, false
@@ -1425,9 +1430,11 @@ func nativeMouseItemIndex(options Options, items []Item, selected int, layout na
 	return selected, false
 }
 
-func nativeListStartLine(options Options) int {
+func nativeListStartLine(options Options, layout nativeLayout) int {
 	lines := 0
-	if header := strings.TrimSpace(options.Header); header != "" {
+	if options.WrapHeader {
+		lines += len(nativeWrappedHeaderLines(options, layout))
+	} else if header := strings.TrimSpace(options.Header); header != "" {
 		lines += nativeTextLineCount(header)
 	}
 	lines += len(options.ChromeBands)
@@ -2002,7 +2009,11 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	var screen strings.Builder
 	pickerTheme := nativeTheme(options)
 	footer := nativeEffectiveFooter(options)
-	if header := strings.TrimSpace(options.Header); header != "" {
+	if options.WrapHeader {
+		for _, line := range nativeWrappedHeaderLines(options, layout) {
+			fmt.Fprintln(&screen, nativeHeaderLineWithTheme(pickerTheme, line, layout.Cols))
+		}
+	} else if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(&screen, nativeHeaderLineWithTheme(pickerTheme, header, layout.Cols))
 	}
 	for _, band := range options.ChromeBands {
@@ -2024,7 +2035,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	previewWindow := nativePreviewWindow(options)
 	placement := nativePreviewPlacement(previewWindow)
 	previewHeight := nativePreviewHeightForOptions(options, layout.Rows, previewWindow)
-	previewLimit := maxInt(1, layout.Rows-nativeChromeLineCount(options))
+	previewLimit := maxInt(1, layout.Rows-nativeChromeLineCountForLayout(options, layout))
 	if placement == "down" {
 		previewLimit = previewHeight
 	}
@@ -2137,7 +2148,7 @@ func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, t
 }
 
 func nativeListLimit(options Options, layout nativeLayout, previewPlacement string, previewHeight int, hasPreview bool) int {
-	available := layout.Rows - nativeChromeLineCount(options)
+	available := layout.Rows - nativeChromeLineCountForLayout(options, layout)
 	if hasPreview && previewPlacement == "down" {
 		available -= previewHeight + 1
 	}
@@ -2261,6 +2272,84 @@ func nativeChromeLineCount(options Options) int {
 	}
 	if footer := strings.TrimSpace(nativeEffectiveFooter(options)); footer != "" {
 		lines += 1 + nativeTextLineCount(footer) // footer separator + footer text
+	}
+	return lines
+}
+
+// nativeWrapHeaderMinListRows is how many list rows a wrapped header always
+// leaves visible (fewer when the list is shorter). A header that would take
+// those rows is cut and ends with "…".
+const nativeWrapHeaderMinListRows = 3
+
+// nativeChromeLineCountForLayout is nativeChromeLineCount with a WrapHeader
+// header counted as the rows it wraps to at layout. Without WrapHeader it
+// equals nativeChromeLineCount.
+func nativeChromeLineCountForLayout(options Options, layout nativeLayout) int {
+	lines := nativeChromeLineCount(options)
+	if options.WrapHeader {
+		lines += len(nativeWrappedHeaderLines(options, layout)) - nativeTextLineCount(options.Header)
+	}
+	return lines
+}
+
+// nativeWrappedHeaderLines returns the WrapHeader rows for layout: Header split
+// on newlines, each paragraph word-wrapped to layout.Cols by display width,
+// then capped so nativeWrapHeaderMinListRows list rows still fit.
+func nativeWrappedHeaderLines(options Options, layout nativeLayout) []string {
+	header := strings.TrimSpace(options.Header)
+	if header == "" {
+		return nil
+	}
+	cols := layout.Cols
+	if cols <= 0 {
+		cols = projmuxpicker.DefaultCols
+	}
+	lines := nativeWrapText(header, cols)
+	listRows := max(1, min(nativeWrapHeaderMinListRows, len(options.Items)))
+	budget := max(1, layout.Rows-(nativeChromeLineCount(options)-nativeTextLineCount(header))-listRows)
+	if len(lines) > budget {
+		lines = lines[:budget]
+		lines[budget-1] = projmuxpicker.TruncateANSI(strings.TrimRight(lines[budget-1], " "), cols-1) + "…"
+	}
+	return lines
+}
+
+// nativeWrapText splits value on newlines and word-wraps each paragraph so no
+// row is wider than width display cells. A word wider than width is broken
+// at the width. Blank paragraphs stay as empty rows.
+func nativeWrapText(value string, width int) []string {
+	var lines []string
+	for paragraph := range strings.SplitSeq(value, "\n") {
+		line, lineWidth := "", 0
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		for _, word := range words {
+			wordWidth := projmuxpicker.VisibleLen(word)
+			if lineWidth > 0 && lineWidth+1+wordWidth <= width {
+				line += " " + word
+				lineWidth += 1 + wordWidth
+				continue
+			}
+			if lineWidth > 0 {
+				lines = append(lines, line)
+				line, lineWidth = "", 0
+			}
+			for wordWidth > width {
+				head := projmuxpicker.TruncateANSI(word, width)
+				if head == "" {
+					_, size := utf8.DecodeRuneInString(word)
+					head = word[:size]
+				}
+				lines = append(lines, head)
+				word = word[len(head):]
+				wordWidth = projmuxpicker.VisibleLen(word)
+			}
+			line, lineWidth = word, wordWidth
+		}
+		lines = append(lines, line)
 	}
 	return lines
 }
