@@ -2135,13 +2135,21 @@ func aiProviderEnableCommand(provider string) string {
 	return "projmux config providers --enable " + strings.TrimSpace(provider)
 }
 
+// getMode resolves the mode a new AI window opens with: the TUI split
+// default when it holds a valid mode, else the central new AI window mode,
+// else selective. A missing, empty, or invalid TUI value falls through to
+// the central file.
 func (c *aiCommand) getMode() string {
 	config.NoteFrontRead(config.TmuxAISplitModeFileName, c.configFile())
-	content, err := os.ReadFile(c.configFile())
-	if err != nil {
-		return aiModeSelective
+	if content, err := os.ReadFile(c.configFile()); err == nil {
+		if mode, ok := config.ValidAINewWindowMode(string(content)); ok {
+			return mode
+		}
 	}
-	return normalizeAIMode(strings.TrimSpace(string(content)))
+	if mode, saved, _ := loadCentralAINewWindowMode(c.homeDir, c.lookupEnv); saved {
+		return mode
+	}
+	return aiModeSelective
 }
 
 func (c *aiCommand) setMode(mode string) error {
@@ -2157,20 +2165,12 @@ func (c *aiCommand) setMode(mode string) error {
 	return nil
 }
 
-// configFile is the saved AI split launch default. With neither
+// configFile is the saved AI split launch default, under the same config
+// home as the central new AI window mode (aiConfigHome). With neither
 // XDG_CONFIG_HOME nor a home directory it stays relative to the working
 // directory, as it always has.
 func (c *aiCommand) configFile() string {
-	configHome := strings.TrimSpace(c.env("XDG_CONFIG_HOME"))
-	if configHome == "" {
-		homeDir, err := c.home()
-		if err != nil || strings.TrimSpace(homeDir) == "" {
-			configHome = ".config"
-		} else {
-			configHome = filepath.Join(homeDir, ".config")
-		}
-	}
-	return config.DefaultPaths(configHome, "").TmuxAISplitModeFile()
+	return config.DefaultPaths(aiConfigHome(c.homeDir, c.lookupEnv), "").TmuxAISplitModeFile()
 }
 
 func (c *aiCommand) openPicker(direction string) error {
