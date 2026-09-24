@@ -117,7 +117,7 @@ const (
 	// its own question prompt, and the question hook stays out of it.
 	AgentQuestionAnsweringClaude AgentQuestionAnswering = "claude"
 	// AgentQuestionAnsweringProjmux is way 2: projmux records the question,
-	// opens its own picker in a popup on the client viewing the Agent's Pane,
+	// opens its own picker in a popup on the tmux client used most recently,
 	// and `projmux agent question answer` answers the same record.
 	AgentQuestionAnsweringProjmux AgentQuestionAnswering = "projmux"
 )
