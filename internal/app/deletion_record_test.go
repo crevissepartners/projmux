@@ -26,10 +26,9 @@ const (
 // deletionActorRunner answers only the actor confirmation query, the way the
 // ambient Pane on the delete's own server would.
 type deletionActorRunner struct {
-	calls  [][]string
-	row    []string
-	err    error
-	socket string
+	calls [][]string
+	row   []string
+	err   error
 }
 
 func newDeletionActorRunner(paneUID string) *deletionActorRunner {
