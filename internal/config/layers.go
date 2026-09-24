@@ -99,6 +99,7 @@ var settingItems = []SettingItem{
 	declareKeys(SettingConfigAISplitCWDFrom, LayerCentral, "[ai] split_cwd_from"),
 	// central: files and directories.
 	declareFile(AIEnabledAgentsFileName, LayerCentral, ""),
+	declareFile(AINewWindowModeFileName, LayerCentral, ""),
 	declareFile(ProjdirFileName, LayerCentral, ""),
 	declareFile(WorkdirsFileName, LayerCentral, ""),
 	declareFile(PinsFileName, LayerCentral, ""),

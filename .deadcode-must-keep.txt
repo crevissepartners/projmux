@@ -112,6 +112,7 @@ Routes	The public route table accessor is retained for cross-package coverage an
 Run	Recorder-free CLI bootstrap retained as the test seam over the live App.Run dispatch that RunWithLifecycleDiagnostics ships.
 Runner.ListWindows	Structured window inventory read retained as the test seam that pins the live format join and pane target argument builders.
 RuntimeKoreanStringAuditOptions	Runtime Korean profile of the governance string audit; it scopes the live guard over shipped Go sources.
+SaveAINewWindowModeFile	Central new-AI-window-mode writer retained for front ends outside this tree (the web client) that write the central default; no in-tree command writes it yet.
 SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
 SettingItems	Read-only projection of the settings layer declaration retained as the test seam the settings layer guard seeds every front file from.
 SharedOutputModes	Closed shared -o catalog retained as the test seam that pins catalog closure and contract ordering.
@@ -182,6 +183,7 @@ rootDefaults	Root teardown defaults are retained inside the pure teardown decisi
 runShellOutputLedger	Closed run-shell producer ledger; the C-1 no-overlay contract is enforced by sweeping shipped generated config against it.
 runShellSourceSites	Closed run-shell source site ledger; the package source sweep fails until a new producer is registered here.
 runtimeMutationPlan.withoutEffects	Effect-free plan projection retained as the property-test seam that pins guarded, ordered, idempotent runtime mutation.
+saveCentralAINewWindowMode	Central new-AI-window-mode writer retained for front ends outside this tree (the web client) that write the central default; no in-tree command writes it yet.
 settingsCommand.rootEntries	Fallback-locale entry point of the settings root entry builder retained as the axis metadata seam.
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.

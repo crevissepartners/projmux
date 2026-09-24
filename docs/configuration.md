@@ -538,6 +538,26 @@ that re-enables it.
 `Settings > Global > AI > Enabled providers`. A missing file means every
 provider is enabled; disabling every provider persists as none enabled.
 
+## New AI Window Default
+
+The mode a new AI window opens with has a central default, one word stored
+at:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-new-window-mode
+```
+
+The word is one of `claude`, `codex`, `antigravity`, `selective`, `resume`,
+or `shell`. In the terminal the mode resolves in this order: the TUI split
+default `tmux-ai-split-mode` when it holds one of those words, then this
+central file, then `selective`. A missing, empty, or invalid TUI value falls
+through to the central file; a missing, empty, or invalid central file means
+not set.
+
+`projmux settings` and `projmux config edit --set` keep writing
+`tmux-ai-split-mode`. No command writes the central file yet; edit it by hand
+or from another front end.
+
 ## AI Resume Picker
 
 The Agent resume picker lists the most recent
@@ -1222,7 +1242,7 @@ Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 Named Agent instructions continue to use the central `personas/` directory. The `projmux instructions` and legacy `projmux persona` commands read and write the same files.
