@@ -17,18 +17,20 @@ import (
 // locally via t.Setenv("LANG", "ko_KR.UTF-8"), which still wins because the
 // higher rungs stay cleared. This makes the suite locale-deterministic on any
 // host while leaving each test free to opt into another locale explicitly.
+//
+// The package runs behind runWithLiveMachineGuard, whose private
+// XDG_CONFIG_HOME also isolates it from the developer machine's real global
+// projmux config (e.g. locale=ko-KR), which outranks the LANG rung below.
 func TestMain(m *testing.M) {
 	exitIfSettingsLayerGuardChild()
 	exitIfClaudeQuestionHookChild()
 	exitIfClaudeQuestionPickerChild()
-	// Isolate from the developer machine's real global projmux config
-	// (e.g. locale=ko-KR), which outranks the LANG rung below.
-	if dir, err := os.MkdirTemp("", "projmux-test-xdg"); err == nil {
-		os.Setenv("XDG_CONFIG_HOME", dir)
-	}
-	os.Unsetenv("PROJMUX_LOCALE")
-	os.Unsetenv("LC_ALL")
-	os.Unsetenv("LC_MESSAGES")
-	os.Setenv("LANG", "en_US.UTF-8")
-	os.Exit(m.Run())
+	exitIfLiveMachineGuardChild()
+	os.Exit(runWithLiveMachineGuard(func() int {
+		os.Unsetenv("PROJMUX_LOCALE")
+		os.Unsetenv("LC_ALL")
+		os.Unsetenv("LC_MESSAGES")
+		os.Setenv("LANG", "en_US.UTF-8")
+		return m.Run()
+	}))
 }
