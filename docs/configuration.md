@@ -760,7 +760,7 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering
 | Value | Way | Meaning |
 | --- | --- | --- |
 | `claude` (default) | 1 | Claude Code shows its own question prompt; projmux stays out of it |
-| `projmux` | 2 | projmux records the question, opens its picker in a popup on the client viewing the Agent's Pane, and `projmux agent question answer` answers the same question |
+| `projmux` | 2 | projmux records the question, opens its picker in a popup on the client of the Agent's tmux server that you used most recently, and `projmux agent question answer` answers the same question |
 
 Set it with `projmux config agent-questions --answering <claude|projmux>`,
 or write the file. The setting applies to every Claude Agent on this machine. The value
