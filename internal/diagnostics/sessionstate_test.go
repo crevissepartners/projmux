@@ -71,13 +71,21 @@ func TestHistoricalSessionStateCommandOutcomesStayReadableButLiveArgvIsUnclassif
 	}
 	for _, args := range [][]string{
 		{"session-state", "save"},
-		{"create", "snapshot"},
-		{"get", "snapshots"},
-		{"delete", "snapshot"},
 		{"restore", "snapshot"},
 	} {
 		if got := Classify(args); got.Command != "" || got.Subcommand != "" || got.StateChanging {
 			t.Fatalf("Classify(%q) = %+v, want the removed route unclassified", args, got)
+		}
+	}
+	// `create`, `get`, and `delete` are live catalog roots, so an error names
+	// the root; the removed snapshot child is never a subcommand or a mutation.
+	for _, args := range [][]string{
+		{"create", "snapshot"},
+		{"get", "snapshots"},
+		{"delete", "snapshot"},
+	} {
+		if got := Classify(args); got.Command != args[0] || got.Subcommand != "" || got.StateChanging {
+			t.Fatalf("Classify(%q) = %+v, want only the live root, no removed subcommand or mutation", args, got)
 		}
 	}
 	for _, args := range [][]string{{"prune", "snapshot", "--apply"}, {"prune", "session-state", "delete"}} {

@@ -140,14 +140,43 @@ func TestClassifyCoversEveryTopLevelRule(t *testing.T) {
 		{args: []string{"version"}},
 		{args: []string{"welcome"}},
 		{args: []string{"window", "recent"}, changing: true},
+		// Catalog routes classified for error attribution only; the last three
+		// rules are internal-only.
+		{args: []string{"agent", "message"}},
+		{args: []string{"config", "apply"}},
+		{args: []string{"create", "window"}},
+		{args: []string{"delete", "agent"}},
+		{args: []string{"describe", "pane"}},
+		{args: []string{"get", "pane"}},
+		{args: []string{"help"}},
+		{args: []string{"instructions", "set"}},
+		{args: []string{"label", "pane"}},
+		{args: []string{"notification"}},
+		{args: []string{"open", "project"}},
+		{args: []string{"persona", "set"}},
+		{args: []string{"profile", "set"}},
+		{args: []string{"rebind", "project"}},
+		{args: []string{"reconcile", "resources"}},
+		{args: []string{"rename", "pane"}},
+		{args: []string{"runtime", "diagnostics"}},
+		{args: []string{"start", "project"}},
+		{args: []string{"stop", "project"}},
+		{args: []string{"unregister", "project"}},
+		{args: []string{"internal", "agent-pane", "picker"}},
+		{args: []string{"internal", "supervise"}},
+		{args: []string{"internal", "activation-exec"}},
 	}
 	seen := make(map[string]bool, len(tests))
 	for _, tt := range tests {
 		class := Classify(tt.args)
-		if class.Command != tt.args[0] || class.StateChanging != tt.changing {
+		command := tt.args[0]
+		if command == internalNamespaceToken {
+			command = tt.args[1] // internal-only rules are reached only this way
+		}
+		if class.Command != command || class.StateChanging != tt.changing {
 			t.Errorf("Classify(%q) = %#v, changing want %v", tt.args, class, tt.changing)
 		}
-		seen[tt.args[0]] = true
+		seen[command] = true
 	}
 	if len(seen) != len(commandRules) {
 		t.Fatalf("top-level classification coverage = %d, rules = %d", len(seen), len(commandRules))
