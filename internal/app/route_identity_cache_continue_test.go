@@ -114,6 +114,9 @@ type continueRouteObserver struct {
 }
 
 func (o *continueRouteObserver) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, o.Run); handled {
+		return out, err
+	}
 	if o.before != nil {
 		o.before(args)
 	}

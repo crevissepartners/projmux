@@ -44,6 +44,9 @@ type driftAfterFirstWriteRunner struct {
 }
 
 func (r *driftAfterFirstWriteRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	out, err := r.base.Run(ctx, name, args...)
 	if !r.fired && r.drift != nil && isRouteIdentityWrite(tmuxCommandArgv(args)) {
 		r.fired = true

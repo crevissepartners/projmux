@@ -980,6 +980,9 @@ type layoutLockProbeRunner struct {
 }
 
 func (r *layoutLockProbeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	argv := tmuxCommandArgv(args)
 	layout := len(argv) > 0 && (argv[0] == "resize-pane" ||
 		(argv[0] == "list-panes" && flagValue(argv, "-F") == splitLayoutBatchFormat))

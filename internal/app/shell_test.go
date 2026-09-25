@@ -1572,7 +1572,10 @@ type scriptedSocketRead struct {
 	err    error
 }
 
-func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *scriptedShellTmuxRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	call := recordedTmuxCall{name: name, args: append([]string(nil), args...)}
 	r.calls = append(r.calls, call)
 	if r.onRun != nil {

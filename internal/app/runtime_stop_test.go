@@ -29,7 +29,10 @@ type exactManagedStopRunner struct {
 	calls         []recordedTmuxCall
 }
 
-func (r *exactManagedStopRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *exactManagedStopRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	r.calls = append(r.calls, recordedTmuxCall{name: name, args: slices.Clone(args)})
 	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != r.physical {
 		return nil, fmt.Errorf("managed stop escaped printed physical route: %s %v", name, args)

@@ -475,22 +475,22 @@ func guardResolvedRuntimeMutationRouteWithMarkerPolicy(
 	allowMissingLogicalMarker bool,
 	identity *runtimeRouteIdentityCache,
 ) error {
-	return guardResolvedRuntimeMutationRouteObserved(ctx, runner, route, allowMissingLogicalMarker, identity, "")
+	return guardResolvedRuntimeMutationRouteObserved(ctx, runner, route, allowMissingLogicalMarker, identity, nil)
 }
 
 // guardResolvedRuntimeMutationRouteObserved is the resolved-route guard for a
-// caller that has just read #{socket_path} through the exact physical socket
-// this route names, with no tmux call in between. The proof then takes that
-// value instead of issuing the same read a second time; every other component
-// (server generation, app marker, logical marker) is still read here. An empty
-// observedSocket reads the socket path itself, exactly as the plain guard does.
+// caller that has just read this proof's whole read set (#{socket_path}, the
+// server generation, and the markers its class demands) through the exact
+// physical socket this route names, in the same tmux invocation. The proof then
+// takes those values instead of reading them a second time; a nil observation
+// reads them itself, exactly as the plain guard does.
 func guardResolvedRuntimeMutationRouteObserved(
 	ctx context.Context,
 	runner tmuxCommandRunner,
 	route runtimeMutationRoute,
 	allowMissingLogicalMarker bool,
 	identity *runtimeRouteIdentityCache,
-	observedSocket string,
+	observed *resolvedRouteObservation,
 ) error {
 	if runner == nil || route.target.Flag() == "" || route.target.Value == "" {
 		return errors.New("runtime mutation route is not exact")
@@ -500,7 +500,7 @@ func guardResolvedRuntimeMutationRouteObserved(
 	if cacheable && identity.reuse(key) {
 		return nil
 	}
-	if err := proveResolvedRuntimeMutationRouteObserved(ctx, runner, route, allowMissingLogicalMarker, observedSocket); err != nil {
+	if err := proveResolvedRuntimeMutationRouteObserved(ctx, runner, route, allowMissingLogicalMarker, observed); err != nil {
 		identity.invalidate("resolved-route-probe-error")
 		return err
 	}
@@ -510,7 +510,48 @@ func guardResolvedRuntimeMutationRouteObserved(
 	return nil
 }
 
-func proveResolvedRuntimeMutationRouteObserved(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, allowMissingLogicalMarker bool, observedSocket string) error {
+// resolvedRouteObservation is one resolved-route proof's read set. Only the
+// fields readResolvedRouteObservation reads for the route's authority are
+// filled; the others stay empty and are never compared.
+type resolvedRouteObservation struct {
+	socket  string
+	pid     string
+	app     string
+	logical string
+}
+
+// readResolvedRouteObservation reads one resolved-route proof's read set in
+// one tmux invocation through routed: #{socket_path}, then the server
+// generation when a generation was captured, then both ownership markers
+// unless the authority class is unknown (that proof is refused right after the
+// generation check, as it always was). The error is the sequence's; each
+// caller reports it with the text of its own socket-path read, the sequence's
+// first read.
+func readResolvedRouteObservation(ctx context.Context, routed tmuxCommandRunner, authority *runtimeMutationRouteAuthority) (resolvedRouteObservation, error) {
+	var observed resolvedRouteObservation
+	reads := []routeRead{routeReadSocketPath}
+	fields := []*string{&observed.socket}
+	if authority != nil {
+		reads = append(reads, routeReadServerPID)
+		fields = append(fields, &observed.pid)
+	}
+	switch {
+	case authority == nil, authority.Class == runtimeMutationRouteApp,
+		authority.Class == runtimeMutationRouteStandalone, authority.Class == runtimeMutationRouteStandaloneExplicit:
+		reads = append(reads, routeReadAppMarker, routeReadSocketNameMarker)
+		fields = append(fields, &observed.app, &observed.logical)
+	}
+	sections, err := readTmuxSequence(ctx, routed, reads...)
+	if err != nil {
+		return resolvedRouteObservation{}, err
+	}
+	for i, field := range fields {
+		*field = sections[i]
+	}
+	return observed, nil
+}
+
+func proveResolvedRuntimeMutationRouteObserved(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, allowMissingLogicalMarker bool, pre *resolvedRouteObservation) error {
 	// Once a physical socket has been observed, it is the execution authority.
 	// Re-resolving the logical alias here would let an alias replacement make a
 	// pre-observation report the effect from the wrong server.
@@ -519,14 +560,16 @@ func proveResolvedRuntimeMutationRouteObserved(ctx context.Context, runner tmuxC
 		probeTarget = tmuxTransport{Kind: tmuxSocketPath, Value: filepath.Clean(route.expectedSocketPath), Source: tmuxSocketPathSource}
 	}
 	routed := explicitTmuxRunner{runner: runner, target: probeTarget}
-	if observedSocket == "" || route.expectedSocketPath == "" {
-		out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	if pre == nil || route.expectedSocketPath == "" {
+		// The whole read set is one tmux invocation through routed. A failed
+		// sequence reports the text of its first read, the socket path.
+		read, err := readResolvedRouteObservation(ctx, routed, route.authority)
 		if err != nil {
 			return fmt.Errorf("reobserve planned runtime socket: %w", err)
 		}
-		observedSocket = string(out)
+		pre = &read
 	}
-	observed := filepath.Clean(strings.TrimSpace(observedSocket))
+	observed := filepath.Clean(strings.TrimSpace(pre.socket))
 	if route.expectedSocketPath != "" && observed != filepath.Clean(route.expectedSocketPath) {
 		return fmt.Errorf("runtime socket drifted: observed %q, planned %q", observed, filepath.Clean(route.expectedSocketPath))
 	}
@@ -535,14 +578,11 @@ func proveResolvedRuntimeMutationRouteObserved(ctx context.Context, runner tmuxC
 			(route.target.Flag() != "-S" || route.target.Value != route.expectedSocketPath) {
 			return errors.New("planned standalone runtime route is not exact physical authority")
 		}
-		pidOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
-		if err != nil || strings.TrimSpace(string(pidOut)) != route.authority.ServerPID {
+		if strings.TrimSpace(pre.pid) != route.authority.ServerPID {
 			return errors.New("planned runtime server generation drifted")
 		}
 		if route.authority.Class == runtimeMutationRouteStandalone || route.authority.Class == runtimeMutationRouteStandaloneExplicit {
-			appOwned, appErr := routed.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
-			logical, logicalErr := routed.Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
-			if appErr != nil || logicalErr != nil || strings.TrimSpace(string(appOwned)) != "" || strings.TrimSpace(string(logical)) != "" {
+			if strings.TrimSpace(pre.app) != "" || strings.TrimSpace(pre.logical) != "" {
 				return errors.New("planned standalone runtime route class drifted")
 			}
 			return nil
@@ -551,13 +591,11 @@ func proveResolvedRuntimeMutationRouteObserved(ctx context.Context, runner tmuxC
 			return errors.New("planned runtime route has an unknown authority class")
 		}
 	}
-	appOwned, err := routed.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
-	if err != nil || strings.TrimSpace(string(appOwned)) != "1" {
+	if strings.TrimSpace(pre.app) != "1" {
 		return errors.New("planned runtime socket is not app-owned")
 	}
-	logical, err := routed.Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
-	logicalName := strings.TrimSpace(string(logical))
-	if err != nil || (logicalName != route.socketName && !(allowMissingLogicalMarker && logicalName == "")) {
+	logicalName := strings.TrimSpace(pre.logical)
+	if logicalName != route.socketName && !(allowMissingLogicalMarker && logicalName == "") {
 		return errors.New("planned runtime socket logical route marker drifted")
 	}
 	return nil

@@ -285,6 +285,10 @@ type materializer struct {
 	// identityMemo is open only while one identity-write plan runs (see
 	// scopeIdentityObservations). It is nil everywhere else.
 	identityMemo *identityObservationMemo
+	// paneDefaults is the default-shell/default-command pair a create read
+	// before taking the Registry lock (prefetchPaneDefaults). It is nil outside
+	// that create's transaction.
+	paneDefaults *paneDefaultsMemo
 	// guardedWrites counts every Apply and Undo that passed through
 	// guardedWriteSteps. A reader that observed tmux when the count was n knows
 	// no guarded write of ours followed while it is still n.
@@ -636,7 +640,40 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 		probe = m.mutationRunner(plannedRuntimeMutation{Target: runtimeMutationTarget{PhysicalSocket: m.expectedSocketPath}})
 		physicalObservation = filepath.IsAbs(m.expectedSocketPath)
 	}
-	observedOut, observeErr := probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	// With a captured server generation and that exact physical socket, the
+	// whole proof is one tmux invocation: the socket path and every value the
+	// rest of this proof compares are read together through the one runner the
+	// separate reads would each have used, with no tmux call in between. A
+	// failed sequence reports the socket-path read's text, the first read. Any
+	// other route keeps a lone socket-path read, because what follows it (a
+	// rebind or a route re-resolution) decides which runner reads the rest. So
+	// does a nested resolved-route proof that will reuse this transaction's
+	// earlier proof: it compares nothing past the socket path, so nothing more
+	// is read.
+	var folded *resolvedRouteObservation
+	var observedOut []byte
+	var observeErr error
+	if physicalObservation && m.routeAuthority != nil && !m.resolvedRouteProofWouldReuse(target, requireLogical) {
+		authority := m.routeAuthority
+		if authority.Class == runtimeMutationRouteApp && !requireLogical {
+			// The app-route variant reads the generation and the app marker only.
+			var sections []string
+			sections, observeErr = readTmuxSequence(ctx, probe, routeReadSocketPath, routeReadServerPID, routeReadAppMarker)
+			if observeErr == nil {
+				folded = &resolvedRouteObservation{socket: sections[0], pid: sections[1], app: sections[2]}
+			}
+		} else {
+			var read resolvedRouteObservation
+			if read, observeErr = readResolvedRouteObservation(ctx, probe, authority); observeErr == nil {
+				folded = &read
+			}
+		}
+		if observeErr == nil {
+			observedOut = []byte(folded.socket)
+		}
+	} else {
+		observedOut, observeErr = probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	}
 	if observeErr != nil {
 		if allowNoServer && m.expectedSocketPath == "" && m.routeAuthority == nil && inttmux.IsNoServerFailure(observeErr) {
 			return nil
@@ -676,8 +713,8 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 		// speaks for, so every earlier proof is void.
 		m.invalidateRouteIdentity("route-re-resolution")
 		// The re-resolution issued its own reads after the socket observation
-		// above, so that observation no longer stands in for the nested proof.
-		physicalObservation = false
+		// above, so no observation stands in for the nested proof.
+		folded = nil
 		m.target = bound.target
 		target = bound.target
 		m.socketName = bound.socketName
@@ -685,27 +722,34 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 	}
 	if m.routeAuthority != nil {
 		if m.routeAuthority.Class == runtimeMutationRouteApp && !requireLogical {
-			pidOut, err := probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
-			if err != nil || strings.TrimSpace(string(pidOut)) != m.routeAuthority.ServerPID {
+			pid, owned := "", ""
+			if folded != nil {
+				pid, owned = folded.pid, folded.app
+			} else {
+				// One invocation through probe; a failed sequence reports the
+				// generation read's text, the first read.
+				sections, err := readTmuxSequence(ctx, probe, routeReadServerPID, routeReadAppMarker)
+				if err != nil {
+					return errors.New("runtime mutation route: exact app server generation drifted")
+				}
+				pid, owned = sections[0], sections[1]
+			}
+			if strings.TrimSpace(pid) != m.routeAuthority.ServerPID {
 				return errors.New("runtime mutation route: exact app server generation drifted")
 			}
-			owned, err := probe.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
-			if err != nil || strings.TrimSpace(string(owned)) != "1" {
+			if strings.TrimSpace(owned) != "1" {
 				return errors.New("runtime mutation route: exact server is not app-owned")
 			}
 			return nil
 		}
-		// The socket path this proof needs was read above, through the same exact
-		// physical socket, with no tmux call in between; the nested proof reads
-		// the server generation and both markers.
-		reuseObserved := ""
-		if physicalObservation {
-			reuseObserved = observed
-		}
+		// When the socket path was read above through the same exact physical
+		// socket, the same invocation also read the server generation and both
+		// markers, and the nested proof takes them all. Otherwise it reads its
+		// whole set itself, in one invocation.
 		return guardResolvedRuntimeMutationRouteObserved(ctx, m.baseRunner(), runtimeMutationRoute{
 			target: target, expectedSocketPath: m.expectedSocketPath,
 			socketName: m.logicalSocketName(target), authority: m.routeAuthority,
-		}, false, m.routeIdentity, reuseObserved)
+		}, false, m.routeIdentity, folded)
 	}
 	if requireLogical {
 		if err := guardRuntimeMutationServerOwnership(ctx, probe, target); err != nil {
@@ -730,6 +774,20 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 		// independently or bound at the first post-create observation.
 	}
 	return nil
+}
+
+// resolvedRouteProofWouldReuse reports whether the nested resolved-route proof
+// proveExactRouteOwnership hands off to would answer from the identity cache.
+// The app-route variant has no nested proof.
+func (m *materializer) resolvedRouteProofWouldReuse(target tmuxTransport, requireLogical bool) bool {
+	if m.routeAuthority.Class == runtimeMutationRouteApp && !requireLogical {
+		return false
+	}
+	key, cacheable := runtimeRouteIdentityKeyForRoute(routeIdentityScopeResolvedRoute, runtimeMutationRoute{
+		target: target, expectedSocketPath: m.expectedSocketPath,
+		socketName: m.logicalSocketName(target), authority: m.routeAuthority,
+	})
+	return cacheable && m.routeIdentity.wouldReuse(key)
 }
 
 func (m *materializer) logicalSocketName(target tmuxTransport) string {

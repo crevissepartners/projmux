@@ -402,22 +402,98 @@ func resolveRuntimeMutationAnchorPane(lookupEnv func(string) string, explicit st
 	return "", nil
 }
 
+// routeRead is the argv of one tmux read a route proof issues.
+type routeRead []string
+
+var (
+	routeReadSocketPath       = routeRead{"display-message", "-p", "-F", "#{socket_path}"}
+	routeReadServerPID        = routeRead{"display-message", "-p", "-F", "#{pid}"}
+	routeReadAppMarker        = routeRead{"show-options", "-gqv", tmuxopts.AppGlobal}
+	routeReadSocketNameMarker = routeRead{"show-options", "-gqv", runtimeMutationSocketNameOption}
+)
+
+// routeReadBoundary is the literal line printed between two reads of one
+// sequence. It carries no format escape, so display-message prints it
+// verbatim.
+const routeReadBoundary = "projmux-route-read-boundary-5f0c"
+
+// readTmuxSequence issues reads as ONE tmux invocation, a command sequence
+// joined by tmux's ";" argument (exec'd directly, no shell), and returns each
+// read's own output in order. A single read is issued unchanged.
+//
+// One route proof reads the socket path, the server generation, and both
+// ownership markers under the Registry lock; each separate exec is a full
+// tmux client round trip. The sequence keeps every read's own semantics:
+// show-options -gqv still reads the GLOBAL option (a #{@option} format would
+// let a session or window scoped option shadow it), an unset option still
+// prints no line, and a multi-line value stays whole within its section.
+//
+// The caller maps an error to the text its FIRST read in the sequence gives
+// today: tmux stops at a failing command, so which read failed is not known.
+// Output that does not split into exactly one section per read -- a value
+// that itself prints the boundary line, or a truncated sequence -- is refused
+// the same way instead of being assigned to the wrong read.
+func readTmuxSequence(ctx context.Context, runner tmuxCommandRunner, reads ...routeRead) ([]string, error) {
+	if len(reads) == 0 {
+		return nil, nil
+	}
+	if len(reads) == 1 {
+		out, err := runner.Run(ctx, "tmux", reads[0]...)
+		if err != nil {
+			return nil, err
+		}
+		return []string{string(out)}, nil
+	}
+	args := make([]string, 0, len(reads)*9)
+	for i, read := range reads {
+		if i > 0 {
+			args = append(args, ";", "display-message", "-p", "-F", routeReadBoundary, ";")
+		}
+		args = append(args, read...)
+	}
+	out, err := runner.Run(ctx, "tmux", args...)
+	if err != nil {
+		return nil, err
+	}
+	sections := splitTmuxSequenceOutput(string(out))
+	if len(sections) != len(reads) {
+		return nil, fmt.Errorf("tmux read sequence returned %d sections, want %d", len(sections), len(reads))
+	}
+	return sections, nil
+}
+
+// splitTmuxSequenceOutput splits a sequence's output at the boundary lines.
+// Every command's output ends in a newline, so exactly one trailing newline
+// belongs to the last read and is dropped before splitting.
+func splitTmuxSequenceOutput(out string) []string {
+	out = strings.TrimSuffix(out, "\n")
+	sections := []string{}
+	current := []string{}
+	for line := range strings.SplitSeq(out, "\n") {
+		if line == routeReadBoundary {
+			sections = append(sections, strings.Join(current, "\n"))
+			current = current[:0]
+			continue
+		}
+		current = append(current, line)
+	}
+	return append(sections, strings.Join(current, "\n"))
+}
+
 // guardRuntimeMutationServerOwnership proves that an already-running server is
 // the app-owned server declared by the logical route. A matching socket path is
 // not ownership evidence: a foreign server can be cloned onto the same -L name.
 func guardRuntimeMutationServerOwnership(ctx context.Context, routed tmuxCommandRunner, target tmuxTransport) error {
-	owned, err := routed.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
+	// Both markers are read in one tmux invocation through the same runner. A
+	// failed sequence reports the error the first read (the app marker) gives.
+	markers, err := readTmuxSequence(ctx, routed, routeReadAppMarker, routeReadSocketNameMarker)
 	if err != nil {
 		return fmt.Errorf("runtime mutation route: read app ownership marker: %w", err)
 	}
-	if strings.TrimSpace(string(owned)) != "1" {
+	if strings.TrimSpace(markers[0]) != "1" {
 		return errors.New("runtime mutation route: exact server is not app-owned")
 	}
-	logical, err := routed.Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
-	if err != nil {
-		return fmt.Errorf("runtime mutation route: read app logical socket marker: %w", err)
-	}
-	logicalName := strings.TrimSpace(string(logical))
+	logicalName := strings.TrimSpace(markers[1])
 	if logicalName == "" {
 		name := ""
 		if target.Flag() == "-L" {

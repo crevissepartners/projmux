@@ -55,6 +55,9 @@ type canonicalRenameRecycleRunner struct {
 }
 
 func (r *canonicalRenameRecycleRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	argv := tmuxCommandArgv(args)
 	if len(argv) > 0 && argv[0] == "display-message" {
 		format := flagValue(argv, "-F")
@@ -71,6 +74,9 @@ func (r *canonicalRenameRecycleRunner) Run(ctx context.Context, name string, arg
 }
 
 func (r routeBindingAssertionRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	r.t.Helper()
 	if !*r.bound {
 		r.t.Fatal("canonical Window producer used its materializer before binding the exact invocation route")

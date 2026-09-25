@@ -36,6 +36,9 @@ func (f pruneKillerFunc) KillSession(ctx context.Context, sessionName string) er
 type lifecycleTmuxRunnerFunc func(context.Context, string, ...string) ([]byte, error)
 
 func (f lifecycleTmuxRunnerFunc) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, f.Run); handled {
+		return out, err
+	}
 	return f(ctx, name, args...)
 }
 

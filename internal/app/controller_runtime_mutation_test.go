@@ -25,6 +25,9 @@ type controllerRollbackMoveRunner struct {
 type controllerBooleanOptionRunner struct{ base tmuxCommandRunner }
 
 func (r controllerBooleanOptionRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	out, err := r.base.Run(ctx, name, args...)
 	if err != nil || !slices.Contains(args, "display-message") || !slices.Contains(args, "#{automatic-rename}") {
 		return out, err
@@ -40,6 +43,9 @@ func (r controllerBooleanOptionRunner) Run(ctx context.Context, name string, arg
 }
 
 func (r *controllerRollbackMoveRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	out, err := r.base.Run(ctx, name, args...)
 	if err != nil || r.moved || !slices.Contains(args, r.firstField) || !slices.Contains(args, "set-option") {
 		return out, err

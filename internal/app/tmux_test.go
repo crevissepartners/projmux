@@ -3472,7 +3472,10 @@ type recordedTmuxCall struct {
 	args []string
 }
 
-func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *recordingTmuxRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
 	if name == "tmux" && len(args) == 4 && reflect.DeepEqual(args[:3], []string{"display-message", "-p", "-F"}) {
 		return []byte(r.formats[args[3]] + "\n"), nil

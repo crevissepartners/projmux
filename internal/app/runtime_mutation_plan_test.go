@@ -3497,6 +3497,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"attach.go:executeAutoAttachPlan:helper:KillSession":                              "attach.ephemeral-prune",
 		"prune.go:runEphemeral:helper:KillSession":                                        "standalone.prune",
 		"materialize.go:read:variable-argv":                                               "runtime.observation",
+		"runtime_mutation_route.go:readTmuxSequence:variable-argv":                        "runtime.observation",
 		"tmux.go:managedIngestMigrationAIForRoute:variable-argv":                          "config.migration",
 		"tmux.go:runApply:source-file":                                                    "config.apply-source",
 		"tmux.go:retireGeneratedKeySequenceState:variable-argv":                           "key-sequence.retirement",

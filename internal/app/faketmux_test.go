@@ -290,7 +290,10 @@ type settingsLiveTestRunner struct {
 	socketPath string
 }
 
-func (r *settingsLiveTestRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *settingsLiveTestRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	argv := tmuxCommandArgv(args)
 	if r.socketPath == "" {
 		switch {
@@ -360,7 +363,10 @@ func flagValue(args []string, flag string) string {
 }
 
 // Run answers one tmux invocation.
-func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (f *fakeTmux) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, f.Run); handled {
+		return out, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if name != "tmux" {
