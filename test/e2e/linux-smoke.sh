@@ -5615,6 +5615,7 @@ topology_assert_exact_resume() {
   local expected="$1"
   topology_launch_count_reached() { [[ "$(wc -l <"$topology_agent_argv")" -ge "$expected" ]]; }
   smoke_wait_until 10 "Continue provider argv receipt" topology_launch_count_reached
+  topology_assert_launch_settled "Continue did not resume the exact retained conversation once (expected total $expected)"
   if [[ "$(wc -l <"$topology_agent_argv")" != "$expected" ]] || ! tail -n 1 "$topology_agent_argv" | grep -F "resume topology-thread" >/dev/null; then
     echo "Continue did not resume the exact retained conversation once (expected total $expected)" >&2
     cat "$topology_agent_argv" >&2
@@ -5636,6 +5637,27 @@ topology_assert_no_pending_launch() {
     { [[ -n "$hosts" ]] && printf '%s\n' "$hosts" | awk -F '|' -v uid="$topology_agent_uid" '$2 != "Agent" || $3 != uid' | grep . >/dev/null; }; then
     echo "$message" >&2
     printf 'provider-capable panes (want %s counted Agent pane(s)):\n%s\n' "$counted" "$hosts" >&2
+    cat "$topology_agent_argv" >&2
+    exit 1
+  fi
+}
+
+# An exact-once judgement reads the provider argv log only once no duplicate
+# launch can still append to it. A new-Pane duplicate is ruled out when every
+# provider-capable Pane on the whole server is this Agent's single Pane. A
+# same-Pane relaunch would first replace that Pane's process, and nothing
+# re-runs a Pane command while it lives; the shim execs sleep only after its one
+# append, so once that Pane's foreground command is sleep the count is final.
+topology_assert_launch_settled() {
+  local message="$1" topology_settled_pane
+  topology_assert_no_pending_launch 1 "$message"
+  topology_settled_pane="$(topology_tmux list-panes -a -F '#{pane_id}|#{@projmux_pane_owner_kind}' | awk -F '|' '$2 != "Window" {print $1}')"
+  topology_launch_settled() {
+    [[ "$(topology_tmux display-message -p -t "$topology_settled_pane" '#{pane_current_command}')" == "sleep" ]]
+  }
+  if ! smoke_wait_until 10 "Agent provider launch settled in sleep" topology_launch_settled; then
+    echo "$message" >&2
+    topology_tmux display-message -p -t "$topology_settled_pane" '#{pane_id}|#{pane_pid}|#{pane_current_command}|#{pane_start_command}' >&2
     cat "$topology_agent_argv" >&2
     exit 1
   fi
@@ -5894,12 +5916,14 @@ fi
 
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/agent-only-execute.json"
 # The provider shim appends its argv inside the new Agent Pane after reconcile
-# returns, so wait on the same bound as topology_assert_exact_resume before the
-# exact-once judgement. A timeout falls through to that judgement, which still
-# fails zero or duplicate launches with the argv dump.
+# returns, so wait on the same bound as topology_assert_exact_resume, then let
+# that launch settle so no duplicate can still arrive, before the exact-once
+# judgement. A receipt timeout falls through to those checks, which still fail
+# zero or duplicate launches with the argv dump.
 topology_agent_only_expected="$((topology_agent_only_launches_before + 1))"
 topology_agent_only_launch_reached() { [[ "$(wc -l <"$topology_agent_argv")" -ge "$topology_agent_only_expected" ]]; }
 smoke_wait_until 10 "Agent-only provider argv receipt" topology_agent_only_launch_reached || true
+topology_assert_launch_settled "Agent-only interrupted fixture did not resume its exact conversation once"
 topology_agent_only_launches_after="$(wc -l <"$topology_agent_argv")"
 if [[ "$((topology_agent_only_launches_after - topology_agent_only_launches_before))" != "1" ]] ||
   ! tail -n 1 "$topology_agent_argv" | grep -F "resume topology-thread" >/dev/null; then
