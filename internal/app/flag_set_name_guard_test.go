@@ -55,6 +55,7 @@ var flagSetNameExceptions = map[string]flagSetNameException{
 // local assigned once, and a function parameter through every same-package
 // call of that function; anything else is not statically known.
 type flagSetNameEval struct {
+	fset   *token.FileSet
 	files  map[string]*ast.File // repo-relative name -> file
 	pkgOf  map[string]string    // repo-relative name -> import path
 	consts map[string]map[string]ast.Expr
@@ -67,8 +68,8 @@ type flagSetNameFunc struct {
 }
 
 func newFlagSetNameEval(pkgs []flagParseGuardPackage) (*flagSetNameEval, []string) {
-	e := &flagSetNameEval{files: map[string]*ast.File{}, pkgOf: map[string]string{}, consts: map[string]map[string]ast.Expr{}, funcs: map[string][]flagSetNameFunc{}}
 	fset := token.NewFileSet()
+	e := &flagSetNameEval{fset: fset, files: map[string]*ast.File{}, pkgOf: map[string]string{}, consts: map[string]map[string]ast.Expr{}, funcs: map[string][]flagSetNameFunc{}}
 	var problems []string
 	for _, pkg := range pkgs {
 		if !pkg.scan {
