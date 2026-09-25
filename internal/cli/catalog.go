@@ -2064,7 +2064,7 @@ var routes = []Route{
 		Invocation:  InvocationNatural,
 		Summary:     "Pick a project and compose create project with open project",
 		Disposition: DispositionShortcut,
-		Usage:       []string{"projmux switch [<project>]"},
+		Usage:       []string{"projmux switch"},
 		Canonical:   []string{"create project", "open project"},
 	},
 	{

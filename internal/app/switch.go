@@ -333,7 +333,7 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printSwitchUsage(stderr)
-		return fmt.Errorf("switch does not accept positional arguments")
+		return usageError("switch does not accept positional arguments")
 	}
 	if err := validateSwitchUI(*ui); err != nil {
 		printSwitchUsage(stderr)

@@ -3939,7 +3939,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux switch [<project>]
+projmux switch
 ```
 
 Canonical spelling: `projmux create project`, `projmux open project`
