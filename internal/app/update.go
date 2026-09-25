@@ -253,7 +253,8 @@ func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runCheck(args[1:], stdout, stderr)
 	case "apply":
 		return c.runApply(args[1:], stdout, stderr)
-	case "help", "--help", "-h":
+	// Only `update help <more tokens>` gets here: the help boundary answers `update help`, `--help`, and `-h` first.
+	case "help":
 		return printRouteHelp(stdout, "update")
 	default:
 		return usageError(fmt.Sprintf("unknown update subcommand: %s", args[0]))

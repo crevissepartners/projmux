@@ -1,8 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -10,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -168,35 +172,76 @@ func exactPaneExitDirty(receipts ...coremetadata.TerminationEvidence) lifecycleD
 	}
 }
 
-type lifecyclePinStore struct {
-	set     pins.Set
-	saves   int
-	loadErr error
-	saveErr error
+// lifecyclePinFile is the production pin file seeded for one test, with the
+// bytes and mtime it held before automatic retention ran. Retention no longer
+// carries a pin store at all, so the guarantee is observed on the file the
+// production pin path resolves to rather than on an injected fake.
+type lifecyclePinFile struct {
+	paths   config.Paths
+	path    string
+	bytes   []byte
+	modTime time.Time
 }
 
-func (s *lifecyclePinStore) Path() string            { return "/tmp/phase3-pins" }
-func (s *lifecyclePinStore) Load() (pins.Set, error) { return s.set, s.loadErr }
-func (s *lifecyclePinStore) Save(set pins.Set) error {
-	if s.saveErr != nil {
-		return s.saveErr
-	}
-	s.set = set
-	s.saves++
-	return nil
-}
+// lifecyclePinFileSeedTime is a fixed past mtime, so any rewrite -- even one
+// with identical bytes -- moves the file off it.
+var lifecyclePinFileSeedTime = time.Date(2020, time.January, 2, 3, 4, 5, 0, time.UTC)
 
-// Update mirrors pins.Store.Update: load, decide, save only when asked to.
-func (s *lifecyclePinStore) Update(update func(pins.Set) (pins.Set, bool, error)) error {
-	stored, err := s.Load()
+// seedLifecyclePinFile isolates every home the pin path resolves through and
+// saves the other candidate pin plus the managed proj-beta Project pin through
+// the production store. The caller cannot run in parallel: t.Setenv owns them.
+func seedLifecyclePinFile(t *testing.T) lifecyclePinFile {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
-		return err
+		t.Fatalf("resolve pin paths: %v", err)
 	}
-	next, write, err := update(stored)
-	if err != nil || !write {
-		return err
+	store := pins.NewDefaultStore(paths)
+	if !strings.HasPrefix(store.Path(), root) {
+		t.Fatalf("pin file %s escaped the isolated root %s", store.Path(), root)
 	}
-	return s.Save(next)
+	managed, _ := pins.ProjectPin("proj-beta")
+	other, _ := pins.CandidatePin("/srv/other")
+	if err := store.Save(pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other, managed}}); err != nil {
+		t.Fatalf("seed pin file: %v", err)
+	}
+	if err := os.Chtimes(store.Path(), lifecyclePinFileSeedTime, lifecyclePinFileSeedTime); err != nil {
+		t.Fatalf("age pin file: %v", err)
+	}
+	data, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatalf("read seeded pin file: %v", err)
+	}
+	info, err := os.Stat(store.Path())
+	if err != nil {
+		t.Fatalf("stat seeded pin file: %v", err)
+	}
+	return lifecyclePinFile{paths: paths, path: store.Path(), bytes: data, modTime: info.ModTime()}
+}
+
+// lifecyclePinFileProblem reports how the pin file moved off its seed, or ""
+// when it still holds the same bytes and mtime.
+func lifecyclePinFileProblem(file lifecyclePinFile) string {
+	info, err := os.Stat(file.path)
+	if err != nil {
+		return fmt.Sprintf("automatic retention removed or hid the pin file %s: %v", file.path, err)
+	}
+	if !info.ModTime().Equal(file.modTime) {
+		return fmt.Sprintf("automatic retention rewrote the pin file %s: mtime %s, want %s", file.path, info.ModTime(), file.modTime)
+	}
+	data, err := os.ReadFile(file.path)
+	if err != nil {
+		return fmt.Sprintf("read pin file %s: %v", file.path, err)
+	}
+	if !bytes.Equal(data, file.bytes) {
+		return fmt.Sprintf("automatic retention changed the pin file %s:\n%s\nwant:\n%s", file.path, data, file.bytes)
+	}
+	return ""
 }
 
 func renameFixtureProjectUID(t *testing.T, registry *coremetadata.Registry, oldUID, newUID string) {
@@ -251,7 +296,7 @@ func prepareLastBetaProjectCascade(t *testing.T) (*fakeResourceStore, *exactPane
 }
 
 func TestLastPaneExitAndMatchingWindowUnlinkDeleteWindowAndRetainProject(t *testing.T) {
-	t.Parallel()
+	pinFile := seedLifecyclePinFile(t)
 	store, inventory, event := prepareLastBetaProjectCascade(t)
 	alphaBefore, _ := store.registry.Project("prj-alpha")
 	alphaWindowsBefore := store.registry.WindowsOf("prj-alpha")
@@ -260,10 +305,6 @@ func TestLastPaneExitAndMatchingWindowUnlinkDeleteWindowAndRetainProject(t *test
 		alphaPanesBefore = append(alphaPanesBefore, store.registry.PanesOf(window.Metadata.UID)...)
 	}
 	deadPaneUID := event.receipts[0].PaneUID
-	managed, _ := pins.ProjectPin("proj-beta")
-	other, _ := pins.CandidatePin("/srv/other")
-	pinStore := &lifecyclePinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other, managed}}}
-	event.pinStore = pinStore
 	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
 	if err != nil {
 		t.Fatalf("record last-Pane receipt: %v", err)
@@ -316,8 +357,8 @@ func TestLastPaneExitAndMatchingWindowUnlinkDeleteWindowAndRetainProject(t *test
 	if !reflect.DeepEqual(alphaBefore, alphaAfter) || !reflect.DeepEqual(alphaWindowsBefore, alphaWindowsAfter) || !reflect.DeepEqual(alphaPanesBefore, alphaPanesAfter) {
 		t.Fatal("last-Project cascade changed the sibling Project graph")
 	}
-	if pinStore.saves != 0 || !reflect.DeepEqual(pinStore.set, pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other, managed}}) {
-		t.Fatalf("automatic retention touched pins = %+v, saves=%d", pinStore.set, pinStore.saves)
+	if problem := lifecyclePinFileProblem(pinFile); problem != "" {
+		t.Fatal(problem)
 	}
 	settled := store.snapshot()
 	if repeat, err := reconcileLifecycle(context.Background(), unlinked, inventory, store.store()); err != nil || repeat.transactions != 0 || store.snapshot() != settled {
@@ -326,19 +367,51 @@ func TestLastPaneExitAndMatchingWindowUnlinkDeleteWindowAndRetainProject(t *test
 }
 
 func TestAutomaticWindowClosureNeverUsesProjectPinAuthority(t *testing.T) {
-	t.Parallel()
-	managed, _ := pins.ProjectPin("proj-beta")
-	other, _ := pins.CandidatePin("/srv/other")
-	initial := pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other, managed}}
+	pinFile := seedLifecyclePinFile(t)
 	store, inventory, event := prepareLastBetaProjectCascade(t)
-	pinStore := &lifecyclePinStore{set: initial, loadErr: errors.New("must not load"), saveErr: errors.New("must not save")}
-	event.pinStore = pinStore
+	// An unreadable pin file makes any load fail, so retention that still
+	// reached for pin authority would surface an error here, not just a write.
+	if err := os.Chmod(pinFile.path, 0); err != nil {
+		t.Fatalf("seal pin file: %v", err)
+	}
+	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	info, statErr := os.Stat(pinFile.path)
+	if statErr == nil && info.Mode().Perm() != 0 {
+		t.Fatalf("automatic retention replaced the sealed pin file: mode %v", info.Mode().Perm())
+	}
+	if statErr == nil {
+		if chmodErr := os.Chmod(pinFile.path, 0o600); chmodErr != nil {
+			t.Fatalf("unseal pin file: %v", chmodErr)
+		}
+	}
+	if err != nil || len(result.pending) != 1 {
+		t.Fatalf("pending Window lifecycle = %+v, %v", result, err)
+	}
+	if problem := lifecyclePinFileProblem(pinFile); problem != "" {
+		t.Fatal(problem)
+	}
+}
+
+// TestAutomaticRetentionPinGuardDetectsAPinWrite is the negative control for
+// lifecyclePinFileProblem: a retention that did write the pin file -- here,
+// dropping the managed Project pin after the same last-Project cascade -- must
+// be reported, or the two guards above prove nothing.
+func TestAutomaticRetentionPinGuardDetectsAPinWrite(t *testing.T) {
+	pinFile := seedLifecyclePinFile(t)
+	store, inventory, event := prepareLastBetaProjectCascade(t)
 	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
 	if err != nil || len(result.pending) != 1 {
 		t.Fatalf("pending Window lifecycle = %+v, %v", result, err)
 	}
-	if !reflect.DeepEqual(pinStore.set, initial) || pinStore.saves != 0 {
-		t.Fatalf("automatic retention touched pins: %+v saves=%d", pinStore.set, pinStore.saves)
+	if problem := lifecyclePinFileProblem(pinFile); problem != "" {
+		t.Fatalf("pin file moved before the simulated write: %s", problem)
+	}
+	other, _ := pins.CandidatePin("/srv/other")
+	if err := pins.NewDefaultStore(pinFile.paths).Save(pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other}}); err != nil {
+		t.Fatalf("simulate a retention pin write: %v", err)
+	}
+	if problem := lifecyclePinFileProblem(pinFile); !strings.Contains(problem, "automatic retention") {
+		t.Fatalf("pin guard missed a pin write: %q", problem)
 	}
 }
 

@@ -133,7 +133,8 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runList(args[1:], stdout, stderr)
 	case "window":
 		return c.runWindow(args[1:], stdout, stderr)
-	case "help", "--help", "-h":
+	// Only `attention help <more tokens>` gets here: the help boundary answers `attention help`, `--help`, and `-h` first.
+	case "help":
 		return printRouteHelp(stdout, "attention")
 	default:
 		printRouteUsage(stderr, "attention")
