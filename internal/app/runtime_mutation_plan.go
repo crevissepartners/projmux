@@ -931,10 +931,36 @@ type runtimeMutationStep struct {
 // semantic Guard when, on the same fresh read, the step's own write field
 // already holds its planned value and every other condition the Guard checks
 // still holds. A concurrent writer converged the target between pre-effect
-// reobservation and the guard pass. The executor drops such a step like a
-// repeat-empty one. Only a Guard that opts in by returning this sentinel
-// changes behaviour; the executor never decides convergence itself.
+// reobservation and the guard pass. For an absence-effect step (a kill, stop,
+// or lease clear) the expected effect is the exact target's absence, so its
+// Guard returns the sentinel only when the same absence predicate its
+// Reobserve uses proves that exact target gone; any other drift stays a
+// refusal. The executor drops such a step like a repeat-empty one. Only a
+// Guard that opts in by returning this sentinel changes behaviour; the
+// executor never decides convergence itself.
 var errRuntimeMutationEffectConverged = errors.New("runtime mutation plan: expected effect already present at guard")
+
+// runtimeMutationAbsentTargetConverged is the sentinel an absence-effect Guard
+// returns when its own fresh read already proved the exact target absent.
+func runtimeMutationAbsentTargetConverged(target string) error {
+	return fmt.Errorf("exact target %s already absent: %w", target, errRuntimeMutationEffectConverged)
+}
+
+// runtimeMutationAbsenceConverged reclassifies an absence-effect Guard refusal
+// as converged only when a fresh observeAbsent, the step's own absence
+// predicate, proves the exact target gone. A nil guardErr, an observation
+// error, or a still-present target returns guardErr unchanged, so every
+// non-absence drift stays refused.
+func runtimeMutationAbsenceConverged(ctx context.Context, guardErr error, observeAbsent func(context.Context) (bool, error)) error {
+	if guardErr == nil || observeAbsent == nil {
+		return guardErr
+	}
+	absent, err := observeAbsent(ctx)
+	if err != nil || !absent {
+		return guardErr
+	}
+	return fmt.Errorf("exact target proven absent after guard refusal (%v): %w", guardErr, errRuntimeMutationEffectConverged)
+}
 
 // replanRuntimeMutationSteps renumbers the surviving steps of a replan and
 // re-validates their printable plan. An empty replan needs no validation.

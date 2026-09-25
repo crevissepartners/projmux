@@ -468,3 +468,110 @@ func TestWindowDeleteKillAllTreatsAWindowKilledBetweenReobserveAndGuardAsAbsent(
 		}
 	}
 }
+
+// windowGuardDriftRunner is racedAwayWindowRunner with the post-Reobserve
+// state chosen per test: guardRow is what the Guard's exact `display-message
+// -t @10` reads, and laterList what every later `list-windows -a` lists.
+type windowGuardDriftRunner struct {
+	guardRow  string
+	laterList string
+	listReads int
+	calls     []recordedTmuxCall
+}
+
+func (r *windowGuardDriftRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
+	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
+	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != testDeleteTarget.Value {
+		return nil, fmt.Errorf("window guard drift runner requires exact -S routing: %s %v", name, args)
+	}
+	switch args[2] {
+	case "display-message":
+		switch args[len(args)-1] {
+		case "#{socket_path}":
+			return []byte(testDeleteTarget.Value + "\n"), nil
+		case "#{pid}":
+			return []byte("4242\n"), nil
+		}
+		if flagValue(args[2:], "-t") == "@10" {
+			return []byte(r.guardRow), nil
+		}
+	case "show-options":
+		switch args[len(args)-1] {
+		case tmuxopts.AppGlobal:
+			return []byte("1\n"), nil
+		case runtimeMutationSocketNameOption:
+			return []byte(defaultAppSocket + "\n"), nil
+		}
+	case "list-windows":
+		r.listReads++
+		if r.listReads > 1 {
+			return []byte(r.laterList), nil
+		}
+		return []byte(liveInventoryRow("$1", "@10", "win-alpha-main") + liveInventoryRow("$1", "@11", "win-alpha-review")), nil
+	case "kill-window":
+		return nil, fmt.Errorf("window guard drift runner refuses kill: %v", args)
+	}
+	return nil, fmt.Errorf("unexpected window guard drift command: %v", args)
+}
+
+func runWindowGuardDriftKillAll(t *testing.T, runner *windowGuardDriftRunner) (int, error) {
+	t.Helper()
+	target, err := tmuxSocketPathTarget(testDeleteTarget.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &tmuxWindowDeleteRuntime{
+		runner: runner, target: target, getenv: func(string) string { return "" },
+		expectedSocketPath: testDeleteTarget.Value, expectedLogicalSocket: defaultAppSocket,
+		routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+	}
+	live := windowLiveDeleteTarget{
+		UID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1",
+		RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+	}
+	return runtime.killAll(context.Background(), []windowLiveDeleteTarget{live})
+}
+
+// Real tmux answers `display-message -t @10` for a missing Window with an
+// empty row and exit 0 rather than an error, so the Guard sees drift and the
+// Reobserve predicate (list-windows) must prove the absence.
+func TestWindowDeleteKillAllTreatsAnEmptyGuardRowForAKilledWindowAsAbsent(t *testing.T) {
+	runner := &windowGuardDriftRunner{
+		guardRow:  liveInventoryRow("", "", "", "", ""),
+		laterList: liveInventoryRow("$1", "@11", "win-alpha-review"),
+	}
+	applied, err := runWindowGuardDriftKillAll(t, runner)
+	if err != nil || applied != 0 {
+		t.Fatalf("killAll() = applied %d, err %v; want the concurrently removed Window treated as absent with zero kills", applied, err)
+	}
+	if runner.listReads != 2 {
+		t.Fatalf("list-windows reads = %d, want Reobserve plus the Guard's absence proof", runner.listReads)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-window") {
+			t.Fatalf("Window removed before the guard reached tmux mutation: %#v", runner.calls)
+		}
+	}
+}
+
+func TestWindowDeleteKillAllStillRefusesAWindowWhoseUIDDriftedBetweenReobserveAndGuard(t *testing.T) {
+	runner := &windowGuardDriftRunner{
+		guardRow: liveInventoryRow("$1", "alpha", "@10", "prj-alpha", "win-other"),
+		laterList: liveInventoryRow("$1", "@10", "win-other") +
+			liveInventoryRow("$1", "@11", "win-alpha-review"),
+	}
+	applied, err := runWindowGuardDriftKillAll(t, runner)
+	if err == nil || applied != 0 ||
+		!strings.Contains(err.Error(), `guard refused action "kill-window" before first write`) ||
+		!strings.Contains(err.Error(), "exact live Window @10 drifted before mutation") {
+		t.Fatalf("killAll() = applied %d, err %v; want the present-but-drifted Window refused at the guard", applied, err)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-window") {
+			t.Fatalf("drifted Window reached tmux mutation: %#v", runner.calls)
+		}
+	}
+}

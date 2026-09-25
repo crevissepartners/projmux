@@ -593,3 +593,31 @@ func TestManagedRuntimeStopTreatsASessionKilledBetweenReobserveAndGuardAsStopped
 	}
 	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: false})
 }
+
+func TestManagedRuntimeStopStillRefusesASessionWhoseAttributionDriftedBetweenReobserveAndGuard(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	activateRuntimeStopAgent(t, store, "gen-attribution-drift")
+	// Read 3 is the Guard's: the exact $1 is still listed, now attributed to
+	// another Project. Present-with-drift is not absence and must stay refused.
+	runner := &exactManagedStopRunner{physical: "/tmp/projmux-stop", logical: defaultAppSocket, rootUID: "prj-alpha"}
+	runner.onListRead = func(read int) {
+		if read == 3 {
+			runner.rootUID = "prj-other"
+		}
+	}
+	stopStore := store.store()
+	err := executeManagedRuntimeStop(context.Background(), runner, runtimeStopProjectTarget(runner),
+		managedRuntimeStopRegistryAuthority(stopStore.snapshot), stopStore)
+	if err == nil || !strings.Contains(err.Error(), `guard refused action "stop-managed-session" before first write`) ||
+		!strings.Contains(err.Error(), "managed Project attribution drifted on exact physical route") {
+		t.Fatalf("executeManagedRuntimeStop() error = %v; want the attribution drift refused at the guard", err)
+	}
+	if runner.killed {
+		t.Fatalf("attribution-drifted Session was killed: %#v", runner.calls)
+	}
+	pane, _ := store.registry.Pane("pan-alpha-codex")
+	if pane.Status.LastTermination != nil {
+		t.Fatalf("refused stop retained its interruption receipt: %+v", pane.Status.LastTermination)
+	}
+}

@@ -119,3 +119,54 @@ func TestUnmanagedRuntimeStopRefusesForgedAppRoute(t *testing.T) {
 		t.Fatalf("forged route writes = %d, want zero", got)
 	}
 }
+
+func unmanagedGuardDriftStop(t *testing.T, guardRow, absenceRow string) (*unmanagedStopRunner, bool, error) {
+	t.Helper()
+	row := strings.Join([]string{"$7", "scratch", "", "", ""}, tmuxRowSep) + "\n"
+	runner := &unmanagedStopRunner{
+		appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux",
+		// Initial selection and the executor's pre-reobserve see $7; the
+		// Guard's read and its absence proof see what a concurrent writer left.
+		listRows: []string{row, row, guardRow, absenceRow},
+	}
+	killed, err := executeUnmanagedRuntimeStop(context.Background(), runner, func(string) string { return "" }, "scratch", "")
+	if len(runner.listRows) != 0 {
+		t.Fatalf("list-sessions reads left %d rows unread; want the Guard's absence proof to read the last one", len(runner.listRows))
+	}
+	return runner, killed, err
+}
+
+func TestUnmanagedRuntimeStopTreatsASessionKilledBetweenReobserveAndGuardAsStopped(t *testing.T) {
+	t.Parallel()
+	other := strings.Join([]string{"$9", "other"}, tmuxRowSep) + "\n"
+	runner, killed, err := unmanagedGuardDriftStop(t, "", other)
+	if err != nil || !killed {
+		t.Fatalf("killed/error = %v / %v; want the concurrently removed session treated as stopped", killed, err)
+	}
+	if got := runner.topologyWrites(); got != 0 {
+		t.Fatalf("already-absent session writes = %d, want zero: %#v", got, runner.calls)
+	}
+}
+
+func TestUnmanagedRuntimeStopStillRefusesASameNameSuccessorAtTheGuard(t *testing.T) {
+	t.Parallel()
+	successor := strings.Join([]string{"$8", "scratch", "", "", ""}, tmuxRowSep) + "\n"
+	runner, killed, err := unmanagedGuardDriftStop(t, successor, strings.Join([]string{"$8", "scratch"}, tmuxRowSep)+"\n")
+	if err == nil || killed || !strings.Contains(err.Error(), "unmanaged runtime identity drifted before stop") {
+		t.Fatalf("killed/error = %v / %v; want a same-name successor with another $N refused", killed, err)
+	}
+	if got := runner.topologyWrites(); got != 0 {
+		t.Fatalf("same-name successor writes = %d, want zero: %#v", got, runner.calls)
+	}
+}
+
+func TestUnmanagedRuntimeStopStillRefusesARenamedLiveSessionAtTheGuard(t *testing.T) {
+	t.Parallel()
+	runner, killed, err := unmanagedGuardDriftStop(t, "", strings.Join([]string{"$7", "renamed"}, tmuxRowSep)+"\n")
+	if err == nil || killed || !strings.Contains(err.Error(), "unmanaged runtime identity drifted before stop") {
+		t.Fatalf("killed/error = %v / %v; want the renamed but live $7 refused", killed, err)
+	}
+	if got := runner.topologyWrites(); got != 0 {
+		t.Fatalf("renamed session writes = %d, want zero: %#v", got, runner.calls)
+	}
+}

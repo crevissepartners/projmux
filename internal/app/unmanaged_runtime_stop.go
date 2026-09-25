@@ -109,16 +109,43 @@ func executeUnmanagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, 
 		},
 		Guard: func(ctx context.Context) error {
 			if err := guardPrintedRuntimeMutationRoute(ctx, runner, route, action); err != nil {
+				if inttmux.IsNoServerFailure(err) {
+					return runtimeMutationAbsentTargetConverged("unmanaged session " + observed.sessionID)
+				}
 				return err
 			}
 			current, found, err := observe(ctx)
-			if err != nil {
-				return err
+			if err == nil && (!found || current != observed) {
+				err = errors.New("unmanaged runtime identity drifted before stop")
 			}
-			if !found || current != observed {
-				return errors.New("unmanaged runtime identity drifted before stop")
-			}
-			return nil
+			// Stricter than Reobserve: a same-name successor or a renamed live
+			// $N is still drift. Only the observed $N and its name both gone
+			// (or no server at all) is the stop's goal already reached.
+			return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
+				if err := guardPrintedRuntimeMutationRoute(ctx, runner, route, action); err != nil {
+					if inttmux.IsNoServerFailure(err) {
+						return true, nil
+					}
+					return false, err
+				}
+				out, err := routed.Run(ctx, "tmux", "list-sessions", "-F", tmuxRowFormat("#{session_id}", "#{session_name}"))
+				if err != nil {
+					if inttmux.IsNoServerFailure(err) {
+						return true, nil
+					}
+					return false, err
+				}
+				rows, err := strictTmuxRows(string(out), 2)
+				if err != nil {
+					return false, err
+				}
+				for _, row := range rows {
+					if row[0] == observed.sessionID || row[1] == sessionName {
+						return false, nil
+					}
+				}
+				return true, nil
+			})
 		},
 		Apply: func(ctx context.Context) error {
 			_, err := runRuntimeMutationCommand(ctx, routed, action)
