@@ -2177,7 +2177,7 @@ bounded_resource_reconcile_to_noop() {
     else
       report="$report_prefix-pass-$pass.json"
     fi
-    "$@" >"$report"
+    "$@" >"$report" || return
     if grep -Fq '"outcome": "changed"' "$report"; then
       continue
     fi
@@ -3469,10 +3469,127 @@ termination_pmx_inside() {
     "$bin" "$@"
 }
 
+# A replay that exits zero proves nothing about the Registry: a holds-deferral
+# is success to the controller lease, and a pass that runs while the Pane is
+# still alive converges on the receipt alone, leaving the cascade to the
+# generated hook worker. The replay loop therefore ends only when the caller's
+# arrived predicate sees the state its judgement needs and the last replay held
+# the lease itself: every holds-deferred replay marks a pane-exited event, and
+# only a replay that held the lease has drained those marks. Left behind, they
+# share a controller batch with the next fixture step's triggers. A timeout, or
+# a judgement that then fails, has to name the replay's last outcome and who
+# held the controller lease, or the failure cannot be told apart from a product
+# regression. This dump is called only on failure branches, right before their
+# exit, and never fails itself.
+declare -A termination_replay_attempt=() termination_replay_returned_at=()
+termination_dump_controller_state() {
+  local report_label="$1" runtime_id="$2" pane_uid="$3"
+  (
+    local err_file="$termination_root/receipt-converge-$report_label.err"
+    local controller_dir="$termination_root/state/projmux/controller"
+    local journal="$termination_root/state/projmux/termination-receipts.jsonl"
+    local key lock_file inode holders holder_pid events_dir event_file workers panes rows
+    echo ">> termination controller state ($report_label): replay"
+    echo "attempt=${termination_replay_attempt[$report_label]:-unknown} returned_at=${termination_replay_returned_at[$report_label]:-unknown} dumped_at=$(date +%s.%N || true)"
+    if [[ -e "$err_file" ]]; then
+      cat "$err_file" || true
+    else
+      echo "replay stderr absent: $err_file"
+    fi
+    key="$(printf '%s\0%s' -S "$termination_socket_path" | sha256sum | cut -c1-16 || true)"
+    lock_file="$controller_dir/$key.lock"
+    echo ">> termination controller state ($report_label): lease"
+    if [[ -e "$lock_file" ]]; then
+      inode="$(stat -c %i "$lock_file" 2>/dev/null || true)"
+      echo "lock=$lock_file exists=yes inode=$inode"
+      holders=""
+      if [[ -n "$inode" && -r /proc/locks ]]; then
+        # A blocked waiter's row carries an extra `->` field, so the pid is
+        # located as the field before the dev:inode triple rather than by column.
+        holders="$(awk -v inode="$inode" '{
+          for (i = 2; i <= NF; i++) {
+            n = split($i, parts, ":")
+            if (n == 3 && parts[3] == inode) {
+              print $(i - 1) (index($0, "->") ? " waiting" : " holding")
+              break
+            }
+          }
+        }' /proc/locks 2>/dev/null || true)"
+      fi
+      if [[ -z "$holders" ]]; then
+        echo "holder=none"
+      else
+        while read -r holder_pid holder_state; do
+          echo "pid=$holder_pid state=$holder_state args=$(tr '\0' ' ' <"/proc/$holder_pid/cmdline" 2>/dev/null || true)"
+        done <<<"$holders"
+      fi
+    else
+      echo "lock=$lock_file exists=no"
+    fi
+    echo ">> termination controller state ($report_label): pending events"
+    events_dir="$controller_dir/$key.events"
+    if compgen -G "$events_dir/*" >/dev/null 2>&1; then
+      for event_file in "$events_dir"/*; do
+        echo "event=$(basename "$event_file" || true) body=$(cat "$event_file" 2>/dev/null || true)"
+      done
+    else
+      echo "events=none"
+    fi
+    echo ">> termination controller state ($report_label): in-flight workers"
+    # shellcheck disable=SC2009 # pgrep -f also matches the shell running this pipeline and cannot print etimes.
+    workers="$(ps -eo pid=,etimes=,args= 2>/dev/null | grep -F 'internal tmux converge' | grep -F -- "$termination_socket_path" || true)"
+    echo "${workers:-workers=none}"
+    echo ">> termination controller state ($report_label): runtime pane $runtime_id"
+    panes="$(termination_tmux list-panes -a -F '#{pane_id} dead=#{pane_dead} uid=#{@projmux_pane_uid}' 2>/dev/null | awk -v id="$runtime_id" '$1 == id' || true)"
+    echo "${panes:-absent}"
+    echo ">> termination controller state ($report_label): journal rows for $pane_uid"
+    rows=""
+    if [[ -n "$pane_uid" && -e "$journal" ]]; then
+      rows="$(grep -F -- "$pane_uid" "$journal" 2>/dev/null || true)"
+    fi
+    echo "${rows:-journal=none}"
+  ) >&2 || true
+}
+
+# A refused public reconcile names only the pane whose option drifted. Dump
+# every report pass, every live pane uid, the Registry Pane bindings, and the
+# controller workers so the other identity writer can be named. Never fails.
+termination_dump_reconcile_state() {
+  local report_label="$1" report_prefix="$2"
+  (
+    local report pane_uid rebalancers
+    echo ">> termination reconcile state ($report_label): dumped_at=$(date +%s.%N || true)"
+    for report in "$report_prefix.json" "$report_prefix"-pass-*.json; do
+      [[ -e "$report" ]] || continue
+      echo ">> termination reconcile state ($report_label): report $report"
+      cat "$report" || true
+    done
+    echo ">> termination reconcile state ($report_label): tmux panes"
+    termination_tmux list-panes -a -F '#{pane_id} session=#{session_name} window=#{window_id} dead=#{pane_dead} uid=#{@projmux_pane_uid} owner=#{@projmux_pane_owner_kind}:#{@projmux_pane_owner_uid} pid=#{pane_pid} cmd=#{pane_start_command}' 2>&1 || true
+    echo ">> termination reconcile state ($report_label): Registry panes"
+    while read -r pane_uid; do
+      [[ -n "$pane_uid" ]] || continue
+      echo "pane=$pane_uid"
+      termination_pmx describe pane "uid:$pane_uid" -o json </dev/null 2>&1 \
+        | grep -E '"(uid|kind|name|runtimeID|generation|ownerRef)"' | sed -n 1,40p || true
+    done < <(termination_pmx get panes --all-projects -o uid 2>&1 | sed -n 1,50p || true)
+    termination_dump_controller_state "$report_label" "" ""
+    echo ">> termination reconcile state ($report_label): in-flight rebalancers"
+    # rebalance-panes carries no socket argument; the generated hook's run-shell
+    # wrapper names both it and this socket path for the whole hook lifetime.
+    # shellcheck disable=SC2009 # pgrep -f also matches the shell running this pipeline and cannot print etimes.
+    rebalancers="$(ps -eo pid=,etimes=,args= 2>/dev/null | grep -F 'internal tmux rebalance-panes' | grep -F -- "$termination_socket_path" || true)"
+    echo "${rebalancers:-rebalancers=none}"
+  ) >&2 || true
+}
+
 termination_pmx create project --root "$termination_root/work/evidence" --name evidence \
   >"$termination_root/register-project.out"
-bounded_resource_reconcile_to_noop "$termination_root/reconcile" \
-  termination_pmx reconcile resources --socket "$termination_socket" -o json
+if ! bounded_resource_reconcile_to_noop "$termination_root/reconcile" \
+  termination_pmx reconcile resources --socket "$termination_socket" -o json; then
+  termination_dump_reconcile_state reconcile "$termination_root/reconcile"
+  exit 1
+fi
 smoke_assert_file_contains "$termination_root/reconcile.json" '"outcome": "changed"'
 termination_project_uid="$(termination_pmx get projects -o uid)"
 if [[ -z "$termination_project_uid" ]] || [[ "$(printf '%s\n' "$termination_project_uid" | grep -c .)" != "1" ]]; then
@@ -3554,88 +3671,6 @@ termination_await_journal_receipt() {
   echo "no durable supervisor journal receipt was recorded for $pane_uid" >&2
   [[ ! -e "$journal" ]] || tail -n 20 "$journal" >&2
   exit 1
-}
-
-# A replay that exits zero proves nothing about the Registry: a holds-deferral
-# is success to the controller lease, and a pass that runs while the Pane is
-# still alive converges on the receipt alone, leaving the cascade to the
-# generated hook worker. The replay loop therefore ends only when the caller's
-# arrived predicate sees the state its judgement needs and the last replay held
-# the lease itself: every holds-deferred replay marks a pane-exited event, and
-# only a replay that held the lease has drained those marks. Left behind, they
-# share a controller batch with the next fixture step's triggers. A timeout, or
-# a judgement that then fails, has to name the replay's last outcome and who
-# held the controller lease, or the failure cannot be told apart from a product
-# regression. This dump is called only on failure branches, right before their
-# exit, and never fails itself.
-declare -A termination_replay_attempt=() termination_replay_returned_at=()
-termination_dump_controller_state() {
-  local report_label="$1" runtime_id="$2" pane_uid="$3"
-  (
-    local err_file="$termination_root/receipt-converge-$report_label.err"
-    local controller_dir="$termination_root/state/projmux/controller"
-    local journal="$termination_root/state/projmux/termination-receipts.jsonl"
-    local key lock_file inode holders holder_pid events_dir event_file workers panes rows
-    echo ">> termination controller state ($report_label): replay"
-    echo "attempt=${termination_replay_attempt[$report_label]:-unknown} returned_at=${termination_replay_returned_at[$report_label]:-unknown} dumped_at=$(date +%s.%N || true)"
-    if [[ -e "$err_file" ]]; then
-      cat "$err_file" || true
-    else
-      echo "replay stderr absent: $err_file"
-    fi
-    key="$(printf '%s\0%s' -S "$termination_socket_path" | sha256sum | cut -c1-16 || true)"
-    lock_file="$controller_dir/$key.lock"
-    echo ">> termination controller state ($report_label): lease"
-    if [[ -e "$lock_file" ]]; then
-      inode="$(stat -c %i "$lock_file" 2>/dev/null || true)"
-      echo "lock=$lock_file exists=yes inode=$inode"
-      holders=""
-      if [[ -n "$inode" && -r /proc/locks ]]; then
-        # A blocked waiter's row carries an extra `->` field, so the pid is
-        # located as the field before the dev:inode triple rather than by column.
-        holders="$(awk -v inode="$inode" '{
-          for (i = 2; i <= NF; i++) {
-            n = split($i, parts, ":")
-            if (n == 3 && parts[3] == inode) {
-              print $(i - 1) (index($0, "->") ? " waiting" : " holding")
-              break
-            }
-          }
-        }' /proc/locks 2>/dev/null || true)"
-      fi
-      if [[ -z "$holders" ]]; then
-        echo "holder=none"
-      else
-        while read -r holder_pid holder_state; do
-          echo "pid=$holder_pid state=$holder_state args=$(tr '\0' ' ' <"/proc/$holder_pid/cmdline" 2>/dev/null || true)"
-        done <<<"$holders"
-      fi
-    else
-      echo "lock=$lock_file exists=no"
-    fi
-    echo ">> termination controller state ($report_label): pending events"
-    events_dir="$controller_dir/$key.events"
-    if compgen -G "$events_dir/*" >/dev/null 2>&1; then
-      for event_file in "$events_dir"/*; do
-        echo "event=$(basename "$event_file" || true) body=$(cat "$event_file" 2>/dev/null || true)"
-      done
-    else
-      echo "events=none"
-    fi
-    echo ">> termination controller state ($report_label): in-flight workers"
-    # shellcheck disable=SC2009 # pgrep -f also matches the shell running this pipeline and cannot print etimes.
-    workers="$(ps -eo pid=,etimes=,args= 2>/dev/null | grep -F 'internal tmux converge' | grep -F -- "$termination_socket_path" || true)"
-    echo "${workers:-workers=none}"
-    echo ">> termination controller state ($report_label): runtime pane $runtime_id"
-    panes="$(termination_tmux list-panes -a -F '#{pane_id} dead=#{pane_dead} uid=#{@projmux_pane_uid}' 2>/dev/null | awk -v id="$runtime_id" '$1 == id' || true)"
-    echo "${panes:-absent}"
-    echo ">> termination controller state ($report_label): journal rows for $pane_uid"
-    rows=""
-    if [[ -n "$pane_uid" && -e "$journal" ]]; then
-      rows="$(grep -F -- "$pane_uid" "$journal" 2>/dev/null || true)"
-    fi
-    echo "${rows:-journal=none}"
-  ) >&2 || true
 }
 
 termination_replay_pane_exited_hook() {
@@ -4050,8 +4085,11 @@ mkdir -p "$termination_root/work/closed"
 termination_tmux new-session -d -s work-closed -n main -c "$termination_root/work/closed" sleep 600
 termination_tmux set-option -t work-closed -q @projmux_project_path "$termination_root/work/closed"
 termination_closed_project_uid="$(termination_pmx create project --root "$termination_root/work/closed" --name closed -o uid)"
-bounded_resource_reconcile_to_noop "$termination_root/reconcile-closed" \
-  termination_pmx reconcile resources --socket "$termination_socket" -o json
+if ! bounded_resource_reconcile_to_noop "$termination_root/reconcile-closed" \
+  termination_pmx reconcile resources --socket "$termination_socket" -o json; then
+  termination_dump_reconcile_state reconcile-closed "$termination_root/reconcile-closed"
+  exit 1
+fi
 termination_closed_window_uid="$(termination_tmux show-options -wqv -t work-closed @projmux_window_uid)"
 termination_closed_shell_runtime="$(termination_tmux display-message -p -t work-closed '#{pane_id}')"
 termination_closed_shell_uid="$(termination_tmux show-options -pqv -t "$termination_closed_shell_runtime" @projmux_pane_uid)"
@@ -4213,8 +4251,11 @@ mkdir -p "$termination_root/work/killwin"
 termination_tmux new-session -d -s work-killwin -n main -c "$termination_root/work/killwin" sleep 600
 termination_tmux set-option -t work-killwin -q @projmux_project_path "$termination_root/work/killwin"
 termination_killwin_project_uid="$(termination_pmx create project --root "$termination_root/work/killwin" --name killwin -o uid)"
-bounded_resource_reconcile_to_noop "$termination_root/reconcile-killwin" \
-  termination_pmx reconcile resources --socket "$termination_socket" -o json
+if ! bounded_resource_reconcile_to_noop "$termination_root/reconcile-killwin" \
+  termination_pmx reconcile resources --socket "$termination_socket" -o json; then
+  termination_dump_reconcile_state reconcile-killwin "$termination_root/reconcile-killwin"
+  exit 1
+fi
 termination_killwin_window_id="$(termination_tmux display-message -p -t work-killwin:main '#{window_id}')"
 termination_killwin_window_uid="$(termination_tmux show-options -wqv -t work-killwin:main @projmux_window_uid)"
 termination_killwin_pane_runtime="$(termination_tmux display-message -p -t work-killwin:main '#{pane_id}')"
