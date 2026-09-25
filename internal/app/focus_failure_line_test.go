@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
@@ -23,55 +24,43 @@ func focusSubprocessExitError(t *testing.T) *exec.ExitError {
 	return exitErr
 }
 
-// entrypointFailureLine is a local copy of cmd/projmux executeCLI's stderr
-// rule: it returns what the entrypoint itself prints for the error a command
-// returned.
+// entrypointFailureLine returns what the cmd/projmux entrypoint itself prints
+// for the error a command returned, from the verdict it shares with dispatch.
 func entrypointFailureLine(err error) string {
-	if err == nil {
-		return ""
-	}
-	var coded interface {
-		error
-		ExitCode() int
-	}
-	if errors.As(err, &coded) {
-		if exitErr, ok := coded.(*exec.ExitError); ok && error(exitErr) != err {
-			return err.Error() + "\n"
-		}
+	if !cli.ClassifyFailure(err, IsUsageError(err)).Print {
 		return ""
 	}
 	return err.Error() + "\n"
 }
 
-// TestCLIPrintsFailureMirrorsExecuteCLIRule pins the dispatch predicate to the
-// entrypoint's print rule over every error kind focus can return, so a drift
-// in either side is caught here.
-func TestCLIPrintsFailureMirrorsExecuteCLIRule(t *testing.T) {
+// TestFocusErrorsTakeTheSharedEntrypointVerdict pins where every error kind
+// focus can return falls under the verdict the entrypoint and dispatch share:
+// focus's own not-resolved coder is silent however it is wrapped, so dispatch
+// owns its line, and every other kind is the entrypoint's to print.
+func TestFocusErrorsTakeTheSharedEntrypointVerdict(t *testing.T) {
 	t.Parallel()
 	exitErr := focusSubprocessExitError(t)
 	wrapped := fmt.Errorf("focus: list-sessions: %w", exitErr)
 	tests := []struct {
-		name string
-		err  error
-		want bool
+		name      string
+		err       error
+		wantPrint bool
+		wantCode  int
 	}{
-		{name: "plain error", err: errors.New("boom"), want: true},
-		{name: "usage error", err: usageError("bad usage"), want: true},
-		{name: "wrapped exit error", err: wrapped, want: true},
-		{name: "doubly wrapped exit error", err: fmt.Errorf("outer: %w", wrapped), want: true},
-		{name: "bare exit error", err: exitErr, want: false},
-		{name: "focus exit error", err: focusExitError{code: focusExitNotResolved, err: errors.New("gone")}, want: false},
-		{name: "focus exit error wrapping exit error", err: focusExitError{code: focusExitNotResolved, err: wrapped}, want: false},
-		{name: "wrapped focus exit error", err: fmt.Errorf("outer: %w", focusExitError{code: focusExitNotResolved, err: wrapped}), want: false},
+		{name: "plain error", err: errors.New("boom"), wantPrint: true, wantCode: 1},
+		{name: "usage error", err: usageError("bad usage"), wantPrint: true, wantCode: 2},
+		{name: "wrapped exit error", err: wrapped, wantPrint: true, wantCode: 3},
+		{name: "doubly wrapped exit error", err: fmt.Errorf("outer: %w", wrapped), wantPrint: true, wantCode: 3},
+		{name: "bare exit error", err: exitErr, wantCode: 3},
+		{name: "focus exit error", err: focusExitError{code: focusExitNotResolved, err: errors.New("gone")}, wantCode: focusExitNotResolved},
+		{name: "focus exit error wrapping exit error", err: focusExitError{code: focusExitNotResolved, err: wrapped}, wantCode: focusExitNotResolved},
+		{name: "wrapped focus exit error", err: fmt.Errorf("outer: %w", focusExitError{code: focusExitNotResolved, err: wrapped}), wantCode: focusExitNotResolved},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := cliPrintsFailure(tt.err)
-			if got != tt.want {
-				t.Fatalf("cliPrintsFailure = %v, want %v", got, tt.want)
-			}
-			if entrypoint := entrypointFailureLine(tt.err) != ""; entrypoint != got {
-				t.Fatalf("cliPrintsFailure = %v, but the executeCLI rule prints = %v", got, entrypoint)
+			got := cli.ClassifyFailure(tt.err, IsUsageError(tt.err))
+			if got.Print != tt.wantPrint || got.ExitCode != tt.wantCode {
+				t.Fatalf("verdict = %+v, want print=%v exit=%d", got, tt.wantPrint, tt.wantCode)
 			}
 		})
 	}
