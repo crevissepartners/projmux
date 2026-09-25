@@ -10,6 +10,9 @@ set -euo pipefail
 # and __PROJMUX_RUNTIME_ANCHOR_PANE both name a Pane the server never issued.
 # TestStartProjectRefusesADeadAnchorThroughRealTmux pins that `start project`
 # over that dead anchor is refused as an absent Pane, with zero writes.
+# TestAgentResumeIntoStoppedProjectNeedsNoAnchorPaneThroughRealTmux resumes into
+# a stopped Project over that dead anchor and requires resume to start its one
+# session.
 # PMX_TEST_RESUME_NO_ANCHOR_REAL_TMUX=1 turns a missing tmux into a failure, and
 # every PASS line is required so a skip or an empty -run match cannot pass.
 unset TMUX TMUX_PANE __PROJMUX_RUNTIME_ANCHOR_PANE
@@ -21,10 +24,11 @@ tests=(
   TestAbsentAnchorPaneAnswersBlankReceiptThroughRealTmux
   TestAgentResumeNeedsNoAnchorPaneThroughRealTmux
   TestStartProjectRefusesADeadAnchorThroughRealTmux
+  TestAgentResumeIntoStoppedProjectNeedsNoAnchorPaneThroughRealTmux
 )
 status=0
 PMX_TEST_RESUME_NO_ANCHOR_REAL_TMUX=1 \
-  go test ./internal/app -run '^(TestAbsentAnchorPaneAnswersBlankReceiptThroughRealTmux|TestAgentResumeNeedsNoAnchorPaneThroughRealTmux|TestStartProjectRefusesADeadAnchorThroughRealTmux)$' -count=1 -v >"$output" 2>&1 || status=$?
+  go test ./internal/app -run '^(TestAbsentAnchorPaneAnswersBlankReceiptThroughRealTmux|TestAgentResumeNeedsNoAnchorPaneThroughRealTmux|TestStartProjectRefusesADeadAnchorThroughRealTmux|TestAgentResumeIntoStoppedProjectNeedsNoAnchorPaneThroughRealTmux)$' -count=1 -v >"$output" 2>&1 || status=$?
 cat "$output"
 if [[ "$status" != 0 ]]; then
   exit "$status"

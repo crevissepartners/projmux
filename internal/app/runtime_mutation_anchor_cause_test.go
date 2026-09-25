@@ -51,7 +51,9 @@ func TestRuntimeMutationAnchorRefusalNamesItsCause(t *testing.T) {
 			absent: true,
 		},
 		{
-			name: "pane answers on a foreign socket",
+			// Defensive only: see the comment on the socket branch in
+			// observeRuntimeMutationAnchorRow.
+			name: "pane answers on a foreign socket (defensive: unreachable from a shell, every caller routes to the proven socket)",
 			row:  anchorRow("/tmp/projmux-route/foreign.sock", pid, "$1", "@2", pane),
 			want: "answers on socket",
 		},
