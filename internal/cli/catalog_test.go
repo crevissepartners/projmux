@@ -95,8 +95,12 @@ var exactTransportRoots = []string{"reconcile", "get", "runtime", "delete"}
 // same exact-server flags. `agent persona attach|detach` stops a Running Agent
 // by running `delete pane` on its managed Pane, and passes --socket and
 // --socket-path through unchanged, so it needs exactly the flags `delete`
-// needs outside tmux and no other routing rule.
-var exactTransportRoutes = []string{"agent instructions", "agent persona"}
+// needs outside tmux and no other routing rule. `unregister project` runs the
+// same parser as `delete` ((*deleteCommand).runKind) with the same exact-server
+// flags, and uses them only through lenientDeletionRoute to pick the tmux
+// server that proves the deletion record's actor; it is not binding
+// convergence.
+var exactTransportRoutes = []string{"agent instructions", "agent persona", "unregister project"}
 
 // exactTransportUsage reports whether one usage line spells an exact
 // transport route, which a parent namespace's usage list repeats.

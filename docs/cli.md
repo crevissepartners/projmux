@@ -120,25 +120,25 @@ Allowed effects:
 projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
-projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--dialogue-reply-only]
+projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref>
 projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
-projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
+projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json] [--json]
 projmux agent models [--provider claude] [-o json]
 projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message status <message-ref> [-o json]
-projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
+projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json [--timeout <duration>]
 projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]
-projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
-projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
-projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]
-projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
+projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 Subcommands:
@@ -224,7 +224,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--dialogue-reply-only]
 ```
 
 ### `projmux agent instructions`
@@ -245,8 +245,8 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Subcommands:
@@ -276,7 +276,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Output modes (`-o`): `json`
@@ -299,7 +299,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Output modes (`-o`): `json`
@@ -322,8 +322,8 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Subcommands:
@@ -353,7 +353,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Output modes (`-o`): `json`
@@ -378,7 +378,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Output modes (`-o`): `json`
@@ -611,7 +611,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
+projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json] [--json]
 ```
 
 Output modes (`-o`): `json`
@@ -659,7 +659,7 @@ Allowed effects:
 ```
 projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message status <message-ref> [-o json]
-projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
+projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json [--timeout <duration>]
 ```
 
 Subcommands:
@@ -734,7 +734,7 @@ Allowed effects:
 - `domain-effect=agent-delivery`
 
 ```
-projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
+projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json [--timeout <duration>]
 ```
 
 Output modes (`-o`): `json`
@@ -780,10 +780,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
-projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
-projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]
-projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
+projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 Subcommands:
@@ -815,7 +815,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 #### `projmux agent question disable`
@@ -836,7 +836,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 #### `projmux agent question list`
@@ -857,7 +857,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]
+projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
 ```
 
 Output modes (`-o`): `json`
@@ -880,7 +880,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 ## `projmux attention`
@@ -1094,7 +1094,7 @@ projmux config providers [--enable <id>|--disable <id>]
 projmux config locale [--set <value>]
 projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]
 projmux config render standalone|app [--bin <path>]
-projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
+projmux config apply [--bin <path>] [--config <path>] [--socket <name>] [--no-reload]
 ```
 
 Subcommands:
@@ -1294,7 +1294,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
+projmux config apply [--bin <path>] [--config <path>] [--socket <name>] [--no-reload]
 ```
 
 ## `projmux create`
@@ -1318,11 +1318,11 @@ Allowed effects:
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
+projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>] [--severity info|warn|critical] [--source <source>] [--ttl <seconds>] [--id <id>] [--json]
 ```
 
 Subcommands:
@@ -1436,7 +1436,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
@@ -1459,7 +1459,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
+projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>] [--severity info|warn|critical] [--source <source>] [--ttl <seconds>] [--id <id>] [--json]
 ```
 
 ### `projmux create codex`
@@ -1503,7 +1503,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
@@ -1526,7 +1526,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
@@ -1549,10 +1549,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
-projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
-projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
-projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete project [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 projmux delete notification <id> | --all
 ```
 
@@ -1586,7 +1586,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
+projmux delete project [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Aliases: `projects`
@@ -1611,7 +1611,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Aliases: `windows`
@@ -1634,7 +1634,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Aliases: `panes`
@@ -1657,7 +1657,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Aliases: `agents`
@@ -1703,10 +1703,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
-projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
-projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
-projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
+projmux describe project [<ref>] [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]
+projmux describe window [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
+projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
+projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Subcommands:
@@ -1738,7 +1738,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
+projmux describe project [<ref>] [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]
 ```
 
 Aliases: `projects`
@@ -1763,7 +1763,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
+projmux describe window [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Aliases: `windows`
@@ -1788,7 +1788,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
+projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Aliases: `panes`
@@ -1813,7 +1813,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
+projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Aliases: `agents`
@@ -1955,11 +1955,11 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
-projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]
-projmux focus window uid:<uid> [--project <ref> | -p <ref>] [--socket <path>] [--client <tty>] [--json]
-projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]
-projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>] [--socket <path>] [--json]
+projmux focus project <ref> [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
+projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
+projmux focus window uid:<uid> [--project <ref> | -p <ref>] [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
+projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
+projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>] [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
 ```
 
 Subcommands:
@@ -1990,7 +1990,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
+projmux focus project <ref> [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
 ```
 
 `<ref>` is the live tmux session name, or `uid:<uid>` for a Registry Project, which resolves to its `status.session.name`. A `uid:` ref uses the Project's recorded socket; an explicit `--socket` naming another server exits 2. The resolved session must still be live.
@@ -2013,8 +2013,8 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]
-projmux focus window uid:<uid> [--project <ref> | -p <ref>] [--socket <path>] [--client <tty>] [--json]
+projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
+projmux focus window uid:<uid> [--project <ref> | -p <ref>] [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
 ```
 
 A plain `<ref>` is a live window name or `@id` and requires `--project`. `uid:<uid>` names a Registry Window, which resolves to its `status.runtimeID` inside its owning Project's session, so `--project` is optional; when given it must be that Project (`uid:` or its session name) or the route exits 2. `--project uid:<uid>` also works with a plain `<ref>`.
@@ -2039,8 +2039,8 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]
-projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>] [--socket <path>] [--json]
+projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
+projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>] [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]
 ```
 
 A plain `<ref>` is a live pane name or `%id` and requires `--project` and `--window`. `uid:<uid>` names a Registry Pane, which resolves to its `status.activation.runtimeID` inside its owning Window and Project, so both flags are optional; when given they must match that owner chain or the route exits 2. `--project` and `--window` also accept `uid:<uid>` with a plain `<ref>`.
@@ -2495,10 +2495,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux label project [<ref>] <key=value|key->... [--project <ref> | -p <ref>]
-projmux label window [<ref>] <key=value|key->... [--project <ref> | -p <ref>]
-projmux label pane [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
-projmux label agent [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux label project [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--selector key=value]...
+projmux label window [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux label pane [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]...
+projmux label agent [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 Subcommands:
@@ -2530,7 +2530,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux label project [<ref>] <key=value|key->... [--project <ref> | -p <ref>]
+projmux label project [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--selector key=value]...
 ```
 
 Aliases: `projects`
@@ -2553,7 +2553,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux label window [<ref>] <key=value|key->... [--project <ref> | -p <ref>]
+projmux label window [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 Aliases: `windows`
@@ -2576,7 +2576,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux label pane [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux label pane [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]...
 ```
 
 Aliases: `panes`
@@ -2599,7 +2599,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux label agent [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux label agent [<ref>] <key=value|key->... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 Aliases: `agents`
@@ -3310,7 +3310,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--import-orphan-mirrors] [--yes] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
@@ -3341,7 +3341,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--import-orphan-mirrors] [--yes] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Output modes (`-o`): `json`
@@ -3387,7 +3387,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>
+projmux rebind project [<ref>] [--project <ref> | -p <ref>] [--selector key=value]... --root <absolute-path>
 ```
 
 Subcommands:
@@ -3416,7 +3416,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>
+projmux rebind project [<ref>] [--project <ref> | -p <ref>] [--selector key=value]... --root <absolute-path>
 ```
 
 ## `projmux rename`
@@ -3437,10 +3437,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name> [-o <mode>]
-projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>] [-o <mode>]
-projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
-projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
+projmux rename project [<ref>] [--project <ref> | -p <ref>] [--selector key=value]... --name <name> [-o <mode>]
+projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
+projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
+projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Subcommands:
@@ -3472,7 +3472,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name> [-o <mode>]
+projmux rename project [<ref>] [--project <ref> | -p <ref>] [--selector key=value]... --name <name> [-o <mode>]
 ```
 
 Aliases: `projects`
@@ -3497,7 +3497,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>] [-o <mode>]
+projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Aliases: `windows`
@@ -3522,7 +3522,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
+projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Aliases: `panes`
@@ -3547,7 +3547,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
+projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Aliases: `agents`
@@ -3781,7 +3781,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux setup
+projmux setup [--timeout <duration>] [--non-interactive]
 projmux setup terminal [terminal] [--apply] [--config <path>] [--allow-symlink]
 ```
 
@@ -3832,7 +3832,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux shell [--session <name>]
+projmux shell [--session <name>] [--socket <name>] [--config <path>] [--bin <path>] [--no-install]
 ```
 
 ## `projmux start`
@@ -3957,7 +3957,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux switch [--ui popup|sidebar]
+projmux switch [--ui popup|sidebar] [--anchor <pane>]
 ```
 
 Canonical spelling: `projmux create project`, `projmux open project`
@@ -3980,7 +3980,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux unregister project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
+projmux unregister project [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Subcommands:
@@ -4009,7 +4009,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux unregister project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
+projmux unregister project [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Aliases: `projects`
