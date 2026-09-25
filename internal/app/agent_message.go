@@ -863,7 +863,10 @@ func (c *agentCommand) runMessageStatus(args []string, stdout, stderr io.Writer)
 	fs.StringVar(&output, "o", "", "output mode: json")
 	refs, err := parseWithPositionals(fs, args)
 	if err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if len(refs) != 1 || (output != "" && output != "json") {
 		return usageError(spelling + " requires <message-ref> [-o json]")
@@ -922,7 +925,10 @@ func (c *agentCommand) runWait(args []string, stdout, stderr io.Writer) error {
 	fs.StringVar(&output, "o", "", "output mode: json")
 	refs, err := parseWithPositionals(fs, args)
 	if err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if len(refs) != 1 || until != "idle" || (output != "" && output != "json") || timeout < 0 || timeout > coremessage.MaxTTL {
 		return usageError(spelling + " requires <agent-ref> [--until idle] [--timeout <duration>] [-o json]")

@@ -276,7 +276,10 @@ func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error 
 	jsonOut := fs.Bool("json", false, "print raw JSONL entries")
 	pathOnly := fs.Bool("path", false, "print the ingest log path")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
