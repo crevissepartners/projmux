@@ -59,7 +59,8 @@ func (f LinesFile) Write(lines []string) error {
 		return err
 	}
 
-	temp, err := os.CreateTemp(dir, "."+filepath.Base(f.path)+".tmp-*")
+	pattern := "." + filepath.Base(f.path) + ".tmp-*"
+	temp, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return err
 	}
@@ -93,6 +94,7 @@ func (f LinesFile) Write(lines []string) error {
 	}
 
 	cleanup = false
+	ReclaimStaleTemps(dir, pattern)
 	RepairPrivateFile(f.path)
 	return nil
 }

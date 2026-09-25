@@ -583,3 +583,45 @@ func TestRecordOutcomeRetiredCLIIsStrictlyNoWrite(t *testing.T) {
 		t.Fatalf("retired argv created diagnostics state: %v", err)
 	}
 }
+
+func TestStoreTrimReclaimsStaleOrphanTemps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", LogFileName)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record, _ := json.Marshal(fixtureEvent("old"))
+	record = append(record, '\n')
+	if err := os.WriteFile(path, bytes.Repeat(record, MaxLogSize/len(record)+20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plant := func(name string, age time.Duration) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("orphan\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stamp := time.Now().Add(-age)
+		if err := os.Chtimes(p, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	stale := plant(".operations-111.tmp", 2*time.Minute)
+	fresh := plant(".operations-222.tmp", 10*time.Second)
+	unrelated := plant(".other-333.tmp", 2*time.Minute)
+
+	if err := NewStore(path).Append(fixtureEvent("newest")); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() > MaxLogSize {
+		t.Fatalf("log was not trimmed: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale trim temp survived: %v", err)
+	}
+	for _, p := range []string{fresh, unrelated} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s was removed: %v", filepath.Base(p), err)
+		}
+	}
+}

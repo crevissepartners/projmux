@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/state"
 )
 
 const (
@@ -271,6 +273,9 @@ func decodeCompleteRecords(reader io.Reader, home string) ReadResult {
 	}
 }
 
+// trimTempPattern names the temp file trimIfNeeded renames over the log.
+const trimTempPattern = ".operations-*.tmp"
+
 func (s *Store) trimIfNeeded() error {
 	info, err := os.Stat(s.path)
 	if err != nil || info.Size() <= MaxLogSize {
@@ -290,7 +295,8 @@ func (s *Store) trimIfNeeded() error {
 		}
 	}
 	retained := completeValidLines(data[start:])
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".operations-*.tmp")
+	dir := filepath.Dir(s.path)
+	tmp, err := os.CreateTemp(dir, trimTempPattern)
 	if err != nil {
 		return fmt.Errorf("create diagnostics trim file: %w", err)
 	}
@@ -310,6 +316,7 @@ func (s *Store) trimIfNeeded() error {
 	if err := replaceFile(tmpPath, s.path); err != nil {
 		return fmt.Errorf("replace diagnostics log: %w", err)
 	}
+	state.ReclaimStaleTemps(dir, trimTempPattern)
 	bestEffortPrivateFile(s.path)
 	return nil
 }
