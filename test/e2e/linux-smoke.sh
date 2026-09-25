@@ -5622,6 +5622,25 @@ topology_assert_exact_resume() {
   fi
 }
 
+# A no-launch judgement reads the provider argv log only once no late launch
+# can still append to it. Reconcile hands a provider argv to tmux solely as an
+# Agent Pane command, and each such Pane appends exactly once; excluded or
+# ref-less Agents get no Agent Pane at all, and Window-owned shell Panes run the
+# stub shell, which never launches the provider. So when every non-Window Pane
+# on the whole server is this Agent's and their number equals the launches
+# already counted, nothing can still launch and the argv count read next is final.
+topology_assert_no_pending_launch() {
+  local counted="$1" message="$2" hosts
+  hosts="$(topology_tmux list-panes -a -F '#{pane_id}|#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}|#{pane_start_command}' | awk -F '|' '$2 != "Window"')"
+  if [[ "$(printf '%s' "$hosts" | grep -c .)" != "$counted" ]] || \
+    { [[ -n "$hosts" ]] && printf '%s\n' "$hosts" | awk -F '|' -v uid="$topology_agent_uid" '$2 != "Agent" || $3 != uid' | grep . >/dev/null; }; then
+    echo "$message" >&2
+    printf 'provider-capable panes (want %s counted Agent pane(s)):\n%s\n' "$counted" "$hosts" >&2
+    cat "$topology_agent_argv" >&2
+    exit 1
+  fi
+}
+
 topology_stop_contained_server() {
   local actual
   actual="$(topology_tmux display-message -p '#{socket_path}')"
@@ -5790,6 +5809,7 @@ while read -r topology_case_class topology_case_phase topology_case_ref topology
     topology_assert_exact_resume "$((topology_case_before + 1))"
   else
     smoke_assert_file_contains "$topology_root/matrix-$topology_case_label.err" 'was not restored'
+    topology_assert_no_pending_launch 0 "Continue launched excluded/ref-less case $topology_case_label"
     if [[ "$(wc -l <"$topology_agent_argv")" != "$topology_case_before" ]]; then
       echo "Continue launched excluded/ref-less case $topology_case_label" >&2
       exit 1
@@ -5810,6 +5830,7 @@ while read -r topology_case_class topology_case_phase topology_case_ref topology
   topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json \
     >"$topology_root/matrix-$topology_case_label-repeat.json" 2>"$topology_root/matrix-$topology_case_label-repeat.err"
   smoke_assert_file_contains "$topology_root/matrix-$topology_case_label-repeat.json" '"outcome": "no-op"'
+  topology_assert_no_pending_launch "$topology_case_launches" "Continue matrix repeat wrote or duplicated $topology_case_label"
   if [[ "$(sha256sum "$topology_registry" | cut -d' ' -f1)" != "$topology_case_registry" ]] || \
     [[ "$(wc -l <"$topology_agent_argv")" != "$((topology_case_before + topology_case_launches))" ]]; then
     echo "Continue matrix repeat wrote or duplicated $topology_case_label" >&2
