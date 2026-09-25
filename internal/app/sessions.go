@@ -92,7 +92,10 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	ui := fs.String(switchUIFlag, switchUIPopup, "recent-session surface to prepare")
 	if err := fs.Parse(args); err != nil {
 		printSessionsUsage(stderr)
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printSessionsUsage(stderr)
