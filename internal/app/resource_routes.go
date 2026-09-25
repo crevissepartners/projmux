@@ -21,6 +21,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
+	"golang.org/x/term"
 )
 
 // resourceStore is the shared registry seam of the canonical verb-to-kind
@@ -1048,12 +1049,10 @@ func newConfirmer() *confirmer {
 	return &confirmer{interactive: stdinIsTerminal, ask: askOnStdin}
 }
 
+// stdinIsTerminal reports whether stdin is a terminal. A character device such
+// as /dev/null is not a terminal, so it gets the non-interactive refusal.
 func stdinIsTerminal() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 func askOnStdin(prompt string, stdout io.Writer) (bool, error) {

@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	localstate "github.com/crevissepartners/projmux/internal/state"
+	"golang.org/x/term"
 )
 
 const (
@@ -624,16 +625,14 @@ func (r *Runner) promptProjectHookTrust(req ProjectHookPromptRequest) (ProjectHo
 	return terminalProjectHookPrompt(reader, writer, req), true
 }
 
+// isInteractiveReader reports whether reader is a terminal. A character device
+// such as /dev/null is not a terminal, so it takes the non-interactive path.
 func isInteractiveReader(reader io.Reader) bool {
 	file, ok := reader.(*os.File)
 	if !ok {
 		return false
 	}
-	info, err := file.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(file.Fd()))
 }
 
 func terminalProjectHookPrompt(reader io.Reader, writer io.Writer, req ProjectHookPromptRequest) ProjectHookDecision {
