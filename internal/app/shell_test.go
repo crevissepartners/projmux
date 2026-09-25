@@ -35,7 +35,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 			if name == "HOME" {
 				return home
 			}
-			if name == "XDG_CONFIG_HOME" {
+			if name == "XDG_CONFIG_HOME" || name == "XDG_STATE_HOME" {
 				return ""
 			}
 			if name == "SHELL" {
@@ -132,7 +132,7 @@ func TestShellAppConfigCanonicalizesNpmStagingBinaryPath(t *testing.T) {
 			if name == "HOME" {
 				return home
 			}
-			if name == "XDG_CONFIG_HOME" {
+			if name == "XDG_CONFIG_HOME" || name == "XDG_STATE_HOME" {
 				return ""
 			}
 			if name == "SHELL" {

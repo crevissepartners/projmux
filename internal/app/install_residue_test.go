@@ -440,8 +440,6 @@ func TestInstallResidueAgeTextRendersDurationsAnOperatorReads(t *testing.T) {
 // no diagnostic at all, so every failure path here -- an unresolvable state
 // directory, an unwritable ledger -- has to end in a silent exit 0.
 func TestInstallResidueNeverFailsAnInstall(t *testing.T) {
-	t.Parallel()
-
 	t.Run("unresolvable state directory", func(t *testing.T) {
 		cmd := &installResidueCommand{
 			now:         time.Now,
@@ -475,6 +473,9 @@ func TestInstallResidueNeverFailsAnInstall(t *testing.T) {
 	})
 
 	t.Run("route always exits zero", func(t *testing.T) {
+		// The route resolves the default state directory; keep its ledger
+		// record in this test's own directory.
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
 		if err := runInstallResidueReport(nil, nil, nil); err != nil {
 			t.Fatalf("runInstallResidueReport() error = %v, want nil on every path", err)
 		}
