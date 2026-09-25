@@ -17,11 +17,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 )
 
-// synopsisFlagDispatchVerbReason explains the site rows of the `switch`
-// dispatch verbs: their FlagSets carry the parent's name, so the name guard
-// resolves them to the `switch` route, but their flags belong to the verb.
-const synopsisFlagDispatchVerbReason = "a `switch` dispatch verb whose FlagSet carries the parent name `switch`; its flags are the verb's, not the switch route's, and the verbs are declared as their own catalog children in a later task"
-
 // synopsisFlagPinVerbReason explains the site rows of the `pin project` verbs,
 // whose FlagSets carry the parent name while the parent Usage is the verb menu.
 const synopsisFlagPinVerbReason = "the verbs are not catalog children yet; a later task declares them and removes this row"
@@ -34,17 +29,11 @@ type synopsisSiteException struct {
 }
 
 // synopsisFlagSiteExceptions is keyed by flagParseGuardSite.key(). Only the
-// dispatch verb sites of `switch` and `pin project` may appear here, one row
+// dispatch verb sites of `pin project` may appear here, one row
 // per site. A row no site has, or whose site resolves elsewhere, fails.
 var synopsisFlagSiteExceptions = map[string]synopsisSiteException{
-	`internal/app/switch.go (*switchCommand).runToggleTag switch`:   {route: "switch", reason: synopsisFlagDispatchVerbReason},
-	`internal/app/switch.go (*switchCommand).runTogglePin switch`:   {route: "switch", reason: synopsisFlagDispatchVerbReason},
-	`internal/app/switch.go (*switchCommand).runKill switch`:        {route: "switch", reason: synopsisFlagDispatchVerbReason},
-	`internal/app/switch.go (*switchCommand).runOpen switch`:        {route: "switch", reason: synopsisFlagDispatchVerbReason},
-	`internal/app/switch.go (*switchCommand).runPreview switch`:     {route: "switch", reason: synopsisFlagDispatchVerbReason},
-	`internal/app/switch.go (*switchCommand).runSidebarOpen switch`: {route: "switch", reason: synopsisFlagDispatchVerbReason},
-	`internal/app/pin.go (*pinCommand).runList pin project`:         {route: "pin project", reason: synopsisFlagPinVerbReason},
-	`internal/app/pin.go (*pinCommand).runMigrate pin project`:      {route: "pin project", reason: synopsisFlagPinVerbReason},
+	`internal/app/pin.go (*pinCommand).runList pin project`:    {route: "pin project", reason: synopsisFlagPinVerbReason},
+	`internal/app/pin.go (*pinCommand).runMigrate pin project`: {route: "pin project", reason: synopsisFlagPinVerbReason},
 }
 
 // synopsisFlagException admits one registered flag a route's Usage may omit.
@@ -1561,8 +1550,8 @@ func TestPublicRouteSynopsisListsEveryParsedFlag(t *testing.T) {
 	for _, problem := range append(problems, checked...) {
 		t.Error(problem)
 	}
-	if counts.sites < 75 || counts.routes < 115 {
-		t.Errorf("checked %d public flag parse sites over %d routes, want at least 75 sites and 115 routes; the site collection has regressed", counts.sites, counts.routes)
+	if counts.sites < 87 || counts.routes < 133 {
+		t.Errorf("checked %d public flag parse sites over %d routes, want at least 87 sites and 133 routes; the site collection has regressed", counts.sites, counts.routes)
 	}
 	t.Logf("synopsis flag guard: %d public sites, %d routes, %d route flags", counts.sites, counts.routes, counts.flags)
 }

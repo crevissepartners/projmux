@@ -55,6 +55,7 @@ var routeVerbDispatchers = map[string]routeVerbDispatcher{
 	"hook":        {file: "internal/app/hook.go", fn: "(*hookCommand).Run", tag: "fs.Arg(0)"},
 	"pin project": {file: "internal/app/pin.go", fn: "(*pinCommand).runLevel", tag: "fs.Arg(0)", passThrough: []string{"project"}},
 	"runtime tag": {file: "internal/app/tag.go", fn: "(*tagCommand).Run", tag: "fs.Arg(0)", passThrough: []string{"project"}},
+	"switch":      {file: "internal/app/switch.go", fn: "(*switchCommand).Run", tag: "args[0]"},
 	"update":      {file: "internal/app/update.go", fn: "(*updateCommand).Run", tag: "args[0]"},
 	"window":      {file: "internal/app/recent_window.go", fn: "(*windowCommand).Run", tag: "fs.Arg(0)"},
 }
@@ -165,7 +166,7 @@ func usageVerbRun(usage string) []string {
 // line (internal/cli TestParentUsageCoversEveryPublicChild), so no line spells
 // the verbs as an alternation and each verb is only ever spelled one per line.
 // create's kinds and provider shortcuts are the widest case.
-var routeVerbPinnedPositions = []string{"attention", "create", "hook", "update", "window"}
+var routeVerbPinnedPositions = []string{"attention", "create", "hook", "switch", "update", "window"}
 
 // routeVerbPinProblems reports every pin that no longer needs to be one: a
 // position an alternation already qualifies, one with no dispatcher entry, or

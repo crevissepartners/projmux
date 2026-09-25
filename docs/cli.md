@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 211 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 221 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -3969,6 +3969,245 @@ Allowed effects:
 
 ```
 projmux switch [--ui popup|sidebar] [--anchor <pane>]
+projmux switch open <path>
+projmux switch toggle-tag [path]
+projmux switch toggle-pin [path]
+projmux switch kill [path]
+projmux switch preview [--ui popup|sidebar] [path]
+projmux switch settings
+projmux switch cycle-pane <path> <next|prev>
+projmux switch cycle-window <path> <next|prev>
+projmux switch sidebar-focus <path>
+projmux switch sidebar-open --path <path> --anchor <pane> [--session <name>] [--mode <mode>] [--query <text>] [--client <client>]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux switch open`](#projmux-switch-open) | Open the project at a path the way the picker opens a selected row |
+| [`projmux switch toggle-tag`](#projmux-switch-toggle-tag) | Toggle the picker tag on a project path; no path means the current directory |
+| [`projmux switch toggle-pin`](#projmux-switch-toggle-pin) | Toggle the pin on a project path; no path means the current directory |
+| [`projmux switch kill`](#projmux-switch-kill) | Stop the tmux session of a project path; no path means the current directory |
+| [`projmux switch preview`](#projmux-switch-preview) | Render the picker preview of a project path; no path means the current directory |
+| [`projmux switch settings`](#projmux-switch-settings) | Open the picker's pin settings menu |
+| [`projmux switch cycle-pane`](#projmux-switch-cycle-pane) | Advance the picker preview pane cursor of a project path |
+| [`projmux switch cycle-window`](#projmux-switch-cycle-window) | Advance the picker preview window cursor of a project path |
+| [`projmux switch sidebar-focus`](#projmux-switch-sidebar-focus) | Move the client to the live session of a project path; a path with no live session does nothing |
+| [`projmux switch sidebar-open`](#projmux-switch-sidebar-open) | Open a project the sidebar selected, anchored on an exact tmux Pane |
+
+Canonical spelling: `projmux create project`, `projmux open project`
+
+### `projmux switch open`
+
+Open the project at a path the way the picker opens a selected row
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged|created|reused|replaced`
+- `address=unchanged|allocated|released`
+- `topology=unchanged|established|replaced`
+- `desired-state=unchanged|created|reused|replaced`
+- `runtime=unchanged|materialized|already-live`
+- `focus=unchanged|moved-current-client|attached-caller`
+- `cardinality=unchanged|exact-one`
+- `domain-effect=null`
+
+```
+projmux switch open <path>
+```
+
+Canonical spelling: `projmux create project`, `projmux open project`
+
+### `projmux switch toggle-tag`
+
+Toggle the picker tag on a project path; no path means the current directory
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux switch toggle-tag [path]
+```
+
+### `projmux switch toggle-pin`
+
+Toggle the pin on a project path; no path means the current directory
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux switch toggle-pin [path]
+```
+
+### `projmux switch kill`
+
+Stop the tmux session of a project path; no path means the current directory
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged|stopped`
+- `focus=unchanged|moved-current-client`
+- `cardinality=unchanged|exact-one`
+- `domain-effect=null`
+
+```
+projmux switch kill [path]
+```
+
+### `projmux switch preview`
+
+Render the picker preview of a project path; no path means the current directory
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux switch preview [--ui popup|sidebar] [path]
+```
+
+### `projmux switch settings`
+
+Open the picker's pin settings menu
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux switch settings
+```
+
+### `projmux switch cycle-pane`
+
+Advance the picker preview pane cursor of a project path
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux switch cycle-pane <path> <next|prev>
+```
+
+### `projmux switch cycle-window`
+
+Advance the picker preview window cursor of a project path
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux switch cycle-window <path> <next|prev>
+```
+
+### `projmux switch sidebar-focus`
+
+Move the client to the live session of a project path; a path with no live session does nothing
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged|moved-current-client`
+- `cardinality=unchanged|exact-one`
+- `domain-effect=null`
+
+```
+projmux switch sidebar-focus <path>
+```
+
+### `projmux switch sidebar-open`
+
+Open a project the sidebar selected, anchored on an exact tmux Pane
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged|created|reused|replaced`
+- `address=unchanged|allocated|released`
+- `topology=unchanged|established|replaced`
+- `desired-state=unchanged|created|reused|replaced`
+- `runtime=unchanged|materialized|already-live`
+- `focus=unchanged|moved-current-client|attached-caller`
+- `cardinality=unchanged|exact-one`
+- `domain-effect=null`
+
+```
+projmux switch sidebar-open --path <path> --anchor <pane> [--session <name>] [--mode <mode>] [--query <text>] [--client <client>]
 ```
 
 Canonical spelling: `projmux create project`, `projmux open project`

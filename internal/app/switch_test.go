@@ -3316,11 +3316,11 @@ func TestSwitchCommandToggleTagRejectsInvalidUsage(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("error = %v, want substring %q", err, tt.want)
+			if !IsUsageError(err) || err.Error() != tt.want {
+				t.Fatalf("error = %v (usage error %v), want usage error %q", err, IsUsageError(err), tt.want)
 			}
-			if !strings.Contains(stderr.String(), "Usage:") {
-				t.Fatalf("stderr = %q, want usage text", stderr.String())
+			if want := "Usage:\n  projmux switch toggle-tag [path]\n"; stderr.String() != want {
+				t.Fatalf("stderr = %q, want only the toggle-tag usage %q", stderr.String(), want)
 			}
 		})
 	}

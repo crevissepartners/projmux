@@ -196,6 +196,36 @@ var shortcutRoutesWithoutACanonicalSpelling = map[string]string{
 	"settings":  "",
 	"shell":     "runtime open",
 	"welcome":   "setup welcome",
+
+	// The switch dispatch verbs below perform no public route's operation.
+	//
+	// toggle-tag writes the tag store `runtime tag toggle` writes, but keys it
+	// by a candidate path snapped through switch discovery, while `runtime tag`
+	// and `runtime stop` key it by a tmux session name.
+	"switch toggle-tag": "",
+	// toggle-pin toggles the pin store `pin project toggle` toggles, but its
+	// target is resolved differently: no operand means the current directory,
+	// a relative path joins it, and the path is validated and snapped to a
+	// switch candidate; `pin project toggle` takes one `<dir|uid:uid>` verbatim.
+	"switch toggle-pin": "",
+	// kill maps a path to its session identity and stops that one session with
+	// no fallback; `runtime stop` stops session names or the tagged selection
+	// through the tagged kill plan, which moves the client off the current
+	// session first.
+	"switch kill": "",
+	// preview renders the picker preview pane; no public route renders it.
+	"switch preview": "",
+	// settings is the picker's pin menu, not the `settings` UI, which itself
+	// names no canonical spelling.
+	"switch settings": "",
+	// cycle-pane and cycle-window move the picker preview cursor; only the
+	// hidden `internal preview` and `internal session-popup` routes do the like.
+	"switch cycle-pane":   "",
+	"switch cycle-window": "",
+	// sidebar-focus maps a path to its session identity and switches to that
+	// session only when it is live, doing nothing otherwise; `focus project`
+	// takes a Project reference (a name or uid:) through the focus dispatch.
+	"switch sidebar-focus": "",
 }
 
 // TestEveryRouteCanonicalSpellingResolves proves there is no dangling canonical

@@ -304,7 +304,7 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 		case "sidebar-open":
 			return c.runSidebarOpen(args[1:], stderr)
 		case "settings":
-			return c.runSettings(stdout, stderr)
+			return c.runSettingsRoute(args[1:], stdout, stderr)
 		case "preview":
 			return c.runPreview(args[1:], stdout, stderr)
 		case "cycle-pane":
@@ -380,32 +380,28 @@ func (c *switchCommand) plan(ui, anchorPane string) (switchPlan, error) {
 }
 
 func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch toggle-tag", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
+		printRouteUsage(stderr, "switch toggle-tag")
 	}
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+			printRouteUsage(stderr, "switch toggle-tag")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return fmt.Errorf("switch toggle-tag accepts at most 1 [path] argument")
+		printRouteUsage(stderr, "switch toggle-tag")
+		return usageError("switch toggle-tag accepts at most 1 [path] argument")
 	}
 
 	target, err := c.resolveToggleTagTarget(fs.Args())
 	if err != nil {
-		if strings.Contains(err.Error(), "switch toggle-tag requires") {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+		if IsUsageError(err) {
+			printRouteUsage(stderr, "switch toggle-tag")
 		}
 		return err
 	}
@@ -414,32 +410,28 @@ func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) er
 }
 
 func (c *switchCommand) runTogglePin(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch toggle-pin", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
+		printRouteUsage(stderr, "switch toggle-pin")
 	}
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+			printRouteUsage(stderr, "switch toggle-pin")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return fmt.Errorf("switch toggle-pin accepts at most 1 [path] argument")
+		printRouteUsage(stderr, "switch toggle-pin")
+		return usageError("switch toggle-pin accepts at most 1 [path] argument")
 	}
 
 	target, err := c.resolveSwitchTarget(fs.Args(), "switch toggle-pin")
 	if err != nil {
-		if strings.Contains(err.Error(), "switch toggle-pin requires") {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+		if IsUsageError(err) {
+			printRouteUsage(stderr, "switch toggle-pin")
 		}
 		return err
 	}
@@ -448,32 +440,28 @@ func (c *switchCommand) runTogglePin(args []string, stdout, stderr io.Writer) er
 }
 
 func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch kill", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
+		printRouteUsage(stderr, "switch kill")
 	}
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+			printRouteUsage(stderr, "switch kill")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return fmt.Errorf("switch kill accepts at most 1 [path] argument")
+		printRouteUsage(stderr, "switch kill")
+		return usageError("switch kill accepts at most 1 [path] argument")
 	}
 
 	target, err := c.resolveSwitchTarget(fs.Args(), "switch kill")
 	if err != nil {
-		if strings.Contains(err.Error(), "switch kill requires") {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+		if IsUsageError(err) {
+			printRouteUsage(stderr, "switch kill")
 		}
 		return err
 	}
@@ -495,54 +483,47 @@ func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch open", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
+		printRouteUsage(stderr, "switch open")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+			printRouteUsage(stderr, "switch open")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 1 {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return fmt.Errorf("switch open requires exactly 1 argument: <path>")
+		printRouteUsage(stderr, "switch open")
+		return usageError("switch open requires exactly 1 argument: <path>")
 	}
 	return c.openProjectTargetPath(context.Background(), cleanOptionalPath(fs.Arg(0)))
 }
 
 func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch preview", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
+		printRouteUsage(stderr, "switch preview")
 	}
 	ui := fs.String(switchUIFlag, switchUIPopup, "preview surface to render")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+			printRouteUsage(stderr, "switch preview")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if err := validateSwitchUI(*ui); err != nil {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return err
+		printRouteUsage(stderr, "switch preview")
+		return usageError(err.Error())
 	}
 	if fs.NArg() > 1 {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return fmt.Errorf("switch preview accepts at most 1 [path] argument")
+		printRouteUsage(stderr, "switch preview")
+		return usageError("switch preview accepts at most 1 [path] argument")
 	}
 	if fs.NArg() == 1 && strings.TrimSpace(fs.Arg(0)) == switchSettingsSentinel {
 		return c.writeSettingsPreview(stdout)
@@ -558,9 +539,8 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 
 	target, err := c.resolveSwitchTarget(fs.Args(), "switch preview")
 	if err != nil {
-		if strings.Contains(err.Error(), "switch preview requires") {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
+		if IsUsageError(err) {
+			printRouteUsage(stderr, "switch preview")
 		}
 		return err
 	}
@@ -575,6 +555,29 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 
 	_, err = io.WriteString(stdout, intrender.RenderSwitchPreviewWithAIBadgeStyle(model, *ui, string(loadAIBadgeStyle(c.homeDir, c.lookupEnv))))
 	return err
+}
+
+// runSettingsRoute is the public `switch settings` route: it takes no flags or
+// operands, and then runs the same settings menu the picker's settings row
+// opens.
+func (c *switchCommand) runSettingsRoute(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("switch settings", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "switch settings")
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printRouteUsage(stderr, "switch settings")
+			return err
+		}
+		return flagParseError(err)
+	}
+	if fs.NArg() != 0 {
+		printRouteUsage(stderr, "switch settings")
+		return usageError("switch settings does not accept positional arguments")
+	}
+	return c.runSettings(stdout, stderr)
 }
 
 func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
@@ -601,7 +604,7 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 			return nil
 		}
 
-		if err := c.executeSettingsAction(action, stdout, stderr, func() { printRouteUsage(stderr, "switch"); printSwitchNotes(stderr) }); err != nil {
+		if err := c.executeSettingsAction(action, stdout, stderr, func() { printRouteUsage(stderr, "switch settings") }); err != nil {
 			return err
 		}
 	}
@@ -664,13 +667,51 @@ func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
 }
 
 func (c *switchCommand) runCyclePane(args []string, stderr io.Writer) error {
-	return c.runCycle("switch cycle-pane", args, stderr, func(store switchPreviewStore, sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error) {
+	fs := flag.NewFlagSet("switch cycle-pane", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "switch cycle-pane")
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printRouteUsage(stderr, "switch cycle-pane")
+			return err
+		}
+		return flagParseError(err)
+	}
+	target, direction, err := c.parseCycleArgs("switch cycle-pane", fs.Args())
+	if err != nil {
+		if IsUsageError(err) {
+			printRouteUsage(stderr, "switch cycle-pane")
+		}
+		return err
+	}
+	return c.runCycle("switch cycle-pane", target, direction, func(store switchPreviewStore, sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error) {
 		return store.CyclePaneSelection(sessionName, windows, panes, direction)
 	})
 }
 
 func (c *switchCommand) runCycleWindow(args []string, stderr io.Writer) error {
-	return c.runCycle("switch cycle-window", args, stderr, func(store switchPreviewStore, sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error) {
+	fs := flag.NewFlagSet("switch cycle-window", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "switch cycle-window")
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printRouteUsage(stderr, "switch cycle-window")
+			return err
+		}
+		return flagParseError(err)
+	}
+	target, direction, err := c.parseCycleArgs("switch cycle-window", fs.Args())
+	if err != nil {
+		if IsUsageError(err) {
+			printRouteUsage(stderr, "switch cycle-window")
+		}
+		return err
+	}
+	return c.runCycle("switch cycle-window", target, direction, func(store switchPreviewStore, sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error) {
 		return store.CycleWindowSelection(sessionName, windows, panes, direction)
 	})
 }
@@ -907,11 +948,11 @@ func (c *switchCommand) resolveSwitchInput(args []string, command string) (strin
 		}
 	case 1:
 		if strings.TrimSpace(args[0]) == "" {
-			return "", fmt.Errorf("%s requires a non-empty [path] argument", command)
+			return "", usageError(fmt.Sprintf("%s requires a non-empty [path] argument", command))
 		}
 		path = args[0]
 	default:
-		return "", fmt.Errorf("%s accepts at most 1 [path] argument", command)
+		return "", usageError(fmt.Sprintf("%s accepts at most 1 [path] argument", command))
 	}
 
 	if !filepath.IsAbs(path) {
@@ -1000,12 +1041,7 @@ func (c *switchCommand) previewModel(ctx context.Context, target string) (corepr
 
 type switchCycleFunc func(store switchPreviewStore, sessionName string, windows []corepreview.Window, panes []corepreview.Pane, direction corepreview.Direction) (corepreview.CycleResult, error)
 
-func (c *switchCommand) runCycle(command string, args []string, stderr io.Writer, cycle switchCycleFunc) error {
-	target, direction, err := c.parseCycleArgs(command, args, stderr)
-	if err != nil {
-		return err
-	}
-
+func (c *switchCommand) runCycle(command, target string, direction corepreview.Direction, cycle switchCycleFunc) error {
 	ctx := context.Background()
 
 	if c.identityErr != nil {
@@ -1053,27 +1089,21 @@ func (c *switchCommand) runCycle(command string, args []string, stderr io.Writer
 	return nil
 }
 
-func (c *switchCommand) parseCycleArgs(command string, args []string, stderr io.Writer) (string, corepreview.Direction, error) {
+// parseCycleArgs reads the `<path> <next|prev>` operands of a cycle verb. A
+// misuse is a usage error, and the caller prints its own route usage.
+func (c *switchCommand) parseCycleArgs(command string, args []string) (string, corepreview.Direction, error) {
 	if len(args) != 2 {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return "", "", fmt.Errorf("%s requires exactly 2 arguments: <path> <next|prev>", command)
+		return "", "", usageError(fmt.Sprintf("%s requires exactly 2 arguments: <path> <next|prev>", command))
 	}
 
 	target, err := c.resolveSwitchTarget(args[:1], command)
 	if err != nil {
-		if strings.Contains(err.Error(), "requires a non-empty") {
-			printRouteUsage(stderr, "switch")
-			printSwitchNotes(stderr)
-		}
 		return "", "", err
 	}
 
 	direction, err := parsePreviewDirection(args[1])
 	if err != nil {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return "", "", fmt.Errorf("%s: %w", command, err)
+		return "", "", usageError(fmt.Sprintf("%s: %v", command, err))
 	}
 
 	return target, direction, nil
@@ -1878,8 +1908,11 @@ func (c *switchCommand) lookupEnvValue(name string) string {
 }
 
 func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch sidebar-open", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "switch sidebar-open")
+	}
 	target := fs.String("path", "", "project path to open")
 	sessionName := fs.String("session", "", "target session name")
 	mode := fs.String("mode", projectStartupKindTopology, "startup mode")
@@ -1888,23 +1921,27 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	anchor := fs.String("anchor", "", "exact tmux Pane that anchors Project materialization")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			printRouteUsage(stderr, "switch sidebar-open")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("switch sidebar-open does not accept positional arguments")
+		printRouteUsage(stderr, "switch sidebar-open")
+		return usageError("switch sidebar-open does not accept positional arguments")
 	}
 	anchorPane := strings.TrimSpace(*anchor)
 	if anchorPane == "" {
-		return errors.New("switch sidebar-open requires --anchor")
+		printRouteUsage(stderr, "switch sidebar-open")
+		return usageError("switch sidebar-open requires --anchor")
 	}
 	if exactTmuxHandle(anchorPane, "%") == "" {
 		return errors.New("switch sidebar-open --anchor requires an exact %N Pane handle")
 	}
 	openTarget := cleanOptionalPath(*target)
 	if openTarget == "" {
-		return fmt.Errorf("switch sidebar-open requires --path")
+		printRouteUsage(stderr, "switch sidebar-open")
+		return usageError("switch sidebar-open requires --path")
 	}
 	openSession := strings.TrimSpace(*sessionName)
 	if openSession == "" {
@@ -2083,13 +2120,24 @@ func buildShellCommand(binaryPath string, args []string, env map[string]string) 
 }
 
 func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Writer) error {
-	if len(args) != 1 {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-		return fmt.Errorf("switch sidebar-focus requires exactly 1 argument: <path>")
+	fs := flag.NewFlagSet("switch sidebar-focus", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "switch sidebar-focus")
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printRouteUsage(stderr, "switch sidebar-focus")
+			return err
+		}
+		return flagParseError(err)
+	}
+	if fs.NArg() != 1 {
+		printRouteUsage(stderr, "switch sidebar-focus")
+		return usageError("switch sidebar-focus requires exactly 1 argument: <path>")
 	}
 
-	target := cleanOptionalPath(args[0])
+	target := cleanOptionalPath(fs.Arg(0))
 	if target == "" || target == switchSettingsSentinel {
 		return nil
 	}
