@@ -8,6 +8,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+# `unittest discover -s test` puts this directory on sys.path, so the CI
+# contract's shared real-tmux strict check is importable here.
+from ci_workflow_contract_test import (
+    assert_job_runs_real_tmux_strict,
+    real_tmux_strict_mutations,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -188,6 +195,23 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
             self.assertIn(f"--required {child}", aggregate)
             self.assertNotIn(f"      - {child}", build)
         self.assertIn("      - e2e", build)
+
+    def test_release_unit_job_runs_real_tmux_tests_strict(self) -> None:
+        # The tag build reruns the unit gate, so it must hold the same bar as
+        # the CI Unit Tests job: tmux installed before a strict run under a long
+        # TMPDIR, or a missing tmux would ship a release on skipped tests.
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(
+            encoding="utf-8"
+        )
+        unit = workflow_job(workflow, "unit")
+        self.assertIn("    name: Release Unit Tests\n", unit)
+        assert_job_runs_real_tmux_strict(unit)
+
+        for name, mutated in real_tmux_strict_mutations(unit).items():
+            with self.subTest(mutation=name):
+                self.assertNotEqual(mutated, unit)
+                with self.assertRaises(AssertionError):
+                    assert_job_runs_real_tmux_strict(mutated)
 
     def test_release_please_config_declares_no_prerelease_keys(self) -> None:
         raw = (ROOT / "release-please-config.json").read_text(encoding="utf-8")

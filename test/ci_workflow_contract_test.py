@@ -95,8 +95,8 @@ def unit_test_tmpdir(script: str) -> str:
     return tmpdir
 
 
-def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
-    """Fail unless the Unit Tests job installs tmux and runs strict unit tests.
+def assert_job_runs_real_tmux_strict(job: str) -> None:
+    """Fail unless a unit test job installs tmux and runs strict unit tests.
 
     The real-tmux Go tests skip without tmux. The job installs tmux before the
     tests and runs them with PROJMUX_REAL_TMUX_STRICT=1, so a missing tmux
@@ -107,23 +107,19 @@ def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
     macOS 104B), and the runner's short default TMPDIR would hide a socket test
     under t.TempDir() that breaks on a longer TMPDIR such as macOS's; at 100
     bytes a socket under t.TempDir() has almost no room left under either.
+
+    The CI Unit Tests job and the Release Unit Tests job both hold this part.
     """
-    if re.search(r"(?m)^\s+(?:if|continue-on-error|env):", unit):
+    if re.search(r"(?m)^\s+(?:if|continue-on-error|env):", job):
         raise AssertionError("unit job must not use if:, continue-on-error:, or env:")
     for needle in ("uses: actions/setup-go@", "go-version-file: go.mod"):
-        if needle not in unit:
+        if needle not in job:
             raise AssertionError(f"unit job is missing: {needle}")
 
-    deadcode = workflow_step(unit, "Check pinned deadcode baseline")
-    if deadcode.strip() != "run: make deadcode":
-        raise AssertionError(f"unexpected deadcode step: {deadcode.strip()!r}")
-    test = workflow_step(unit, "Run unit tests")
+    test = workflow_step(job, "Run unit tests")
     unit_test_tmpdir(step_script(test))
-    vet = workflow_step(unit, "Vet")
-    if vet.strip() != "run: make vet":
-        raise AssertionError(f"unexpected vet step: {vet.strip()!r}")
 
-    install = workflow_step(unit, "Install tmux")
+    install = workflow_step(job, "Install tmux")
     install_script = step_script(install)
     if TMUX_INSTALL not in install_script.splitlines():
         raise AssertionError(f"Install tmux step must run: {TMUX_INSTALL}")
@@ -131,6 +127,69 @@ def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
         raise AssertionError("Install tmux step must print tmux -V")
     if re.search(r"(?m)^\s+(?:if|continue-on-error):", install):
         raise AssertionError("Install tmux step must not be conditional")
+
+    order = ["go-version-file: go.mod", "      - name: Install tmux", UNIT_TEST_COMMAND]
+    positions = [job.index(needle) for needle in order]
+    if positions != sorted(positions):
+        raise AssertionError(f"unit job steps must run in order: {order}")
+
+
+def real_tmux_strict_mutations(job: str) -> dict[str, str]:
+    """Return drifted copies of a job that assert_job_runs_real_tmux_strict rejects."""
+    install_marker = "      - name: Install tmux\n"
+    install_block = install_marker + workflow_step(job, "Install tmux") + "\n"
+    test_marker = "      - name: Run unit tests\n"
+    test_block = test_marker + workflow_step(job, "Run unit tests") + "\n"
+    if job.count(install_block) != 1 or job.count(test_block) != 1:
+        raise AssertionError("Install tmux and Run unit tests must each occur once")
+    tmpdir = unit_test_tmpdir(step_script(workflow_step(job, "Run unit tests")))
+    without_install = job.replace(install_block, "")
+    return {
+        "install step removed": without_install,
+        "apt-get install line removed": job.replace(f"          {TMUX_INSTALL}\n", ""),
+        "strict prefix stripped": job.replace(
+            UNIT_TEST_COMMAND, 'TMPDIR="$tmpdir" make test'
+        ),
+        "strict moved into env": job.replace(
+            test_block,
+            test_block.replace(
+                "        run: |\n",
+                "        env:\n"
+                "          PROJMUX_REAL_TMUX_STRICT: \"1\"\n"
+                "        run: |\n",
+            ).replace(UNIT_TEST_COMMAND, 'TMPDIR="$tmpdir" make test'),
+        ),
+        "install after test": without_install.replace(
+            test_block, test_block + install_block
+        ),
+        "long TMPDIR dropped": job.replace(
+            UNIT_TEST_COMMAND, "PROJMUX_REAL_TMUX_STRICT=1 make test"
+        ),
+        "short TMPDIR": job.replace(f"tmpdir={tmpdir}\n", "tmpdir=/tmp/projmux-unit\n"),
+        # A literal 99 bytes, not the constant, so lowering the floor itself
+        # fails here.
+        "TMPDIR one byte under the floor": job.replace(
+            f"tmpdir={tmpdir}\n", f"tmpdir={tmpdir[:99]}\n"
+        ),
+        "TMPDIR not created": job.replace(f"          {UNIT_TEST_MKDIR}\n", ""),
+        "TMPDIR length not printed": job.replace(f"          {UNIT_TEST_ECHO}\n", ""),
+    }
+
+
+def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
+    """Fail unless the CI Unit Tests job runs strict unit tests between its gates.
+
+    On top of assert_job_runs_real_tmux_strict, the job checks the pinned
+    deadcode baseline before the tests and vets after them.
+    """
+    assert_job_runs_real_tmux_strict(unit)
+
+    deadcode = workflow_step(unit, "Check pinned deadcode baseline")
+    if deadcode.strip() != "run: make deadcode":
+        raise AssertionError(f"unexpected deadcode step: {deadcode.strip()!r}")
+    vet = workflow_step(unit, "Vet")
+    if vet.strip() != "run: make vet":
+        raise AssertionError(f"unexpected vet step: {vet.strip()!r}")
 
     order = [
         "go-version-file: go.mod",
@@ -182,48 +241,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         unit = workflow_job(workflow, "unit")
         assert_unit_job_runs_real_tmux_strict(unit)
 
-        install_marker = "      - name: Install tmux\n"
-        install_block = install_marker + workflow_step(unit, "Install tmux") + "\n"
-        test_marker = "      - name: Run unit tests\n"
-        test_block = test_marker + workflow_step(unit, "Run unit tests") + "\n"
-        self.assertEqual(unit.count(install_block), 1)
-        self.assertEqual(unit.count(test_block), 1)
-        tmpdir = unit_test_tmpdir(step_script(workflow_step(unit, "Run unit tests")))
-        without_install = unit.replace(install_block, "")
-        mutations = {
-            "install step removed": without_install,
-            "apt-get install line removed": unit.replace(
-                f"          {TMUX_INSTALL}\n", ""
-            ),
-            "strict prefix stripped": unit.replace(
-                UNIT_TEST_COMMAND, 'TMPDIR="$tmpdir" make test'
-            ),
-            "strict moved into env": unit.replace(
-                test_block,
-                test_block.replace(
-                    "        run: |\n",
-                    "        env:\n"
-                    "          PROJMUX_REAL_TMUX_STRICT: \"1\"\n"
-                    "        run: |\n",
-                ).replace(UNIT_TEST_COMMAND, 'TMPDIR="$tmpdir" make test'),
-            ),
-            "install after test": without_install.replace(
-                test_block, test_block + install_block
-            ),
-            "long TMPDIR dropped": unit.replace(
-                UNIT_TEST_COMMAND, "PROJMUX_REAL_TMUX_STRICT=1 make test"
-            ),
-            "short TMPDIR": unit.replace(
-                f"tmpdir={tmpdir}\n", "tmpdir=/tmp/projmux-unit\n"
-            ),
-            # A literal 99 bytes, not the constant, so lowering the floor
-            # itself fails here.
-            "TMPDIR one byte under the floor": unit.replace(
-                f"tmpdir={tmpdir}\n", f"tmpdir={tmpdir[:99]}\n"
-            ),
-            "TMPDIR not created": unit.replace(f"          {UNIT_TEST_MKDIR}\n", ""),
-            "TMPDIR length not printed": unit.replace(f"          {UNIT_TEST_ECHO}\n", ""),
-        }
+        mutations = real_tmux_strict_mutations(unit)
         for name, mutated in mutations.items():
             with self.subTest(mutation=name):
                 self.assertNotEqual(mutated, unit)
