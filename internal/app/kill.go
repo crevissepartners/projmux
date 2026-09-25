@@ -157,9 +157,25 @@ func (e cleanupKillSessionExecutor) KillSession(ctx context.Context, sessionName
 	return nil
 }
 
+// resolveTaggedTargets validates explicit targets before any tag-store, tmux,
+// or executor access. `runtime stop` is the only public route here, so
+// unknown flags are reported under that spelling. Operands that end up empty
+// after a bare `--` fall through to the tag store exactly like no arguments.
 func (c *killCommand) resolveTaggedTargets(args []string, stderr io.Writer) ([]string, error) {
 	if len(args) != 0 {
-		return normalizeTaggedItems("kill tagged", args, stderr)
+		operands, err := splitOperands("runtime stop", args)
+		if err != nil {
+			printKillUsage(stderr)
+			return nil, err
+		}
+		args = operands
+	}
+	if len(args) != 0 {
+		targets, err := normalizeTaggedItems("kill tagged", args, stderr)
+		if err != nil {
+			return nil, usageError(err.Error())
+		}
+		return targets, nil
 	}
 
 	store, err := c.requireTagStore()
