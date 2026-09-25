@@ -188,6 +188,25 @@ func TestStoreReadOnlySharesDecoderWithoutRepairingSource(t *testing.T) {
 	}
 }
 
+// concurrentAppendAttempts bounds how often the concurrent writer tests retry
+// one record. Each attempt waits at most lockBudget, so a record gives up
+// after about ten seconds instead of hanging the test.
+const concurrentAppendAttempts = 50
+
+// appendRetryingLockBusy retries only errLockBusy, which Append returns by
+// contract when its bounded lock wait expires under contention. The
+// completeness assertions then judge the records that were written, not how
+// busy the machine was. Any other error returns at once.
+func appendRetryingLockBusy(store *Store, event Event) error {
+	var err error
+	for range concurrentAppendAttempts {
+		if err = store.Append(event); !errors.Is(err, errLockBusy) {
+			return err
+		}
+	}
+	return fmt.Errorf("append %q: still busy after %d attempts: %w", event.RunID, concurrentAppendAttempts, err)
+}
+
 func TestStoreConcurrentGoroutineWritersKeepCompleteRecords(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "logs", LogFileName)
 	store := NewStore(path)
@@ -197,7 +216,7 @@ func TestStoreConcurrentGoroutineWritersKeepCompleteRecords(t *testing.T) {
 		go func(worker int) {
 			defer wg.Done()
 			for record := range 30 {
-				if err := store.Append(fixtureEvent(fmt.Sprintf("g-%d-%d", worker, record))); err != nil {
+				if err := appendRetryingLockBusy(store, fixtureEvent(fmt.Sprintf("g-%d-%d", worker, record))); err != nil {
 					t.Errorf("Append: %v", err)
 				}
 			}
@@ -216,7 +235,8 @@ func TestStoreConcurrentProcessesKeepCompleteRecords(t *testing.T) {
 		prefix := os.Getenv("PROJMUX_DIAGNOSTICS_PREFIX")
 		store := NewStore(path)
 		for i := range 80 {
-			if err := store.Append(fixtureEvent(prefix + "-" + strconv.Itoa(i))); err != nil {
+			if err := appendRetryingLockBusy(store, fixtureEvent(prefix+"-"+strconv.Itoa(i))); err != nil {
+				fmt.Fprintf(os.Stderr, "helper %s: Append: %v\n", prefix, err)
 				os.Exit(3)
 			}
 		}
@@ -232,17 +252,22 @@ func TestStoreConcurrentProcessesKeepCompleteRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	commands := make([]*exec.Cmd, 8)
+	stderrs := make([]bytes.Buffer, len(commands))
 	for i := range commands {
 		commands[i] = exec.Command(os.Args[0], "-test.run=^TestStoreConcurrentProcessesKeepCompleteRecords$")
 		commands[i].Env = append(os.Environ(), "PROJMUX_DIAGNOSTICS_HELPER=1", "PROJMUX_DIAGNOSTICS_PATH="+path, fmt.Sprintf("PROJMUX_DIAGNOSTICS_PREFIX=p%d", i))
+		commands[i].Stderr = &stderrs[i]
 		if err := commands[i].Start(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, command := range commands {
+	for i, command := range commands {
 		if err := command.Wait(); err != nil {
-			t.Fatal(err)
+			t.Errorf("helper p%d: %v; stderr: %s", i, err, strings.TrimSpace(stderrs[i].String()))
 		}
+	}
+	if t.Failed() {
+		t.FailNow()
 	}
 	events, err := NewStore(path).Read()
 	if err != nil {
