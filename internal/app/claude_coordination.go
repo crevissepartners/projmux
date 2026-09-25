@@ -343,12 +343,8 @@ func probeCodexMessageAuthority(stateDir string, authority coremetadata.CodexRou
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	connection, err := codexbroker.Dial(ctx, discovery, codexbroker.DialConfig{Timeout: 200 * time.Millisecond})
-	if err != nil {
-		return false
-	}
-	defer connection.Close()
-	return connection.CheckAuthority(ctx, authority.Authority.BrokerRuntimeID, authority.ThreadID,
+	return codexbroker.ProbeAuthority(ctx, discovery, codexbroker.DialConfig{Timeout: 200 * time.Millisecond},
+		authority.Authority.BrokerRuntimeID, authority.ThreadID,
 		codexbroker.Fence{Connection: codexbroker.ConnectionEpoch(authority.Authority.ConnectionEpoch),
 			Binding: codexbroker.BindingEpoch(authority.Authority.BindingEpoch)}) == nil
 }

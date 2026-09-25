@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -228,7 +229,7 @@ func processFixtureReplyTmux(t *testing.T, root, paneUID string) ([]string, stri
 	return []string{"TMUX=" + fmt.Sprintf("%s,%d,0", socket, identities[0].PID), "TMUX_PANE=" + paneID, "TMUX_TMPDIR=" + temporary}, paneID, cleanup
 }
 
-func processFixtureCodexSource(t *testing.T, registry *coremetadata.Registry, claudeUID, stateDir string) (coremetadata.AgentRouteRef, func()) {
+func processFixtureCodexSource(t *testing.T, registry *coremetadata.Registry, claudeUID, stateDir string, replaced *atomic.Bool) (coremetadata.AgentRouteRef, *codexbroker.Host, func()) {
 	t.Helper()
 	claude, _ := registry.Agent(claudeUID)
 	mutator := intmetadata.DefaultMutator()
@@ -261,21 +262,47 @@ func processFixtureCodexSource(t *testing.T, registry *coremetadata.Registry, cl
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+	var imageReplaced func() bool
+	if replaced != nil {
+		imageReplaced = replaced.Load
+	}
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1, ImageReplaced: imageReplaced})
 	if err != nil {
 		_ = broker.Close()
 		t.Fatal(err)
 	}
-	binding, err := broker.Bind("process-source-thread", "", nil)
-	if err != nil {
-		_ = host.Close()
-		_ = broker.Close()
-		t.Fatal(err)
+	var events <-chan codexbroker.Event
+	var closeBinding func()
+	if replaced == nil {
+		binding, err := broker.Bind("process-source-thread", "", nil)
+		if err != nil {
+			_ = host.Close()
+			_ = broker.Close()
+			t.Fatal(err)
+		}
+		events = binding.Events()
+		closeBinding = func() { _ = binding.Close() }
+	} else {
+		conn, err := codexbroker.Dial(t.Context(), discovery, codexbroker.DialConfig{})
+		if err != nil {
+			_ = host.Close()
+			_ = broker.Close()
+			t.Fatal(err)
+		}
+		binding, err := conn.Bind(t.Context(), "process-source-thread", "", nil)
+		if err != nil {
+			_ = conn.Close()
+			_ = host.Close()
+			_ = broker.Close()
+			t.Fatal(err)
+		}
+		events = binding.Events()
+		closeBinding = func() { _ = binding.Close(); _ = conn.Close() }
 	}
-	cleanup := func() { _ = binding.Close(); _ = host.Close(); _ = broker.Close() }
+	cleanup := func() { closeBinding(); _ = host.Close(); _ = broker.Close() }
 	var observed codexbroker.Event
 	select {
-	case observed = <-binding.Events():
+	case observed = <-events:
 	case <-time.After(5 * time.Second):
 		cleanup()
 		t.Fatal("source broker snapshot timed out")
@@ -299,7 +326,7 @@ func processFixtureCodexSource(t *testing.T, registry *coremetadata.Registry, cl
 		cleanup()
 		t.Fatal(reason)
 	}
-	return route, cleanup
+	return route, host, cleanup
 }
 
 func TestClaudeEndpointProcessIntegration(t *testing.T) {
@@ -335,7 +362,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	registryPath := intmetadata.PathFor(filepath.Join(root, "state", "projmux"))
-	sourceRoute, closeSource := processFixtureCodexSource(t, h.registry, h.agentUID, filepath.Dir(filepath.Dir(registryPath)))
+	sourceRoute, _, closeSource := processFixtureCodexSource(t, h.registry, h.agentUID, filepath.Dir(filepath.Dir(registryPath)), nil)
 	defer closeSource()
 	metadataStore := intmetadata.NewStore(registryPath)
 	if _, err := metadataStore.Update(func(reg *coremetadata.Registry) error { *reg = h.registry.Clone(); return nil }); err != nil {

@@ -1,6 +1,7 @@
 package codexbroker
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"sync/atomic"
@@ -31,6 +32,111 @@ func startVintageHost(t *testing.T, discovery Discovery, replaced *atomic.Bool) 
 	}
 	t.Cleanup(func() { _ = host.Close() })
 	return host, endpoint, &reads
+}
+
+func TestVintageDrainAdmitsOnlyExactBoundAuthorityProbe(t *testing.T) {
+	discovery := newRuntimeDiscovery(t)
+	var replaced atomic.Bool
+	host, endpoint, _ := startVintageHost(t, discovery, &replaced)
+	live := dialTestClient(t, discovery, ProtocolRange{})
+	binding, fence := boundRemote(t, live, "thread-one")
+	previous, staleReboundFence := boundRemote(t, live, "thread-rebound")
+	if err := previous.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A separate session avoids conflating this proof with the older session's
+	// in-flight revocation frame for the reused thread name.
+	reboundConn := dialTestClient(t, discovery, ProtocolRange{})
+	rebound, reboundFence := boundRemote(t, reboundConn, "thread-rebound")
+	before := host.broker.Diagnostics()
+
+	if err := ProbeAuthority(t.Context(), discovery, DialConfig{}, host.RuntimeID(), "thread-one", fence); err != nil {
+		t.Fatalf("pre-install authority probe: %v", err)
+	}
+	preDrainCheck, err := dial(t.Context(), discovery, DialConfig{}, authoritySessionPurpose)
+	if err != nil {
+		t.Fatalf("pre-drain authority session: %v", err)
+	}
+	defer preDrainCheck.Close()
+	replaced.Store(true)
+	if err := ProbeAuthority(t.Context(), discovery, DialConfig{}, host.RuntimeID(), "thread-one", fence); err != nil {
+		t.Fatalf("first handshake after replacement failed bound authority probe: %v", err)
+	}
+	if !host.Stats().Draining {
+		t.Fatal("vintage authority check did not start the drain")
+	}
+	if _, err := Dial(t.Context(), discovery, DialConfig{}); RefusalOf(err) != RefusalDrainRequired {
+		t.Fatalf("ordinary Dial during drain = %v", err)
+	}
+	if err := ProbeAuthority(t.Context(), discovery, DialConfig{}, host.RuntimeID(), "thread-rebound", staleReboundFence); RefusalOf(err) != RefusalStaleBindingEpoch {
+		t.Fatalf("rebound thread accepted stale fence: %v", err)
+	}
+	if err := ProbeAuthority(t.Context(), discovery, DialConfig{}, host.RuntimeID(), "thread-rebound", reboundFence); err != nil {
+		t.Fatalf("rebound thread rejected current fence: %v", err)
+	}
+	for _, test := range []struct {
+		name, runtime, thread string
+		fence                 Fence
+		want                  Refusal
+	}{
+		{"old runtime", "old-runtime", "thread-one", fence, RefusalRuntimeReplaced},
+		{"foreign thread", host.RuntimeID(), "thread-two", fence, RefusalBindingClosed},
+		{"stale connection", host.RuntimeID(), "thread-one", Fence{Connection: fence.Connection + 1, Binding: fence.Binding}, RefusalStaleConnectionEpoch},
+		{"stale binding", host.RuntimeID(), "thread-one", Fence{Connection: fence.Connection, Binding: fence.Binding + 1}, RefusalStaleBindingEpoch},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ProbeAuthority(t.Context(), discovery, DialConfig{}, test.runtime, test.thread, test.fence); RefusalOf(err) != test.want {
+				t.Fatalf("authority refusal=%s, want %s: %v", RefusalOf(err), test.want, err)
+			}
+		})
+	}
+	check, err := dial(t.Context(), discovery, DialConfig{}, authoritySessionPurpose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	for _, connection := range []*Conn{preDrainCheck, check} {
+		for _, kind := range []requestKind{requestBind, requestUnbind, requestSubmit, requestAnswer, requestStats, requestLifecycle, requestCancel} {
+			reply, err := connection.call(t.Context(), wireRequest{Kind: kind, Thread: "thread-one", Fence: fence})
+			if err != nil || reply.Refusal != RefusalRequestUnknown {
+				t.Fatalf("authority-only %s = %+v, %v", kind, reply, err)
+			}
+		}
+	}
+	if _, err := live.Bind(t.Context(), "thread-two", "", nil); RefusalOf(err) != RefusalDrainRequired {
+		t.Fatalf("fresh Bind on live session during drain = %v", err)
+	}
+	if _, err := binding.ReadLifecycleSnapshot(t.Context(), fence); RefusalOf(err) != RefusalDrainRequired {
+		t.Fatalf("lifecycle read during drain = %v", err)
+	}
+	if outcome, err := binding.Submit(t.Context(), fence, Mutation{Method: "turn/steer"}); err != nil || outcome != MutationApplied {
+		t.Fatalf("bound Submit during drain = %s, %v", outcome, err)
+	}
+	after := host.broker.Diagnostics()
+	if before.Bindings != after.Bindings || before.ConnectionEpoch != after.ConnectionEpoch || before.OpenAttempts != after.OpenAttempts {
+		t.Fatalf("probe changed broker state: before=%+v after=%+v", before, after)
+	}
+	endpoint.mu.Lock()
+	requests, answers := len(endpoint.requests), len(endpoint.answers)
+	endpoint.mu.Unlock()
+	if requests != 1 || answers != 0 {
+		t.Fatalf("probe caused provider traffic: requests=%d answers=%d", requests, answers)
+	}
+	_ = check.Close()
+	if err := rebound.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := binding.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-host.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("last binding did not close vintage host")
+	}
+	if err := ProbeAuthority(context.Background(), discovery, DialConfig{}, host.RuntimeID(), "thread-one", fence); err == nil {
+		t.Fatal("released binding remained authoritative")
+	}
 }
 
 // TestBrokerRuntimeDrainsWhenItsOwnImageWasReplaced is the vintage entry

@@ -126,6 +126,22 @@ func Dial(ctx context.Context, discovery Discovery, cfg DialConfig) (*Conn, erro
 	return dial(ctx, discovery, cfg, "")
 }
 
+// ProbeAuthority checks an existing exact binding through an authenticated,
+// authority-check-only session. A host that predates this purpose rejects its
+// handshake as frame-invalid; only then does the client retry the ordinary
+// session. An older draining host returns drain-required and fails closed.
+func ProbeAuthority(ctx context.Context, discovery Discovery, cfg DialConfig, runtime, thread string, fence Fence) error {
+	conn, err := dial(ctx, discovery, cfg, authoritySessionPurpose)
+	if RefusalOf(err) == RefusalFrameInvalid && DialStageOf(err) == DialStageHandshake {
+		conn, err = Dial(ctx, discovery, cfg)
+	}
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return conn.CheckAuthority(ctx, runtime, thread, fence)
+}
+
 func dialLifecycleIPC(ctx context.Context, discovery Discovery, protocol ProtocolRange) (*Conn, error) {
 	timeout := ownedLifecycleLimit
 	if deadline, ok := ctx.Deadline(); ok {
