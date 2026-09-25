@@ -64,7 +64,7 @@ type candidateDiscoverer func(inputs candidates.Inputs) ([]string, error)
 type switchPinStore interface {
 	Path() string
 	Load() (pins.Set, error)
-	Save(pins.Set) error
+	Update(func(pins.Set) (pins.Set, bool, error)) error
 }
 
 type switchPinStoreFactory func() (switchPinStore, error)

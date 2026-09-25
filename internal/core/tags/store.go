@@ -14,6 +14,9 @@ var ErrInvalidTag = errors.New("invalid tag")
 // Store manages a file-backed ordered set of tagged entries.
 type Store struct {
 	file state.LinesFile
+	// afterRead is a test seam run inside a locked update after the stored
+	// tags were read.
+	afterRead func()
 }
 
 // NewStore builds a tag store for the provided file path.
@@ -36,43 +39,53 @@ func (s Store) List() ([]string, error) {
 	return s.load()
 }
 
-// Toggle flips the tag state and reports whether the tag is now present.
+// Toggle flips the tag state and reports whether the tag is now present. The
+// read-modify-write runs under the tag file's lock, so an overlapping Toggle or
+// Clear cannot drop this change or have its own change dropped.
 func (s Store) Toggle(name string) (bool, error) {
 	name, err := validate(name)
 	if err != nil {
 		return false, err
 	}
 
-	lines, err := s.load()
+	present := false
+	err = s.update(func(lines []string) ([]string, bool, error) {
+		if contains(lines, name) {
+			filtered := lines[:0]
+			for _, line := range lines {
+				if line == name {
+					continue
+				}
+				filtered = append(filtered, line)
+			}
+			present = false
+			return filtered, true, nil
+		}
+		present = true
+		return append(lines, name), true, nil
+	})
 	if err != nil {
 		return false, err
 	}
-
-	if contains(lines, name) {
-		filtered := lines[:0]
-		for _, line := range lines {
-			if line == name {
-				continue
-			}
-			filtered = append(filtered, line)
-		}
-		if err := s.file.Write(filtered); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-
-	lines = append(lines, name)
-	if err := s.file.Write(lines); err != nil {
-		return false, err
-	}
-
-	return true, nil
+	return present, nil
 }
 
-// Clear truncates the underlying file to an empty set.
+// Clear truncates the underlying file to an empty set. It takes the same lock
+// as Toggle, so it neither erases nor is erased by an overlapping Toggle.
 func (s Store) Clear() error {
-	return s.file.Write(nil)
+	return s.update(func([]string) ([]string, bool, error) {
+		return nil, true, nil
+	})
+}
+
+// update runs one locked read-modify-write over the deduplicated tag set.
+func (s Store) update(fn func(lines []string) ([]string, bool, error)) error {
+	return s.file.Update(func(lines []string) ([]string, bool, error) {
+		if s.afterRead != nil {
+			s.afterRead()
+		}
+		return fn(unique(lines))
+	})
 }
 
 func (s Store) load() ([]string, error) {

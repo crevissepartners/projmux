@@ -3667,6 +3667,19 @@ func (s *stubSwitchPinStore) Save(set pins.Set) error {
 	return nil
 }
 
+// Update mirrors pins.Store.Update: load, decide, save only when asked to.
+func (s *stubSwitchPinStore) Update(update func(pins.Set) (pins.Set, bool, error)) error {
+	stored, err := s.Load()
+	if err != nil {
+		return err
+	}
+	next, write, err := update(stored)
+	if err != nil || !write {
+		return err
+	}
+	return s.Save(next)
+}
+
 type capturingSwitchTagStore struct {
 	calls  []string
 	tagged bool
