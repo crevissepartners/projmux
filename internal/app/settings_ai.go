@@ -578,7 +578,7 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.nodeRowLabelInfo(settingsNavAIProviders, c.aiEnabledAgentsSummary(), "~/.config/projmux/"+config.AIEnabledAgentsFileName),
+			Label: c.nodeRowLabelInfo(settingsNavAIProviders, c.aiEnabledAgentsSummary(), configFileDisplayPath(c.homeDir, c.lookupEnv, config.AIEnabledAgentsFileName)),
 			Value: settingsNoopValue,
 		},
 	}

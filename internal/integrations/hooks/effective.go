@@ -17,8 +17,8 @@ const (
 	// when the same key was defined globally — Phase B merge policy.
 	EffectiveSourceProject EffectiveSource = "project"
 	// EffectiveSourceGlobal means the resolved value was defined in the
-	// global config (~/.config/projmux/config.toml) and was not overridden
-	// by a project value.
+	// global config (${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml)
+	// and was not overridden by a project value.
 	EffectiveSourceGlobal EffectiveSource = "global"
 	// EffectiveSourceMerged is a section-level label used when the section
 	// contains keys from both axes (e.g. some env vars come from global,
