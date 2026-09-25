@@ -745,11 +745,11 @@ func (m *materializer) logicalSocketName(target tmuxTransport) string {
 func (m *materializer) generatedAppConfigPath() (string, error) {
 	path := strings.TrimSpace(m.configPath)
 	if path == "" {
-		paths, err := configPaths(os.UserHomeDir, m.lookupEnv)
+		resolved, err := generatedAppConfigDefaultPath(os.UserHomeDir, m.lookupEnv)
 		if err != nil {
 			return "", fmt.Errorf("resolve generated app tmux config: %w", err)
 		}
-		path = filepath.Join(paths.ConfigDir, "tmux.conf")
+		path = resolved
 	}
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return "", fmt.Errorf("generated app tmux config path is not absolute and clean: %q", path)

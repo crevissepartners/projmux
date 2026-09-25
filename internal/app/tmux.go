@@ -1473,7 +1473,10 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	}
 	config := c.expandHome(strings.TrimSpace(configOverride))
 	if config == "" {
-		config = c.expandHome("~/.config/projmux/tmux.conf")
+		config, err = generatedAppConfigDefaultPath(c.homeDir, c.lookupEnv)
+		if err != nil {
+			return "", fmt.Errorf("resolve tmux app config path: %w", err)
+		}
 	}
 	if c.writeFile == nil {
 		return "", errors.New("configure tmux install-app writer: file writer is not configured")
