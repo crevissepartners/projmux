@@ -53,6 +53,11 @@ func (r *realTmuxHelperRecorder) Skip(args ...any) {
 	runtime.Goexit()
 }
 
+func (r *realTmuxHelperRecorder) Skipf(format string, args ...any) {
+	r.skipped = true
+	runtime.Goexit()
+}
+
 func (r *realTmuxHelperRecorder) Fatalf(format string, args ...any) {
 	r.fatal = fmt.Sprintf(format, args...)
 	runtime.Goexit()

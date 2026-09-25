@@ -131,7 +131,7 @@ func realTmuxPtyUnavailable(t testing.TB, step string, err error) {
 	if os.Getenv(realTmuxStrictEnv) == "1" {
 		t.Fatalf("%s: %v; %s=1 requires the real-tmux popup tests to attach a terminal client", step, err, realTmuxStrictEnv)
 	}
-	t.Skip(fmt.Sprintf("no pseudo-terminal: %s: %v", step, err))
+	t.Skipf("no pseudo-terminal: %s: %v", step, err)
 }
 
 // TestRealTmuxPtyUnavailableSkipsOrFails pins both answers to a pseudo-terminal
