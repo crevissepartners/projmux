@@ -229,6 +229,8 @@ func TestAIConfigHomeMatchesTheTUIModeFile(t *testing.T) {
 		{name: "home error", homeDir: failing, want: ".config"},
 		{name: "home", homeDir: func() (string, error) { return "/h", nil }, want: "/h/.config"},
 		{name: "XDG wins", homeDir: func() (string, error) { return "/h", nil }, lookupEnv: func(string) string { return " /x " }, want: "/x"},
+		{name: "blank XDG is unset", homeDir: func() (string, error) { return "/h", nil }, lookupEnv: func(string) string { return " " }, want: "/h/.config"},
+		{name: "blank XDG and empty home", homeDir: func() (string, error) { return "", nil }, lookupEnv: func(string) string { return " " }, want: ".config"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := aiConfigHome(tc.homeDir, tc.lookupEnv); got != tc.want {

@@ -1,21 +1,22 @@
 package app
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
-// aiConfigHome is the config home the AI mode files live under:
-// XDG_CONFIG_HOME, else the home directory's .config. With neither it stays
-// relative to the working directory, as the TUI split default always has. A
-// nil resolver counts as unset.
+// aiConfigHome is the config home the AI mode files live under, as
+// config.ResolveConfigHome resolves it: XDG_CONFIG_HOME, else the home
+// directory's .config. With neither it stays relative to the working
+// directory, as the TUI split default always has. A nil resolver and a blank
+// value count as unset.
 func aiConfigHome(homeDir func() (string, error), lookupEnv func(string) string) string {
-	if lookupEnv != nil {
-		if configHome := strings.TrimSpace(lookupEnv("XDG_CONFIG_HOME")); configHome != "" {
-			return configHome
-		}
+	if lookupEnv == nil {
+		lookupEnv = func(string) string { return "" }
+	}
+	if configHome, err := config.ResolveConfigHome("", lookupEnv("XDG_CONFIG_HOME")); err == nil {
+		return configHome
 	}
 	if homeDir == nil {
 		return ".config"
@@ -24,7 +25,8 @@ func aiConfigHome(homeDir func() (string, error), lookupEnv func(string) string)
 	if err != nil || strings.TrimSpace(home) == "" {
 		return ".config"
 	}
-	return filepath.Join(home, ".config")
+	configHome, _ := config.ResolveConfigHome(home, lookupEnv("XDG_CONFIG_HOME"))
+	return configHome
 }
 
 // loadCentralAINewWindowMode reads the central new AI window mode. It is a

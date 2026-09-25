@@ -2,6 +2,7 @@ package initcmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -462,6 +463,37 @@ func TestGhosttyAdapterConfigPathCandidatesHomeFallback(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("candidates[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestGhosttyAdapterConfigPathCandidatesBlankXDGAndMissingHome(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		home    string
+		homeErr error
+		want    string
+		wantErr string
+	}{
+		{name: "blank XDG falls back to home", home: "/home/u", want: filepath.Join("/home/u", ".config", "ghostty", "config")},
+		{name: "home error", homeErr: errors.New("no home"), wantErr: "resolve home directory for ghostty config: no home"},
+		{name: "empty home", wantErr: "resolve home directory for ghostty config: empty home"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewGhosttyAdapter(testGhosttyBindings)
+			a.userHomeDir = func() (string, error) { return tc.home, tc.homeErr }
+			got, err := a.ConfigPathCandidates(func(string) string { return " " })
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("ConfigPathCandidates() = %v, %v; want error %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || len(got) == 0 || got[0] != tc.want {
+				t.Fatalf("ConfigPathCandidates() = %v, %v; want first %q", got, err, tc.want)
+			}
+		})
 	}
 }
 

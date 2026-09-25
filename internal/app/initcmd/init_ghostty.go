@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 // GhosttyBinding is one keybind = trigger=action pair the terminal remediation
@@ -100,10 +102,8 @@ func (g *GhosttyAdapter) ConfigPathCandidates(env func(string) string) ([]string
 	if env == nil {
 		env = os.Getenv
 	}
-	var base string
-	if xdg := strings.TrimSpace(env("XDG_CONFIG_HOME")); xdg != "" {
-		base = filepath.Join(xdg, "ghostty")
-	} else {
+	configHome, err := config.ResolveConfigHome("", env("XDG_CONFIG_HOME"))
+	if err != nil {
 		homeFn := g.userHomeDir
 		if homeFn == nil {
 			homeFn = os.UserHomeDir
@@ -112,11 +112,11 @@ func (g *GhosttyAdapter) ConfigPathCandidates(env func(string) string) ([]string
 		if err != nil {
 			return nil, fmt.Errorf("resolve home directory for ghostty config: %w", err)
 		}
-		if home == "" {
+		if configHome, err = config.ResolveConfigHome(home, env("XDG_CONFIG_HOME")); err != nil {
 			return nil, fmt.Errorf("resolve home directory for ghostty config: empty home")
 		}
-		base = filepath.Join(home, ".config", "ghostty")
 	}
+	base := filepath.Join(configHome, "ghostty")
 	return []string{
 		filepath.Join(base, "config"),
 		filepath.Join(base, "config.ghostty"),
