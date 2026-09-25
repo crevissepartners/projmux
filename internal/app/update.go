@@ -270,7 +270,7 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("update apply does not accept positional arguments")
@@ -1200,7 +1200,7 @@ func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("update status does not accept positional arguments")
@@ -1224,7 +1224,7 @@ func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error 
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("update check does not accept positional arguments")

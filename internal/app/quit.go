@@ -46,7 +46,7 @@ func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printQuitUsage(stderr)

@@ -325,11 +325,11 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	ui := fs.String(switchUIFlag, switchUIPopup, "future sessionizer surface to prepare")
 	anchor := fs.String("anchor", "", "exact tmux Pane that anchors Project sidebar continuation")
 	if err := fs.Parse(args); err != nil {
-		printSwitchUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printSwitchUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printSwitchUsage(stderr)
@@ -382,11 +382,11 @@ func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) er
 	}
 
 	if err := fs.Parse(args); err != nil {
-		printSwitchUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printSwitchUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
 		printSwitchUsage(stderr)
@@ -412,11 +412,11 @@ func (c *switchCommand) runTogglePin(args []string, stdout, stderr io.Writer) er
 	}
 
 	if err := fs.Parse(args); err != nil {
-		printSwitchUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printSwitchUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
 		printSwitchUsage(stderr)
@@ -442,11 +442,11 @@ func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if err := fs.Parse(args); err != nil {
-		printSwitchUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printSwitchUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
 		printSwitchUsage(stderr)
@@ -484,11 +484,11 @@ func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
 		printSwitchUsage(stderr)
 	}
 	if err := fs.Parse(args); err != nil {
-		printSwitchUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printSwitchUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 1 {
 		printSwitchUsage(stderr)
@@ -506,11 +506,11 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 	ui := fs.String(switchUIFlag, switchUIPopup, "preview surface to render")
 
 	if err := fs.Parse(args); err != nil {
-		printSwitchUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printSwitchUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if err := validateSwitchUI(*ui); err != nil {
 		printSwitchUsage(stderr)
@@ -1859,7 +1859,7 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("switch sidebar-open does not accept positional arguments")

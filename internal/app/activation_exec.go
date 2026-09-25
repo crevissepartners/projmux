@@ -43,7 +43,7 @@ func (c *activationExecCommand) Run(args []string, stdout, stderr io.Writer) (ru
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	failure := c.failure
 	var failureFile *os.File

@@ -80,7 +80,7 @@ func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Wri
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)

@@ -75,7 +75,7 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return usageError(fmt.Sprintf("parse notify reconcile flags: %v", err))
+		return flagParseError(fmt.Errorf("parse notify reconcile flags: %w", err))
 	}
 	if fs.NArg() != 0 {
 		printNotifyUsage(stderr)

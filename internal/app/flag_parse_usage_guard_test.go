@@ -96,6 +96,17 @@ type flagParseGuardSite struct {
 	detail            string
 	helpWrapped       bool // the flag.ErrHelp branch constructs a usage marker
 	helpBranch        bool
+	// marked and reported count the non-help returns that construct a usage
+	// marker, and those whose marker says the reason is already on stderr
+	// (flagParseError).
+	marked, reported int
+	// output is where the FlagSet writes its reason and usage: "stderr" (any
+	// writer but io.Discard, or the flag default), "discard", or a problem
+	// description when the analyzer cannot tell.
+	output string
+	// reprints lists the usage printers the non-help error path calls, here or
+	// in the error branch of a caller that hands its FlagSet to this site.
+	reprints []string
 }
 
 func (s flagParseGuardSite) key() string { return s.file + " " + s.fn + " " + s.flagSet }
@@ -127,11 +138,15 @@ type flagParseGuardPackage struct {
 // the analyzer could not classify; the guard treats each as a failure so the
 // site set stays closed.
 type flagParseGuardReport struct {
-	sites    []flagParseGuardSite
-	markers  []string
-	ctors    []string
-	wrappers []string
-	problems []string
+	sites   []flagParseGuardSite
+	markers []string
+	ctors   []string
+	// reportedMarkers and reportedCtors are the markers declaring
+	// `FailureReported() bool { return true }` and their constructors.
+	reportedMarkers []string
+	reportedCtors   []string
+	wrappers        []string
+	problems        []string
 }
 
 type flagParseGuardParsedFile struct {
@@ -396,6 +411,12 @@ type flagParseGuardFlagSet struct {
 	// function: a bare parse on it makes that function a parse wrapper.
 	wrapperFunc string
 	wrapperIdx  int
+	param       bool
+	pf          *flagParseGuardParsedFile
+	// outputs are the arguments of every SetOutput call on the FlagSet.
+	outputs []ast.Expr
+	// usageFuncs are the same-package functions its Usage literal calls.
+	usageFuncs map[string]bool
 }
 
 // flagParseGuardCall is a candidate site before classification.
@@ -414,15 +435,19 @@ type flagParseGuardFunc struct {
 }
 
 type flagParseGuardAnalyzer struct {
-	fset     *token.FileSet
-	files    []*flagParseGuardParsedFile
-	markers  map[string]bool // importPath.Type
-	ctors    map[string]bool // importPath.func
-	report   flagParseGuardReport
-	funcs    map[string]map[string][]flagParseGuardFunc // pkg -> lookup name -> decls
-	direct   []flagParseGuardCall
-	calls    []flagParseGuardCall
-	wrappers map[string]map[string]map[int]bool // pkg -> func -> param idx
+	fset    *token.FileSet
+	files   []*flagParseGuardParsedFile
+	markers map[string]bool // importPath.Type
+	ctors   map[string]bool // importPath.func
+	// reported and reportedCtors are the subset of markers (and constructors)
+	// that tell the entrypoint the reason is already printed.
+	reported      map[string]bool
+	reportedCtors map[string]bool
+	report        flagParseGuardReport
+	funcs         map[string]map[string][]flagParseGuardFunc // pkg -> lookup name -> decls
+	direct        []flagParseGuardCall
+	calls         []flagParseGuardCall
+	wrappers      map[string]map[string]map[int]bool // pkg -> func -> param idx
 }
 
 func flagParseGuardAnalyze(pkgs []flagParseGuardPackage) flagParseGuardReport {
@@ -463,7 +488,8 @@ func flagParseGuardAnalyze(pkgs []flagParseGuardPackage) flagParseGuardReport {
 			}
 		}
 	}
-	a.deriveMarkers()
+	a.markers, a.ctors = a.deriveMarkers("MetadataUsageError")
+	a.reported, a.reportedCtors = a.deriveMarkers("FailureReported")
 	for _, pf := range scanned {
 		a.collectFuncs(pf)
 	}
@@ -473,6 +499,8 @@ func flagParseGuardAnalyze(pkgs []flagParseGuardPackage) flagParseGuardReport {
 	a.resolveSites()
 	a.report.markers = flagParseGuardSortedKeys(a.markers)
 	a.report.ctors = flagParseGuardSortedKeys(a.ctors)
+	a.report.reportedMarkers = flagParseGuardSortedKeys(a.reported)
+	a.report.reportedCtors = flagParseGuardSortedKeys(a.reportedCtors)
 	for pkg, fns := range a.wrappers {
 		for fn := range fns {
 			a.report.wrappers = append(a.report.wrappers, pkg+"."+fn)
@@ -498,14 +526,15 @@ func flagParseGuardSortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// deriveMarkers finds every type declaring `MetadataUsageError() bool` that
-// returns true, then every package-level function whose returns all construct
-// such a marker (usageError and friends), to a fixpoint.
-func (a *flagParseGuardAnalyzer) deriveMarkers() {
+// deriveMarkers finds every type declaring `<method>() bool` that returns
+// true, then every package-level function whose returns all construct such a
+// marker (usageError and friends for MetadataUsageError), to a fixpoint.
+func (a *flagParseGuardAnalyzer) deriveMarkers(method string) (markers, ctors map[string]bool) {
+	markers, ctors = map[string]bool{}, map[string]bool{}
 	for _, pf := range a.files {
 		for _, decl := range pf.file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv == nil || fn.Name.Name != "MetadataUsageError" || fn.Body == nil || len(fn.Recv.List) != 1 {
+			if !ok || fn.Recv == nil || fn.Name.Name != method || fn.Body == nil || len(fn.Recv.List) != 1 {
 				continue
 			}
 			if len(fn.Body.List) != 1 {
@@ -520,7 +549,7 @@ func (a *flagParseGuardAnalyzer) deriveMarkers() {
 				recv = star.X
 			}
 			if id, ok := recv.(*ast.Ident); ok {
-				a.markers[pf.pkg+"."+id.Name] = true
+				markers[pf.pkg+"."+id.Name] = true
 			}
 		}
 	}
@@ -529,7 +558,7 @@ func (a *flagParseGuardAnalyzer) deriveMarkers() {
 		for _, pf := range a.files {
 			for _, decl := range pf.file.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Recv != nil || fn.Body == nil || a.ctors[pf.pkg+"."+fn.Name.Name] {
+				if !ok || fn.Recv != nil || fn.Body == nil || ctors[pf.pkg+"."+fn.Name.Name] {
 					continue
 				}
 				returns := flagParseGuardReturns(fn.Body)
@@ -538,18 +567,19 @@ func (a *flagParseGuardAnalyzer) deriveMarkers() {
 				}
 				all := true
 				for _, ret := range returns {
-					if len(ret.Results) == 0 || !a.isMarker(pf, ret.Results[len(ret.Results)-1]) {
+					if len(ret.Results) == 0 || !a.constructs(pf, ret.Results[len(ret.Results)-1], markers, ctors) {
 						all = false
 						break
 					}
 				}
 				if all {
-					a.ctors[pf.pkg+"."+fn.Name.Name] = true
+					ctors[pf.pkg+"."+fn.Name.Name] = true
 					changed = true
 				}
 			}
 		}
 	}
+	return markers, ctors
 }
 
 // flagParseGuardReturns lists the return statements of body, excluding those
@@ -571,19 +601,31 @@ func flagParseGuardReturns(body ast.Node) []*ast.ReturnStmt {
 // isMarker reports whether expr constructs a usage marker: a composite literal
 // of a marker type, or a call to a marker constructor.
 func (a *flagParseGuardAnalyzer) isMarker(pf *flagParseGuardParsedFile, expr ast.Expr) bool {
+	return a.constructs(pf, expr, a.markers, a.ctors)
+}
+
+// isReported reports whether expr constructs a usage marker that tells the
+// entrypoint the reason is already printed.
+func (a *flagParseGuardAnalyzer) isReported(pf *flagParseGuardParsedFile, expr ast.Expr) bool {
+	return a.constructs(pf, expr, a.reported, a.reportedCtors)
+}
+
+// constructs reports whether expr is a composite literal of one of markers or
+// a call to one of ctors.
+func (a *flagParseGuardAnalyzer) constructs(pf *flagParseGuardParsedFile, expr ast.Expr, markers, ctors map[string]bool) bool {
 	switch e := expr.(type) {
 	case *ast.ParenExpr:
-		return a.isMarker(pf, e.X)
+		return a.constructs(pf, e.X, markers, ctors)
 	case *ast.UnaryExpr:
 		if e.Op == token.AND {
 			if lit, ok := e.X.(*ast.CompositeLit); ok {
-				return a.isMarker(pf, lit)
+				return a.constructs(pf, lit, markers, ctors)
 			}
 		}
 	case *ast.CompositeLit:
-		return a.markers[a.qualify(pf, e.Type)]
+		return markers[a.qualify(pf, e.Type)]
 	case *ast.CallExpr:
-		return a.ctors[a.qualify(pf, e.Fun)]
+		return ctors[a.qualify(pf, e.Fun)]
 	}
 	return false
 }
@@ -740,7 +782,7 @@ func (a *flagParseGuardAnalyzer) walkFunc(pf *flagParseGuardParsedFile, fn *ast.
 					if pf.locals[name] == nil {
 						continue
 					}
-					info := &flagParseGuardFlagSet{name: "param " + name.Name + " of " + fnName, wrapperIdx: -1}
+					info := &flagParseGuardFlagSet{name: "param " + name.Name + " of " + fnName, wrapperIdx: -1, param: true, pf: pf}
 					if wrapperFunc != "" {
 						info.wrapperFunc, info.wrapperIdx = wrapperFunc, idx+i
 					}
@@ -770,7 +812,7 @@ func (a *flagParseGuardAnalyzer) walkFunc(pf *flagParseGuardParsedFile, fn *ast.
 			}
 		}
 		accounted[call] = true
-		flagSets[pf.locals[id]] = &flagParseGuardFlagSet{name: name, wrapperIdx: -1}
+		flagSets[pf.locals[id]] = &flagParseGuardFlagSet{name: name, wrapperIdx: -1, pf: pf}
 	}
 
 	var stack []ast.Node
@@ -829,6 +871,7 @@ func (a *flagParseGuardAnalyzer) classifyUse(pf *flagParseGuardParsedFile, fnNam
 			break
 		}
 		if p.Sel.Name != "Parse" {
+			a.recordSetting(pf, info, p, stack)
 			return
 		}
 		if len(stack) >= 2 {
@@ -912,6 +955,7 @@ func (a *flagParseGuardAnalyzer) resolveSites() {
 			// The wrapper's own parse is not a site; its call sites are.
 			continue
 		}
+		a.resolveOutput(s.call, &s.site)
 		a.report.sites = append(a.report.sites, s.site)
 	}
 }
@@ -944,43 +988,15 @@ func (a *flagParseGuardAnalyzer) classify(c flagParseGuardCall) flagParseGuardSi
 		site.detail = "discards the parse error"
 		return site
 	case *ast.AssignStmt:
-		if len(parent.Rhs) != 1 || len(parent.Lhs) == 0 {
-			return unclassified("multi-value assignment")
-		}
-		id, ok := parent.Lhs[len(parent.Lhs)-1].(*ast.Ident)
-		if !ok {
-			return unclassified("the error is not assigned to a variable")
-		}
-		if id.Name == "_" {
+		var why string
+		errName, body, why = flagParseGuardErrorBranch(c.stack)
+		switch {
+		case why == "discards the parse error":
 			site.verdict = flagParseGuardOther
-			site.detail = "discards the parse error"
+			site.detail = why
 			return site
-		}
-		errName = id.Name
-		if len(c.stack) < 2 {
-			return unclassified("no enclosing statement")
-		}
-		var cond ast.Expr
-		switch gp := c.stack[len(c.stack)-2].(type) {
-		case *ast.IfStmt:
-			if gp.Init != parent {
-				return unclassified("assignment is not the if initializer")
-			}
-			cond, body = gp.Cond, gp.Body
-		default:
-			list := flagParseGuardStmtList(gp)
-			i := slices.IndexFunc(list, func(s ast.Stmt) bool { return s == parent })
-			if i < 0 || i+1 >= len(list) {
-				return unclassified("the assignment is not followed by an error check")
-			}
-			next, ok := list[i+1].(*ast.IfStmt)
-			if !ok || next.Init != nil {
-				return unclassified("the assignment is not followed by `if " + errName + " != nil`")
-			}
-			cond, body = next.Cond, next.Body
-		}
-		if !flagParseGuardChecksNonNil(cond, errName) {
-			return unclassified("the error check does not test " + errName + " != nil")
+		case why != "":
+			return unclassified(why)
 		}
 	default:
 		return unclassified("unsupported statement shape")
@@ -1018,6 +1034,9 @@ func (a *flagParseGuardAnalyzer) classify(c flagParseGuardCall) flagParseGuardSi
 				switch {
 				case isMarker:
 					marked++
+					if a.isReported(pf, last) {
+						site.reported++
+					}
 				case last != nil && flagParseGuardIsIdent(last, errName):
 					bare++
 				default:
@@ -1033,6 +1052,8 @@ func (a *flagParseGuardAnalyzer) classify(c flagParseGuardCall) flagParseGuardSi
 		})
 	}
 	walk(body, false)
+	site.marked = marked
+	site.reprints = a.reprintsIn(pf, body, errName, c.fs)
 	switch {
 	case marked+bare+other == 0:
 		site.verdict = flagParseGuardOther
@@ -1050,6 +1071,201 @@ func (a *flagParseGuardAnalyzer) classify(c flagParseGuardCall) flagParseGuardSi
 		}
 	}
 	return site
+}
+
+// flagParseGuardErrorBranch finds the error branch of a parse call whose
+// innermost ancestor (the last of stack) assigns its error: the body of the
+// `if err != nil` that is the assignment's if statement or the statement right
+// after it. why is non-empty when the shape is anything else.
+func flagParseGuardErrorBranch(stack []ast.Node) (errName string, body *ast.BlockStmt, why string) {
+	if len(stack) < 2 {
+		return "", nil, "no enclosing statement"
+	}
+	parent, ok := stack[len(stack)-1].(*ast.AssignStmt)
+	if !ok {
+		return "", nil, "unsupported statement shape"
+	}
+	if len(parent.Rhs) != 1 || len(parent.Lhs) == 0 {
+		return "", nil, "multi-value assignment"
+	}
+	id, ok := parent.Lhs[len(parent.Lhs)-1].(*ast.Ident)
+	if !ok {
+		return "", nil, "the error is not assigned to a variable"
+	}
+	if id.Name == "_" {
+		return "", nil, "discards the parse error"
+	}
+	errName = id.Name
+	var cond ast.Expr
+	switch gp := stack[len(stack)-2].(type) {
+	case *ast.IfStmt:
+		if gp.Init != parent {
+			return "", nil, "assignment is not the if initializer"
+		}
+		cond, body = gp.Cond, gp.Body
+	default:
+		list := flagParseGuardStmtList(gp)
+		i := slices.IndexFunc(list, func(s ast.Stmt) bool { return s == parent })
+		if i < 0 || i+1 >= len(list) {
+			return "", nil, "the assignment is not followed by an error check"
+		}
+		next, ok := list[i+1].(*ast.IfStmt)
+		if !ok || next.Init != nil {
+			return "", nil, "the assignment is not followed by `if " + errName + " != nil`"
+		}
+		cond, body = next.Cond, next.Body
+	}
+	if !flagParseGuardChecksNonNil(cond, errName) {
+		return "", nil, "the error check does not test " + errName + " != nil"
+	}
+	return errName, body, ""
+}
+
+// recordSetting records what a FlagSet method call configures: the output of
+// SetOutput, and the same-package functions a Usage literal calls.
+func (a *flagParseGuardAnalyzer) recordSetting(pf *flagParseGuardParsedFile, info *flagParseGuardFlagSet, sel *ast.SelectorExpr, stack []ast.Node) {
+	if len(stack) < 2 {
+		return
+	}
+	switch sel.Sel.Name {
+	case "SetOutput":
+		if call, ok := stack[len(stack)-2].(*ast.CallExpr); ok && call.Fun == sel && len(call.Args) == 1 {
+			info.outputs = append(info.outputs, call.Args[0])
+		}
+	case "Usage":
+		assign, ok := stack[len(stack)-2].(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 1 || assign.Lhs[0] != sel || len(assign.Rhs) != 1 {
+			return
+		}
+		if info.usageFuncs == nil {
+			info.usageFuncs = map[string]bool{}
+		}
+		ast.Inspect(assign.Rhs[0], func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if name := flagParseGuardLocalCallee(pf, call); name != "" {
+					info.usageFuncs[name] = true
+				}
+			}
+			return true
+		})
+		if id, ok := assign.Rhs[0].(*ast.Ident); ok && pf.locals[id] == nil {
+			info.usageFuncs[id.Name] = true
+		}
+	}
+}
+
+// flagParseGuardLocalCallee names the same-package function or method call
+// calls, or returns "" for a call into an imported package or a local value.
+func flagParseGuardLocalCallee(pf *flagParseGuardParsedFile, call *ast.CallExpr) string {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		if pf.locals[fun] == nil {
+			return fun.Name
+		}
+	case *ast.SelectorExpr:
+		if x, ok := fun.X.(*ast.Ident); ok && pf.locals[x] == nil && pf.imports[x.Name] != "" {
+			return ""
+		}
+		return fun.Sel.Name
+	}
+	return ""
+}
+
+// reprintsIn lists the usage printers called on the non-help path of an error
+// branch: the FlagSet's Usage or PrintDefaults, a function its Usage literal
+// calls, or any same-package function whose name says it prints a usage.
+func (a *flagParseGuardAnalyzer) reprintsIn(pf *flagParseGuardParsedFile, body *ast.BlockStmt, errName string, fs *flagParseGuardFlagSet) []string {
+	if body == nil {
+		return nil
+	}
+	var out []string
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.IfStmt:
+			if node != nil && errName != "" && a.isHelpCond(pf, node.Cond, errName) {
+				if node.Else != nil {
+					out = append(out, a.reprintsIn(pf, &ast.BlockStmt{List: []ast.Stmt{node.Else}}, errName, fs)...)
+				}
+				return false
+			}
+		case *ast.CallExpr:
+			name := flagParseGuardLocalCallee(pf, node)
+			_, method := node.Fun.(*ast.SelectorExpr)
+			switch {
+			case name == "":
+			case method && (name == "Usage" || name == "PrintDefaults"),
+				fs != nil && fs.usageFuncs[name],
+				strings.Contains(name, "Usage") && !a.ctors[a.qualify(pf, node.Fun)]:
+				out = append(out, types.ExprString(node.Fun))
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// outputOf says where fs writes its reason and usage: "stderr", "discard", or
+// a description of why the analyzer cannot tell.
+func flagParseGuardOutputOf(fs *flagParseGuardFlagSet) string {
+	if len(fs.outputs) == 0 {
+		if fs.param {
+			return ""
+		}
+		// flag.NewFlagSet writes to os.Stderr until SetOutput is called.
+		return "stderr"
+	}
+	kind := ""
+	for _, out := range fs.outputs {
+		k := "stderr"
+		if sel, ok := out.(*ast.SelectorExpr); ok && sel.Sel.Name == "Discard" {
+			if x, ok := sel.X.(*ast.Ident); ok && fs.pf.locals[x] == nil && fs.pf.imports[x.Name] == "io" {
+				k = "discard"
+			}
+		}
+		if kind != "" && kind != k {
+			return "mixed SetOutput calls"
+		}
+		kind = k
+	}
+	return kind
+}
+
+// resolveOutput decides a site's output. A FlagSet parameter without its own
+// SetOutput takes the output of every caller that hands a FlagSet to it, and
+// the usage printers in each caller's error branch join the site's.
+func (a *flagParseGuardAnalyzer) resolveOutput(c flagParseGuardCall, site *flagParseGuardSite) {
+	site.output = flagParseGuardOutputOf(c.fs)
+	if site.output != "" {
+		return
+	}
+	if c.fs.wrapperFunc == "" {
+		site.output = "unresolved: a FlagSet parameter of a function literal without SetOutput"
+		return
+	}
+	for _, caller := range a.calls {
+		if caller.pf.pkg != c.pf.pkg || caller.callee != c.fs.wrapperFunc || caller.argIdx != c.fs.wrapperIdx {
+			continue
+		}
+		out := flagParseGuardOutputOf(caller.fs)
+		if out == "" {
+			out = "unresolved: caller " + caller.fn + " passes a FlagSet parameter without SetOutput"
+		}
+		if site.output != "" && site.output != out {
+			site.output = "mixed: callers disagree on the FlagSet output"
+			return
+		}
+		site.output = out
+		if errName, body, why := flagParseGuardErrorBranch(caller.stack); why == "" {
+			for _, reprint := range a.reprintsIn(caller.pf, body, errName, caller.fs) {
+				site.reprints = append(site.reprints, reprint+" in caller "+caller.fn)
+			}
+		}
+	}
+	if site.output == "" {
+		site.output = "unresolved: no caller hands a FlagSet to " + c.fs.wrapperFunc
+	}
 }
 
 func flagParseGuardStmtList(n ast.Node) []ast.Stmt {
@@ -1245,6 +1461,264 @@ func TestFlagParseUsageGuardEveryParserMarksUsage(t *testing.T) {
 	}
 	t.Logf("flag parse guard: %d sites (%d usage-marked, %d of them without a flag.ErrHelp branch; %d exception rows), wrappers %v, markers %v, in %s",
 		len(report.sites), marked, helpless, len(used), report.wrappers, report.markers, time.Since(start).Round(time.Millisecond))
+}
+
+// flagParseOutputFindings applies the output rule to a report: a flag parse
+// failure puts its reason on stderr exactly once and its usage at most once.
+// A FlagSet writing to stderr has already printed both through the flag
+// package, so the site returns flagParseError (the entrypoint stays silent)
+// and prints no usage of its own; a FlagSet with a discarded output returns a
+// plain usage error so the entrypoint prints the reason. Sites the exit-code
+// guard does not hold as usage-marked (its exception rows) are left to it.
+func flagParseOutputFindings(report flagParseGuardReport, exceptions map[string]flagParseGuardException) (failures []string) {
+	for _, site := range report.sites {
+		if _, ok := exceptions[site.key()]; ok || site.verdict != flagParseGuardMarked {
+			continue
+		}
+		switch site.output {
+		case "stderr":
+			if site.reported != site.marked {
+				failures = append(failures, site.describe()+": the FlagSet writes to stderr, so the flag package has already printed the reason and the usage; return flagParseError(err) so the entrypoint does not print the reason a second time")
+			}
+			if len(site.reprints) > 0 {
+				failures = append(failures, site.describe()+": the parse error path prints the usage again ("+strings.Join(site.reprints, ", ")+") after the flag package printed it; print it only in the flag.ErrHelp branch, if at all")
+			}
+		case "discard":
+			if site.reported > 0 {
+				failures = append(failures, site.describe()+": the FlagSet discards its output, so nothing printed the reason; return usageError(...) so the entrypoint prints it once")
+			}
+		default:
+			failures = append(failures, site.describe()+": cannot tell where the FlagSet writes its reason ("+site.output+")")
+		}
+	}
+	return failures
+}
+
+// TestFlagParseOutputGuardPrintsReasonOnceUsageAtMostOnce holds every
+// usage-marked flag parse site in internal/app/** to the stderr shape of a
+// flag error: the reason exactly once and the usage at most once. It walks the
+// same closed site set as TestFlagParseUsageGuardEveryParserMarksUsage.
+func TestFlagParseOutputGuardPrintsReasonOnceUsageAtMostOnce(t *testing.T) {
+	t.Parallel()
+	report := flagParseGuardAnalyze(flagParseGuardLoadRepo(t, filepath.Join("..", "..")))
+	for _, failure := range append(report.problems, flagParseOutputFindings(report, flagParseGuardExceptions)...) {
+		t.Error(failure)
+	}
+	if !slices.Contains(report.reportedMarkers, flagParseGuardModule+"/internal/cli.flagParseError") {
+		t.Errorf("cli.flagParseError not derived from a FailureReported declaration; reported markers = %v", report.reportedMarkers)
+	}
+	for _, want := range []string{flagParseGuardModule + "/internal/cli.FlagParseError", flagParseGuardModule + "/internal/app.flagParseError"} {
+		if !slices.Contains(report.reportedCtors, want) {
+			t.Errorf("%s not derived as a reported marker constructor; reported ctors = %v", want, report.reportedCtors)
+		}
+	}
+	outputs := map[string]int{}
+	for _, site := range report.sites {
+		if _, ok := flagParseGuardExceptions[site.key()]; !ok && site.verdict == flagParseGuardMarked {
+			outputs[site.output]++
+		}
+	}
+	if outputs["stderr"] < 80 || outputs["discard"] < 3 {
+		t.Errorf("site outputs = %v; the output resolution has regressed", outputs)
+	}
+	t.Logf("flag parse output guard: %v usage-marked sites by output", outputs)
+}
+
+// TestFlagParseOutputGuardPositiveControl runs the output rule on synthetic
+// source: a plain usage error or a usage reprint on a stderr FlagSet, a
+// reported error on a discarded FlagSet, and helpers whose callers disagree
+// must fail; the idioms must pass.
+func TestFlagParseOutputGuardPositiveControl(t *testing.T) {
+	t.Parallel()
+	const pkgPath = "example.test/guard/internal/app"
+	const src = `package app
+
+import (
+	"errors"
+	"flag"
+	"io"
+)
+
+type UsageError struct{ Message string }
+
+func (e *UsageError) Error() string            { return e.Message }
+func (e *UsageError) MetadataUsageError() bool { return true }
+
+type flagParseUsageError struct{ message string }
+
+func (e *flagParseUsageError) Error() string            { return e.message }
+func (e *flagParseUsageError) MetadataUsageError() bool { return true }
+func (e *flagParseUsageError) FailureReported() bool    { return true }
+
+func usageError(message string) error { return &UsageError{Message: message} }
+
+func flagParseError(err error) error { return &flagParseUsageError{message: err.Error()} }
+
+func printFooUsage(w io.Writer) {}
+
+func showHelp(w io.Writer) {}
+
+func stderrPlain(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("stderr-plain", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
+	}
+	return nil
+}
+
+func defaultPlain(args []string) error {
+	fs := flag.NewFlagSet("default-plain", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return usageError(err.Error())
+	}
+	return nil
+}
+
+func stderrReprint(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("stderr-reprint", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		printFooUsage(stderr)
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func stderrUsageLiteral(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("stderr-usage-literal", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { showHelp(stderr) }
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		showHelp(stderr)
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func discardReported(args []string) error {
+	fs := flag.NewFlagSet("discard-reported", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func parseHelper(fs *flag.FlagSet, args []string) ([]string, error) {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil, err
+		}
+		return nil, flagParseError(err)
+	}
+	return fs.Args(), nil
+}
+
+func helperCallerReprint(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("helper-caller", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	_, err := parseHelper(fs, args)
+	if err != nil {
+		printFooUsage(stderr)
+		return err
+	}
+	return nil
+}
+
+func mixedHelper(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func mixedStderr(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("mixed-stderr", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	return mixedHelper(fs, args)
+}
+
+func mixedDiscard(args []string) error {
+	fs := flag.NewFlagSet("mixed-discard", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	return mixedHelper(fs, args)
+}
+
+func idiomStderr(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("idiom-stderr", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() { printFooUsage(stderr) }
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printFooUsage(stderr)
+			return err
+		}
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func idiomDiscard(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("idiom-discard", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		printFooUsage(stderr)
+		return usageError("idiom-discard: " + err.Error())
+	}
+	return nil
+}
+
+func idiomHelperCaller(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("idiom-helper", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if _, err := parseHelper(fs, args); err != nil {
+		return err
+	}
+	return nil
+}
+`
+	report := flagParseGuardAnalyze([]flagParseGuardPackage{{
+		importPath: pkgPath,
+		scan:       true,
+		files:      []flagParseGuardFile{{name: "synthetic/app.go", src: []byte(src)}},
+	}})
+	if len(report.problems) != 0 {
+		t.Fatalf("positive control: analyzer problems: %v", report.problems)
+	}
+	failures := flagParseOutputFindings(report, nil)
+	joined := strings.Join(failures, "\n")
+	t.Logf("positive control failures:\n%s", joined)
+	for _, want := range []string{
+		`func stderrPlain, FlagSet "stderr-plain" (FlagSet.Parse): the FlagSet writes to stderr`,
+		`func defaultPlain, FlagSet "default-plain" (FlagSet.Parse): the FlagSet writes to stderr`,
+		`func stderrReprint, FlagSet "stderr-reprint" (FlagSet.Parse): the parse error path prints the usage again (printFooUsage)`,
+		`func stderrUsageLiteral, FlagSet "stderr-usage-literal" (FlagSet.Parse): the parse error path prints the usage again (showHelp)`,
+		`func discardReported, FlagSet "discard-reported" (FlagSet.Parse): the FlagSet discards its output`,
+		`FlagSet "param fs of parseHelper" (FlagSet.Parse): the parse error path prints the usage again (printFooUsage in caller helperCallerReprint)`,
+		`FlagSet "param fs of mixedHelper" (FlagSet.Parse): cannot tell where the FlagSet writes its reason (mixed: callers disagree on the FlagSet output)`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("positive control: missing failure containing %q", want)
+		}
+	}
+	for _, clean := range []string{"idiom-stderr", "idiom-discard", "idiom-helper"} {
+		if strings.Contains(joined, clean) {
+			t.Errorf("positive control: %q must pass the output guard", clean)
+		}
+	}
+	if len(failures) != 7 {
+		t.Errorf("positive control: got %d failures, want 7", len(failures))
+	}
 }
 
 // TestFlagParseUsageGuardPositiveControl runs the same analyzer and policy on

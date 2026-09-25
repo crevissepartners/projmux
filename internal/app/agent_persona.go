@@ -312,7 +312,7 @@ func parseAgentPersonaArgs(args []string, noun string, stderr io.Writer) (agentP
 		if errors.Is(err, flag.ErrHelp) {
 			return agentPersonaRequest{}, err
 		}
-		return agentPersonaRequest{}, usageError(err.Error())
+		return agentPersonaRequest{}, flagParseError(err)
 	}
 	want := 2
 	shape := "<agent-ref> <persona>"

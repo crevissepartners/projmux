@@ -449,7 +449,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		if errors.Is(err, flag.ErrHelp) {
 			return resourceCreateFlags{}, err
 		}
-		return resourceCreateFlags{}, usageError(err.Error())
+		return resourceCreateFlags{}, flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return resourceCreateFlags{}, usageError(fmt.Sprintf("%s does not accept positional arguments; got %q", spelling, fs.Arg(0)))

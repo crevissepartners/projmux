@@ -36,7 +36,7 @@ func (c *agentCommand) runModels(args []string, stdout, stderr io.Writer) error 
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(rest) > 0 {
 		return usageError(fmt.Sprintf("%s accepts no positional arguments; got %q", spelling, rest[0]))

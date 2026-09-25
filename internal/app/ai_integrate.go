@@ -164,7 +164,7 @@ func (c *aiCommand) runIntegrateTmuxBell(args []string, stdout, stderr io.Writer
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
@@ -240,7 +240,7 @@ func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) 
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
@@ -277,7 +277,7 @@ func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) e
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)

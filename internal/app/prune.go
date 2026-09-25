@@ -86,7 +86,7 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
 		printPruneUsage(stderr)
@@ -123,11 +123,11 @@ func (c *pruneCommand) runEphemeral(args []string, _ io.Writer, stderr io.Writer
 	keepCount := fs.Int("keep", 3, "number of unattached ephemeral sessions to retain")
 
 	if err := fs.Parse(args); err != nil {
-		printPruneUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printPruneUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printPruneUsage(stderr)

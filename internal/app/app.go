@@ -89,6 +89,14 @@ func usageError(message string) error {
 	return &UsageError{Message: message}
 }
 
+// flagParseError builds the usage error for a failed Parse of a FlagSet whose
+// output is stderr: the flag package has already printed the reason, so the
+// entrypoint must not (cli.FlagParseError). A FlagSet with a discarded output
+// returns usageError instead, so the entrypoint prints the reason once.
+func flagParseError(err error) error {
+	return cli.FlagParseError(err)
+}
+
 // IsUsageError reports whether err was caused by invalid user input. It is a
 // projection of coremetadata.IsUsageError, which owns the judgement; *UsageError
 // reaches it through the MetadataUsageError marker above. The app keeps the name

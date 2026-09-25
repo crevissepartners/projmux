@@ -117,7 +117,7 @@ func (c *agentCommand) runReview(args []string, stdout, stderr io.Writer) error 
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(positionals) > 1 || (len(positionals) == 1 && agentRef != "") {
 		return usageError(spelling + " accepts one Agent reference, either positional or with --agent")

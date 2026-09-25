@@ -53,11 +53,11 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printWindowUsage(stderr)
 	}
 	if err := fs.Parse(args); err != nil {
-		printWindowUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printWindowUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
 		printWindowUsage(stderr)
@@ -146,11 +146,11 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 		printWindowRecentUsage(stderr)
 	}
 	if err := fs.Parse(args); err != nil {
-		printWindowRecentUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printWindowRecentUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printWindowRecentUsage(stderr)
@@ -236,11 +236,11 @@ func (c *recentWindowCommand) RunRecord(args []string, _ io.Writer, stderr io.Wr
 		printWindowRecordUsage(stderr)
 	}
 	if err := fs.Parse(args); err != nil {
-		printWindowRecordUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printWindowRecordUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printWindowRecordUsage(stderr)

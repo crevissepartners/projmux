@@ -365,7 +365,7 @@ func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focu
 		if errors.Is(err, flag.ErrHelp) {
 			return focusOptions{}, err
 		}
-		return focusOptions{}, usageError(err.Error())
+		return focusOptions{}, flagParseError(err)
 	}
 	if len(refs) != 1 {
 		return focusOptions{}, usageError(fmt.Sprintf("%s requires exactly one resource reference", spelling))

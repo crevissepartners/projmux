@@ -157,7 +157,7 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("internal codex-broker serve does not accept positional arguments")
@@ -228,7 +228,7 @@ func (c *codexBrokerCommand) runProbe(args []string, stdout, stderr io.Writer) e
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("internal codex-broker probe does not accept positional arguments")

@@ -46,7 +46,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
 		printPinUsage(stderr)
@@ -100,7 +100,7 @@ func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printPinUsage(stderr)
@@ -287,7 +287,7 @@ func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printPinUsage(stderr)

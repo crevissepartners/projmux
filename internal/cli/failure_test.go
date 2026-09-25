@@ -16,6 +16,11 @@ func (e testExitCoder) Error() string { return "already displayed" }
 func (e testExitCoder) ExitCode() int { return e.code }
 func (e testExitCoder) Unwrap() error { return e.cause }
 
+type testReported struct{ reported bool }
+
+func (e testReported) Error() string         { return "flag provided but not defined: -zz" }
+func (e testReported) FailureReported() bool { return e.reported }
+
 // subprocessExitError returns a real bare *exec.ExitError with exit code 3, so
 // a test can tell its code apart from the default exit code 1.
 func subprocessExitError(t *testing.T) *exec.ExitError {
@@ -57,6 +62,11 @@ func TestClassifyFailureDecidesPrintExitCodeAndKind(t *testing.T) {
 		// A coder's own code wins over the usage exit code, while the journal
 		// still names the usage; both halves predate the shared rule.
 		{name: "usage error with app coder", err: testExitCoder{code: 6}, usage: true, want: Failure{ExitCode: 6, Kind: FailureUsage}},
+		// A FlagSet parse failure already printed its reason on stderr: the
+		// entrypoint stays silent and keeps the usage exit code and kind.
+		{name: "reported usage error", err: testReported{reported: true}, usage: true, want: Failure{ExitCode: 2, Kind: FailureUsage}},
+		{name: "wrapped reported usage error", err: fmt.Errorf("outer: %w", testReported{reported: true}), usage: true, want: Failure{ExitCode: 2, Kind: FailureUsage}},
+		{name: "usage error that did not report", err: testReported{}, usage: true, want: Failure{Print: true, ExitCode: 2, Kind: FailureUsage}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

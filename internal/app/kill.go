@@ -101,7 +101,7 @@ func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
 		printKillUsage(stderr)
