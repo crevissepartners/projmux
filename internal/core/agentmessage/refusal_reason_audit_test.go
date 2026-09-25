@@ -43,6 +43,9 @@ func TestNoProductPathReturnsAnUnnamedEnvelopeRefusal(t *testing.T) {
 			if path != root && (strings.HasPrefix(name, ".") || name == "node_modules" || name == "testdata" || name == "vendor") {
 				return filepath.SkipDir
 			}
+			if skipNestedCheckout(root, path, entry) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
