@@ -3331,7 +3331,7 @@ func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePat
 
 func printSwitchUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux switch [--ui=popup|sidebar]")
+	fmt.Fprintln(w, "  projmux switch [--ui popup|sidebar]")
 	fmt.Fprintln(w, "  projmux switch toggle-tag [path]")
 	fmt.Fprintln(w, "  projmux switch toggle-pin [path]")
 	fmt.Fprintln(w, "  projmux switch kill [path]")

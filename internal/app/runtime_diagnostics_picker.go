@@ -263,7 +263,7 @@ func (c *runtimeDiagnosticsCommand) insideTmux() bool {
 
 func printRuntimeDiagnosticsUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]")
+	fmt.Fprintln(w, "  projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]")
 }
 
 func runtimeDiagnosticsFooter(locale i18n.Locale) string {

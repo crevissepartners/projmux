@@ -321,7 +321,7 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		if source == hooks.EffectiveSourceGlobal {
-			return fmt.Errorf("hook %q is defined at %s; edit that file directly or run 'projmux hook edit %s --project' to create a project override", event, sourcePath, event)
+			return fmt.Errorf("hook %q is defined at %s; edit that file directly or run 'projmux hook edit --project %s' to create a project override", event, sourcePath, event)
 		}
 	}
 	path := filepath.Join(repo, ".projmux", "config.toml")
@@ -779,7 +779,7 @@ func supportedHookEventList() string {
 func printHookUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux hook list [--global|--project|--effective]")
-	fmt.Fprintln(w, "  projmux hook edit <event> [--global|--project] [--editor]")
+	fmt.Fprintln(w, "  projmux hook edit [--global | --project] [--editor] <event>")
 	fmt.Fprintln(w, "  projmux hook validate")
 	fmt.Fprintln(w, "  projmux hook trust [<project>]")
 	fmt.Fprintln(w, "  projmux hook untrust [<project>]")

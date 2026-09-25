@@ -1146,7 +1146,7 @@ operator's question, so they stay reachable only as `projmux internal tmux ...`.
 ## switch
 
 ```
-projmux switch [--ui=popup|sidebar]
+projmux switch [--ui popup|sidebar]
 projmux switch open <path>
 projmux switch toggle-tag | toggle-pin | kill | settings | preview
 projmux switch cycle-pane | cycle-window | sidebar-focus

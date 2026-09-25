@@ -1199,8 +1199,8 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printAIUsage(stderr)
-		return usageError("ai settings does not accept positional arguments")
+		printConfigEditUsage(stderr)
+		return usageError("config edit does not accept positional arguments")
 	}
 
 	if *get {
@@ -4366,4 +4366,11 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux agent topic set <text> [--pane <id>]")
 	fmt.Fprintln(w, "  projmux agent topic clear [--pane <id>]")
 	fmt.Fprintln(w, "  projmux agent topic get [--pane <id>]")
+}
+
+// printConfigEditUsage prints the synopsis of `config edit`, the public route
+// runSettings serves, so a rejected call shows that route's usage alone.
+func printConfigEditUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintln(w, "  projmux config edit [--get|--set <mode>]")
 }
