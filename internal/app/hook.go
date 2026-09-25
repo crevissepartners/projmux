@@ -13,6 +13,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
@@ -346,9 +347,15 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return fmt.Errorf("create project config dir: %w", err)
 		}
-		return c.openInEditor(path, stdout, stderr)
+		if err := c.openInEditor(path, stdout, stderr); err != nil {
+			return err
+		}
+		return c.printProjectScopeNote(stdout)
 	}
-	return c.editProjectInline(repo, path, event, stdout, stderr)
+	if err := c.editProjectInline(repo, path, event, stdout, stderr); err != nil {
+		return err
+	}
+	return c.printProjectScopeNote(stdout)
 }
 
 func (c *hookCommand) effectiveHookSource(event string) (hooks.EffectiveSource, string, error) {
@@ -611,7 +618,7 @@ func validateHookEvents(cfg hooks.ProjectConfig) error {
 // --- trust / untrust -----------------------------------------------------
 
 func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
-	repo, err := c.resolveTrustTarget("hook trust", args, func() { printRouteUsage(stderr, "hook trust"); printHookEvents(stderr) })
+	repo, fromContext, err := c.resolveTrustTarget("hook trust", args, func() { printRouteUsage(stderr, "hook trust"); printHookEvents(stderr) })
 	if err != nil {
 		return err
 	}
@@ -623,12 +630,17 @@ func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("trust %s: %w", repo, err)
 	}
-	_, err = fmt.Fprintf(stdout, "trusted %s\n  .projmux/config.toml sha256=%s\n", repo, sum)
-	return err
+	if _, err := fmt.Fprintf(stdout, "trusted %s\n  .projmux/config.toml sha256=%s\n", repo, sum); err != nil {
+		return err
+	}
+	if !fromContext {
+		return nil
+	}
+	return c.printProjectScopeNote(stdout)
 }
 
 func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error {
-	repo, err := c.resolveTrustTarget("hook untrust", args, func() { printRouteUsage(stderr, "hook untrust"); printHookEvents(stderr) })
+	repo, fromContext, err := c.resolveTrustTarget("hook untrust", args, func() { printRouteUsage(stderr, "hook untrust"); printHookEvents(stderr) })
 	if err != nil {
 		return err
 	}
@@ -645,43 +657,48 @@ func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error 
 	} else {
 		_, err = fmt.Fprintf(stdout, "no trust entry for %s\n", repo)
 	}
-	return err
+	if err != nil || !fromContext {
+		return err
+	}
+	return c.printProjectScopeNote(stdout)
 }
 
 // resolveTrustTarget rejects unknown flags before it reads the project
 // context or the trust store; command names the verb in that rejection, and
 // printUsage prints that verb's catalog usage under every refusal.
-func (c *hookCommand) resolveTrustTarget(command string, args []string, printUsage func()) (string, error) {
-	args, err := splitOperands(command, args)
+// fromContext reports that the target is the project context rather than an
+// explicit <project> argument, so only then can a scope note apply.
+func (c *hookCommand) resolveTrustTarget(command string, args []string, printUsage func()) (repo string, fromContext bool, err error) {
+	args, err = splitOperands(command, args)
 	if err != nil {
 		printUsage()
-		return "", err
+		return "", false, err
 	}
 	switch len(args) {
 	case 0:
 		repo, err := c.resolveProjectContext()
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if repo == "" {
 			printUsage()
-			return "", usageError("trust/untrust requires <project> or a project context")
+			return "", false, usageError("trust/untrust requires <project> or a project context")
 		}
-		return repo, nil
+		return repo, true, nil
 	case 1:
 		raw := strings.TrimSpace(args[0])
 		if raw == "" {
 			printUsage()
-			return "", usageError("trust/untrust <project> must not be empty")
+			return "", false, usageError("trust/untrust <project> must not be empty")
 		}
 		abs, err := filepath.Abs(raw)
 		if err != nil {
-			return "", fmt.Errorf("resolve %q: %w", raw, err)
+			return "", false, fmt.Errorf("resolve %q: %w", raw, err)
 		}
-		return filepath.Clean(abs), nil
+		return filepath.Clean(abs), false, nil
 	default:
 		printUsage()
-		return "", usageError("trust/untrust takes at most one <project> argument")
+		return "", false, usageError("trust/untrust takes at most one <project> argument")
 	}
 }
 
@@ -765,6 +782,9 @@ func (c *hookCommand) resolveProjectScope() (root, cwd string, err error) {
 	return "", wd, nil
 }
 
+// hookProjectScopeNoteFallback is the en-US text of i18n.KeyHookProjectScopeNote.
+const hookProjectScopeNoteFallback = "note: sessions created in {cwd} do not run this file's pre-create, post-create, or post-attach hooks, [startup], or [env]; only sessions created in {root} do"
+
 // projectScopeNote says, when the project context was found by walking up,
 // that sessions created in the current directory do not read the context's
 // config: the hook runner reads only <session dir>/.projmux/config.toml. It
@@ -776,7 +796,19 @@ func (c *hookCommand) projectScopeNote() string {
 	if err != nil || root == "" || root == cwd {
 		return ""
 	}
-	return fmt.Sprintf("note: sessions created in %s do not run this file's pre-create, post-create, or post-attach hooks, [startup], or [env]; only sessions created in %s do", cwd, root)
+	template := localizeText(appLocale(c.homeDir, c.lookupEnv), i18n.KeyHookProjectScopeNote, hookProjectScopeNoteFallback)
+	return strings.NewReplacer("{cwd}", cwd, "{root}", root).Replace(template)
+}
+
+// printProjectScopeNote writes projectScopeNote on its own line after a
+// command that acted on the project context, when there is a note to show.
+func (c *hookCommand) printProjectScopeNote(stdout io.Writer) error {
+	note := c.projectScopeNote()
+	if note == "" {
+		return nil
+	}
+	_, err := fmt.Fprintln(stdout, note)
+	return err
 }
 
 // nearestProjectMarker walks parent directories looking for a `.projmux` or

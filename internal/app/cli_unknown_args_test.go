@@ -227,7 +227,7 @@ func TestHookTrustDoubleDashAllowsDashPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, verb := range []string{"hook trust", "hook untrust"} {
-		got, err := cmd.resolveTrustTarget(verb, []string{"--", "-x"}, func() {})
+		got, _, err := cmd.resolveTrustTarget(verb, []string{"--", "-x"}, func() {})
 		if err != nil {
 			t.Fatalf("%s -- -x: err = %v", verb, err)
 		}
