@@ -1781,7 +1781,7 @@ var routes = []Route{
 		CanonicalOrder: 15,
 		Summary:        "Manage pinned project directories",
 		Disposition:    DispositionCanonical,
-		Usage:          []string{"projmux pin project list|add|remove|toggle|clear"},
+		Usage:          []string{"projmux pin project list|add|remove|toggle|clear|migrate"},
 		Canonical:      []string{"pin project"},
 		Children: []Route{
 			// The store behind this route is a lines file of directory paths, not
@@ -1789,7 +1789,7 @@ var routes = []Route{
 			// document. So the summary says "project directories" like every
 			// sibling below it, rather than "Project resources", which would name
 			// a resource kind the route never touches.
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "project", Invocation: InvocationExplicit, Summary: "Manage pinned project directories (canonical spelling)", CanonicalSummary: "Manage pinned project directories", Usage: []string{"projmux pin project list|add|remove|toggle|clear"}, Canonical: []string{"pin project"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "project", Invocation: InvocationExplicit, Summary: "Manage pinned project directories (canonical spelling)", CanonicalSummary: "Manage pinned project directories", Usage: []string{"projmux pin project list|add|remove|toggle|clear|migrate"}, Canonical: []string{"pin project"}},
 		},
 	},
 	{

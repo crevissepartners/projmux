@@ -3128,7 +3128,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux pin project list|add|remove|toggle|clear
+projmux pin project list|add|remove|toggle|clear|migrate
 ```
 
 Subcommands:
@@ -3157,7 +3157,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux pin project list|add|remove|toggle|clear
+projmux pin project list|add|remove|toggle|clear|migrate
 ```
 
 ## `projmux prune`
