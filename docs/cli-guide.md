@@ -1697,7 +1697,7 @@ projmux attention toggle [pane]
 projmux attention clear  [pane]
 projmux attention arm    [pane]
 projmux attention list   [--json] [--all]
-projmux attention window [window]
+projmux attention window [window] [style]
 ```
 
 Toggles the `✳` pane title prefix and the `@projmux_attention_state` pane
