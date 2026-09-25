@@ -38,6 +38,18 @@ const (
 	// claudeQuestionProjectTimeout bounds each tmux call of the way-2 Pane
 	// projection, so a stuck tmux cannot hold the question before its wait.
 	claudeQuestionProjectTimeout = 2 * time.Second
+	// claudeQuestionRefreshInterval is how often a way-2 hook whose raise
+	// committed recommits input_required while its record waits. Its contract
+	// is interval < coremetadata.AgentInteractionFreshFor: every read of the
+	// effective interaction reads an observation older than the freshness
+	// window as unknown, so a question left waiting longer than that window
+	// would otherwise stop holding messages and stop being lowered by its
+	// PostToolUse. A third of the window leaves two missed refreshes of slack.
+	claudeQuestionRefreshInterval = coremetadata.AgentInteractionFreshFor / 3
+	// claudeQuestionRefreshRetry is how long a refresh that failed for a reason
+	// other than its fence waits before it tries again, so a Registry that stays
+	// broken is not rewritten on every poll.
+	claudeQuestionRefreshRetry = time.Minute
 )
 
 // claudeQuestionWindow is how long the hook holds one question open for a
@@ -118,6 +130,15 @@ func claudeQuestionAnsweredByProjmux(agent coremetadata.Agent, answering func() 
 // a changed binding or any failure skips it and the question goes on. The hook
 // never lowers the interaction; the PostToolUse that follows the answer, or the
 // next provider event, does.
+//
+// A raise that committed is kept fresh: while the record still waits and the
+// popup has not ended, the wait recommits the same interaction every
+// claudeQuestionRefreshInterval, Registry only, so a question left open longer
+// than the interaction freshness window still reads as input_required. Each
+// refresh is fenced on the same binding and compares-and-sets on the
+// provider-hook input_required it wrote; once anything else has written the
+// interaction or the binding moved, the hook never refreshes again for that
+// question. Nothing refreshes once the wait has ended.
 //
 // Whatever else happens, it prints nothing and succeeds, which Claude Code
 // reads as "no decision": the question goes on to the ordinary prompt. That is
@@ -322,13 +343,17 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 			panic(recovered)
 		}
 	}()
+	var fresh *claudeQuestionFreshness
 	if paneFound {
-		h.raiseInputRequired(claudeQuestionBinding{
+		binding := claudeQuestionBinding{
 			agentUID: agent.Metadata.UID, paneUID: paneUID, paneID: paneID,
 			generation: pane.Status.Activation.Generation, activationAgentUID: pane.Status.Activation.AgentUID,
-		})
+		}
+		if h.raiseInputRequired(binding) {
+			fresh = &claudeQuestionFreshness{binding: binding, due: h.clock()().Add(claudeQuestionRefreshInterval)}
+		}
 	}
-	answered, ok := h.wait(ctx, store, record, paneID, claudeQuestionAskerOf(registry, agent))
+	answered, ok := h.wait(ctx, store, record, paneID, claudeQuestionAskerOf(registry, agent), fresh)
 	if !ok {
 		return
 	}
@@ -346,43 +371,140 @@ type claudeQuestionBinding struct {
 	generation, activationAgentUID string
 }
 
-// errClaudeQuestionBindingChanged aborts the raise transaction, which then
-// writes nothing.
+// errClaudeQuestionBindingChanged aborts the raise or refresh transaction,
+// which then writes nothing.
 var errClaudeQuestionBindingChanged = errors.New("question Agent binding changed before interaction commit")
 
-// raiseInputRequired commits the asking Agent's interaction as input_required
-// from the provider hook and then projects it onto the Pane. It is silent: a
-// binding that changed since the snapshot, a failed transaction, or a failed
-// projection leaves the question flow exactly as it would be without it, and a
-// projection runs only after a commit. Even a panic in it is contained here,
-// so it cannot hand the question back.
-func (h claudeQuestionHook) raiseInputRequired(binding claudeQuestionBinding) {
-	if h.updateRegistry == nil {
-		return
+// errClaudeQuestionInteractionChanged aborts a refresh transaction whose Agent
+// no longer carries the provider-hook input_required the raise wrote: another
+// writer owns the interaction now, so the refresh writes nothing.
+var errClaudeQuestionInteractionChanged = errors.New("question Agent interaction changed before refresh commit")
+
+// fence reports errClaudeQuestionBindingChanged unless working still holds the
+// binding: the Agent is Running on the same Pane, and that Pane's activation is
+// the same Generation for the same Agent. It returns the Agent it checked.
+func (binding claudeQuestionBinding) fence(working *coremetadata.Registry) (*coremetadata.Agent, error) {
+	agent, ok := working.Agent(binding.agentUID)
+	if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != binding.paneUID {
+		return nil, errClaudeQuestionBindingChanged
 	}
-	defer func() { _ = recover() }()
+	pane, ok := working.Pane(binding.paneUID)
+	if !ok || pane.Status.Activation.Generation != binding.generation ||
+		pane.Status.Activation.AgentUID != binding.activationAgentUID {
+		return nil, errClaudeQuestionBindingChanged
+	}
+	return agent, nil
+}
+
+// clock is the hook's injected clock, or the wall clock when none is set.
+func (h claudeQuestionHook) clock() func() time.Time {
+	if h.now != nil {
+		return h.now
+	}
+	return time.Now
+}
+
+// interactionMutator is the Registry mutator the raise and the refresh commit
+// through, stamped by the hook's clock.
+func (h claudeQuestionHook) interactionMutator() coremetadata.Mutator {
 	mutator := intmetadata.DefaultMutator()
 	if h.now != nil {
 		mutator.Now = h.now
 	}
+	return mutator
+}
+
+// raiseInputRequired commits the asking Agent's interaction as input_required
+// from the provider hook and then projects it onto the Pane, and reports
+// whether the commit landed, which is what arms the refresh. It is silent: a
+// binding that changed since the snapshot, a failed transaction, or a failed
+// projection leaves the question flow exactly as it would be without it, and a
+// projection runs only after a commit. Even a panic in it is contained here,
+// so it cannot hand the question back.
+func (h claudeQuestionHook) raiseInputRequired(binding claudeQuestionBinding) (committed bool) {
+	if h.updateRegistry == nil {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			committed = false
+		}
+	}()
+	mutator := h.interactionMutator()
 	kind := coremetadata.InteractionInputRequired
 	_, err := h.updateRegistry(func(working *coremetadata.Registry) error {
-		agent, ok := working.Agent(binding.agentUID)
-		if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != binding.paneUID {
-			return errClaudeQuestionBindingChanged
-		}
-		pane, ok := working.Pane(binding.paneUID)
-		if !ok || pane.Status.Activation.Generation != binding.generation ||
-			pane.Status.Activation.AgentUID != binding.activationAgentUID {
-			return errClaudeQuestionBindingChanged
+		if _, err := binding.fence(working); err != nil {
+			return err
 		}
 		_, err := mutator.SetAgentInteraction(working, binding.agentUID, kind, string(coremetadata.InteractionSourceProviderHook))
 		return err
 	})
-	if err != nil || h.projectInteraction == nil || binding.paneID == "" {
+	if err != nil {
+		return false
+	}
+	if h.projectInteraction != nil && binding.paneID != "" {
+		_ = h.projectInteraction(binding.paneID, kind)
+	}
+	return true
+}
+
+// claudeQuestionFreshness is the refresh state one wait carries for a raise
+// that committed: the binding it is fenced on, when the next refresh is due by
+// the hook's clock, and whether refreshing has stopped for good. A nil
+// *claudeQuestionFreshness never refreshes.
+type claudeQuestionFreshness struct {
+	binding claudeQuestionBinding
+	due     time.Time
+	stopped bool
+}
+
+// refreshInputRequired recommits the raise once it is due, in one Registry
+// transaction fenced on the raise's binding that also compares-and-sets on the
+// Agent's raw interaction still being the provider-hook input_required. It
+// only rewrites the observation time, so it projects nothing: the Pane already
+// shows input_required. A fence or compare-and-set failure means another
+// writer or a new activation owns the Agent now, and stops refreshing for the
+// rest of the wait even if input_required from the provider hook comes back.
+// Any other failure is tried again after claudeQuestionRefreshRetry rather
+// than on the next poll. It is silent like the raise, and a panic in it stops
+// refreshing without touching the question.
+func (h claudeQuestionHook) refreshInputRequired(fresh *claudeQuestionFreshness) {
+	if fresh == nil || fresh.stopped || h.updateRegistry == nil {
 		return
 	}
-	_ = h.projectInteraction(binding.paneID, kind)
+	now := h.clock()()
+	if now.Before(fresh.due) {
+		return
+	}
+	defer func() {
+		if recover() != nil {
+			fresh.stopped = true
+		}
+	}()
+	mutator := h.interactionMutator()
+	binding := fresh.binding
+	_, err := h.updateRegistry(func(working *coremetadata.Registry) error {
+		agent, err := binding.fence(working)
+		if err != nil {
+			return err
+		}
+		current := agent.Status.Interaction
+		if current.Kind != coremetadata.InteractionInputRequired ||
+			current.Source != string(coremetadata.InteractionSourceProviderHook) {
+			return errClaudeQuestionInteractionChanged
+		}
+		_, err = mutator.SetAgentInteraction(working, binding.agentUID, coremetadata.InteractionInputRequired,
+			string(coremetadata.InteractionSourceProviderHook))
+		return err
+	})
+	switch {
+	case errors.Is(err, errClaudeQuestionBindingChanged) || errors.Is(err, errClaudeQuestionInteractionChanged):
+		fresh.stopped = true
+	case err != nil:
+		fresh.due = now.Add(claudeQuestionRefreshRetry)
+	default:
+		fresh.due = now.Add(claudeQuestionRefreshInterval)
+	}
 }
 
 func (h claudeQuestionHook) openStore() (*agentquestion.Store, error) {
@@ -407,7 +529,12 @@ func (h claudeQuestionHook) openStore() (*agentquestion.Store, error) {
 // and ends while the record still waits (Esc, a failed open, a crashed picker)
 // closes the record, which gives the question back, and is never opened again;
 // whatever ends the wait first closes a popup still open.
-func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, paneID string, asker claudeQuestionAsker) (result agentquestion.Record, answered bool) {
+//
+// fresh, when not nil, is the refresh state of a raise that committed: only a
+// poll that reads the record still waiting with the popup not ended refreshes
+// it, so nothing is written once the record is answered, closed, or expired,
+// the popup ended, ctx is canceled, or wait has returned.
+func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, paneID string, asker claudeQuestionAsker, fresh *claudeQuestionFreshness) (result agentquestion.Record, answered bool) {
 	read := h.readRecord
 	if read == nil {
 		read = func(store *agentquestion.Store, id string) (agentquestion.Record, bool, error) { return store.Get(id) }
@@ -460,6 +587,10 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 				// The popup ended but closing the record failed; try again.
 				step = store.Close
 			case current.State == agentquestion.StateWaiting:
+				// A cancellation that raced this tick writes nothing more.
+				if ctx.Err() == nil {
+					h.refreshInputRequired(fresh)
+				}
 				popup.maybeOpen(ctx)
 				continue
 			case current.State == agentquestion.StateExpired:
