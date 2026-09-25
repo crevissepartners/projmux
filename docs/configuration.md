@@ -72,7 +72,7 @@ Projects sidebar registers that exact path. See
 Pins are presentation preferences, stored typed:
 
 ```text
-~/.config/projmux/pins
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/pins
 ```
 
 ```text
@@ -120,8 +120,9 @@ terminal-layer remediation, first try the key in `projmux shell`, then run
 `projmux setup` from the raw terminal, then use `projmux setup terminal` for
 supported terminal adapters.
 
-`~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
-absent, generated tmux config stays on the built-in defaults.
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml` can also be edited by
+hand. When the file is absent, generated tmux config stays on the built-in
+defaults.
 
 Supported schema:
 
@@ -226,13 +227,14 @@ Theme is a global user preference. The effective theme resolves from the global
 user theme plus a built-in fallback only:
 
 ```text
-~/.config/projmux/config.toml
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml
 built-in fallback preset
 ```
 
-Settings edits the global `[theme]` in `~/.config/projmux/config.toml`. The
-Effective theme view shows the final global > built-in fallback value for each
-field with source labels: `global` or `fallback`. Saving or resetting a theme
+Settings edits the global `[theme]` in
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml`. The Effective theme
+view shows the final global > built-in fallback value for each field with
+source labels: `global` or `fallback`. Saving or resetting a theme
 value live-applies it: projmux regenerates the generated tmux config and, when
 Settings runs inside tmux, `tmux source-file`-reloads it so a running server
 repaints immediately. Outside tmux the save still succeeds and the report
@@ -367,7 +369,7 @@ Preferred interactive path:
 Global config path:
 
 ```text
-~/.config/projmux/config.toml
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml
 ```
 
 Schema:
@@ -482,8 +484,8 @@ one writes only the global `[ai] split_cwd_from`.
 Config paths (global and project both honored):
 
 ```text
-~/.config/projmux/config.toml      # global
-<project>/.projmux/config.toml     # project
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml  # global
+<project>/.projmux/config.toml                        # project
 ```
 
 Schema:
@@ -576,8 +578,8 @@ Preferred interactive path:
 Config paths (global and project both honored):
 
 ```text
-~/.config/projmux/config.toml      # global
-<project>/.projmux/config.toml     # project
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml  # global
+<project>/.projmux/config.toml                        # project
 ```
 
 Schema:
@@ -640,7 +642,7 @@ to the install path: every installer can be judged on either channel.
 Files:
 
 ```text
-~/.config/projmux/config.toml      # global/user
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml  # global/user
 ```
 
 Schema:
@@ -1061,13 +1063,13 @@ Settings > Appearance controls optional icon decoration per surface:
 The per-surface saved values live at:
 
 ```text
-~/.config/projmux/statusbar-decoration-cwd
-~/.config/projmux/statusbar-decoration-git
-~/.config/projmux/statusbar-decoration-notify
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-decoration-cwd
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-decoration-git
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-decoration-notify
 ```
 
-The legacy `~/.config/projmux/statusbar-decoration` value is still read as the
-fallback default when a per-surface file is absent.
+The legacy `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-decoration`
+value is still read as the fallback default when a per-surface file is absent.
 
 ## Row 0 HUD Visibility
 
@@ -1082,14 +1084,14 @@ independent global presentation preferences:
 The saved values are `on` or `off` in these files:
 
 ```text
-~/.config/projmux/statusbar-visibility-notifications-hud
-~/.config/projmux/statusbar-visibility-agent-usage-hud
-~/.config/projmux/statusbar-visibility-agent-usage-provider-claude
-~/.config/projmux/statusbar-visibility-agent-usage-provider-codex
-~/.config/projmux/statusbar-visibility-agent-usage-window-claude-5h
-~/.config/projmux/statusbar-visibility-agent-usage-window-claude-weekly
-~/.config/projmux/statusbar-visibility-agent-usage-window-codex-5h
-~/.config/projmux/statusbar-visibility-agent-usage-window-codex-weekly
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-notifications-hud
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-agent-usage-hud
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-agent-usage-provider-claude
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-agent-usage-provider-codex
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-agent-usage-window-claude-5h
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-agent-usage-window-claude-weekly
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-agent-usage-window-codex-5h
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-agent-usage-window-codex-weekly
 ```
 
 Missing, empty, and invalid values fall back to the
@@ -1130,11 +1132,11 @@ components independently:
 Their global saved values are `on` or `off` in:
 
 ```text
-~/.config/projmux/statusbar-visibility-project
-~/.config/projmux/statusbar-visibility-working-directory
-~/.config/projmux/statusbar-visibility-git
-~/.config/projmux/statusbar-visibility-clock
-~/.config/projmux/statusbar-visibility-settings-launcher
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-project
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-working-directory
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-git
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-clock
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-settings-launcher
 ```
 
 Missing, empty, and invalid values fall back to the
@@ -1150,8 +1152,9 @@ text visible. Settings launcher `off` removes only its mouse chip; CLI and
 keybinding entry remain.
 
 Resources intentionally does not use one of these visibility files. Its
-existing `~/.config/projmux/live-resources` value is the only enabled source
-and controls both the segment and sampler/cache mutation.
+existing `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/live-resources` value is
+the only enabled source and controls both the segment and sampler/cache
+mutation.
 
 ## Central Status Bar Defaults
 
@@ -1159,7 +1162,7 @@ The status bar visibility files above, except the settings launcher, have a
 central default layer under them in:
 
 ```text
-~/.config/projmux/statusbar-defaults.json
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-defaults.json
 ```
 
 It holds `on` or `off` per visibility file, keyed by the file name without its
@@ -1207,7 +1210,7 @@ visibility files still decide.
 CPU/memory segment on the lower status row. The saved global value is:
 
 ```text
-~/.config/projmux/live-resources
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/live-resources
 ```
 
 Accepted values are `off` (default) and `on`. A missing, empty, or invalid
@@ -1245,7 +1248,8 @@ next refresh.
 ## Agent Profiles
 
 An Agent profile is a named set of Agent start settings stored at
-`<config dir>/profiles/<name>.toml` (by default `~/.config/projmux/profiles/`).
+`<config dir>/profiles/<name>.toml` (by default
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/profiles/`).
 Manage profiles with `projmux profile list|show|set|delete`, and start an
 Agent from one with `projmux create agent --profile <name>` or a `role` label
 (see [CLI guide](cli-guide.md#agent-profiles-at-create)).
