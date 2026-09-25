@@ -239,15 +239,39 @@ func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 		return errors.New("claude helper start failed")
 	}
 	_ = writeAck.Close()
-	_ = readAck.SetReadDeadline(time.Now().Add(3 * time.Second))
+	return awaitClaudeHelperAdmission(readAck, time.Now().Add(3*time.Second), cmd.Process)
+}
+
+// claudeHelperAck is the hook's read side of the helper's one-byte admission
+// acknowledgement.
+type claudeHelperAck interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
+}
+
+// claudeHelperProcess is the started helper the hook lets go of.
+type claudeHelperProcess interface {
+	Release() error
+}
+
+// awaitClaudeHelperAdmission releases the helper however the wait ends. The
+// hook's wait budget says nothing about whether the registration is valid:
+// killing a helper still waiting on the Registry lock when the deadline passes
+// stops it before Record and leaves a live Claude with only its Begin.
+// A released helper settles by itself. Its Record is a CAS on the exact
+// registrationGeneration, so a stale helper cannot overwrite a newer one; if
+// Record fails, or the helper is stale, it exits and its defers remove the
+// lease socket, owner receipt, and coordination socket. Its lock wait is
+// bounded by the Registry lock acquisition timeout (defaultLockTimeout in
+// internal/integrations/metadata/store.go).
+func awaitClaudeHelperAdmission(readAck claudeHelperAck, deadline time.Time, helper claudeHelperProcess) error {
+	_ = readAck.SetReadDeadline(deadline)
 	var ack [1]byte
-	_, err = io.ReadFull(readAck, ack[:])
-	if err != nil || ack[0] != 1 {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return errors.New("claude helper admission failed")
+	_, err := io.ReadFull(readAck, ack[:])
+	if releaseErr := helper.Release(); err == nil && ack[0] == 1 {
+		return releaseErr
 	}
-	return cmd.Process.Release()
+	return errors.New("claude helper admission unconfirmed")
 }
 
 func claudeHelperEnvironment(environment []string) []string {
@@ -608,9 +632,11 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 	if !current() {
 		return errors.New("claude registration is stale")
 	}
-	if _, err := ack.Write([]byte{1}); err != nil {
-		return errors.New("claude helper acknowledgement failed")
-	}
+	// Record already succeeded, so a failed write means only that the hook
+	// stopped waiting (Claude Code ends it at its hook timeout). Exiting here
+	// would clear the Ready registration this helper just recorded and leave a
+	// live Claude registered and then lost, so the helper keeps serving.
+	_, _ = ack.Write([]byte{1})
 	for {
 		if ctx.Err() != nil || !idleRegistry.current(identityCurrent, registryCurrent) {
 			return nil
