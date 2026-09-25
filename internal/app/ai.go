@@ -349,7 +349,9 @@ func (c *aiCommand) applyAIStatusWithBadgeKind(state, paneID, badgeKind string) 
 	if c.resourceOwnedPane(paneID) {
 		return nil
 	}
-	return c.applyAIStatusInternalWithSource(state, paneID, attentionNotifyInput{BadgeKind: badgeKind}, true, true, "", false)
+	// Only the long-lived runWatchTitle loop calls this, so its send-noti hook
+	// must not stall the next sample.
+	return c.applyAIStatusInternalWithSource(state, paneID, attentionNotifyInput{BadgeKind: badgeKind, AsyncHooks: true}, true, true, "", false)
 }
 
 func (c *aiCommand) applyAIStatusStateOnly(state, paneID string, notifyIn attentionNotifyInput) error {

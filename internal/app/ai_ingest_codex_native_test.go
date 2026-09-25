@@ -2983,3 +2983,83 @@ func waitForCodexObserverEvents(t *testing.T, sink *recordingCodexLifecycleSink,
 		}
 	}
 }
+
+// The native Codex lifecycle observer is long-lived, so its notify push must
+// not wait for the send-noti hook result.
+func TestCodexLifecycleSinkDispatchesSendNotiHookWithoutWaiting(t *testing.T) {
+	store := newFakeResourceStore(t)
+	mutator := store.mutator()
+	if _, err := mutator.RecordPaneActivation(&store.registry, "pan-alpha-codex", coremetadata.PaneActivationOptions{
+		Generation: "generation-1", RuntimeID: "%7", AgentUID: "agt-alpha-codex", OperationID: "send-noti-async-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bindNativeCodexTestFixture(t, store, mutator, coremetadata.CodexActivationObservation{
+		AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", Generation: "generation-1", ThreadID: "thread-1",
+	})
+	cmd := testAICommand(t.TempDir())
+	notifyStore := &stubNotifyStore{}
+	runner := newGatedNotifyHookRunner(t)
+	cmd.notifyStore = notifyStore
+	cmd.producer = &storeAttentionNotifyProducer{store: notifyStore, ttl: time.Minute, hooks: &sendNotiHookDispatcher{
+		runner: runner, lookupEnv: func(string) string { return "" }, getwd: func() (string, error) { return t.TempDir(), nil },
+	}}
+	cmd.loadRegistry = store.store().load
+	cmd.updateRegistry = store.store().update
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && len(args) == 5 && reflect.DeepEqual(args[:4], []string{"show-options", "-pqv", "-t", "%7"}) {
+			switch args[4] {
+			case tmuxopts.PaneUID:
+				return []byte("pan-alpha-codex\n"), nil
+			case aiPaneAgentOption:
+				return []byte("codex\n"), nil
+			}
+		}
+		if name == "tmux" && len(args) == 5 && reflect.DeepEqual(args[:4], []string{"display-message", "-p", "-t", "%7"}) {
+			switch args[4] {
+			case "#{@projmux_pane_uid}":
+				return []byte("pan-alpha-codex\n"), nil
+			case "#{@projmux_ai_agent}":
+				return []byte("codex\n"), nil
+			case "#S":
+				return []byte("phase3\n"), nil
+			case "#{pane_id}":
+				return []byte("%7\n"), nil
+			}
+		}
+		return nil, os.ErrNotExist
+	}
+	paths, err := configPaths(cmd.homeDir, cmd.lookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := config.DefaultAISemanticPolicies()
+	policies.Events[config.AISemanticApprovalRequired] = config.AISemanticNotify
+	if err := config.SaveAISemanticPoliciesFile(paths.AISemanticPoliciesFile(), policies); err != nil {
+		t.Fatal(err)
+	}
+	identity := codexLifecycleIdentity{AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", RuntimeID: "%7", Generation: "generation-1", ThreadID: "thread-1"}
+
+	// The gate stays closed: a waiting dispatch would never return.
+	done := make(chan error, 1)
+	go func() {
+		done <- testCodexLifecycleSink(cmd).Apply(identity, codexLifecycleProjection{
+			Accepted: true, Interaction: coremetadata.InteractionApprovalRequired,
+			Notices: []codexLifecycleNotice{{Category: "approval_required", ID: "notice-1", Severity: "critical", ThreadID: "thread-1", TurnID: "turn-1"}},
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("lifecycle sink Apply waited for the pending send-noti hook result")
+	}
+	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].ID != "notice-1" {
+		t.Fatalf("Notify queue writes = %#v", notifyStore.pushed)
+	}
+	if runner.calls.Load() != 1 || runner.delivered.Load() {
+		t.Fatalf("hook calls = %d delivered = %v, want 1 pending dispatch", runner.calls.Load(), runner.delivered.Load())
+	}
+}

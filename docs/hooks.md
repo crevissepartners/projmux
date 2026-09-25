@@ -15,7 +15,7 @@ projmux-owned internal tmux hooks such as `pane-focus-in`, `pane-focus-out`,
 | `pre-create` | Before projmux creates a missing persistent or ephemeral session | Non-zero exit, exec error, or timeout aborts creation | Logged with `[pre-create] ` |
 | `post-create` | After projmux creates a brand-new persistent or ephemeral session | Logged and ignored; creation continues | Logged with `[post-create] ` |
 | `post-attach` | After projmux switches the current tmux client to an existing session/target from inside tmux | Logged and ignored | Logged with `[post-attach] ` |
-| `send-noti` | After `projmux create notification` (or the in-process AI notify producer) successfully writes a queue entry | Fired asynchronously and best-effort; queue write and desktop notifications continue even if the hook fails or times out | Receives JSON on stdin; stdout/stderr are logged with `[send-noti] ` |
+| `send-noti` | After `projmux create notification` (or the in-process AI notify producer) successfully writes a queue entry | Runs after the queue entry is written; the command waits until the hook exits or is killed at its timeout, and a failure or timeout is only a warning that changes neither the queue entry nor the exit code | Receives JSON on stdin; stdout/stderr are logged with `[send-noti] ` |
 
 Deferred Phase A candidates remain future work until their behavior can be
 specified without exposing projmux's internal tmux hook machinery: pane exit,
@@ -168,9 +168,10 @@ An empty `[startup] run` is a no-op.
 already durable before the hook starts, so a failing or slow hook cannot drop
 the notification or block the normal desktop notification flow.
 
-The hook runs asynchronously with the same default timeout (`5s`) as other
-hooks. projmux does not wait for completion before returning from
-`projmux create notification`.
+The hook runs with the same default timeout (`5s`) as other hooks. projmux
+waits until the hook exits or is killed at that timeout before returning from
+`projmux create notification`; a failure or timeout is logged as a warning and
+does not change the exit code.
 
 stdin receives one JSON object:
 

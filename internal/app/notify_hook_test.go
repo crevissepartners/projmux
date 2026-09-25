@@ -6,6 +6,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -207,5 +211,200 @@ func TestNotifyPushDepthGuardSuppressesDispatch(t *testing.T) {
 	}
 	if runner.calls != 0 {
 		t.Fatalf("RunAsync call count = %d, want 0", runner.calls)
+	}
+}
+
+// gatedNotifyHookRunner keeps the hook result channel open until the test
+// closes release, so a test can tell whether a caller waited for the result.
+type gatedNotifyHookRunner struct {
+	started     chan struct{}
+	release     chan struct{}
+	startOnce   sync.Once
+	releaseOnce sync.Once
+	delivered   atomic.Bool
+	calls       atomic.Int32
+	onStart     func()
+}
+
+func newGatedNotifyHookRunner(t *testing.T) *gatedNotifyHookRunner {
+	t.Helper()
+	r := &gatedNotifyHookRunner{started: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(r.open)
+	return r
+}
+
+func (r *gatedNotifyHookRunner) open() {
+	r.releaseOnce.Do(func() { close(r.release) })
+}
+
+func (r *gatedNotifyHookRunner) RunAsync(context.Context, hooks.Event, hooks.Context) <-chan hooks.AsyncResult {
+	r.calls.Add(1)
+	if r.onStart != nil {
+		r.onStart()
+	}
+	ch := make(chan hooks.AsyncResult, 1)
+	go func() {
+		<-r.release
+		r.delivered.Store(true)
+		ch <- hooks.AsyncResult{}
+		close(ch)
+	}()
+	r.startOnce.Do(func() { close(r.started) })
+	return ch
+}
+
+// assertCallWaitsForHookResult runs call in a goroutine and proves it does not
+// return until the gated hook result has been delivered. The short select
+// guard only bounds how long an early return is looked for; ordering is
+// proven by the delivered flag sampled at return time.
+func assertCallWaitsForHookResult(t *testing.T, runner *gatedNotifyHookRunner, call func()) {
+	t.Helper()
+	done := make(chan bool, 1)
+	go func() {
+		call()
+		done <- runner.delivered.Load()
+	}()
+	select {
+	case <-runner.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("send-noti hook was never dispatched")
+	}
+	select {
+	case deliveredAtReturn := <-done:
+		t.Fatalf("call returned while the hook result was still pending (delivered at return = %v)", deliveredAtReturn)
+	case <-time.After(50 * time.Millisecond):
+	}
+	runner.open()
+	select {
+	case deliveredAtReturn := <-done:
+		if !deliveredAtReturn {
+			t.Fatal("call returned before the hook result was delivered")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("call did not return after the hook result was delivered")
+	}
+}
+
+func TestSendNotiHookDispatcherDispatchWaitsForHookResult(t *testing.T) {
+	t.Parallel()
+
+	runner := newGatedNotifyHookRunner(t)
+	dispatcher := &sendNotiHookDispatcher{
+		runner:    runner,
+		lookupEnv: func(string) string { return "" },
+		getwd:     func() (string, error) { return t.TempDir(), nil },
+	}
+	assertCallWaitsForHookResult(t, runner, func() {
+		dispatcher.Dispatch(notify.Notification{ID: "n_wait", Text: "Ready"}, notifyHookMeta{Type: notify.SourceExternal})
+	})
+}
+
+func TestNotifyPushWaitsForSendNotiHookResult(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{
+		pushResult: notify.PushResult{ID: "abc", QueueLen: 1},
+		pushEntry:  notify.Notification{ID: "abc", Text: "deploy ok", Source: notify.SourceExternal, Session: "main"},
+	}
+	cmd := newCmd(store)
+	events := &stubNotifyQueueEvents{}
+	cmd.events = events
+	runner := newGatedNotifyHookRunner(t)
+	publishedBeforeHook := 0
+	runner.onStart = func() { publishedBeforeHook = events.publishCalls }
+	cmd.hooks = &sendNotiHookDispatcher{
+		runner:    runner,
+		lookupEnv: func(string) string { return "" },
+		getwd:     func() (string, error) { return t.TempDir(), nil },
+	}
+	var runErr error
+	assertCallWaitsForHookResult(t, runner, func() {
+		runErr = cmd.Run([]string{"push", "--text", "deploy ok", "--target", "main:1.0"}, &bytes.Buffer{}, &bytes.Buffer{})
+	})
+	if runErr != nil {
+		t.Fatalf("Run error = %v", runErr)
+	}
+	if publishedBeforeHook != 1 {
+		t.Fatalf("refresh publishes before the hook = %d, want 1 so a slow hook cannot delay open sidebars", publishedBeforeHook)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+}
+
+// realSendNotiHookPush runs `create notification` against a real notify store
+// and a real hooks.Runner whose global config holds only run.
+func realSendNotiHookPush(t *testing.T, run string, timeout time.Duration) (dir string, stdout, stderr string, queue []notify.Notification, err error) {
+	t.Helper()
+	dir = t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfg, []byte("[hooks.send-noti]\nrun = "+strconv.Quote(run)+"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	store := notify.NewStore(filepath.Join(dir, "notify.json"))
+	cmd := newCmd(store)
+	var logs bytes.Buffer
+	cmd.hooks = &sendNotiHookDispatcher{
+		runner:    &hooks.Runner{GlobalConfigPath: cfg, Logger: &logs, Timeout: timeout},
+		lookupEnv: func(string) string { return "" },
+		getwd:     func() (string, error) { return dir, nil },
+	}
+	var out bytes.Buffer
+	err = cmd.Run([]string{"push", "--id", "n_real", "--text", "deploy ok", "--target", "main:1.0"}, &out, &bytes.Buffer{})
+	queue, listErr := store.List()
+	if listErr != nil {
+		t.Fatalf("list queue: %v", listErr)
+	}
+	return dir, out.String(), logs.String(), queue, err
+}
+
+func TestNotifyPushRealSendNotiHookCompletesBeforeReturn(t *testing.T) {
+	t.Parallel()
+
+	markerDir := t.TempDir()
+	_, _, _, _, err := realSendNotiHookPush(t, `touch "`+markerDir+`/marker-$PROJMUX_NOTIFY_ID"`, hooks.DefaultPostCreateTimeout)
+	if err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(markerDir, "marker-n_real")); statErr != nil {
+		t.Fatalf("send-noti hook marker missing right after create notification returned: %v", statErr)
+	}
+}
+
+func TestNotifyPushRealSendNotiHookFailureWarnsAndSucceeds(t *testing.T) {
+	t.Parallel()
+
+	_, stdout, logs, queue, err := realSendNotiHookPush(t, "exit 3", hooks.DefaultPostCreateTimeout)
+	if err != nil {
+		t.Fatalf("Run error = %v, want success despite hook failure", err)
+	}
+	if !strings.Contains(stdout, "queued n_real") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if len(queue) != 1 || queue[0].ID != "n_real" {
+		t.Fatalf("queue = %#v, want the n_real entry", queue)
+	}
+	if !strings.Contains(logs, "exited with status 3") {
+		t.Fatalf("hook warning = %q, want exited with status 3", logs)
+	}
+}
+
+func TestNotifyPushRealSendNotiHookTimeoutWarnsAndReturns(t *testing.T) {
+	t.Parallel()
+
+	started := time.Now()
+	_, _, logs, queue, err := realSendNotiHookPush(t, "sleep 10", 200*time.Millisecond)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("Run error = %v, want success despite hook timeout", err)
+	}
+	if len(queue) != 1 || queue[0].ID != "n_real" {
+		t.Fatalf("queue = %#v, want the n_real entry", queue)
+	}
+	if !strings.Contains(logs, "timed out after 200ms") {
+		t.Fatalf("hook warning = %q, want timed out after 200ms", logs)
+	}
+	if elapsed >= 5*time.Second {
+		t.Fatalf("create notification took %s, want it bounded by the hook timeout", elapsed)
 	}
 }

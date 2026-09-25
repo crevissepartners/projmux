@@ -38,7 +38,10 @@ type attentionNotifyInput struct {
 	Metadata      map[string]string
 	Force         bool
 	SuppressHooks bool
-	BadgeKind     string
+	// AsyncHooks starts the send-noti hook without waiting for it. Only a
+	// long-lived caller may set it; a short-lived process would exit first.
+	AsyncHooks bool
+	BadgeKind  string
 }
 
 // attentionNotifyLookup is the minimal tmux read surface the producer needs.
@@ -162,20 +165,25 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 		return
 	}
 	recordNotifyEnqueue(p.diagnostics, pushInput, result, nil, started, false)
-	if p.hooks != nil && !in.SuppressHooks {
-		p.hooks.Dispatch(entry, notifyHookMeta{
-			Type:    "ai-reply-ready",
-			Agent:   agent,
-			Topic:   topic,
-			Message: entry.Text,
-		})
-	}
 	if entry.Severity != notify.SeverityCritical {
 		if entries, err := p.store.List(); err == nil {
 			_ = ackOlderSameTargetAINotifications(p.store, entry, entries)
 		}
 	}
 	p.publishNotifyQueueRefreshBestEffort()
+	if p.hooks != nil && !in.SuppressHooks {
+		meta := notifyHookMeta{
+			Type:    "ai-reply-ready",
+			Agent:   agent,
+			Topic:   topic,
+			Message: entry.Text,
+		}
+		if in.AsyncHooks {
+			p.hooks.DispatchNoWait(entry, meta)
+		} else {
+			p.hooks.Dispatch(entry, meta)
+		}
+	}
 }
 
 // AckReplyReady is kept for the attention state-machine seam, but it no
