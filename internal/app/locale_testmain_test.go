@@ -26,11 +26,12 @@ func TestMain(m *testing.M) {
 	exitIfClaudeQuestionHookChild()
 	exitIfClaudeQuestionPickerChild()
 	exitIfLiveMachineGuardChild()
+	exitIfProviderGuardChild()
 	os.Exit(runWithLiveMachineGuard(func() int {
 		os.Unsetenv("PROJMUX_LOCALE")
 		os.Unsetenv("LC_ALL")
 		os.Unsetenv("LC_MESSAGES")
 		os.Setenv("LANG", "en_US.UTF-8")
-		return m.Run()
+		return runWithProviderGuard(m.Run)
 	}))
 }
