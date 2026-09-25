@@ -590,8 +590,11 @@ and connection epoch still match exactly. `start` sends only the exact thread
 id and one text input. Immediately before that write it reads one bounded,
 content-free lifecycle snapshot: fresh active/in-progress returns
 `turn-in-progress`, fresh idle/terminal repairs stale cached state and starts
-once, and an unavailable or inconsistent snapshot returns
-`turn-state-unavailable` with no turn mutation. Broker read admission refusals
+once, and so does a fresh system-error thread (left by a provider error) whose
+latest turn is not in progress. An unavailable or inconsistent snapshot returns
+`turn-state-unavailable` with no turn mutation; its line says the read failed,
+returned a different thread, or names the observed thread and turn state
+(for example `thread=system-error turn=in-progress`). Broker read admission refusals
 remain visible as `lifecycle-retry` or `lifecycle-busy`. `steer` also reads that
 content-free snapshot before any write and submits exactly once only when it
 still proves the same exact active turn. Fresh idle, terminal, or different-turn
