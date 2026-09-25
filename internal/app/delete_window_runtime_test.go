@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -384,5 +385,86 @@ func TestWindowDeleteRuntimeQueueRevalidatesEveryMirrorBeforeQueueing(t *testing
 				}
 			}
 		})
+	}
+}
+
+// racedAwayWindowRunner answers one exact app server whose Window @10 is listed
+// by the first `list-windows -a` (the plan's first-loop Reobserve) and is gone
+// from every later read, as if a concurrent writer killed it right after.
+type racedAwayWindowRunner struct {
+	listReads int
+	calls     []recordedTmuxCall
+}
+
+func (r *racedAwayWindowRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
+	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
+	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != testDeleteTarget.Value {
+		return nil, fmt.Errorf("raced-away Window runner requires exact -S routing: %s %v", name, args)
+	}
+	gone := r.listReads >= 1
+	switch args[2] {
+	case "display-message":
+		switch args[len(args)-1] {
+		case "#{socket_path}":
+			return []byte(testDeleteTarget.Value + "\n"), nil
+		case "#{pid}":
+			return []byte("4242\n"), nil
+		}
+		if flagValue(args[2:], "-t") == "@10" {
+			if gone {
+				return nil, appTypedCommandFailure{inttmux.CommandFailure{
+					Kind: inttmux.CommandFailureExit, Stderr: "can't find window: @10",
+				}}
+			}
+			return []byte(liveInventoryRow("$1", "alpha", "@10", "prj-alpha", "win-alpha-main")), nil
+		}
+	case "show-options":
+		switch args[len(args)-1] {
+		case tmuxopts.AppGlobal:
+			return []byte("1\n"), nil
+		case runtimeMutationSocketNameOption:
+			return []byte(defaultAppSocket + "\n"), nil
+		}
+	case "list-windows":
+		r.listReads++
+		if gone {
+			return []byte(liveInventoryRow("$1", "@11", "win-alpha-review")), nil
+		}
+		return []byte(liveInventoryRow("$1", "@10", "win-alpha-main") + liveInventoryRow("$1", "@11", "win-alpha-review")), nil
+	case "kill-window":
+		return nil, fmt.Errorf("raced-away Window runner refuses kill: %v", args)
+	}
+	return nil, fmt.Errorf("unexpected raced-away Window command: %v", args)
+}
+
+func TestWindowDeleteKillAllTreatsAWindowKilledBetweenReobserveAndGuardAsAbsent(t *testing.T) {
+	runner := &racedAwayWindowRunner{}
+	target, err := tmuxSocketPathTarget(testDeleteTarget.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &tmuxWindowDeleteRuntime{
+		runner: runner, target: target, getenv: func(string) string { return "" },
+		expectedSocketPath: testDeleteTarget.Value, expectedLogicalSocket: defaultAppSocket,
+		routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+	}
+	live := windowLiveDeleteTarget{
+		UID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1",
+		RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+	}
+	applied, err := runtime.killAll(context.Background(), []windowLiveDeleteTarget{live})
+	if err != nil || applied != 0 {
+		t.Fatalf("killAll() = applied %d, err %v; want the concurrently removed Window treated as absent with zero kills", applied, err)
+	}
+	if runner.listReads != 1 {
+		t.Fatalf("list-windows reads = %d, want exactly the first-loop Reobserve", runner.listReads)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-window") {
+			t.Fatalf("Window removed before the guard reached tmux mutation: %#v", runner.calls)
+		}
 	}
 }
