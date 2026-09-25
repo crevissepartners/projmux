@@ -193,6 +193,16 @@ func observeRuntimeMutationAnchorRow(
 			"runtime mutation route: %s anchor pane %s returned no single containment row", scope.subject, paneID)
 	}
 	row := rows[0]
+	// No shell invocation reaches this branch. Every caller hands in a runner
+	// already routed with -S to the socket path it has just proven equal to
+	// expectedSocketPath -- the default-socket detached `--anchor` branch, and
+	// the inherited standalone and app branches of both the invocation and the
+	// existing-route resolvers -- so tmux answers #{socket_path} for that same
+	// server. The branch stays as a defensive check, and its refusal text is
+	// pinned by TestRuntimeMutationAnchorRefusalNamesItsCause. This stops being
+	// true once a caller reobserves the anchor through a runner not routed to
+	// the proven path (a logical -L alias, an unproven socket): then the branch
+	// is reachable and needs a real-tmux test.
 	if row[0] != expectedSocketPath {
 		return "", "", fmt.Errorf(
 			"runtime mutation route: %s anchor pane %s answers on socket %q, not the proven socket %q",
