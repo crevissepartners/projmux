@@ -39,6 +39,7 @@ func newJournalHarness(t *testing.T, adapters ...*stubAdapter) *journalHarness {
 	mgr := usage.NewManager(registry, usage.NewStore(filepath.Join(dir, "usage")), func() time.Time { return now })
 
 	cmd := New(func() time.Time { return now })
+	isolateUsageCommandEnv(t, cmd)
 	cmd.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
 	cmd.journalFn = func() *diagnostics.UsageRecorder {
 		return diagnostics.NewUsageRecorder(store, "journaltestrun", "0.0.0-test", diagnostics.MuxBackend())

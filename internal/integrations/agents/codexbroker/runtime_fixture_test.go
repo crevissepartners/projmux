@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
 // The runtime and IPC contracts are stated in terms of separate OS processes:
@@ -42,7 +43,8 @@ const (
 
 // TestMain turns this test binary into its own helper process. A role is only
 // ever set by a test that spawned the process, so a normal run reaches m.Run
-// untouched.
+// untouched, behind liveguard: the package links the codex app-server client.
+// A helper inherits the guard's environment from the test that spawned it.
 func TestMain(m *testing.M) {
 	switch os.Getenv(helperRoleEnv) {
 	case helperRoleRuntime:
@@ -50,8 +52,12 @@ func TestMain(m *testing.M) {
 	case helperRoleClient:
 		os.Exit(runHelperClient())
 	}
-	os.Exit(m.Run())
+	os.Exit(liveguard.RunTests(m))
 }
+
+// TestLiveMachineGuardHolds pins that TestMain runs this package behind the
+// guard.
+func TestLiveMachineGuardHolds(t *testing.T) { liveguard.RequireActive(t) }
 
 // ledgerEndpoint is an endpoint whose every upstream call is appended to a file
 // shared with the parent process. It is how a multi-process test counts the
