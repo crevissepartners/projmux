@@ -61,6 +61,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 		rest := fs.Args()[1:]
 		if len(rest) > 0 && rest[0] == "project" {
 			printRouteUsage(stderr, "pin project")
+			printPinNotes(stderr)
 			return usageError(fmt.Sprintf("unknown pin project subcommand: %s", rest[0]))
 		}
 		return c.Run(rest, stdout, stderr)
@@ -104,11 +105,13 @@ func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return usageError("pin list does not accept positional arguments")
 	}
 	filter, err := parsePinKindFilter(*kind)
 	if err != nil {
 		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return err
 	}
 
@@ -257,6 +260,7 @@ func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return usageError("pin clear does not accept positional arguments")
 	}
 
@@ -291,6 +295,7 @@ func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return usageError("pin migrate does not accept positional arguments")
 	}
 
@@ -358,6 +363,7 @@ func (c *pinCommand) readRegistry() coremetadata.Registry {
 func requireSinglePinArg(command string, args []string, stderr io.Writer) (string, error) {
 	if len(args) != 1 {
 		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return "", fmt.Errorf("%s requires exactly 1 <dir|uid:uid> argument", command)
 	}
 	if strings.HasPrefix(strings.TrimSpace(args[0]), "uid:") {
@@ -370,6 +376,12 @@ func requireSinglePinArg(command string, args []string, stderr io.Writer) (strin
 // then the pin kinds a synopsis cannot state.
 func printPinHelp(w io.Writer) {
 	printRouteUsage(w, "pin")
+	printPinNotes(w)
+}
+
+// printPinNotes prints the pin kinds and the workdir boundary under a pin
+// usage block.
+func printPinNotes(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Pins are presentation preferences in two kinds:")
 	fmt.Fprintln(w, "  project    a Registry Project uid; its root and name are projected from the Registry")

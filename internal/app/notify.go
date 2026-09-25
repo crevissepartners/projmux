@@ -83,7 +83,7 @@ func (c *notifyCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "list":
 		return c.runList(args[1:], stdout, stderr)
 	case "ack":
-		return c.runAck(args[1:], stdout, stderr)
+		return c.runAck("notification ack", args[1:], stdout, stderr)
 	case "reconcile":
 		return c.runReconcile(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -93,6 +93,16 @@ func (c *notifyCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printNotifyQueueHelp(stderr)
 		return usageError(fmt.Sprintf("unknown notify subcommand: %s", args[0]))
 	}
+}
+
+// RunRoute serves the routes that forward into the notify handler. `delete
+// notification` and `notification ack` share the ack leaf; each keeps its own
+// FlagSet name and usage.
+func (c *notifyCommand) RunRoute(route string, args []string, stdout, stderr io.Writer) error {
+	if route == "delete notification" && len(args) > 0 && args[0] == "ack" {
+		return c.runAck("delete notification", args[1:], stdout, stderr)
+	}
+	return c.Run(args, stdout, stderr)
 }
 
 func (c *notifyCommand) requireStore() (notifyStore, error) {
@@ -119,9 +129,8 @@ func (c *notifyCommand) locale() i18n.Locale {
 	return appLocale(c.homeDir, c.lookupEnv)
 }
 
-// notifyQueueSummary heads the notification usage on the notify handler's own
-// help and dispatch refusals: the queue/attention boundary a synopsis cannot
-// state.
+// notifyQueueSummary heads the usage every notify refusal and help prints: the
+// queue/attention boundary a synopsis cannot state.
 const notifyQueueSummary = "Pending AI notify queue. Attention is live pane state; notify rows remain until explicit ack.\n" +
 	"Use `notify list --live` to explain queue/live drift and `notify reconcile` to repair AI reply entries.\n\n"
 
@@ -159,32 +168,39 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(fmt.Errorf("parse notify push flags: %w", err))
 	}
 	if fs.NArg() != 0 {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
 		return usageError("notify push does not accept positional arguments")
 	}
 	if strings.TrimSpace(*text) == "" {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
 		return usageError("notify push requires --text")
 	}
 	if strings.TrimSpace(*target) == "" {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
 		return usageError("notify push requires --target")
 	}
 	if err := notify.ValidateSeverity(*severity); err != nil {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
 		return usageError(err.Error())
 	}
 	if err := notify.ValidateSource(*source); err != nil {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
 		return usageError(err.Error())
 	}
 	if *ttlSecs <= 0 {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
 		return usageError("notify push requires positive --ttl")
 	}
 
 	parsed, err := notify.ParseTarget(*target)
 	if err != nil {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
 		return usageError(err.Error())
 	}
@@ -239,6 +255,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
 		fmt.Fprint(stderr, notifyListSummary)
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "get notifications")
 	}
 
@@ -261,6 +278,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(fmt.Errorf("parse notify list flags: %w", err))
 	}
 	if fs.NArg() != 0 {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "get notifications")
 		return usageError("notify list does not accept positional arguments")
 	}
@@ -1530,10 +1548,14 @@ func (c *notifyCommand) statusbarDecoration() config.StatusbarDecoration {
 
 // --- ack ---------------------------------------------------------------------
 
-func (c *notifyCommand) runAck(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("notification ack", flag.ContinueOnError)
+func (c *notifyCommand) runAck(route string, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	all := fs.Bool("all", false, "remove every queued entry")
+	printAckUsage := func() { fmt.Fprint(stderr, notifyQueueSummary); printRouteUsage(stderr, "notification ack") }
+	if route == "delete notification" {
+		printAckUsage = func() { fmt.Fprint(stderr, notifyQueueSummary); printRouteUsage(stderr, "delete notification") }
+	}
 
 	if err := fs.Parse(args); err != nil {
 		return flagParseError(fmt.Errorf("parse notify ack flags: %w", err))
@@ -1546,7 +1568,7 @@ func (c *notifyCommand) runAck(args []string, stdout, stderr io.Writer) error {
 
 	if *all {
 		if fs.NArg() != 0 {
-			printRouteUsage(stderr, "notification ack")
+			printAckUsage()
 			return usageError("notify ack --all does not accept positional arguments")
 		}
 		removed, err := store.AckAll()
@@ -1558,12 +1580,12 @@ func (c *notifyCommand) runAck(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if fs.NArg() != 1 {
-		printRouteUsage(stderr, "notification ack")
+		printAckUsage()
 		return usageError("notify ack requires exactly 1 <id> argument or --all")
 	}
 	id := strings.TrimSpace(fs.Arg(0))
 	if id == "" {
-		printRouteUsage(stderr, "notification ack")
+		printAckUsage()
 		return usageError("notify ack requires a non-empty <id> argument")
 	}
 	if err := store.Ack(id); err != nil {

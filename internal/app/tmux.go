@@ -238,7 +238,7 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "install-app":
 		return c.runInstallApp(fs.Args()[1:], stdout, stderr)
 	case "apply":
-		return c.runApply(fs.Args()[1:], stdout, stderr)
+		return c.runApply("internal tmux apply", fs.Args()[1:], stdout, stderr)
 	case "autosave-session-state":
 		return c.runAutosaveSessionState(fs.Args()[1:], stderr)
 	case "help", "--help", "-h":
@@ -1362,8 +1362,19 @@ func (c *tmuxCommand) appConfigThemeSource() renderThemeSource {
 	return source
 }
 
+// runPrintConfig is the hidden `internal tmux print-config` spelling.
 func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) error {
-	binaryPath, err := c.parseConfigBinary(args, "config render standalone", "tmux print-config", stderr, func() { printRouteUsage(stderr, "config render standalone") })
+	return c.runPrintConfigAs("internal tmux print-config", args, stdout, stderr)
+}
+
+// runPrintConfigAs prints the standalone config; route is the spelling that
+// reached it.
+func (c *tmuxCommand) runPrintConfigAs(route string, args []string, stdout, stderr io.Writer) error {
+	printUsage := func() { printRouteUsage(stderr, "internal tmux print-config") }
+	if route == "config render standalone" {
+		printUsage = func() { printRouteUsage(stderr, "config render standalone") }
+	}
+	binaryPath, err := c.parseConfigBinary(args, route, "tmux print-config", stderr, printUsage)
 	if err != nil {
 		return err
 	}
@@ -1376,8 +1387,19 @@ func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) er
 	return err
 }
 
+// runPrintAppConfig is the hidden `internal tmux print-app-config` spelling.
 func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer) error {
-	binaryPath, err := c.parseConfigBinary(args, "config render app", "tmux print-app-config", stderr, func() { printRouteUsage(stderr, "config render app") })
+	return c.runPrintAppConfigAs("internal tmux print-app-config", args, stdout, stderr)
+}
+
+// runPrintAppConfigAs prints the app config; route is the spelling that
+// reached it.
+func (c *tmuxCommand) runPrintAppConfigAs(route string, args []string, stdout, stderr io.Writer) error {
+	printUsage := func() { printRouteUsage(stderr, "internal tmux print-app-config") }
+	if route == "config render app" {
+		printUsage = func() { printRouteUsage(stderr, "config render app") }
+	}
+	binaryPath, err := c.parseConfigBinary(args, route, "tmux print-app-config", stderr, printUsage)
 	if err != nil {
 		return err
 	}
@@ -1549,8 +1571,27 @@ func (c *tmuxCommand) reportKeymapMigrationPreflight(stderr io.Writer) {
 	writeKeymapMigrationPreflight(stderr, plan)
 }
 
-func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("config apply", flag.ContinueOnError)
+// RunRoute serves the public `config` spellings that forward into the tmux
+// handler, so each keeps its own FlagSet name and usage; every other spelling
+// is the hidden `internal tmux` dispatch.
+func (c *tmuxCommand) RunRoute(route string, args []string, stdout, stderr io.Writer) error {
+	switch {
+	case route == "config apply" && len(args) > 0 && args[0] == "apply":
+		return c.runApply("config apply", args[1:], stdout, stderr)
+	case route == "config render standalone" && len(args) > 0 && args[0] == "print-config":
+		return c.runPrintConfigAs("config render standalone", args[1:], stdout, stderr)
+	case route == "config render app" && len(args) > 0 && args[0] == "print-app-config":
+		return c.runPrintAppConfigAs("config render app", args[1:], stdout, stderr)
+	default:
+		return c.Run(args, stdout, stderr)
+	}
+}
+
+// runApply applies the generated config; route is the spelling that reached
+// it (`config apply` or the hidden `internal tmux apply`), which names the
+// FlagSet and picks the usage.
+func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
 	configPath := fs.String("config", "", "app tmux config path to write")
@@ -1573,7 +1614,11 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRouteUsage(stderr, "config apply")
+		if route == "config apply" {
+			printRouteUsage(stderr, "config apply")
+		} else {
+			printRouteUsage(stderr, "internal tmux apply")
+		}
 		return usageError("tmux apply does not accept positional arguments")
 	}
 	if c.diagnostics != nil {
@@ -2352,7 +2397,7 @@ func nativeLaunchKeyForPopupMode(mode string) string {
 }
 
 // parseConfigBinary parses the --bin flag of a config render handler. route is
-// the public `config render` spelling the FlagSet is named after, name the
+// the spelling that reached it, which names the FlagSet; name is the
 // historical spelling its positional refusal names, and printUsage prints the
 // route's catalog usage under that refusal.
 func (c *tmuxCommand) parseConfigBinary(args []string, route, name string, stderr io.Writer, printUsage func()) (string, error) {

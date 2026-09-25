@@ -2185,11 +2185,14 @@ func TestUsagePositionalRejectionPrintsCatalogUsage(t *testing.T) {
 	}
 	var want bytes.Buffer
 	cli.WriteRouteUsage(&want, "agent usage")
-	if want.Len() == 0 || stderr.String() != want.String() {
-		t.Fatalf("stderr = %q, want the agent usage catalog block %q", stderr.String(), want.String())
+	if want.Len() == 0 || !strings.HasPrefix(stderr.String(), want.String()) {
+		t.Fatalf("stderr = %q, want it to open with the agent usage catalog block %q", stderr.String(), want.String())
 	}
 	if !strings.Contains(stderr.String(), "--force") {
 		t.Fatalf("usage missing --force flag: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "-f") {
+		t.Fatalf("usage missing -f shorthand: %s", stderr.String())
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want none", stdout.String())

@@ -90,11 +90,13 @@ func newResourceCommand() *resourceCommand {
 }
 
 func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
-	// The usage text is non-interactive public route output, so it is the
-	// catalog synopsis and reads no locale. Only the interactive inspector
-	// below, a TUI surface, resolves the operator's locale.
+	// The usage text is non-interactive public route output, so it is en-US
+	// and reads no locale. Only the interactive inspector below, a TUI
+	// surface, resolves the operator's locale.
+	text := resourceText{locale: i18n.FallbackLocale}
 	if hasHelpArg(args) {
 		printRouteUsage(stdout, "resources")
+		printResourcesDescription(stdout, text)
 		return nil
 	}
 	fs := flag.NewFlagSet("resources", flag.ContinueOnError)
@@ -107,6 +109,7 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "resources")
+		printResourcesDescription(stderr, text)
 		return usageError("resources does not accept positional arguments")
 	}
 	if c.collector == nil {
@@ -147,6 +150,12 @@ func (c *resourceCommand) collectionBudget() time.Duration {
 		return resourceScanBudget
 	}
 	return c.scanBudget
+}
+
+// printResourcesDescription prints the inspector description under the
+// resources usage block.
+func printResourcesDescription(w io.Writer, text resourceText) {
+	fmt.Fprintln(w, "  "+text.value("picker.resources.help", "Open the read-only Project → Window → Pane resource inspector."))
 }
 
 func hasHelpArg(args []string) bool {

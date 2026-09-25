@@ -82,6 +82,7 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 		return flagParseError(fmt.Errorf("parse notify reconcile flags: %w", err))
 	}
 	if fs.NArg() != 0 {
+		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "notification reconcile")
 		return usageError("notify reconcile does not accept positional arguments")
 	}

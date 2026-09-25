@@ -42,7 +42,7 @@ type projectDirStore interface {
 // switchSettingsActions executes the switch-owned settings actions
 // (implemented by *switchCommand; consumed by settings.go).
 type switchSettingsActions interface {
-	executeSettingsAction(action string, stdout, stderr io.Writer) error
+	executeSettingsAction(action string, stdout, stderr io.Writer, printUsage func()) error
 	executeProjdirSettingsAction(action string, stdout, stderr io.Writer) error
 	executeWorkdirSettingsAction(action string, stdout, stderr io.Writer) error
 }

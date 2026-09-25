@@ -140,6 +140,10 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		cli.WriteRouteUsage(stderr, "agent usage")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Flags:")
+		fmt.Fprintln(stderr, "  --force, -f   bypass per-adapter throttle and clear active backoff before refreshing.")
+		fmt.Fprintln(stderr, "                Useful when bound to a tmux key as a manual 'refresh now' gesture.")
 		return &coremetadata.InputError{Detail: "usage does not accept positional arguments"}
 	}
 

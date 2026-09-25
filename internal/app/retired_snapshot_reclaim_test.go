@@ -47,7 +47,7 @@ func (f *reclaimFixture) apply(t *testing.T, extra ...string) []string {
 	t.Helper()
 	args := append([]string{"--config", filepath.Join(f.home, "generated", "tmux.conf")}, extra...)
 	var stdout, stderr bytes.Buffer
-	if err := f.command().runApply(args, &stdout, &stderr); err != nil {
+	if err := f.command().runApply("internal tmux apply", args, &stdout, &stderr); err != nil {
 		t.Fatalf("apply error = %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
 	}
 	var lines []string
@@ -439,7 +439,7 @@ func TestConfigApplyReclaimHonorsXDGOverridesWithoutNoReload(t *testing.T) {
 	// and reclamation still runs once.
 	var stdout, stderr bytes.Buffer
 	args := []string{"--config", filepath.Join(f.home, "generated", "tmux.conf")}
-	if err := f.command().runApply(args, &stdout, &stderr); err != nil {
+	if err := f.command().runApply("internal tmux apply", args, &stdout, &stderr); err != nil {
 		t.Fatalf("apply error = %v; stderr=%s", err, stderr.String())
 	}
 	var lines []string

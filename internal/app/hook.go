@@ -73,6 +73,7 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() == 0 {
 		printRouteUsage(stderr, "hook")
+		printHookEvents(stderr)
 		return usageError("hook requires a subcommand")
 	}
 	switch fs.Arg(0) {
@@ -88,9 +89,11 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runUntrust(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printRouteUsage(stdout, "hook")
+		printHookEvents(stdout)
 		return nil
 	default:
 		printRouteUsage(stderr, "hook")
+		printHookEvents(stderr)
 		return usageError("unknown hook subcommand: " + fs.Arg(0))
 	}
 }
@@ -120,6 +123,7 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "hook list")
+		printHookEvents(stderr)
 		return usageError("hook list does not accept positional arguments")
 	}
 	flags := 0
@@ -130,6 +134,7 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 	}
 	if flags > 1 {
 		printRouteUsage(stderr, "hook list")
+		printHookEvents(stderr)
 		return usageError("hook list: --global, --project, and --effective are mutually exclusive")
 	}
 	scope := hookListScopeContext
@@ -286,10 +291,12 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 	}
 	if *global && *project {
 		printRouteUsage(stderr, "hook edit")
+		printHookEvents(stderr)
 		return usageError("hook edit: --global and --project are mutually exclusive")
 	}
 	if fs.NArg() != 1 {
 		printRouteUsage(stderr, "hook edit")
+		printHookEvents(stderr)
 		return usageError("hook edit requires exactly one <event> argument")
 	}
 	event := strings.TrimSpace(fs.Arg(0))
@@ -531,6 +538,7 @@ func (c *hookCommand) runValidate(args []string, stdout, stderr io.Writer) error
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "hook validate")
+		printHookEvents(stderr)
 		return usageError("hook validate does not accept positional arguments")
 	}
 	globalPath, globalCfg, globalErr := c.loadGlobal()
@@ -588,7 +596,7 @@ func validateHookEvents(cfg hooks.ProjectConfig) error {
 // --- trust / untrust -----------------------------------------------------
 
 func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
-	repo, err := c.resolveTrustTarget("hook trust", args, func() { printRouteUsage(stderr, "hook trust") })
+	repo, err := c.resolveTrustTarget("hook trust", args, func() { printRouteUsage(stderr, "hook trust"); printHookEvents(stderr) })
 	if err != nil {
 		return err
 	}
@@ -605,7 +613,7 @@ func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error {
-	repo, err := c.resolveTrustTarget("hook untrust", args, func() { printRouteUsage(stderr, "hook untrust") })
+	repo, err := c.resolveTrustTarget("hook untrust", args, func() { printRouteUsage(stderr, "hook untrust"); printHookEvents(stderr) })
 	if err != nil {
 		return err
 	}
@@ -766,6 +774,13 @@ func isSupportedHookEvent(event string) bool {
 		}
 	}
 	return false
+}
+
+// printHookEvents prints the hook events under the hook usage block.
+func printHookEvents(w io.Writer) {
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Events:")
+	fmt.Fprintln(w, "  "+supportedHookEventList())
 }
 
 func supportedHookEventList() string {

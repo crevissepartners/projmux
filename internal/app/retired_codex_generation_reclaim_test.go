@@ -63,7 +63,7 @@ func (f *codexReclaimFixture) apply(t *testing.T) []string {
 	t.Helper()
 	args := []string{"--config", filepath.Join(f.home, "generated", "tmux.conf"), "--no-reload"}
 	var stdout, stderr bytes.Buffer
-	if err := f.command().runApply(args, &stdout, &stderr); err != nil {
+	if err := f.command().runApply("internal tmux apply", args, &stdout, &stderr); err != nil {
 		t.Fatalf("apply error = %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
 	}
 	var lines []string

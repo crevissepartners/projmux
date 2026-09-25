@@ -465,7 +465,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 		triggerRunner: recorder,
 	}
 	var stdout, stderr bytes.Buffer
-	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated"}, &stdout, &stderr); err != nil {
+	if err := cmd.runApply("internal tmux apply", []string{"--config", configPath, "--socket", "isolated"}, &stdout, &stderr); err != nil {
 		t.Fatalf("apply: %v; stderr=%q", err, stderr.String())
 	}
 	if want := []tmuxTransport{{Kind: tmuxSocketPath, Value: "/tmp/tmux-1000/isolated", Source: tmuxSocketPathSource}}; !reflect.DeepEqual(recorder.targets(), want) {
@@ -507,7 +507,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	// generated config is not byte-written again.
 	recorder.triggers = nil
 	runner.calls = nil
-	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runApply("internal tmux apply", []string{"--config", configPath, "--socket", "isolated"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if configWrites != 1 {
@@ -519,7 +519,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 
 	recorder.triggers = nil
 	runner.calls = nil
-	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated", "--no-reload"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runApply("internal tmux apply", []string{"--config", configPath, "--socket", "isolated", "--no-reload"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(recorder.triggers) != 0 || len(runner.calls) != 0 {
@@ -533,7 +533,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	if err := os.WriteFile(keymap, []byte("[bindings.new-window]\nkeys = [oops\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+	if err := cmd.runApply("internal tmux apply", []string{"--config", configPath, "--socket", "isolated"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("malformed keymap preflight unexpectedly succeeded")
 	}
 	if len(recorder.triggers) != 0 || len(runner.calls) != 0 {

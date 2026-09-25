@@ -262,10 +262,14 @@ func flagSetNameParamIndex(fn *ast.FuncDecl, name string) int {
 }
 
 // evalParam evaluates parameter idx of fn at every same-package call of a
-// function or method with fn's name.
+// function or method with fn's name and arity.
 func (e *flagSetNameEval) evalParam(file string, fn *ast.FuncDecl, idx, depth int) ([]string, bool) {
 	var values []string
 	calls, ok := 0, true
+	params := 0
+	for _, field := range fn.Type.Params.List {
+		params += max(len(field.Names), 1)
+	}
 	for _, caller := range e.funcs[e.pkgOf[file]] {
 		ast.Inspect(caller.decl, func(node ast.Node) bool {
 			call, isCall := node.(*ast.CallExpr)
@@ -279,7 +283,10 @@ func (e *flagSetNameEval) evalParam(file string, fn *ast.FuncDecl, idx, depth in
 			case *ast.SelectorExpr:
 				callee = f.Sel.Name
 			}
-			if callee != fn.Name.Name || idx >= len(call.Args) {
+			// A same-named function or method with another arity is a
+			// different declaration (updateCommand.runApply next to
+			// tmuxCommand.runApply).
+			if callee != fn.Name.Name || len(call.Args) != params {
 				return true
 			}
 			calls++

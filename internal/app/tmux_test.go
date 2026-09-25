@@ -342,7 +342,7 @@ func TestConfigApplyFullSurfaceReturnsForeignMarkerRefusal(t *testing.T) {
 		return ""
 	}
 	var stdout, stderr bytes.Buffer
-	err := cmd.runApply([]string{
+	err := cmd.runApply("internal tmux apply", []string{
 		"--bin", "/tmp/projmux",
 		"--config", filepath.Join(home, ".config", "projmux", "tmux.conf"),
 		"--socket", defaultAppSocket,
@@ -381,7 +381,7 @@ func TestConfigApplySourceFailureIsNotConvergenceSuccess(t *testing.T) {
 		return ""
 	}
 	var stdout, stderr bytes.Buffer
-	err := cmd.runApply([]string{
+	err := cmd.runApply("internal tmux apply", []string{
 		"--bin", "/tmp/projmux",
 		"--config", filepath.Join(home, ".config", "projmux", "tmux.conf"),
 		"--socket", defaultAppSocket,

@@ -93,6 +93,7 @@ func defaultStatusbarNotifyStore() (notifyStore, error) {
 func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printRouteUsage(stderr, "internal statusbar")
+		printStatusbarNotes(stderr)
 		return usageError("statusbar requires a subcommand")
 	}
 	// Bright Phase 2 (B3): statusbar popups (pwd/usage/notify) render with the
@@ -109,14 +110,17 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 		opts, err := parseStatusbarUsageRefreshArgs(args[1:])
 		if err != nil {
 			printRouteUsage(stderr, "internal statusbar usage-refresh")
+			printStatusbarNotes(stderr)
 			return err
 		}
 		return c.handleUsage(true, opts, stdout, stderr)
 	case "help", "--help", "-h":
 		printRouteUsage(stdout, "internal statusbar")
+		printStatusbarNotes(stdout)
 		return nil
 	default:
 		printRouteUsage(stderr, "internal statusbar")
+		printStatusbarNotes(stderr)
 		return usageError(fmt.Sprintf("unknown statusbar subcommand: %s", args[0]))
 	}
 }
@@ -274,6 +278,7 @@ func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) err
 	raw, opts, err := parseStatusbarClickArgs(args)
 	if err != nil {
 		printRouteUsage(stderr, "internal statusbar click")
+		printStatusbarNotes(stderr)
 		return err
 	}
 	// MouseX/MouseY are intentionally unused today. The fields are wired
@@ -1470,4 +1475,12 @@ func (statusbarExecRunner) Run(ctx context.Context, name string, args ...string)
 		return out, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return out, nil
+}
+
+// printStatusbarNotes prints the click compatibility note and the range ids
+// under the statusbar usage block.
+func printStatusbarNotes(w io.Writer) {
+	fmt.Fprintln(w, "  (--mouse-window <v> is accepted for compatibility with older bindings and ignored)")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Range ids: session pwd git usage notify resources settings")
 }

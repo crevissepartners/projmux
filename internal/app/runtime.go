@@ -93,8 +93,17 @@ func forwardNestedNativeArgv(target rawArgvCommand, spelling, route string, args
 	return nested.RunNested(args, stdout, stderr)
 }
 
+// routedRawArgvCommand is a raw-argv handler that more than one public route
+// forwards into. It receives the spelling that reached it, so the FlagSet it
+// parses with and the usage it prints name that route rather than a sibling
+// sharing the same leaf.
+type routedRawArgvCommand interface {
+	RunRoute(route string, args []string, stdout, stderr io.Writer) error
+}
+
 // forwardRawArgv prefixes the current spelling's leading tokens and hands the
-// rest of argv through untouched.
+// rest of argv through untouched. A target that implements
+// routedRawArgvCommand also learns the spelling.
 func forwardRawArgv(target rawArgvCommand, spelling, route string, prefix, args []string, stdout, stderr io.Writer) error {
 	if target == nil {
 		return fmt.Errorf("%s: the %s handler is not configured", spelling, route)
@@ -102,5 +111,8 @@ func forwardRawArgv(target rawArgvCommand, spelling, route string, prefix, args 
 	forwarded := make([]string, 0, len(prefix)+len(args))
 	forwarded = append(forwarded, prefix...)
 	forwarded = append(forwarded, args...)
+	if routed, ok := target.(routedRawArgvCommand); ok {
+		return routed.RunRoute(spelling, forwarded, stdout, stderr)
+	}
 	return target.Run(forwarded, stdout, stderr)
 }

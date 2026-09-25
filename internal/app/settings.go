@@ -756,7 +756,7 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		if c.switcher == nil {
 			return errors.New("project picker settings are not configured")
 		}
-		return c.switcher.executeSettingsAction(action, stdout, stderr)
+		return c.switcher.executeSettingsAction(action, stdout, stderr, func() { printRouteUsage(stderr, "settings") })
 	case strings.HasPrefix(value, settingsActionPrefixUpdate):
 		action := strings.TrimPrefix(value, settingsActionPrefixUpdate)
 		// The release-channel opt-in is settled before the runner check: it
