@@ -17,10 +17,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 )
 
-// synopsisFlagPinVerbReason explains the site rows of the `pin project` verbs,
-// whose FlagSets carry the parent name while the parent Usage is the verb menu.
-const synopsisFlagPinVerbReason = "the verbs are not catalog children yet; a later task declares them and removes this row"
-
 // synopsisSiteException excludes one whole public flag parse site whose
 // FlagSet carries its parent's name: the flags are a dispatch verb's, not the
 // route's. route is the route the site must still resolve to.
@@ -28,13 +24,11 @@ type synopsisSiteException struct {
 	route, reason string
 }
 
-// synopsisFlagSiteExceptions is keyed by flagParseGuardSite.key(). Only the
-// dispatch verb sites of `pin project` may appear here, one row
-// per site. A row no site has, or whose site resolves elsewhere, fails.
-var synopsisFlagSiteExceptions = map[string]synopsisSiteException{
-	`internal/app/pin.go (*pinCommand).runList pin project`:    {route: "pin project", reason: synopsisFlagPinVerbReason},
-	`internal/app/pin.go (*pinCommand).runMigrate pin project`: {route: "pin project", reason: synopsisFlagPinVerbReason},
-}
+// synopsisFlagSiteExceptions is keyed by flagParseGuardSite.key(). It is
+// empty: every dispatch verb is its own catalog child with a FlagSet named
+// after it, so every site resolves to the route whose flags it parses. A row
+// no site has, or whose site resolves elsewhere, fails.
+var synopsisFlagSiteExceptions = map[string]synopsisSiteException{}
 
 // synopsisFlagException admits one registered flag a route's Usage may omit.
 // Two categories exist:
@@ -1550,8 +1544,8 @@ func TestPublicRouteSynopsisListsEveryParsedFlag(t *testing.T) {
 	for _, problem := range append(problems, checked...) {
 		t.Error(problem)
 	}
-	if counts.sites < 87 || counts.routes < 133 {
-		t.Errorf("checked %d public flag parse sites over %d routes, want at least 87 sites and 133 routes; the site collection has regressed", counts.sites, counts.routes)
+	if counts.sites < 92 || counts.routes < 138 {
+		t.Errorf("checked %d public flag parse sites over %d routes, want at least 92 sites and 138 routes; the site collection has regressed", counts.sites, counts.routes)
 	}
 	t.Logf("synopsis flag guard: %d public sites, %d routes, %d route flags", counts.sites, counts.routes, counts.flags)
 }

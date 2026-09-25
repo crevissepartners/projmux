@@ -120,6 +120,10 @@ type publicRouteArgvGuardRow struct {
 const (
 	publicRouteArgvOperandReason = "synopsis declares a positional operand; validating its value is out of scope"
 
+	// publicRouteArgvOperandVerbatimReason explains the form A behavior rows
+	// of the single-operand pin and tag verbs.
+	publicRouteArgvOperandVerbatimReason = "the verb parses no flags: a token with a leading dash, the probe flag included, is taken verbatim as its one operand, so the probe succeeds (J-13 K-2)"
+
 	publicRouteArgvHelpReason = "root policy: `projmux help [anything]` prints the primary listing and exits 0 (internal/cli/root.go SetHelpCommand; docs/cli-guide.md Help boundary: `projmux help` keeps printing the top-level list)"
 )
 
@@ -187,13 +191,16 @@ var publicRouteArgvOperandRoutes = []string{
 	"profile show",
 	"profile set",
 	"profile delete",
+	"pin project add",
+	"pin project remove",
+	"pin project toggle",
 	"rebind project",
 	"rename project",
 	"rename window",
 	"rename pane",
 	"rename agent",
 	"runtime stop",
-	"runtime tag",
+	"runtime tag toggle",
 	"setup terminal",
 	"start project",
 	"stop project",
@@ -224,6 +231,10 @@ func publicRouteArgvGuardSpecialRows() []publicRouteArgvGuardRow {
 		// Behavior rows (executed; stale once the probe exits 2).
 		{route: "help", form: publicRouteArgvFormUnknownFlag, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvHelpReason},
 		{route: "help", form: publicRouteArgvFormOperand, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvHelpReason},
+		{route: "pin project add", form: publicRouteArgvFormUnknownFlag, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvOperandVerbatimReason},
+		{route: "pin project remove", form: publicRouteArgvFormUnknownFlag, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvOperandVerbatimReason},
+		{route: "pin project toggle", form: publicRouteArgvFormUnknownFlag, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvOperandVerbatimReason},
+		{route: "runtime tag toggle", form: publicRouteArgvFormUnknownFlag, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvOperandVerbatimReason},
 
 		// Runnable parents (not executed for D-bare).
 		{route: "setup", form: publicRouteArgvFormBareParent, kind: publicRouteArgvRunnableParentRow, reason: "synopsis `projmux setup` documents the bare parent as the interactive terminal-key probe"},

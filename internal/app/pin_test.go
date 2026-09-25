@@ -409,7 +409,9 @@ func TestPinUsageSeparatesTheThreeCollections(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
-		"projmux pin project list|add|remove|toggle|clear|migrate",
+		"projmux pin project list [--kind project|candidate]",
+		"projmux pin project add <dir|uid:uid>",
+		"projmux pin project migrate [--dry-run]",
 		"a Registry Project uid",
 		"a filesystem path that no Registry Project claims",
 		"Discovery roots (workdirs) are a separate collection",
