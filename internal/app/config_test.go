@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -297,6 +298,93 @@ func (f *configForwarderFixture) files(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	return files
+}
+
+// TestConfigEditSetRejectsUnknownAIMode pins that `config edit --set` refuses a
+// word outside the AI split modes as a usage error (exit 2) before it touches
+// the mode file: an absent file and its directory stay absent, and a saved
+// file stays byte-identical. Matching is case-sensitive.
+func TestConfigEditSetRejectsUnknownAIMode(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"bogus", "Claude", "selectivex", " shellx "} {
+		for _, seeded := range []bool{false, true} {
+			name := value + "/unseeded"
+			if seeded {
+				name = value + "/seeded"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				fixture := newConfigForwarderFixture(t)
+				path := fixture.ai.configFile()
+				const saved = "codex\n"
+				if seeded {
+					if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, []byte(saved), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				var stdout bytes.Buffer
+				err := fixture.app.Run([]string{"config", "edit", "--set", value}, &stdout, &bytes.Buffer{})
+				if err == nil || !IsUsageError(err) {
+					t.Fatalf("config edit --set %q error = %v, want a usage error", value, err)
+				}
+				want := fmt.Sprintf("unknown AI mode %q; --set must be one of: claude, codex, antigravity, selective, resume, shell", strings.TrimSpace(value))
+				if err.Error() != want {
+					t.Fatalf("config edit --set %q error text = %q, want %q", value, err.Error(), want)
+				}
+				if stdout.Len() != 0 {
+					t.Fatalf("config edit --set %q wrote stdout %q, want none", value, stdout.String())
+				}
+				if commands := cmdRecorder(fixture.ai).commands; len(commands) != 0 {
+					t.Fatalf("config edit --set %q issued commands %#v, want none", value, commands)
+				}
+
+				if seeded {
+					got, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(got) != saved {
+						t.Fatalf("mode file = %q after refused --set %q, want it unchanged %q", got, value, saved)
+					}
+					return
+				}
+				if files := fixture.files(t); len(files) != 0 {
+					t.Fatalf("config edit --set %q wrote files %v, want none", value, files)
+				}
+				if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("mode file directory stat error = %v, want it still absent", err)
+				}
+			})
+		}
+	}
+}
+
+// TestConfigEditSetWritesEachAllowedAIMode pins that every AI split mode is
+// still accepted by `config edit --set`, trimmed, and saved as one line.
+func TestConfigEditSetWritesEachAllowedAIMode(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeSelective, aiModeResume, aiModeShell, " claude "} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			fixture := newConfigForwarderFixture(t)
+			if err := fixture.app.Run([]string{"config", "edit", "--set", value}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("config edit --set %q error = %v", value, err)
+			}
+			got, err := os.ReadFile(fixture.ai.configFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := strings.TrimSpace(value) + "\n"; string(got) != want {
+				t.Fatalf("mode file after --set %q = %q, want %q", value, got, want)
+			}
+		})
+	}
 }
 
 // TestConfigForwarderRejectsFlagAndArgErrorsAsUsage pins that a bad flag or an

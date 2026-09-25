@@ -555,8 +555,9 @@ through to the central file; a missing, empty, or invalid central file means
 not set.
 
 `projmux settings` and `projmux config edit --set` keep writing
-`tmux-ai-split-mode`. No command writes the central file yet; edit it by hand
-or from another front end.
+`tmux-ai-split-mode`. `projmux config edit --set` rejects any other word with
+exit 2 and leaves the file unchanged. No command writes the central file yet;
+edit it by hand or from another front end.
 
 ## AI Resume Picker
 
