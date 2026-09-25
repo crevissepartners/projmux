@@ -796,6 +796,8 @@ var routes = []Route{
 			"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]",
 			"projmux agent topic set <text> [<agent-ref>] [--agent <ref>]",
 			"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--dialogue-reply-only]",
+			"projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
+			"projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent turn start|steer <agent-ref> -- <text>",
@@ -963,8 +965,14 @@ var routes = []Route{
 		CanonicalOrder: 18,
 		Summary:        "View and manage live tmux pane attention state",
 		Disposition:    DispositionCanonical,
-		Usage:          []string{"projmux attention toggle|clear|arm|list|window"},
-		Canonical:      []string{"attention list", "attention toggle", "attention clear", "attention arm", "attention window"},
+		Usage: []string{
+			"projmux attention toggle [pane]",
+			"projmux attention clear [pane]",
+			"projmux attention arm [pane]",
+			"projmux attention list [--json] [--all]",
+			"projmux attention window [window] [style]",
+		},
+		Canonical: []string{"attention list", "attention toggle", "attention clear", "attention arm", "attention window"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "toggle", Invocation: InvocationNatural, Summary: "Toggle attention state for a pane", CanonicalSummary: "Toggle live Pane attention state", CanonicalNodeOrder: 2, Usage: []string{"projmux attention toggle [pane]"}, Canonical: []string{"attention toggle"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "clear", Invocation: InvocationNatural, Summary: "Clear attention state for a pane", CanonicalSummary: "Clear live Pane attention state", CanonicalNodeOrder: 3, Usage: []string{"projmux attention clear [pane]"}, Canonical: []string{"attention clear"}},
@@ -1526,6 +1534,7 @@ var routes = []Route{
 			"projmux get pane --current -o cwd",
 			"projmux get pane [--current] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
 			"projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]",
+			"projmux get notifications [--json] [--live] [--limit <n>] [--ui table|sidebar] [--client <tty>] [--severity <severity>]... [--source <source>]...",
 		},
 		Canonical: []string{"get projects", "get windows", "get panes", "get agents",
 			"get runtime sessions", "get runtime windows", "get runtime panes",
@@ -1624,7 +1633,13 @@ var routes = []Route{
 		CanonicalOrder: 20,
 		Summary:        "List, edit, validate, and trust lifecycle hook config",
 		Disposition:    DispositionCanonical,
-		Usage:          []string{"projmux hook list|edit|validate|trust|untrust"},
+		Usage: []string{
+			"projmux hook list [--global | --project | --effective]",
+			"projmux hook edit [--global | --project] [--editor] <event>",
+			"projmux hook validate",
+			"projmux hook trust [<project>]",
+			"projmux hook untrust [<project>]",
+		},
 		// The event list is hooks.SupportedEvents sorted; a guard in package app
 		// fails when the two drift.
 		Notes:     []string{"Events:\n  post-attach, post-create, pre-create, send-noti"},
@@ -2137,8 +2152,12 @@ var routes = []Route{
 		CanonicalOrder: 25,
 		Summary:        "Check installer-aware release update status",
 		Disposition:    DispositionCanonical,
-		Usage:          []string{"projmux update status|check|apply"},
-		Canonical:      []string{"update status", "update check", "update apply"},
+		Usage: []string{
+			"projmux update status [--json]",
+			"projmux update check [--json]",
+			"projmux update apply [--dry-run] [--no-apply]",
+		},
+		Canonical: []string{"update status", "update check", "update apply"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "status", Invocation: InvocationFanOut, Summary: "Show read-only update status", Usage: []string{"projmux update status [--json]"}, Canonical: []string{"update status"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "check", Invocation: InvocationFanOut, Summary: "Check for a newer release and refresh the cache", Usage: []string{"projmux update check [--json]"}, Canonical: []string{"update check"}},
@@ -2159,8 +2178,11 @@ var routes = []Route{
 		Invocation:  InvocationRefusal,
 		Summary:     "Open recent window navigation surfaces",
 		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux window record|recent"},
-		Canonical:   []string{"get windows", "describe window", "create window", "focus window", "rename window"},
+		Usage: []string{
+			"projmux window record",
+			"projmux window recent",
+		},
+		Canonical: []string{"get windows", "describe window", "create window", "focus window", "rename window"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "record", Invocation: InvocationNatural, Summary: "Record the current window into the MRU store", Usage: []string{"projmux window record"}, Canonical: []string{"get windows"}},
 			{Effects: runtimeDiagnosticsEffects(), Name: "recent", Invocation: InvocationNatural, Summary: "Open the recent-window navigation picker", Usage: []string{"projmux window recent"}, Canonical: []string{"get windows"}},
