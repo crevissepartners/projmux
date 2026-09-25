@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 // forwardedSupervisorSignals are the signals the supervisor relays to the
@@ -43,7 +45,10 @@ func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 	return runSupervisedChildWithSignalSource(argv, argv0, nil)
 }
 
-func runSupervisedChildWithActivation(argv []string, argv0 string, spec superviseSpec) (processOutcome, error) {
+// runSupervisedChildWithActivation is the production activation runner.
+// recorder is the operations diagnostics recorder its lease watcher reports a
+// failed native-prompt refresh to; nil records nothing.
+func runSupervisedChildWithActivation(argv []string, argv0 string, spec superviseSpec, recorder *diagnostics.AIRecorder) (processOutcome, error) {
 	if spec.AgentUID == "" {
 		return runSupervisedChildWithEnvironment(argv, argv0, activationEnvironment(spec), nil)
 	}
@@ -59,7 +64,7 @@ func runSupervisedChildWithActivation(argv []string, argv0 string, spec supervis
 	}
 	watchContext, cancelWatch := context.WithCancel(context.Background())
 	defer cancelWatch()
-	go watchClaudeActivationLeases(watchContext, spec)
+	go watchClaudeActivationLeases(watchContext, spec, recorder)
 	outcome, runErr := runSupervisedActivationGate(activationExecArgv(binary, spec, argv0, 3, argv))
 	cancelWatch()
 	cleanupClaudeActivationLeases(spec)

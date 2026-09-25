@@ -126,6 +126,8 @@ func TestAISchemaRejectsRawAndImpossibleTuples(t *testing.T) {
 		{"payload route failure", editAIEvent(failedPayload, func(e *Event) { e.Failure = string(AIFailureRoute) })},
 		{"codex prompt route failure", editAIEvent(failedRoute, func(e *Event) { e.Provider = string(ProviderCodex); e.AIKind = string(AIKindPrompt) })},
 		{"claude stop route failure", editAIEvent(failedRoute, func(e *Event) { e.Provider = string(ProviderClaude); e.AIKind = string(AIKindStop) })},
+		{"claude tool route failure", editAIEvent(failedRoute, func(e *Event) { e.Provider = string(ProviderClaude); e.AIKind = string(AIKindTool) })},
+		{"claude permission route ignored", editAIEvent(ignoredStop, func(e *Event) { e.AIKind = string(AIKindPermission); e.Failure = string(AIFailureRoute) })},
 		{"antigravity invocation route failure", failedRoute},
 		{"known kind unsupported", editAIEvent(unsupported, func(e *Event) { e.AIKind = string(AIKindPrompt) })},
 		{"tmux bell unsupported", editAIEvent(unsupported, func(e *Event) { e.Provider = string(ProviderTmuxBell); e.AIKind = string(AIKindBell) })},
@@ -196,6 +198,16 @@ func TestAISchemaAcceptsProductionProviderKindTuples(t *testing.T) {
 	antigravityRoute.AIKind = string(AIKindTool)
 	if _, err := sanitizeEvent(antigravityRoute, ""); err != nil {
 		t.Fatalf("valid Antigravity response route tuple rejected: %v", err)
+	}
+	// The pane supervisor's native-prompt refresh records a recommit it could
+	// not land for an open permission dialog or elicitation.
+	for _, kind := range []AIKind{AIKindPermission, AIKindNotification} {
+		claudeRoute := bellRoute
+		claudeRoute.Provider = string(ProviderClaude)
+		claudeRoute.AIKind = string(kind)
+		if _, err := sanitizeEvent(claudeRoute, ""); err != nil {
+			t.Fatalf("valid Claude %s route tuple rejected: %v", kind, err)
+		}
 	}
 }
 

@@ -555,7 +555,7 @@ func TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives(t *testing.
 	_ = helper.Wait()
 	spec := superviseSpec{RegistryPath: f.bootstrap.RegistryPath, PaneUID: f.bootstrap.PaneUID, AgentUID: f.bootstrap.AgentUID, Generation: f.bootstrap.Generation}
 	ctx := t.Context()
-	go watchClaudeActivationLeases(ctx, spec)
+	go watchClaudeActivationLeases(ctx, spec, nil)
 	deadline := time.Now().Add(4 * time.Second)
 	for {
 		if _, reason := f.route(t); reason != "" {
