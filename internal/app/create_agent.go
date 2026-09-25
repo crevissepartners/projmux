@@ -645,7 +645,7 @@ func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget)
 func activationUnconfirmedDiagnosticSteps(target agentActivationTarget) []string {
 	return []string{
 		fmt.Sprintf("the Agent and its managed Pane %s were created and are still live; nothing was rolled back", target.paneID),
-		fmt.Sprintf("re-read the committed activation with `projmux get agent uid:%s` first: a provider hook that arrived after the bound refines it to acknowledged", target.agentUID),
+		fmt.Sprintf("re-read the committed activation with `projmux describe agent uid:%s` first: a provider hook that arrived after the bound refines it to acknowledged", target.agentUID),
 		fmt.Sprintf("if it is still unconfirmed, look at Pane %s (`tmux capture-pane -p -t %s`) or the provider transcript for the initial task, and retry it through the provider when it never arrived", target.paneID, target.paneID),
 		fmt.Sprintf("only when neither read shows activation evidence, clean up with `projmux delete agent uid:%s --yes`", target.agentUID),
 	}

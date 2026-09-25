@@ -205,7 +205,7 @@ func TestActivationUnconfirmedDiagnosticRereadsAuthorityBeforeSuggestingDelete(t
 	ordered := []string{
 		"has live managed Pane %41",
 		"still live; nothing was rolled back",
-		"projmux get agent uid:agent-load-bound",
+		"projmux describe agent uid:agent-load-bound",
 		"tmux capture-pane -p -t %41",
 		"retry it through the provider",
 		"projmux delete agent uid:agent-load-bound --yes",
@@ -218,7 +218,7 @@ func TestActivationUnconfirmedDiagnosticRereadsAuthorityBeforeSuggestingDelete(t
 		}
 		cursor += index + len(fragment)
 	}
-	if removal, recheck := strings.Index(diagnostic, "delete agent"), strings.Index(diagnostic, "get agent"); removal < recheck {
+	if removal, recheck := strings.Index(diagnostic, "delete agent"), strings.Index(diagnostic, "describe agent"); removal < recheck {
 		t.Fatalf("diagnostic suggests delete before re-reading authority: %q", diagnostic)
 	}
 	if !strings.HasSuffix(diagnostic, "--yes`") {

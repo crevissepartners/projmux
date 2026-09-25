@@ -460,7 +460,7 @@ func TestCreateWindowProviderRefusesAPromptedCodexCreate(t *testing.T) {
 		}
 		for _, want := range []string{
 			"create window --provider codex does not accept a payload",
-			"projmux create agent --provider codex --create-window",
+			"projmux create agent --provider codex --window <name> --create-window -- <payload>",
 		} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("refusal = %q, missing %q", err, want)

@@ -403,7 +403,7 @@ func refuseWindowProviderWithoutNativeLane(spelling, provider string, flags reso
 		return nil
 	}
 	return usageError(fmt.Sprintf(
-		"%s --provider %s does not accept a payload: a prompted %s Agent needs the native thread binding only `projmux create agent --provider %s --create-window <name> -- <payload>` opens; drop the payload for a plain interactive Agent",
+		"%s --provider %s does not accept a payload: a prompted %s Agent needs the native thread binding only `projmux create agent --provider %s --window <name> --create-window -- <payload>` opens; drop the payload for a plain interactive Agent",
 		spelling, provider, provider, provider))
 }
 
