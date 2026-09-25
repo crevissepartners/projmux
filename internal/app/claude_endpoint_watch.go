@@ -11,6 +11,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -66,18 +67,32 @@ func readClaudeLeaseOwner(path string, spec superviseSpec) (claudeLeaseOwnerRece
 	return receipt, true
 }
 
-func watchClaudeActivationLeases(ctx context.Context, spec superviseSpec) {
+// watchClaudeActivationLeases is the pane supervisor's one watcher goroutine.
+// It reaps dead Claude leases on the fast poll and, on its own slower ticker,
+// runs the native-prompt refresh, so the reaper keeps its cadence. The
+// refresh ticker stops for good once a step reports it can never apply to this
+// activation; the reaper keeps running.
+func watchClaudeActivationLeases(ctx context.Context, spec superviseSpec, recorder *diagnostics.AIRecorder) {
 	if spec.AgentUID == "" || exactActivationRegistryPath(spec.RegistryPath) != nil {
 		return
 	}
 	ticker := time.NewTicker(2 * claudeEndpointPollInterval)
 	defer ticker.Stop()
+	nativePrompt := newClaudeNativePromptRefresh(spec, recorder)
+	nativePromptTicker := time.NewTicker(claudeNativePromptCheckInterval)
+	defer nativePromptTicker.Stop()
+	nativePromptDue := nativePromptTicker.C
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			reapDeadClaudeLeases(spec)
+		case <-nativePromptDue:
+			if !nativePrompt.step() {
+				nativePromptTicker.Stop()
+				nativePromptDue = nil
+			}
 		}
 	}
 }

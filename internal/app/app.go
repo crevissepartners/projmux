@@ -353,7 +353,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// move onto the canonical spellings without a second implementation.
 	keyBrokerCmd := newKeyBrokerCommand()
 	popupWaitKeyCmd := newPopupWaitKeyCommand()
-	superviseCmd := newSuperviseCommand()
+	superviseCmd := newSuperviseCommand(aiOperationalDiagnostics)
 	activationExecCmd := newActivationExecCommand()
 	previewCmd := newPreviewCommand()
 	sessionPopupCmd := newSessionPopupCommand(recorder)

@@ -471,7 +471,7 @@ func TestAgentAdmissionAndReceiptUseCreatorRegistryAuthorityNotAmbientXDG(t *tes
 		t.Fatalf("admission touched ambient Registry: %v", err)
 	}
 
-	supervisor := newSuperviseCommand()
+	supervisor := newSuperviseCommand(nil)
 	supervisor.runActivation = func([]string, string, superviseSpec) (processOutcome, error) {
 		return processOutcome{ExitCode: 42}, nil
 	}

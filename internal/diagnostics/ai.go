@@ -174,7 +174,11 @@ func aiTupleMatches(event Event) bool {
 			case AIFailurePayloadInvalid, AIFailurePayloadRead, AIFailurePayloadOversized:
 				return provider != ProviderTmuxBell && kind == AIKindPayload && event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
 			case AIFailureRoute:
-				routeSeam := (provider == ProviderTmuxBell && kind == AIKindBell) || (provider == ProviderAntigravity && kind == AIKindTool)
+				// A Claude permission or notification route failure is the pane
+				// supervisor's native-prompt refresh failing to recommit a dialog
+				// its transcript shows open.
+				routeSeam := (provider == ProviderTmuxBell && kind == AIKindBell) || (provider == ProviderAntigravity && kind == AIKindTool) ||
+					(provider == ProviderClaude && (kind == AIKindPermission || kind == AIKindNotification))
 				return routeSeam && event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
 			}
 		}

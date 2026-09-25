@@ -62,7 +62,7 @@ func TestSupervisedActivationRefusesPartialAgentIdentityBeforeProviderStart(t *t
 	sideEffect := filepath.Join(root, "provider-started")
 	cmd := &superviseCommand{
 		journal:       terminationJournal{path: filepath.Join(root, terminationJournalFile)},
-		runActivation: runSupervisedChildWithActivation,
+		runActivation: newSuperviseCommand(nil).runActivation,
 	}
 	err := cmd.Run([]string{
 		"--pane-uid", "pane-1", "--agent-uid", "agent-1", "--generation", "gen-1",
@@ -85,7 +85,7 @@ func TestSupervisedActivationRefusesUnexpectedRegistryShapeBeforeProviderStart(t
 	sideEffect := filepath.Join(root, "provider-started")
 	cmd := &superviseCommand{
 		journal:       terminationJournal{path: filepath.Join(root, terminationJournalFile)},
-		runActivation: runSupervisedChildWithActivation,
+		runActivation: newSuperviseCommand(nil).runActivation,
 	}
 	err := cmd.Run([]string{
 		"--pane-uid", "pane-1", "--agent-uid", "agent-1", "--generation", "gen-1",
@@ -116,7 +116,7 @@ func TestSupervisedShellBypassesAgentAdmissionWithOrWithoutOperationID(t *testin
 			t.Parallel()
 			outcome, err := runSupervisedChildWithActivation(
 				[]string{"sh", "-c", "exit 0"}, "",
-				superviseSpec{PaneUID: "pane-shell", Generation: "gen-shell", OperationID: test.operationID},
+				superviseSpec{PaneUID: "pane-shell", Generation: "gen-shell", OperationID: test.operationID}, nil,
 			)
 			if err != nil || outcome.ExitCode != 0 || outcome.Signal != "" {
 				t.Fatalf("shell compatibility = outcome=%+v err=%v", outcome, err)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -97,10 +98,16 @@ type superviseCommand struct {
 	warn          io.Writer
 }
 
-func newSuperviseCommand() *superviseCommand {
+// newSuperviseCommand wires the production runners. recorder is the
+// operations diagnostics recorder the activation's lease watcher reports a
+// failed native-prompt refresh to; nil records nothing.
+func newSuperviseCommand(recorder *diagnostics.AIRecorder) *superviseCommand {
 	return &superviseCommand{
 		store: newResourceStore(),
-		run:   runSupervisedChild, runActivation: runSupervisedChildWithActivation,
+		run:   runSupervisedChild,
+		runActivation: func(argv []string, argv0 string, spec superviseSpec) (processOutcome, error) {
+			return runSupervisedChildWithActivation(argv, argv0, spec, recorder)
+		},
 		now: time.Now,
 	}
 }

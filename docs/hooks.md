@@ -533,6 +533,17 @@ at each line's type, subtype, and timestamp and whether an assistant line has a
 `tool_use` item. Nothing it reads is stored, logged, or forwarded. See
 [held messages](claude-coordination-endpoints.md#held-while-the-target-awaits-its-operator).
 
+A permission dialog or an elicitation raises its Agent once, so the Agent's
+pane supervisor is a third transcript tail reader. While the Agent's
+interaction is a provider-hook `approval_required` or `input_required`, about
+every ten minutes it reads the same bounded tail of the Agent's own recorded
+`transcript_path`. While the turn has not ended and an assistant `tool_use`
+still has no `tool_result`, it recommits the same interaction, so an open
+dialog does not decay to `unknown` after thirty minutes. It looks only at each
+line's type, subtype, and timestamp, the `tool_use` ids, and the `tool_result`
+`tool_use_id`s. Nothing it reads is stored, logged, or forwarded. A denied or
+dismissed dialog ends the turn, and it stops.
+
 Hook-generated queue rows use the same compact body catalog: agent label,
 event category, then the best available summary (Codex assistant text, Claude
 tool/action summary, transcript summary, error, or teammate labels). Structured
