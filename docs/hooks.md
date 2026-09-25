@@ -1014,7 +1014,13 @@ it does not retroactively change the current shell. Open new panes via tmux
   disabled.
 - **`projmux: <event> hook: ... timed out after 5s`.** Long-running work
   belongs in a backgrounded child (`(slow-thing &) >/dev/null 2>&1`). The hook
-  itself must return within 5s or projmux kills it.
+  itself must return within 5s or projmux kills it. The kill is a SIGKILL
+  sent only to the `sh -c` process projmux started; projmux does not signal
+  that process's group. Whatever that process was running stops with no
+  chance to clean up, so it can leave residue such as a stale
+  `.git/index.lock`, and children or grandchildren it started are not killed
+  and can keep running after the timeout is reported. Remove leftover locks
+  and processes by hand.
 - **`projmux: <event> hook: hook ... exited with status N`.** The script
   returned non-zero. For `pre-create`, creation aborts; for other events,
   projmux logs once and moves on.
