@@ -271,6 +271,46 @@ func TestDeletionRecordUIRouteRecordsEmptyActorEvenInsideAgentPane(t *testing.T)
 	}
 }
 
+// The generated UI Window delete (`prefix &`) records via=ui with an empty
+// actor and judges nothing, even when the ambient Pane is an Agent Pane whose
+// CLI delete of the same Window would name that Agent.
+func TestDeletionRecordUIWindowRouteRecordsEmptyActorEvenInsideAgentPane(t *testing.T) {
+	// Control: the same fixture through the CLI judges the Agent Pane, so the
+	// UI route's empty actor below is its own rule, not an unjudgeable fixture.
+	control, _, controlRunner, controlPath := newDeletionActorDeleteCommand(t)
+	if _, stderr, err := runRoute(t, control, "window", "uid:win-alpha-review", "--yes"); err != nil || stderr != "" {
+		t.Fatalf("cli window delete: err=%v stderr=%q", err, stderr)
+	}
+	if record := onlyDeletionRecord(t, controlPath); record.Via != "cli" || record.Actor.Basis != "pane-chain" || len(controlRunner.calls) != 1 {
+		t.Fatalf("control record = %+v calls = %v", record, controlRunner.calls)
+	}
+
+	cmd, store, runner, path := newDeletionActorDeleteCommand(t)
+	lookup := func() (activeTargetObserver, bool) {
+		return activeTargetObserver{paneID: "%31", windowUID: func() string { return "win-alpha-review" }}, true
+	}
+	var stdout, stderr bytes.Buffer
+	if err := deleteExactWindowThroughCommand(cmd, lookup, &stdout, &stderr); err != nil || stderr.Len() != 0 {
+		t.Fatalf("ui window delete: err=%v stderr=%q", err, stderr.String())
+	}
+	if _, ok := store.registry.Window("win-alpha-review"); ok {
+		t.Fatal("ui window delete kept the Window")
+	}
+	record := onlyDeletionRecord(t, path)
+	if record.Operation != "delete-window" || record.Via != "ui" || record.Actor != (DeletionActor{}) {
+		t.Fatalf("record = %+v", record)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("the UI route must not judge an actor: %v", runner.calls)
+	}
+	if len(record.Targets) != 1 || record.Targets[0].Kind != "Window" || record.Targets[0].UID != "win-alpha-review" {
+		t.Fatalf("targets = %+v", record.Targets)
+	}
+	if got := affectedUIDs(record); !reflect.DeepEqual(got, []string{"Window/win-alpha-review", "Pane/pan-alpha-review"}) {
+		t.Fatalf("affected = %v", got)
+	}
+}
+
 // Acceptance 4 (prune agent): one via=prune line listing every pruned Agent.
 func TestDeletionRecordPruneAgentRecordsEveryPrunedTarget(t *testing.T) {
 	store := newPruneAgentFakeStore(t)

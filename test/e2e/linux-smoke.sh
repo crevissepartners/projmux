@@ -50,6 +50,62 @@ e2e_bounded_reconcile_to_noop() {
   smoke_bounded_fixed_point "$report_prefix" "$@"
 }
 
+# e2e_deletion_record_count prints how many records <state>/projmux's
+# deletion-records.jsonl holds, 0 before the first one. Each record is framed by
+# a leading newline, so only non-empty lines count.
+e2e_deletion_record_count() {
+  if [[ ! -f "$1" ]]; then
+    printf '0\n'
+    return
+  fi
+  grep -c . "$1" || true
+}
+
+# e2e_assert_new_deletion_record FILE BEFORE OPERATION VIA AGENT PANE BASIS
+# TARGET AFFECTED... requires exactly one record after the first BEFORE, with
+# that operation, via, and actor, TARGET among its target uids, and exactly the
+# AFFECTED kind/uid set. A failure prints every new line whole.
+e2e_assert_new_deletion_record() {
+  python3 - "$@" <<'DELETION_RECORD'
+import json
+import sys
+
+path, before, operation, via, agent, pane, basis, target = sys.argv[1:9]
+want_affected = sorted(sys.argv[9:])
+try:
+    with open(path, encoding="utf-8") as records:
+        lines = [line for line in records.read().splitlines() if line.strip()]
+except FileNotFoundError:
+    lines = []
+new = lines[int(before):]
+
+
+def fail(reason):
+    sys.stderr.write(f"deletion record: {reason}; new lines after {before} in {path}:\n")
+    for line in new:
+        sys.stderr.write(line + "\n")
+    sys.exit(1)
+
+
+if len(new) != 1:
+    fail(f"want exactly 1 new line, got {len(new)}")
+try:
+    record = json.loads(new[0])
+except ValueError:
+    fail("the new line is not JSON")
+if record.get("schemaVersion") != 1 or record.get("operation") != operation or record.get("via") != via:
+    fail(f"want operation={operation} via={via}")
+want_actor = {"agentUID": agent, "paneUID": pane, "basis": basis}
+if record.get("actor") != want_actor:
+    fail(f"want actor {json.dumps(want_actor)}")
+if target not in [item.get("uid") for item in record.get("targets", [])]:
+    fail(f"targets lack {target}")
+affected = sorted(f"{item.get('kind')}/{item.get('uid')}" for item in record.get("affected", []) if item.get("action") == "deleted")
+if affected != want_affected or len(affected) != len(record.get("affected", [])):
+    fail(f"want affected {want_affected}")
+DELETION_RECORD
+}
+
 if smoke_linux_shard_enabled bootstrap-interactive; then
 if smoke_linux_scenario_enabled L01; then
 smoke_contract_begin L01 bootstrap harness
@@ -4342,6 +4398,101 @@ delete_await_controller_observed_idle managed-agent-delete
 delete_live_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
 delete_live_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_live_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_live_agent_pane" @projmux_pane_uid)"
+
+# A detached daemon's deletion is never the Agent's. The fake Codex fixture's
+# detached-daemon shape starts a daemon in a new session, and its launcher
+# exits so the daemon is reparented out of the launcher's tree, the shape of a
+# Codex app-server daemon that outlives the command that spawned it. The daemon
+# runs the real `projmux delete pane --yes` on the explicit socket as its child
+# and records its own process tree. With no ambient Pane the actor is empty
+# with an empty basis; with the live Agent Pane's own TMUX/TMUX_PANE (read from
+# that Pane's process environment) the pane chain is judged up to the process
+# step and stops at not-pane-descendant, never at the Agent. Each shape deletes
+# only a shell Pane it created.
+delete_daemon_fixture="$delete_root/daemon-bin/codex"
+go build -o "$delete_daemon_fixture" ./test/e2e/fake_codex_appserver_fixture.go
+delete_deletion_records="$delete_root/state/projmux/deletion-records.jsonl"
+delete_live_agent_pane_pid="$(delete_tmux display-message -p -t "$delete_live_agent_pane" '#{pane_pid}')"
+delete_live_agent_pane_env() {
+  tr '\0' '\n' <"/proc/$delete_live_agent_pane_pid/environ" | sed -n "s/^$1=//p"
+}
+delete_daemon_pane_tmux="$(delete_live_agent_pane_env TMUX)"
+delete_daemon_pane_tmux_pane="$(delete_live_agent_pane_env TMUX_PANE)"
+if [[ "$delete_daemon_pane_tmux" != "$delete_socket_path,$delete_server_pid,"* ||
+  "$delete_daemon_pane_tmux_pane" != "$delete_live_agent_pane" ]]; then
+  echo "live Agent Pane environment does not name its own server and Pane: TMUX=$delete_daemon_pane_tmux TMUX_PANE=$delete_daemon_pane_tmux_pane" >&2
+  exit 1
+fi
+delete_daemon_evidence_ready() {
+  [[ -f "$1/daemon.json" ]]
+}
+# delete_daemon_delete SHAPE BASIS ENV... deletes one fresh shell Pane through
+# the detached daemon, whose environment is delete_pmx's plus ENV.
+delete_daemon_delete() {
+  local shape="$1" basis="$2" evidence="$delete_root/daemon-$1" victim victim_uid records_before
+  shift 2
+  mkdir -p "$evidence"
+  victim="$(delete_pmx create pane --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id -- sleep 600)"
+  victim_uid="$(delete_tmux show-options -pqv -t "$victim" @projmux_pane_uid)"
+  if [[ -z "$victim_uid" ]]; then
+    echo "detached daemon $shape fixture Pane has no Registry identity: $victim" >&2
+    exit 1
+  fi
+  delete_await_controller_observed_idle "detached-daemon-$shape-create"
+  records_before="$(e2e_deletion_record_count "$delete_deletion_records")"
+  env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE \
+    HOME="$delete_root/home" \
+    XDG_CONFIG_HOME="$delete_root/config" \
+    XDG_STATE_HOME="$delete_root/state" \
+    XDG_RUNTIME_DIR="$delete_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$delete_root/work" \
+    TMUX_TMPDIR="$delete_root/tmux" \
+    PATH="$delete_shim:$PATH" \
+    SHELL=/bin/sh \
+    "$@" \
+    "$delete_daemon_fixture" app-server detached-daemon "$evidence" "$bin" \
+    delete pane "uid:$victim_uid" --yes --socket "$delete_socket"
+  if ! smoke_wait_until 10 "detached daemon $shape delete" delete_daemon_evidence_ready "$evidence"; then
+    cat "$evidence/delete.err" >&2 2>/dev/null || true
+    exit 1
+  fi
+  # The tree is real: the daemon leads its own session, its launcher is gone
+  # from its ancestry, and neither the Agent Pane's process nor the tmux server
+  # is an ancestor of the daemon, and so of its delete child.
+  python3 - "$evidence/daemon.json" "$delete_live_agent_pane_pid" "$delete_server_pid" "$shape" <<'DAEMON_TREE'
+import json
+import sys
+
+path, pane_pid, server_pid, shape = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+with open(path, encoding="utf-8") as evidence_file:
+    evidence = json.load(evidence_file)
+tree = [evidence["pid"], *evidence["ancestors"]]
+problems = []
+if evidence["sid"] != evidence["pid"]:
+    problems.append("daemon does not lead its own session")
+if evidence["ppid"] == evidence["launcherPID"] or evidence["launcherPID"] in tree:
+    problems.append("daemon was not reparented away from its launcher")
+if pane_pid in tree or server_pid in tree:
+    problems.append("daemon descends from the Agent Pane or the tmux server")
+if evidence["childExit"] != 0 or evidence["childPID"] <= 0:
+    problems.append("the delete child failed")
+if evidence["anchorPane"] != "":
+    problems.append("daemon inherited a private runtime anchor")
+if problems:
+    sys.exit(f"detached daemon {shape}: {'; '.join(problems)}: {json.dumps(evidence)}")
+DAEMON_TREE
+  e2e_assert_new_deletion_record "$delete_deletion_records" "$records_before" \
+    delete-pane cli "" "" "$basis" "$victim_uid" "Pane/$victim_uid"
+  delete_await_controller_observed_idle "detached-daemon-$shape-delete"
+  delete_daemon_last_evidence="$evidence/daemon.json"
+}
+# (a) No TMUX, TMUX_PANE, or private anchor anywhere in the daemon's tree.
+delete_daemon_delete no-ambient ""
+smoke_assert_file_contains "$delete_daemon_last_evidence" '"tmuxSet":false,"tmuxPane":""'
+# (b) The Agent Pane's TMUX and TMUX_PANE, inherited without its process tree.
+delete_daemon_delete agent-pane-env not-pane-descendant \
+  TMUX="$delete_daemon_pane_tmux" TMUX_PANE="$delete_daemon_pane_tmux_pane"
+smoke_assert_file_contains "$delete_daemon_last_evidence" "\"tmuxSet\":true,\"tmuxPane\":\"$delete_live_agent_pane\""
 delete_offline_pane="$(delete_pmx create pane --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id -- sleep 600)"
 delete_offline_pane_uid="$(delete_tmux show-options -pqv -t "$delete_offline_pane" @projmux_pane_uid)"
 if [[ "$(delete_tmux show-options -gqv @projmux_app)" != "1" ]]; then
@@ -10478,6 +10629,9 @@ menu_refocus_origin() {
   menu_tmux select-window -t "$menu_origin_pane"
   menu_tmux select-pane -t "$menu_origin_pane"
 }
+# Each confirmed managed close key is one explicit deletion: exactly one new
+# deletion record, via=ui, with an actor that is never judged.
+menu_deletion_records="$menu_root/state/projmux/deletion-records.jsonl"
 
 # 5a. Managed Pane: prefix x asks first, then deletes through the Pane menu Kill
 #     route.
@@ -10487,6 +10641,7 @@ menu_close_pane="$(menu_new_pane_except "$menu_origin_pane")"
 smoke_wait_for "close-key managed Pane Registry identity" menu_pane_is_managed "$menu_close_pane"
 menu_close_pane_uid="$(menu_tmux show-options -pqv -t "$menu_close_pane" @projmux_pane_uid)"
 menu_tmux select-pane -t "$menu_close_pane"
+menu_close_records_before="$(e2e_deletion_record_count "$menu_deletion_records")"
 menu_close_offset="$(stat -c %s "$menu_client_log")"
 menu_press C-b x
 smoke_wait_for "managed prefix x confirmation prompt" menu_client_saw "$menu_close_offset" "Registry"
@@ -10496,6 +10651,9 @@ if ! menu_pane_is_managed "$menu_close_pane"; then
 fi
 menu_press y
 smoke_wait_for "managed prefix x canonical delete" menu_delete_converged "$menu_close_pane_uid" "$menu_close_offset" 1
+# The record is durable before the result line the convergence wait read.
+e2e_assert_new_deletion_record "$menu_deletion_records" "$menu_close_records_before" \
+  delete-pane ui "" "" "" "$menu_close_pane_uid" "Pane/$menu_close_pane_uid"
 menu_refocus_origin
 
 # 5b. Unmanaged Pane: tmux's stock prompt and kill, and no Registry resource
@@ -10545,11 +10703,17 @@ menu_window_delete_converged() {
   menu_window_absent "$menu_close_window"
 }
 menu_tmux select-window -t "$menu_close_window"
+menu_close_records_before="$(e2e_deletion_record_count "$menu_deletion_records")"
 menu_close_offset="$(stat -c %s "$menu_client_log")"
 menu_press C-b '&'
 smoke_wait_for "managed prefix & confirmation prompt" menu_client_saw "$menu_close_offset" "Registry"
 menu_press y
 smoke_wait_for "managed prefix & canonical delete" menu_window_delete_converged "$menu_close_offset"
+# The shell-launch Window holds exactly one Pane and no Agent, so the cascade
+# is the Window and that Pane.
+e2e_assert_new_deletion_record "$menu_deletion_records" "$menu_close_records_before" \
+  delete-window ui "" "" "" "$menu_close_window_uid" \
+  "Window/$menu_close_window_uid" "Pane/$menu_close_window_pane_uid"
 menu_refocus_origin
 
 # 5d. A Window whose mirror names no Registry Window: the canonical route

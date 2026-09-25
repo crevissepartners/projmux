@@ -1,6 +1,8 @@
 // Command fake_codex_appserver_fixture is an offline Codex app-server fixture
 // used only by the lifecycle E2E smoke. It implements the read-only daemon
 // version probe and minimum proxy surface needed for native lifecycle coverage.
+// The canonical-delete smoke also uses its detached-daemon shape: a daemon that
+// leaves its launcher's session and process tree and runs one projmux delete.
 package main
 
 import (
@@ -16,8 +18,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -48,6 +52,8 @@ const (
 	fixtureCommandControlServer
 	fixtureCommandDialogueBind
 	fixtureCommandDialogueAgent
+	fixtureCommandDetachedDaemon
+	fixtureCommandDetachedDaemonServe
 )
 
 func main() {
@@ -63,6 +69,10 @@ func main() {
 		err = bindDialogueAgentRoute(os.Args[2:])
 	case fixtureCommandDialogueAgent:
 		err = waitForDialogueAgentExit()
+	case fixtureCommandDetachedDaemon:
+		err = launchDetachedDaemon(os.Args[3:])
+	case fixtureCommandDetachedDaemonServe:
+		err = serveDetachedDaemon(os.Args[3:])
 	default:
 		fmt.Fprintln(os.Stderr, "unsupported fake Codex command")
 		os.Exit(2)
@@ -82,6 +92,14 @@ func classifyFixtureCommand(args []string) fixtureCommand {
 	}
 	if len(args) == 2 && args[0] == "app-server" && args[1] == "fixture-control" {
 		return fixtureCommandControlServer
+	}
+	// <evidence-dir> <projmux> delete <args...>
+	if len(args) >= 6 && args[0] == "app-server" && args[1] == "detached-daemon" && args[4] == "delete" {
+		return fixtureCommandDetachedDaemon
+	}
+	// <launcher-pid> <evidence-dir> <projmux> delete <args...>
+	if len(args) >= 7 && args[0] == "app-server" && args[1] == "detached-daemon-serve" && args[5] == "delete" {
+		return fixtureCommandDetachedDaemonServe
 	}
 	if dialogueFixtureProfile() {
 		if len(args) == 5 && args[0] == "dialogue-bind" {
@@ -821,4 +839,191 @@ func readClientFrame(reader *bufio.Reader) ([]byte, byte, error) {
 		payload[index] ^= mask[index%len(mask)]
 	}
 	return payload, opcode, nil
+}
+
+// detachedDaemonEvidence is what the detached daemon observed about its own
+// place in the process tree, and what its one delete child returned. The smoke
+// reads it next to the deletion record that child wrote.
+type detachedDaemonEvidence struct {
+	PID         int   `json:"pid"`
+	SID         int   `json:"sid"`
+	PPID        int   `json:"ppid"`
+	LauncherPID int   `json:"launcherPID"`
+	Ancestors   []int `json:"ancestors"`
+	ChildPID    int   `json:"childPID"`
+	ChildExit   int   `json:"childExit"`
+	// Env reports only which ambient tmux names the daemon, and so its child,
+	// inherited.
+	TMUXSet    bool   `json:"tmuxSet"`
+	TMUXPane   string `json:"tmuxPane"`
+	AnchorPane string `json:"anchorPane"`
+}
+
+// detachedDaemonDir confines the evidence directory to an existing directory
+// under the isolated smoke root.
+func detachedDaemonDir(raw string) (string, error) {
+	smokeRoot := strings.TrimSpace(os.Getenv("PROJMUX_SMOKE_WORKDIR"))
+	if smokeRoot == "" || !filepath.IsAbs(smokeRoot) {
+		return "", errors.New("PROJMUX_SMOKE_WORKDIR must be absolute")
+	}
+	dir := filepath.Clean(raw)
+	if !filepath.IsAbs(raw) || dir != raw || !strings.HasPrefix(dir, filepath.Clean(smokeRoot)+string(filepath.Separator)) {
+		return "", errors.New("detached daemon evidence dir must be an exact path under PROJMUX_SMOKE_WORKDIR")
+	}
+	info, err := os.Stat(dir) // #nosec G703 -- confined to the isolated smoke root above.
+	if err != nil || !info.IsDir() {
+		return "", errors.New("detached daemon evidence dir must exist")
+	}
+	return dir, nil
+}
+
+// launchDetachedDaemon starts the daemon in a new session and returns without
+// waiting for it, so the daemon is reparented away from whatever started this
+// launcher -- the shape of a Codex app-server daemon that outlives the command
+// that spawned it. args are <evidence-dir> <projmux> delete <args...>.
+func launchDetachedDaemon(args []string) error {
+	if _, err := detachedDaemonDir(args[0]); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(args[1]) {
+		return errors.New("detached daemon projmux binary must be absolute")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	serveArgs := append([]string{"app-server", "detached-daemon-serve", strconv.Itoa(os.Getpid())}, args...)
+	// #nosec G204 G702 -- re-executes this fixture binary itself with the
+	// classified detached-daemon-serve argv; no shell.
+	daemon := exec.Command(self, serveArgs...)
+	// Setsid leaves the launcher's session and controlling terminal; the
+	// launcher's exit below leaves its process tree. The environment is the
+	// launcher's own, unchanged: the smoke chooses what tmux names it inherits.
+	daemon.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := daemon.Start(); err != nil {
+		return err
+	}
+	return daemon.Process.Release()
+}
+
+// serveDetachedDaemon waits to be reparented, records its process tree, runs
+// the one projmux delete as its child, and writes the evidence. args are
+// <launcher-pid> <evidence-dir> <projmux> delete <args...>.
+func serveDetachedDaemon(args []string) error {
+	launcher, err := strconv.Atoi(args[0])
+	if err != nil || launcher <= 1 {
+		return errors.New("detached daemon launcher pid is invalid")
+	}
+	dir, err := detachedDaemonDir(args[1])
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for os.Getppid() == launcher {
+		if time.Now().After(deadline) {
+			return errors.New("detached daemon was never reparented away from its launcher")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_, sid, err := processStat(os.Getpid())
+	if err != nil {
+		return err
+	}
+	evidence := detachedDaemonEvidence{
+		PID: os.Getpid(), SID: sid, PPID: os.Getppid(), LauncherPID: launcher,
+		Ancestors: processParentChain(os.Getppid()), ChildExit: -1,
+		TMUXPane: os.Getenv("TMUX_PANE"), AnchorPane: os.Getenv("__PROJMUX_RUNTIME_ANCHOR_PANE"),
+	}
+	_, evidence.TMUXSet = os.LookupEnv("TMUX")
+	// #nosec G304 G703 -- fixed leaves under the confined evidence dir.
+	stdout, err := os.Create(filepath.Join(dir, "delete.out"))
+	if err != nil {
+		return err
+	}
+	defer stdout.Close()
+	// #nosec G304 G703 -- fixed leaves under the confined evidence dir.
+	stderr, err := os.Create(filepath.Join(dir, "delete.err"))
+	if err != nil {
+		return err
+	}
+	defer stderr.Close()
+	// #nosec G204 G702 -- the harness-selected absolute projmux binary, run
+	// only with the classified `delete` argv; no shell.
+	child := exec.Command(args[2], args[3:]...)
+	child.Stdout, child.Stderr = stdout, stderr
+	if err := child.Start(); err != nil {
+		return err
+	}
+	evidence.ChildPID = child.Process.Pid
+	var exitErr *exec.ExitError
+	switch err := child.Wait(); {
+	case err == nil:
+		evidence.ChildExit = 0
+	case errors.As(err, &exitErr):
+		evidence.ChildExit = exitErr.ExitCode()
+	default:
+		return err
+	}
+	body, err := json.Marshal(evidence)
+	if err != nil {
+		return err
+	}
+	// The complete evidence appears by rename, so the smoke never reads a
+	// partial file.
+	partial := filepath.Join(dir, "daemon.json.partial")
+	// #nosec G304 G703 -- fixed leaves under the confined evidence dir.
+	if err := os.WriteFile(partial, append(body, '\n'), 0o600); err != nil {
+		return err
+	}
+	// #nosec G703 -- fixed leaves under the confined evidence dir.
+	return os.Rename(partial, filepath.Join(dir, "daemon.json"))
+}
+
+// processParentChain lists pid and each of its ancestors, ending at the first
+// pid whose parent is 0 or 1 (1 itself is included when reached).
+func processParentChain(pid int) []int {
+	chain := []int{}
+	for range 64 {
+		if pid <= 0 {
+			break
+		}
+		chain = append(chain, pid)
+		parent, _, err := processStat(pid)
+		if err != nil || parent <= 0 || parent == pid {
+			break
+		}
+		pid = parent
+	}
+	return chain
+}
+
+// processStat reads the parent pid and session id from /proc/<pid>/stat. The
+// command name may hold spaces and parentheses, so the fields are read after
+// the last ')': state, ppid, pgrp, session.
+func processStat(pid int) (int, int, error) {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat") // #nosec G304 G703 -- fixed procfs leaf of a numeric pid.
+	if err != nil {
+		return 0, 0, err
+	}
+	return parseProcessStat(string(raw))
+}
+
+func parseProcessStat(stat string) (int, int, error) {
+	end := strings.LastIndexByte(stat, ')')
+	if end < 0 {
+		return 0, 0, errors.New("malformed /proc stat")
+	}
+	fields := strings.Fields(stat[end+1:])
+	if len(fields) < 4 {
+		return 0, 0, errors.New("malformed /proc stat")
+	}
+	parent, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	session, err := strconv.Atoi(fields[3])
+	if err != nil {
+		return 0, 0, err
+	}
+	return parent, session, nil
 }

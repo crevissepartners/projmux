@@ -18,6 +18,11 @@ func TestClassifyFixtureCommandUsesExactReadOnlyArgv(t *testing.T) {
 		{args: []string{"app-server", "daemon", "version"}, want: fixtureCommandDaemonVersion},
 		{args: []string{"app-server", "daemon", "restart"}, want: fixtureCommandUnknown},
 		{args: []string{"app-server", "proxy", "extra"}, want: fixtureCommandUnknown},
+		{args: []string{"app-server", "detached-daemon", "/w/e", "/bin/projmux", "delete", "pane"}, want: fixtureCommandDetachedDaemon},
+		{args: []string{"app-server", "detached-daemon", "/w/e", "/bin/projmux", "create", "pane"}, want: fixtureCommandUnknown},
+		{args: []string{"app-server", "detached-daemon", "/w/e", "/bin/projmux", "delete"}, want: fixtureCommandUnknown},
+		{args: []string{"app-server", "detached-daemon-serve", "42", "/w/e", "/bin/projmux", "delete", "pane"}, want: fixtureCommandDetachedDaemonServe},
+		{args: []string{"app-server", "detached-daemon-serve", "42", "/w/e", "/bin/projmux", "get", "pane"}, want: fixtureCommandUnknown},
 		{args: nil, want: fixtureCommandUnknown},
 	}
 	for _, test := range tests {
@@ -149,5 +154,15 @@ func TestFixtureFrameHeaderCheckedLengths(t *testing.T) {
 		if !bytes.Equal(got, test.want) {
 			t.Errorf("length %d header = %v, want %v", test.length, got, test.want)
 		}
+	}
+}
+
+func TestParseProcessStatReadsAfterTheLastParen(t *testing.T) {
+	parent, session, err := parseProcessStat("4242 (a) b (c)) S 17 4242 4242 0 -1 4194560")
+	if err != nil || parent != 17 || session != 4242 {
+		t.Fatalf("parseProcessStat = %d %d %v", parent, session, err)
+	}
+	if _, _, err := parseProcessStat("4242 (truncated"); err == nil {
+		t.Fatal("a stat line without its command terminator parsed")
 	}
 }
