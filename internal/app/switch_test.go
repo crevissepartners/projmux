@@ -1668,9 +1668,10 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		args []string
-		want string
+		name  string
+		args  []string
+		want  string
+		usage bool
 	}{
 		{
 			name: "invalid ui",
@@ -1678,9 +1679,10 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 			want: "invalid --ui value",
 		},
 		{
-			name: "positional args",
-			args: []string{"extra"},
-			want: "switch does not accept positional arguments",
+			name:  "positional args",
+			args:  []string{"extra"},
+			want:  "switch does not accept positional arguments",
+			usage: true,
 		},
 	}
 
@@ -1705,6 +1707,14 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
+			}
+			if tt.usage {
+				if !IsUsageError(err) {
+					t.Fatalf("error = %v (%T), want usage error (exit 2)", err, err)
+				}
+				if got := err.Error(); got != tt.want {
+					t.Fatalf("error = %q, want exactly %q", got, tt.want)
+				}
 			}
 			if !strings.Contains(stderr.String(), "Usage:") {
 				t.Fatalf("stderr = %q, want usage text", stderr.String())

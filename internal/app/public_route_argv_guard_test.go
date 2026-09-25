@@ -120,8 +120,6 @@ type publicRouteArgvGuardRow struct {
 const (
 	publicRouteArgvOperandReason = "synopsis declares a positional operand; validating its value is out of scope"
 
-	publicRouteArgvSwitchReason = "catalog synopsis `projmux switch [<project>]` promises an operand but the handler refuses it with exit 1; accepting the argument vs fixing the synopsis is an open product/help decision (Epic owner ruling O-3, Backlog 241), so this guard records it instead of changing behavior"
-
 	publicRouteArgvHelpReason = "root policy: `projmux help [anything]` prints the primary listing and exits 0 (internal/cli/root.go SetHelpCommand; docs/cli-guide.md Help boundary: `projmux help` keeps printing the top-level list)"
 )
 
@@ -214,7 +212,6 @@ func publicRouteArgvGuardOperandRows() []publicRouteArgvGuardRow {
 func publicRouteArgvGuardSpecialRows() []publicRouteArgvGuardRow {
 	return []publicRouteArgvGuardRow{
 		// Behavior rows (executed; stale once the probe exits 2).
-		{route: "switch", form: publicRouteArgvFormOperand, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvSwitchReason},
 		{route: "help", form: publicRouteArgvFormUnknownFlag, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvHelpReason},
 		{route: "help", form: publicRouteArgvFormOperand, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvHelpReason},
 
