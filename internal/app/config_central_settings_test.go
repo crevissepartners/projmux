@@ -206,7 +206,7 @@ func TestConfigCentralSettingsRejectInvalidWithoutWriting(t *testing.T) {
 		usage bool
 		want  string
 	}{
-		{name: "unsupported locale", args: []string{"locale", "--set", "fr-FR"}, want: "unsupported locale setting: fr-FR"},
+		{name: "unsupported locale", args: []string{"locale", "--set", "fr-FR"}, usage: true, want: "unsupported locale setting: fr-FR"},
 		{name: "empty locale", args: []string{"locale", "--set="}, usage: true, want: "config locale --set requires a locale setting"},
 		{name: "locale positional", args: []string{"locale", "ko-KR"}, usage: true, want: "config locale does not accept positional arguments: ko-KR"},
 		{name: "unknown answering way", args: []string{"agent-questions", "--answering", "codex"}, usage: true, want: `config agent-questions --answering: unknown way "codex"; known ways: claude, projmux`},
@@ -253,6 +253,26 @@ func TestConfigCentralSettingsRejectInvalidWithoutWriting(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestConfigLocaleWriteFailureIsNotUsageError pins that a valid locale whose
+// config directory cannot be created fails as a runtime error, not a usage
+// error: only the value check marks usage.
+func TestConfigLocaleWriteFailureIsNotUsageError(t *testing.T) {
+	t.Parallel()
+
+	cmd := centralSettingsTestCommand(t)
+	configToml, _ := centralSettingsFiles(t, cmd)
+	// A regular file where the config directory belongs blocks its creation.
+	seedCentralSettingsFile(t, filepath.Dir(configToml), "not a directory\n")
+
+	_, _, err := runRoute(t, cmd, "locale", "--set", "ko-KR")
+	if err == nil {
+		t.Fatal("config locale --set ko-KR succeeded, want a write error")
+	}
+	if IsUsageError(err) {
+		t.Fatalf("config locale --set ko-KR write error is a usage error: %v", err)
 	}
 }
 

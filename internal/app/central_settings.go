@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -35,13 +34,14 @@ func loadCentralLocaleSetting(homeDir func() (string, error), lookupEnv func(str
 }
 
 // saveCentralLocale validates value before touching any file, then stores it
-// as `[ui] locale`. It returns the trimmed value it saved.
+// as `[ui] locale`. It returns the trimmed value it saved. An unsupported value
+// is a usage error; path and write failures are not.
 func saveCentralLocale(homeDir func() (string, error), lookupEnv func(string) string, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	switch value {
 	case i18n.LocaleSettingAuto, string(i18n.FallbackLocale), "ko-KR":
 	default:
-		return "", fmt.Errorf("unsupported locale setting: %s", value)
+		return "", usageError("unsupported locale setting: " + value)
 	}
 	path, err := hooks.GlobalConfigPath(lookupEnv, homeDir)
 	if err != nil {
