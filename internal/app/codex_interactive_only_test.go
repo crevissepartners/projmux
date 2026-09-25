@@ -184,22 +184,26 @@ func TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent(t *
 				t.Fatalf("create %s advertises a Codex-only flag: %v", name, child.Usage)
 			}
 		}
-		var agentLine, codexLine, otherProviderLine string
+		var agentLine, codexLine, claudeLine, antigravityLine string
 		for _, line := range create.Usage {
 			switch {
 			case strings.HasPrefix(line, "projmux create agent "):
 				agentLine = line
 			case strings.HasPrefix(line, "projmux create codex "):
 				codexLine = line
-			case strings.HasPrefix(line, "projmux create claude|antigravity "):
-				otherProviderLine = line
+			case strings.HasPrefix(line, "projmux create claude "):
+				claudeLine = line
+			case strings.HasPrefix(line, "projmux create antigravity "):
+				antigravityLine = line
 			}
 		}
 		if !strings.Contains(agentLine, "--interactive-only") || !strings.Contains(codexLine, "--interactive-only") {
 			t.Fatalf("top-level create usage lines = %v", create.Usage)
 		}
-		if otherProviderLine == "" || strings.Contains(otherProviderLine, "--interactive-only") {
-			t.Fatalf("top-level non-Codex shortcut line = %q", otherProviderLine)
+		for _, line := range []string{claudeLine, antigravityLine} {
+			if line == "" || strings.Contains(line, "--interactive-only") {
+				t.Fatalf("top-level non-Codex shortcut line = %q in %v", line, create.Usage)
+			}
 		}
 	})
 

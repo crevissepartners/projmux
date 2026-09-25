@@ -160,11 +160,20 @@ func usageVerbRun(usage string) []string {
 	return append(run, strings.Join(leads, "|"))
 }
 
+// routeVerbPinnedPositions are verb positions that stay qualified although no
+// line spells them as an alternation. create's Usage copies each child's line
+// verbatim (internal/cli TestParentUsageLinesCopyTheChildLine), so its kinds
+// and provider shortcuts are only ever spelled one per line.
+var routeVerbPinnedPositions = []string{"create"}
+
 // routeVerbPositions returns, per qualified verb position, the verbs the lines
 // spell there and the routes those lines belong to.
-func routeVerbPositions(lines []routeVerbUsageLine) map[string]*routeVerbUsage {
-	// A position is qualified by any alternation token in a run.
+func routeVerbPositions(lines []routeVerbUsageLine, pinned ...string) map[string]*routeVerbUsage {
+	// A position is qualified by any alternation token in a run, or by a pin.
 	positions := map[string]*routeVerbUsage{}
+	for _, position := range pinned {
+		positions[position] = &routeVerbUsage{verbs: map[string]bool{}, sources: map[string]bool{}}
+	}
 	for _, line := range lines {
 		for i, tok := range line.run {
 			if strings.Contains(tok, "|") {
@@ -208,7 +217,7 @@ func catalogRouteVerbUsage(t *testing.T) map[string]*routeVerbUsage {
 		}
 	}
 	walk(cli.Routes(), nil)
-	return routeVerbPositions(lines)
+	return routeVerbPositions(lines, routeVerbPinnedPositions...)
 }
 
 // dispatcherVerbs returns the verbs d dispatches: table() for a lookup, else
