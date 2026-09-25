@@ -1112,7 +1112,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 			return []byte("dev\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_current_path}"}):
 			return []byte(work + "\n"), nil
-		case reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}):
+		case reflect.DeepEqual(args, []string{"list-clients", "-F", visibleClientPaneFormat}):
 			return []byte("%99\n"), nil
 		}
 		return nil, os.ErrNotExist
@@ -1202,7 +1202,7 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 			return []byte("dev\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "#{pane_current_path}"}):
 			return []byte(work + "\n"), nil
-		case reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}):
+		case reflect.DeepEqual(args, []string{"list-clients", "-F", visibleClientPaneFormat}):
 			return []byte("%99\n"), nil
 		}
 		return nil, os.ErrNotExist
@@ -1298,7 +1298,7 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			return []byte("dev\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%2", "#{pane_current_path}"}):
 			return []byte(work + "\n"), nil
-		case reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}):
+		case reflect.DeepEqual(args, []string{"list-clients", "-F", visibleClientPaneFormat}):
 			return []byte("%99\n"), nil
 		}
 		return nil, os.ErrNotExist
@@ -1414,7 +1414,7 @@ func TestAIStatusSetWaitingAcksVisiblePane(t *testing.T) {
 		if row, ok := testAIPaneRouteProbe(name, args); ok {
 			return row, nil
 		}
-		if name == "tmux" && reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-clients", "-F", visibleClientPaneFormat}) {
 			return []byte("%15\n"), nil
 		}
 		return []byte("\n"), nil
@@ -1451,7 +1451,7 @@ func TestAIStatusSetWaitingDoesNotAckWhenNoClientViewingPane(t *testing.T) {
 		if row, ok := testAIPaneRouteProbe(name, args); ok {
 			return row, nil
 		}
-		if name == "tmux" && reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-clients", "-F", visibleClientPaneFormat}) {
 			return []byte("%99\n"), nil
 		}
 		return []byte("\n"), nil
@@ -1495,7 +1495,7 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
-		if reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}) {
+		if reflect.DeepEqual(args, []string{"list-clients", "-F", visibleClientPaneFormat}) {
 			return []byte("%21\n"), nil
 		}
 		if len(args) >= 5 && args[0] == "display-message" && args[1] == "-p" && args[2] == "-t" && args[3] == "%21" {

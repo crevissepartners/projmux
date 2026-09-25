@@ -3117,20 +3117,16 @@ func (c *aiCommand) readTmuxPaneOption(paneID, option string) string {
 }
 
 // paneVisibleToClient mirrors attentionCommand.paneVisibleToClient: a pane is
-// only "visible" when some attached client's #{client_active_pane} matches it.
+// only "visible" when it is the active pane of some attached client's current
+// window, which list-clients reports as #{pane_id} (visibleClientPaneFormat).
 // pane_active alone is true even when every client has moved to a different
 // window or session, which made the auto-ack silently swallow reply pings.
 func (c *aiCommand) paneVisibleToClient(paneID string) bool {
-	output, err := c.read("tmux", "list-clients", "-F", "#{client_active_pane}")
+	output, err := c.read("tmux", "list-clients", "-F", visibleClientPaneFormat)
 	if err != nil {
 		return false
 	}
-	for line := range strings.SplitSeq(strings.TrimRight(string(output), "\r\n"), "\n") {
-		if strings.TrimSpace(line) == paneID {
-			return true
-		}
-	}
-	return false
+	return listClientsShowPane(output, paneID)
 }
 
 func (c *aiCommand) duplicateAINotificationRecent(paneID, key string) bool {

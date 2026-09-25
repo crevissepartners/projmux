@@ -377,21 +377,36 @@ func (c *attentionCommand) paneAttentionState(paneID string) string {
 	return c.paneOption(paneID, attentionStateOption)
 }
 
-// paneVisibleToClient reports whether some attached tmux client is currently
-// viewing paneID. The naive #{pane_active} check is wrong here: a pane stays
-// pane_active=1 even when every client has switched to a different window or
-// session, which caused auto-ack to silently swallow reply notifications.
-func (c *attentionCommand) paneVisibleToClient(paneID string) bool {
-	output, err := c.run("tmux", "list-clients", "-F", "#{client_active_pane}")
-	if err != nil {
-		return false
-	}
+// visibleClientPaneFormat is the list-clients format both paneVisibleToClient
+// methods read. In list-clients context #{pane_id} expands to the active pane
+// of each attached client's current window. tmux has no
+// #{client_active_pane}; an unknown name expands to nothing, which once made
+// every pane read as unseen.
+const visibleClientPaneFormat = "#{pane_id}"
+
+// listClientsShowPane reports whether a line of list-clients output written
+// with visibleClientPaneFormat names paneID.
+func listClientsShowPane(output []byte, paneID string) bool {
 	for line := range strings.SplitSeq(strings.TrimRight(string(output), "\r\n"), "\n") {
 		if strings.TrimSpace(line) == paneID {
 			return true
 		}
 	}
 	return false
+}
+
+// paneVisibleToClient reports whether some attached tmux client is currently
+// viewing paneID: whether it is the active pane of some client's current
+// window (visibleClientPaneFormat). The naive #{pane_active} check is wrong
+// here: a pane stays pane_active=1 even when every client has switched to a
+// different window or session, which caused auto-ack to silently swallow
+// reply notifications.
+func (c *attentionCommand) paneVisibleToClient(paneID string) bool {
+	output, err := c.run("tmux", "list-clients", "-F", visibleClientPaneFormat)
+	if err != nil {
+		return false
+	}
+	return listClientsShowPane(output, paneID)
 }
 
 func (c *attentionCommand) paneOption(paneID, option string) string {
