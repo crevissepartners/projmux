@@ -25,12 +25,7 @@ const flagShapedWindowNameRealTmuxEnv = "PMX_TEST_FLAG_NAME_REAL_TMUX"
 // set-option option name as values, so a Registry-valid name spelled like a
 // tmux flag must land verbatim in both #{window_name} and the mirror.
 func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		if os.Getenv(flagShapedWindowNameRealTmuxEnv) == "1" {
-			t.Fatalf("%s=1 requires tmux: %v", flagShapedWindowNameRealTmuxEnv, err)
-		}
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t, flagShapedWindowNameRealTmuxEnv)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	root, err := os.MkdirTemp("", "pfn-")

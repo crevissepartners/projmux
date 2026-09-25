@@ -257,9 +257,7 @@ func (fx *projectIntentRealTmux) liveWindowCount(t *testing.T) int {
 // stopped before an unguarded runtime write" and leave the started session
 // running; fresh `create window --project` had the same defect.
 func TestProjectWindowIntentResumesIntoAStoppedProjectThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	const conversation = "claude-real-tmux-session"
 	answer := agentPaneIntent{producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right", conversationID: conversation}
 

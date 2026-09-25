@@ -29,12 +29,7 @@ const cliWindowRenameRealTmuxEnv = "PMX_TEST_CLI_WINDOW_RENAME_REAL_TMUX"
 // name must repair a tab someone left stale -- the Recovery the keybinding
 // rename contract points at.
 func TestCLIWindowRenameConvergesTheTabThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		if os.Getenv(cliWindowRenameRealTmuxEnv) == "1" {
-			t.Fatalf("%s=1 requires tmux: %v", cliWindowRenameRealTmuxEnv, err)
-		}
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t, cliWindowRenameRealTmuxEnv)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	root, err := os.MkdirTemp("", "pcr-")

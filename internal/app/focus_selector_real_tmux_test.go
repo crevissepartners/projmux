@@ -20,9 +20,7 @@ import (
 // only have reached the server the Project records. The target Pane is neither
 // in the current Window nor the active Pane before the call.
 func TestFocusPaneUIDSelectsThePaneOnAnIsolatedTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	root, err := os.MkdirTemp("", "pfu-")

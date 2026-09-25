@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -228,9 +227,7 @@ func (fx *splitFocusRealTmux) clientPane(t *testing.T) string {
 // left with exactly the Agent Pane: it is the Window's anchor, the Window has
 // no default shell left, and the pressing client is on it.
 func TestWindowCreateAppliesTheSavedLaunchDefaultThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 
 	t.Run("mode shell keeps the created shell Pane", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

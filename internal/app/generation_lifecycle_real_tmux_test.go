@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,9 +16,7 @@ import (
 )
 
 func TestGenerationLifecycleProjectionUsesIsolatedRealTmuxAndExactCleanup(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	root, err := os.MkdirTemp("", "p1tmux-")

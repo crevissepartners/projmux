@@ -23,9 +23,7 @@ import (
 // `#{pane_id}` empty. If tmux ever stops doing that, this test is where it
 // should be noticed, because the classification above reads exactly that row.
 func TestAbsentAnchorPaneAnswersBlankReceiptThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	root, err := os.MkdirTemp("", "pma-")

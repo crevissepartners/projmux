@@ -26,12 +26,7 @@ import (
 // #{window_name} through `rename-window -t @N -- <name>` and agree with
 // @projmux_window_name and the Registry name.
 func TestGeneratedWindowRenameProjectsFlagShapedNamesThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		if os.Getenv(flagShapedWindowNameRealTmuxEnv) == "1" {
-			t.Fatalf("%s=1 requires tmux: %v", flagShapedWindowNameRealTmuxEnv, err)
-		}
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t, flagShapedWindowNameRealTmuxEnv)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	root, err := os.MkdirTemp("", "pfr-")

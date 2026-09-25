@@ -9,6 +9,12 @@ and humans run the same entrypoints.
   and host shell dependencies.
 - `make vet` runs `go vet ./...`. CI runs it in the Unit Tests job after
   `make test`.
+- The real-tmux Go tests in `internal/app` find tmux through one helper,
+  `requireRealTmux`. Without tmux they skip; `PROJMUX_REAL_TMUX_STRICT=1`
+  turns a missing tmux into a test failure instead, so a run that is meant to
+  exercise real tmux cannot pass by skipping. A new real-tmux test must call
+  the helper rather than its own `exec.LookPath("tmux")` skip, and the source
+  audit `TestRealTmuxSkipIsOwnedByOneHelper` fails on any other skip.
 - Picker unit coverage includes the backend-neutral item/action contract,
   native title-focused filtering, numeric selection, and shared close actions.
 - `make test-integration` builds `test/docker/Dockerfile` and runs

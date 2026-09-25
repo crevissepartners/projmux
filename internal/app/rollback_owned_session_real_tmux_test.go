@@ -31,12 +31,7 @@ const ownedSessionRollbackRealTmuxEnv = "PMX_TEST_OWNED_SESSION_ROLLBACK_REAL_TM
 // just created alive on the server it had just started. A fake runner cannot
 // see that, because the rejection is tmux's own argv parsing.
 func TestRollbackRemovesAnOwnedSessionThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		if os.Getenv(ownedSessionRollbackRealTmuxEnv) == "1" {
-			t.Fatalf("%s=1 requires tmux: %v", ownedSessionRollbackRealTmuxEnv, err)
-		}
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t, ownedSessionRollbackRealTmuxEnv)
 
 	// "last session" is the shape the Backlog reported: the refused create had
 	// started the server, so rolling its session back empties the server.
