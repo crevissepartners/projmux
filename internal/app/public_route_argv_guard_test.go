@@ -120,8 +120,6 @@ type publicRouteArgvGuardRow struct {
 const (
 	publicRouteArgvOperandReason = "synopsis declares a positional operand; validating its value is out of scope"
 
-	publicRouteArgvUndeclaredOperandReason = "the handler takes a positional operand the catalog synopsis does not show (help/synopsis gap, not an exit-code gap; Epic owner ruling O-7); running it can have effects"
-
 	publicRouteArgvSwitchReason = "catalog synopsis `projmux switch [<project>]` promises an operand but the handler refuses it with exit 1; accepting the argument vs fixing the synopsis is an open product/help decision (Epic owner ruling O-3, Backlog 241), so this guard records it instead of changing behavior"
 
 	publicRouteArgvHelpReason = "root policy: `projmux help [anything]` prints the primary listing and exits 0 (internal/cli/root.go SetHelpCommand; docs/cli-guide.md Help boundary: `projmux help` keeps printing the top-level list)"
@@ -157,11 +155,13 @@ var publicRouteArgvOperandRoutes = []string{
 	"attention toggle",
 	"attention clear",
 	"attention arm",
+	"attention window",
 	"attach project",
 	"delete project",
 	"delete window",
 	"delete pane",
 	"delete agent",
+	"delete notification",
 	"describe project",
 	"describe window",
 	"describe pane",
@@ -169,6 +169,8 @@ var publicRouteArgvOperandRoutes = []string{
 	"focus project",
 	"focus window",
 	"focus pane",
+	"hook trust",
+	"hook untrust",
 	"label project",
 	"label window",
 	"label pane",
@@ -218,12 +220,6 @@ func publicRouteArgvGuardSpecialRows() []publicRouteArgvGuardRow {
 
 		// Runnable parents (not executed for D-bare).
 		{route: "setup", form: publicRouteArgvFormBareParent, kind: publicRouteArgvRunnableParentRow, reason: "synopsis `projmux setup` documents the bare parent as the interactive terminal-key probe"},
-
-		// Undeclared operands (not executed for C).
-		{route: "attention window", form: publicRouteArgvFormOperand, kind: publicRouteArgvUndeclaredOperandRow, reason: publicRouteArgvUndeclaredOperandReason + " (`attention window [<window-id> [<style>]]`, at most 2 arguments)"},
-		{route: "delete notification", form: publicRouteArgvFormOperand, kind: publicRouteArgvUndeclaredOperandRow, reason: publicRouteArgvUndeclaredOperandReason + " (`delete notification <id>`)"},
-		{route: "hook trust", form: publicRouteArgvFormOperand, kind: publicRouteArgvUndeclaredOperandRow, reason: publicRouteArgvUndeclaredOperandReason + " (`hook trust [<project>]`)"},
-		{route: "hook untrust", form: publicRouteArgvFormOperand, kind: publicRouteArgvUndeclaredOperandRow, reason: publicRouteArgvUndeclaredOperandReason + " (`hook untrust [<project>]`)"},
 	}
 }
 

@@ -755,7 +755,7 @@ func printAttentionUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux attention clear [pane]")
 	fmt.Fprintln(w, "  projmux attention arm [pane]")
 	fmt.Fprintln(w, "  projmux attention list [--json] [--all]")
-	fmt.Fprintln(w, "  projmux attention window [window]")
+	fmt.Fprintln(w, "  projmux attention window [window] [style]")
 }
 
 func printAttentionListUsage(w io.Writer) {
