@@ -153,19 +153,28 @@ func (m runtimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessio
 				if current[0] != target.ID || current[1] != initial[1] || current[2] != project.Metadata.UID || current[4] != "" {
 					return false, nil
 				}
-				field := 2
-				if item.option == tmuxopts.ProjectNameSession {
-					field = 3
-				}
-				return current[field] == item.value, nil
+				return current[mirrorProjectTupleField(item.option)] == item.value, nil
 			},
 			Guard: func(ctx context.Context) error {
 				current, err := observeTuple(ctx)
 				if err != nil {
 					return err
 				}
-				if current[0] != initial[0] || current[1] != initial[1] || current[2] != initial[2] || current[3] != initial[3] || current[4] != initial[4] {
+				// The session handle, name, and role are pinned to the planning
+				// observation. Each field this plan writes may sit at its initial
+				// value or at its planned value: a sibling step's field may be
+				// converged by a concurrent writer without changing the target.
+				drifted := current[0] != initial[0] || current[1] != initial[1] || current[4] != initial[4]
+				for _, written := range declarations {
+					field := mirrorProjectTupleField(written.option)
+					drifted = drifted || (current[field] != initial[field] && current[field] != written.value)
+				}
+				if drifted {
 					return errors.New("typed metadata mirror: Project session tuple drifted before write")
+				}
+				field := mirrorProjectTupleField(item.option)
+				if current[field] != initial[field] && current[field] == item.value {
+					return fmt.Errorf("typed metadata mirror: Project session %s: %w", item.option, errRuntimeMutationEffectConverged)
 				}
 				return nil
 			},
@@ -177,6 +186,15 @@ func (m runtimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessio
 		})
 	}
 	return executeRuntimeMutationPlan(ctx, m.guardedSteps(steps))
+}
+
+// mirrorProjectTupleField is the index of a MirrorProject-written option in
+// the observed Project session tuple.
+func mirrorProjectTupleField(option string) int {
+	if option == tmuxopts.ProjectNameSession {
+		return 3
+	}
+	return 2
 }
 
 func (m runtimeMutationMetadataMirror) MirrorWindow(ctx context.Context, windowID string, window coremetadata.Window) error {

@@ -3925,3 +3925,87 @@ func TestOwnedKillReobserveArgvMatchesEachTargetKind(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeMutationPlanDropsGuardConvergedStepWithoutApplyOrUndo(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	actions := []plannedRuntimeMutation{
+		newRuntimeMutation(1, mutationWriteLease, runtimeMutationTarget{Socket: "-L=converged", PhysicalSocket: "/tmp/converged", RouteAuthority: authority, Kind: "session", ID: "$1", UID: "prj-1"}),
+		newRuntimeMutation(2, mutationCreatePane, runtimeMutationTarget{Socket: "-L=converged", PhysicalSocket: "/tmp/converged", RouteAuthority: authority, Kind: "pane", ID: "%2", UID: "pan-2"}),
+		newRuntimeMutation(3, mutationWriteLayout, runtimeMutationTarget{Socket: "-L=converged", PhysicalSocket: "/tmp/converged", RouteAuthority: authority, Kind: "pane", ID: "%3", UID: "pan-3"}),
+	}
+	actions[0].Operands = []string{"-t", "$1", createOperationEnvironment, "op-converged"}
+	actions[1].Operands = []string{"-d", "-t", "%2"}
+	actions[2].Operands = []string{"-t", "%3", "-x", "40"}
+
+	type record struct {
+		applied, undone []int
+		reobserved      map[int]int
+	}
+	build := func(rec *record, guards map[int]error, failApply int) []runtimeMutationStep {
+		rec.reobserved = map[int]int{}
+		steps := make([]runtimeMutationStep, 0, len(actions))
+		for _, action := range actions {
+			order := action.Order
+			applied := false
+			steps = append(steps, runtimeMutationStep{
+				Action:           action,
+				TargetRouteGuard: func(context.Context) error { return nil },
+				Reobserve: func(context.Context) (bool, error) {
+					rec.reobserved[order]++
+					return applied, nil
+				},
+				Guard: func(context.Context) error { return guards[order] },
+				Apply: func(context.Context) error {
+					rec.applied = append(rec.applied, order)
+					if order == failApply {
+						return errPropertyApply
+					}
+					applied = true
+					return nil
+				},
+				Undo: func(context.Context) error { rec.undone = append(rec.undone, order); return nil },
+			})
+		}
+		return steps
+	}
+	converged := fmt.Errorf("own field already planned: %w", errRuntimeMutationEffectConverged)
+
+	var ok record
+	if err := executeRuntimeMutationPlan(context.Background(), build(&ok, map[int]error{1: converged}, 0)); err != nil {
+		t.Fatalf("converged step failed the plan: %v", err)
+	}
+	if !reflect.DeepEqual(ok.applied, []int{2, 3}) || ok.undone != nil {
+		t.Fatalf("converged plan apply/undo = %v/%v, want [2 3]/none", ok.applied, ok.undone)
+	}
+	if ok.reobserved[1] != 1 || ok.reobserved[2] != 2 || ok.reobserved[3] != 2 {
+		t.Fatalf("reobservations = %v, want the converged step out of the final reobserve set", ok.reobserved)
+	}
+
+	// A later failure unwinds only applied steps: the converged step was never
+	// applied, so rollback cannot revert the value its concurrent writer put there.
+	var failed record
+	err := executeRuntimeMutationPlan(context.Background(), build(&failed, map[int]error{1: converged}, 3))
+	if err == nil || !errors.Is(err, errPropertyApply) {
+		t.Fatalf("later apply failure = %v", err)
+	}
+	if !reflect.DeepEqual(failed.applied, []int{2, 3}) || !reflect.DeepEqual(failed.undone, []int{3, 2}) {
+		t.Fatalf("rollback apply/undo = %v/%v, want [2 3]/[3 2] without the converged step", failed.applied, failed.undone)
+	}
+
+	var all record
+	if err := executeRuntimeMutationPlan(context.Background(), build(&all, map[int]error{1: converged, 2: converged, 3: converged}, 0)); err != nil {
+		t.Fatalf("all-converged plan = %v, want nil", err)
+	}
+	if all.applied != nil || all.undone != nil {
+		t.Fatalf("all-converged plan apply/undo = %v/%v, want none", all.applied, all.undone)
+	}
+
+	var refused record
+	err = executeRuntimeMutationPlan(context.Background(), build(&refused, map[int]error{1: converged, 2: errPropertyDrift}, 0))
+	if err == nil || !strings.Contains(err.Error(), `guard refused action "create-pane" before first write: guard drift`) {
+		t.Fatalf("non-sentinel guard error = %v", err)
+	}
+	if refused.applied != nil || refused.undone != nil {
+		t.Fatalf("refused plan apply/undo = %v/%v, want none", refused.applied, refused.undone)
+	}
+}

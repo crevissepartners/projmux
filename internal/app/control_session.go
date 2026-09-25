@@ -532,14 +532,22 @@ func executeControlSessionIdentityPlan(
 		if initialWindowUID != "" && initialWindowUID != window.Metadata.UID {
 			return 0, errors.New("ControlSession Window carries a foreign UID")
 		}
-		guard := func(ctx context.Context) error {
-			out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", windowID, "-F",
-				tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
-			rows := splitTmuxRows(string(out), 3)
-			if err != nil || len(rows) != 1 || rows[0][0] != sessionID || rows[0][1] != windowID || rows[0][2] != initialWindowUID {
-				return errors.New("ControlSession Window containment or UID drifted")
+		// The UID may sit at its planning value or at its planned value (a
+		// concurrent writer may converge it); any other UID is drift. Only the
+		// UID step owns that field, so only it reports a converged effect.
+		guard := func(ownsUID bool) func(context.Context) error {
+			return func(ctx context.Context) error {
+				out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", windowID, "-F",
+					tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
+				rows := splitTmuxRows(string(out), 3)
+				if err != nil || len(rows) != 1 || rows[0][0] != sessionID || rows[0][1] != windowID || (rows[0][2] != initialWindowUID && rows[0][2] != window.Metadata.UID) {
+					return errors.New("ControlSession Window containment or UID drifted")
+				}
+				if ownsUID && rows[0][2] != initialWindowUID {
+					return fmt.Errorf("control session Window %s UID: %w", windowID, errRuntimeMutationEffectConverged)
+				}
+				return nil
 			}
-			return nil
 		}
 		observeStable := func(ctx context.Context) (bool, error) {
 			out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", windowID, "-F",
@@ -553,9 +561,9 @@ func executeControlSessionIdentityPlan(
 			}
 			return rows[0][2] == window.Metadata.UID, nil
 		}
-		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before automatic-rename projection", []string{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"}, observeStable, guard)
-		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before UID projection", []string{"-w", "-t", windowID, "-q", tmuxopts.WindowUID, window.Metadata.UID}, observeStable, guard)
-		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before stable-name projection", []string{"-w", "-t", windowID, "-q", tmuxopts.WindowName, window.Metadata.Name}, observeStable, guard)
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before automatic-rename projection", []string{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"}, observeStable, guard(false))
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before UID projection", []string{"-w", "-t", windowID, "-q", tmuxopts.WindowUID, window.Metadata.UID}, observeStable, guard(true))
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before stable-name projection", []string{"-w", "-t", windowID, "-q", tmuxopts.WindowName, window.Metadata.Name}, observeStable, guard(false))
 		logicalWrites++
 	}
 	for _, bound := range binding.Panes {
@@ -599,14 +607,20 @@ func executeControlSessionIdentityPlan(
 		if initialPaneUID != "" && initialPaneUID != pane.Metadata.UID {
 			return 0, errors.New("ControlSession Pane carries a foreign UID")
 		}
-		guard := func(ctx context.Context) error {
-			out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
-				tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
-			rows := splitTmuxRows(string(out), 4)
-			if err != nil || len(rows) != 1 || rows[0][0] != sessionID || rows[0][1] != windowID || rows[0][2] != paneID || rows[0][3] != initialPaneUID {
-				return errors.New("ControlSession Pane containment or UID drifted")
+		// Same UID rule as the Window guard above.
+		guard := func(ownsUID bool) func(context.Context) error {
+			return func(ctx context.Context) error {
+				out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
+					tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
+				rows := splitTmuxRows(string(out), 4)
+				if err != nil || len(rows) != 1 || rows[0][0] != sessionID || rows[0][1] != windowID || rows[0][2] != paneID || (rows[0][3] != initialPaneUID && rows[0][3] != pane.Metadata.UID) {
+					return errors.New("ControlSession Pane containment or UID drifted")
+				}
+				if ownsUID && rows[0][3] != initialPaneUID {
+					return fmt.Errorf("control session Pane %s UID: %w", paneID, errRuntimeMutationEffectConverged)
+				}
+				return nil
 			}
-			return nil
 		}
 		observeStable := func(ctx context.Context) (bool, error) {
 			out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
@@ -620,8 +634,8 @@ func executeControlSessionIdentityPlan(
 			}
 			return rows[0][3] == pane.Metadata.UID, nil
 		}
-		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Pane containment before UID projection", []string{"-p", "-t", paneID, "-q", tmuxopts.PaneUID, pane.Metadata.UID}, observeStable, guard)
-		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Pane containment before stable-name projection", []string{"-p", "-t", paneID, "-q", tmuxopts.PaneName, pane.Metadata.Name}, observeStable, guard)
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Pane containment before UID projection", []string{"-p", "-t", paneID, "-q", tmuxopts.PaneUID, pane.Metadata.UID}, observeStable, guard(true))
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Pane containment before stable-name projection", []string{"-p", "-t", paneID, "-q", tmuxopts.PaneName, pane.Metadata.Name}, observeStable, guard(false))
 		logicalWrites++
 	}
 	if len(steps) == 0 {

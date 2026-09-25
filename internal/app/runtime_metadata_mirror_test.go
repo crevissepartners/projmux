@@ -17,8 +17,11 @@ type metadataMirrorPlanRunner struct {
 	windowUID, windowName, paneUID                                       string
 	projectTupleReads, driftProjectTupleAt                               int
 	driftProjectName                                                     string
-	options                                                              map[string]string
-	calls                                                                [][]string
+	// onProjectTupleRead, when set, runs before the read-th Project tuple
+	// read is answered: a concurrent writer at that exact point.
+	onProjectTupleRead func(r *metadataMirrorPlanRunner, read int)
+	options            map[string]string
+	calls              [][]string
 }
 
 func (r *metadataMirrorPlanRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -67,6 +70,9 @@ func (r *metadataMirrorPlanRunner) Run(ctx context.Context, name string, args ..
 			r.projectTupleReads++
 			if r.driftProjectTupleAt > 0 && r.projectTupleReads == r.driftProjectTupleAt {
 				r.projectName = r.driftProjectName
+			}
+			if r.onProjectTupleRead != nil {
+				r.onProjectTupleRead(r, r.projectTupleReads)
 			}
 			return []byte(strings.Join([]string{r.sessionID, r.sessionName, r.projectUID, r.projectName, r.role}, tmuxRowSep) + "\n"), nil
 		case strings.Contains(format, "#{window_id}") && strings.Contains(format, tmuxopts.SessionRole):
@@ -286,5 +292,73 @@ func TestTypedMetadataMirrorPaneRefusesForeignUIDAndRepeatsEmpty(t *testing.T) {
 	}
 	if after != writes {
 		t.Fatalf("repeat Pane mirror wrote %d actions, want zero", after-writes)
+	}
+}
+
+func TestTypedMetadataMirrorProjectDropsConcurrentlyConvergedFieldAndRefusesThirdValue(t *testing.T) {
+	project := coremetadata.Project{Metadata: coremetadata.ObjectMeta{UID: "prj-1", Name: "repo"}}
+	// Read 1 is the initial observation and the pre-write reobservations
+	// answer from it, so read 2 is the UID step's Guard and read 3 the name
+	// step's Guard.
+	for _, test := range []struct {
+		name       string
+		read       int
+		concurrent func(*metadataMirrorPlanRunner)
+		wantWrite  string
+	}{
+		{name: "name before UID guard", read: 2, concurrent: func(r *metadataMirrorPlanRunner) { r.projectName = "repo" }, wantWrite: tmuxopts.ProjectUIDSession},
+		{name: "name before name guard", read: 3, concurrent: func(r *metadataMirrorPlanRunner) { r.projectName = "repo" }, wantWrite: tmuxopts.ProjectUIDSession},
+		{name: "UID before UID guard", read: 2, concurrent: func(r *metadataMirrorPlanRunner) { r.projectUID = "prj-1" }, wantWrite: tmuxopts.ProjectNameSession},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner, mirror := newMetadataMirrorPlanFixture()
+			runner.projectUID, runner.projectName = "", "old"
+			runner.onProjectTupleRead = func(r *metadataMirrorPlanRunner, read int) {
+				if read == test.read {
+					test.concurrent(r)
+				}
+			}
+			if err := mirror.MirrorProject(context.Background(), "repo", project); err != nil {
+				t.Fatalf("concurrent same planned value was refused: %v", err)
+			}
+			var written []string
+			for _, call := range runner.calls {
+				if slices.Contains(call, "set-option") {
+					written = append(written, call[len(call)-2])
+				}
+			}
+			if !reflect.DeepEqual(written, []string{test.wantWrite}) {
+				t.Fatalf("writes = %v, want only %s", written, test.wantWrite)
+			}
+			if runner.projectUID != "prj-1" || runner.projectName != "repo" {
+				t.Fatalf("end tuple = %q/%q", runner.projectUID, runner.projectName)
+			}
+		})
+	}
+	for _, test := range []struct {
+		name       string
+		concurrent func(*metadataMirrorPlanRunner)
+	}{
+		{name: "third name", concurrent: func(r *metadataMirrorPlanRunner) { r.projectName = "third" }},
+		{name: "third UID", concurrent: func(r *metadataMirrorPlanRunner) { r.projectUID = "prj-foreign" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner, mirror := newMetadataMirrorPlanFixture()
+			runner.projectUID, runner.projectName = "", "old"
+			runner.onProjectTupleRead = func(r *metadataMirrorPlanRunner, read int) {
+				if read == 2 {
+					test.concurrent(r)
+				}
+			}
+			err := mirror.MirrorProject(context.Background(), "repo", project)
+			if err == nil || !strings.Contains(err.Error(), "tuple drifted before write") {
+				t.Fatalf("third value error = %v", err)
+			}
+			for _, call := range runner.calls {
+				if slices.Contains(call, "set-option") {
+					t.Fatalf("refused Project mirror wrote tmux: %#v", runner.calls)
+				}
+			}
+		})
 	}
 }

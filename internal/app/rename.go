@@ -415,7 +415,14 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 	// The identity half of every step is the same: the exact live Window still
 	// carries this UID inside this root on this server generation. Only the
 	// field each step converges differs.
-	step := func(action plannedRuntimeMutation, converged func(runtimeWindowRenameObservation) bool) runtimeMutationStep {
+	// Both steps write their field to the same planned name. At the guard each
+	// written field may sit at its snapshot value or at name, and every other
+	// field must still equal the snapshot.
+	written := []func(runtimeWindowRenameObservation) string{
+		func(o runtimeWindowRenameObservation) string { return o.stableName },
+		func(o runtimeWindowRenameObservation) string { return o.windowName },
+	}
+	step := func(action plannedRuntimeMutation, own func(runtimeWindowRenameObservation) string) runtimeMutationStep {
 		return runtimeMutationStep{
 			Action: action,
 			TargetRouteGuard: func(ctx context.Context) error {
@@ -430,7 +437,7 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 					return false, err
 				}
 				return ok && current.windowID == action.Target.ID && current.sessionID == observed.sessionID &&
-					converged(current), nil
+					own(current) == name, nil
 			},
 			Guard: func(ctx context.Context) error {
 				if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action); err != nil {
@@ -440,8 +447,20 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 				if err != nil {
 					return err
 				}
-				if !ok || current != observed {
+				drifted := !ok
+				if ok {
+					unwritten := current
+					unwritten.stableName, unwritten.windowName = observed.stableName, observed.windowName
+					drifted = unwritten != observed
+					for _, field := range written {
+						drifted = drifted || (field(current) != field(observed) && field(current) != name)
+					}
+				}
+				if drifted {
 					return errors.New("Window runtime identity drifted before rename")
+				}
+				if own(current) != own(observed) && own(current) == name {
+					return fmt.Errorf("window rename %s: %w", action.Verb, errRuntimeMutationEffectConverged)
 				}
 				return nil
 			},
@@ -452,8 +471,8 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 		}
 	}
 	err = executeRuntimeMutationPlan(ctx, []runtimeMutationStep{
-		step(stable, func(current runtimeWindowRenameObservation) bool { return current.stableName == name }),
-		step(display, func(current runtimeWindowRenameObservation) bool { return current.windowName == name }),
+		step(stable, written[0]),
+		step(display, written[1]),
 	})
 	if err != nil {
 		return "", committedMirrorError("rename", coremetadata.KindWindow, uid, err)

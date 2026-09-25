@@ -588,3 +588,88 @@ func TestControlSessionWarningNamesTheSession(t *testing.T) {
 		t.Fatalf("controlSessionWarning() = %q, want a trailing newline", got)
 	}
 }
+
+func TestControlSessionIdentityPlanDropsUIDAConcurrentWriterAlreadyConvergedAndRefusesThirdValue(t *testing.T) {
+	windowTuple := tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}")
+	paneTuple := tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}")
+	for _, test := range []struct {
+		name, trigger, field string
+		// after is the last pre-write reobservation read of the tuple: one
+		// planning read, then one read per step of that object (Window: three
+		// steps, Pane: two; a Pane name reobservation stops at the blank UID).
+		after      int
+		opts       func(*fakeTmuxSession) map[string]string
+		concurrent string
+		wantErr    string
+	}{
+		{name: "Window same", trigger: windowTuple, field: tmuxopts.WindowUID, after: 4, opts: func(s *fakeTmuxSession) map[string]string { return s.windows[0].opts }},
+		{name: "Pane same", trigger: paneTuple, field: tmuxopts.PaneUID, after: 3, opts: func(s *fakeTmuxSession) map[string]string { return s.windows[0].panes[0].opts }},
+		{name: "Window third", trigger: windowTuple, field: tmuxopts.WindowUID, after: 4, opts: func(s *fakeTmuxSession) map[string]string { return s.windows[0].opts }, concurrent: "win-foreign", wantErr: "ControlSession Window containment or UID drifted"},
+		{name: "Pane third", trigger: paneTuple, field: tmuxopts.PaneUID, after: 3, opts: func(s *fakeTmuxSession) map[string]string { return s.windows[0].panes[0].opts }, concurrent: "pan-foreign", wantErr: "ControlSession Pane containment or UID drifted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			converger, store, server, base := controlSessionFixture(t)
+			if _, err := converger.converge(context.Background(), controlFixtureSocket, "home"); err != nil {
+				t.Fatalf("seed convergence: %v", err)
+			}
+			session := server.session("home")
+			registry := store.registry.Clone()
+			window, pane := registry.Windows[0], registry.Panes[0]
+			planned := window.Metadata.UID
+			if test.field == tmuxopts.PaneUID {
+				planned = pane.Metadata.UID
+			}
+			concurrent := test.concurrent
+			if concurrent == "" {
+				concurrent = planned
+			}
+			// Both identities are unclaimed at planning, so both UID steps and
+			// their name steps are pending.
+			session.windows[0].opts[tmuxopts.WindowUID] = ""
+			session.windows[0].panes[0].opts[tmuxopts.PaneUID] = ""
+			runner := &concurrentWriterRunner{base: base, trigger: test.trigger, after: test.after, write: func() {
+				test.opts(session)[test.field] = concurrent
+			}}
+			beforeCalls := len(server.calls)
+			binding := coremetadata.ControlSessionBinding{
+				ControlSession: registry.ControlSessions[0],
+				Windows:        []coremetadata.ImportedWindow{{UID: window.Metadata.UID, SourceIndex: 0, Origin: coremetadata.ImportCreated}},
+				Panes:          []coremetadata.ImportedPane{{UID: pane.Metadata.UID, WindowIndex: 0, PaneIndex: 0, Origin: coremetadata.ImportCreated}},
+			}
+			targets := intmetadata.LegacyTargets{Windows: []string{session.windows[0].id}, Panes: [][]string{{session.windows[0].panes[0].id}}}
+			transport := tmuxTransport{Kind: tmuxSocketName, Value: controlFixtureSocket, Source: tmuxSocketNameSource}
+			_, err := executeControlSessionIdentityPlan(context.Background(), transport, "home",
+				intmetadata.NewMirror(explicitTmuxRunner{runner: runner, target: transport}), registry, binding, targets, false)
+			if runner.seen <= test.after {
+				t.Fatalf("guard did not reread the %s tuple after the concurrent write (reads=%d)", test.field, runner.seen)
+			}
+			writes := map[string]int{}
+			for _, call := range server.calls[beforeCalls:] {
+				if slices.Contains(call, "set-option") {
+					writes[call[len(call)-2]]++
+				}
+			}
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("third-value identity plan error = %v, want %q", err, test.wantErr)
+				}
+				if len(writes) != 0 {
+					t.Fatalf("refused identity plan wrote %v", writes)
+				}
+				if got := test.opts(session)[test.field]; got != concurrent {
+					t.Fatalf("third value was overwritten: %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("concurrent same-value identity write was refused: %v", err)
+			}
+			if writes[test.field] != 0 {
+				t.Fatalf("converged %s received %d write(s): %v", test.field, writes[test.field], writes)
+			}
+			if session.windows[0].opts[tmuxopts.WindowUID] != window.Metadata.UID || session.windows[0].panes[0].opts[tmuxopts.PaneUID] != pane.Metadata.UID {
+				t.Fatalf("end identities = %q/%q", session.windows[0].opts[tmuxopts.WindowUID], session.windows[0].panes[0].opts[tmuxopts.PaneUID])
+			}
+		})
+	}
+}
