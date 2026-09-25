@@ -12,10 +12,19 @@ INSTALL_BIN := $(INSTALL_DIR)/projmux
 PROJMUX_INSTALL_SOCKET ?= projmux
 INSTALL_MV ?= mv
 
-GO_FILES := $(shell find . -type f -name '*.go' \
+# The command that lists Go paths, not its output. fmt and fmt-check stream
+# its NUL-separated output into xargs, so the recipe stays the same size as
+# the tree grows instead of passing every path in one shell argument, which
+# Linux caps at MAX_ARG_STRLEN (128 KiB).
+GO_FILES_FIND := find . -type f -name '*.go' \
 	-not -path './.git/*' \
 	-not -path './.wt/*' \
-	-not -path '*/node_modules/*')
+	-not -path '*/node_modules/*'
+
+# GOFMT_EACH runs gofmt with the given flags on the file arguments xargs
+# supplies, and never with none (gofmt would read stdin). BSD xargs skips an
+# empty input; GNU xargs runs once with no arguments, which the guard absorbs.
+GOFMT_EACH = xargs -0 sh -c '[ "$$\#" -eq 0 ] || exec $(GOFMT) $(1) "$$@"' sh
 
 DEADCODE_ALLOWLIST ?= .deadcode-allowlist.txt
 DEADCODE_MUST_KEEP ?= .deadcode-must-keep.txt
@@ -26,7 +35,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -76,22 +85,21 @@ docs:
 	@echo ">> regenerated $(DOCS_REFERENCE)"
 
 fmt:
-	@if [ -n "$(GO_FILES)" ]; then \
-		$(GOFMT) -w $(GO_FILES); \
-	else \
-		echo "no Go files to format"; \
-	fi
+	@$(GO_FILES_FIND) -print0 | $(call GOFMT_EACH,-w)
 
+# Prints unformatted paths and fails when any exist. A gofmt failure (for
+# example a parse error) fails the target too, even with empty stdout.
 fmt-check:
-	@if [ -n "$(GO_FILES)" ]; then \
-		out="$$( $(GOFMT) -l $(GO_FILES) )"; \
-		if [ -n "$$out" ]; then \
-			echo "$$out"; \
-			exit 1; \
-		fi; \
-	else \
-		echo "no Go files to check"; \
-	fi
+	@status=0; \
+	out="$$($(GO_FILES_FIND) -print0 | $(call GOFMT_EACH,-l))" || status=$$?; \
+	if [ -n "$$out" ]; then \
+		printf '%s\n' "$$out"; \
+		[ "$$status" -ne 0 ] || status=1; \
+	fi; \
+	if [ "$$status" -ne 0 ] && [ -z "$$out" ]; then \
+		echo ">> fmt-check: gofmt failed (exit $$status)" >&2; \
+	fi; \
+	exit "$$status"
 
 mod-tidy-check:
 	$(GO) mod tidy -diff
@@ -122,7 +130,7 @@ deadcode-contract:
 vet:
 	$(GO) vet ./...
 
-test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract e2e-admission-contract e2e-pipe-contract e2e-terminal-line-contract
+test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract fmt-contract e2e-admission-contract e2e-pipe-contract e2e-terminal-line-contract
 	$(GO) test ./...
 
 smoke-assert-contract:
@@ -130,6 +138,9 @@ smoke-assert-contract:
 
 build-vcs-contract:
 	bash test/build-vcs-contract.sh
+
+fmt-contract:
+	bash test/fmt-contract.sh
 
 release-contract:
 	python3 -m unittest discover -s test -p 'release_workflow_contract_test.py'
