@@ -92,11 +92,10 @@ func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickUnknownRangeWithoutMouseWindowIsNoop(t *testing.T) {
+func TestStatusbarClickUnknownRangeIsNoop(t *testing.T) {
 	t.Parallel()
 
-	// Once we share `MouseDown1Status` with the window-list passthrough, an
-	// unknown range id is no longer a user error — it just means the click
+	// An unknown range id is not a user error — it just means the click
 	// landed somewhere we don't manage. Returning nil keeps run-shell from
 	// flashing a tmux error popup at the user.
 	runner := &statusbarFakeRunner{}
@@ -106,7 +105,7 @@ func TestStatusbarClickUnknownRangeWithoutMouseWindowIsNoop(t *testing.T) {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
 	if len(runner.calls) != 0 {
-		t.Fatalf("unknown range without mouse-window should not invoke runner, got %d calls", len(runner.calls))
+		t.Fatalf("unknown range should not invoke runner, got %d calls", len(runner.calls))
 	}
 }
 
@@ -128,8 +127,7 @@ func TestStatusbarClickKnownRangeIgnoresMouseWindow(t *testing.T) {
 	t.Parallel()
 
 	// When the click lands on a projmux user-defined range, the range
-	// handler always wins. The `--mouse-window` passthrough only applies
-	// when the click landed outside any range.
+	// handler runs. The compatibility-only `--mouse-window` flag is ignored.
 	runner := &statusbarFakeRunner{}
 	store := &stubNotifyStore{listEntries: nil}
 	cmd := newStatusbarTestCommand(runner, store)
@@ -150,39 +148,26 @@ func TestStatusbarClickKnownRangeIgnoresMouseWindow(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickEmptyRangeWithMouseWindowSelectsWindow(t *testing.T) {
+// TestStatusbarClickEmptyRangeIgnoresMouseWindowFlag pins that the
+// compatibility-only `--mouse-window` flag, still emitted by bindings from
+// older releases until `config apply`, is accepted in both the spaced and the
+// equals form and never turns an empty-range click into a select-window.
+func TestStatusbarClickEmptyRangeIgnoresMouseWindowFlag(t *testing.T) {
 	t.Parallel()
 
-	// Default tmux behavior: clicking on a window-list entry switches to
-	// that window. Restored here via select-window with the `@` prefix.
-	runner := &statusbarFakeRunner{}
-	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	for _, args := range [][]string{
+		{"click", "--mouse-window", "3", ""},
+		{"click", "--mouse-window=3", ""},
+		{"click", "", "--mouse-window", ""},
+	} {
+		runner := &statusbarFakeRunner{}
+		cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	if err := cmd.Run([]string{"click", "--mouse-window", "3", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@3"}) {
-		t.Fatalf("missing select-window -t @3; calls = %#v", runner.calls)
-	}
-}
-
-func TestStatusbarClickEmptyRangeWithPrefixedMouseWindowDoesNotDoublePrefix(t *testing.T) {
-	t.Parallel()
-
-	// `#{mouse_window}` is normally numeric (e.g. "3") but if a future
-	// tmux ever returns "@5" we must not produce "@@5".
-	runner := &statusbarFakeRunner{}
-	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
-
-	if err := cmd.Run([]string{"click", "--mouse-window", "@5", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@5"}) {
-		t.Fatalf("missing select-window -t @5; calls = %#v", runner.calls)
-	}
-	for _, call := range runner.calls {
-		if call.name == "tmux" && len(call.args) >= 3 && call.args[0] == "select-window" && call.args[2] == "@@5" {
-			t.Fatalf("select-window target was double-prefixed; calls = %#v", runner.calls)
+		if err := cmd.Run(args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatalf("Run(%q) error = %v, want nil", args, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("Run(%q) must be a noop, got calls = %#v", args, runner.calls)
 		}
 	}
 }
@@ -190,9 +175,9 @@ func TestStatusbarClickEmptyRangeWithPrefixedMouseWindowDoesNotDoublePrefix(t *t
 func TestStatusbarClickEmptyRangeWithEmptyMouseWindowIsNoop(t *testing.T) {
 	t.Parallel()
 
-	// Click on row-1 whitespace between two ranges: tmux gives us an empty
-	// `mouse_status_range` *and* an empty `mouse_window`. We must not call
-	// select-window with a bare `@`.
+	// Click on row-1 whitespace between two ranges from an older binding:
+	// an empty range id plus an empty, ignored `--mouse-window` value. Nothing
+	// to dispatch, so no tmux call.
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
@@ -204,20 +189,20 @@ func TestStatusbarClickEmptyRangeWithEmptyMouseWindowIsNoop(t *testing.T) {
 	}
 }
 
-func TestStatusbarClickUnknownRangeWithMouseWindowSelectsWindow(t *testing.T) {
+func TestStatusbarClickUnknownRangeIgnoresMouseWindowFlag(t *testing.T) {
 	t.Parallel()
 
-	// Some custom right-hand `range=user|foo` from a third-party plugin
-	// could deliver an unfamiliar range id. We still want the click to
-	// switch to the window underneath the cursor when one is available.
+	// A custom right-hand `range=user|foo` from a third-party plugin could
+	// deliver an unfamiliar range id. The ignored `--mouse-window` value must
+	// not turn it into a select-window.
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	if err := cmd.Run([]string{"click", "--mouse-window", "7", "totally-bogus"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"click", "totally-bogus", "--mouse-window", "7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
-	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@7"}) {
-		t.Fatalf("missing select-window -t @7; calls = %#v", runner.calls)
+	if len(runner.calls) != 0 {
+		t.Fatalf("unknown range must be a noop, got calls = %#v", runner.calls)
 	}
 }
 
@@ -1466,59 +1451,52 @@ func TestStatusbarClickWindowRangeWithEmptyMouseWindowIsNoop(t *testing.T) {
 	}
 }
 
-// TestStatusbarClickPositionalThenFlagSelectsWindow verifies that the natural
-// tmux invocation order — the positional range id first, then the
-// `--mouse-window` flag — actually triggers the window-list passthrough rather
-// than failing parser checks.
-func TestStatusbarClickPositionalThenFlagSelectsWindow(t *testing.T) {
+// TestStatusbarClickBareWindowRangeIgnoresMouseWindowFlag covers the bare
+// `window` range reaching the dispatcher with the compatibility-only
+// `--mouse-window` flag in every accepted position and form. The binding
+// handles bare `window` natively, so the dispatcher has nothing to switch to
+// and the ignored value must not change that.
+func TestStatusbarClickBareWindowRangeIgnoresMouseWindowFlag(t *testing.T) {
 	t.Parallel()
 
-	runner := &statusbarFakeRunner{}
-	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	for _, args := range [][]string{
+		{"click", "window", "--mouse-window", "3"},
+		{"click", "--mouse-window", "3", "window"},
+		{"click", "--mouse-window=3", "window"},
+	} {
+		runner := &statusbarFakeRunner{}
+		cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	if err := cmd.Run([]string{"click", "window", "--mouse-window", "3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@3"}) {
-		t.Fatalf("missing select-window -t @3; calls = %#v", runner.calls)
+		if err := cmd.Run(args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatalf("Run(%q) error = %v, want nil", args, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("Run(%q) must be a noop, got calls = %#v", args, runner.calls)
+		}
 	}
 }
 
-// TestStatusbarClickFlagThenPositionalSelectsWindow verifies the symmetric
-// "flags first, positional last" order also works.
-func TestStatusbarClickFlagThenPositionalSelectsWindow(t *testing.T) {
+// TestStatusbarClickMouseWindowFlagWithoutValueIsUsageError keeps the parser
+// strict: the ignored flag still consumes a value, so a dangling flag is a
+// usage error rather than a silently accepted click.
+func TestStatusbarClickMouseWindowFlagWithoutValueIsUsageError(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	if err := cmd.Run([]string{"click", "--mouse-window", "3", "window"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	err := cmd.Run([]string{"click", "window", "--mouse-window"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if !IsUsageError(err) {
+		t.Fatalf("expected UsageError, got %T: %v", err, err)
 	}
-	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@3"}) {
-		t.Fatalf("missing select-window -t @3; calls = %#v", runner.calls)
-	}
-}
-
-// TestStatusbarClickEqualsFormSelectsWindow verifies the `--flag=value` form
-// is accepted in addition to the `--flag value` form.
-func TestStatusbarClickEqualsFormSelectsWindow(t *testing.T) {
-	t.Parallel()
-
-	runner := &statusbarFakeRunner{}
-	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
-
-	if err := cmd.Run([]string{"click", "--mouse-window=3", "window"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@3"}) {
-		t.Fatalf("missing select-window -t @3; calls = %#v", runner.calls)
+	if len(runner.calls) != 0 {
+		t.Fatalf("usage error must not invoke runner, got calls = %#v", runner.calls)
 	}
 }
 
 // TestStatusbarClickEmptyPositionalAndEmptyMouseWindowIsNoop covers the
-// `click "" --mouse-window ""` shape (positional first then flag) which the
-// previous parser also mishandled when the flag value was empty.
+// `click "" --mouse-window ""` shape (positional first then the ignored flag)
+// which the previous parser also mishandled when the flag value was empty.
 func TestStatusbarClickEmptyPositionalAndEmptyMouseWindowIsNoop(t *testing.T) {
 	t.Parallel()
 
@@ -1556,12 +1534,10 @@ func TestStatusbarClickNotifyWithMouseWindowIgnoresFlag(t *testing.T) {
 	}
 }
 
-// TestStatusbarClickWindowRangeTokenWithMouseWindowSelectsWindow covers the
-// real tmux shape for a window-list click: `#{mouse_status_range}` evaluates
-// to `window|<idx>` (the built-in `STYLE_RANGE_WINDOW`) rather than an empty
-// string. When `#{mouse_window}` is also populated we should use it (it's the
-// unique window id) and address with the `@<id>` syntax.
-func TestStatusbarClickWindowRangeTokenWithMouseWindowSelectsWindow(t *testing.T) {
+// TestStatusbarClickWindowRangeTokenIgnoresMouseWindowFlag pins that the
+// index in a `window|<idx>` range token wins and the compatibility-only
+// `--mouse-window` value is ignored: exactly one `select-window -t :<idx>`.
+func TestStatusbarClickWindowRangeTokenIgnoresMouseWindowFlag(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
@@ -1570,34 +1546,33 @@ func TestStatusbarClickWindowRangeTokenWithMouseWindowSelectsWindow(t *testing.T
 	if err := cmd.Run([]string{"click", "window|3", "--mouse-window", "5"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", "@5"}) {
-		t.Fatalf("missing select-window -t @5; calls = %#v", runner.calls)
+	if len(runner.calls) != 1 || !sawTmuxArgs(runner.calls, []string{"select-window", "-t", ":3"}) {
+		t.Fatalf("want exactly select-window -t :3; calls = %#v", runner.calls)
 	}
 }
 
-// TestStatusbarClickWindowRangeTokenWithoutMouseWindowFallsBackToIndex covers
-// the tmux configurations where `#{mouse_window}` is empty for a window-range
-// click but the range token still carries the winlink index (`window|<idx>`).
-// We fall back to addressing by index (`:<idx>`) so the click still switches
-// tabs reliably — this is the regression the user reported.
-func TestStatusbarClickWindowRangeTokenWithoutMouseWindowFallsBackToIndex(t *testing.T) {
+// TestStatusbarClickWindowRangeTokenSelectsWindowByIndex covers the
+// defense-in-depth path for a window-range click whose range token carries the
+// winlink index (`window|<idx>`). The dispatcher addresses it by index
+// (`:<idx>`) so the click still switches tabs.
+func TestStatusbarClickWindowRangeTokenSelectsWindowByIndex(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	if err := cmd.Run([]string{"click", "window|3", "--mouse-window", ""}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"click", "window|3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawTmuxArgs(runner.calls, []string{"select-window", "-t", ":3"}) {
-		t.Fatalf("missing select-window -t :3; calls = %#v", runner.calls)
+	if len(runner.calls) != 1 || !sawTmuxArgs(runner.calls, []string{"select-window", "-t", ":3"}) {
+		t.Fatalf("want exactly select-window -t :3; calls = %#v", runner.calls)
 	}
 }
 
 // TestStatusbarClickBareWindowRangeWithoutIndexIsNoop covers the (rare) case
-// where `#{mouse_status_range}` is the bare `window` token with no index
-// attached and no `mouse_window` either. We have nothing to switch to, so
-// the click must be a noop rather than a tmux error popup.
+// where the bare `window` token (no index attached) reaches the dispatcher
+// instead of the binding's native short-circuit. We have nothing to switch
+// to, so the click must be a noop rather than a tmux error popup.
 func TestStatusbarClickBareWindowRangeWithoutIndexIsNoop(t *testing.T) {
 	t.Parallel()
 
@@ -1608,7 +1583,7 @@ func TestStatusbarClickBareWindowRangeWithoutIndexIsNoop(t *testing.T) {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
 	if len(runner.calls) != 0 {
-		t.Fatalf("bare 'window' range with no mouse-window must be a noop, got %d calls", len(runner.calls))
+		t.Fatalf("bare 'window' range must be a noop, got %d calls", len(runner.calls))
 	}
 }
 

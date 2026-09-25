@@ -1,16 +1,15 @@
 // Package app: statusbar dispatches click and keyboard activations from the
 // projmux tmux status bar to per-segment handlers. The status bar wraps each
 // segment in a tmux user-defined range (e.g. `#[range=user|notify]...`); the
-// mouse binding `bind -n MouseDown1Status run-shell '<bin> statusbar click
-// "#{mouse_status_range}" --client "#{client_tty}" --mouse-window
-// "#{mouse_window}"'` invokes us with the matching range id, client tty, and
-// the window id under the cursor, and the
+// mouse binding `bind -n MouseDown1Status ... run-shell '<bin> internal
+// statusbar click "#{mouse_status_range}" --client "#{client_tty}"'` invokes
+// us with the matching range id and client tty, and the
 // `prefix s {u,n,g,p,s}` shortcuts call us with hard-coded ids, while
 // `prefix s r` invokes the dedicated throttled usage refresh subcommand.
 //
-// When the click lands outside any user-defined range (e.g. on a window-list
-// entry) we fall back to `select-window -t @<mouse_window>` so we restore
-// tmux's default click-to-switch-window UX after taking over the bind.
+// Window-list clicks are handled natively by the binding (`if-shell -F` on the
+// bare `window` range runs `select-window -t =` inside tmux), so they normally
+// never reach us. A click with an empty or unknown range id is a no-op.
 package app
 
 import (
@@ -125,28 +124,27 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 // statusbarClickOptions captures the parsed argv. mouseX/mouseY are reserved
 // for future telemetry — see runClick.
 type statusbarClickOptions struct {
-	RangeID     statusbarRangeID
-	Socket      string
-	ClientTTY   string
-	MouseWindow string
-	MouseX      int
-	MouseY      int
+	RangeID   statusbarRangeID
+	Socket    string
+	ClientTTY string
+	MouseX    int
+	MouseY    int
 }
 
 // parseStatusbarClickArgs parses the argv handed to `projmux internal statusbar click`
 // in an order-flexible way. The standard `flag` package stops at the first
 // non-flag token, which means that when tmux emits args in the natural
-// "<range-id> --mouse-window <id>" order the trailing flag pair is misread as
+// "<range-id> --client <tty>" order the trailing flag pair is misread as
 // extra positionals and the whole click is rejected with exit 2 — re-introducing
 // the very tmux error popup we are trying to avoid. We therefore walk argv
 // ourselves: any token starting with `-` (or `--`) is treated as a flag plus
 // optional value, anything else is a positional. Up to one positional is
 // allowed; everything beyond that is a UsageError.
 //
-// Recognized flags: --socket, --client, --mouse-window, --mouse-x, --mouse-y. Both
-// space-separated (`--flag value`) and equals (`--flag=value`) forms are
-// accepted. Unknown flags are reported as UsageError so typos don't silently
-// swallow values.
+// Recognized flags: --socket, --client, --mouse-x, --mouse-y, plus the ignored
+// compatibility flag --mouse-window. Both space-separated (`--flag value`) and
+// equals (`--flag=value`) forms are accepted. Unknown flags are reported as
+// UsageError so typos don't silently swallow values.
 func parseStatusbarClickArgs(args []string) (string, statusbarClickOptions, error) {
 	var (
 		opts        statusbarClickOptions
@@ -201,15 +199,17 @@ func parseStatusbarClickArgs(args []string) (string, statusbarClickOptions, erro
 			}
 			opts.ClientTTY = strings.TrimSpace(value)
 		case "mouse-window":
+			// Accepted and ignored for compatibility with bindings generated
+			// by older releases, which stay live on a running tmux server
+			// until `config apply`. The value is consumed so it is never
+			// misread as the positional range id.
 			if !hasValue {
-				v, ni, err := consumeValue(name, i)
+				_, ni, err := consumeValue(name, i)
 				if err != nil {
 					return "", opts, err
 				}
-				value = v
 				i = ni
 			}
-			opts.MouseWindow = strings.TrimSpace(value)
 		case "mouse-x":
 			if !hasValue {
 				v, ni, err := consumeValue(name, i)
@@ -281,29 +281,18 @@ func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) err
 	_ = opts.MouseX
 	_ = opts.MouseY
 
-	// tmux's built-in window-list ranges (the tabs on row 0) set
-	// `#{mouse_status_range}` to `window|<idx>` — *not* a user-defined range
-	// id and *not* empty. We must detect the `window` / `window|N` shape
-	// directly and route to the window-list handler, otherwise the click
-	// falls through unrecognized. Two important details:
-	//
-	//   1. Some tmux versions populate `#{mouse_window}` for window-list
-	//      clicks, others leave it empty and only encode the index in the
-	//      range token. Parsing the index out of `window|N` makes the
-	//      handler robust across both shapes.
-	//   2. We do this *before* the user-defined range dispatch so a hostile
-	//      user range named "window" can't shadow the built-in.
+	// tmux's built-in window-list range is reported as `window` (and, in
+	// shapes that carry the winlink index, `window|<idx>`). The binding
+	// already short-circuits the bare `window` range to a native
+	// `select-window -t =`, because the clicked window is only reachable
+	// through tmux's internal mouse target, which does not survive
+	// `run-shell`. We keep the `window|<idx>` path as defense in depth:
+	// the index is addressed via `:<idx>` so tmux resolves it against the
+	// current session's window list. A bare `window` that still reaches us
+	// carries nothing to switch to and is a no-op. This check runs *before*
+	// the user-defined range dispatch so a user range named "window" can't
+	// shadow the built-in.
 	if isWindowListRangeToken(raw) {
-		// Prefer the `#{mouse_window}` value (a unique window id like `3`,
-		// addressed via `@3`) when populated. Some tmux versions / layouts
-		// leave it empty for built-in window-range clicks and only encode
-		// the winlink index in the range token (`window|<idx>`); in that
-		// case we fall back to the index, addressed via `:<idx>` so tmux
-		// resolves it against the current session's window list rather
-		// than as a (different) window-id lookup.
-		if opts.MouseWindow != "" {
-			return c.handleWindowListClick(opts, stderr)
-		}
 		if idx := windowIndexFromRangeToken(raw); idx != "" {
 			return c.selectWindow(stderr, ":"+idx)
 		}
@@ -312,27 +301,16 @@ func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) err
 
 	if raw == "" {
 		// tmux emits an empty `#{mouse_status_range}` when the click lands
-		// outside any range — typically on status-bar whitespace. If
-		// `--mouse-window` is non-empty we fall back to tmux's default
-		// `select-window` behavior so users can still click a tab to switch
-		// to it; otherwise the click is a noop.
-		if opts.MouseWindow != "" {
-			return c.handleWindowListClick(opts, stderr)
-		}
+		// outside any range — typically on status-bar whitespace. There is
+		// nothing to dispatch, so the click is a no-op.
 		return nil
 	}
 
 	handler, ok := c.dispatchTable()[opts.RangeID]
 	if !ok {
 		// Unknown range id (something other than a known projmux range and
-		// not an empty range): tmux's default behavior would not have
-		// invoked us at all, so we treat it as a noop. If a window id is
-		// available we still perform the window-list passthrough so users
-		// can click on, e.g., a custom right-side range without losing the
-		// window-switch affordance.
-		if opts.MouseWindow != "" {
-			return c.handleWindowListClick(opts, stderr)
-		}
+		// not an empty range): no projmux handler owns it, so the click is a
+		// no-op rather than a tmux error popup.
 		return nil
 	}
 	return handler(opts, stdout, stderr)
@@ -358,20 +336,6 @@ func windowIndexFromRangeToken(raw string) string {
 		return ""
 	}
 	return strings.TrimSpace(raw[len(prefix):])
-}
-
-// handleWindowListClick restores tmux's default window-list click behavior
-// (`select-window -t =`) when the click lands on a window entry rather than a
-// projmux user-defined range. The id arrives as a numeric string from
-// `#{mouse_window}` (e.g. "3"); tmux requires the `@` prefix to interpret it
-// as a window id rather than a name. We strip any leading `@` first so we
-// never end up with `@@3`.
-func (c *statusbarCommand) handleWindowListClick(opts statusbarClickOptions, stderr io.Writer) error {
-	id := strings.TrimPrefix(strings.TrimSpace(opts.MouseWindow), "@")
-	if id == "" {
-		return nil
-	}
-	return c.selectWindow(stderr, "@"+id)
 }
 
 // dispatchTable maps each known range id to its click handler. A method on the
@@ -1493,7 +1457,8 @@ func (c *statusbarCommand) displayPopupNoFallback(command string, options intmux
 
 func printStatusbarUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux internal statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
+	fmt.Fprintln(w, "  projmux internal statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-x N] [--mouse-y N]")
+	fmt.Fprintln(w, "  (--mouse-window <v> is accepted for compatibility with older bindings and ignored)")
 	fmt.Fprintln(w, "  projmux internal statusbar usage-refresh")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Range ids: session pwd git usage notify resources settings")

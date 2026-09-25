@@ -2096,14 +2096,14 @@ func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *tes
 	t.Parallel()
 
 	// Empirically tmux 3.4+ fires `MouseDown1Status` with
-	// `#{mouse_status_range}` set to the bare string "window" and an empty
-	// `#{mouse_window}` for window-list clicks. The `select-window -t =`
-	// idiom only resolves through tmux's internal mouse context, which a
-	// `run-shell` subprocess cannot see — so the projmux dispatcher would
-	// no-op silently. The bind must short-circuit that case via
-	// `if-shell -F` to a native `select-window -t =` *before* invoking
-	// projmux. This test pins the rendered config so the regression cannot
-	// silently come back.
+	// `#{mouse_status_range}` set to the bare string "window" for
+	// window-list clicks, and tmux has no format variable naming the clicked
+	// window. The `select-window -t =` idiom only resolves through tmux's
+	// internal mouse context, which a `run-shell` subprocess cannot see — so
+	// the projmux dispatcher would no-op silently. The bind must
+	// short-circuit that case via `if-shell -F` to a native
+	// `select-window -t =` *before* invoking projmux. This test pins the
+	// rendered config so the regression cannot silently come back.
 	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }}
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -2119,7 +2119,7 @@ func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *tes
 		"{ select-window -t = }",
 		// Projmux fallback path for non-window ranges still goes through run-shell,
 		// now wrapped in a `{ ... }` block instead of an extra layer of quoting.
-		`{ run-shell "'/tmp/proj mux/bin/projmux' internal statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\"" }`,
+		`{ run-shell "'/tmp/proj mux/bin/projmux' internal statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\"" }`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
@@ -2131,6 +2131,26 @@ func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *tes
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
+		}
+	}
+	// tmux has no `mouse_window` format, so the click command must pass only
+	// the range id and client tty; a nonexistent format always expands to "".
+	if strings.Contains(output, "mouse_window") {
+		t.Fatalf("print-config output = %q, must not reference the nonexistent mouse_window format", output)
+	}
+	var mouseDownLine string
+	for line := range strings.SplitSeq(output, "\n") {
+		if strings.Contains(line, "MouseDown1Status") && strings.Contains(line, "internal statusbar click") {
+			mouseDownLine = line
+			break
+		}
+	}
+	if mouseDownLine == "" {
+		t.Fatalf("print-config output = %q, missing MouseDown1Status statusbar click line", output)
+	}
+	for _, want := range []string{"#{mouse_status_range}", "#{client_tty}"} {
+		if !strings.Contains(mouseDownLine, want) {
+			t.Fatalf("MouseDown1Status line = %q, want substring %q", mouseDownLine, want)
 		}
 	}
 }
