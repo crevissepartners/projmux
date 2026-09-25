@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2317,5 +2319,104 @@ func assertNoAIPaneTopicWrite(t *testing.T, commands []recordedAICommand) {
 	t.Helper()
 	if hasRecordedAISetOption(commands, aiPaneTopicOption) {
 		t.Fatalf("commands = %#v, did not want hook ingest to write topic", commands)
+	}
+}
+
+// watchTitleReplyReadyCommand builds an aiCommand whose pane %5 is an
+// unowned, hidden Claude pane in attention state busy, so one watch-title
+// sample moves it to waiting and pushes a reply-ready row. The watch-title
+// gate reports the pane alive once and gone afterwards, ending the loop.
+func watchTitleReplyReadyCommand(t *testing.T, runner notifyAsyncHookRunner) (*aiCommand, *stubNotifyStore) {
+	t.Helper()
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case desktopNotifyModeEnv:
+			return "off"
+		default:
+			return ""
+		}
+	}
+	store := &stubNotifyStore{}
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute, hooks: &sendNotiHookDispatcher{
+		runner: runner, lookupEnv: func(string) string { return "" }, getwd: func() (string, error) { return home, nil },
+	}}
+	const gateFormat = "#{pane_id}__PROJMUX_TMUX_AI_GATE_SEP__#{" + aiPaneHookActiveOption + "}"
+	var mu sync.Mutex
+	gateReads := 0
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
+		if name != "tmux" || len(args) != 5 || args[3] != "%5" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case args[0] == "display-message" && args[4] == gateFormat:
+			mu.Lock()
+			defer mu.Unlock()
+			gateReads++
+			if gateReads == 1 {
+				return []byte("%5__PROJMUX_TMUX_AI_GATE_SEP__\n"), nil
+			}
+			return nil, os.ErrNotExist
+		case args[0] == "display-message" && strings.HasPrefix(args[4], "#{pane_title}__PROJMUX_TMUX_AI_SEP__#{pane_current_command}"):
+			// title, command, path, agent, context, topic, topic-manual, ai state, badge, attention state, ack
+			fields := []string{"", "", "", "claude", "", "", "", "", "", attentionStateBusy, ""}
+			return []byte(strings.Join(fields, "__PROJMUX_TMUX_AI_SEP__") + "\n"), nil
+		case args[0] == "show-options" && args[4] == aiPaneAgentOption,
+			args[0] == "display-message" && args[4] == "#{"+aiPaneAgentOption+"}":
+			return []byte("claude\n"), nil
+		case args[0] == "display-message" && args[4] == "#S":
+			return []byte("main\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	return cmd, store
+}
+
+// The title watcher is a long-lived loop: its reply-ready push must not wait
+// for the send-noti hook result.
+func TestAIWatchTitleDispatchesSendNotiHookWithoutWaiting(t *testing.T) {
+	runner := newGatedNotifyHookRunner(t)
+	cmd, store := watchTitleReplyReadyCommand(t, runner)
+
+	// The gate stays closed: a waiting dispatch would never return.
+	done := make(chan error, 1)
+	go func() { done <- cmd.runWatchTitle([]string{"%5"}, io.Discard) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runWatchTitle error = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("watch-title waited for the pending send-noti hook result")
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1 reply-ready row", len(store.pushed))
+	}
+	if runner.calls.Load() != 1 || runner.delivered.Load() {
+		t.Fatalf("hook calls = %d delivered = %v, want 1 pending dispatch", runner.calls.Load(), runner.delivered.Load())
+	}
+}
+
+// The provider-hook status path shares applyAIStatus* with the watcher but is
+// a short-lived process, so it must keep waiting for the hook result.
+func TestAIStatusWithNotifyWaitsForSendNotiHookResult(t *testing.T) {
+	runner := newGatedNotifyHookRunner(t)
+	cmd, store := watchTitleReplyReadyCommand(t, runner)
+
+	var applyErr error
+	assertCallWaitsForHookResult(t, runner, func() {
+		applyErr = cmd.applyAIStatusWithNotify("waiting", "%5", attentionNotifyInput{Text: "done", Force: true})
+	})
+	if applyErr != nil {
+		t.Fatalf("applyAIStatusWithNotify error = %v", applyErr)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 }

@@ -1562,6 +1562,8 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 		input := attentionNotifyInput{
 			PaneID: identity.RuntimeID, Lookup: routedAINotifyLookup{runner: s.runner}, ID: notice.ID, Text: text,
 			Severity: notice.Severity, Metadata: metadata, Force: true, BadgeKind: badge,
+			// The native observer is long-lived; it must not stall on the hook.
+			AsyncHooks: true,
 		}
 		_ = s.notifyAIWithInput(identity.RuntimeID, input)
 		c.notifyProducer().PushReplyReady(input)

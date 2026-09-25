@@ -228,13 +228,15 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("push notification: %w", err)
 	}
 	recordNotifyEnqueue(c.diagnostics, in, result, nil, started, true)
+	c.publishNotifyQueueRefreshBestEffort()
+	// The hook runs last and is waited for, so it neither delays the refresh
+	// event nor dies with this short-lived process.
 	if c.hooks != nil {
 		c.hooks.Dispatch(entry, notifyHookMeta{
 			Type:    strings.TrimSpace(*source),
 			Message: strings.TrimSpace(entry.Text),
 		})
 	}
-	c.publishNotifyQueueRefreshBestEffort()
 
 	if *asJSON {
 		payload := map[string]any{

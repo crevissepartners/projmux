@@ -52,13 +52,28 @@ func newSendNotiHookDispatcher() *sendNotiHookDispatcher {
 	}
 }
 
+// Dispatch runs the send-noti hook and waits until it exits or is killed at
+// the runner's timeout, so a short-lived process cannot exit before the hook
+// starts. Hook failures are logged by the runner and never returned.
 func (d *sendNotiHookDispatcher) Dispatch(entry notify.Notification, meta notifyHookMeta) {
+	if result := d.dispatch(entry, meta); result != nil {
+		<-result
+	}
+}
+
+// DispatchNoWait starts the send-noti hook without waiting for its result.
+// Only a long-lived process, which outlives the hook, may use it.
+func (d *sendNotiHookDispatcher) DispatchNoWait(entry notify.Notification, meta notifyHookMeta) {
+	d.dispatch(entry, meta)
+}
+
+func (d *sendNotiHookDispatcher) dispatch(entry notify.Notification, meta notifyHookMeta) <-chan hooks.AsyncResult {
 	if d == nil || d.runner == nil {
-		return
+		return nil
 	}
 	depth := d.currentDepth()
 	if depth >= 1 {
-		return
+		return nil
 	}
 
 	payload := notifyHookPayload{
@@ -82,10 +97,10 @@ func (d *sendNotiHookDispatcher) Dispatch(entry notify.Notification, meta notify
 
 	stdin, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return nil
 	}
 
-	d.runner.RunAsync(context.Background(), hooks.EventSendNoti, hooks.Context{
+	return d.runner.RunAsync(context.Background(), hooks.EventSendNoti, hooks.Context{
 		SessionName: payload.Session,
 		CWD:         d.resolveCWD(),
 		Socket:      strings.TrimSpace(entry.Socket),

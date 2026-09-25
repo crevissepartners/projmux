@@ -592,3 +592,70 @@ func TestAIStatusSetIdleKeepsQueue(t *testing.T) {
 		t.Fatalf("ackedID = %q, want empty", store.ackedID)
 	}
 }
+
+func TestStoreAttentionNotifyProducerPushReplyReadyWaitsForSendNotiHookResult(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{}
+	runner := newGatedNotifyHookRunner(t)
+	producer := &storeAttentionNotifyProducer{
+		store: store,
+		ttl:   time.Minute,
+		hooks: &sendNotiHookDispatcher{
+			runner:    runner,
+			lookupEnv: func(string) string { return "" },
+			getwd:     func() (string, error) { return t.TempDir(), nil },
+		},
+	}
+	lookup := newFakeAttentionLookup(map[string]string{
+		"%2|@projmux_ai_agent": "claude",
+		"%2|#S":                "main",
+		"%2|#{pane_id}":        "%2",
+	})
+
+	assertCallWaitsForHookResult(t, runner, func() {
+		producer.PushReplyReady(attentionNotifyInput{PaneID: "%2", Lookup: lookup})
+	})
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+}
+
+func TestStoreAttentionNotifyProducerPushReplyReadyAsyncHooksDoesNotWait(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{}
+	runner := newGatedNotifyHookRunner(t)
+	producer := &storeAttentionNotifyProducer{
+		store: store,
+		ttl:   time.Minute,
+		hooks: &sendNotiHookDispatcher{
+			runner:    runner,
+			lookupEnv: func(string) string { return "" },
+			getwd:     func() (string, error) { return t.TempDir(), nil },
+		},
+	}
+	lookup := newFakeAttentionLookup(map[string]string{
+		"%2|@projmux_ai_agent": "codex",
+		"%2|#S":                "main",
+		"%2|#{pane_id}":        "%2",
+	})
+
+	// The gate stays closed: a waiting dispatch would never return.
+	done := make(chan struct{})
+	go func() {
+		producer.PushReplyReady(attentionNotifyInput{PaneID: "%2", Lookup: lookup, AsyncHooks: true})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("PushReplyReady with AsyncHooks waited for the pending hook result")
+	}
+	if runner.calls.Load() != 1 || runner.delivered.Load() {
+		t.Fatalf("hook calls = %d delivered = %v, want 1 pending dispatch", runner.calls.Load(), runner.delivered.Load())
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+}

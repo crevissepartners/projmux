@@ -1502,8 +1502,8 @@ projmux notification reconcile [--json]
   `get notifications` and is considered only by reconcile together with a gone
   target. Reconcile also retains only the newest 256 rows. `--text` is hard-capped to 80 runes (longer text is
   truncated server-side). After a successful queue write, projmux sends a
-  best-effort refresh event to open native notify sidebars and fires
-  declarative `[hooks.send-noti]` asynchronously if configured. Event delivery
+  best-effort refresh event to open native notify sidebars and, if configured,
+  runs declarative `[hooks.send-noti]` and waits until it exits or its timeout. Event delivery
   failure does not fail the queue write; reopening the sidebar still shows the
   latest queue. The hook gets a JSON payload on stdin plus
   `PROJMUX_NOTIFY_*` env vars, and it does not replace the normal desktop
