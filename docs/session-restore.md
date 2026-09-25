@@ -17,9 +17,12 @@ registered Project is not asked: it opens fresh, which registers it.
   the exact old Project UID and its Window/Pane/Agent counts. Declining returns
   to the startup rows and writes nothing. It does not archive or retain the old
   generation. Its new Window's first Pane follows the saved launch default
-  (`tmux-ai-split-mode`), exactly as a Window created from the UI does: the
-  choice is made before anything is cleared. The first open of an unregistered
-  root, which resolves to the same fresh start, behaves the same.
+  (`tmux-ai-split-mode`, then the central `ai-new-window-mode`, then
+  `selective`; see
+  [New AI Window Default](configuration.md#new-ai-window-default)), exactly as
+  a Window created from the UI does: the choice is made before anything is
+  cleared. The first open of an unregistered root, which resolves to the same
+  fresh start, behaves the same.
 
 Esc/cancel returns to Projects; it is not an action row. Picker failure falls
 back to the non-destructive `Continue project` action.
@@ -77,10 +80,11 @@ each successful result has exactly one Project claiming the root.
 The saved launch default is used only when the open carries the exact client
 that pressed the row. The order is:
 
-1. Ask. A picker mode (`selective`, the unset default, or `resume`) opens its
-   picker on the Pane the row was pressed in, before the old layout is cleared
-   or the new Session exists; a provider mode and `shell` are already the
-   answer and open nothing.
+1. Ask. A picker mode (`selective`, the default when neither
+   `tmux-ai-split-mode` nor `ai-new-window-mode` holds a valid mode, or
+   `resume`) opens its picker on the Pane the row was pressed in, before the
+   old layout is cleared or the new Session exists; a provider mode and
+   `shell` are already the answer and open nothing.
 2. Clear the layout and create the new Session with its one shell Pane.
 3. Fill it: an Agent answer is created in that Window first, and the shell is
    then removed through the canonical Pane delete.

@@ -233,8 +233,12 @@ per-launch model or effort row.
 
 `window.create` (v0 id `new-window`) and the Window menu's New At End decide the
 new Window's first Pane before the Window exists, following the saved launch
-default -- the same setting the saved-default split key reads (Settings > AI
-Settings, stored in `$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode`). The order is:
+default. That default is the TUI file
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/tmux-ai-split-mode` (Settings > AI
+Settings, the same setting the saved-default split key reads) when it holds a
+valid mode, then the central `ai-new-window-mode`, then `selective`; see
+[New AI Window Default](configuration.md#new-ai-window-default). The create
+then runs in this order:
 
 1. Ask. A picker mode opens its picker on the Pane the key was pressed in; a
    provider mode and `shell` are already the answer and open nothing.
@@ -249,7 +253,7 @@ The client therefore never sees a shell Pane that is about to be replaced.
 | --- | --- |
 | `shell` | the shell Pane the create made; nothing else runs |
 | `claude`, `codex`, `antigravity` | exactly that Agent Pane, with no picker |
-| `selective` (also the unset default) | whatever the `Alt-7` picker chose: that Agent Pane, or the shell Pane for the shell row; its `resume` row opens the resume session list in the same popup |
+| `selective` (also the default when neither `tmux-ai-split-mode` nor `ai-new-window-mode` holds a valid mode) | whatever the `Alt-7` picker chose: that Agent Pane, or the shell Pane for the shell row; its `resume` row opens the resume session list in the same popup |
 | `resume` | whatever the resume picker chose, on the same terms |
 
 Cancelling the picker creates nothing: no Window, and the client stays where it
@@ -605,14 +609,14 @@ still required before ordinary mutation.
 To roll v2 back to the immediately previous v1 file, restore its pre-v2 backup:
 
 ```sh
-cp ~/.config/projmux/keymap.toml.pre-v2-<digest>.bak ~/.config/projmux/keymap.toml
+cp "${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml.pre-v2-<digest>.bak" "${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml"
 ```
 
 For a keymap that entered migration as v0, restore the established pre-v1
 backup **before** installing a projmux that predates versioned keymaps:
 
 ```sh
-cp ~/.config/projmux/keymap.toml.pre-v1-<digest>.bak ~/.config/projmux/keymap.toml
+cp "${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml.pre-v1-<digest>.bak" "${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml"
 ```
 
 A projmux that predates this schema reads `schema_version` as an unsupported
