@@ -1048,9 +1048,13 @@ run = "$HOME/.local/bin/projmux-post-create; $HOME/.local/bin/projmux-gh-token"
      `.projmux/config.toml` directly in the hook's `PROJMUX_CWD` directory,
      which is the session directory for `pre-create`, `post-create`, and
      `post-attach`. The runner does not look in parent directories. Without
-     `PROJMUX_CWD`, `projmux hook list` walks up to the nearest `.projmux` or
-     `.git`, so it can show a parent file as `active` that the runner never
-     reads.
+     `PROJMUX_CWD`, `projmux hook list` uses `.projmux/config.toml` in the
+     current directory, or walks up to the nearest `.projmux` or `.git`. When
+     it shows a parent file, it says that sessions created in the current
+     directory do not run it:
+     `note: sessions created in <dir> do not run this file's pre-create, post-create, or post-attach hooks, [startup], or [env]; only sessions created in <root> do`.
+     `projmux hook validate` prints the same note. Move the file into the
+     session directory, or create the session in `<root>`.
   2. Check for parse errors. If a file cannot be parsed, the whole file is
      ignored for that run and stderr shows
      `projmux: <event> hook: global config "<path>" could not be parsed: <reason>`

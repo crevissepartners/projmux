@@ -762,3 +762,11 @@ func discoverProjectConfig(cwd string) projectConfigFile {
 		path: path,
 	}
 }
+
+// SessionProjectConfigPath returns the project config the runner reads for a
+// session created in sessionDir, or "" when there is none. It applies the
+// runner's own discovery rule — sessionDir/.projmux/config.toml only, never a
+// parent directory — so other surfaces can say which file a session reads.
+func SessionProjectConfigPath(sessionDir string) string {
+	return discoverProjectConfig(sessionDir).path
+}
