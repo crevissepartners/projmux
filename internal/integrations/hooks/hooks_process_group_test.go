@@ -192,6 +192,55 @@ func TestRunnerForwardsTerminationSignalToHookGroup(t *testing.T) {
 	}
 }
 
+// TestRunnerReturnsWhenCallerCatchesTheSignal proves a caller that catches a
+// termination signal with its own Notify channel survives the re-raise: the
+// hook's group dies, the caller's channel receives the signal, and Run
+// returns. It signals the test process itself, so it must not run in parallel.
+func TestRunnerReturnsWhenCallerCatchesTheSignal(t *testing.T) {
+	if signal.Ignored(syscall.SIGTERM) {
+		t.Skipf("%v is ignored by this process; Notify would un-ignore it", syscall.SIGTERM)
+	}
+
+	other := make(chan os.Signal, 2)
+	signal.Notify(other, syscall.SIGTERM)
+
+	cwd := t.TempDir()
+	cleanupHookPidFiles(t, cwd, "bg.pid", "fg.pid")
+	runner, _ := processGroupRunner(t, blockingHookWithChildren, time.Minute)
+
+	returned := make(chan error, 1)
+	go func() {
+		_, err := runner.Run(context.Background(), EventPostCreate, Context{CWD: cwd})
+		returned <- err
+	}()
+	if err := waitForFiles(filepath.Join(cwd, "bg.pid"), filepath.Join(cwd, "fg.pid")); err != nil {
+		t.Fatal(err)
+	}
+	bg, fg := readHookPids(t, cwd)
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("signal test process: %v", err)
+	}
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run() did not return after a SIGTERM the caller catches")
+	}
+	select {
+	case sig := <-other:
+		if sig != syscall.SIGTERM {
+			t.Fatalf("caller received %v, want %v", sig, syscall.SIGTERM)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("caller's Notify channel did not receive SIGTERM within 5s")
+	}
+	waitHookPidsGone(t, bg, fg)
+	signal.Stop(other)
+}
+
 func processGroupRunner(t *testing.T, run string, timeout time.Duration) (*Runner, *bytes.Buffer) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
