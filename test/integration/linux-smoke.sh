@@ -3556,12 +3556,18 @@ termination_await_journal_receipt() {
   exit 1
 }
 
-# The replay loop returns on any outcome other than the holds-deferral: it may
-# have converged before the Pane died, lost the release handoff, left the
-# runtime unverified, or hit its pass bound. A judgement that then fails has to
-# name which of those the replay took and who held the controller lease, or the
-# failure cannot be told apart from a product regression. This dump is called
-# only on failure branches, right before their exit, and never fails itself.
+# A replay that exits zero proves nothing about the Registry: a holds-deferral
+# is success to the controller lease, and a pass that runs while the Pane is
+# still alive converges on the receipt alone, leaving the cascade to the
+# generated hook worker. The replay loop therefore ends only when the caller's
+# arrived predicate sees the state its judgement needs and the last replay held
+# the lease itself: every holds-deferred replay marks a pane-exited event, and
+# only a replay that held the lease has drained those marks. Left behind, they
+# share a controller batch with the next fixture step's triggers. A timeout, or
+# a judgement that then fails, has to name the replay's last outcome and who
+# held the controller lease, or the failure cannot be told apart from a product
+# regression. This dump is called only on failure branches, right before their
+# exit, and never fails itself.
 declare -A termination_replay_attempt=() termination_replay_returned_at=()
 termination_dump_controller_state() {
   local report_label="$1" runtime_id="$2" pane_uid="$3"
@@ -3633,15 +3639,17 @@ termination_dump_controller_state() {
 }
 
 termination_replay_pane_exited_hook() {
-  local pane_uid="$1" want_class="$2" runtime_id="$3" report_label="$4"
-  local converge_status
+  local pane_uid="$1" want_class="$2" runtime_id="$3" report_label="$4" arrived_fn="$5"
+  shift 5
+  local -a arrived_args=("$@")
+  local converge_status arrived_status
   if [[ "$runtime_id" != %* ]]; then
     echo "Pane $pane_uid has invalid activation runtimeID '$runtime_id'" >&2
     exit 1
   fi
   termination_await_journal_receipt "$pane_uid" "$want_class"
   termination_replay_attempt[$report_label]=0
-  for _ in $(seq 1 100); do
+  for _ in $(seq 1 200); do
     termination_replay_attempt[$report_label]=$((termination_replay_attempt[$report_label] + 1))
     set +e
     termination_pmx internal tmux converge \
@@ -3659,34 +3667,85 @@ termination_replay_pane_exited_hook() {
       termination_dump_controller_state "$report_label" "$runtime_id" "$pane_uid"
       exit 1
     fi
-    if ! grep -q "deferred: another controller worker holds" \
+    # A holds-deferral or an early converge is not a failure; the next pass
+    # replays again until the Registry state the caller needs has arrived and
+    # a replay that held the lease has drained this loop's own pane-exited
+    # marks. The predicate runs every pass so the timeout report is fresh.
+    arrived_status=0
+    "$arrived_fn" "${arrived_args[@]}" || arrived_status=$?
+    if [[ "$arrived_status" == "0" ]] && ! grep -q "deferred: another controller worker holds" \
       "$termination_root/receipt-converge-$report_label.err"; then
       return
     fi
     sleep 0.05
   done
-  echo "pane-exited replay stayed behind the generated hook lease for $pane_uid" >&2
+  if grep -q "deferred: another controller worker holds" \
+    "$termination_root/receipt-converge-$report_label.err"; then
+    echo "pane-exited replay stayed behind the generated hook lease for $pane_uid" >&2
+  else
+    echo "pane-exited replay for $pane_uid never reached the Registry state $report_label needs" >&2
+  fi
   cat "$termination_root/receipt-converge-$report_label.err" >&2
+  cat "$termination_root/await-$report_label.observed" >&2 || true
   termination_dump_controller_state "$report_label" "$runtime_id" "$pane_uid"
   exit 1
 }
 
-termination_await_receipt() {
-  local pane_uid="$1" want_class="$2" report_label="$3" runtime_id="$4"
-  for _ in $(seq 1 200); do
-    # A runtime-created pass can briefly record reconcile/unknown before the
-    # supervisor's append becomes visible. Phase 6 explicitly refines that
-    # same-generation evidence, so wait for the expected settled class rather
-    # than accepting the first non-empty observation.
-    if [[ "$(termination_receipt_field "$pane_uid" classification)" == "$want_class" ]]; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "no termination receipt was recorded for $pane_uid" >&2
-  termination_pmx describe pane "uid:$pane_uid" -o json >&2 || true
-  termination_dump_controller_state "$report_label" "$runtime_id" "$pane_uid"
-  exit 1
+# Arrived predicates for the replay loop. Each one observes the Registry once,
+# leaves that observation in await-<label>.observed for the timeout report, and
+# returns 0 only when its caller's judgement has the state it reads. None exits.
+termination_arrived_pane_deleted() {
+  local report_label="$1" pane_uid="$2"
+  ! termination_pmx describe pane "uid:$pane_uid" -o json \
+    >"$termination_root/await-$report_label.observed" 2>&1
+}
+
+termination_arrived_pane_receipt() {
+  local report_label="$1" pane_uid="$2" want_class="$3"
+  termination_pmx describe pane "uid:$pane_uid" -o json \
+    >"$termination_root/await-$report_label.observed" 2>&1 || true
+  # A runtime-created pass can briefly record reconcile/unknown before the
+  # supervisor's append becomes visible. Phase 6 explicitly refines that
+  # same-generation evidence, so wait for the expected settled class rather
+  # than accepting the first non-empty observation.
+  [[ "$(termination_receipt_field "$pane_uid" classification)" == "$want_class" ]]
+}
+
+termination_arrived_agent_offline() {
+  local report_label="$1" agent_uid="$2" pane_ref="$3"
+  local observed="$termination_root/await-$report_label.observed"
+  if ! termination_agent_json "$agent_uid"; then
+    cp "$termination_root/agent.json" "$observed" 2>/dev/null || true
+    return 1
+  fi
+  cp "$termination_root/agent.json" "$observed" 2>/dev/null || true
+  [[ "$(termination_agent_phase)" == "Offline" && -z "$(termination_agent_pane_ref)" ]] &&
+    ! termination_pmx describe pane "uid:$pane_ref" -o json >/dev/null 2>&1
+}
+
+termination_arrived_agent_receipt() {
+  local report_label="$1" agent_uid="$2"
+  local observed="$termination_root/await-$report_label.observed"
+  if ! termination_agent_json "$agent_uid"; then
+    cp "$termination_root/agent.json" "$observed" 2>/dev/null || true
+    return 1
+  fi
+  cp "$termination_root/agent.json" "$observed" 2>/dev/null || true
+  [[ -n "$(termination_agent_field classification)" ]]
+}
+
+termination_arrived_closed() {
+  local report_label="$1" window_uid="$2" pane_uid="$3" agent_uid="$4"
+  local window_gone=1 pane_gone=1 agent_gone=1
+  {
+    echo ">> window $window_uid"
+    if termination_pmx describe window "uid:$window_uid" -o json 2>&1; then window_gone=0; fi
+    echo ">> pane $pane_uid"
+    if termination_pmx describe pane "uid:$pane_uid" -o json 2>&1; then pane_gone=0; fi
+    echo ">> agent $agent_uid"
+    if termination_pmx describe agent "uid:$agent_uid" -o json 2>&1; then agent_gone=0; fi
+  } >"$termination_root/await-$report_label.observed"
+  [[ "$window_gone" == "1" && "$pane_gone" == "1" && "$agent_gone" == "1" ]]
 }
 
 # Each case launches a managed shell Pane whose child ends a different way. The
@@ -3697,6 +3756,7 @@ termination_case() {
   local label="$1" want_class="$2" want_code="$3" want_signal="$4"
   shift 4
   local pane_uid runtime_id activation release_file
+  local -a arrived
   release_file="$termination_root/release-$label"
   rm -f "$release_file"
   pane_uid="$(termination_pmx_inside create pane --project evidence --all-windows -o uid -- "$@")"
@@ -3706,8 +3766,12 @@ termination_case() {
   fi
   runtime_id="$(termination_activation_runtime_id "$pane_uid")"
   activation="$(termination_activation_generation "$pane_uid")"
+  arrived=(termination_arrived_pane_receipt "$label" "$pane_uid" "$want_class")
+  if [[ "$want_class" == "normal" ]]; then
+    arrived=(termination_arrived_pane_deleted "$label" "$pane_uid")
+  fi
   touch "$release_file"
-  termination_replay_pane_exited_hook "$pane_uid" "$want_class" "$runtime_id" "$label"
+  termination_replay_pane_exited_hook "$pane_uid" "$want_class" "$runtime_id" "$label" "${arrived[@]}"
   if [[ "$want_class" == "normal" ]]; then
     if termination_pmx describe pane "uid:$pane_uid" -o json >"$termination_root/clean-pane-present.json" 2>/dev/null; then
       echo "clean shell Pane $pane_uid survived exact runtime-exit cascade" >&2
@@ -3726,7 +3790,6 @@ termination_case() {
     echo ">> termination case $label uid=$pane_uid class=normal registry=deleted journal=preserved"
     return
   fi
-  termination_await_receipt "$pane_uid" "$want_class" "$label" "$runtime_id"
   local got_class got_code got_signal got_source got_generation activation
   got_class="$(termination_receipt_field "$pane_uid" classification)"
   got_code="$(termination_receipt_field "$pane_uid" exitCode)"
@@ -3830,6 +3893,7 @@ termination_provider_case() {
   local agent_uid create_status pane_ref got_class got_code got_signal got_source got_generation activation runtime_id
   local pane_set_before pane_set_after sibling_before sibling_after window_name window_name_before anchor_ref
   local runtime_window_name runtime_window_name_before
+  local -a arrived
   set +e
   agent_uid="$(termination_pmx_provider "${create_args[@]}" -o uid \
     2>"$termination_root/provider-$provider-create.err")"
@@ -3878,8 +3942,12 @@ termination_provider_case() {
     --window "uid:$termination_main_window_uid" -o uid \
     | grep -Fvx "$pane_ref" | sort >"$pane_set_before"
   sibling_before="$(termination_sibling_tmux show-options -gqv @projmux_termination_sentinel):$(termination_sibling_tmux list-panes -a -F '#{pane_id}')"
+  arrived=(termination_arrived_agent_receipt "provider-$provider" "$agent_uid")
+  if [[ "$want_class" == "normal" ]]; then
+    arrived=(termination_arrived_agent_offline "provider-$provider" "$agent_uid" "$pane_ref")
+  fi
   touch "$release_file"
-  termination_replay_pane_exited_hook "$pane_ref" "$want_class" "$runtime_id" "provider-$provider"
+  termination_replay_pane_exited_hook "$pane_ref" "$want_class" "$runtime_id" "provider-$provider" "${arrived[@]}"
   if [[ "$want_class" == "normal" ]]; then
     termination_agent_json "$agent_uid"
     got_class="$(termination_agent_field classification)"
@@ -3937,13 +4005,6 @@ termination_provider_case() {
     echo ">> termination provider case $provider agent=$agent_uid pane=$pane_ref class=normal phase=Offline registry-pane=released window=$termination_main_window_uid anchor=$anchor_ref replacement=zero journal=preserved"
     return
   fi
-  for _ in $(seq 1 200); do
-    termination_agent_json "$agent_uid"
-    if [[ -n "$(termination_agent_field classification)" ]]; then
-      break
-    fi
-    sleep 0.05
-  done
   got_class="$(termination_agent_field classification)"
   got_code="$(termination_agent_field exitCode)"
   got_signal="$(termination_agent_field signal)"
@@ -4022,15 +4083,9 @@ if [[ "$(termination_tmux list-panes -t work-closed -F '#{@projmux_pane_uid}' | 
 fi
 termination_sibling_closed_before="$(termination_sibling_tmux show-options -gqv @projmux_termination_sentinel):$(termination_sibling_tmux list-panes -a -F '#{pane_id}')"
 touch "$termination_closed_release"
-termination_replay_pane_exited_hook "$termination_closed_agent_pane_uid" normal "$termination_closed_runtime_id" closed-last-pane
-for _ in $(seq 1 200); do
-  if ! termination_pmx describe window "uid:$termination_closed_window_uid" -o json >/dev/null 2>&1 &&
-    ! termination_pmx describe pane "uid:$termination_closed_agent_pane_uid" -o json >/dev/null 2>&1 &&
-    ! termination_pmx describe agent "uid:$termination_closed_agent_uid" -o json >/dev/null 2>&1; then
-    break
-  fi
-  sleep 0.05
-done
+termination_replay_pane_exited_hook "$termination_closed_agent_pane_uid" normal "$termination_closed_runtime_id" closed-last-pane \
+  termination_arrived_closed closed-last-pane "$termination_closed_window_uid" \
+  "$termination_closed_agent_pane_uid" "$termination_closed_agent_uid"
 if termination_pmx describe window "uid:$termination_closed_window_uid" -o json >/dev/null 2>&1 ||
   termination_pmx describe pane "uid:$termination_closed_agent_pane_uid" -o json >/dev/null 2>&1 ||
   termination_pmx describe agent "uid:$termination_closed_agent_uid" -o json >/dev/null 2>&1 ||
