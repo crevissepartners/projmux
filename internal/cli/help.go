@@ -328,3 +328,29 @@ func WriteRouteUsage(w io.Writer, route string) {
 		fmt.Fprintln(w, "  "+line)
 	}
 }
+
+// WriteRouteHelp writes the help `projmux <route> --help` prints, for the
+// handlers that answer their own `help` verb. route is the exact canonical path
+// the verb reached; the root help boundary and the verb then render one catalog
+// node byte for byte. A route the catalog does not resolve exactly is an error,
+// not a silent fallback, because the verb would otherwise print nothing.
+func WriteRouteHelp(w io.Writer, route string) error {
+	tokens := strings.Fields(route)
+	path, resolved, ok := Resolve(tokens)
+	if !ok || !slices.Equal(path, tokens) {
+		return fmt.Errorf("help: the catalog has no route %q", route)
+	}
+	return RenderRouteHelp(w, path, resolved)
+}
+
+// RouteNotes returns the catalog Notes of route, the exact canonical path, so a
+// handler that prints a note under a refusal prints the text route help does.
+// It returns nil for a route the catalog does not resolve exactly.
+func RouteNotes(route string) []string {
+	tokens := strings.Fields(route)
+	path, resolved, ok := Resolve(tokens)
+	if !ok || !slices.Equal(path, tokens) {
+		return nil
+	}
+	return slices.Clone(resolved.Notes)
+}

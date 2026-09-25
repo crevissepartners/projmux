@@ -269,7 +269,7 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "settings":
 		return c.runSettings(args[1:], stdout, stderr)
 	case "status":
-		return c.runStatus(args[1:], stderr)
+		return c.runStatus(args[1:], stdout, stderr)
 	case "notify":
 		return c.runNotify(args[1:], stderr)
 	case "watch-title":
@@ -280,8 +280,6 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runIntegrate(args[1:], stdout, stderr)
 	case "topic":
 		return c.runTopic(args[1:], stdout, stderr)
-	case "help", "--help", "-h":
-		return nil
 	default:
 		return fmt.Errorf("unknown ai subcommand: %s", args[0])
 	}
@@ -315,7 +313,7 @@ func (c *aiCommand) runDirectShell(args []string, stderr io.Writer) error {
 	return c.createShellPane(canonicalProducerDirectShell, direction)
 }
 
-func (c *aiCommand) runStatus(args []string, stderr io.Writer) error {
+func (c *aiCommand) runStatus(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printRouteUsage(stderr, "agent status")
 		return errors.New("ai status requires a subcommand")
@@ -332,8 +330,7 @@ func (c *aiCommand) runStatus(args []string, stderr io.Writer) error {
 		}
 		return c.applyAIStatus(args[1], paneID)
 	case "help", "--help", "-h":
-		printRouteUsage(stderr, "agent status")
-		return nil
+		return printRouteHelp(stdout, "agent status")
 	default:
 		printRouteUsage(stderr, "agent status")
 		return fmt.Errorf("unknown ai status subcommand: %s", args[0])
@@ -540,8 +537,6 @@ func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
 		c.notifyDeliveryOwnsTopLevel = true
 		defer func() { c.notifyDeliveryOwnsTopLevel = previous }()
 		return c.notifyAIForce(paneID)
-	case "help", "--help", "-h":
-		return nil
 	default:
 		return fmt.Errorf("unknown ai notify action: %s", action)
 	}
@@ -879,8 +874,7 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, c.readTmuxPaneOption(paneID, aiPaneTopicOption))
 		return nil
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "agent topic")
-		return nil
+		return printRouteHelp(stdout, "agent topic")
 	default:
 		printRouteUsage(stderr, "agent topic")
 		return fmt.Errorf("unknown ai topic subcommand: %s", args[0])
@@ -4359,4 +4353,19 @@ func parsePositiveInt(value string) int {
 // nothing, so the reason line stands alone.
 func printRouteUsage(w io.Writer, route string) {
 	cli.WriteRouteUsage(w, route)
+}
+
+// printRouteHelp answers a handler's own `help` verb with the catalog help of
+// route: the bytes `projmux <route> --help` prints, on stdout, exit 0.
+func printRouteHelp(w io.Writer, route string) error {
+	return cli.WriteRouteHelp(w, route)
+}
+
+// printRouteNotes prints the catalog Notes of route under a refusal's usage
+// block, each after a blank line, as route help prints them.
+func printRouteNotes(w io.Writer, route string) {
+	for _, note := range cli.RouteNotes(route) {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, note)
+	}
 }

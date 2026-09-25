@@ -134,8 +134,7 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "window":
 		return c.runWindow(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "attention")
-		return nil
+		return printRouteHelp(stdout, "attention")
 	default:
 		printRouteUsage(stderr, "attention")
 		return usageError(fmt.Sprintf("unknown attention subcommand: %s", args[0]))

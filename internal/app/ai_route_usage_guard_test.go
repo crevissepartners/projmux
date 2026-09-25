@@ -26,10 +26,11 @@ const aiRouteUsageHelper = "printRouteUsage"
 // rule, without a per-call behavior row.
 var aiRouteUsageFiles = []string{"ai.go", "ai_ingest.go", "ai_integrate.go", "ai_integrate_antigravity.go", "split_selection_continuation.go"}
 
-// aiRouteUsageCallFloor is the number of printRouteUsage calls in internal/app
-// when the retired `ai` listing was split per route. The set may grow; it must
-// not silently shrink back into a shared listing.
-const aiRouteUsageCallFloor = 36
+// aiRouteUsageCallFloor is the number of printRouteUsage calls in the ai
+// handler files once the retired `ai` listing was split per route and the
+// `help` verbs moved to printRouteHelp. The set may grow; it must not silently
+// shrink back into a shared listing.
+const aiRouteUsageCallFloor = 33
 
 // aiRouteUsageExit is the exit class a rejected call keeps: nil (help, exit
 // 0), a usage error (exit 2), or any other error (exit 1).
@@ -55,20 +56,19 @@ func (e aiRouteUsageExit) of(err error) aiRouteUsageExit {
 // aiRouteUsageRow is one rejected call an ai handler prints usage for. route
 // is the catalog path the printed block must match; app rows are driven
 // through App.Run, handler rows (the legacy aiCommand status/topic branches no
-// route dispatches to) through aiCommand.Run. help rows print on stdout.
+// route dispatches to) through aiCommand.Run. A `help` verb prints the
+// catalog help, not a usage block; handler_help_verb_guard_test.go owns it.
 type aiRouteUsageRow struct {
 	route  string
 	app    []string
 	ai     []string
 	exit   aiRouteUsageExit
 	reason string
-	help   bool
 }
 
 // aiRouteUsageRows reaches every printRouteUsage call site at least once.
 var aiRouteUsageRows = []aiRouteUsageRow{
 	{route: "agent integrate", app: []string{"agent", "integrate"}, exit: aiRouteUsageExitUsage, reason: "agent integrate requires <agent-kind>"},
-	{route: "agent integrate", app: []string{"agent", "integrate", "help"}, exit: aiRouteUsageExitOK, help: true},
 	{route: "agent integrate", app: []string{"agent", "integrate", "bogus"}, exit: aiRouteUsageExitUsage, reason: "unknown agent integrate agent-kind: bogus"},
 	{route: "agent integrate", app: []string{"agent", "integrate", "tmux-bell", "x"}, exit: aiRouteUsageExitUsage, reason: "agent integrate tmux-bell does not accept positional arguments"},
 	{route: "agent integrate", app: []string{"agent", "integrate", "claude", "x"}, exit: aiRouteUsageExitUsage, reason: "agent integrate claude does not accept positional arguments"},
@@ -77,7 +77,6 @@ var aiRouteUsageRows = []aiRouteUsageRow{
 	{route: "diagnostics agent-hook", app: []string{"diagnostics", "agent-hook", "x"}, exit: aiRouteUsageExitUsage, reason: "diagnostics agent-hook does not accept positional arguments"},
 	{route: "internal agent-hook ingest", app: []string{"internal", "agent-hook", "ingest"}, exit: aiRouteUsageExitError, reason: "internal agent-hook ingest requires <agent-kind>"},
 	{route: "internal agent-hook ingest", app: []string{"internal", "agent-hook", "ingest", "bogus"}, exit: aiRouteUsageExitError, reason: "unknown internal agent-hook ingest source: bogus"},
-	{route: "internal agent-hook ingest", ai: []string{"ingest", "help"}, exit: aiRouteUsageExitOK},
 	{route: "internal agent-hook ingest", app: []string{"internal", "agent-hook", "ingest", "codex-hook", "x"}, exit: aiRouteUsageExitError, reason: "internal agent-hook ingest codex-hook reads JSON from stdin and accepts no payload arguments"},
 	{route: "internal agent-hook ingest", app: []string{"internal", "agent-hook", "ingest", "claude-hook", "x"}, exit: aiRouteUsageExitError, reason: "internal agent-hook ingest claude-hook reads JSON from stdin and accepts no payload arguments"},
 	{route: "internal agent-hook ingest", app: []string{"internal", "agent-hook", "ingest", "antigravity-hook", "x"}, exit: aiRouteUsageExitError, reason: "internal agent-hook ingest antigravity-hook does not accept positional payload arguments"},
@@ -91,7 +90,6 @@ var aiRouteUsageRows = []aiRouteUsageRow{
 	{route: "internal agent-pane launch-selection", app: []string{"internal", "agent-pane", "launch-selection", "sideways"}, exit: aiRouteUsageExitError, reason: "internal agent-pane launch-selection direction must be right or down"},
 	{route: "agent status", ai: []string{"status"}, exit: aiRouteUsageExitError, reason: "ai status requires a subcommand"},
 	{route: "agent status", ai: []string{"status", "set"}, exit: aiRouteUsageExitError, reason: "ai status set requires <thinking|waiting|idle> [pane]"},
-	{route: "agent status", ai: []string{"status", "help"}, exit: aiRouteUsageExitOK},
 	{route: "agent status", ai: []string{"status", "bogus"}, exit: aiRouteUsageExitError, reason: "unknown ai status subcommand: bogus"},
 	{route: "agent topic", ai: []string{"topic"}, exit: aiRouteUsageExitError, reason: "ai topic requires a subcommand"},
 	{route: "agent topic", ai: []string{"topic", "set", "--pane"}, exit: aiRouteUsageExitError, reason: "--pane requires a value"},
@@ -102,7 +100,6 @@ var aiRouteUsageRows = []aiRouteUsageRow{
 	{route: "agent topic", ai: []string{"topic", "clear", "x"}, exit: aiRouteUsageExitError, reason: "ai topic clear takes no positional arguments"},
 	{route: "agent topic", ai: []string{"topic", "get", "--pane"}, exit: aiRouteUsageExitError, reason: "--pane requires a value"},
 	{route: "agent topic", ai: []string{"topic", "get", "x"}, exit: aiRouteUsageExitError, reason: "ai topic get takes no positional arguments"},
-	{route: "agent topic", ai: []string{"topic", "help"}, exit: aiRouteUsageExitOK, help: true},
 	{route: "agent topic", ai: []string{"topic", "bogus"}, exit: aiRouteUsageExitError, reason: "unknown ai topic subcommand: bogus"},
 	{route: "config edit", ai: []string{"settings", "x"}, exit: aiRouteUsageExitUsage, reason: "config edit does not accept positional arguments"},
 }
@@ -116,7 +113,7 @@ var aiRouteUsageReasonOnlyRows = []aiRouteUsageRow{
 	{app: []string{"internal", "agent-pane", "launch-shell", "right", "down"}, exit: aiRouteUsageExitError, reason: "internal agent-pane launch-shell accepts at most 1 [right|down] argument"},
 	{ai: []string{}, exit: aiRouteUsageExitError, reason: "ai requires a subcommand"},
 	{ai: []string{"bogus"}, exit: aiRouteUsageExitError, reason: "unknown ai subcommand: bogus"},
-	{ai: []string{"help"}, exit: aiRouteUsageExitOK},
+	{ai: []string{"help"}, exit: aiRouteUsageExitError, reason: "unknown ai subcommand: help"},
 	{ai: []string{"notify", "a", "b", "c"}, exit: aiRouteUsageExitError, reason: "ai notify accepts [notify|reset] [pane]"},
 	{ai: []string{"notify", "bogus", "%1"}, exit: aiRouteUsageExitError, reason: "unknown ai notify action: bogus"},
 }
@@ -216,9 +213,6 @@ func TestAIHandlersPrintOnlyTheirRouteUsage(t *testing.T) {
 				t.Errorf("%s: reason = %q, want %q", row.route, err.Error(), row.reason)
 			}
 			printed, other := stderr, stdout
-			if row.help {
-				printed, other = stdout, stderr
-			}
 			if other != "" {
 				t.Errorf("%s: wrote %q to the other stream, want nothing", row.route, other)
 			}

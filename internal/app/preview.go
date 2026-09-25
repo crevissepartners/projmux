@@ -81,8 +81,7 @@ func (c *previewCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "select":
 		return c.runSelect(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "internal preview")
-		return nil
+		return printRouteHelp(stdout, "internal preview")
 	default:
 		printRouteUsage(stderr, "internal preview")
 		return fmt.Errorf("unknown preview subcommand: %s", fs.Arg(0))

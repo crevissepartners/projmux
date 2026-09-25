@@ -219,8 +219,7 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 	case "log":
 		return c.runIngestLog(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stderr, "internal agent-hook ingest")
-		return nil
+		return printRouteHelp(stdout, "internal agent-hook ingest")
 	default:
 		printRouteUsage(stderr, "internal agent-hook ingest")
 		return fmt.Errorf("unknown internal agent-hook ingest source: %s", args[0])

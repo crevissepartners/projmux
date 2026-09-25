@@ -70,8 +70,7 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "recent":
 		return c.recent.Run(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "window")
-		return nil
+		return printRouteHelp(stdout, "window")
 	default:
 		printRouteUsage(stderr, "window")
 		return usageError(fmt.Sprintf("unknown window subcommand: %s", fs.Arg(0)))

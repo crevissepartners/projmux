@@ -53,8 +53,7 @@ func (c *profileCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "delete":
 		return c.runDelete(rest, stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "profile")
-		return nil
+		return printRouteHelp(stdout, "profile")
 	default:
 		printRouteUsage(stderr, "profile")
 		return usageError("unknown profile subcommand: " + args[0])

@@ -1625,7 +1625,10 @@ var routes = []Route{
 		Summary:        "List, edit, validate, and trust lifecycle hook config",
 		Disposition:    DispositionCanonical,
 		Usage:          []string{"projmux hook list|edit|validate|trust|untrust"},
-		Canonical:      []string{"hook list", "hook edit", "hook validate", "hook trust", "hook untrust"},
+		// The event list is hooks.SupportedEvents sorted; a guard in package app
+		// fails when the two drift.
+		Notes:     []string{"Events:\n  post-attach, post-create, pre-create, send-noti"},
+		Canonical: []string{"hook list", "hook edit", "hook validate", "hook trust", "hook untrust"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationNatural, Summary: "List global and project lifecycle hooks", CanonicalSummary: "List lifecycle hook config", Usage: []string{"projmux hook list [--global | --project | --effective]"}, Canonical: []string{"hook list"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationNatural, Summary: "Edit lifecycle hook config", Usage: []string{"projmux hook edit [--global | --project] [--editor] <event>"}, Canonical: []string{"hook edit"}},
@@ -1813,7 +1816,21 @@ var routes = []Route{
 			// document. So the summary says "project directories" like every
 			// sibling below it, rather than "Project resources", which would name
 			// a resource kind the route never touches.
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "project", Invocation: InvocationExplicit, Summary: "Manage pinned project directories (canonical spelling)", CanonicalSummary: "Manage pinned project directories", Usage: []string{"projmux pin project list|add|remove|toggle|clear|migrate"}, Canonical: []string{"pin project"}},
+			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
+				Name:             "project",
+				Invocation:       InvocationExplicit,
+				Summary:          "Manage pinned project directories (canonical spelling)",
+				CanonicalSummary: "Manage pinned project directories",
+				Usage:            []string{"projmux pin project list|add|remove|toggle|clear|migrate"},
+				Notes: []string{
+					"Pins are presentation preferences in two kinds:\n" +
+						"  project    a Registry Project uid; its root and name are projected from the Registry\n" +
+						"  candidate  a filesystem path that no Registry Project claims",
+					"Discovery roots (workdirs) are a separate collection; manage them in `projmux settings`.",
+				},
+				Canonical: []string{"pin project"},
+			},
 		},
 	},
 	{
@@ -2287,7 +2304,13 @@ var routes = []Route{
 				Summary:          "Dispatch projmux status bar clicks and shortcuts",
 				CanonicalSummary: "tmux status bar click and key dispatcher",
 				Usage:            []string{"projmux internal statusbar click <range-id> ...", "projmux internal statusbar usage-refresh"},
-				Canonical:        []string{"internal statusbar"},
+				// One note: a refusal prints it straight under the usage lines, so
+				// the compatibility line keeps the usage indent.
+				Notes: []string{
+					"  (--mouse-window <v> is accepted for compatibility with older bindings and ignored)\n\n" +
+						"Range ids: session pwd git usage notify resources settings",
+				},
+				Canonical: []string{"internal statusbar"},
 				Children: []Route{
 					{Effects: statusbarClickEffects(), Name: "click", Invocation: InvocationExplicit, Summary: "Dispatch a status bar click range", Usage: []string{"projmux internal statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-x N] [--mouse-y N]"}, Canonical: []string{"internal statusbar"}},
 					{Effects: unchangedEffects(CardinalityUnchanged), Name: "usage-refresh", Invocation: InvocationExplicit, Summary: "Refresh the AI usage snapshot", Usage: []string{"projmux internal statusbar usage-refresh"}, Canonical: []string{"internal statusbar"}},

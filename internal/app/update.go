@@ -254,8 +254,7 @@ func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "apply":
 		return c.runApply(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "update")
-		return nil
+		return printRouteHelp(stdout, "update")
 	default:
 		return usageError(fmt.Sprintf("unknown update subcommand: %s", args[0]))
 	}

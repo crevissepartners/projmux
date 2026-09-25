@@ -86,8 +86,7 @@ func (c *sessionPopupCommand) Run(args []string, stdout, stderr io.Writer) error
 	case "cycle-window":
 		return c.runCycleWindow(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "internal session-popup")
-		return nil
+		return printRouteHelp(stdout, "internal session-popup")
 	default:
 		printRouteUsage(stderr, "internal session-popup")
 		return fmt.Errorf("unknown session-popup subcommand: %s", fs.Arg(0))

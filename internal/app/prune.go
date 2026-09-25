@@ -109,8 +109,7 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 		return c.agent.Run(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "prune")
-		return nil
+		return printRouteHelp(stdout, "prune")
 	default:
 		printRouteUsage(stderr, "prune")
 		return fmt.Errorf("unknown prune subcommand: %s", fs.Arg(0))
