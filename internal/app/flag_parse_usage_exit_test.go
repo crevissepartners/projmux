@@ -85,6 +85,7 @@ func TestAgentDiagnosticsUpdateFlagParseErrorsAreUsageErrors(t *testing.T) {
 	routes := []flagParseRoute{
 		flagParseAgentRoute("agent message status", "message", "status"),
 		flagParseAgentRoute("agent wait", "wait"),
+		flagParseAgentRoute("agent models", "models"),
 		flagParseAgentRoute("agent message qualify", "message", "qualify"),
 		flagParseDiagnosticsRoute("diagnostics agent-hook", "agent-hook"),
 		flagParseUpdateRoute("update apply", "apply"),
@@ -100,6 +101,7 @@ func TestAgentDiagnosticsUpdateFlagParseErrorsAreUsageErrors(t *testing.T) {
 	cases = append(cases,
 		parseCase{route: byName["agent message status"], tail: []string{"-o"}, wantText: "flag needs an argument: -o"},
 		parseCase{route: byName["agent wait"], tail: []string{"--timeout"}, wantText: "flag needs an argument: -timeout"},
+		parseCase{route: byName["agent models"], tail: []string{"--provider"}, wantText: "flag needs an argument: -provider"},
 		parseCase{route: byName["agent message qualify"], tail: []string{"--timeout"}, wantText: "flag needs an argument: -timeout"},
 		parseCase{route: byName["diagnostics agent-hook"], tail: []string{"--tail"}, wantText: "flag needs an argument: -tail"},
 		parseCase{route: byName["update apply"], tail: []string{"--dry-run=maybe"}, wantText: `invalid boolean value "maybe" for -dry-run: parse error`},

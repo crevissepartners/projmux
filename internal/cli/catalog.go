@@ -799,6 +799,7 @@ var routes = []Route{
 			"projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]",
 			"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]",
 			"projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]",
+			"projmux agent models [--provider claude] [-o json]",
 			"projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>",
 			"projmux agent message status <message-ref> [-o json]",
 			"projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json",
@@ -808,7 +809,7 @@ var routes = []Route{
 			"projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o json]",
 			"projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -898,6 +899,18 @@ var routes = []Route{
 				Summary:    "Read static provider support or one exact Agent's Registry-backed runtime eligibility",
 				Usage:      []string{"projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]"},
 				Canonical:  []string{"agent capabilities"},
+				Outputs:    []OutputMode{OutputModeJSON},
+			},
+			{
+				// A static read of the core Claude model list. The list is a
+				// suggestion: `create --model` and a Profile `model` still take
+				// any other well-formed name.
+				Effects:    unchangedEffects(CardinalityUnchanged),
+				Name:       "models",
+				Invocation: InvocationNatural,
+				Summary:    "List the Claude model names projmux suggests for --model; other names are still accepted",
+				Usage:      []string{"projmux agent models [--provider claude] [-o json]"},
+				Canonical:  []string{"agent models"},
 				Outputs:    []OutputMode{OutputModeJSON},
 			},
 			{

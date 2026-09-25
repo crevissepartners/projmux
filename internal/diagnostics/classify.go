@@ -53,7 +53,7 @@ var commandRules = map[string]commandRule{
 	"welcome":        {},
 	"window":         {subcommands: stringSet("record", "recent"), changing: stringSet("recent")},
 
-	"agent":           {subcommands: stringSet("status", "topic", "resume", "instructions", "persona", "turn", "approval", "review", "integrate", "usage", "capabilities", "message", "wait", "question")},
+	"agent":           {subcommands: stringSet("status", "topic", "resume", "instructions", "persona", "turn", "approval", "review", "integrate", "usage", "capabilities", "models", "message", "wait", "question")},
 	"config":          {subcommands: stringSet("edit", "providers", "locale", "agent-questions", "render", "apply")},
 	"create":          {subcommands: stringSet("project", "window", "pane", "agent", "notification", "codex", "claude", "antigravity")},
 	"delete":          {subcommands: stringSet("project", "window", "pane", "agent", "notification"), aliases: pluralAliases("project", "window", "pane", "agent", "notification")},

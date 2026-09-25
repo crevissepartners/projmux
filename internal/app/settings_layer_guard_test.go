@@ -74,6 +74,7 @@ var settingsLayerGuardArgv = [][]string{
 	{"agent", "integrate", "codex", "--dry-run"},
 	{"agent", "usage", "--json"},
 	{"agent", "capabilities", "--provider", "codex", "-o", "json"},
+	{"agent", "models", "-o", "json"},
 	{"agent", "message", "status", "msg-1", "-o", "json"},
 	{"agent", "wait", "alpha-agent", "--timeout", "1s"},
 	{"agent", "question", "list", "alpha-agent", "-o", "json"},

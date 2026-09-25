@@ -24,8 +24,8 @@ import (
 )
 
 // agentSubcommands is projected from the authoritative provider action catalog.
-// capabilities is the metadata query itself, not a provider action cell.
-var agentSubcommands = append(aiprovider.AgentGroups(), "capabilities")
+// capabilities and models are metadata queries, not provider action cells.
+var agentSubcommands = append(aiprovider.AgentGroups(), "capabilities", "models")
 
 // resumableAgentPhases is the closed set of phases `agent resume` accepts.
 var resumableAgentPhases = []coremetadata.AgentPhase{
@@ -203,6 +203,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runReview(rest, stdout, stderr)
 	case "capabilities":
 		return c.runCapabilities(rest, stdout, stderr)
+	case "models":
+		return c.runModels(rest, stdout, stderr)
 	case "message":
 		return c.runMessage(rest, stdout, stderr)
 	case "wait":

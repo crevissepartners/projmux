@@ -533,6 +533,15 @@ current Registry-backed `available`, and
 `completionPrecision` are separate fields. Use `-o json` for the stable machine
 projection.
 
+`projmux agent models [--provider claude] [-o json]` lists, in order, the
+Claude model names projmux suggests for `create --model` and a Profile `model`:
+one name per line, or `{"provider","models","acceptsUnlisted":true}` with
+`-o json`. It reads a fixed list without opening the Registry, tmux, a provider
+process, or the network. The list is a suggestion, not an allowlist: any other
+well-formed model name is still accepted. `--provider codex` (or any other
+provider projmux does not apply a model to) is a usage error rather than an
+empty list.
+
 The closed static modes are `generic-registry`, `provider-resume`,
 `native-exact-control`, `provider-hook`, `read-only-adapter`, and
 `unsupported`. `message.send`, `message.status`, and `wait.idle` are provider-neutral commands whose availability is decided from
@@ -1717,6 +1726,7 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
+projmux agent models [--provider claude] [-o json]
 projmux internal agent-hook watch-title [pane]
 projmux internal agent-hook ingest codex-hook [--pane <pane_uid|pane_id>] < payload.json
 projmux internal agent-hook ingest claude-hook [--pane <pane_uid|pane_id>] < payload.json

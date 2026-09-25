@@ -1261,7 +1261,7 @@ booleans, and inline tables. The file limit is 64 KiB.
 | Key | Value |
 | --- | --- |
 | `instructions` | the name of stored instructions (`projmux instructions list`); the file must exist |
-| `model` | a Claude model alias or name, the same shape `create --model` accepts |
+| `model` | a Claude model alias or name, the same shape `create --model` accepts; `projmux agent models` lists suggestions, and names outside that list are accepted too |
 | `effort` | `low`, `medium`, `high`, `xhigh`, or `max` |
 | `roles` | array of role names; each non-empty, without surrounding whitespace, listed once, and not listed by another valid profile |
 | `[permissions]` `sandbox` | `read-only`, `workspace-write`, or `full-access` |

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 )
 
 func TestCreateClaudeAgentPassesModelAndEffort(t *testing.T) {
@@ -17,6 +18,26 @@ func TestCreateClaudeAgentPassesModelAndEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(launcher.plans) != 1 || launcher.plans[0].model != "opus[1m]" || launcher.plans[0].effort != "xhigh" {
+		t.Fatalf("plans = %+v", launcher.plans)
+	}
+}
+
+// TestCreateClaudeAgentAcceptsAModelOutsideTheSuggestedList holds `agent
+// models` to a suggestion: --model takes any well-formed name, listed or not.
+func TestCreateClaudeAgentAcceptsAModelOutsideTheSuggestedList(t *testing.T) {
+	t.Parallel()
+	const unlisted = "claude-opus-5"
+	if slices.Contains(profile.ClaudeModels(), unlisted) {
+		t.Fatalf("%q is listed; pick a name outside the list", unlisted)
+	}
+	store := newFakeResourceStore(t)
+	create, launcher := newTestAgentCreateCommand(t, store, newFakeTmux())
+	if _, _, err := runRoute(t, create,
+		"agent", "--provider", "claude", "--model", unlisted,
+		"--project", "alpha", "--window", "review", "--", "review this"); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.plans) != 1 || launcher.plans[0].model != unlisted {
 		t.Fatalf("plans = %+v", launcher.plans)
 	}
 }

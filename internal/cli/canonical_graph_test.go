@@ -15,7 +15,10 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `profile list|show|set|delete` joined the graph
+// The baseline last moved when `agent models` joined the Agent domain: one row
+// with a json projection that lists the Claude model names projmux suggests
+// for --model, a suggestion rather than an allowlist.
+// Before that, it moved when `profile list|show|set|delete` joined the graph
 // as a noun group of its own: four rows over the named Agent profile files in
 // <ConfigDir>/profiles, which store and validate profiles and apply none.
 // Before that, it moved when `config locale` and `config agent-questions`
@@ -67,7 +70,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "3a3595f86df6b9543b61b9bf48c160f4caea211072aae6ccef16fd7f23e7713c"
+	const want = "7505dfdf78996aebfcda155bc58ba744763ce3ed6fa8f60777c1fb8634b3d21c"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}
