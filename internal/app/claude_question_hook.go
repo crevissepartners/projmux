@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"os/signal"
 	"sort"
 	"strings"
@@ -34,6 +35,9 @@ const (
 	// claudeQuestionClientPoll is how often a way-2 hook with no popup open
 	// looks for a tmux client to open it on.
 	claudeQuestionClientPoll = time.Second
+	// claudeQuestionProjectTimeout bounds each tmux call of the way-2 Pane
+	// projection, so a stuck tmux cannot hold the question before its wait.
+	claudeQuestionProjectTimeout = 2 * time.Second
 )
 
 // claudeQuestionWindow is how long the hook holds one question open for a
@@ -106,6 +110,15 @@ func claudeQuestionAnsweredByProjmux(agent coremetadata.Agent, answering func() 
 // Agent and its Project/Window, and waits for that picker or `projmux agent
 // question answer`, whichever answers the record first.
 //
+// Once the question is recorded and before it waits, it raises the asking
+// Agent's interaction to input_required (source provider-hook) in one Registry
+// transaction fenced on the Agent and Pane binding it read, and then projects
+// that onto the Pane's tmux options, so a question projmux holds shows as
+// input_required rather than in_progress. The raise is best effort and silent:
+// a changed binding or any failure skips it and the question goes on. The hook
+// never lowers the interaction; the PostToolUse that follows the answer, or the
+// next provider event, does.
+//
 // Whatever else happens, it prints nothing and succeeds, which Claude Code
 // reads as "no decision": the question goes on to the ordinary prompt. That is
 // way 1, and the outcome for every event it does not own, every error, an
@@ -116,8 +129,8 @@ func claudeQuestionAnsweredByProjmux(agent coremetadata.Agent, answering func() 
 // Way 1 runs for every question of every Claude session with the hook
 // installed, so it reads one payload, the Registry file, and, only once the
 // Registry confirms a projmux Claude Agent that is not opted in, the one
-// answering setting: no tmux, no store, no migration. The window is resolved
-// only in way 2.
+// answering setting: no tmux, no store, no migration, no Registry write. The
+// window is resolved only in way 2.
 type claudeQuestionHook struct {
 	loadRegistry func() (coremetadata.Registry, error)
 	store        func() (*agentquestion.Store, error)
@@ -131,6 +144,11 @@ type claudeQuestionHook struct {
 	readRecord func(*agentquestion.Store, string) (agentquestion.Record, bool, error)
 	newID      func() (string, error)
 	now        func() time.Time
+	// updateRegistry is the Registry transaction the way-2 raise commits in;
+	// nil never raises. projectInteraction writes the committed interaction
+	// onto the Pane's tmux options by its live handle; nil projects nothing.
+	updateRegistry     func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
+	projectInteraction func(paneID string, kind coremetadata.AgentInteractionKind) error
 }
 
 func defaultClaudeQuestionHook() claudeQuestionHook {
@@ -150,7 +168,33 @@ func defaultClaudeQuestionHook() claudeQuestionHook {
 		clientPoll: claudeQuestionClientPoll,
 		newID:      agentquestion.NewID,
 		now:        time.Now,
+		// The same locked read -> mutate -> validate -> atomic replace
+		// transaction the ingest hook commits interaction through.
+		updateRegistry:     updateResourceRegistry,
+		projectInteraction: projectClaudeQuestionInteraction,
 	}
+}
+
+// projectClaudeQuestionInteraction writes kind onto paneID through the ingest
+// hook's own routed Pane writer: the tmux server the inherited $TMUX names, or
+// else the app socket once it proves it owns that Pane. Every tmux call has
+// its output captured, so nothing reaches the hook's stdout, where the
+// decision goes, and is bounded by claudeQuestionProjectTimeout.
+func projectClaudeQuestionInteraction(paneID string, kind coremetadata.AgentInteractionKind) error {
+	read := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(ctx, claudeQuestionProjectTimeout)
+		defer cancel()
+		return readExternalCommand(ctx, name, args...)
+	}
+	writer := &aiCommand{
+		lookupEnv:   os.Getenv,
+		readCommand: read,
+		runCommand: func(ctx context.Context, name string, args ...string) error {
+			_, err := read(ctx, name, args...)
+			return err
+		},
+	}
+	return writer.projectManagedAgentInteraction(paneID, kind)
 }
 
 // defaultAgentQuestionStore opens the question store under the same state
@@ -241,7 +285,8 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 	}
 	// The popup is placed by the Agent Pane's live tmux handle.
 	var paneID string
-	if pane, found := registry.Pane(paneUID); found {
+	pane, paneFound := registry.Pane(paneUID)
+	if paneFound {
 		paneID = strings.TrimSpace(pane.Status.Activation.RuntimeID)
 	}
 
@@ -277,6 +322,12 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 			panic(recovered)
 		}
 	}()
+	if paneFound {
+		h.raiseInputRequired(claudeQuestionBinding{
+			agentUID: agent.Metadata.UID, paneUID: paneUID, paneID: paneID,
+			generation: pane.Status.Activation.Generation, activationAgentUID: pane.Status.Activation.AgentUID,
+		})
+	}
 	answered, ok := h.wait(ctx, store, record, paneID, claudeQuestionAskerOf(registry, agent))
 	if !ok {
 		return
@@ -286,6 +337,52 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 		return
 	}
 	_, _ = stdout.Write(decision)
+}
+
+// claudeQuestionBinding is the Agent and Pane binding the hook read from its
+// read-only Registry snapshot; the raise commits only while it still holds.
+type claudeQuestionBinding struct {
+	agentUID, paneUID, paneID      string
+	generation, activationAgentUID string
+}
+
+// errClaudeQuestionBindingChanged aborts the raise transaction, which then
+// writes nothing.
+var errClaudeQuestionBindingChanged = errors.New("question Agent binding changed before interaction commit")
+
+// raiseInputRequired commits the asking Agent's interaction as input_required
+// from the provider hook and then projects it onto the Pane. It is silent: a
+// binding that changed since the snapshot, a failed transaction, or a failed
+// projection leaves the question flow exactly as it would be without it, and a
+// projection runs only after a commit. Even a panic in it is contained here,
+// so it cannot hand the question back.
+func (h claudeQuestionHook) raiseInputRequired(binding claudeQuestionBinding) {
+	if h.updateRegistry == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	mutator := intmetadata.DefaultMutator()
+	if h.now != nil {
+		mutator.Now = h.now
+	}
+	kind := coremetadata.InteractionInputRequired
+	_, err := h.updateRegistry(func(working *coremetadata.Registry) error {
+		agent, ok := working.Agent(binding.agentUID)
+		if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != binding.paneUID {
+			return errClaudeQuestionBindingChanged
+		}
+		pane, ok := working.Pane(binding.paneUID)
+		if !ok || pane.Status.Activation.Generation != binding.generation ||
+			pane.Status.Activation.AgentUID != binding.activationAgentUID {
+			return errClaudeQuestionBindingChanged
+		}
+		_, err := mutator.SetAgentInteraction(working, binding.agentUID, kind, string(coremetadata.InteractionSourceProviderHook))
+		return err
+	})
+	if err != nil || h.projectInteraction == nil || binding.paneID == "" {
+		return
+	}
+	_ = h.projectInteraction(binding.paneID, kind)
 }
 
 func (h claudeQuestionHook) openStore() (*agentquestion.Store, error) {

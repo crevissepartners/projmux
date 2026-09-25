@@ -742,6 +742,7 @@ holds another value in 60–3600 (see
 [configuration.md](configuration.md#agent-question-window)). The window binds
 only in way 2; way 1 never waits. While it waits, Claude Code shows the hook's
 status message instead of the question prompt.
+A question projmux holds also shows the Agent as `input_required` until the tool runs.
 
 The hook opens a tmux popup right away on the terminal you are looking at: the
 client of the Agent's tmux server that you used most recently, whatever
