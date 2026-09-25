@@ -239,15 +239,44 @@ func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 		return errors.New("claude helper start failed")
 	}
 	_ = writeAck.Close()
-	_ = readAck.SetReadDeadline(time.Now().Add(3 * time.Second))
+	return awaitClaudeHelperAdmission(readAck, time.Now().Add(3*time.Second), claudeHelperCommand{cmd: cmd})
+}
+
+// claudeHelperAck is the hook's read side of the helper's one-byte admission
+// acknowledgement.
+type claudeHelperAck interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
+}
+
+// claudeHelperProcess is what the hook does with a started helper once its
+// acknowledgement wait ends.
+type claudeHelperProcess interface {
+	Kill() error
+	Release() error
+}
+
+// claudeHelperCommand kills and reaps, or releases, the exact helper the hook
+// started.
+type claudeHelperCommand struct{ cmd *exec.Cmd }
+
+func (c claudeHelperCommand) Kill() error {
+	err := c.cmd.Process.Kill()
+	_ = c.cmd.Wait()
+	return err
+}
+
+func (c claudeHelperCommand) Release() error { return c.cmd.Process.Release() }
+
+func awaitClaudeHelperAdmission(readAck claudeHelperAck, deadline time.Time, helper claudeHelperProcess) error {
+	_ = readAck.SetReadDeadline(deadline)
 	var ack [1]byte
-	_, err = io.ReadFull(readAck, ack[:])
+	_, err := io.ReadFull(readAck, ack[:])
 	if err != nil || ack[0] != 1 {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		_ = helper.Kill()
 		return errors.New("claude helper admission failed")
 	}
-	return cmd.Process.Release()
+	return helper.Release()
 }
 
 func claudeHelperEnvironment(environment []string) []string {
