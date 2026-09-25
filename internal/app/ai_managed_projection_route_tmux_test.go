@@ -20,9 +20,7 @@ import (
 // Internal topic/idle cases always compile this source; they are not installed
 // CLI calls. Canonical agent status/topic uses a separate already-routed mirror.
 func TestManagedProjectionRoutingRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	binary := os.Getenv("PROJMUX_TEST_MANAGED_ROUTE_BINARY")
 	if binary != "" && !filepath.IsAbs(binary) {
 		t.Fatal("installed smoke binary must be absolute")

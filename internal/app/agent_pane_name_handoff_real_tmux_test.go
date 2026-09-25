@@ -52,12 +52,7 @@ type realTmuxNameHandoffServer struct {
 
 func startRealTmuxNameHandoffServer(t *testing.T, ctx context.Context) realTmuxNameHandoffServer {
 	t.Helper()
-	if _, err := exec.LookPath("tmux"); err != nil {
-		if os.Getenv(resumedPaneNameRealTmuxEnv) == "1" {
-			t.Fatalf("%s=1 requires tmux: %v", resumedPaneNameRealTmuxEnv, err)
-		}
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t, resumedPaneNameRealTmuxEnv)
 	root, err := os.MkdirTemp("", "pnh-")
 	if err != nil {
 		t.Fatal(err)

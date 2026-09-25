@@ -28,9 +28,7 @@ type realTmuxQuestionServer struct {
 
 func startRealTmuxQuestionServer(t *testing.T) realTmuxQuestionServer {
 	t.Helper()
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	root, err := os.MkdirTemp("", "pqa-")
 	if err != nil {
 		t.Fatal(err)

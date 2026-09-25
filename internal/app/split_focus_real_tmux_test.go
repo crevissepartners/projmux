@@ -317,9 +317,7 @@ func (fx *splitFocusRealTmux) aiCommand(t *testing.T) *aiCommand {
 // pressing client on another Window, the pane menu split keeps the origin Pane
 // active.
 func TestUISplitFocusesTheNewPaneThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	fx := newSplitFocusRealTmux(t, ctx)

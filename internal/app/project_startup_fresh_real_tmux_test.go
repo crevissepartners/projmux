@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -353,9 +352,7 @@ func (f *freshOpenRealTmux) requireShellOnly(t *testing.T) {
 // Session agree on exactly one Pane -- the Agent for a provider answer, the
 // shell for a shell answer or a closed picker.
 func TestFreshOpenAsksFirstAndFillsTheFirstPaneThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	claude := &agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right"}
 	for _, registered := range []bool{true, false} {
 		kind := "unregistered root"

@@ -530,9 +530,7 @@ func tmuxPromptTemplateReplace(template, response string) string {
 // format-expands it in run-shell, and runs it with /bin/sh. The recorder
 // stands in for projmux and keeps its argv and stdin.
 func TestGeneratedRenameBindingDeliversHostileResponsesVerbatimThroughRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	root, err := os.MkdirTemp("", "prn-")

@@ -22,9 +22,7 @@ import (
 // same detached/inherited hook assertions execute the installed entrypoint;
 // normal test runs exercise the real ingest command with real tmux subprocesses.
 func TestSharedPaneRoutingRealTmux(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
+	requireRealTmux(t)
 	// A test process may itself be a managed Agent; its activation belongs to
 	// the caller, never to either isolated fixture server. Seed stale values so
 	// removing the filter below is detected even in a clean CI environment.
