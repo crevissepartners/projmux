@@ -64,16 +64,49 @@ func TestClassifyFailureDecidesPrintExitCodeAndKind(t *testing.T) {
 		{name: "usage error with app coder", err: testExitCoder{code: 6}, usage: true, want: Failure{ExitCode: 6, Kind: FailureUsage}},
 		// A FlagSet parse failure already printed its reason on stderr: the
 		// entrypoint stays silent and keeps the usage exit code and kind.
-		{name: "reported usage error", err: testReported{reported: true}, usage: true, want: Failure{ExitCode: 2, Kind: FailureUsage}},
-		{name: "wrapped reported usage error", err: fmt.Errorf("outer: %w", testReported{reported: true}), usage: true, want: Failure{ExitCode: 2, Kind: FailureUsage}},
+		{name: "reported usage error", err: testReported{reported: true}, usage: true, want: Failure{ExitCode: 2, Kind: FailureUsage, Reported: true}},
+		{name: "wrapped reported usage error", err: fmt.Errorf("outer: %w", testReported{reported: true}), usage: true, want: Failure{ExitCode: 2, Kind: FailureUsage, Reported: true}},
+		{name: "flag parse error", err: FlagParseError(errors.New("flag provided but not defined: -zz")), usage: true, want: Failure{ExitCode: 2, Kind: FailureUsage, Reported: true}},
+		// A hidden route's parse failure is reported but not a usage error: the
+		// entrypoint stays silent and the exit code and kind are a printed
+		// runtime failure's, the hidden route's historical exit 1.
+		{name: "flag parse reported", err: FlagParseReported(errors.New("flag provided but not defined: -zz")), want: Failure{ExitCode: 1, Kind: FailureRuntime, Reported: true}},
+		{name: "wrapped flag parse reported", err: fmt.Errorf("outer: %w", FlagParseReported(errors.New("flag provided but not defined: -zz"))), want: Failure{ExitCode: 1, Kind: FailureRuntime, Reported: true}},
+		{name: "reported error that is not usage", err: testReported{reported: true}, want: Failure{ExitCode: 1, Kind: FailureRuntime, Reported: true}},
 		{name: "usage error that did not report", err: testReported{}, usage: true, want: Failure{Print: true, ExitCode: 2, Kind: FailureUsage}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			// Only a reported error is Reported; a silent coded exit
+			// (app coder, bare exit error) must stay distinguishable.
+			if tt.want.Reported && tt.want.Print {
+				t.Fatalf("row %q: a reported verdict cannot print", tt.name)
+			}
 			if got := ClassifyFailure(tt.err, tt.usage); got != tt.want {
 				t.Fatalf("ClassifyFailure(%v, %v) = %+v, want %+v", tt.err, tt.usage, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestFlagParseReportedIsNotAUsageError pins the hidden-route marker's shape:
+// it says the reason is printed, unwraps to the parse error, keeps its text,
+// and carries no usage marker, so a hidden route keeps exit 1.
+func TestFlagParseReportedIsNotAUsageError(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("flag provided but not defined: -zz")
+	err := FlagParseReported(cause)
+	if err.Error() != cause.Error() {
+		t.Fatalf("Error() = %q, want %q", err.Error(), cause.Error())
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("FlagParseReported does not unwrap to its cause")
+	}
+	if _, ok := err.(interface{ MetadataUsageError() bool }); ok {
+		t.Fatal("FlagParseReported carries a usage marker; a hidden route must keep exit 1")
+	}
+	if _, ok := FlagParseError(cause).(interface{ MetadataUsageError() bool }); !ok {
+		t.Fatal("FlagParseError lost its usage marker")
 	}
 }

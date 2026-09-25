@@ -193,7 +193,7 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() == 0 {
 		printRouteUsage(stderr, "internal tmux")
@@ -261,7 +261,7 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 	_ = fs.Bool("quiet", false, "ignored; the route is a retained no-op")
 	_ = fs.Bool("force", false, "ignored; the route is a retained no-op")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		return errors.New("tmux autosave-session-state does not accept positional arguments")
@@ -314,7 +314,7 @@ func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
 	hookWindow := fs.String("hook-window", "", "exact tmux #{hook_window} for window-unlinked")
 	reason := fs.String("reason", "", "trigger reason: "+strings.Join(controllerTriggerReasonSpellings(), ", "))
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("internal tmux converge does not accept positional arguments")
@@ -464,7 +464,7 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 	fs.SetOutput(stderr)
 	client := fs.String("client", "", "exact tmux client that receives the action result")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 2 || strings.TrimSpace(*client) == "" || exactTmuxHandle(fs.Arg(1), "%") == "" {
 		return errors.New("tmux pane-menu requires --client <key> <split-right|split-down|kill> <%pane>")
@@ -566,7 +566,7 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 	client := fs.String("client", "", "exact tmux client that receives the action result")
 	anchor := fs.String("anchor", "", "exact anchor Pane")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 || strings.TrimSpace(*client) == "" || exactTmuxHandle(*anchor, "%") == "" {
 		return errors.New("tmux window-create requires --client <key> --anchor <%pane>")
@@ -746,7 +746,7 @@ func parseRenameIntentArgs(route string, args []string, stderr io.Writer) (renam
 	anchor := fs.String("anchor", "", "exact anchor Pane")
 	fromStdin := fs.Bool(strings.TrimPrefix(generatedRenameStdinFlag, "--"), false, "read the raw prompt response from stdin")
 	if err := fs.Parse(args); err != nil {
-		return renameIntentArgs{}, err
+		return renameIntentArgs{}, flagParseReported(err)
 	}
 	parsed := renameIntentArgs{
 		client:    strings.TrimSpace(*client),
@@ -859,7 +859,7 @@ func (c *tmuxCommand) runWindowDeleteIntent(args []string, stdout, stderr io.Wri
 	client := fs.String("client", "", "exact tmux client that receives the action result")
 	anchor := fs.String("anchor", "", "exact anchor Pane")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	paneID := exactTmuxHandle(strings.TrimSpace(*anchor), "%")
 	if fs.NArg() != 0 || strings.TrimSpace(*client) == "" || paneID == "" {
@@ -905,7 +905,7 @@ func (c *tmuxCommand) runDeleteConfirmIntent(args []string, stdout, stderr io.Wr
 	client := fs.String("client", "", "exact tmux client that answers the confirmation")
 	anchor := fs.String("anchor", "", "exact anchor Pane")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	clientKey := strings.TrimSpace(*client)
 	paneID := exactTmuxHandle(strings.TrimSpace(*anchor), "%")
@@ -1214,7 +1214,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	answerFile := fs.String(strings.TrimPrefix(popupToggleAnswerFlag, "--"), "",
 		"absolute file the picker writes its selection to instead of creating anything")
 	if err := fs.Parse(args); err != nil {
-		return tmuxPopupToggleMode{}, err
+		return tmuxPopupToggleMode{}, flagParseReported(err)
 	}
 	if fs.NArg() != 1 {
 		printRouteUsage(stderr, "internal tmux popup-toggle")
@@ -1418,7 +1418,7 @@ func (c *tmuxCommand) runInstall(args []string, stdout, stderr io.Writer) error 
 	configPath := fs.String("config", "", "tmux config file to update")
 	includePath := fs.String("include", "", "standalone snippet path to write")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "internal tmux install")
@@ -1467,7 +1467,7 @@ func (c *tmuxCommand) runInstallApp(args []string, stdout, stderr io.Writer) err
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
 	configPath := fs.String("config", "", "app tmux config path to write")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "internal tmux install-app")

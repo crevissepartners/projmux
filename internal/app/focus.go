@@ -178,10 +178,12 @@ func (c *focusCommand) dispatch(opts focusOptions, stdout, stderr io.Writer) (ru
 	}
 	diagnosticsSocket = socket
 	if err != nil {
-		// The entrypoint prints this error itself unless its verdict is silent
-		// (for example the not-resolved focusExitError). JSON mode keeps its
-		// historical dispatch line; its output is out of scope here.
-		if opts.JSON || !cli.ClassifyFailure(err, IsUsageError(err)).Print {
+		// The entrypoint prints this error itself unless its verdict is silent.
+		// A silent coded exit (for example the not-resolved focusExitError)
+		// gets its line here; a reported failure is already on stderr and gets
+		// none. JSON mode keeps its historical dispatch line; its output is out
+		// of scope here.
+		if opts.JSON || focusOwesFailureLine(err) {
 			fmt.Fprintln(stderr, err.Error())
 		}
 		return err
@@ -224,10 +226,11 @@ func (c *focusCommand) dispatch(opts focusOptions, stdout, stderr io.Writer) (ru
 			returned = focusExitError{code: focusExitNotResolved, err: err}
 		}
 		// On non-JSON output paths the failure gets one short stderr line:
-		// dispatch writes it only when the CLI entrypoint will not, judged by
-		// the entrypoint's own verdict on the error actually returned. The
-		// JSON path already conveys the failure via ok:false.
-		if !opts.JSON && !cli.ClassifyFailure(returned, IsUsageError(returned)).Print {
+		// dispatch writes it only when the CLI entrypoint will not and the
+		// reason is not already on stderr, judged by the entrypoint's own
+		// verdict on the error actually returned. The JSON path already
+		// conveys the failure via ok:false.
+		if !opts.JSON && focusOwesFailureLine(returned) {
 			fmt.Fprintln(stderr, err.Error())
 		}
 		return returned
@@ -238,6 +241,14 @@ func (c *focusCommand) dispatch(opts focusOptions, stdout, stderr io.Writer) (ru
 		}
 	}
 	return nil
+}
+
+// focusOwesFailureLine reports whether dispatch must write err's line itself:
+// only for a silent coded exit. A printed verdict is the entrypoint's line, and
+// a reported one (cli.Failure.Reported) is already on stderr.
+func focusOwesFailureLine(err error) bool {
+	failure := cli.ClassifyFailure(err, IsUsageError(err))
+	return !failure.Print && !failure.Reported
 }
 
 func focusResultIsUnresolvedID(res focusResult) bool {
@@ -310,7 +321,7 @@ func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {
 	fs.BoolVar(&opts.JSON, "json", false, "Emit a single-line JSON result")
 
 	if err := fs.Parse(args); err != nil {
-		return focusOptions{}, err
+		return focusOptions{}, flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		return focusOptions{}, fmt.Errorf("focus does not accept positional arguments")

@@ -24,10 +24,16 @@ const (
 // Failure is the one verdict on what a command error means to the process:
 // whether the entrypoint prints it, which exit code the process returns, and
 // which kind the journal records.
+//
+// Reported tells the two silent verdicts apart. It is true when the error says
+// its reason is already on the user's stderr, so nobody may print it again; it
+// is false for a silent coded exit, whose command decides for itself whether a
+// line of its own is owed.
 type Failure struct {
 	Print    bool
 	ExitCode int
 	Kind     FailureKind
+	Reported bool
 }
 
 // exitCoder lets a command request a non-default exit code while still
@@ -67,6 +73,26 @@ func (e *flagParseError) MetadataUsageError() bool { return true }
 // FailureReported says stderr already has the reason.
 func (e *flagParseError) FailureReported() bool { return true }
 
+// FlagParseReported is the error of a failed FlagSet.Parse on a hidden
+// `internal ...` route when the FlagSet writes to the user's stderr. Like
+// FlagParseError it reports its reason as printed, so the entrypoint does not
+// print it again, but it is not a usage error: a hidden route keeps its
+// historical exit code 1, which generated tmux config, provider hooks and
+// supervisors consume. A FlagSet with a discarded output returns the parse
+// error unwrapped instead, so the entrypoint prints the reason.
+func FlagParseReported(err error) error {
+	return &flagParseReported{cause: err}
+}
+
+type flagParseReported struct{ cause error }
+
+func (e *flagParseReported) Error() string { return e.cause.Error() }
+
+func (e *flagParseReported) Unwrap() error { return e.cause }
+
+// FailureReported says stderr already has the reason.
+func (e *flagParseReported) FailureReported() bool { return true }
+
 // ClassifyFailure decides the verdict for err. usage reports whether err is a
 // usage error; the caller supplies it because the usage predicate lives above
 // this package.
@@ -78,7 +104,9 @@ func (e *flagParseError) FailureReported() bool { return true }
 // outer context is printed once, so the non-zero exit carries its reason. Any
 // coder keeps its own exit code, and only a silent one is journaled as an exit.
 // An error that reports its reason as already printed is never printed again;
-// its exit code and kind are decided as if it were printed.
+// its exit code and kind are decided as if it were printed, and the verdict is
+// marked Reported so a command that owes a silent coded exit its own line can
+// tell that nothing is owed here.
 func ClassifyFailure(err error, usage bool) Failure {
 	if err == nil {
 		return Failure{}
@@ -103,6 +131,7 @@ func ClassifyFailure(err error, usage bool) Failure {
 	var reported reportedFailure
 	if errors.As(err, &reported) && reported.FailureReported() {
 		f.Print = false
+		f.Reported = true
 	}
 	return f
 }

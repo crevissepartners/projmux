@@ -97,6 +97,15 @@ func flagParseError(err error) error {
 	return cli.FlagParseError(err)
 }
 
+// flagParseReported builds the error for a failed Parse of a hidden
+// `internal ...` route's FlagSet whose output is stderr: the flag package has
+// already printed the reason, so the entrypoint must not, and the route keeps
+// its historical exit 1 (cli.FlagParseReported). A hidden FlagSet with a
+// discarded output returns the parse error itself, so the entrypoint prints it.
+func flagParseReported(err error) error {
+	return cli.FlagParseReported(err)
+}
+
 // IsUsageError reports whether err was caused by invalid user input. It is a
 // projection of coremetadata.IsUsageError, which owns the judgement; *UsageError
 // reaches it through the MetadataUsageError marker above. The app keeps the name

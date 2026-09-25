@@ -160,7 +160,7 @@ func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Read
 	requestPath := fs.String("request", "", "path to project hook trust request JSON")
 	decisionPath := fs.String("decision", "", "path to write the selected trust decision")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 || strings.TrimSpace(*requestPath) == "" || strings.TrimSpace(*decisionPath) == "" {
 		return errors.New("tmux hook-trust-prompt requires --request <path> --decision <path>")

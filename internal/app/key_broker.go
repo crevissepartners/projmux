@@ -60,7 +60,7 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("key-broker does not accept positional arguments")

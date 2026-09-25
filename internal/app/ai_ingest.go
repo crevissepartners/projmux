@@ -174,7 +174,7 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		eventName := fs.String("event", "", "authoritative Antigravity hook event name")
 		explicitPane := fs.String("pane", "", aiHookPaneArgumentUsage)
 		if err := fs.Parse(args[1:]); err != nil {
-			return err
+			return flagParseReported(err)
 		}
 		if fs.NArg() != 0 {
 			printRouteUsage(stderr, "internal agent-hook ingest")
@@ -240,7 +240,7 @@ func parseAIHookPaneArgument(route string, args []string, stderr io.Writer) (str
 	fs.SetOutput(stderr)
 	explicitPane := fs.String("pane", "", aiHookPaneArgumentUsage)
 	if err := fs.Parse(args); err != nil {
-		return "", err
+		return "", flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "internal agent-hook ingest")
@@ -254,7 +254,7 @@ func (c *aiCommand) runIngestBell(args []string, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	paneID := fs.String("pane", "", "target tmux pane id")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "internal agent-hook ingest")

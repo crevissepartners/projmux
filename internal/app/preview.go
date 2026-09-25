@@ -66,7 +66,7 @@ func (c *previewCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() == 0 {
 		printRouteUsage(stderr, "internal preview")

@@ -989,7 +989,7 @@ func (c *aiCommand) runPicker(args []string, stderr io.Writer) error {
 	shellOnly := fs.Bool("shell", false, "open a plain shell split")
 	resumeOnly := fs.Bool("resume", false, "open the resume session picker")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	direction, err := parseAISplitDirection(fs.Args(), "ai picker")
 	if err != nil {
