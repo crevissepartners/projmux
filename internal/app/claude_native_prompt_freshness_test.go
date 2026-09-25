@@ -101,11 +101,14 @@ func (f *nativePromptFixture) agent(t *testing.T) coremetadata.Agent {
 }
 
 // stepUntil advances the fake clock by nativePromptStep and steps the refresh
-// until the clock is past horizon after the raise.
+// until the clock is past horizon after the raise, or, like the watcher, until
+// a step reports that the refresh can never apply again.
 func (f *nativePromptFixture) stepUntil(horizon time.Duration) {
 	for f.now.Sub(f.raisedAt) <= horizon {
 		f.now = f.now.Add(nativePromptStep)
-		_ = f.refresh.step()
+		if !f.refresh.step() {
+			return
+		}
 	}
 }
 
@@ -283,8 +286,8 @@ func TestClaudeNativePromptRefreshWritesNothingOutsideItsFenceAndObservation(t *
 			tc.setup(t, f)
 			before := f.agent(t).Status.Interaction
 			f.stepUntil(claudeNativePromptRefreshInterval)
-			if f.registryWrites != 0 {
-				t.Fatalf("writes = %d, want none", f.registryWrites)
+			if f.registryWrites != 0 || len(f.events.events) != 0 {
+				t.Fatalf("writes=%d diagnostics=%+v, want no write and nothing recorded", f.registryWrites, f.events.events)
 			}
 			// Only the simulated other writer moves ObservedAt, a second per
 			// commit attempt; a refresh would stamp a step's time.
@@ -438,8 +441,11 @@ func TestClaudeNativePromptRefreshFailureLandsInTheOperationsJournal(t *testing.
 }
 
 // The watcher stops asking once a step reports that the refresh can never
-// apply to this activation -- the Agent is gone or is not a Claude Agent --
-// and keeps asking on a failed load or any interaction that is not due.
+// apply to this activation -- the loaded snapshot is outside the binding fence:
+// the Agent is gone, is not a Claude Agent, is not Running on this Pane, or
+// the Pane's activation is not this one -- and such a step records nothing and
+// reads no transcript although the raise is due. It keeps asking on a failed
+// load or any interaction that is not due.
 func TestClaudeNativePromptRefreshStopsOnlyWhenItCanNeverApply(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -451,23 +457,91 @@ func TestClaudeNativePromptRefreshStopsOnlyWhenItCanNeverApply(t *testing.T) {
 			agent.Spec.Provider = aiModeCodex
 		}},
 		{name: "agent gone", setup: func(_ *testing.T, f *nativePromptFixture) { f.spec.AgentUID = "agt-gone"; f.refresh.spec = f.spec }},
+		{name: "phase not running", setup: func(_ *testing.T, f *nativePromptFixture) {
+			agent, _ := f.registry.Agent(f.claudeUID)
+			agent.Status.Phase = coremetadata.PhaseOffline
+		}},
+		{name: "pane ref differs", setup: func(_ *testing.T, f *nativePromptFixture) {
+			agent, _ := f.registry.Agent(f.claudeUID)
+			agent.Status.PaneRef = "pan-other"
+		}},
+		{name: "pane generation differs", setup: func(_ *testing.T, f *nativePromptFixture) {
+			pane, _ := f.registry.Pane(f.spec.PaneUID)
+			pane.Status.Activation.Generation = "gen-other"
+		}},
+		{name: "activation agent differs", setup: func(_ *testing.T, f *nativePromptFixture) {
+			pane, _ := f.registry.Pane(f.spec.PaneUID)
+			pane.Status.Activation.AgentUID = "agt-other"
+		}},
 		{name: "load error", keep: true, setup: func(_ *testing.T, f *nativePromptFixture) {
 			f.refresh.load = func() (coremetadata.Registry, error) {
 				return coremetadata.Registry{}, errors.New("registry read failed")
 			}
 		}},
-		{name: "not due", keep: true, setup: func(*testing.T, *nativePromptFixture) {}},
-		{name: "other kind", keep: true, setup: func(t *testing.T, f *nativePromptFixture) { f.setInteraction(t, coremetadata.InteractionInProgress) }},
+		{name: "not due", keep: true, setup: func(_ *testing.T, f *nativePromptFixture) { f.now = f.now.Add(-claudeNativePromptRefreshInterval) }},
+		{name: "other kind", keep: true, setup: func(t *testing.T, f *nativePromptFixture) {
+			f.setInteraction(t, coremetadata.InteractionInProgress)
+			f.now = f.now.Add(-claudeNativePromptRefreshInterval)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newNativePromptFixture(t, coremetadata.InteractionApprovalRequired)
+			f.now = f.now.Add(claudeNativePromptRefreshInterval + time.Minute)
 			tc.setup(t, f)
-			f.now = f.now.Add(time.Minute)
 			if got := f.refresh.step(); got != tc.keep {
 				t.Fatalf("step() = %v, want %v", got, tc.keep)
 			}
-			if f.registryWrites != 0 {
-				t.Fatalf("writes = %d, want none", f.registryWrites)
+			if f.registryWrites != 0 || len(f.events.events) != 0 || f.transcriptReads != 0 {
+				t.Fatalf("writes=%d diagnostics=%+v tail reads=%d, want none", f.registryWrites, f.events.events, f.transcriptReads)
+			}
+		})
+	}
+}
+
+// A binding that changes between the snapshot and the commit of an open
+// dialog's recommit is recorded exactly once and stops the refresh, since it
+// never comes back within the activation; a transient Registry error is
+// recorded and retried on the next check; an observation another writer
+// replaced is neither recorded nor a reason to stop.
+func TestClaudeNativePromptRefreshStopsOnACommitTimeBindingChange(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		setup  func(f *nativePromptFixture)
+		keep   bool
+		record bool
+	}{
+		{name: "binding changed at commit", record: true, setup: func(f *nativePromptFixture) {
+			f.beforeUpdate = func(working *coremetadata.Registry) {
+				pane, _ := working.Pane(f.spec.PaneUID)
+				pane.Status.Activation.Generation = "gen-next"
+			}
+		}},
+		{name: "transient registry error", keep: true, record: true, setup: func(f *nativePromptFixture) {
+			f.updateErr = errors.New("registry write failed")
+		}},
+		{name: "interaction changed", keep: true, setup: func(f *nativePromptFixture) {
+			f.beforeUpdate = func(working *coremetadata.Registry) {
+				agent, _ := working.Agent(f.claudeUID)
+				agent.Status.Interaction.ObservedAt = agent.Status.Interaction.ObservedAt.Add(time.Second)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newNativePromptFixture(t, coremetadata.InteractionApprovalRequired)
+			tc.setup(f)
+			f.now = f.now.Add(claudeNativePromptRefreshInterval + time.Minute)
+			if got := f.refresh.step(); got != tc.keep {
+				t.Fatalf("step() = %v, want %v", got, tc.keep)
+			}
+			if f.registryWrites != 0 || f.transcriptReads != 1 {
+				t.Fatalf("writes=%d tail reads=%d, want no write after one judged read", f.registryWrites, f.transcriptReads)
+			}
+			want := 0
+			if tc.record {
+				want = 1
+			}
+			if len(f.events.events) != want {
+				t.Fatalf("diagnostics = %+v, want %d", f.events.events, want)
 			}
 		})
 	}

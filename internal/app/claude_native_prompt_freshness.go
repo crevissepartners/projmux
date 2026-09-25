@@ -29,7 +29,8 @@ const (
 // errClaudeNativePromptBindingChanged aborts a native-prompt recommit whose
 // Agent is no longer the running Claude Agent of this supervisor's Pane and
 // activation. It is recorded, since a dialog the transcript shows open is then
-// left to decay.
+// left to decay, and it stops the refresh: a binding never comes back within
+// one activation.
 var errClaudeNativePromptBindingChanged = errors.New("claude native prompt binding changed before refresh commit")
 
 // errClaudeNativePromptInteractionChanged aborts a native-prompt recommit whose
@@ -206,15 +207,19 @@ func claudeNativePromptKind(interaction coremetadata.AgentInteraction) (diagnost
 // read, so a turn_duration written after that read stays after the new
 // observation and the held-message release still sees the turn end. It projects
 // nothing: the Pane already shows the kind. It never writes to a stream: the
-// supervisor's stderr is the provider's terminal. A binding that changed or a
-// failed transaction is recorded once the transcript showed the dialog open;
-// an observation another writer replaced is expected and records nothing.
+// supervisor's stderr is the provider's terminal.
 //
-// It reports whether later steps can still apply to this activation: false
-// once the Agent is gone or is not a Claude Agent, since neither changes
-// within one activation, so the watcher stops asking and stops loading the
-// Registry. A failed load, an interaction that is not due, or any other answer
-// keeps it asking.
+// It reports whether later steps can still apply to this activation. A binding
+// never comes back within one activation, so step reports false, and the
+// watcher stops asking and stops loading the Registry, once the loaded
+// snapshot is outside the fence -- the Agent is gone, is not a Claude Agent,
+// is not Running on spec's Pane, or that Pane's activation is not spec's -- and
+// then records nothing and reads no transcript. A binding that changed between
+// the snapshot and the commit is recorded once the transcript showed the
+// dialog open, and also stops. A failed load, an interaction that is not due,
+// a dialog not judged open, and an observation another writer replaced keep it
+// asking and record nothing; a failed transaction is recorded and retried on
+// the next check.
 func (r claudeNativePromptRefresh) step() (keep bool) {
 	if r.now == nil || r.load == nil || r.update == nil || r.readTail == nil {
 		return false
@@ -223,8 +228,8 @@ func (r claudeNativePromptRefresh) step() (keep bool) {
 	if err != nil {
 		return true
 	}
-	agent, ok := registry.Agent(r.spec.AgentUID)
-	if !ok || agent.Spec.Provider != string(aiprovider.Claude) {
+	agent, ok := r.bound(&registry)
+	if !ok {
 		return false
 	}
 	judged := agent.Status.Interaction
@@ -245,13 +250,8 @@ func (r claudeNativePromptRefresh) step() (keep bool) {
 	mutator.Now = func() time.Time { return judgedAt }
 	spec := r.spec
 	err = r.update(func(working *coremetadata.Registry) error {
-		current, ok := working.Agent(spec.AgentUID)
-		if !ok || current.Spec.Provider != string(aiprovider.Claude) || current.Status.Phase != coremetadata.PhaseRunning ||
-			current.Status.PaneRef != spec.PaneUID {
-			return errClaudeNativePromptBindingChanged
-		}
-		pane, ok := working.Pane(spec.PaneUID)
-		if !ok || pane.Status.Activation.Generation != spec.Generation || pane.Status.Activation.AgentUID != spec.AgentUID {
+		current, ok := r.bound(working)
+		if !ok {
 			return errClaudeNativePromptBindingChanged
 		}
 		interaction := current.Status.Interaction
@@ -261,8 +261,28 @@ func (r claudeNativePromptRefresh) step() (keep bool) {
 		_, err := mutator.SetAgentInteraction(working, spec.AgentUID, judged.Kind, string(coremetadata.InteractionSourceProviderHook))
 		return err
 	})
-	if err != nil && !errors.Is(err, errClaudeNativePromptInteractionChanged) && r.record != nil {
+	switch {
+	case err == nil || errors.Is(err, errClaudeNativePromptInteractionChanged):
+		return true
+	case r.record != nil:
 		r.record(kind, judgedAt)
 	}
-	return true
+	return !errors.Is(err, errClaudeNativePromptBindingChanged)
+}
+
+// bound returns spec's Agent when registry still holds this supervisor's
+// binding: the Agent is a Claude Agent Running on spec's Pane, and that Pane's
+// activation is spec's Generation for spec's Agent.
+func (r claudeNativePromptRefresh) bound(registry *coremetadata.Registry) (*coremetadata.Agent, bool) {
+	spec := r.spec
+	agent, ok := registry.Agent(spec.AgentUID)
+	if !ok || agent.Spec.Provider != string(aiprovider.Claude) || agent.Status.Phase != coremetadata.PhaseRunning ||
+		agent.Status.PaneRef != spec.PaneUID {
+		return nil, false
+	}
+	pane, ok := registry.Pane(spec.PaneUID)
+	if !ok || pane.Status.Activation.Generation != spec.Generation || pane.Status.Activation.AgentUID != spec.AgentUID {
+		return nil, false
+	}
+	return agent, true
 }
