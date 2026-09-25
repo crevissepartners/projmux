@@ -1018,7 +1018,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux attention window
+projmux attention window [window] [style]
 ```
 
 ## `projmux attach`
@@ -1550,6 +1550,7 @@ projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] 
 projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete notification <id> | --all
 ```
 
 Subcommands:
@@ -1676,7 +1677,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux delete notification
+projmux delete notification <id> | --all
 ```
 
 Aliases: `notifications`
@@ -2446,7 +2447,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux hook trust
+projmux hook trust [<project>]
 ```
 
 ### `projmux hook untrust`
@@ -2467,7 +2468,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux hook untrust
+projmux hook untrust [<project>]
 ```
 
 ## `projmux label`

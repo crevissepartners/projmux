@@ -964,7 +964,7 @@ var routes = []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "clear", Invocation: InvocationNatural, Summary: "Clear attention state for a pane", CanonicalSummary: "Clear live Pane attention state", CanonicalNodeOrder: 3, Usage: []string{"projmux attention clear [pane]"}, Canonical: []string{"attention clear"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "arm", Invocation: InvocationNatural, Summary: "Arm focus-only attention consumption", CanonicalNodeOrder: 4, Usage: []string{"projmux attention arm [pane]"}, Canonical: []string{"attention arm"}},
 			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "list", Invocation: InvocationNatural, Summary: "List live pane attention state", CanonicalSummary: "List live Pane attention state", CanonicalNodeOrder: 1, Canonical: []string{"attention list"}},
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "window", Invocation: InvocationNatural, Summary: "Render window-scoped attention badges", CanonicalNodeOrder: 5, Canonical: []string{"attention window"}},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "window", Invocation: InvocationNatural, Summary: "Render window-scoped attention badges", CanonicalNodeOrder: 5, Usage: []string{"projmux attention window [window] [style]"}, Canonical: []string{"attention window"}},
 		},
 	},
 	{
@@ -1318,6 +1318,7 @@ var routes = []Route{
 			"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
+			"projmux delete notification <id> | --all",
 		},
 		Canonical: []string{"unregister project", "delete window", "delete pane", "delete agent", "delete notification"},
 		Children: []Route{
@@ -1368,7 +1369,7 @@ var routes = []Route{
 				Usage:            []string{"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
 				Canonical:        []string{"delete agent"},
 			},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "notification", Invocation: InvocationExplicit, Summary: "Delete pending notification rows", Aliases: []string{"notifications"}, Canonical: []string{"delete notification"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "notification", Invocation: InvocationExplicit, Summary: "Delete pending notification rows", Aliases: []string{"notifications"}, Usage: []string{"projmux delete notification <id> | --all"}, Canonical: []string{"delete notification"}},
 		},
 	},
 	{
@@ -1619,8 +1620,8 @@ var routes = []Route{
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationNatural, Summary: "List global and project lifecycle hooks", CanonicalSummary: "List lifecycle hook config", Canonical: []string{"hook list"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationNatural, Summary: "Edit lifecycle hook config", Canonical: []string{"hook edit"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "validate", Invocation: InvocationNatural, Summary: "Validate lifecycle hook config", Canonical: []string{"hook validate"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "trust", Invocation: InvocationNatural, Summary: "Trust the current project hook config", Canonical: []string{"hook trust"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "untrust", Invocation: InvocationNatural, Summary: "Revoke project hook config trust", Canonical: []string{"hook untrust"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "trust", Invocation: InvocationNatural, Summary: "Trust the current project hook config", Usage: []string{"projmux hook trust [<project>]"}, Canonical: []string{"hook trust"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "untrust", Invocation: InvocationNatural, Summary: "Revoke project hook config trust", Usage: []string{"projmux hook untrust [<project>]"}, Canonical: []string{"hook untrust"}},
 		},
 	},
 	{

@@ -159,11 +159,13 @@ var publicRouteArgvOperandRoutes = []string{
 	"attention toggle",
 	"attention clear",
 	"attention arm",
+	"attention window",
 	"attach project",
 	"delete project",
 	"delete window",
 	"delete pane",
 	"delete agent",
+	"delete notification",
 	"describe project",
 	"describe window",
 	"describe pane",
@@ -171,6 +173,8 @@ var publicRouteArgvOperandRoutes = []string{
 	"focus project",
 	"focus window",
 	"focus pane",
+	"hook trust",
+	"hook untrust",
 	"label project",
 	"label window",
 	"label pane",
@@ -222,12 +226,6 @@ func publicRouteArgvGuardSpecialRows() []publicRouteArgvGuardRow {
 
 		// Runnable parents (not executed for D-bare).
 		{route: "setup", form: publicRouteArgvFormBareParent, kind: publicRouteArgvRunnableParentRow, reason: "synopsis `projmux setup` documents the bare parent as the interactive terminal-key probe"},
-
-		// Undeclared operands (not executed for C).
-		{route: "attention window", form: publicRouteArgvFormOperand, kind: publicRouteArgvUndeclaredOperandRow, reason: publicRouteArgvUndeclaredOperandReason + " (`attention window [<window-id> [<style>]]`, at most 2 arguments)"},
-		{route: "delete notification", form: publicRouteArgvFormOperand, kind: publicRouteArgvUndeclaredOperandRow, reason: publicRouteArgvUndeclaredOperandReason + " (`delete notification <id>`)"},
-		{route: "hook trust", form: publicRouteArgvFormOperand, kind: publicRouteArgvUndeclaredOperandRow, reason: publicRouteArgvUndeclaredOperandReason + " (`hook trust [<project>]`)"},
-		{route: "hook untrust", form: publicRouteArgvFormOperand, kind: publicRouteArgvUndeclaredOperandRow, reason: publicRouteArgvUndeclaredOperandReason + " (`hook untrust [<project>]`)"},
 	}
 }
 
