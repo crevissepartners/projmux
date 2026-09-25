@@ -368,6 +368,7 @@ func TestFlagValueRefusalsExitTwoAndJournalAsUsage(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", t.TempDir())
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
+	t.Setenv("__PROJMUX_RUNTIME_ANCHOR_PANE", "")
 	t.Setenv("PROJMUX_CWD", "")
 
 	for _, test := range []struct {
