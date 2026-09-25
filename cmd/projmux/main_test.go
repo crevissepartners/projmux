@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/app"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 type testExitError struct{ code int }
@@ -349,6 +351,72 @@ func TestFlagParseErrorPrintsReasonOnceAndUsageAtMostOnce(t *testing.T) {
 			}
 			if reasons != 1 || usages > 1 {
 				t.Errorf("stderr has %d reason lines and %d usage blocks, want 1 and at most 1:\n%s", reasons, usages, stderr.String())
+			}
+		})
+	}
+}
+
+// TestFlagValueRefusalsExitTwoAndJournalAsUsage drives the flag value
+// refusals through the real entrypoint seam: executeCLI must exit 2 and print
+// the unchanged reason once after one Usage block, and the diagnostics outcome
+// it records must classify the failure as usage, not runtime.
+func TestFlagValueRefusalsExitTwoAndJournalAsUsage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("PROJMUX_CWD", "")
+
+	for _, test := range []struct {
+		argv   []string
+		reason string
+	}{
+		{[]string{"switch", "--ui", "bogus"}, `invalid --ui value "bogus": expected "popup" or "sidebar"`},
+		{[]string{"switch", "--anchor", "bogus"}, "switch --anchor requires an exact %N Pane handle"},
+		{[]string{"runtime", "sessions", "--ui", "bogus"}, `invalid --ui value "bogus": expected "popup" or "sidebar"`},
+		{[]string{"switch", "sidebar-open", "--path", "/work/alpha", "--anchor", "bogus"}, "switch sidebar-open --anchor requires an exact %N Pane handle"},
+		{[]string{"switch", "sidebar-open", "--path", "/work/alpha", "--anchor", "%1", "--mode", "bogus"}, `switch sidebar-open: unknown startup mode "bogus"`},
+		{[]string{"pin", "project", "list", "--kind", "bogus"}, `unknown pin kind "bogus": use project or candidate`},
+		{[]string{"runtime", "attach", "--fallback", "bogus"}, "runtime attach fallback must be one of: home, ephemeral"},
+		{[]string{"runtime", "attach", "--keep", "-1"}, "plan auto attach: ephemeral keep count must be non-negative"},
+		{[]string{"runtime", "prune", "--keep", "-1"}, "plan ephemeral prune: ephemeral keep count must be non-negative"},
+	} {
+		t.Run(strings.Join(test.argv, " "), func(t *testing.T) {
+			store := diagnostics.NewStore(filepath.Join(t.TempDir(), "diagnostics.jsonl"))
+			var stdout, stderr bytes.Buffer
+			code := executeCLI(
+				func() error { return app.New().Run(test.argv, &stdout, &stderr) },
+				func(err error) {
+					if recordErr := diagnostics.RecordOutcome(store, test.argv, "run-test", "test", "tmux", time.Now(), err, app.IsUsageError(err), false); recordErr != nil {
+						t.Fatalf("RecordOutcome() error = %v", recordErr)
+					}
+				},
+				&stderr,
+			)
+			if code != 2 {
+				t.Errorf("exit code = %d, want 2", code)
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q, want 0 bytes", stdout.String())
+			}
+			if got := strings.Count(stderr.String(), test.reason); got != 1 {
+				t.Errorf("stderr carries the reason %d times, want 1:\n%s", got, stderr.String())
+			}
+			if got := strings.Count(stderr.String(), "Usage:"); got != 1 {
+				t.Errorf("stderr has %d Usage blocks, want 1:\n%s", got, stderr.String())
+			}
+			if !strings.HasSuffix(stderr.String(), test.reason+"\n") {
+				t.Errorf("stderr does not end with the reason line:\n%s", stderr.String())
+			}
+			events, err := store.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(events) != 1 || events[0].Kind != "usage" || events[0].Result != "error" {
+				t.Fatalf("journaled outcome = %+v, want one error event of kind usage", events)
 			}
 		})
 	}

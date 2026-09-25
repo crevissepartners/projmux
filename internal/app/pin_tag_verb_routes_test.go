@@ -134,13 +134,17 @@ func TestPinVerbMisuseIsItsOwnRouteUsageError(t *testing.T) {
 		})
 	}
 
-	// A bad --kind value is value validation, not a usage error: it keeps its
-	// exit 1 and prints the list route's own usage.
+	// A bad --kind value is a flag value outside its declared set: a usage
+	// error (exit 2) that keeps its reason and prints the list route's own
+	// usage.
 	store := newStubPinStore("proj-a")
 	var stdout, stderr bytes.Buffer
 	err := pinFixture(store).Run([]string{"project", "list", "--kind", "bogus"}, &stdout, &stderr)
-	if err == nil || IsUsageError(err) || err.Error() != `unknown pin kind "bogus": use project or candidate` {
-		t.Fatalf("pin project list --kind bogus err = %v (usage error %v), want the exit 1 kind refusal", err, IsUsageError(err))
+	if err == nil || !IsUsageError(err) || err.Error() != `unknown pin kind "bogus": use project or candidate` {
+		t.Fatalf("pin project list --kind bogus err = %v (usage error %v), want the exit 2 kind refusal", err, IsUsageError(err))
+	}
+	if store.writes != 0 {
+		t.Errorf("pin project list --kind bogus wrote the pin store %d times", store.writes)
 	}
 	var usage bytes.Buffer
 	cli.WriteRouteUsage(&usage, "pin project list")

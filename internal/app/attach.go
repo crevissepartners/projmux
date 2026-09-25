@@ -149,7 +149,14 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 	}
 	if *fallback != "home" && *fallback != "ephemeral" {
 		printRouteUsage(stderr, "runtime attach")
-		return fmt.Errorf("runtime attach fallback must be one of: home, ephemeral")
+		return usageError("runtime attach fallback must be one of: home, ephemeral")
+	}
+	// A negative --keep is a flag value error: refuse it before the home and
+	// inventory reads. The reason text is the one PlanAutoAttach reports, which
+	// stays in place as defense for other callers.
+	if *keepCount < 0 {
+		printRouteUsage(stderr, "runtime attach")
+		return usageError("plan auto attach: " + lifecycle.ErrEphemeralKeepCountInvalid.Error())
 	}
 
 	homeDir, err := c.resolveHomeDir()

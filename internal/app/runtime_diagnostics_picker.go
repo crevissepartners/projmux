@@ -100,7 +100,7 @@ func (c *runtimeDiagnosticsCommand) run(args []string, stdout, stderr io.Writer,
 	}
 	if err := validateSwitchUI(*ui); err != nil {
 		printRouteUsage(stderr, "runtime diagnostics")
-		return usageError(err.Error())
+		return err
 	}
 	if c.reader == nil {
 		return errors.New("runtime diagnostics reader is not configured")
