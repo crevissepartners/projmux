@@ -318,6 +318,9 @@ func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name st
 	// inherited stdout/stderr (e.g. a backgrounded sleep) cannot keep us
 	// blocked in cmd.Wait.
 	cmd.WaitDelay = 250 * time.Millisecond
+	// Run the hook in its own process group; on timeout or cancel the whole
+	// group is SIGKILLed so the hook's children do not outlive it.
+	startInOwnProcessGroup(cmd)
 
 	logger := r.Logger
 	// Note: label (e.g. "global"/"project") is intentionally NOT embedded in
@@ -331,7 +334,12 @@ func (r *Runner) runCommand(ctx context.Context, event Event, c Context, name st
 	cmd.Stdout = prefixed
 	cmd.Stderr = prefixed
 
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		release := forwardTerminationSignals(cmd.Process)
+		err = cmd.Wait()
+		release()
+	}
 	prefixed.Flush()
 
 	if runCtx.Err() == context.DeadlineExceeded {

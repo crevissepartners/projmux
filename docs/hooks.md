@@ -1105,13 +1105,16 @@ run = "$HOME/.local/bin/projmux-post-create; $HOME/.local/bin/projmux-gh-token"
   be disabled.
 - **`projmux: <event> hook: ... timed out after 5s`.** Long-running work
   belongs in a backgrounded child (`(slow-thing &) >/dev/null 2>&1`). The hook
-  itself must return within 5s or projmux kills it. The kill is a SIGKILL
-  sent only to the `sh -c` process projmux started; projmux does not signal
-  that process's group. Whatever that process was running stops with no
-  chance to clean up, so it can leave residue such as a stale
-  `.git/index.lock`, and children or grandchildren it started are not killed
-  and can keep running after the timeout is reported. Remove leftover locks
-  and processes by hand. For `pre-create`, creation stops and the command
+  itself must return within 5s or projmux kills it. projmux runs the hook in
+  its own process group and on timeout sends SIGKILL to that whole group, so
+  children and grandchildren started by the hook stop too; if projmux itself
+  receives SIGINT, SIGTERM, or SIGHUP while a hook runs, it kills the hook's
+  group the same way before exiting. A process that left the group or session
+  (for example via `setsid` or by daemonizing) is not killed, and SIGKILL gives
+  no chance to clean up, so residue such as a stale `.git/index.lock` can
+  remain; remove it by hand. Because the hook runs outside the terminal's
+  foreground process group, a hook that reads `/dev/tty` directly is stopped
+  (SIGTTIN) until the timeout. For `pre-create`, creation stops and the command
   fails with `pre-create hook for tmux session "<name>": timed out after 5s`.
 - **`projmux: <event> hook: ... exited with status N`.** The hook returned
   non-zero. projmux logs once and moves on. A global hook shows
