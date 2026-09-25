@@ -268,7 +268,18 @@ func TestRequestedHelpDetection(t *testing.T) {
 		{name: "help after terminator is payload", args: []string{"notify", "push", "--", "--help"}, ok: false},
 		{name: "short help after terminator is payload", args: []string{"ai", "split", "--", "-h"}, ok: false},
 		{name: "bare terminator only", args: []string{"tmux", "print-config", "--"}, ok: false},
-		{name: "bare help word is not a help flag", args: []string{"pin", "help"}, ok: false},
+		// A bare `help` word is help only as the last token after a public
+		// parent path; on a leaf it can be an operand.
+		{name: "help verb on a public parent", args: []string{"pin", "help"}, ok: true, path: []string{"pin"}},
+		{name: "help verb on a nested public parent", args: []string{"agent", "approval", "help"}, ok: true, path: []string{"agent", "approval"}},
+		{name: "help verb before the terminator", args: []string{"get", "help", "--", "x"}, ok: true, path: []string{"get"}},
+		{name: "help verb on a leaf is an operand", args: []string{"get", "projects", "help"}, ok: false},
+		{name: "help verb followed by more tokens", args: []string{"get", "help", "agents"}, ok: false},
+		{name: "help verb after the terminator is payload", args: []string{"get", "--", "help"}, ok: false},
+		{name: "help verb after an unknown child", args: []string{"get", "bogus", "help"}, ok: false},
+		{name: "help verb on a hidden parent", args: []string{"internal", "help"}, ok: false},
+		{name: "help verb on a retired route", args: []string{"ai", "help"}, ok: false},
+		{name: "root help word stays with the help route", args: []string{"help"}, ok: false},
 		{name: "unknown command keeps its error", args: []string{"nosuchcmd", "--help"}, ok: false},
 		{name: "no help token", args: []string{"doctor", "--json"}, ok: false},
 		// `=value` spellings are help requests to the flag package too, so the

@@ -171,10 +171,10 @@ func TestHelpBoundaryAndDiagnosticsClassifierAgree(t *testing.T) {
 		}
 	}
 
-	// A bare nested `help` word keeps reaching its handler, and both packages
-	// must still agree that it is not a mutation.
-	if cli.HelpRequested([]string{"pin", "help"}) {
-		t.Fatal("cli.HelpRequested(pin help) = true; the bare help word belongs to the handler")
+	// A bare `help` word after a public parent is answered by the boundary,
+	// and the classifier must not score it as a mutation either.
+	if !cli.HelpRequested([]string{"pin", "help"}) {
+		t.Fatal("cli.HelpRequested(pin help) = false; the boundary owns the parent help verb")
 	}
 	if diagnostics.Classify([]string{"pin", "help"}).StateChanging {
 		t.Fatal("diagnostics.Classify(pin help) is state-changing")
