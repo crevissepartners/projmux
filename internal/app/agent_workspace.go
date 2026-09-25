@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,16 +18,77 @@ import (
 // changing the owner Window's Project, but cannot widen access to a parent or
 // an unregistered sibling.
 func resolveAgentWorkspace(registry coremetadata.Registry, owner coremetadata.Project, provider, cwd string, additional []string) (coremetadata.AgentWorkspace, error) {
-	return resolveAgentWorkspaceFor("create agent", registry, owner, provider, cwd, additional)
+	return resolveAgentWorkspaceFor(canonicalCreateAgent, registry, owner, provider, cwd, additional)
 }
 
+// errAgentWorkspaceNotAbsolute is the reason every empty or relative workspace
+// path is refused with.
+var errAgentWorkspaceNotAbsolute = errors.New("must be an absolute existing directory")
+
+// refuseStatelessAgentWorkspace is the argv half of resolveAgentWorkspace: the
+// refusals a --cwd or --add-dir value earns without reading the Registry or the
+// filesystem, returned as usage errors before any lock is taken. The reason
+// text is the resolver's own, spelling included -- the production resolver
+// always says `create agent`, so a shortcut does too. What needs state (a
+// missing path, a root outside every Project, a duplicate only canonicalization
+// or the owner root reveals) is left to the resolver inside the transaction.
+func refuseStatelessAgentWorkspace(provider, cwd string, additional []string) error {
+	spelling := canonicalCreateAgent
+	if len(additional) > 0 && !supportsAdditionalWritableRoots(provider) {
+		return usageError(unsupportedAdditionalRootsError(spelling, provider).Error())
+	}
+	seen := make([]string, 0, len(additional)+1)
+	if strings.TrimSpace(cwd) != "" {
+		if !absoluteWorkspacePath(cwd) {
+			return usageError(agentWorkspacePathError(spelling, "--cwd", cwd, errAgentWorkspaceNotAbsolute).Error())
+		}
+		seen = append(seen, filepath.Clean(strings.TrimSpace(cwd)))
+	}
+	for _, raw := range additional {
+		if !absoluteWorkspacePath(raw) {
+			return usageError(agentWorkspacePathError(spelling, "--add-dir", raw, errAgentWorkspaceNotAbsolute).Error())
+		}
+		clean := filepath.Clean(strings.TrimSpace(raw))
+		if slices.Contains(seen, clean) {
+			return usageError(duplicateAdditionalRootError(spelling, raw).Error())
+		}
+		seen = append(seen, clean)
+	}
+	return nil
+}
+
+func supportsAdditionalWritableRoots(provider string) bool {
+	return provider == aiModeCodex || provider == aiModeClaude
+}
+
+func absoluteWorkspacePath(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	return raw != "" && filepath.IsAbs(raw)
+}
+
+func unsupportedAdditionalRootsError(spelling, provider string) error {
+	return fmt.Errorf("%s: provider %q does not support additional writable roots", spelling, provider)
+}
+
+func agentWorkspacePathError(spelling, label, raw string, err error) error {
+	return fmt.Errorf("%s: %s %q: %w", spelling, label, raw, err)
+}
+
+func duplicateAdditionalRootError(spelling, raw string) error {
+	return fmt.Errorf("%s: --add-dir %q duplicates the effective workspace or another explicit root", spelling, raw)
+}
+
+// resolveAgentWorkspaceFor is the whole workspace contract. The public argv
+// routes refuse its stateless cases first (refuseStatelessAgentWorkspace); the
+// checks stay here as the defense for stored values -- a restored UI intent, a
+// resumed or rebound Agent -- whose refusals remain plain errors.
 func resolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, owner coremetadata.Project, provider, cwd string, additional []string) (coremetadata.AgentWorkspace, error) {
 	defaultCWD := strings.TrimSpace(cwd) == ""
 	if defaultCWD {
 		cwd = owner.Spec.Root
 	}
-	if len(additional) > 0 && provider != aiModeCodex && provider != aiModeClaude {
-		return coremetadata.AgentWorkspace{}, fmt.Errorf("%s: provider %q does not support additional writable roots", spelling, provider)
+	if len(additional) > 0 && !supportsAdditionalWritableRoots(provider) {
+		return coremetadata.AgentWorkspace{}, unsupportedAdditionalRootsError(spelling, provider)
 	}
 
 	ownerRoot, err := canonicalExistingDir(owner.Spec.Root)
@@ -47,7 +109,7 @@ func resolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, o
 	resolve := func(label, raw string) (string, error) {
 		clean, err := canonicalExistingDir(raw)
 		if err != nil {
-			return "", fmt.Errorf("%s: %s %q: %w", spelling, label, raw, err)
+			return "", agentWorkspacePathError(spelling, label, raw, err)
 		}
 		for _, root := range authorized {
 			if pathWithinTree(root, clean) {
@@ -68,7 +130,7 @@ func resolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, o
 			return coremetadata.AgentWorkspace{}, err
 		}
 		if root == effective || slices.Contains(roots, root) {
-			return coremetadata.AgentWorkspace{}, fmt.Errorf("%s: --add-dir %q duplicates the effective workspace or another explicit root", spelling, raw)
+			return coremetadata.AgentWorkspace{}, duplicateAdditionalRootError(spelling, raw)
 		}
 		roots = append(roots, root)
 	}
@@ -76,10 +138,10 @@ func resolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, o
 }
 
 func canonicalExistingDir(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || !filepath.IsAbs(raw) {
-		return "", fmt.Errorf("must be an absolute existing directory")
+	if !absoluteWorkspacePath(raw) {
+		return "", errAgentWorkspaceNotAbsolute
 	}
+	raw = strings.TrimSpace(raw)
 	clean := filepath.Clean(raw)
 	info, err := os.Stat(clean)
 	if err != nil {
