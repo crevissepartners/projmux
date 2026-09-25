@@ -927,6 +927,32 @@ type runtimeMutationStep struct {
 	Undo func(context.Context) error
 }
 
+// errRuntimeMutationEffectConverged is returned (possibly wrapped) by a step's
+// semantic Guard when, on the same fresh read, the step's own write field
+// already holds its planned value and every other condition the Guard checks
+// still holds. A concurrent writer converged the target between pre-effect
+// reobservation and the guard pass. The executor drops such a step like a
+// repeat-empty one. Only a Guard that opts in by returning this sentinel
+// changes behaviour; the executor never decides convergence itself.
+var errRuntimeMutationEffectConverged = errors.New("runtime mutation plan: expected effect already present at guard")
+
+// replanRuntimeMutationSteps renumbers the surviving steps of a replan and
+// re-validates their printable plan. An empty replan needs no validation.
+func replanRuntimeMutationSteps(steps []runtimeMutationStep) ([]runtimeMutationStep, error) {
+	if len(steps) == 0 {
+		return steps, nil
+	}
+	actions := make([]plannedRuntimeMutation, 0, len(steps))
+	for i := range steps {
+		steps[i].Action.Order = i + 1
+		actions = append(actions, steps[i].Action)
+	}
+	if _, err := newRuntimeMutationPlan(actions...).printableBytes(); err != nil {
+		return nil, err
+	}
+	return steps, nil
+}
+
 // executeRuntimeMutationPlan is the sole
 // plan -> target/route guard -> reobserve/replan -> semantic guard -> execute
 // -> reobserve/replan boundary.
@@ -972,28 +998,32 @@ func executeRuntimeMutationPlan(ctx context.Context, steps []runtimeMutationStep
 		if observed {
 			continue
 		}
-		step := steps[i]
-		step.Action.Order = len(pending) + 1
-		pending = append(pending, step)
+		pending = append(pending, steps[i])
 	}
-	if len(pending) == 0 {
-		return nil
-	}
-	steps = pending
-	actions = actions[:0]
-	for _, step := range steps {
-		actions = append(actions, step.Action)
-	}
-	plan = newRuntimeMutationPlan(actions...)
-	if _, err := plan.printableBytes(); err != nil {
+	steps, err := replanRuntimeMutationSteps(pending)
+	if err != nil || len(steps) == 0 {
 		return err
 	}
+	guarded := make([]runtimeMutationStep, 0, len(steps))
 	for i := range steps {
 		if steps[i].Guard == nil {
 			return fmt.Errorf("runtime mutation plan: action %q has no executable guard", steps[i].Action.Verb)
 		}
 		if err := steps[i].Guard(ctx); err != nil {
+			if errors.Is(err, errRuntimeMutationEffectConverged) {
+				// Drop, never re-write: the step is not applied, so it is not in
+				// applied and no rollback can revert the value another writer
+				// put there. Undo cannot tell its own write from a concurrent
+				// same-value write.
+				continue
+			}
 			return fmt.Errorf("runtime mutation plan: guard refused action %q before first write: %w", steps[i].Action.Verb, err)
+		}
+		guarded = append(guarded, steps[i])
+	}
+	if len(guarded) != len(steps) {
+		if steps, err = replanRuntimeMutationSteps(guarded); err != nil || len(steps) == 0 {
+			return err
 		}
 	}
 	var applied []runtimeMutationStep

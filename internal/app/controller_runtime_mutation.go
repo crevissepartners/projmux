@@ -412,10 +412,18 @@ func guardControllerRuntimeMutation(ctx context.Context, runner tmuxCommandRunne
 	if err != nil {
 		return err
 	}
-	if controllerRuntimeMutationEffectValue(write.Field, string(out)) != controllerRuntimeMutationEffectValue(write.Field, write.Before) {
+	switch controllerRuntimeMutationEffectValue(write.Field, string(out)) {
+	case controllerRuntimeMutationEffectValue(write.Field, write.Before):
+		return nil
+	case controllerRuntimeMutationEffectValue(write.Field, write.After):
+		// A concurrent controller converge wrote this same planned value after
+		// pre-effect reobservation, and every target guard above still holds.
+		// The executor drops the step instead of re-writing it, so rollback
+		// never reverts the other writer's value.
+		return fmt.Errorf("controller target %s option %s: %w", write.Target, write.Field, errRuntimeMutationEffectConverged)
+	default:
 		return fmt.Errorf("controller target %s option %s drifted before write", write.Target, write.Field)
 	}
-	return nil
 }
 
 func observeControllerRuntimeMutation(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, action plannedRuntimeMutation, write controller.Action, final map[string]string) (bool, error) {

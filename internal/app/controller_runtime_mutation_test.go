@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -953,5 +954,169 @@ func TestStandaloneExplicitAuthorityHasOneProductionConstructor(t *testing.T) {
 	}
 	if !slices.Equal(sites, []string{"controller_runtime_mutation.go"}) {
 		t.Fatalf("receiptless authority constructors = %v", sites)
+	}
+}
+
+// concurrentWriterRunner models a concurrent writer (a tmux hook's controller
+// converge) that runs after the plan reads trigger for the after-th time. The
+// executor reads each step's effect in its reobserve pass before any guard, so
+// a trigger on the last reobserve read lands between reobservation and guard.
+type concurrentWriterRunner struct {
+	base    tmuxCommandRunner
+	trigger string
+	after   int
+	seen    int
+	write   func()
+}
+
+func (r *concurrentWriterRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
+	out, err := r.base.Run(ctx, name, args...)
+	if slices.Contains(args, "display-message") && slices.Contains(args, r.trigger) {
+		r.seen++
+		if r.seen == r.after {
+			r.write()
+		}
+	}
+	return out, err
+}
+
+func controllerFieldWrites(server *fakeTmux, field string) int {
+	count := 0
+	for _, call := range server.calls {
+		if slices.Contains(call, "set-option") && slices.Contains(call, field) {
+			count++
+		}
+	}
+	return count
+}
+
+func TestControllerGuardTreatsPlannedAfterValueAsConvergedNotDrifted(t *testing.T) {
+	server, base, route, write := controllerMutationFixture(t)
+	runner := &concurrentWriterRunner{base: base, trigger: "#{" + write.Field + "}", after: 1, write: func() {
+		server.sessions[0].opts[write.Field] = write.After
+	}}
+	if err := executeControllerRuntimeMutations(context.Background(), runner, route, []controller.Action{write}); err != nil {
+		t.Fatalf("target a concurrent writer already moved to After was refused: %v", err)
+	}
+	if runner.seen < 2 {
+		t.Fatalf("guard did not reread the field after the concurrent write (reads=%d)", runner.seen)
+	}
+	if got := controllerFieldWrites(server, write.Field); got != 0 {
+		t.Fatalf("converged field received %d write(s)", got)
+	}
+	if got := server.sessions[0].opts[write.Field]; got != write.After {
+		t.Fatalf("converged field = %q, want %q", got, write.After)
+	}
+
+	// The guard itself opts in with the sentinel on the same fresh read.
+	action, err := controllerRuntimeMutationAction(1, route, write, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := guardControllerRuntimeMutation(context.Background(), base, route, action, write, nil); !errors.Is(err, errRuntimeMutationEffectConverged) {
+		t.Fatalf("guard at After = %v, want converged sentinel", err)
+	}
+}
+
+func TestControllerGuardStillRefusesThirdValueAsDriftedBeforeWrite(t *testing.T) {
+	server, base, route, write := controllerMutationFixture(t)
+	runner := &concurrentWriterRunner{base: base, trigger: "#{" + write.Field + "}", after: 1, write: func() {
+		server.sessions[0].opts[write.Field] = "third"
+	}}
+	err := executeControllerRuntimeMutations(context.Background(), runner, route, []controller.Action{write})
+	if err == nil || !strings.Contains(err.Error(), "option "+write.Field+" drifted before write") {
+		t.Fatalf("third value error = %v", err)
+	}
+	if errors.Is(err, errRuntimeMutationEffectConverged) {
+		t.Fatalf("third value reported convergence: %v", err)
+	}
+	if got := controllerFieldWrites(server, write.Field); got != 0 {
+		t.Fatalf("third value received %d write(s)", got)
+	}
+	if got := server.sessions[0].opts[write.Field]; got != "third" {
+		t.Fatalf("third value = %q, want untouched", got)
+	}
+}
+
+func TestControllerConcurrentSameIdentityWriteBetweenReobserveAndGuardConverges(t *testing.T) {
+	newFixture := func(concurrent string) (*fakeTmux, *concurrentWriterRunner, runtimeMutationRoute, []controller.Action) {
+		server := newFakeTmux()
+		server.socketPath = "/tmp/fake-tmux/controller-concurrent-identity"
+		session := server.addSession("alpha")
+		window, pane := session.windows[0], session.windows[0].panes[0]
+		base := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+		route := runtimeMutationRoute{
+			target: tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}, expectedSocketPath: server.socketPath,
+			socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
+		}
+		containment := []controller.Guard{{Field: "session_id", Expect: session.id}, {Field: "window_id", Expect: window.id}}
+		writes := []controller.Action{
+			{
+				Key: "uid", Surface: controller.SurfaceTmux, Intent: controller.IntentRepairBinding,
+				Authority: controller.AuthorityAllow, Scope: resourcegraph.ObjectPane, Target: pane.id,
+				Field: tmuxopts.PaneUID, Before: "", After: "pane-x",
+				Guards: append([]controller.Guard{{Field: tmuxopts.PaneUID, Expect: ""}}, containment...),
+				Args:   []string{"set-option", "-p", "-t", pane.id, "-q", tmuxopts.PaneUID, "pane-x"},
+			},
+			{
+				Key: "name", Surface: controller.SurfaceTmux, Intent: controller.IntentRepairMirror,
+				Authority: controller.AuthorityAllow, Scope: resourcegraph.ObjectPane, Target: pane.id,
+				Field: tmuxopts.PaneName, Before: "", After: "name-x",
+				Guards: append([]controller.Guard{{Field: tmuxopts.PaneUID, Expect: ""}}, containment...),
+				Args:   []string{"set-option", "-p", "-t", pane.id, "-q", tmuxopts.PaneName, "name-x"},
+			},
+		}
+		// The name step's own-field read is the last reobserve read; the UID
+		// step's guard is the next read of the UID.
+		runner := &concurrentWriterRunner{base: base, trigger: "#{" + tmuxopts.PaneName + "}", after: 1, write: func() {
+			pane.opts[tmuxopts.PaneUID] = concurrent
+		}}
+		return server, runner, route, writes
+	}
+
+	server, runner, route, writes := newFixture("pane-x")
+	if err := executeControllerRuntimeMutations(context.Background(), runner, route, writes); err != nil {
+		t.Fatalf("concurrent same-value identity write was refused: %v", err)
+	}
+	pane := server.sessions[0].windows[0].panes[0]
+	if pane.opts[tmuxopts.PaneUID] != "pane-x" || pane.opts[tmuxopts.PaneName] != "name-x" {
+		t.Fatalf("end state = %#v, want planned After", pane.opts)
+	}
+	if got := controllerFieldWrites(server, tmuxopts.PaneUID); got != 0 {
+		t.Fatalf("converged UID received %d write(s)", got)
+	}
+
+	// A later action fails: rollback must not revert the UID the concurrent
+	// writer put there, because this plan never wrote it.
+	server, runner, route, writes = newFixture("pane-x")
+	server.fail = []string{"set-option", tmuxopts.PaneName}
+	err := executeControllerRuntimeMutations(context.Background(), runner, route, writes)
+	if err == nil || strings.Contains(err.Error(), "owned reverse rollback incomplete") {
+		t.Fatalf("later failure = %v", err)
+	}
+	pane = server.sessions[0].windows[0].panes[0]
+	if got := pane.opts[tmuxopts.PaneUID]; got != "pane-x" {
+		t.Fatalf("rollback clobbered the concurrent writer's UID: %q", got)
+	}
+	if got := controllerFieldWrites(server, tmuxopts.PaneUID); got != 0 {
+		t.Fatalf("rollback wrote the concurrent writer's UID %d time(s)", got)
+	}
+
+	server, runner, route, writes = newFixture("pane-foreign")
+	err = executeControllerRuntimeMutations(context.Background(), runner, route, writes)
+	// An identity write carries an exact guard on its own UID field, which
+	// refuses the foreign value before the write-field check is reached.
+	if err == nil || !strings.Contains(err.Error(), "before first write") || !strings.Contains(err.Error(), tmuxopts.PaneUID+" drifted") ||
+		errors.Is(err, errRuntimeMutationEffectConverged) {
+		t.Fatalf("concurrent third-value identity write = %v", err)
+	}
+	if got := tmuxMutationCallCount(server); got != 0 {
+		t.Fatalf("third-value identity drift received %d write(s)", got)
+	}
+	if got := controllerFieldWrites(server, tmuxopts.PaneUID) + controllerFieldWrites(server, tmuxopts.PaneName); got != 0 {
+		t.Fatalf("third-value identity drift received %d write(s)", got)
 	}
 }

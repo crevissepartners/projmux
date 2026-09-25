@@ -37,6 +37,9 @@ type mutationRoutingRunner struct {
 	listWindowReads, driftAt            int
 	driftWindowID, driftSessionID       string
 	renameWindowErr                     error
+	// onListWindowRead, when set, runs before the read-th Window list read is
+	// answered: a concurrent writer at that exact point.
+	onListWindowRead func(r *mutationRoutingRunner, read int)
 }
 
 func (r *mutationRoutingRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -99,6 +102,9 @@ func (r *mutationRoutingRunner) Run(ctx context.Context, name string, args ...st
 		r.listWindowReads++
 		if r.driftAt > 0 && r.listWindowReads == r.driftAt {
 			r.windowID, r.sessionID = r.driftWindowID, r.driftSessionID
+		}
+		if r.onListWindowRead != nil {
+			r.onListWindowRead(r, r.listWindowReads)
 		}
 		return []byte(strings.Join([]string{r.windowID, r.windowUID, r.sessionID, r.projectUID, r.sessionRole, r.stableName, r.windowName}, tmuxRowSep) + "\n"), nil
 	case len(argv) > 0 && argv[0] == "set-option" && slices.Contains(argv, tmuxopts.WindowName):
@@ -779,5 +785,61 @@ func TestWindowDisplayRenameFailureIsNonzeroAfterTheDurableRegistryCommit(t *tes
 	}
 	if runner.windowName == "renamed" {
 		t.Fatal("injected failure still moved the tab")
+	}
+}
+
+func TestWindowRenameDropsFieldAConcurrentWriterAlreadyRenamedAndRefusesThirdValue(t *testing.T) {
+	// Read 1 plans, reads 2-3 are the pre-write reobservations of the stable
+	// name and display steps, and read 4 is the stable-name step's Guard.
+	for _, test := range []struct {
+		name       string
+		concurrent func(*mutationRoutingRunner)
+		wantWrites []string
+		wantErr    string
+	}{
+		{name: "stable name converged", concurrent: func(r *mutationRoutingRunner) { r.stableName = "renamed" }, wantWrites: []string{"rename-window"}},
+		{name: "display converged", concurrent: func(r *mutationRoutingRunner) { r.windowName = "renamed" }, wantWrites: []string{"set-option"}},
+		{name: "third stable name", concurrent: func(r *mutationRoutingRunner) { r.stableName = "third" }, wantErr: "Window runtime identity drifted before rename"},
+		{name: "third display", concurrent: func(r *mutationRoutingRunner) { r.windowName = "third" }, wantErr: "Window runtime identity drifted before rename"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			runner := &mutationRoutingRunner{onListWindowRead: func(r *mutationRoutingRunner, read int) {
+				if read == 4 {
+					test.concurrent(r)
+				}
+			}}
+			cmd := newTestRenameCommand(store)
+			cmd.mirror = &fakeMutationMirror{windowTarget: "@7"}
+			cmd.tmuxRunner = runner
+			cmd.lookupEnv = func(string) string { return "" }
+
+			_, _, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", "renamed")
+			var writes []string
+			for _, call := range runner.calls {
+				argv := tmuxCommandArgv(call[1:])
+				if len(argv) > 0 && (argv[0] == "set-option" || argv[0] == "rename-window") {
+					writes = append(writes, argv[0])
+				}
+			}
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("third value rename = %v", err)
+				}
+				if len(writes) != 0 {
+					t.Fatalf("refused rename wrote %v", writes)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("concurrent same-value rename was refused: %v", err)
+			}
+			if !reflect.DeepEqual(writes, test.wantWrites) {
+				t.Fatalf("writes = %v, want %v", writes, test.wantWrites)
+			}
+			if runner.stableName != "renamed" || runner.windowName != "renamed" {
+				t.Fatalf("stable/display = %q/%q", runner.stableName, runner.windowName)
+			}
+		})
 	}
 }
