@@ -1804,8 +1804,8 @@ list|show|edit|set|delete` (`edit` opens `$EDITOR`, then `$VISUAL`; `set
 <name> --file <path>` or `-` writes without an editor). The former `projmux
 persona` commands and `--persona <name>` remain aliases for the same files.
 Both names read and write `<config dir>/personas/<name>.md` (by default
-`~/.config/projmux/personas/`), with a 64 KiB limit. They do not create an
-`instructions/` directory.
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/personas/`), with a 64 KiB limit.
+They do not create an `instructions/` directory.
 
 The content is fixed when an Agent starts: create copies it to the existing
 content-addressed snapshot `<state dir>/personas/sha256-<hex>.md`, passes only
@@ -2593,8 +2593,8 @@ human configuration work should prefer `config render` and `config apply`.
   diagnostics guides: use `projmux setup` for key-delivery diagnosis,
   `projmux setup terminal` for supported terminal remediation, and the
   read-only `projmux doctor` report for dependency/runtime diagnostics. In Project
-  Picker, `Project Root` manages the saved
-  primary root (`~/.config/projmux/projdir`) and displays whether the effective
+  Picker, `Project Root` manages the saved primary root
+  (`$HOME/.config/projmux/projdir`) and displays whether the effective
   value comes from `PROJMUX_PROJDIR`, tmux `@projmux_projdir`, saved config, or
   no configured source. When no source is configured, the direct-set prompt
   starts with `$HOME` as an editable fallback, but `$HOME` is not used as the

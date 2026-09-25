@@ -9,11 +9,11 @@ semantic role map is `internal/theme/resolve.go`.
 ## Scope
 
 The fallback palette is a semantic token layer. The effective theme is a global
-user theme resolved from `~/.config/projmux/config.toml`, followed by the
-built-in fallback values from `internal/theme/palette.go`. The resolver derives
-a semantic role map (`RenderRoles` for tmux chrome, `ANSIRoles` for native ANSI
-surfaces) from the effective theme, and renderers consume those roles instead of
-bare palette literals.
+user theme resolved from `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml`,
+followed by the built-in fallback values from `internal/theme/palette.go`. The
+resolver derives a semantic role map (`RenderRoles` for tmux chrome, `ANSIRoles`
+for native ANSI surfaces) from the effective theme, and renderers consume those
+roles instead of bare palette literals.
 
 - Native picker truecolor SGR tokens.
 - Native sidebar and chip-strip 256-color SGR tokens.
@@ -124,7 +124,7 @@ Rules:
 
 The effective theme resolves theme fields from:
 
-1. Global `~/.config/projmux/config.toml`
+1. Global `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml`
 2. Built-in fallback preset `projmux`
 
 Rules:

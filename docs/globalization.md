@@ -375,7 +375,7 @@ Width policy:
 User override surface:
 
 - Environment override: `PROJMUX_LOCALE=auto|en-US|ko-KR`.
-- Global config override: `~/.config/projmux/config.toml`:
+- Global config override: `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml`:
 
   ```toml
   [ui]

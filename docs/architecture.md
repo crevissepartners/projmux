@@ -1707,7 +1707,7 @@ a discovery input *and* the only record that a directory mattered. They are five
 separate authorities now, and the boundaries are the point.
 
 - **Workdirs and project roots are scan roots.** `PROJMUX_MANAGED_ROOTS`,
-  `PROJMUX_PROJDIR` and `~/.config/projmux/workdirs` name directories to look
+  `PROJMUX_PROJDIR` and `$HOME/.config/projmux/workdirs` name directories to look
   inside. Looking inside a directory registers nothing. On Windows they are
   OS-native paths and stay OS-native paths; nothing normalizes them into identity.
 - **A discovered child is an unregistered candidate.** It is a filesystem fact

@@ -61,9 +61,9 @@ With nothing left to choose, the setting that turned the screen off is gone.
 
 - Settings > Projects > Project Sidebar > Closed Project startup is removed.
   Project Sidebar keeps its Runtime diagnostics choice.
-- `~/.config/projmux/sidebar-startup-picker` is no longer read. The first
-  `projmux config apply` after upgrading (which `make install` and
-  `projmux update apply` also run) removes it and prints one
+- `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker` is no
+  longer read. The first `projmux config apply` after upgrading (which
+  `make install` and `projmux update apply` also run) removes it and prints one
   `reclaimed retired closed-Project startup setting: removed 1 file` line.
   Only a regular file with that name is removed; a failure is reported and
   never fails the apply, and later applies print nothing.
@@ -105,9 +105,9 @@ projmux no longer installs, reads, or judges the Antigravity `statusLine` in
   prints the `usage unsupported` note; `agent capabilities` reports Antigravity
   usage as unsupported. Working state still follows the official
   `PreInvocation`/`Stop` hooks.
-- Leftover `~/.config/projmux/statusbar-visibility-*antigravity*` files,
-  `<state>/usage/antigravity-*.json` sidecars, and cached Antigravity rows in
-  `snapshots.json` are ignored, not deleted. Doctor JSON no longer has
+- Leftover `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-visibility-*antigravity*`
+  files, `<state>/usage/antigravity-*.json` sidecars, and cached Antigravity
+  rows in `snapshots.json` are ignored, not deleted. Doctor JSON no longer has
   `statusline_config_path`, and the diagnostic is named `Antigravity hooks`.
 
 ### Project snapshots removed
@@ -419,8 +419,9 @@ projmux get projects
 
 ### Pins are typed, and migrate on request
 
-**Breaking.** `~/.config/projmux/pins` held one absolute path per line, which
-could not say whether the path was a Project. It is now a typed envelope:
+**Breaking.** `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/pins` held one absolute
+path per line, which could not say whether the path was a Project. It is now a
+typed envelope:
 
 ```text
 projmux-pins v2
@@ -586,12 +587,12 @@ The deprecated top-level `projmux init` command and its legacy-only
 
 ### Keymap schema migration
 
-`~/.config/projmux/keymap.toml` is now versioned by a root `schema_version`
-marker. A file without one is v0 and uses the action ids projmux has always
-written; `schema_version = 1` uses canonical dotted ids such as
-`window.create` and `project-sidebar.runtime.stop`; `schema_version = 2` keeps
-those ids and adds two-to-four-stroke `sequences`. All versions read — the v0
-spelling of every action stays a permanent read alias.
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml` is now versioned by a
+root `schema_version` marker. A file without one is v0 and uses the action ids
+projmux has always written; `schema_version = 1` uses canonical dotted ids such
+as `window.create` and `project-sidebar.runtime.stop`; `schema_version = 2`
+keeps those ids and adds two-to-four-stroke `sequences`. All versions read — the
+v0 spelling of every action stays a permanent read alias.
 
 The migration needs no command of its own. Every installer path ends by running
 the newly installed binary's `projmux config apply`, which migrates first and only
@@ -616,7 +617,7 @@ fail before the keymap, generated config, or live server changes.
 **Downgrading to a projmux that predates the schema:** restore the backup first.
 
 ```sh
-cp ~/.config/projmux/keymap.toml.pre-v1-<digest>.bak ~/.config/projmux/keymap.toml
+cp "${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml.pre-v1-<digest>.bak" "${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml"
 ```
 
 An older binary reads `schema_version` as an unsupported root key and refuses
@@ -627,7 +628,7 @@ full ordering.
 ### Pane rename keymap action ID removed
 
 The deprecated `rename-pane-topic` keybinding action ID has been removed. If
-`~/.config/projmux/keymap.toml` still contains
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/keymap.toml` still contains
 `[bindings.rename-pane-topic]`, rename that table to
 `[bindings.rename-pane-label]` before running Settings or
 `projmux config apply`. Projmux now rejects the stale table with that exact
@@ -641,7 +642,8 @@ independent fallback.
 ### Theme is now global-only
 
 Theme is a global user preference. The effective theme resolves from the global
-`[theme]` in `~/.config/projmux/config.toml` plus a built-in fallback preset.
+`[theme]` in `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml` plus a
+built-in fallback preset.
 
 If you previously set a `[theme]` section in a project's `.projmux/config.toml`,
 it is now **deprecated and ignored** — it no longer overrides the global theme
@@ -650,11 +652,11 @@ The project `[theme]` keys are left in the file untouched (no warning, no
 removal); they simply have no effect.
 
 To restore your previous look, copy the values into the global
-`~/.config/projmux/config.toml` `[theme]` section, or edit them through
-Settings > Theme. Settings no longer exposes a Project theme editor, and the
-separate Effective theme view has been merged into the Global theme view: each
-token row now shows its resolved value inline, with unset tokens shown as their
-dimmed `(fallback)` value.
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml` `[theme]` section, or
+edit them through Settings > Theme. Settings no longer exposes a Project theme
+editor, and the separate Effective theme view has been merged into the Global
+theme view: each token row now shows its resolved value inline, with unset
+tokens shown as their dimmed `(fallback)` value.
 
 ### Foreground split
 
@@ -780,7 +782,7 @@ apply refuses and names the path it found — the active executable is left
 untouched. The scratch directory is removed on success and on every failure.
 
 The command reads `PROJMUX_PROJDIR` from the calling shell and memoizes the
-primary path to `~/.config/projmux/projdir`, so the new binary keeps the same
+primary path to `$HOME/.config/projmux/projdir`, so the new binary keeps the same
 project root context as the one it replaces.
 
 To switch the saved project root during the upgrade:
