@@ -84,7 +84,10 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	fs.BoolVar(&confirmed, "confirm-isolated-provider-push", false, "confirm this opt-in command sends one qualification frame")
 	refs, err := parseWithPositionals(fs, args)
 	if err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if len(refs) != 1 || output != "json" || timeout <= 0 || timeout > 5*time.Minute || !confirmed {
 		return usageError(spelling + " requires <claude-agent-ref> [--evidence <absolute-private-json>] --confirm-isolated-provider-push -o json [--timeout <duration>]")

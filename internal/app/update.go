@@ -267,7 +267,10 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 	dryRun := fs.Bool("dry-run", false, "print installer-specific update command without running it")
 	noApply := fs.Bool("no-apply", false, "skip reloading tmux after 'projmux config apply'")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("update apply does not accept positional arguments")
@@ -1194,7 +1197,10 @@ func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("update status does not accept positional arguments")
@@ -1215,7 +1221,10 @@ func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error 
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("update check does not accept positional arguments")
