@@ -26,13 +26,17 @@ package liveguard
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -50,6 +54,14 @@ const (
 	// (see guardPrivateRoot), so an owner can find the roots its own children
 	// made without inheriting rootEnv.
 	rootPrefix = "pmx-live-guard-"
+
+	// ownerLockName is the lock file at the top of a root its maker owns. The
+	// owner holds an exclusive flock on it for its whole life, so a later
+	// guarded owner can tell a root whose maker was killed (the lock is free)
+	// from a live one (guardReclaimKilledRoots). ownerLockTempPattern is the
+	// name it is written under before it is renamed into place locked.
+	ownerLockName        = "owner.lock"
+	ownerLockTempPattern = ".owner.lock-*"
 
 	// providerDirName is the stand-in directory under the private root, and
 	// providerRecordName the log each stand-in appends its argv to.
@@ -156,13 +168,18 @@ func RunGuarded(run func() int, opts ...Option) int {
 		opt(&options)
 	}
 
-	root, owned, err := guardPrivateRoot()
+	root, owned, lock, err := guardPrivateRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "live machine guard: create private root: %v\n", err)
 		return 1
 	}
 	if owned {
-		defer func() { _ = os.RemoveAll(root) }()
+		// The lock stays referenced, and so held, until the root is gone.
+		defer func() {
+			_ = os.RemoveAll(root)
+			_ = lock.Close()
+		}()
+		guardReclaimKilledRoots("/tmp", root, os.Stderr)
 	}
 
 	// Resolve the go command's own locations while HOME is still the
@@ -261,14 +278,134 @@ func guardOptedIn(names []string) bool {
 // A new root is made under /tmp, whatever TMPDIR is: it holds TMUX_TMPDIR and
 // XDG_STATE_HOME, so the tmux and broker sockets under it must stay within the
 // unix socket path bound (104 bytes on macOS, 108 on Linux).
-func guardPrivateRoot() (string, bool, error) {
+//
+// A new root carries the owner lock (guardLockRoot), returned to the caller,
+// which must keep it open until the root is removed: an unreferenced *os.File
+// is closed by its finalizer, which would free a live owner's lock. The lock
+// is nil for a joined root.
+func guardPrivateRoot() (string, bool, *os.File, error) {
 	if inherited := os.Getenv(rootEnv); inherited != "" {
 		if info, err := os.Stat(inherited); err == nil && info.IsDir() { // #nosec G703 -- read-only check of the root a guarded parent test binary exported; nothing is opened or written through it here.
-			return inherited, false, nil
+			return inherited, false, nil, nil
 		}
 	}
 	root, err := os.MkdirTemp("/tmp", fmt.Sprintf("%sp%d-", rootPrefix, os.Getppid()))
-	return root, err == nil, err
+	if err != nil {
+		return "", false, nil, err
+	}
+	lock, err := guardLockRoot(root)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return "", false, nil, err
+	}
+	return root, true, lock, nil
+}
+
+// guardLockRoot creates the owner lock at the top of root and returns it held.
+// The file is locked and given this process's pid under a temporary name, then
+// renamed into place, so whoever sees ownerLockName sees it already locked and
+// can read who holds it. Go opens it close-on-exec, so no child inherits the
+// lock and keeps it held after this process dies.
+func guardLockRoot(root string) (*os.File, error) {
+	lock, err := os.CreateTemp(root, ownerLockTempPattern)
+	if err != nil {
+		return nil, fmt.Errorf("create owner lock: %w", err)
+	}
+	err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		_, err = fmt.Fprintf(lock, "%d\n", os.Getpid())
+	}
+	if err == nil {
+		err = os.Rename(lock.Name(), filepath.Join(root, ownerLockName))
+	}
+	if err != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("take owner lock: %w", err)
+	}
+	return lock, nil
+}
+
+// guardReclaimKilledRoots removes the roots under dir whose owner was killed
+// before its deferred cleanup ran (SIGKILL, a tool timeout's SIGTERM, a
+// -test.timeout panic), and returns how many it removed. An owner holds its
+// lock until it dies, so a root whose lock this process can take has no live
+// owner. A root without the lock file, the old name format included, is never
+// touched: it predates the lock, or its maker died before taking it, and it
+// belongs to whoever left it. A dead run's writes are not audited.
+//
+// Two lock-proven cases stay out of the reclaim, keeping each audit where it
+// belongs: this process is a dropped-environment helper when its parent holds
+// a lock, and then reclaims nothing and prints nothing, because its stderr is
+// the test's that started it; and a free root named after a live owner is that
+// owner's dropped helper's, which its guardSweepHelperRoots audits and removes.
+//
+// dir is "/tmp" in production and a private directory in tests. own is the
+// caller's own root. Errors are ignored: a reclaim never fails the run.
+func guardReclaimKilledRoots(dir, own string, stderr io.Writer) int {
+	found, _ := filepath.Glob(filepath.Join(dir, rootPrefix+"p*"))
+	type deadRoot struct {
+		path string
+		lock *os.File
+	}
+	var dead []deadRoot
+	live := map[int]bool{}
+	for _, root := range found {
+		if root == own {
+			continue
+		}
+		if info, err := os.Lstat(root); err != nil || !info.IsDir() {
+			continue
+		}
+		lockPath := filepath.Join(root, ownerLockName)
+		if info, err := os.Lstat(lockPath); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		lock, err := os.OpenFile(lockPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- the owner lock of a private root found under the scanned directory; opened read-only without following a symlink.
+		if err != nil {
+			continue
+		}
+		switch err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); {
+		case err == nil:
+			dead = append(dead, deadRoot{root, lock})
+			continue
+		case errors.Is(err, syscall.EWOULDBLOCK):
+			data, _ := io.ReadAll(io.LimitReader(lock, 32))
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				live[pid] = true
+			}
+		}
+		_ = lock.Close()
+	}
+
+	helper := live[os.Getppid()]
+	reclaimed := 0
+	for _, root := range dead {
+		if !helper && !live[guardRootMakerParent(root.path)] {
+			if err := os.RemoveAll(root.path); err == nil {
+				reclaimed++
+			}
+		}
+		_ = root.lock.Close()
+	}
+	if reclaimed > 0 {
+		fmt.Fprintf(stderr, "live machine guard: reclaimed %d private root(s) a killed guarded run left under %s\n", reclaimed, dir)
+	}
+	return reclaimed
+}
+
+// guardRootMakerParent returns the parent pid a root is named after
+// (rootPrefix + "p<pid>-"), or 0 when the name does not carry one.
+func guardRootMakerParent(root string) int {
+	rest, ok := strings.CutPrefix(filepath.Base(root), rootPrefix+"p")
+	if !ok {
+		return 0
+	}
+	digits, _, _ := strings.Cut(rest, "-")
+	pid, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0
+	}
+	return pid
 }
 
 // guardPinToolchainEnv exports the go command's current locations for the
@@ -322,7 +459,8 @@ func guardInstallProviderStandIns(dir string) error {
 // resolved a default per-user location. Reaching the Registry directory at
 // all, even to create a lock beside a missing registry, is reported on its own
 // because it is the live machine's shared state. A non-empty origin names the
-// helper root the paths are relative to.
+// helper root the paths are relative to. The owner lock at the top of root is
+// the guard's own and is not reported.
 func guardAuditRoot(root, origin string) bool {
 	failed := false
 	report := func(message string, lines []string) {
@@ -359,6 +497,9 @@ func guardAuditRoot(root, origin string) bool {
 			if slices.Contains(auditSkipPaths, rel) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if rel == ownerLockName {
 			return nil
 		}
 		if filepath.Base(filepath.Dir(path)) == "metadata" && filepath.Base(filepath.Dir(filepath.Dir(path))) == appName {
