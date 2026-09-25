@@ -35,9 +35,14 @@ Project-local hooks are discovered from the lifecycle context's `PROJMUX_CWD`:
 <repo>/.projmux/config.toml
 ```
 
-File-form hooks from the historical `.projmux/<event>` and
-`.projmux/hooks/<event>` layouts are no longer executed. Use declarative
-`[hooks.<event>] run` entries instead.
+projmux reads `.projmux/config.toml` directly in that directory. It does not
+look in parent directories.
+
+File-form hooks from the historical global
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/<event>` layout and the project
+`.projmux/<event>` and `.projmux/hooks/<event>` layouts are no longer executed.
+Use declarative `[hooks.<event>] run` entries instead. projmux converts or warns
+about these files; see [Troubleshooting](#troubleshooting).
 
 If both a global hook and a project-local hook exist for an event, projmux runs
 the global hook first, then the project-local hook.
@@ -145,8 +150,9 @@ session-level tmux environment before the startup command is sent. It does not
 run when projmux attaches to an existing session or target.
 
 Before sending the startup command, projmux polls tmux `pane_current_command`
-for the new pane and waits until it reports a shell command. This avoids fixed
-sleeps as the primary readiness mechanism.
+for the new pane and waits up to 2 seconds for it to report a shell command. If
+no shell appears in that time, the startup command is not sent. This avoids
+fixed sleeps as the primary readiness mechanism.
 
 The configured string is sent into the new pane:
 
@@ -966,12 +972,27 @@ context to either event.
 
 ## Examples
 
+Save hook scripts outside the legacy paths (`projmux/hooks/<event>`,
+`.projmux/<event>`, `.projmux/hooks/<event>`). projmux rewrites or ignores
+files at those paths. Make each script executable and name it in a `run` line.
+`run` goes through `sh -c`, so `$HOME` expands.
+
 ### Global Post Create Stub
+
+Save this as `~/.local/bin/projmux-post-create`:
 
 ```bash
 #!/usr/bin/env bash
 echo "session=$PROJMUX_SESSION cwd=$PROJMUX_CWD kind=$PROJMUX_SESSION_KIND"
 tmux -L "$PROJMUX_SOCKET" set-option -p -t "$PROJMUX_PANE" @projmux_initialized 1
+```
+
+Make it executable with `chmod +x ~/.local/bin/projmux-post-create`, then add
+this to `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml`:
+
+```toml
+[hooks.post-create]
+run = "$HOME/.local/bin/projmux-post-create"
 ```
 
 ### Project Startup Command
@@ -982,6 +1003,8 @@ run = "git status --short"
 ```
 
 ### Per Session GH_TOKEN By Repo
+
+Save this as `~/.local/bin/projmux-gh-token`:
 
 ```bash
 #!/usr/bin/env bash
@@ -996,22 +1019,85 @@ esac
 tmux -L "$PROJMUX_SOCKET" set-environment -t "$PROJMUX_SESSION" GH_TOKEN "$token"
 ```
 
+Make it executable with `chmod +x ~/.local/bin/projmux-gh-token`, then add this
+to `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml`:
+
+```toml
+[hooks.post-create]
+run = "$HOME/.local/bin/projmux-gh-token"
+```
+
 `set-environment` only seeds the session env that newly-spawned panes inherit;
 it does not retroactively change the current shell. Open new panes via tmux
 (`Ctrl-b c`, `Ctrl-b "`, etc.) to pick up the value.
 
+Both examples use `post-create`, and an event has one `run` line. To use both,
+call them from one line:
+
+```toml
+[hooks.post-create]
+run = "$HOME/.local/bin/projmux-post-create; $HOME/.local/bin/projmux-gh-token"
+```
+
 ## Troubleshooting
 
-- **Nothing happens.** Check the execute bit on the global hook
-  (`ls -l "${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/<event>"`) or the
-  project hook (`ls -l .projmux/<event> .projmux/hooks/<event>`). A missing
-  bit makes projmux skip hook files silently by design. `.projmux/config.toml`
-  does not need an execute bit.
-- **`project hook ... requires trust; skipping in non-interactive context`** or
-  **`project config ... requires trust; skipping in non-interactive context`.**
+- **Nothing happens.** Work through these checks in order:
+  1. Check that a `run` line exists for the event. `projmux hook list` shows
+     the global and project entries. A project hook must be in
+     `.projmux/config.toml` directly in the hook's `PROJMUX_CWD` directory,
+     which is the session directory for `pre-create`, `post-create`, and
+     `post-attach`. The runner does not look in parent directories. Without
+     `PROJMUX_CWD`, `projmux hook list` walks up to the nearest `.projmux` or
+     `.git`, so it can show a parent file as `active` that the runner never
+     reads.
+  2. Check for parse errors. If a file cannot be parsed, the whole file is
+     ignored for that run and stderr shows
+     `projmux: <event> hook: global config "<path>" could not be parsed: <reason>`
+     or
+     `projmux: <event> hook: project config ".projmux/config.toml" could not be parsed: <reason>`.
+     `projmux hook validate` prints each file's status, for example
+     `global   <path>   PARSE ERROR: line 2: value must be a quoted string`,
+     and exits 1.
+  3. Check that project hooks are on. `PROJMUX_PROJECT_HOOKS=off` or
+     Settings > Labs > Project Hooks turns them off with no warning. Global
+     hooks still run.
+  4. Check trust. An untrusted or changed project config is skipped; see the
+     trust item below.
+  5. `post-attach` runs only when projmux switches a client from inside tmux.
+     An attach from outside tmux does not run it.
+  6. Check for legacy script files. Legacy files are never executed, whatever
+     their execute bit: global
+     `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/<event>`, and project
+     `.projmux/<event>` and `.projmux/hooks/<event>`. Most projmux commands,
+     such as `projmux hook list`, scan them when they start. Help and
+     read-only commands such as `doctor`, `get`, and `describe` do not:
+     - A one-command script is moved into `[hooks.<event>] run` in the
+       matching `config.toml` and renamed to `<path>.bak`. stderr shows
+       `projmux: migrated legacy <global|project> hook <path> -> [hooks.<event>] run; original kept at <path>.bak`.
+       An existing `run` for that event wins; the script is still renamed.
+     - A multi-line script is left in place and not run. Every scanning
+       command prints
+       `projmux: legacy <global|project> hook <path> has <N> non-trivial lines; declarative migration skipped (multi-line scripts are no longer executed; rewrite manually as run = "bash -c '...'" or run = "./scripts/foo.sh")`.
+     - A symlink is left in place and not run:
+       `projmux: legacy <global|project> hook <path> is a symlink; declarative migration skipped (clean up via the source dotfiles repo)`.
+
+     The project scan runs only when the projmux process has `PROJMUX_CWD` set
+     to the repository, for example
+     `PROJMUX_CWD="$PWD" projmux hook list --project`. Without it, project
+     legacy files are ignored silently. A migrated `.projmux/config.toml` has
+     new content, so it needs trust again.
+  7. Check the execute bit of the program named in `run`. It needs its own
+     execute bit, or use `run = "bash /path/script"`. Without it, stderr shows
+     `[<event>] sh: 1: <path>: Permission denied` and then
+     `projmux: <event> hook: global config hook: exited with status 126`.
+     `.projmux/config.toml` itself does not need an execute bit.
+- **`projmux: <event> hook: project config ".projmux/config.toml" requires trust; skipping in non-interactive context`**
+  or
+  **`projmux: <event> hook: project config ".projmux/config.toml" hash changed; trusted sha256=<old> current sha256=<new>; skipping in non-interactive context`.**
   Run the same projmux command from an interactive terminal to approve the file,
-  or set `PROJMUX_PROJECT_HOOKS=off` if project-local execution should be
-  disabled.
+  or run `projmux hook trust [<project>]`, which prints `trusted <repo>` and
+  the sha256. Set `PROJMUX_PROJECT_HOOKS=off` if project-local execution should
+  be disabled.
 - **`projmux: <event> hook: ... timed out after 5s`.** Long-running work
   belongs in a backgrounded child (`(slow-thing &) >/dev/null 2>&1`). The hook
   itself must return within 5s or projmux kills it. The kill is a SIGKILL
@@ -1020,10 +1106,14 @@ it does not retroactively change the current shell. Open new panes via tmux
   chance to clean up, so it can leave residue such as a stale
   `.git/index.lock`, and children or grandchildren it started are not killed
   and can keep running after the timeout is reported. Remove leftover locks
-  and processes by hand.
-- **`projmux: <event> hook: hook ... exited with status N`.** The script
-  returned non-zero. For `pre-create`, creation aborts; for other events,
-  projmux logs once and moves on.
-- **Lines appear with `[post-create] `, `[pre-create] `, or `[post-attach] `
-  prefixes.** Expected; hook stdout/stderr are multiplexed into projmux's
-  stderr stream.
+  and processes by hand. For `pre-create`, creation stops and the command
+  fails with `pre-create hook for tmux session "<name>": timed out after 5s`.
+- **`projmux: <event> hook: ... exited with status N`.** The hook returned
+  non-zero. projmux logs once and moves on. A global hook shows
+  `global config hook: exited with status N`; a project hook shows
+  `project config ".projmux/config.toml": exited with status N`. For
+  `pre-create`, this warning is not logged. Creation stops and the command
+  fails with `pre-create hook for tmux session "<name>": exited with status N`.
+- **Lines appear with `[post-create] `, `[pre-create] `, `[post-attach] `, or
+  `[send-noti] ` prefixes.** Expected; hook stdout/stderr are multiplexed into
+  projmux's stderr stream.
