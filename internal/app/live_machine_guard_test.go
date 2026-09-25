@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,8 +26,9 @@ import (
 // live tmux server and read or write the live Registry.
 //
 // runWithLiveMachineGuard removes that inheritance for the whole test binary
-// before any test runs, and fails the package when a test still reaches the
-// default Registry location.
+// before any test runs, and fails the package when a test still writes to any
+// default per-user location: the Registry or any other state, config, cache,
+// or data file.
 
 // liveMachineGuardInheritedEnv names the variables through which a process
 // inherits a live tmux client or a managed Pane's identity. The guard unsets
@@ -61,19 +63,39 @@ var liveMachineGuardPrivateEnv = []struct {
 // otherwise start from an empty module cache under the private HOME.
 var liveMachineGuardToolchainEnv = []string{"GOPATH", "GOCACHE", "GOMODCACHE", "GOENV"}
 
+// liveMachineGuardToolchainPaths are the paths under the private root that
+// the go command writes for itself when a test runs it. Its telemetry counters
+// live under os.UserConfigDir, which follows the private XDG_CONFIG_HOME and
+// has no variable of its own to pin the way liveMachineGuardToolchainEnv does.
+var liveMachineGuardToolchainPaths = []string{
+	filepath.Join("config", "go", "telemetry"),
+}
+
 // liveMachineGuardRoot is the private root of the running guard, or "" when
 // the package runs without it.
 var liveMachineGuardRoot string
 
-const liveMachineGuardChildEnv = "PMX_TEST_LIVE_MACHINE_GUARD_CHILD"
+const (
+	liveMachineGuardChildEnv = "PMX_TEST_LIVE_MACHINE_GUARD_CHILD"
+
+	// liveMachineGuardRootEnv hands the private root to every process the test
+	// binary starts. Many tests re-execute the binary as a helper process that
+	// ends in os.Exit inside m.Run, which skips the guard's deferred cleanup; a
+	// helper that made its own root would leave it behind. A process that
+	// inherits a root joins it instead, and the process that made the root
+	// removes it and audits what every descendant wrote there.
+	liveMachineGuardRootEnv = "PMX_TEST_LIVE_MACHINE_GUARD_ROOT"
+)
 
 func runWithLiveMachineGuard(run func() int) int {
-	root, err := os.MkdirTemp("", "pmx-live-guard-")
+	root, owned, err := liveMachineGuardPrivateRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "live machine guard: create private root: %v\n", err)
 		return 1
 	}
-	defer os.RemoveAll(root)
+	if owned {
+		defer os.RemoveAll(root)
+	}
 
 	// Resolve the go command's own locations while HOME is still the
 	// caller's, so they stay the caller's after HOME moves.
@@ -95,13 +117,30 @@ func runWithLiveMachineGuard(run func() int) int {
 			return 1
 		}
 	}
+	if err := os.Setenv(liveMachineGuardRootEnv, root); err != nil {
+		fmt.Fprintf(os.Stderr, "live machine guard: set %s: %v\n", liveMachineGuardRootEnv, err)
+		return 1
+	}
 	liveMachineGuardRoot = root
 	defer func() { liveMachineGuardRoot = "" }()
 
 	code := run()
-	if leaked := liveMachineGuardLeaks(root); len(leaked) > 0 {
-		fmt.Fprintln(os.Stderr, "FAIL: a test reached the default projmux Registry; inject a Registry path")
-		for _, line := range leaked {
+	if !owned {
+		return code
+	}
+	registry, other := liveMachineGuardLeaks(root)
+	for _, leak := range []struct {
+		message string
+		paths   []string
+	}{
+		{"FAIL: a test reached the default projmux Registry; inject a Registry path", registry},
+		{"FAIL: a test wrote to a default per-user location; inject a path", other},
+	} {
+		if len(leak.paths) == 0 {
+			continue
+		}
+		fmt.Fprintln(os.Stderr, leak.message)
+		for _, line := range leak.paths {
 			fmt.Fprintln(os.Stderr, "  "+line)
 		}
 		if code == 0 {
@@ -109,6 +148,20 @@ func runWithLiveMachineGuard(run func() int) int {
 		}
 	}
 	return code
+}
+
+// liveMachineGuardPrivateRoot returns the root this process runs behind and
+// whether it owns it. A process started by a guarded test binary joins the
+// root it inherited while that root still exists; any other process makes a
+// new one.
+func liveMachineGuardPrivateRoot() (string, bool, error) {
+	if inherited := os.Getenv(liveMachineGuardRootEnv); inherited != "" {
+		if info, err := os.Stat(inherited); err == nil && info.IsDir() {
+			return inherited, false, nil
+		}
+	}
+	root, err := os.MkdirTemp("", "pmx-live-guard-")
+	return root, err == nil, err
 }
 
 // pinLiveMachineGuardToolchainEnv exports the go command's current locations
@@ -136,24 +189,33 @@ func pinLiveMachineGuardToolchainEnv() {
 	}
 }
 
-// liveMachineGuardLeaks lists every file a test left in a Registry state
-// directory under root, relative to root. Reaching it at all, even to create a
-// lock beside a missing registry, means the test resolved the default path.
-func liveMachineGuardLeaks(root string) []string {
-	var leaked []string
+// liveMachineGuardLeaks lists every file a test left under root, relative to
+// root, split into the Registry state directory and everything else. The guard
+// itself creates only directories, so any file outside the go command's own
+// paths means a test resolved a default per-user location. Reaching the
+// Registry directory at all, even to create a lock beside a missing registry,
+// is reported on its own because it is the live machine's shared state.
+func liveMachineGuardLeaks(root string) (registry, other []string) {
 	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			leaked = append(leaked, fmt.Sprintf("unreadable guard path: %v", err))
-			return nil
-		}
-		if entry.IsDir() || filepath.Base(filepath.Dir(path)) != "metadata" || filepath.Base(filepath.Dir(filepath.Dir(path))) != config.AppName {
+			other = append(other, fmt.Sprintf("unreadable guard path: %v", err))
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
-		leaked = append(leaked, rel)
+		if entry.IsDir() {
+			if slices.Contains(liveMachineGuardToolchainPaths, rel) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Base(filepath.Dir(path)) == "metadata" && filepath.Base(filepath.Dir(filepath.Dir(path))) == config.AppName {
+			registry = append(registry, rel)
+		} else {
+			other = append(other, rel)
+		}
 		return nil
 	})
-	return leaked
+	return registry, other
 }
 
 // exitIfLiveMachineGuardChild runs the guard around a fixed body when the test
@@ -184,6 +246,44 @@ func exitIfLiveMachineGuardChild() {
 				return 1
 			}
 			return 0
+		case "state":
+			paths, err := config.DefaultPathsFromEnv()
+			if err == nil {
+				err = os.MkdirAll(paths.StateDir, 0o700)
+			}
+			if err == nil {
+				err = os.WriteFile(filepath.Join(paths.StateDir, "guard-fixture.json"), []byte("{}\n"), 0o600)
+			}
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return 0
+		case "toolchain":
+			dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "go", "telemetry", "local")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(dir, "guard-fixture.count"), nil, 0o600); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return 0
+		case "helper-exits":
+			// A helper process ends inside m.Run with os.Exit, so nothing the
+			// guard deferred runs.
+			os.Exit(0)
+			return 0
+		case "helper-writes-state":
+			command := exec.Command(os.Args[0], "-test.run=^$") // #nosec G204 -- re-executes this test binary as a fixed guard fixture.
+			command.Env = append(os.Environ(), liveMachineGuardChildEnv+"=state")
+			command.Stderr = os.Stderr
+			if err := command.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "helper: %v\n", err)
+				return 1
+			}
+			return 0
 		default:
 			return 0
 		}
@@ -207,6 +307,9 @@ func TestLiveMachineGuardHoldsForThePackage(t *testing.T) {
 		if got, want := os.Getenv(entry.key), filepath.Join(root, entry.leaf); got != want {
 			t.Errorf("%s = %q, want the private %q", entry.key, got, want)
 		}
+	}
+	if got := os.Getenv(liveMachineGuardRootEnv); got != root {
+		t.Errorf("%s = %q, want the private root %q so helper processes join it", liveMachineGuardRootEnv, got, root)
 	}
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
@@ -257,10 +360,101 @@ func TestLiveMachineGuardFailsAPackageThatReachesTheDefaultRegistry(t *testing.T
 	}
 }
 
+// TestLiveMachineGuardFailsAPackageThatWritesAnyDefaultState extends the
+// detection past the Registry: a body that writes any other file under a
+// default per-user location fails the run with that path, while the go
+// command's own telemetry under the private config home does not.
+func TestLiveMachineGuardFailsAPackageThatWritesAnyDefaultState(t *testing.T) {
+	t.Parallel()
+
+	code, stderr := runLiveMachineGuardChild(t, []string{liveMachineGuardChildEnv + "=state"})
+	if code != 1 {
+		t.Fatalf("guard child exit = %d, want 1; stderr:\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"FAIL: a test wrote to a default per-user location; inject a path",
+		filepath.Join("state", config.AppName, "guard-fixture.json"),
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "default projmux Registry") {
+		t.Errorf("a state file outside the Registry was reported as a Registry leak:\n%s", stderr)
+	}
+
+	if code, stderr := runLiveMachineGuardChild(t, []string{liveMachineGuardChildEnv + "=toolchain"}); code != 0 {
+		t.Fatalf("toolchain guard child exit = %d, want 0; stderr:\n%s", code, stderr)
+	}
+}
+
+// TestLiveMachineGuardAuditsWhatAHelperProcessWrites pins that a test binary
+// re-executed as a helper joins its parent's private root, so what the helper
+// writes to a default location fails the parent's run.
+func TestLiveMachineGuardAuditsWhatAHelperProcessWrites(t *testing.T) {
+	t.Parallel()
+
+	code, stderr := runLiveMachineGuardChild(t, []string{liveMachineGuardChildEnv + "=helper-writes-state"})
+	if code != 1 {
+		t.Fatalf("guard child exit = %d, want 1; stderr:\n%s", code, stderr)
+	}
+	if want := filepath.Join("state", config.AppName, "guard-fixture.json"); !strings.Contains(stderr, want) {
+		t.Errorf("stderr lacks the helper's write %q:\n%s", want, stderr)
+	}
+	if strings.Contains(stderr, "helper:") {
+		t.Errorf("the helper failed its own audit instead of joining the parent's root:\n%s", stderr)
+	}
+}
+
+// TestLiveMachineGuardLeavesNoRootBehindAHelperThatExits pins the cleanup: a
+// helper process that ends in os.Exit inside m.Run skips every deferred call,
+// so it must not own a root. Joined to an inherited root it leaves nothing in
+// its temp directory; the control shows the root a helper that makes its own
+// leaves behind.
+func TestLiveMachineGuardLeavesNoRootBehindAHelperThatExits(t *testing.T) {
+	t.Parallel()
+
+	roots := func(tmp string) []string {
+		t.Helper()
+		found, err := filepath.Glob(filepath.Join(tmp, "pmx-live-guard-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return found
+	}
+
+	joined := t.TempDir()
+	code, stderr := runLiveMachineGuardChild(t, []string{
+		liveMachineGuardChildEnv + "=helper-exits",
+		liveMachineGuardRootEnv + "=" + liveMachineGuardRoot,
+		"TMPDIR=" + joined,
+	})
+	if code != 0 {
+		t.Fatalf("joined helper exit = %d, want 0; stderr:\n%s", code, stderr)
+	}
+	if left := roots(joined); len(left) != 0 {
+		t.Fatalf("a helper that joined the inherited root left %v", left)
+	}
+
+	own := t.TempDir()
+	if code, stderr := runLiveMachineGuardChild(t, []string{
+		liveMachineGuardChildEnv + "=helper-exits",
+		"TMPDIR=" + own,
+	}); code != 0 {
+		t.Fatalf("control helper exit = %d, want 0; stderr:\n%s", code, stderr)
+	}
+	if left := roots(own); len(left) != 1 {
+		t.Fatalf("control helper with its own root left %v, want exactly one root; the join above proves nothing without it", left)
+	}
+}
+
+// runLiveMachineGuardChild re-executes the test binary as a guard fixture. The
+// child starts without this run's private root, so it makes and audits its own
+// unless env hands one back.
 func runLiveMachineGuardChild(t *testing.T, env []string) (int, string) {
 	t.Helper()
 	command := exec.Command(os.Args[0], "-test.run=^$") // #nosec G204 -- re-executes this test binary as a fixed guard fixture.
-	command.Env = append(os.Environ(), env...)
+	command.Env = append(append(os.Environ(), liveMachineGuardRootEnv+"="), env...)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	err := command.Run()
