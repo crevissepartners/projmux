@@ -412,7 +412,7 @@ func (c *agentCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	var topic string
 	switch action {
@@ -479,7 +479,7 @@ func (c *agentCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	var kind coremetadata.AgentInteractionKind
 	if action == "set" {

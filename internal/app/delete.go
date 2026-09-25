@@ -291,7 +291,7 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	for _, ref := range refs {
 		flags.addPositionalRef(ref)

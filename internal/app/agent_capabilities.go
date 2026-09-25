@@ -78,7 +78,7 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(refs) > 1 {
 		return usageError(spelling + " accepts at most one Agent reference")

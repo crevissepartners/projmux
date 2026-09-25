@@ -88,7 +88,7 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(refs) > 1 {
 		return usageError(fmt.Sprintf("%s accepts at most one resource reference; got %q", spelling, refs[1]))

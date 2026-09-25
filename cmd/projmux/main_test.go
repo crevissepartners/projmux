@@ -299,3 +299,57 @@ func TestSelectorCardinalityFailureReachesExitCodeTwoWithNoStdout(t *testing.T) 
 		t.Fatalf("stderr does not carry the bounded candidate context:\n%s", stderr.String())
 	}
 }
+
+// TestFlagParseErrorPrintsReasonOnceAndUsageAtMostOnce runs sample public routes
+// through the real app and the entrypoint: a rejected flag leaves its reason on
+// stderr exactly once, at most one usage block, nothing on stdout, and exit 2.
+// A FlagSet that writes to stderr prints the reason through the flag package;
+// one that discards its output (config providers) leaves it to the entrypoint.
+func TestFlagParseErrorPrintsReasonOnceAndUsageAtMostOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("PROJMUX_CWD", "")
+
+	const reason = "flag provided but not defined: -zz"
+	for _, argv := range [][]string{
+		{"switch", "--zz"},
+		{"switch", "open", "--zz"},
+		{"window", "recent", "--zz"},
+		{"window", "--zz"},
+		{"get", "agents", "--zz"},
+		{"create", "agent", "--zz"},
+		{"rename", "agent", "--zz"},
+		{"delete", "window", "--zz"},
+		{"runtime", "attach", "--zz"},
+		{"runtime", "prune", "--zz"},
+		{"config", "providers", "--zz"},
+	} {
+		t.Run(strings.Join(argv, " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := executeCLI(func() error { return app.New().Run(argv, &stdout, &stderr) }, func(error) {}, &stderr)
+			if code != 2 {
+				t.Errorf("exit code = %d, want 2", code)
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q, want 0 bytes", stdout.String())
+			}
+			reasons, usages := 0, 0
+			for line := range strings.SplitSeq(stderr.String(), "\n") {
+				if strings.Contains(line, reason) {
+					reasons++
+				}
+				if strings.HasPrefix(line, "Usage") {
+					usages++
+				}
+			}
+			if reasons != 1 || usages > 1 {
+				t.Errorf("stderr has %d reason lines and %d usage blocks, want 1 and at most 1:\n%s", reasons, usages, stderr.String())
+			}
+		})
+	}
+}

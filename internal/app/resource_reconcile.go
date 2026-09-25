@@ -172,7 +172,7 @@ func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceRec
 		if errors.Is(err, flag.ErrHelp) {
 			return resourceReconcileOptions{}, err
 		}
-		return resourceReconcileOptions{}, usageError(err.Error())
+		return resourceReconcileOptions{}, flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return resourceReconcileOptions{}, usageError("reconcile resources does not accept positional arguments")

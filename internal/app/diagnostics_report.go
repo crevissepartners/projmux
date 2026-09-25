@@ -65,7 +65,7 @@ func (c *diagnosticsCommand) runReport(args []string, stdout, stderr io.Writer) 
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("diagnostics report does not accept positional arguments")

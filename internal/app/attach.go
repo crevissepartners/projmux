@@ -72,7 +72,7 @@ func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
 		printAttachUsage(stderr)
@@ -109,7 +109,7 @@ func (c *attachCommand) runProject(args []string, stdout, stderr io.Writer) erro
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 1 {
 		return usageError(spelling + " requires exactly one Project reference")
@@ -138,11 +138,11 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 	fallback := fs.String("fallback", "home", "fallback session policy: home or ephemeral")
 
 	if err := fs.Parse(args); err != nil {
-		printAttachUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
+			printAttachUsage(stderr)
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printAttachUsage(stderr)

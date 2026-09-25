@@ -69,7 +69,7 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
 		printHookUsage(stderr)
@@ -116,7 +116,7 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printHookUsage(stderr)
@@ -282,7 +282,7 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if *global && *project {
 		printHookUsage(stderr)
@@ -527,7 +527,7 @@ func (c *hookCommand) runValidate(args []string, stdout, stderr io.Writer) error
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printHookUsage(stderr)

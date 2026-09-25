@@ -254,7 +254,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(refs) == 0 {
 		return usageError(spelling + " requires one Agent reference: <name> or uid:<uid>")

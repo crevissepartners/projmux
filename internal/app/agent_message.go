@@ -390,7 +390,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(positionals) != 1 || strings.TrimSpace(args[separator+1]) == "" {
 		return usageError(spelling + " requires one <target-agent-ref> and non-empty text")
@@ -869,7 +869,7 @@ func (c *agentCommand) runMessageStatus(args []string, stdout, stderr io.Writer)
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(refs) != 1 || (output != "" && output != "json") {
 		return usageError(spelling + " requires <message-ref> [-o json]")
@@ -931,7 +931,7 @@ func (c *agentCommand) runWait(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(refs) != 1 || until != "idle" || (output != "" && output != "json") || timeout < 0 || timeout > coremessage.MaxTTL {
 		return usageError(spelling + " requires <agent-ref> [--until idle] [--timeout <duration>] [-o json]")

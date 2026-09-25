@@ -56,7 +56,7 @@ func (c *diagnosticsCommand) runLog(args []string, stdout, stderr io.Writer) err
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printDiagnosticsUsage(stderr)

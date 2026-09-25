@@ -130,7 +130,7 @@ func parseAgentQuestionArgs(args []string, stderr io.Writer) (agentQuestionReque
 		if errors.Is(err, flag.ErrHelp) {
 			return agentQuestionRequest{}, err
 		}
-		return agentQuestionRequest{}, usageError(err.Error())
+		return agentQuestionRequest{}, flagParseError(err)
 	}
 	want, shape := 1, "<agent-ref>"
 	if request.action == "answer" {

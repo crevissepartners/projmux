@@ -73,7 +73,7 @@ func (c *labelCommand) runKind(token string, kind coremetadata.Kind, args []stri
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 
 	refs, operands := splitLabelPositionals(positionals)

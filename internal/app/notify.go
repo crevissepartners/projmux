@@ -137,7 +137,7 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 	)
 
 	if err := fs.Parse(args); err != nil {
-		return usageError(fmt.Sprintf("parse notify push flags: %v", err))
+		return flagParseError(fmt.Errorf("parse notify push flags: %w", err))
 	}
 	if fs.NArg() != 0 {
 		printNotifyUsage(stderr)
@@ -236,7 +236,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return usageError(fmt.Sprintf("parse notify list flags: %v", err))
+		return flagParseError(fmt.Errorf("parse notify list flags: %w", err))
 	}
 	if fs.NArg() != 0 {
 		printNotifyUsage(stderr)
@@ -1514,7 +1514,7 @@ func (c *notifyCommand) runAck(args []string, stdout, stderr io.Writer) error {
 	all := fs.Bool("all", false, "remove every queued entry")
 
 	if err := fs.Parse(args); err != nil {
-		return usageError(fmt.Sprintf("parse notify ack flags: %v", err))
+		return flagParseError(fmt.Errorf("parse notify ack flags: %w", err))
 	}
 
 	store, err := c.requireStore()

@@ -103,7 +103,7 @@ func (c *projectLifecycleCommand) runProject(args []string, stdout, stderr io.Wr
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(refs) != 1 {
 		return usageError(spelling + " requires exactly one Project reference")

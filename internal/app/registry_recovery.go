@@ -415,7 +415,7 @@ func parseRegistryRecoveryOptions(args []string, stderr io.Writer) (registryReco
 		if errors.Is(err, flag.ErrHelp) {
 			return registryRecoveryOptions{}, err
 		}
-		return registryRecoveryOptions{}, usageError(err.Error())
+		return registryRecoveryOptions{}, flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return registryRecoveryOptions{}, usageError("reconcile registry does not accept positional arguments")

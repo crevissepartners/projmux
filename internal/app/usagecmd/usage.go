@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/usage"
@@ -135,8 +136,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		// usagecmd cannot import internal/app, so mark the parse failure with the shared metadata usage marker.
-		return &coremetadata.InputError{Cause: err}
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printUsageHelp(stderr)

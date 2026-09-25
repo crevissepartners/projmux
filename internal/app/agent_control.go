@@ -463,7 +463,7 @@ func (c *agentCommand) runApproval(args []string, stdout, stderr io.Writer) erro
 	fs.StringVar(&requestID, "request", "", "normalized pending request id")
 	refs, err := parseWithPositionals(fs, args[1:])
 	if err != nil {
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(refs) != 1 {
 		return usageError("agent approval review requires exactly one <agent-ref>")

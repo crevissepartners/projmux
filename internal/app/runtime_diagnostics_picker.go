@@ -92,8 +92,7 @@ func (c *runtimeDiagnosticsCommand) run(args []string, stdout, stderr io.Writer,
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		printRuntimeDiagnosticsUsage(stderr)
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		printRuntimeDiagnosticsUsage(stderr)

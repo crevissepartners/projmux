@@ -48,7 +48,7 @@ func (c *createCommand) runResourceProject(args []string, stdout, stderr io.Writ
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError(fmt.Sprintf("%s does not accept positional arguments; pass the root with --root", spelling))

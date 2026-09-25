@@ -37,6 +37,36 @@ type exitCoder interface {
 	ExitCode() int
 }
 
+// reportedFailure lets an error say that its reason is already on the user's
+// stderr, so the entrypoint must not print it a second time. A FlagSet parse
+// failure is the case: the flag package prints the reason before the usage.
+type reportedFailure interface {
+	error
+	FailureReported() bool
+}
+
+// FlagParseError is the usage error of a failed FlagSet.Parse when the FlagSet
+// writes to the user's stderr. The flag package has already printed the reason
+// there, followed by the usage, so the error reports its reason as printed and
+// the entrypoint does not print it again. A FlagSet with a discarded output
+// returns a plain usage error instead, so the entrypoint prints the reason.
+func FlagParseError(err error) error {
+	return &flagParseError{cause: err}
+}
+
+type flagParseError struct{ cause error }
+
+func (e *flagParseError) Error() string { return e.cause.Error() }
+
+func (e *flagParseError) Unwrap() error { return e.cause }
+
+// MetadataUsageError marks a flag parse failure as a usage error (exit 2)
+// through the shared marker protocol of internal/core/metadata.
+func (e *flagParseError) MetadataUsageError() bool { return true }
+
+// FailureReported says stderr already has the reason.
+func (e *flagParseError) FailureReported() bool { return true }
+
 // ClassifyFailure decides the verdict for err. usage reports whether err is a
 // usage error; the caller supplies it because the usage predicate lives above
 // this package.
@@ -47,6 +77,8 @@ type exitCoder interface {
 // child output), so it stays silent. A subprocess *exec.ExitError wrapped with
 // outer context is printed once, so the non-zero exit carries its reason. Any
 // coder keeps its own exit code, and only a silent one is journaled as an exit.
+// An error that reports its reason as already printed is never printed again;
+// its exit code and kind are decided as if it were printed.
 func ClassifyFailure(err error, usage bool) Failure {
 	if err == nil {
 		return Failure{}
@@ -67,6 +99,10 @@ func ClassifyFailure(err error, usage bool) Failure {
 	}
 	if usage {
 		f.Kind = FailureUsage
+	}
+	var reported reportedFailure
+	if errors.As(err, &reported) && reported.FailureReported() {
+		f.Print = false
 	}
 	return f
 }

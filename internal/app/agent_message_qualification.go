@@ -87,7 +87,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if len(refs) != 1 || output != "json" || timeout <= 0 || timeout > 5*time.Minute || !confirmed {
 		return usageError(spelling + " requires <claude-agent-ref> [--evidence <absolute-private-json>] --confirm-isolated-provider-push -o json [--timeout <duration>]")
