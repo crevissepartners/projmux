@@ -992,7 +992,7 @@ the server, and no write verb is ever sent.
 ## runtime diagnostics
 
 ```text
-projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
+projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]
 ```
 
 The interactive half of the same read. It lists every tmux object on the exact
@@ -1146,7 +1146,7 @@ operator's question, so they stay reachable only as `projmux internal tmux ...`.
 ## switch
 
 ```
-projmux switch [--ui=popup|sidebar]
+projmux switch [--ui popup|sidebar]
 projmux switch open <path>
 projmux switch toggle-tag | toggle-pin | kill | settings | preview
 projmux switch cycle-pane | cycle-window | sidebar-focus

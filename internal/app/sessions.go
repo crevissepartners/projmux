@@ -410,5 +410,5 @@ func rowsToEntries(rows []intrender.SessionRow) []intpickercompat.Entry {
 
 func printSessionsUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux runtime sessions [--ui=popup|sidebar]")
+	fmt.Fprintln(w, "  projmux runtime sessions [--ui popup|sidebar]")
 }

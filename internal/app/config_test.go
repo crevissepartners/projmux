@@ -402,7 +402,7 @@ func TestConfigForwarderRejectsFlagAndArgErrorsAsUsage(t *testing.T) {
 	}{
 		{name: "config edit unknown flag", args: []string{"config", "edit", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
 		{name: "config edit --set without value", args: []string{"config", "edit", "--set"}, wantErr: "flag needs an argument: -set"},
-		{name: "config edit extra arg", args: []string{"config", "edit", "extra"}, wantErr: "ai settings does not accept positional arguments"},
+		{name: "config edit extra arg", args: []string{"config", "edit", "extra"}, wantErr: "config edit does not accept positional arguments"},
 		{name: "config apply unknown flag", args: []string{"config", "apply", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
 		{name: "config apply extra arg", args: []string{"config", "apply", "extra"}, wantErr: "tmux apply does not accept positional arguments"},
 		{name: "config render standalone unknown flag", args: []string{"config", "render", "standalone", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
