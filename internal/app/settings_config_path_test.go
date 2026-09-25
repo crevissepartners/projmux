@@ -10,10 +10,10 @@ import (
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
-// TestSettingsShowsResolvedConfigFilePaths renders the locale source and AI
-// providers rows and checks they name the files projmux actually reads: under
-// XDG_CONFIG_HOME when it is set, and the unchanged ~/.config spelling with the
-// default environment.
+// TestSettingsShowsResolvedConfigFilePaths renders the locale source, locale
+// setting, and AI providers rows and checks they name the files projmux
+// actually reads: under XDG_CONFIG_HOME when it is set, and the unchanged
+// ~/.config spelling with the default environment.
 func TestSettingsShowsResolvedConfigFilePaths(t *testing.T) {
 	t.Parallel()
 
@@ -71,6 +71,18 @@ func TestSettingsShowsResolvedConfigFilePaths(t *testing.T) {
 			if want := prefix + "config.toml"; !strings.Contains(current, want) {
 				t.Fatalf("locale Current row = %q, want config source %q", current, want)
 			}
+			// The root Language row and the [ui].locale row name the file the
+			// setting came from, spelled like the Current row.
+			language := cmd.localeSettingsEntry().Label
+			uiLocale := settingsEntryLabelContaining(t, cmd.localeEntries(), "[ui].locale")
+			for _, label := range []string{language, uiLocale} {
+				if want := prefix + "config.toml"; !strings.Contains(label, want) {
+					t.Fatalf("locale setting row = %q, want config source %q", label, want)
+				}
+				if strings.HasPrefix(prefix, "~/") && strings.Contains(label, home) {
+					t.Fatalf("locale setting row = %q spells the absolute home %q, want ~/", label, home)
+				}
+			}
 			providers := cmd.aiEnabledAgentEntries()[1].Label
 			if want := prefix + config.AIEnabledAgentsFileName; !strings.Contains(providers, want) {
 				t.Fatalf("AI providers row = %q, want %q", providers, want)
@@ -78,7 +90,7 @@ func TestSettingsShowsResolvedConfigFilePaths(t *testing.T) {
 			if strings.HasPrefix(prefix, "~/.config/") {
 				return
 			}
-			for _, label := range []string{current, providers} {
+			for _, label := range []string{current, language, uiLocale, providers} {
 				if strings.Contains(label, "~/.config/projmux") {
 					t.Fatalf("row = %q names ~/.config/projmux while XDG_CONFIG_HOME=%q", label, xdg)
 				}

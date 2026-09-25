@@ -25,7 +25,7 @@ func (c *settingsCommand) localeSettingsEntry() intpickercompat.Entry {
 		desc = settingsCatalogTextLocale(locale, "warning") + " - " + desc
 	}
 	if source != "" && setting != i18n.LocaleSettingAuto {
-		desc += " - " + source
+		desc += " - " + c.globalConfigDisplayPath()
 	}
 	return intpickercompat.Entry{
 		Label:     settingsNodeRowLabelLocale(locale, settingsNavAppearance+".locale", settingsGlyphOpen, settingsColorType, desc),
@@ -87,6 +87,10 @@ func (c *settingsCommand) localeEntries() []intpickercompat.Entry {
 			Value: settingsNoopValue,
 		})
 	}
+	settingPath := ""
+	if source != "" {
+		settingPath = c.globalConfigDisplayPath()
+	}
 	entries = append(entries,
 		intpickercompat.Entry{
 			Label:     settingsLabelInfoLocale(locale, "Current", string(resolution.Locale), localeResolutionSourceLabel(resolution, c.globalConfigDisplayPath())),
@@ -94,7 +98,7 @@ func (c *settingsCommand) localeEntries() []intpickercompat.Entry {
 			SearchKey: "current locale " + string(resolution.Locale) + " " + string(resolution.Source),
 		},
 		intpickercompat.Entry{
-			Label:     settingsLabelInfoLocale(locale, "[ui].locale", setting, source),
+			Label:     settingsLabelInfoLocale(locale, "[ui].locale", setting, settingPath),
 			Value:     settingsNoopValue,
 			SearchKey: "ui.locale config " + setting,
 		},
