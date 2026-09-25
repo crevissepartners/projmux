@@ -2557,17 +2557,14 @@ func TestAITopicUnknownActionReturnsError(t *testing.T) {
 	}
 }
 
-func TestAITopicHelpListedInUsage(t *testing.T) {
+func TestAITopicHelpPrintsAgentTopicUsage(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
 	stdout := &bytes.Buffer{}
-	printAIUsage(stdout)
-	for _, want := range []string{
-		"projmux agent topic set <text> [--pane <id>]",
-		"projmux agent topic clear [--pane <id>]",
-		"projmux agent topic get [--pane <id>]",
-	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("usage = %q, want contains %q", stdout.String(), want)
-		}
+	if err := cmd.Run([]string{"topic", "help"}, stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run topic help error = %v, want nil", err)
+	}
+	for _, problem := range aiRouteUsageProblems(t, "agent topic", stdout.String()) {
+		t.Error(problem)
 	}
 }
 

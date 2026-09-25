@@ -40,14 +40,14 @@ func TestPublicRoutesLeftoverArgsAndUnknownSubcommandsAreUsageErrors(t *testing.
 		want string
 	}{
 		// agent integrate: a leading flag or unknown token is read as the agent kind.
-		{name: "agent integrate D", argv: []string{"agent", "integrate"}, want: "ai integrate requires <agent-kind>"},
-		{name: "agent integrate A", argv: []string{"agent", "integrate", "--zz"}, want: "unknown ai integrate agent-kind: --zz"},
-		{name: "agent integrate B", argv: []string{"agent", "integrate", "x", "--zz"}, want: "unknown ai integrate agent-kind: x"},
-		{name: "agent integrate C", argv: []string{"agent", "integrate", "x"}, want: "unknown ai integrate agent-kind: x"},
-		{name: "agent integrate claude positional", argv: []string{"agent", "integrate", "claude", "x"}, want: "ai integrate claude does not accept positional arguments"},
-		{name: "agent integrate codex positional", argv: []string{"agent", "integrate", "codex", "x"}, want: "ai integrate codex does not accept positional arguments"},
-		{name: "agent integrate tmux-bell positional", argv: []string{"agent", "integrate", "tmux-bell", "x"}, want: "ai integrate tmux-bell does not accept positional arguments"},
-		{name: "agent integrate antigravity positional", argv: []string{"agent", "integrate", "antigravity", "x"}, want: "ai integrate antigravity does not accept positional arguments"},
+		{name: "agent integrate D", argv: []string{"agent", "integrate"}, want: "agent integrate requires <agent-kind>"},
+		{name: "agent integrate A", argv: []string{"agent", "integrate", "--zz"}, want: "unknown agent integrate agent-kind: --zz"},
+		{name: "agent integrate B", argv: []string{"agent", "integrate", "x", "--zz"}, want: "unknown agent integrate agent-kind: x"},
+		{name: "agent integrate C", argv: []string{"agent", "integrate", "x"}, want: "unknown agent integrate agent-kind: x"},
+		{name: "agent integrate claude positional", argv: []string{"agent", "integrate", "claude", "x"}, want: "agent integrate claude does not accept positional arguments"},
+		{name: "agent integrate codex positional", argv: []string{"agent", "integrate", "codex", "x"}, want: "agent integrate codex does not accept positional arguments"},
+		{name: "agent integrate tmux-bell positional", argv: []string{"agent", "integrate", "tmux-bell", "x"}, want: "agent integrate tmux-bell does not accept positional arguments"},
+		{name: "agent integrate antigravity positional", argv: []string{"agent", "integrate", "antigravity", "x"}, want: "agent integrate antigravity does not accept positional arguments"},
 		// agent usage (usagecmd marks its own refusal through the metadata marker).
 		{name: "agent usage B", argv: []string{"agent", "usage", "x", "--zz"}, want: "usage does not accept positional arguments"},
 		{name: "agent usage C", argv: []string{"agent", "usage", "x"}, want: "usage does not accept positional arguments"},

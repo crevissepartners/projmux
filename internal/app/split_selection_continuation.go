@@ -164,11 +164,12 @@ func parseSplitSelectionArgs(spelling string, args []string, stderr io.Writer) (
 		return agentPaneIntent{}, err
 	}
 	if fs.NArg() != 1 {
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "internal agent-pane launch-selection")
 		return agentPaneIntent{}, usageError(spelling + " requires exactly 1 <right|down> argument")
 	}
-	direction, err := parseAISplitDirection(fs.Args(), spelling, stderr)
+	direction, err := parseAISplitDirection(fs.Args(), spelling)
 	if err != nil {
+		printRouteUsage(stderr, "internal agent-pane launch-selection")
 		return agentPaneIntent{}, err
 	}
 	intent := agentPaneIntent{

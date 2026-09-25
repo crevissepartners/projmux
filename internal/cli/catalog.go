@@ -2348,8 +2348,20 @@ var routes = []Route{
 				Usage:            []string{"projmux internal agent-hook ingest <source> ...", "projmux internal agent-hook watch-title [pane]"},
 				Canonical:        []string{"internal agent-hook"},
 				Children: []Route{
-					{Effects: unchangedEffects(CardinalityUnchanged), Name: "ingest", Invocation: InvocationExplicit, Summary: "Ingest provider hook and log events", Canonical: []string{"internal agent-hook"}},
-					{Effects: unchangedEffects(CardinalityUnchanged), Name: "watch-title", Invocation: InvocationExplicit, Summary: "Run the Agent pane title watcher", Canonical: []string{"internal agent-hook"}},
+					{
+						Effects:    unchangedEffects(CardinalityUnchanged),
+						Name:       "ingest",
+						Invocation: InvocationExplicit,
+						Summary:    "Ingest provider hook and log events",
+						Usage: []string{
+							"projmux internal agent-hook ingest codex-hook [--pane <pane_uid|pane_id>] < payload.json",
+							"projmux internal agent-hook ingest claude-hook [--pane <pane_uid|pane_id>] < payload.json",
+							"projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop>] [--pane <pane_uid|pane_id>] < payload.json",
+							"projmux internal agent-hook ingest bell --pane <pane_id>",
+						},
+						Canonical: []string{"internal agent-hook"},
+					},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "watch-title", Invocation: InvocationExplicit, Summary: "Run the Agent pane title watcher", Usage: []string{"projmux internal agent-hook watch-title [pane]"}, Canonical: []string{"internal agent-hook"}},
 				},
 			},
 			{

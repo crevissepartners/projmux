@@ -257,10 +257,8 @@ func TestHandlerUsageCatalogGuardDetectsDrift(t *testing.T) {
 		}
 	}
 
-	var aiUsage bytes.Buffer
-	printAIUsage(&aiUsage)
-	if foreign := handlerUsageForeignLines("config edit", aiUsage.String()); len(foreign) == 0 {
-		t.Error("config edit: foreign-line check accepted the full ai usage listing")
+	if foreign := handlerUsageForeignLines("config edit", aiRouteUsageRetiredListing); len(foreign) == 0 {
+		t.Error("config edit: foreign-line check accepted the retired ai usage listing")
 	}
 
 	cmd, _ := newHookEditHintFixture(t)

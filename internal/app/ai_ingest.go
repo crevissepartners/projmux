@@ -120,7 +120,7 @@ type aiIngestLogEntry struct {
 
 func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "internal agent-hook ingest")
 		return errors.New("internal agent-hook ingest requires <agent-kind>")
 	}
 	switch args[0] {
@@ -177,7 +177,7 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		if fs.NArg() != 0 {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "internal agent-hook ingest")
 			return errors.New("internal agent-hook ingest antigravity-hook does not accept positional payload arguments")
 		}
 		reader := c.stdin
@@ -219,10 +219,10 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 	case "log":
 		return c.runIngestLog(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "internal agent-hook ingest")
 		return nil
 	default:
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "internal agent-hook ingest")
 		return fmt.Errorf("unknown internal agent-hook ingest source: %s", args[0])
 	}
 }
@@ -244,7 +244,7 @@ func parseAIHookPaneArgument(route string, args []string, stderr io.Writer) (str
 		return "", err
 	}
 	if fs.NArg() != 0 {
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "internal agent-hook ingest")
 		return "", errors.New("internal agent-hook ingest " + route + " reads JSON from stdin and accepts no payload arguments")
 	}
 	return strings.TrimSpace(*explicitPane), nil
@@ -258,12 +258,12 @@ func (c *aiCommand) runIngestBell(args []string, stderr io.Writer) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "internal agent-hook ingest")
 		return errors.New("internal agent-hook ingest bell does not accept positional arguments")
 	}
 	if strings.TrimSpace(*paneID) == "" {
 		c.recordAIIngestIgnored(diagnostics.ProviderTmuxBell, diagnostics.AIKindBell, diagnostics.AIFailureTargetInvalid, true)
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "internal agent-hook ingest")
 		return errors.New("internal agent-hook ingest bell requires --pane <pane_id>")
 	}
 	return c.ingestBell(*paneID)
@@ -282,7 +282,7 @@ func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error 
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "diagnostics agent-hook")
 		return usageError("diagnostics agent-hook does not accept positional arguments")
 	}
 
