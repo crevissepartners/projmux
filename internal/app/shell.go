@@ -64,6 +64,9 @@ type shellCommand struct {
 // convergence through. See internal/app/control_session.go for the contract.
 type controlSessionPass interface {
 	converge(ctx context.Context, socketName, sessionName string) (controlSessionConvergence, error)
+	// rootUID reads, without a lock or a write, the Registry ControlSession
+	// root UID bound to sessionName, or "" when none is bound.
+	rootUID(ctx context.Context, sessionName string) (string, error)
 }
 
 type shellUpdateSkipState struct {
@@ -273,6 +276,13 @@ func (c *shellCommand) executeShellSession(ctx context.Context, socketName, sess
 //     session whose ownership goes to a Project must never carry the control
 //     role: it is a Project's runtime projection, and marking it would give one
 //     tmux session two mutually exclusive attributions.
+//
+// Reobserve and Guard judge convergence by one predicate: the exact bootstrap
+// handles, the control role, both Window/Pane mirrors, and a Registry root
+// UID. Mirrors alone are not convergence, so a Home missing its Registry root
+// still runs the step; a Home that is already converged, or that a concurrent
+// writer converges before the guard, is dropped without Apply and its root UID
+// is taken from the observation instead.
 func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, configPath string, target shellTarget) (retErr error) {
 	if target.ProjectDefault || c.controlSession == nil {
 		return nil
@@ -305,6 +315,19 @@ func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, co
 	})
 	bindRuntimeMutationGuard(&action, "exact bootstrap containment="+strings.Join(before, "/"))
 	var result controlSessionConvergence
+	var observedUID string
+	converged := func(ctx context.Context, current []string) (bool, error) {
+		if current[0] != before[0] || current[2] != before[2] || current[4] != before[4] ||
+			current[1] != resourcegraph.ControlSessionRole || strings.TrimSpace(current[3]) == "" || strings.TrimSpace(current[5]) == "" {
+			return false, nil
+		}
+		uid, err := pass.rootUID(ctx, target.SessionName)
+		if err != nil || strings.TrimSpace(uid) == "" {
+			return false, err
+		}
+		observedUID = uid
+		return true, nil
+	}
 	err = executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
 		TargetRouteGuard: func(ctx context.Context) error {
@@ -318,17 +341,27 @@ func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, co
 			if err != nil {
 				return false, err
 			}
-			return current[1] == resourcegraph.ControlSessionRole && current[3] != "" && current[5] != "", nil
+			return converged(ctx, current)
 		},
 		Guard: func(ctx context.Context) error {
 			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route, action); err != nil {
 				return err
 			}
 			current, err := c.observeControlBootstrapAtRoute(ctx, receipt.route, target.SessionName)
-			if err != nil || !slices.Equal(current, before) {
-				return errors.New("ControlSession bootstrap containment drifted before identity convergence")
+			if err == nil && slices.Equal(current, before) {
+				return nil
 			}
-			return nil
+			if err == nil {
+				// A concurrent writer converged this exact Home after Reobserve.
+				ok, err := converged(ctx, current)
+				if err != nil {
+					return err
+				}
+				if ok {
+					return fmt.Errorf("ControlSession %s identity: %w", before[0], errRuntimeMutationEffectConverged)
+				}
+			}
+			return errors.New("ControlSession bootstrap containment drifted before identity convergence")
 		},
 		Apply: func(ctx context.Context) error {
 			var err error
@@ -342,8 +375,12 @@ func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, co
 	if result.skipped != "" {
 		return fmt.Errorf("declarative control target refused: %s", result.skipped)
 	}
+	controlUID := result.controlUID
+	if controlUID == "" {
+		controlUID = observedUID
+	}
 	after, err := c.observeControlBootstrapAtRoute(ctx, receipt.route, target.SessionName)
-	if err != nil || strings.TrimSpace(result.controlUID) == "" || after[1] != resourcegraph.ControlSessionRole ||
+	if err != nil || strings.TrimSpace(controlUID) == "" || after[1] != resourcegraph.ControlSessionRole ||
 		strings.TrimSpace(after[3]) == "" || strings.TrimSpace(after[5]) == "" {
 		return errors.New("ControlSession identity convergence did not yield exact root UID and Window/Pane mirrors")
 	}

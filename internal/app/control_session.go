@@ -127,6 +127,24 @@ func (c *controlSessionConverger) converge(ctx context.Context, socketName, sess
 	return c.convergeTarget(ctx, target, sessionName)
 }
 
+// rootUID reads the Registry ControlSession root UID bound to sessionName, or
+// "" when none is bound. It takes no lock and writes nothing: it is the
+// Registry half of shell's convergence observation, not a convergence step.
+func (c *controlSessionConverger) rootUID(_ context.Context, sessionName string) (string, error) {
+	if c == nil || c.resources == nil || c.resources.load == nil {
+		return "", errors.New("control session root lookup requires a registry store")
+	}
+	registry, err := c.resources.load()
+	if err != nil {
+		return "", err
+	}
+	control, ok := registry.ControlSessionBySession(sessionName)
+	if !ok || control == nil {
+		return "", nil
+	}
+	return control.Metadata.UID, nil
+}
+
 // convergeTarget is shared by shell lifecycle and config-apply. The caller has
 // already declared both coordinates; there is no inherited/default socket
 // fallback and no session-name inference inside this method.
