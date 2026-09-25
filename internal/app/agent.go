@@ -17,6 +17,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -91,7 +92,16 @@ type agentCommand struct {
 	// recorded transcript for the held-message release, and reports whether
 	// the read started after offset 0. Nil reads the file.
 	messageTranscriptTail func(string) ([]byte, bool, error)
-	focus                 rawArgvCommand
+	// messageDiagnostics records an accepted send whose caller does not
+	// descend from its Claude source Agent's registered process. Nil records
+	// nothing.
+	messageDiagnostics *diagnostics.AgentMessageRecorder
+	// messageProcess reads one process identity and its parent for that
+	// lineage check, and messageCallerPID names the caller. Nil means
+	// localipc.Process and os.Getpid.
+	messageProcess   func(int) (coremetadata.ProcessIdentity, int, error)
+	messageCallerPID func() int
+	focus            rawArgvCommand
 	// paneDelete is the `delete` route. `agent persona` closes a Running
 	// Agent's managed Pane through it rather than through a tmux call of its
 	// own, so the stop is the same one `delete pane` performs.

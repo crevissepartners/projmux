@@ -564,6 +564,9 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return fmt.Errorf("%s: %w", spelling, err)
 	}
+	// Only an accepted send is judged. The reply above needs no warning: its
+	// coordination server already refuses a caller outside the provider.
+	c.warnForeignClaudeSource(stderr, &registry, source, sourceRoute)
 	var pushErr error
 	if created {
 		record, pushErr = c.deliverOrHoldCoordination(record, target, targetRoute, envelope)

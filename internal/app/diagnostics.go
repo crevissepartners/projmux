@@ -143,6 +143,7 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"classification", event.Classification},
 		{"window_uid", event.WindowUID},
 		{"pane_uid", event.PaneUID},
+		{"agent_uid", event.AgentUID},
 	} {
 		if field.value != "" {
 			parts = append(parts, field.name+"="+field.value)

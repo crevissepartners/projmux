@@ -303,6 +303,9 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	agentCmd := newAgentCommand()
 	agentCmd.ai = ai
 	agentCmd.usage = usageCmd
+	// An accepted send from a caller outside its Claude source Agent's
+	// registered process records one agent.message.foreign-source here.
+	agentCmd.messageDiagnostics = recorder.AgentMessage()
 	// `agent resume` materializes its new managed Pane on the create command's
 	// runtime -- the same transaction order, ledger, rollback, and detached
 	// materializer -- while keeping its own launch seam, which can only build a
