@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -599,8 +600,80 @@ func TestDaemonStartHelperProcess(t *testing.T) {
 		os.Exit(17)
 	case "timeout":
 		time.Sleep(10 * time.Second)
+	case "hold-pipe":
+		// Stands in for a daemon: it inherited the start command's
+		// stdout/stderr pipes and keeps them open for its whole lifetime.
+		time.Sleep(20 * time.Second)
+	case "exit-with-open-pipe":
+		startPipeHoldingGrandchild()
+		os.Exit(0)
+	case "hang-with-open-pipe":
+		startPipeHoldingGrandchild()
+		time.Sleep(20 * time.Second)
 	}
 	os.Exit(0)
+}
+
+// startPipeHoldingGrandchild starts a hold-pipe helper that inherits this
+// process's stdout/stderr and records its pid for the test's cleanup.
+func startPipeHoldingGrandchild() {
+	cmd := exec.Command(os.Args[0], "-test.run=TestDaemonStartHelperProcess")
+	cmd.Env = append(os.Environ(), "GO_WANT_DAEMON_START_HELPER=1", "DAEMON_START_SCENARIO=hold-pipe")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		os.Exit(3)
+	}
+	pidFile := os.Getenv("DAEMON_START_GRANDCHILD_PID_FILE")
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+		_ = cmd.Process.Kill()
+		os.Exit(4)
+	}
+}
+
+func TestRunDaemonStartReturnsWhenDaemonKeepsOutputPipesOpen(t *testing.T) {
+	tests := []struct {
+		name     string
+		scenario string
+		timeout  time.Duration
+		want     startResult
+		// maxElapsed is far below the 20s hold-pipe grandchild lifetime, so
+		// exceeding it means Wait blocked on the pipes the grandchild holds.
+		maxElapsed time.Duration
+	}{
+		{name: "start exits zero", scenario: "exit-with-open-pipe", timeout: 5 * time.Second, want: startSucceeded, maxElapsed: 3 * time.Second},
+		{name: "start hangs past timeout", scenario: "hang-with-open-pipe", timeout: time.Second, want: startTimedOut, maxElapsed: time.Second + daemonStartWaitDelay + 2*time.Second},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+			t.Cleanup(func() {
+				data, err := os.ReadFile(pidFile)
+				if err != nil {
+					return
+				}
+				if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			})
+			started := time.Now()
+			got := runDaemonStart(context.Background(), tc.timeout,
+				func(string) (string, error) { return os.Args[0], nil },
+				func(commandCtx context.Context, _ string, _ ...string) *exec.Cmd {
+					cmd := exec.CommandContext(commandCtx, os.Args[0], "-test.run=TestDaemonStartHelperProcess")
+					cmd.Env = append(os.Environ(), "GO_WANT_DAEMON_START_HELPER=1", "DAEMON_START_SCENARIO="+tc.scenario, "DAEMON_START_GRANDCHILD_PID_FILE="+pidFile)
+					return cmd
+				})
+			elapsed := time.Since(started)
+			t.Logf("elapsed = %s", elapsed)
+			if got != tc.want {
+				t.Fatalf("start result = %d, want %d", got, tc.want)
+			}
+			if elapsed >= tc.maxElapsed {
+				t.Fatalf("runDaemonStart took %s, want < %s", elapsed, tc.maxElapsed)
+			}
+		})
+	}
 }
 
 func TestRunDaemonStartFailureClassificationAndExactArgv(t *testing.T) {
