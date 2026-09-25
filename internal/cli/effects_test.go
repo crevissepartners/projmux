@@ -462,7 +462,7 @@ func TestCorrectedHandlerEffectsKeepSourceAndTestAnchors(t *testing.T) {
 		{"reconcile resources", "resource_reconcile.go", "func (c *resourceReconcileCommand) Run", "registry_topology_materialize_test.go", "TestRegistryTopologyMaterializationDryRunExecuteAndRepeatNoop"},
 		{"reconcile registry", "registry_recovery.go", "func (c *registryRecoveryCommand) Run", "registry_recovery_test.go", "TestReconcileRegistryRestoresOnlyAnExplicitSourceAndRepeatsAsANoOp"},
 		{"internal focus", "focus.go", "func (c *focusCommand) execute", "focus_test.go", "TestFocus_NoClientNotifyOnly"},
-		{"internal statusbar click", "statusbar.go", "func (c *statusbarCommand) runClick", "statusbar_test.go", "TestStatusbarClickEmptyRangeWithMouseWindowSelectsWindow"},
+		{"internal statusbar click", "statusbar.go", "func (c *statusbarCommand) runClick", "statusbar_test.go", "TestStatusbarClickWindowRangeTokenSelectsWindowByIndex"},
 		{"internal agent-pane launch-default", "ai.go", "func (c *aiCommand) runLaunchDefault", "agent_pane_intent_test.go", "TestSavedDefaultSplitStatesOneCanonicalIntent"},
 		{"internal agent-pane picker", "ai.go", "func (c *aiCommand) runPicker", "create_intent_control_test.go", "TestResumePickerCreateCommitsExactSessionRefBeforeAnyHook"},
 		{"window recent", "recent_window.go", "func (c *recentWindowCommand) openRecentWindow", "recent_window_test.go", "TestRecentWindowRunSwitchesCrossSessionWindowWithoutPaneRestore"},

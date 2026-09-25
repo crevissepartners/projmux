@@ -3158,23 +3158,17 @@ func tmuxAppKeyBindings(binaryPath string, catalog []keyBindingAction, keymapPre
 // and `#{mouse_status_range}` returns whichever user-defined range we wrapped
 // under the cursor — so a single bind covers both lines.
 //
-// We also pass `--mouse-window "#{mouse_window}"` so the dispatcher can fall
-// back to tmux's default window-list behavior (`select-window -t @<id>`) when
-// the click lands on a window entry rather than one of our user-defined
-// ranges. Without this, overriding `MouseDown1Status` would silently disable
-// click-to-switch-window in the window list.
-//
-// IMPORTANT: empirically (tmux 3.4+ on `-L projmux`), a click on the window
-// list fires `MouseDown1Status` with `#{mouse_status_range}` set to the bare
-// string `"window"` and `#{mouse_window}` empty. The mouse-target idiom
-// `select-window -t =` only resolves through tmux's *internal* mouse context,
-// which is not preserved across a `run-shell` subprocess — so projmux's Go
-// dispatcher cannot recover the clicked window from those inputs alone. We
-// therefore short-circuit the `range == "window"` case to a native
-// `select-window -t =` inside the same tmux command-chain via `if-shell -F`,
-// and only fall through to `run-shell` for projmux-managed ranges. The Go
-// fallback (`isWindowListRangeToken`) is left in place as defense-in-depth
-// for any future tmux that does populate the index.
+// The click command passes only `#{mouse_status_range}` and `#{client_tty}`.
+// tmux has no format variable for the clicked window (no `mouse_*` format
+// names it); the clicked window is only reachable through tmux's *internal*
+// mouse target (`-t =`), which does not survive a `run-shell` subprocess. A
+// click on the window list fires `MouseDown1Status` with
+// `#{mouse_status_range}` set to the bare string `"window"`, so we
+// short-circuit that case to a native `select-window -t =` inside the same
+// tmux command chain via `if-shell -F`, and only fall through to `run-shell`
+// for everything else. The Go dispatcher keeps the `window|<idx>` index path
+// (`isWindowListRangeToken`) as defense in depth; empty and unknown ranges
+// are no-ops there.
 //
 // The `prefix s` chord uses tmux's `switch-client -T <table>` mechanism so
 // keyboard users get the same handlers as mouse clickers without re-defining
@@ -3182,7 +3176,7 @@ func tmuxAppKeyBindings(binaryPath string, catalog []keyBindingAction, keymapPre
 // the throttled refresh subcommand before reopening the same popup.
 func tmuxStatusbarKeyBindings(binaryPath string) []string {
 	bin := tmuxShellQuote(binaryPath)
-	clickCmd := bin + " internal statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\""
+	clickCmd := bin + " internal statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\""
 	// Use tmux's `{...}` block syntax for the if-shell branches so the nested
 	// quotes inside `run-shell` don't need to be escaped through another layer
 	// of tmux config quoting (which the parser rejects). Block syntax requires

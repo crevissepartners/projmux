@@ -1646,19 +1646,21 @@ projmux internal status resources
 ## internal statusbar
 
 ```
-projmux internal statusbar click <range-id> [--socket <s>] [--mouse-window <id>]
-                                            [--client <tty>] [--mouse-x N] [--mouse-y N]
+projmux internal statusbar click <range-id> [--socket <s>] [--client <tty>]
+                                            [--mouse-x N] [--mouse-y N]
 projmux internal statusbar usage-refresh
 ```
 
 Click/keyboard dispatcher for the two-line status bar. Implemented range ids:
-`session pwd git resources usage notify settings`. The bare `window` /
-`window|<idx>` token (tmux's built-in window-list range) and the empty
-range fall through to `select-window -t @<mouse_window>` so the native
-click-to-switch tab affordance is preserved on row 1. Unknown range ids are
-non-specialized placeholders and no-op. `session` opens the existing-session
-popup; `pwd` shows the current pane path in a native-framed display-only
-popup; `git` opens the project switcher popup;
+`session pwd git resources usage notify settings`. Window-list clicks on
+row 1 are handled natively by the binding (`if-shell -F` on the bare `window`
+range runs `select-window -t =`); if a `window|<idx>` token reaches the
+dispatcher it selects `:<idx>`, and a bare `window` token is a no-op. The
+empty range and unknown range ids are no-ops. The binding passes only
+`#{mouse_status_range}` and `#{client_tty}`; `--mouse-window <v>` is accepted
+for compatibility with bindings from older releases and ignored. `session`
+opens the existing-session popup; `pwd` shows the current pane path in a
+native-framed display-only popup; `git` opens the project switcher popup;
 `settings` toggles the settings popup for the tmux client; `usage` opens the
 detailed cached account-usage popup. Legacy context rows are suppressed and
 named quotas retain exact identity/reset/freshness values. Claude model-scoped
