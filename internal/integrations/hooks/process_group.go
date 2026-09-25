@@ -37,10 +37,14 @@ func killProcessGroup(p *os.Process) error {
 
 // forwardTerminationSignals catches SIGINT, SIGTERM, and SIGHUP while the hook
 // p runs. On a signal it kills the hook's group, stops catching, and re-raises
-// the signal on projmux so a caller with the default disposition still dies by
-// it. A signal the caller ignores is left alone, since Notify would un-ignore
-// it. The returned release must be called once Wait has returned; a signal
-// that arrives after that is re-raised without killing the finished hook.
+// the signal on projmux. On Linux the re-raise targets the calling thread, so
+// a caller with the default disposition dies by it before release returns. On
+// macOS it is process-directed and not deterministic, so the caller may still
+// pass Run before it dies. A caller that catches the signal with its own
+// Notify channel receives it once more, and Run returns. A signal the caller
+// ignores is left alone, since Notify would un-ignore it. The returned release
+// must be called once Wait has returned; a signal that arrives after that is
+// re-raised without killing the finished hook.
 //
 // Concurrent hooks each register their own channel. Every channel receives the
 // signal, each kills its own group before Stop, and a re-raise reaches the
@@ -93,11 +97,5 @@ func forwardTerminationSignals(p *os.Process) (release func()) {
 			reraiseSignal(sig)
 		default:
 		}
-	}
-}
-
-func reraiseSignal(sig os.Signal) {
-	if s, ok := sig.(syscall.Signal); ok {
-		_ = syscall.Kill(os.Getpid(), s)
 	}
 }
