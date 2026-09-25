@@ -66,7 +66,10 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() == 0 {
 		printHookUsage(stderr)
@@ -110,7 +113,10 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 	projectOnly := fs.Bool("project", false, "only show project config entries")
 	effective := fs.Bool("effective", false, "show merged effective view with source labels")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printHookUsage(stderr)
@@ -273,7 +279,10 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 	project := fs.Bool("project", false, "force a project-local override in .projmux/config.toml")
 	useEditor := fs.Bool("editor", false, "open the config.toml file in $EDITOR instead of the inline prompt")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if *global && *project {
 		printHookUsage(stderr)
@@ -515,7 +524,10 @@ func (c *hookCommand) runValidate(args []string, stdout, stderr io.Writer) error
 	fs := flag.NewFlagSet("hook validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printHookUsage(stderr)

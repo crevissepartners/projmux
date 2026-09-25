@@ -412,7 +412,10 @@ func parseRegistryRecoveryOptions(args []string, stderr io.Writer) (registryReco
 	fs.StringVar(&opts.socket, "socket", "", "exact tmux socket name (tmux -L) for the mirror diagnostic")
 	fs.StringVar(&opts.socketPath, "socket-path", "", "exact absolute tmux socket path (tmux -S) for the mirror diagnostic")
 	if err := fs.Parse(args); err != nil {
-		return registryRecoveryOptions{}, err
+		if errors.Is(err, flag.ErrHelp) {
+			return registryRecoveryOptions{}, err
+		}
+		return registryRecoveryOptions{}, usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		return registryRecoveryOptions{}, usageError("reconcile registry does not accept positional arguments")
