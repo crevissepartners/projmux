@@ -17,6 +17,12 @@ from unittest import mock
 
 
 REPO=pathlib.Path(__file__).resolve().parents[1]
+HARNESS_DEADLINE=30  # seconds: long enough that load cannot trip it, so expiry means a hang
+
+
+def harness_wait(child):
+    try: child.wait(timeout=HARNESS_DEADLINE)
+    except subprocess.TimeoutExpired as error: raise AssertionError(f'fixture child exit: HARNESS_DEADLINE={HARNESS_DEADLINE}s expired') from error
 
 
 class NativeSourceTests(unittest.TestCase):
@@ -95,7 +101,7 @@ class NativeSourceTests(unittest.TestCase):
             with self.assertRaises(ValueError): self.ns['ancestry'](changed,self.identity)
             with self.assertRaises(ValueError): self.ns['exited'](changed)
         finally:
-            child.stdin.close(); child.wait(timeout=5)
+            child.stdin.close(); harness_wait(child)
         self.assertTrue(self.ns['exited'](identity))
 
     def test_unreaped_zombie_is_proven_exited_without_signal(self):
@@ -105,7 +111,7 @@ class NativeSourceTests(unittest.TestCase):
         child.stdin.close()
         os.waitid(os.P_PID,child.pid,os.WEXITED|os.WNOWAIT)
         try: self.assertTrue(self.ns['exited'](identity))
-        finally: child.wait(timeout=5)
+        finally: harness_wait(child)
 
     def test_signal_requires_exact_captured_birth_and_never_falls_back_to_pid(self):
         role=dict(role='source-action',process=self.identity)
