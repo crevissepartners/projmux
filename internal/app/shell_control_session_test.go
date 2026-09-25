@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/core/lifecycle"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -29,6 +31,17 @@ type recordedControlPass struct {
 	result     controlSessionConvergence
 	err        error
 	onConverge func()
+	// root answers rootUID. The fixture defaults it to the result's UID once
+	// the scripted tmux row is converged, so the Registry root and the tmux
+	// mirrors appear together exactly as a real converge leaves them.
+	root func() string
+}
+
+func (p *recordedControlPass) rootUID(context.Context, string) (string, error) {
+	if p.root == nil {
+		return "", nil
+	}
+	return p.root(), nil
 }
 
 func (p *recordedControlPass) converge(_ context.Context, socketName, sessionName string) (controlSessionConvergence, error) {
@@ -50,6 +63,14 @@ func shellControlFixture(t *testing.T, home string, pass *recordedControlPass) (
 	tmux := &scriptedShellTmuxRunner{}
 	if pass.onConverge == nil {
 		pass.onConverge = func() { tmux.identityConverged = true }
+	}
+	if pass.root == nil {
+		pass.root = func() string {
+			if tmux.identityConverged {
+				return pass.result.controlUID
+			}
+			return ""
+		}
 	}
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -264,6 +285,218 @@ func TestShellSkipsProvisioningAnAlreadyLiveAppSession(t *testing.T) {
 	wantAttach := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=home", "-c", home}
 	if !reflect.DeepEqual(foreground.args, wantAttach) {
 		t.Fatalf("attach = %#v, want tmux %#v", foreground.args, wantAttach)
+	}
+}
+
+// isControlBootstrapWrite reports whether a recorded tmux call is a topology or
+// option write rather than an observation.
+func isControlBootstrapWrite(call recordedTmuxCall) bool {
+	for _, arg := range call.args {
+		switch arg {
+		case "new-session", "set-option", "set-environment", "kill-session":
+			return true
+		}
+	}
+	return false
+}
+
+// countControlIdentityObservations installs an onRun hook that numbers every
+// ControlSession identity-row observation, in order: the pre-plan baseline,
+// Reobserve, Guard, then the post-plan check. Each runs before the scripted
+// runner answers that call.
+func countControlIdentityObservations(tmux *scriptedShellTmuxRunner, each func(n int, call recordedTmuxCall)) {
+	n := 0
+	tmux.onRun = func(call recordedTmuxCall) {
+		if slicesHas(call.args, "display-message") && strings.Contains(strings.Join(call.args, " "), tmuxopts.SessionRole) {
+			n++
+			each(n, call)
+		}
+	}
+}
+
+// TestShellReentersAnAlreadyConvergedControlSession is the re-entry path: the
+// Home is live and already carries the control role, Window/Pane mirrors and a
+// Registry root before the preflight runs, so there is nothing left to
+// converge. Re-entering must succeed without a warning, without a single tmux
+// write, and without running the converger.
+func TestShellReentersAnAlreadyConvergedControlSession(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+
+	// Direct preflight: the scripted runner answers has-session as live and the
+	// identity row as converged from the start.
+	pass := &recordedControlPass{}
+	cmd, _, tmux := shellControlFixture(t, home, pass)
+	tmux.identityConverged = true
+	if err := cmd.prepareControlSession(context.Background(), "projmux", configPath, shellTarget{SessionName: "home", CWD: home}); err != nil {
+		t.Errorf("prepareControlSession() error = %v, want an already-converged Home to be a no-op success; pass calls=%#v", err, pass.calls)
+	}
+	if len(pass.calls) != 0 {
+		t.Errorf("control pass calls = %#v, want none against an already-converged Home", pass.calls)
+	}
+	for _, call := range tmux.calls {
+		if isControlBootstrapWrite(call) {
+			t.Fatalf("re-entry issued a tmux write %#v against an already-converged Home", call.args)
+		}
+	}
+
+	// The same state through the whole entry: no fail-open warning either.
+	pass = &recordedControlPass{}
+	cmd, foreground, tmux := shellControlFixture(t, home, pass)
+	tmux.identityConverged = true
+	var stderr bytes.Buffer
+	if err := cmd.Run(nil, &bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want silence when re-entering an already-converged Home", stderr.String())
+	}
+	if len(pass.calls) != 0 {
+		t.Errorf("control pass calls = %#v, want none against an already-converged Home", pass.calls)
+	}
+	for _, call := range tmux.calls {
+		if isControlBootstrapWrite(call) {
+			t.Fatalf("re-entry issued a tmux write %#v against an already-converged Home", call.args)
+		}
+	}
+	wantAttach := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=home", "-c", home}
+	if !reflect.DeepEqual(foreground.args, wantAttach) {
+		t.Fatalf("attach = %#v, want tmux %#v", foreground.args, wantAttach)
+	}
+}
+
+// TestShellRefusesAConvergedLookingHomeWhoseHandlesDrifted keeps containment
+// drift fail-closed: after the baseline observation the Home answers with
+// converged mirrors and a Registry root, but under a different Window handle.
+// That is not the Home the plan was bound to, so it is neither skipped as
+// converged nor dropped by the guard.
+func TestShellRefusesAConvergedLookingHomeWhoseHandlesDrifted(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	pass := &recordedControlPass{}
+	cmd, _, tmux := shellControlFixture(t, home, pass)
+	countControlIdentityObservations(tmux, func(n int, call recordedTmuxCall) {
+		if n == 2 {
+			tmux.identityConverged = true
+			if tmux.outputs == nil {
+				tmux.outputs = map[string][]byte{}
+			}
+			tmux.outputs[shellTmuxCallKey(call.name, call.args...)] = []byte(strings.Join([]string{
+				"$1", resourcegraph.ControlSessionRole, "@2", "win-home", "%1", "pan-home",
+			}, tmuxRowSep) + "\n")
+		}
+	})
+
+	err := cmd.prepareControlSession(context.Background(), "projmux", configPath, shellTarget{SessionName: "home", CWD: home})
+	if err == nil || !strings.Contains(err.Error(), "containment drifted") {
+		t.Fatalf("prepareControlSession() error = %v, want containment drift refusal", err)
+	}
+	if len(pass.calls) != 0 {
+		t.Fatalf("control pass calls = %#v, want none after containment drift", pass.calls)
+	}
+	for _, call := range tmux.calls {
+		if isControlBootstrapWrite(call) {
+			t.Fatalf("containment drift reached a tmux write %#v", call.args)
+		}
+	}
+}
+
+// TestShellDropsIdentityConvergenceAConcurrentWriterCompletedBeforeTheGuard is
+// the race between Reobserve and Guard: the Home is unconverged when the plan
+// is built, and another writer converges the same exact Home before the guard
+// reads it. The guard drops the step instead of refusing it as drift or
+// converging it a second time, and the root UID comes from that observation.
+func TestShellDropsIdentityConvergenceAConcurrentWriterCompletedBeforeTheGuard(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	pass := &recordedControlPass{}
+	cmd, _, tmux := shellControlFixture(t, home, pass)
+	countControlIdentityObservations(tmux, func(n int, _ recordedTmuxCall) {
+		if n == 3 {
+			tmux.identityConverged = true
+		}
+	})
+
+	if err := cmd.prepareControlSession(context.Background(), "projmux", configPath, shellTarget{SessionName: "home", CWD: home}); err != nil {
+		t.Fatalf("prepareControlSession() error = %v, want a concurrently converged Home to be dropped as converged", err)
+	}
+	if len(pass.calls) != 0 {
+		t.Fatalf("control pass calls = %#v, want the concurrently converged step dropped without Apply", pass.calls)
+	}
+	for _, call := range tmux.calls {
+		if isControlBootstrapWrite(call) {
+			t.Fatalf("a dropped step issued a tmux write %#v", call.args)
+		}
+	}
+}
+
+// TestShellConvergesAHomeWhoseMirrorsLackARegistryRoot pins that tmux mirrors
+// alone are not convergence: a Home that carries the role and Window/Pane
+// mirrors but has no Registry ControlSession root still runs the step, and the
+// converger repairs it.
+func TestShellConvergesAHomeWhoseMirrorsLackARegistryRoot(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	pass := &recordedControlPass{}
+	pass.root = func() string {
+		if len(pass.calls) > 0 {
+			return "ctl-home"
+		}
+		return ""
+	}
+	cmd, _, tmux := shellControlFixture(t, home, pass)
+	tmux.identityConverged = true
+
+	if err := cmd.prepareControlSession(context.Background(), "projmux", configPath, shellTarget{SessionName: "home", CWD: home}); err != nil {
+		t.Fatalf("prepareControlSession() error = %v", err)
+	}
+	if want := [][2]string{{"projmux", "home"}}; !reflect.DeepEqual(pass.calls, want) {
+		t.Fatalf("control pass calls = %#v, want %#v; mirrors without a Registry root must converge", pass.calls, want)
+	}
+}
+
+// TestAttachAutoEntersAnAlreadyConvergedHome is the fail-closed caller of the
+// same preflight: `attach auto` ensures Home through prepareControlSession and
+// turns its error into a hard failure, so re-entering an already-converged
+// Home must proceed to the open.
+func TestAttachAutoEntersAnAlreadyConvergedHome(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	pass := &recordedControlPass{}
+	shell, _, tmux := shellControlFixture(t, home, pass)
+	tmux.identityConverged = true
+	client := &recordingAttachClient{}
+	cmd := &attachCommand{
+		sessions: client,
+		ensureHomeSession: func(ctx context.Context, sessionName, cwd string) error {
+			return shell.prepareControlSession(ctx, "projmux", configPath, shellTarget{SessionName: sessionName, CWD: cwd})
+		},
+	}
+
+	err := cmd.executeAutoAttachPlan(context.Background(), lifecycle.AutoAttachPlan{EnsureHomeSession: true, AttachTarget: "home"}, "home", home)
+	if err != nil {
+		t.Fatalf("executeAutoAttachPlan() error = %v, want an already-converged Home to be entered", err)
+	}
+	if got, want := client.opened, []string{"home"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("OpenSession calls = %#v, want %#v", got, want)
+	}
+	if len(pass.calls) != 0 {
+		t.Fatalf("control pass calls = %#v, want none against an already-converged Home", pass.calls)
+	}
+	for _, call := range tmux.calls {
+		if isControlBootstrapWrite(call) {
+			t.Fatalf("attach auto re-entry issued a tmux write %#v", call.args)
+		}
 	}
 }
 
