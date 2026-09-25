@@ -31,9 +31,11 @@ import (
 // deletions and write nothing here.
 //
 // The actor is provenance, never authentication. An empty actor does not mean
-// a human ran the deletion: a UI route never judges one, and a command whose
-// process does not descend from the Agent's Pane (a Codex app-server command,
-// for one) is recorded with the skip token that stopped the judgment.
+// a human ran the deletion: a UI route never judges one, and a command run by
+// a detached daemon (a Codex app-server command, for one) is never the Agent's.
+// With no ambient Pane its actor is empty with an empty basis; with an Agent
+// Pane's inherited TMUX/TMUX_PANE but a process that does not descend from that
+// Pane, the basis is not-pane-descendant.
 
 const (
 	deletionRecordsFile         = "deletion-records.jsonl"

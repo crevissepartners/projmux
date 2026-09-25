@@ -541,13 +541,17 @@ Termination evidence transport:
   `{"schemaVersion":1,"at","operation","operationID","via","actor":{"agentUID","paneUID","basis"},"targets":[{"kind","uid","name"}],"affected":[{"kind","uid","name","action"}]}`,
   where `at` is RFC 3339 UTC; `operation` is one of `delete-window`,
   `delete-pane`, `delete-agent`, `unregister-project`, `delete-project`,
-  `prune-agent`, `prune-project`; `operationID` is the delete's intentional
-  termination receipt id, or one minted the same way for unregister and prune;
+  `prune-agent`, `prune-project` (the record's own spelling; the receipt line a
+  delete prints spells it `delete.pane` and so on, a separate surface that is
+  not unified with it); `operationID` is the delete's intentional termination
+  receipt id, or one minted the same way for unregister and prune;
   and `via` is `cli`, `ui` (the generated Pane and Window delete keys), or
   `prune`. `targets` are what the operator named; `affected` is every
-  Project, Window, Agent, and Pane present before the commit and absent after
-  it (targets included), ordered by kind and then uid, each with action
-  `deleted`.
+  Project, ControlSession, Window, Agent, and Pane present before the commit
+  and absent after it (targets included), ordered by kind and then uid, each
+  with action `deleted`. No explicit deletion route removes a ControlSession
+  today (only a rolled-back transaction does, and that writes no record), so
+  that kind is listed for completeness of the two root kinds.
 - The actor is the same pane-chain judgment creator provenance uses, run
   against the pre-commit Registry inside the delete's own transaction, so a
   delete that removes its own Agent still names it. `basis` is `pane-chain`
@@ -562,6 +566,11 @@ Termination evidence transport:
   Pane's mirrored uid. `prune` has no socket flags and judges on the inherited
   `$TMUX`; `unregister project` judges on its `--socket`/`--socket-path` or
   `$TMUX`. A `ui` deletion is never judged and records an empty actor.
+- A deletion a detached daemon runs (a Codex app-server command, say) is never
+  recorded as an Agent's. With no ambient Pane in its environment the actor is
+  empty with an empty basis; with an Agent Pane's inherited `TMUX`/`TMUX_PANE`
+  but a process that does not descend from that Pane, `basis` is
+  `not-pane-descendant` and both uids are empty.
 - **An empty actor does not mean a human ran the deletion.** The record is
   provenance, not authentication.
 - The file is appended with one framed `O_APPEND` write and `fsync`, like the

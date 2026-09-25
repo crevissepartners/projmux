@@ -953,14 +953,21 @@ func (c *tmuxCommand) runDeleteConfirmIntent(args []string, stdout, stderr io.Wr
 // exactly, the way deletePaneThroughCanonicalRoute resolves its Pane, and runs
 // canonical `delete window --yes` on that uid.
 func deleteWindowThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writer) error {
-	command := newDeleteCommand()
+	return deleteExactWindowThroughCommand(newDeleteCommand(), defaultAnchoredActiveTargetLookup(anchorPaneID), stdout, stderr)
+}
+
+// deleteExactWindowThroughCommand is the body of the generated Window delete
+// with the same two production seams as deleteExactPaneThroughCommand. The
+// anchor reaches it only through lookup: this route resolves its mutation route
+// from the TMUX_PANE the confirmed job carries, not from a route anchor.
+func deleteExactWindowThroughCommand(command *deleteCommand, lookup activeTargetLookup, stdout, stderr io.Writer) error {
 	// A human pressed the key: the deletion record says so and judges no actor.
 	command.via = deletionViaUI
 	registry, err := command.store.load()
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	ref, resolved, err := activeTargetRef(defaultAnchoredActiveTargetLookup(anchorPaneID), coremetadata.KindWindow, registry)
+	ref, resolved, err := activeTargetRef(lookup, coremetadata.KindWindow, registry)
 	if err != nil {
 		return err
 	}
