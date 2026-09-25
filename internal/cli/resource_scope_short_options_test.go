@@ -12,7 +12,7 @@ func TestResourceScopeHelpAdvertisesLongAndShortOptionsTogether(t *testing.T) {
 	walkResourceScopeUsage(Routes(), nil, func(path []string, usage string) {
 		t.Helper()
 		spelling := strings.Join(path, " ")
-		if strings.Contains(usage, "--project") && !strings.Contains(usage, "-p <ref>") {
+		if strings.Contains(usage, "--project") && !isNonResourceProjectUsage(usage) && !strings.Contains(usage, "-p <ref>") {
 			t.Errorf("%s usage advertises --project without -p: %q", spelling, usage)
 		}
 		if strings.Contains(usage, "--window") && !isNonResourceWindowUsage(usage) && !strings.Contains(usage, "-w <ref>") {
@@ -63,6 +63,21 @@ var nonResourceWindowUsages = []string{"projmux agent usage", "projmux config ag
 func isNonResourceWindowUsage(usage string) bool {
 	for _, prefix := range nonResourceWindowUsages {
 		if strings.Contains(usage, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// nonResourceProjectUsages are the routes whose --project is not the resource
+// scope flag: `hook list` and `hook edit` take a boolean that selects the
+// project-local hook config file instead of a Project reference, and their
+// parsers define no -p.
+var nonResourceProjectUsages = []string{"projmux hook list", "projmux hook edit"}
+
+func isNonResourceProjectUsage(usage string) bool {
+	for _, prefix := range nonResourceProjectUsages {
+		if strings.HasPrefix(usage, prefix+" ") && !strings.Contains(usage, "--project <") {
 			return true
 		}
 	}

@@ -120,7 +120,7 @@ Allowed effects:
 projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent turn start|steer <agent-ref> -- <text>
@@ -997,7 +997,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux attention list
+projmux attention list [--json] [--all]
 ```
 
 ### `projmux attention window`
@@ -1315,9 +1315,9 @@ Allowed effects:
 ```
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
-projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create claude|antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
 ```
@@ -1856,7 +1856,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux diagnostics log [--json] [--tail <n>]
+projmux diagnostics log [--json] [--tail <n>] [--level info|error] [--component <name>] [--path]
 projmux diagnostics agent-hook [--tail <n>] [--json] [--path]
 projmux diagnostics report [--output <path>]
 ```
@@ -1889,7 +1889,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux diagnostics log
+projmux diagnostics log [--json] [--tail <n>] [--level info|error] [--component <name>] [--path]
 ```
 
 ### `projmux diagnostics agent-hook`
@@ -1931,7 +1931,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux diagnostics report
+projmux diagnostics report [--output <path>]
 ```
 
 ## `projmux focus`
@@ -1952,11 +1952,11 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux focus project <ref>
-projmux focus window <ref> {--project <ref> | -p <ref>}
-projmux focus window uid:<uid> [--project <ref> | -p <ref>]
-projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>}
-projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]
+projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
+projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]
+projmux focus window uid:<uid> [--project <ref> | -p <ref>] [--socket <path>] [--client <tty>] [--json]
+projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]
+projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>] [--socket <path>] [--json]
 ```
 
 Subcommands:
@@ -2067,7 +2067,7 @@ projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... 
 projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 projmux get pane --current -o cwd
-projmux get pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
+projmux get pane [--current] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
 projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
 ```
 
@@ -2303,7 +2303,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux get notifications
+projmux get notifications [--json] [--live] [--limit <n>] [--ui table|sidebar] [--client <tty>] [--severity <severity>]... [--source <source>]...
 ```
 
 Aliases: `notification`
@@ -2384,7 +2384,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux hook list
+projmux hook list [--global | --project | --effective]
 ```
 
 ### `projmux hook edit`
@@ -2405,7 +2405,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux hook edit
+projmux hook edit [--global | --project] [--editor] <event>
 ```
 
 ### `projmux hook validate`
@@ -3577,12 +3577,13 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux runtime sessions [--ui=popup|sidebar]
+projmux runtime sessions [--ui popup|sidebar]
 projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
-projmux runtime attach [--keep=N] [--fallback=home|ephemeral]
+projmux runtime attach [--keep <n>] [--fallback home|ephemeral]
 projmux runtime stop [<session>...]
-projmux runtime tag list|toggle|clear
-projmux runtime prune [--keep=N]
+projmux runtime tag list|clear
+projmux runtime tag toggle <name>
+projmux runtime prune [--keep <n>]
 ```
 
 Subcommands:
@@ -3616,7 +3617,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux runtime sessions
+projmux runtime sessions [--ui popup|sidebar]
 ```
 
 ### `projmux runtime diagnostics`
@@ -3658,7 +3659,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux runtime attach
+projmux runtime attach [--keep <n>] [--fallback home|ephemeral]
 ```
 
 ### `projmux runtime stop`
@@ -3679,7 +3680,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux runtime stop
+projmux runtime stop [<session>...]
 ```
 
 ### `projmux runtime tag`
@@ -3700,7 +3701,8 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux runtime tag
+projmux runtime tag list|clear
+projmux runtime tag toggle <name>
 ```
 
 ### `projmux runtime prune`
@@ -3721,7 +3723,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux runtime prune
+projmux runtime prune [--keep <n>]
 ```
 
 ## `projmux settings`
@@ -3764,7 +3766,7 @@ Allowed effects:
 
 ```
 projmux setup
-projmux setup terminal [terminal] [--apply]
+projmux setup terminal [terminal] [--apply] [--config <path>] [--allow-symlink]
 ```
 
 Subcommands:
@@ -4045,7 +4047,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux update status
+projmux update status [--json]
 ```
 
 ### `projmux update check`
@@ -4066,7 +4068,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux update check
+projmux update check [--json]
 ```
 
 ### `projmux update apply`
@@ -4087,7 +4089,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux update apply
+projmux update apply [--dry-run] [--no-apply]
 ```
 
 ## `projmux welcome`

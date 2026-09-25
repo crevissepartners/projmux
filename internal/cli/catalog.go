@@ -789,7 +789,7 @@ var routes = []Route{
 			"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]",
 			"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]",
 			"projmux agent topic set <text> [<agent-ref>] [--agent <ref>]",
-			"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
+			"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...",
 			"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent turn start|steer <agent-ref> -- <text>",
@@ -963,7 +963,7 @@ var routes = []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "toggle", Invocation: InvocationNatural, Summary: "Toggle attention state for a pane", CanonicalSummary: "Toggle live Pane attention state", CanonicalNodeOrder: 2, Usage: []string{"projmux attention toggle [pane]"}, Canonical: []string{"attention toggle"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "clear", Invocation: InvocationNatural, Summary: "Clear attention state for a pane", CanonicalSummary: "Clear live Pane attention state", CanonicalNodeOrder: 3, Usage: []string{"projmux attention clear [pane]"}, Canonical: []string{"attention clear"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "arm", Invocation: InvocationNatural, Summary: "Arm focus-only attention consumption", CanonicalNodeOrder: 4, Usage: []string{"projmux attention arm [pane]"}, Canonical: []string{"attention arm"}},
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "list", Invocation: InvocationNatural, Summary: "List live pane attention state", CanonicalSummary: "List live Pane attention state", CanonicalNodeOrder: 1, Canonical: []string{"attention list"}},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "list", Invocation: InvocationNatural, Summary: "List live pane attention state", CanonicalSummary: "List live Pane attention state", CanonicalNodeOrder: 1, Usage: []string{"projmux attention list [--json] [--all]"}, Canonical: []string{"attention list"}},
 			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "window", Invocation: InvocationNatural, Summary: "Render window-scoped attention badges", CanonicalNodeOrder: 5, Usage: []string{"projmux attention window [window] [style]"}, Canonical: []string{"attention window"}},
 		},
 	},
@@ -1152,9 +1152,9 @@ var routes = []Route{
 		Usage: []string{
 			"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
 			"projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
-			"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
-			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
-			"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+			"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
+			"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create claude|antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]",
 		},
@@ -1414,15 +1414,15 @@ var routes = []Route{
 		Summary:        "Read operational events or create an explicit local support report",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
-			"projmux diagnostics log [--json] [--tail <n>]",
+			"projmux diagnostics log [--json] [--tail <n>] [--level info|error] [--component <name>] [--path]",
 			"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]",
 			"projmux diagnostics report [--output <path>]",
 		},
 		Canonical: []string{"diagnostics log", "diagnostics agent-hook", "diagnostics report"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "log", Invocation: InvocationFanOut, Summary: "Read the bounded local operations journal", Canonical: []string{"diagnostics log"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "log", Invocation: InvocationFanOut, Summary: "Read the bounded local operations journal", Usage: []string{"projmux diagnostics log [--json] [--tail <n>] [--level info|error] [--component <name>] [--path]"}, Canonical: []string{"diagnostics log"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "agent-hook", Invocation: InvocationFanOut, Summary: "Read the bounded Agent hook ingest journal", Usage: []string{"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]"}, Canonical: []string{"diagnostics agent-hook"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "report", Invocation: InvocationFanOut, Summary: "Create an explicit redacted local support report", Canonical: []string{"diagnostics report"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "report", Invocation: InvocationFanOut, Summary: "Create an explicit redacted local support report", Usage: []string{"projmux diagnostics report [--output <path>]"}, Canonical: []string{"diagnostics report"}},
 		},
 	},
 	{
@@ -1433,11 +1433,11 @@ var routes = []Route{
 		Summary:        "Move the current client to a live resource",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
-			"projmux focus project <ref>",
-			"projmux focus window <ref> {--project <ref> | -p <ref>}",
-			"projmux focus window uid:<uid> [--project <ref> | -p <ref>]",
-			"projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>}",
-			"projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]",
+			"projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]",
+			"projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]",
+			"projmux focus window uid:<uid> [--project <ref> | -p <ref>] [--socket <path>] [--client <tty>] [--json]",
+			"projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]",
+			"projmux focus pane uid:<uid> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>] [--socket <path>] [--json]",
 		},
 		Canonical: []string{"focus project", "focus window", "focus pane"},
 		Children: []Route{
@@ -1514,7 +1514,7 @@ var routes = []Route{
 			"projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]",
 			"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]",
 			"projmux get pane --current -o cwd",
-			"projmux get pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
+			"projmux get pane [--current] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
 			"projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]",
 		},
 		Canonical: []string{"get projects", "get windows", "get panes", "get agents",
@@ -1592,7 +1592,7 @@ var routes = []Route{
 					},
 				},
 			},
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "notifications", Invocation: InvocationFanOut, Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "notifications", Invocation: InvocationFanOut, Summary: "List pending notification rows", Aliases: []string{"notification"}, Usage: []string{"projmux get notifications [--json] [--live] [--limit <n>] [--ui table|sidebar] [--client <tty>] [--severity <severity>]... [--source <source>]..."}, Canonical: []string{"get notifications"}, AcceptedOutputs: sharedOutputModes},
 			{
 				Effects:          unchangedEffects(CardinalityExactOne),
 				Name:             "pane",
@@ -1617,9 +1617,9 @@ var routes = []Route{
 		Usage:          []string{"projmux hook list|edit|validate|trust|untrust"},
 		Canonical:      []string{"hook list", "hook edit", "hook validate", "hook trust", "hook untrust"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationNatural, Summary: "List global and project lifecycle hooks", CanonicalSummary: "List lifecycle hook config", Canonical: []string{"hook list"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationNatural, Summary: "Edit lifecycle hook config", Canonical: []string{"hook edit"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "validate", Invocation: InvocationNatural, Summary: "Validate lifecycle hook config", Canonical: []string{"hook validate"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationNatural, Summary: "List global and project lifecycle hooks", CanonicalSummary: "List lifecycle hook config", Usage: []string{"projmux hook list [--global | --project | --effective]"}, Canonical: []string{"hook list"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationNatural, Summary: "Edit lifecycle hook config", Usage: []string{"projmux hook edit [--global | --project] [--editor] <event>"}, Canonical: []string{"hook edit"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "validate", Invocation: InvocationNatural, Summary: "Validate lifecycle hook config", Usage: []string{"projmux hook validate"}, Canonical: []string{"hook validate"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "trust", Invocation: InvocationNatural, Summary: "Trust the current project hook config", Usage: []string{"projmux hook trust [<project>]"}, Canonical: []string{"hook trust"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "untrust", Invocation: InvocationNatural, Summary: "Revoke project hook config trust", Usage: []string{"projmux hook untrust [<project>]"}, Canonical: []string{"hook untrust"}},
 		},
@@ -1941,16 +1941,17 @@ var routes = []Route{
 		Summary:        "Manage the live and ephemeral tmux runtime inventory",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
-			"projmux runtime sessions [--ui=popup|sidebar]",
+			"projmux runtime sessions [--ui popup|sidebar]",
 			"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]",
-			"projmux runtime attach [--keep=N] [--fallback=home|ephemeral]",
+			"projmux runtime attach [--keep <n>] [--fallback home|ephemeral]",
 			"projmux runtime stop [<session>...]",
-			"projmux runtime tag list|toggle|clear",
-			"projmux runtime prune [--keep=N]",
+			"projmux runtime tag list|clear",
+			"projmux runtime tag toggle <name>",
+			"projmux runtime prune [--keep <n>]",
 		},
 		Canonical: []string{"runtime sessions", "runtime diagnostics", "runtime attach", "runtime stop", "runtime tag", "runtime prune"},
 		Children: []Route{
-			{Effects: runtimeSessionsEffects(), Name: "sessions", Invocation: InvocationNatural, Summary: "Pick a live or ephemeral tmux session", Canonical: []string{"runtime sessions"}},
+			{Effects: runtimeSessionsEffects(), Name: "sessions", Invocation: InvocationNatural, Summary: "Pick a live or ephemeral tmux session", Usage: []string{"projmux runtime sessions [--ui popup|sidebar]"}, Canonical: []string{"runtime sessions"}},
 			{
 				// The diagnostics escape hatch, kept separate from `runtime
 				// sessions` on purpose. That picker lists recent sessions to open
@@ -1966,10 +1967,10 @@ var routes = []Route{
 				Usage:      []string{"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]"},
 				Canonical:  []string{"runtime diagnostics"},
 			},
-			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeAlreadyLive}, []FocusEffect{FocusAttachedCaller}, CardinalityExactOne), Name: "attach", Invocation: InvocationExplicit, Summary: "Attach a live or ephemeral runtime without Project identity", Canonical: []string{"runtime attach"}},
-			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityOneOrMore), Name: "stop", Invocation: InvocationFanOut, Summary: "Terminate live tmux sessions by tagged selection", Canonical: []string{"runtime stop"}},
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "tag", Invocation: InvocationFanOut, Summary: "Manage the ephemeral tagged session selection", Canonical: []string{"runtime tag"}},
-			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityZeroOrMore), Name: "prune", Invocation: InvocationFanOut, Summary: "Trim old ephemeral tmux sessions", Canonical: []string{"runtime prune"}},
+			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeAlreadyLive}, []FocusEffect{FocusAttachedCaller}, CardinalityExactOne), Name: "attach", Invocation: InvocationExplicit, Summary: "Attach a live or ephemeral runtime without Project identity", Usage: []string{"projmux runtime attach [--keep <n>] [--fallback home|ephemeral]"}, Canonical: []string{"runtime attach"}},
+			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityOneOrMore), Name: "stop", Invocation: InvocationFanOut, Summary: "Terminate live tmux sessions by tagged selection", Usage: []string{"projmux runtime stop [<session>...]"}, Canonical: []string{"runtime stop"}},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "tag", Invocation: InvocationFanOut, Summary: "Manage the ephemeral tagged session selection", Usage: []string{"projmux runtime tag list|clear", "projmux runtime tag toggle <name>"}, Canonical: []string{"runtime tag"}},
+			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityZeroOrMore), Name: "prune", Invocation: InvocationFanOut, Summary: "Trim old ephemeral tmux sessions", Usage: []string{"projmux runtime prune [--keep <n>]"}, Canonical: []string{"runtime prune"}},
 		},
 	},
 	{
@@ -1989,7 +1990,7 @@ var routes = []Route{
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux setup",
-			"projmux setup terminal [terminal] [--apply]",
+			"projmux setup terminal [terminal] [--apply] [--config <path>] [--allow-symlink]",
 		},
 		Canonical: []string{"setup terminal"},
 		Children: []Route{
@@ -2110,9 +2111,9 @@ var routes = []Route{
 		Usage:          []string{"projmux update status|check|apply"},
 		Canonical:      []string{"update status", "update check", "update apply"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "status", Invocation: InvocationFanOut, Summary: "Show read-only update status", Canonical: []string{"update status"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "check", Invocation: InvocationFanOut, Summary: "Check for a newer release and refresh the cache", Canonical: []string{"update check"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationFanOut, Summary: "Apply an available update", Canonical: []string{"update apply"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "status", Invocation: InvocationFanOut, Summary: "Show read-only update status", Usage: []string{"projmux update status [--json]"}, Canonical: []string{"update status"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "check", Invocation: InvocationFanOut, Summary: "Check for a newer release and refresh the cache", Usage: []string{"projmux update check [--json]"}, Canonical: []string{"update check"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationFanOut, Summary: "Apply an available update", Usage: []string{"projmux update apply [--dry-run] [--no-apply]"}, Canonical: []string{"update apply"}},
 		},
 	},
 	{
@@ -2132,8 +2133,8 @@ var routes = []Route{
 		Usage:       []string{"projmux window record|recent"},
 		Canonical:   []string{"get windows", "describe window", "create window", "focus window", "rename window"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "record", Invocation: InvocationNatural, Summary: "Record the current window into the MRU store", Canonical: []string{"get windows"}},
-			{Effects: runtimeDiagnosticsEffects(), Name: "recent", Invocation: InvocationNatural, Summary: "Open the recent-window navigation picker", Canonical: []string{"get windows"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "record", Invocation: InvocationNatural, Summary: "Record the current window into the MRU store", Usage: []string{"projmux window record"}, Canonical: []string{"get windows"}},
+			{Effects: runtimeDiagnosticsEffects(), Name: "recent", Invocation: InvocationNatural, Summary: "Open the recent-window navigation picker", Usage: []string{"projmux window recent"}, Canonical: []string{"get windows"}},
 		},
 	},
 	{
