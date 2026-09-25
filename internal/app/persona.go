@@ -80,8 +80,10 @@ func (c *personaCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "delete":
 		return c.runDelete(rest, stdout, stderr)
 	case "help", "--help", "-h":
-		printPersonaUsage(stdout, c.spelling())
-		return nil
+		if c.spelling() == "instructions" {
+			return printRouteHelp(stdout, "instructions")
+		}
+		return printRouteHelp(stdout, "persona")
 	default:
 		printPersonaUsage(stderr, c.spelling())
 		return usageError("unknown " + c.spelling() + " subcommand: " + args[0])

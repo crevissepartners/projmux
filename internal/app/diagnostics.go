@@ -36,8 +36,7 @@ func (c *diagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error 
 	case "report":
 		return c.runReport(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "diagnostics")
-		return nil
+		return printRouteHelp(stdout, "diagnostics")
 	default:
 		printRouteUsage(stderr, "diagnostics")
 		return usageError(fmt.Sprintf("unknown diagnostics subcommand: %s", args[0]))

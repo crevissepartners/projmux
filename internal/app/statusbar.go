@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
@@ -115,9 +116,7 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 		return c.handleUsage(true, opts, stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "internal statusbar")
-		printStatusbarNotes(stdout)
-		return nil
+		return printRouteHelp(stdout, "internal statusbar")
 	default:
 		printRouteUsage(stderr, "internal statusbar")
 		printStatusbarNotes(stderr)
@@ -1477,10 +1476,11 @@ func (statusbarExecRunner) Run(ctx context.Context, name string, args ...string)
 	return out, nil
 }
 
-// printStatusbarNotes prints the click compatibility note and the range ids
-// under the statusbar usage block.
+// printStatusbarNotes prints the catalog note of `internal statusbar` (the
+// click compatibility line and the range ids) directly under the statusbar
+// usage block.
 func printStatusbarNotes(w io.Writer) {
-	fmt.Fprintln(w, "  (--mouse-window <v> is accepted for compatibility with older bindings and ignored)")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Range ids: session pwd git usage notify resources settings")
+	for _, note := range cli.RouteNotes("internal statusbar") {
+		fmt.Fprintln(w, note)
+	}
 }

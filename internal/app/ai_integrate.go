@@ -134,8 +134,7 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 	}
 	target := strings.TrimSpace(args[0])
 	if target == "help" || target == "--help" || target == "-h" {
-		printRouteUsage(stdout, "agent integrate")
-		return nil
+		return printRouteHelp(stdout, "agent integrate")
 	}
 	if aiprovider.IntegrationCommand(target) == "" {
 		printRouteUsage(stderr, "agent integrate")

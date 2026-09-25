@@ -71,8 +71,7 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "clear":
 		return c.runClear(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "runtime tag")
-		return nil
+		return printRouteHelp(stdout, "runtime tag")
 	default:
 		printRouteUsage(stderr, "runtime tag")
 		return usageError(fmt.Sprintf("unknown tag subcommand: %s", fs.Arg(0)))

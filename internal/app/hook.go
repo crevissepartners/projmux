@@ -88,9 +88,7 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "untrust":
 		return c.runUntrust(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "hook")
-		printHookEvents(stdout)
-		return nil
+		return printRouteHelp(stdout, "hook")
 	default:
 		printRouteUsage(stderr, "hook")
 		printHookEvents(stderr)
@@ -776,11 +774,10 @@ func isSupportedHookEvent(event string) bool {
 	return false
 }
 
-// printHookEvents prints the hook events under the hook usage block.
+// printHookEvents prints the catalog note of `hook`, the hook events, under
+// the hook usage block.
 func printHookEvents(w io.Writer) {
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Events:")
-	fmt.Fprintln(w, "  "+supportedHookEventList())
+	printRouteNotes(w, "hook")
 }
 
 func supportedHookEventList() string {

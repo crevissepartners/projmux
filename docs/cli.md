@@ -2357,6 +2357,9 @@ Allowed effects:
 projmux hook list|edit|validate|trust|untrust
 ```
 
+Events:
+  post-attach, post-create, pre-create, send-noti
+
 Subcommands:
 
 | Route | Summary |
@@ -3188,6 +3191,12 @@ Allowed effects:
 ```
 projmux pin project list|add|remove|toggle|clear|migrate
 ```
+
+Pins are presentation preferences in two kinds:
+  project    a Registry Project uid; its root and name are projected from the Registry
+  candidate  a filesystem path that no Registry Project claims
+
+Discovery roots (workdirs) are a separate collection; manage them in `projmux settings`.
 
 ## `projmux prune`
 

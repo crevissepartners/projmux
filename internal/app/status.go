@@ -129,8 +129,7 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "resources":
 		return c.runResources(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "internal status")
-		return nil
+		return printRouteHelp(stdout, "internal status")
 	default:
 		printRouteUsage(stderr, "internal status")
 		return fmt.Errorf("unknown status subcommand: %s", args[0])

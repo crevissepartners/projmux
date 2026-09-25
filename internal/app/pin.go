@@ -87,8 +87,10 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 	case "migrate":
 		return c.runMigrate(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printPinHelp(stdout, route)
-		return nil
+		if route == "pin project" {
+			return printRouteHelp(stdout, "pin project")
+		}
+		return printRouteHelp(stdout, "pin")
 	default:
 		printPinHelp(stderr, route)
 		return usageError(fmt.Sprintf("unknown pin subcommand: %s", fs.Arg(0)))
@@ -393,13 +395,8 @@ func printPinHelp(w io.Writer, route string) {
 	printPinNotes(w)
 }
 
-// printPinNotes prints the pin kinds and the workdir boundary under a pin
-// usage block.
+// printPinNotes prints the catalog notes of `pin project`, the pin kinds and
+// the workdir boundary, under a pin usage block.
 func printPinNotes(w io.Writer) {
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Pins are presentation preferences in two kinds:")
-	fmt.Fprintln(w, "  project    a Registry Project uid; its root and name are projected from the Registry")
-	fmt.Fprintln(w, "  candidate  a filesystem path that no Registry Project claims")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Discovery roots (workdirs) are a separate collection; manage them in `projmux settings`.")
+	printRouteNotes(w, "pin project")
 }

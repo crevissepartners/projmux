@@ -47,9 +47,10 @@ var handlerSynopsisExceptions = map[string]handlerSynopsisException{}
 var handlerRouteUsagePrinters = []string{"printRouteUsage", "cli.WriteRouteUsage"}
 
 // handlerRouteUsageCallFloor is the number of route usage calls in
-// internal/app/** when every handler printer moved onto the catalog. The set
-// may grow; a drop means a handler went back to printing its own text.
-const handlerRouteUsageCallFloor = 230
+// internal/app/** when every handler printer moved onto the catalog and the
+// `help` verbs moved to printRouteHelp (handler_help_verb_guard_test.go). The
+// set may grow; a drop means a handler went back to printing its own text.
+const handlerRouteUsageCallFloor = 217
 
 // handlerSynopsisFile is one non-test source file of internal/app/**.
 type handlerSynopsisFile struct {

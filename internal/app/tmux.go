@@ -242,8 +242,7 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "autosave-session-state":
 		return c.runAutosaveSessionState(fs.Args()[1:], stderr)
 	case "help", "--help", "-h":
-		printRouteUsage(stdout, "internal tmux")
-		return nil
+		return printRouteHelp(stdout, "internal tmux")
 	default:
 		printRouteUsage(stderr, "internal tmux")
 		return fmt.Errorf("unknown tmux subcommand: %s", fs.Arg(0))
