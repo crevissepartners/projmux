@@ -81,6 +81,14 @@ type helpShieldedError struct{ err error }
 
 func (e helpShieldedError) Error() string { return e.err.Error() }
 
+// versionUsageError is the usage error (exit 2) for extra arguments after a
+// version spelling. It matches the entrypoint's usage classification by method
+// set (MetadataUsageError), so internal/cli needs no core/metadata import.
+type versionUsageError struct{ msg string }
+
+func (e versionUsageError) Error() string            { return e.msg }
+func (e versionUsageError) MetadataUsageError() bool { return true }
+
 // NewRoot builds the Cobra root for one invocation. It is a factory, not a
 // global singleton: every call returns an independent tree bound to the
 // supplied writers and handlers.
@@ -162,8 +170,8 @@ func newBridgeCommand(root *Root, route Route, opts RootOptions) *cobra.Command 
 		Args:               cobra.ArbitraryArgs,
 	}
 	if route.Name == "version" {
-		bridge.RunE = func(_ *cobra.Command, _ []string) error {
-			return root.printVersion()
+		bridge.RunE = func(_ *cobra.Command, args []string) error {
+			return root.runVersion(route.Name, args)
 		}
 		return bridge
 	}
@@ -213,7 +221,7 @@ func (r *Root) runRoot(args []string) error {
 		return RenderRootHelp(r.stdout)
 	}
 	if slices.Contains(rootVersionFlags, args[0]) {
-		return r.printVersion()
+		return r.runVersion(args[0], args[1:])
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
@@ -231,6 +239,18 @@ func (r *Root) unknownCommand(token string) error {
 		return err
 	}
 	return fmt.Errorf("unknown command: %s", token)
+}
+
+// runVersion prints the version for a bare version spelling. Any other
+// argument is a usage error and nothing is written to stdout. `version --help`
+// never reaches here (Execute answers it first); `--version --help` does,
+// because RequestedHelp cannot resolve the root flag as a route, and it keeps
+// its historical output: the version line, exit 0.
+func (r *Root) runVersion(spelling string, args []string) error {
+	if len(args) > 0 && helpFlagIndex(args) < 0 {
+		return versionUsageError{msg: fmt.Sprintf("%s does not accept arguments; got %q", spelling, args[0])}
+	}
+	return r.printVersion()
 }
 
 func (r *Root) printVersion() error {

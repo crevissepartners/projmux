@@ -264,21 +264,60 @@ func TestUnknownCommandKeepsHistoricalContract(t *testing.T) {
 	}
 }
 
-// TestVersionRoutes covers the three historical version spellings.
+// TestVersionRoutes covers the three historical version spellings: bare prints
+// the version, any further non-help argument is a usage error (exit 2) with
+// nothing on stdout, and a help flag keeps exit 0. `version --help` is route
+// help; the root flags cannot resolve as a help target, so `--version --help`
+// keeps printing the version line as before.
 func TestVersionRoutes(t *testing.T) {
 	t.Parallel()
 
-	for _, argv := range [][]string{{"version"}, {"--version"}, {"-version"}, {"version", "extra"}, {"--version", "extra"}} {
-		var stdout, stderr bytes.Buffer
-		root, recorded := newTestRoot(t, &stdout, &stderr)
-		if err := root.Execute(argv); err != nil {
-			t.Fatalf("Execute(%q) error = %v", argv, err)
-		}
-		if stdout.String() != "projmux 9.9.9\n" {
-			t.Fatalf("Execute(%q) stdout = %q", argv, stdout.String())
-		}
-		if len(*recorded) != 0 {
-			t.Fatalf("Execute(%q) invoked handlers %#v", argv, *recorded)
+	for _, spelling := range []string{"version", "--version", "-version"} {
+		for _, tc := range []struct {
+			name      string
+			extra     []string
+			wantUsage bool
+			wantHelp  bool
+		}{
+			{name: "bare"},
+			{name: "unknown flag", extra: []string{"--zz"}, wantUsage: true},
+			{name: "operand", extra: []string{"zz"}, wantUsage: true},
+			{name: "help", extra: []string{"--help"}, wantHelp: spelling == "version"},
+		} {
+			argv := append([]string{spelling}, tc.extra...)
+			var stdout, stderr bytes.Buffer
+			root, recorded := newTestRoot(t, &stdout, &stderr)
+			err := root.Execute(argv)
+			if len(*recorded) != 0 {
+				t.Fatalf("Execute(%q) invoked handlers %#v", argv, *recorded)
+			}
+			switch {
+			case tc.wantUsage:
+				var usage interface{ MetadataUsageError() bool }
+				if !errors.As(err, &usage) || !usage.MetadataUsageError() {
+					t.Fatalf("Execute(%q) error = %v, want usage error", argv, err)
+				}
+				if strings.Contains(err.Error(), "\n") || !strings.Contains(err.Error(), tc.extra[0]) {
+					t.Fatalf("Execute(%q) error = %q, want one line naming %q", argv, err, tc.extra[0])
+				}
+				if stdout.Len() != 0 {
+					t.Fatalf("Execute(%q) stdout = %q, want empty", argv, stdout.String())
+				}
+			case tc.wantHelp:
+				if err != nil {
+					t.Fatalf("Execute(%q) error = %v", argv, err)
+				}
+				if stdout.Len() == 0 || strings.Contains(stdout.String(), "projmux 9.9.9") {
+					t.Fatalf("Execute(%q) stdout = %q, want help", argv, stdout.String())
+				}
+			default:
+				if err != nil {
+					t.Fatalf("Execute(%q) error = %v", argv, err)
+				}
+				if stdout.String() != "projmux 9.9.9\n" {
+					t.Fatalf("Execute(%q) stdout = %q", argv, stdout.String())
+				}
+			}
 		}
 	}
 }

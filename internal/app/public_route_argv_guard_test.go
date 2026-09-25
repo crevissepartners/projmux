@@ -125,8 +125,6 @@ const (
 	publicRouteArgvSwitchReason = "catalog synopsis `projmux switch [<project>]` promises an operand but the handler refuses it with exit 1; accepting the argument vs fixing the synopsis is an open product/help decision (Epic owner ruling O-3, Backlog 241), so this guard records it instead of changing behavior"
 
 	publicRouteArgvHelpReason = "root policy: `projmux help [anything]` prints the primary listing and exits 0 (internal/cli/root.go SetHelpCommand; docs/cli-guide.md Help boundary: `projmux help` keeps printing the top-level list)"
-
-	publicRouteArgvVersionReason = "root policy-owned route (internal/cli/root.go policyOwnedRoutes): the version bridge prints the version and ignores its arguments, exit 0; ignoring arguments is root/help boundary policy outside this exit-code contract (Epic owner ruling O-6)"
 )
 
 // publicRouteArgvOperandRoutes are the leaves whose catalog synopsis declares
@@ -217,8 +215,6 @@ func publicRouteArgvGuardSpecialRows() []publicRouteArgvGuardRow {
 		{route: "switch", form: publicRouteArgvFormOperand, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvSwitchReason},
 		{route: "help", form: publicRouteArgvFormUnknownFlag, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvHelpReason},
 		{route: "help", form: publicRouteArgvFormOperand, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvHelpReason},
-		{route: "version", form: publicRouteArgvFormUnknownFlag, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvVersionReason},
-		{route: "version", form: publicRouteArgvFormOperand, kind: publicRouteArgvBehaviorRow, reason: publicRouteArgvVersionReason},
 
 		// Runnable parents (not executed for D-bare).
 		{route: "setup", form: publicRouteArgvFormBareParent, kind: publicRouteArgvRunnableParentRow, reason: "synopsis `projmux setup` documents the bare parent as the interactive terminal-key probe"},
