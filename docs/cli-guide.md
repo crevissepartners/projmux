@@ -22,6 +22,9 @@ Exit codes:
 - `1` — runtime failure.
 - `2` — usage error (unknown flag, bad enum, missing required flag) or a
   deterministic semantic exit (e.g. `focus` cannot resolve the target).
+- The hidden `projmux internal …` plumbing is outside this table: it follows
+  its caller's contract (generated tmux config, provider hooks, supervisors),
+  so a flag error there keeps its existing exit code.
 
 ## Help boundary
 

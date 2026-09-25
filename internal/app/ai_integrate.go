@@ -161,7 +161,10 @@ func (c *aiCommand) runIntegrateTmuxBell(args []string, stdout, stderr io.Writer
 	dryRun := fs.Bool("dry-run", false, "print planned tmux bell integration commands without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed tmux bell hook wiring")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
@@ -234,7 +237,10 @@ func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) 
 	dryRun := fs.Bool("dry-run", false, "print planned Claude Code hook settings changes without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed Claude Code hook wiring")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
@@ -268,7 +274,10 @@ func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) e
 	dryRun := fs.Bool("dry-run", false, "print planned Codex config changes without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed Codex wiring")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
