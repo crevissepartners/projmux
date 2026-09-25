@@ -3,6 +3,8 @@ package app
 import (
 	"os"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
 // TestMain pins a deterministic default UI locale for the whole app test
@@ -18,20 +20,18 @@ import (
 // higher rungs stay cleared. This makes the suite locale-deterministic on any
 // host while leaving each test free to opt into another locale explicitly.
 //
-// The package runs behind runWithLiveMachineGuard, whose private
-// XDG_CONFIG_HOME also isolates it from the developer machine's real global
-// projmux config (e.g. locale=ko-KR), which outranks the LANG rung below.
+// The package runs behind liveguard (live_machine_guard_test.go), whose
+// private XDG_CONFIG_HOME also isolates it from the developer machine's real
+// global projmux config (e.g. locale=ko-KR), which outranks the LANG rung below.
 func TestMain(m *testing.M) {
 	exitIfSettingsLayerGuardChild()
 	exitIfClaudeQuestionHookChild()
 	exitIfClaudeQuestionPickerChild()
-	exitIfLiveMachineGuardChild()
-	exitIfProviderGuardChild()
-	os.Exit(runWithLiveMachineGuard(func() int {
+	os.Exit(liveguard.RunGuarded(func() int {
 		os.Unsetenv("PROJMUX_LOCALE")
 		os.Unsetenv("LC_ALL")
 		os.Unsetenv("LC_MESSAGES")
 		os.Setenv("LANG", "en_US.UTF-8")
-		return runWithProviderGuard(m.Run)
-	}))
+		return m.Run()
+	}, liveguard.ProviderOptIn(providerGuardOptInEnv...)))
 }

@@ -157,6 +157,7 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 // tmux, or on the CLI would make the endpoint layer answer to its own adapters.
 func TestBrokerImportsNoRegistryTmuxOrCLIPackage(t *testing.T) {
 	const allowed = "github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	const testGuard = "github.com/crevissepartners/projmux/internal/testutil/liveguard"
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +180,12 @@ func TestBrokerImportsNoRegistryTmuxOrCLIPackage(t *testing.T) {
 			}
 			// A first segment without a dot is a standard library package.
 			if !strings.Contains(strings.SplitN(path, "/", 2)[0], ".") {
+				continue
+			}
+			// A test file may also import the standard-library-only test
+			// guard every package that links the app-server client runs
+			// behind; it is no Registry, tmux, or CLI dependency.
+			if path == testGuard && strings.HasSuffix(entry.Name(), "_test.go") {
 				continue
 			}
 			if path != allowed {

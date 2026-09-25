@@ -49,6 +49,8 @@ func isolateUsageCommandEnv(t *testing.T, command *Command) {
 			return filepath.Join(root, "config")
 		case "XDG_STATE_HOME":
 			return filepath.Join(root, "state")
+		case StateDirEnvVar:
+			return filepath.Join(root, "state", "projmux", "usage")
 		default:
 			return ""
 		}
@@ -343,6 +345,8 @@ func TestCommandCodexJSONAndStatusHUDSelectSameCanonicalNativeRow(t *testing.T) 
 			return filepath.Join(isolatedHome, "config")
 		case "XDG_STATE_HOME":
 			return filepath.Join(isolatedHome, "state")
+		case StateDirEnvVar:
+			return filepath.Join(isolatedHome, "state", "projmux", "usage")
 		default:
 			return ""
 		}
@@ -1429,6 +1433,7 @@ func TestUsageStatusManagerErrorIsSilent(t *testing.T) {
 	t.Parallel()
 
 	c := New(nil)
+	isolateUsageCommandEnv(t, c)
 	c.managerFn = func([]string) (*usage.Manager, error) {
 		return nil, errors.New("boom")
 	}
@@ -1447,6 +1452,7 @@ func TestUsageStatusMaybeCollectThrottledOnSecondCall(t *testing.T) {
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	c := New(nil)
+	isolateUsageCommandEnv(t, c)
 	mgr := newStubManager(t, []*stubAdapter{
 		{name: "claude", snaps: []usage.Snapshot{
 			{Model: "claude", Window: usage.Window5h, Pct: 5, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
@@ -1521,6 +1527,7 @@ func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
 	t.Parallel()
 
 	c := New(nil)
+	isolateUsageCommandEnv(t, c)
 	dir := t.TempDir()
 	registry := usage.NewRegistry()
 	_ = registry.Replace(&stubAdapter{

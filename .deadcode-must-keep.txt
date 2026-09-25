@@ -55,6 +55,8 @@ FormatList	Locale-resolving list formatter retained as the test seam that pins p
 FoundationKeys	Foundation key set retained as the test seam that pins the shipped default catalog coverage of it.
 HeaderLine	Default-theme entry point of HeaderLineWithTheme retained as the picker chrome golden seam.
 Host.RuntimeID	The runtime identity accessor is retained as the authority axis clients present alongside both epochs.
+InheritedEnv	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
+InstalledTestEnvReads	Test-only guard API retained: it keeps each package's provider opt-in gates closed over the variables its installed tests read.
 IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
 IsSharedOutputMode	Closed shared -o catalog membership predicate retained as the seam that keeps route-local projections out of the shared enum.
 IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
@@ -92,6 +94,7 @@ PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision
 PreviousPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 PreviousWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
 PromptLineWithCursor	Default-theme cursor prompt entry point retained as the picker prompt seam over QueryWithCursorAndTheme.
+ProviderOptIn	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 QualificationResult.Validate	Phase 0 strict generation qualification consistency check is retained for installed receipts.
 ReadArchive	Lock-free reader of the agent message store and reclaim log, retained as the archive read contract its own read_test.go suite enters directly; the in-repo product consumer left with the web layer.
 ReadLifecycleSnapshotOn	The shared requester lifecycle decoder remains a compatibility seam and the independent differential oracle for the owned bounded reader.
@@ -102,6 +105,7 @@ RenderBar	Uncolored HUD bar renderer retained as the test seam that pins the Bar
 RenderSwitchPreview	Default badge-style entry point of RenderSwitchPreviewWithAIBadgeStyle retained as the switch preview golden seam.
 Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained as the frame inner-width seam.
 Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
+RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
 Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
 ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained with the per-provider ResumeCommand wrappers after snapshot replay, its only product caller, was removed.
@@ -110,6 +114,8 @@ ResumeDefaultThread	The default-endpoint resume wrapper is retained for installe
 RouteLocalFieldProjections	Closed route-local field projection catalog retained as the test seam that keeps -o cwd out of the shared enum.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
 Run	Recorder-free CLI bootstrap retained as the test seam over the live App.Run dispatch that RunWithLifecycleDiagnostics ships.
+RunGuarded	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
+RunTests	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 Runner.ListWindows	Structured window inventory read retained as the test seam that pins the live format join and pane target argument builders.
 RuntimeKoreanStringAuditOptions	Runtime Korean profile of the governance string audit; it scopes the live guard over shipped Go sources.
 SaveAINewWindowModeFile	Central new-AI-window-mode writer retained for front ends outside this tree (the web client) that write the central default; no in-tree command writes it yet.
@@ -146,6 +152,12 @@ equalArgv	Test-only installed qualification helper retained for closed command-s
 formatRelativeAge	Fallback-locale entry point of formatRelativeAgeLocale retained as the status notify age bucket seam.
 formatStatusNotify	Fallback-locale entry point of formatStatusNotifyWithLiveLocale retained as the status notify width tier seam.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
+guardAuditRoot	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
+guardInstallProviderStandIns	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
+guardOptedIn	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
+guardPinToolchainEnv	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
+guardPrivateRoot	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
+guardSweepHelperRoots	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
