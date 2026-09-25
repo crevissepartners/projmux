@@ -260,7 +260,15 @@ func (r *tmuxPaneDeleteRuntime) mutationSteps(
 				if filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(r.expectedSocketPath) {
 					return errors.New("delete pane: printable physical socket disagrees with bound execution route")
 				}
-				return r.revalidateMutationTarget(ctx, target, guardUID)
+				err := r.revalidateMutationTarget(ctx, target, guardUID)
+				if verb != mutationKillPane {
+					return err
+				}
+				// Only kill-pane's goal is the exact Pane's absence; a
+				// concurrent removal after Reobserve is converged, not drift.
+				return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
+					return r.observeMutationEffect(ctx, target, effectUID, true, attempted)
+				})
 			},
 			Apply: func(ctx context.Context) error {
 				if _, err := runRuntimeMutationCommand(ctx, r.routed(), action); err != nil {

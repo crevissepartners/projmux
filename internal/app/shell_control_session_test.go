@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -873,4 +875,156 @@ func TestControlBootstrapLeaseClearRefusesPhysicalRouteDriftBeforeWrite(t *testi
 
 func slicesHas(haystack []string, needle string) bool {
 	return slices.Contains(haystack, needle)
+}
+
+// bootstrapLeaseRaceRunner is one exact app server holding the bootstrap
+// session $9 and its operation lease. After `change` fires, a concurrent
+// writer has acted: the session is gone (sessionGone) or its lease variable
+// now reads lease.
+type bootstrapLeaseRaceRunner struct {
+	physical    string
+	lease       string
+	sessionGone bool
+	// fireOnList / fireOnEnv trigger change right after that many
+	// list-sessions / show-environment reads were served.
+	fireOnList, fireOnEnv int
+	change                func(*bootstrapLeaseRaceRunner)
+	listReads, envReads   int
+	calls                 [][]string
+}
+
+func (r *bootstrapLeaseRaceRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
+	r.calls = append(r.calls, slices.Clone(args))
+	if name != "tmux" || len(args) < 3 || !(args[0] == "-S" && args[1] == r.physical || args[0] == "-L" && args[1] == "projmux") {
+		return nil, fmt.Errorf("bootstrap lease race runner requires the exact route: %s %v", name, args)
+	}
+	missing := appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "can't find session: $9"}}
+	switch args[2] {
+	case "display-message":
+		if target := flagValue(args[2:], "-t"); target != "" {
+			if target != "$9" || r.sessionGone {
+				return nil, missing
+			}
+		}
+		if args[len(args)-1] == "#{pid}" {
+			return []byte("4242\n"), nil
+		}
+		return []byte(r.physical + "\n"), nil
+	case "show-options":
+		switch args[len(args)-1] {
+		case tmuxopts.AppGlobal:
+			return []byte("1\n"), nil
+		case runtimeMutationSocketNameOption:
+			return []byte("projmux\n"), nil
+		}
+	case "list-sessions":
+		r.listReads++
+		out := "$1\n"
+		if !r.sessionGone {
+			out += "$9\n"
+		}
+		if r.listReads == r.fireOnList {
+			r.change(r)
+		}
+		return []byte(out), nil
+	case "show-environment":
+		if r.sessionGone {
+			return nil, missing
+		}
+		r.envReads++
+		out := ""
+		if r.lease != "" {
+			out = createOperationEnvironment + "=" + r.lease + "\n"
+		}
+		if r.envReads == r.fireOnEnv {
+			r.change(r)
+		}
+		return []byte(out), nil
+	case "kill-session", "set-environment":
+		return nil, fmt.Errorf("bootstrap lease race runner refuses write: %v", args)
+	}
+	return nil, fmt.Errorf("unexpected bootstrap lease race command: %v", args)
+}
+
+func (r *bootstrapLeaseRaceRunner) writes() int {
+	writes := 0
+	for _, call := range r.calls {
+		if slices.Contains(call, "kill-session") || slices.Contains(call, "set-environment") {
+			writes++
+		}
+	}
+	return writes
+}
+
+func bootstrapLeaseRaceReceipt(runner *bootstrapLeaseRaceRunner) controlBootstrapReceipt {
+	return controlBootstrapReceipt{
+		created: true, sessionID: "$9", windowID: "@12", paneID: "%15", operationMarker: "projmux-create-op-race",
+		route: runtimeMutationRoute{
+			target: tmuxTransport{Kind: tmuxSocketName, Value: "projmux", Source: tmuxSocketNameSource}, socketName: "projmux",
+			expectedSocketPath: runner.physical,
+			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$9", WindowID: "@12", PaneID: "%15"},
+		},
+	}
+}
+
+func TestControlBootstrapRollbackTreatsASessionKilledBetweenReobserveAndGuardAsAbsent(t *testing.T) {
+	t.Parallel()
+	// List read 1 is the plan's Reobserve; the session dies right after it.
+	runner := &bootstrapLeaseRaceRunner{physical: "/tmp/tmux-1000/projmux", lease: "projmux-create-op-race",
+		fireOnList: 1, change: func(r *bootstrapLeaseRaceRunner) { r.sessionGone = true }}
+	cmd := &shellCommand{tmuxRunner: runner}
+	if err := cmd.rollbackControlBootstrap(context.Background(), "projmux", bootstrapLeaseRaceReceipt(runner)); err != nil {
+		t.Fatalf("rollbackControlBootstrap() error = %v; want the concurrently removed session treated as absent", err)
+	}
+	if runner.listReads != 2 || runner.writes() != 0 {
+		t.Fatalf("list reads = %d, writes = %d; want Reobserve plus the Guard's absence proof and zero writes: %#v", runner.listReads, runner.writes(), runner.calls)
+	}
+}
+
+func TestControlBootstrapRollbackStillRefusesALeaseChangedBetweenReobserveAndGuard(t *testing.T) {
+	t.Parallel()
+	runner := &bootstrapLeaseRaceRunner{physical: "/tmp/tmux-1000/projmux", lease: "projmux-create-op-race",
+		fireOnList: 1, change: func(r *bootstrapLeaseRaceRunner) { r.lease = "projmux-create-op-someone-else" }}
+	cmd := &shellCommand{tmuxRunner: runner}
+	err := cmd.rollbackControlBootstrap(context.Background(), "projmux", bootstrapLeaseRaceReceipt(runner))
+	if err == nil || !strings.Contains(err.Error(), `guard refused action "kill-owned" before first write`) ||
+		!strings.Contains(err.Error(), "ControlSession bootstrap ownership lease is absent or changed") {
+		t.Fatalf("rollbackControlBootstrap() error = %v; want the changed lease refused at the guard", err)
+	}
+	if runner.writes() != 0 {
+		t.Fatalf("changed lease reached a write: %#v", runner.calls)
+	}
+}
+
+func TestControlBootstrapLeaseClearTreatsALeaseClearedBetweenReobserveAndGuardAsAbsent(t *testing.T) {
+	t.Parallel()
+	// Env read 1 is the plan's Reobserve (lease still ours); a concurrent
+	// writer clears the variable right after it.
+	runner := &bootstrapLeaseRaceRunner{physical: "/tmp/tmux-1000/projmux", lease: "projmux-create-op-race",
+		fireOnEnv: 1, change: func(r *bootstrapLeaseRaceRunner) { r.lease = "" }}
+	cmd := &shellCommand{tmuxRunner: runner}
+	if err := cmd.clearControlBootstrapLease(context.Background(), "projmux", bootstrapLeaseRaceReceipt(runner)); err != nil {
+		t.Fatalf("clearControlBootstrapLease() error = %v; want the concurrently cleared lease treated as absent", err)
+	}
+	if runner.writes() != 0 {
+		t.Fatalf("already-cleared lease reached a write: %#v", runner.calls)
+	}
+}
+
+func TestControlBootstrapLeaseClearStillRefusesALeaseReplacedBetweenReobserveAndGuard(t *testing.T) {
+	t.Parallel()
+	runner := &bootstrapLeaseRaceRunner{physical: "/tmp/tmux-1000/projmux", lease: "projmux-create-op-race",
+		fireOnEnv: 1, change: func(r *bootstrapLeaseRaceRunner) { r.lease = "projmux-create-op-someone-else" }}
+	cmd := &shellCommand{tmuxRunner: runner}
+	err := cmd.clearControlBootstrapLease(context.Background(), "projmux", bootstrapLeaseRaceReceipt(runner))
+	if err == nil || !strings.Contains(err.Error(), `guard refused action "clear-lease" before first write`) ||
+		!strings.Contains(err.Error(), "ControlSession bootstrap ownership lease is absent or changed") {
+		t.Fatalf("clearControlBootstrapLease() error = %v; want another operation's lease refused at the guard", err)
+	}
+	if runner.writes() != 0 {
+		t.Fatalf("replaced lease reached a write: %#v", runner.calls)
+	}
 }

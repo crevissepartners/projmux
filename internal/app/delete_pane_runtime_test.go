@@ -1646,3 +1646,102 @@ func TestDeletedPaneTransportTombstoneCannotBeReimported(t *testing.T) {
 		t.Fatalf("tombstone reimport result uid=%q mirror=%t ok=%t changed=%t", uid, mirror, ok, !reflect.DeepEqual(registry, before))
 	}
 }
+
+// paneGuardDriftRunner answers one exact app server whose Pane %31 is listed
+// by the first `list-panes -a` (the plan's first-loop Reobserve). guardRow is
+// what the Guard's exact `display-message -t %31` then reads, and laterList
+// what every later `list-panes -a` lists.
+type paneGuardDriftRunner struct {
+	guardRow  string
+	laterList string
+	listReads int
+	calls     []recordedTmuxCall
+}
+
+func (r *paneGuardDriftRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
+	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
+	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != testDeleteTarget.Value {
+		return nil, fmt.Errorf("pane guard drift runner requires exact -S routing: %s %v", name, args)
+	}
+	switch args[2] {
+	case "display-message":
+		switch args[len(args)-1] {
+		case "#{socket_path}":
+			return []byte(testDeleteTarget.Value + "\n"), nil
+		case "#{pid}":
+			return []byte("4242\n"), nil
+		}
+		if flagValue(args[2:], "-t") == "%31" {
+			return []byte(r.guardRow), nil
+		}
+	case "show-options":
+		switch args[len(args)-1] {
+		case tmuxopts.AppGlobal:
+			return []byte("1\n"), nil
+		case runtimeMutationSocketNameOption:
+			return []byte(defaultAppSocket + "\n"), nil
+		}
+	case "list-panes":
+		r.listReads++
+		if r.listReads > 1 {
+			return []byte(r.laterList), nil
+		}
+		return []byte(livePaneInventoryRow("$1", "@10", "%30", "pan-alpha-zsh") + livePaneInventoryRow("$1", "@10", "%31", "pan-alpha-log")), nil
+	case "kill-pane":
+		return nil, fmt.Errorf("pane guard drift runner refuses kill: %v", args)
+	}
+	return nil, fmt.Errorf("unexpected pane guard drift command: %v", args)
+}
+
+func runPaneGuardDriftKillAll(t *testing.T, runner *paneGuardDriftRunner) (int, error) {
+	t.Helper()
+	target := paneLiveDeleteTarget{
+		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
+		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+	}
+	return statefulPaneRuntime(t, runner).killAll(context.Background(), []paneLiveDeleteTarget{target})
+}
+
+func TestPaneDeleteKillAllTreatsAPaneKilledBetweenReobserveAndGuardAsAbsent(t *testing.T) {
+	// Real tmux answers `display-message -t %31` for a missing Pane with an
+	// empty row and exit 0, so the Guard reads drift; the Reobserve predicate
+	// (list-panes) then proves the exact Pane absent.
+	runner := &paneGuardDriftRunner{
+		guardRow:  livePaneInventoryRow("", "", "", "", "", "", ""),
+		laterList: livePaneInventoryRow("$1", "@10", "%30", "pan-alpha-zsh"),
+	}
+	applied, err := runPaneGuardDriftKillAll(t, runner)
+	if err != nil || applied != 0 {
+		t.Fatalf("killAll() = applied %d, err %v; want the concurrently removed Pane treated as absent with zero kills", applied, err)
+	}
+	if runner.listReads != 2 {
+		t.Fatalf("list-panes reads = %d, want Reobserve plus the Guard's absence proof", runner.listReads)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-pane") {
+			t.Fatalf("Pane removed before the guard reached tmux mutation: %#v", runner.calls)
+		}
+	}
+}
+
+func TestPaneDeleteKillAllStillRefusesAPaneWhoseUIDDriftedBetweenReobserveAndGuard(t *testing.T) {
+	runner := &paneGuardDriftRunner{
+		guardRow: livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "win-alpha-main", "pan-other"),
+		laterList: livePaneInventoryRow("$1", "@10", "%30", "pan-alpha-zsh") +
+			livePaneInventoryRow("$1", "@10", "%31", "pan-other"),
+	}
+	applied, err := runPaneGuardDriftKillAll(t, runner)
+	if err == nil || applied != 0 ||
+		!strings.Contains(err.Error(), `guard refused action "kill-pane" before first write`) ||
+		!strings.Contains(err.Error(), "exact live Pane %31 drifted") {
+		t.Fatalf("killAll() = applied %d, err %v; want the present-but-drifted Pane refused at the guard", applied, err)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-pane") {
+			t.Fatalf("drifted Pane reached tmux mutation: %#v", runner.calls)
+		}
+	}
+}

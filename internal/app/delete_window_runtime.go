@@ -305,7 +305,14 @@ func (r *tmuxWindowDeleteRuntime) killAll(ctx context.Context, targets []windowL
 				if filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(r.expectedSocketPath) {
 					return errors.New("delete window: printable physical socket disagrees with bound execution route")
 				}
-				return r.revalidateMutationTarget(ctx, target, target.UID)
+				// kill-window's goal is the exact Window's absence. A Guard
+				// refusal is converged only when one re-read of the Reobserve
+				// predicate proves the exact Window gone; every other drift
+				// stays refused.
+				err := r.revalidateMutationTarget(ctx, target, target.UID)
+				return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
+					return r.observeWindowMutationEffect(ctx, target, target.UID, true, attempted)
+				})
 			},
 			Apply: func(ctx context.Context) error {
 				_, err := runRuntimeMutationCommand(ctx, r.routed(), action)

@@ -563,3 +563,61 @@ func TestManagedProjectStopProjectionWriteFailureReportsTheSessionWasStopped(t *
 	}
 	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: true})
 }
+
+func TestManagedRuntimeStopTreatsASessionKilledBetweenReobserveAndGuardAsStopped(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	activateRuntimeStopAgent(t, store, "gen-raced-away")
+	// list-sessions read 1 is the pre-prewrite liveness check and read 2 the
+	// plan's first-loop Reobserve; both see the exact Session live. A concurrent
+	// writer then kills it, so the Guard's read 3 finds the server running
+	// without that Session. Route guards read only display-message/show-options.
+	runner := &exactManagedStopRunner{physical: "/tmp/projmux-stop", logical: defaultAppSocket, rootUID: "prj-alpha", goneAfterRead: 2}
+	stopStore := store.store()
+	if err := executeManagedRuntimeStop(context.Background(), runner, runtimeStopProjectTarget(runner),
+		managedRuntimeStopRegistryAuthority(stopStore.snapshot), stopStore); err != nil {
+		t.Fatalf("executeManagedRuntimeStop() error = %v; want the concurrently removed Session treated as stopped", err)
+	}
+	if runner.listReads != 3 {
+		t.Fatalf("list-sessions reads = %d, want 3 (prewrite, Reobserve, Guard)", runner.listReads)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 2 && call.args[2] == "kill-session" {
+			t.Fatalf("Session removed before the guard reached tmux mutation: %#v", runner.calls)
+		}
+	}
+	pane, _ := store.registry.Pane("pan-alpha-codex")
+	agent, _ := store.registry.Agent("agt-alpha-codex")
+	if pane.Status.LastTermination != nil || agent.Status.LastTermination != nil {
+		t.Fatalf("stop that interrupted nothing retained receipts: pane=%+v agent=%+v", pane.Status.LastTermination, agent.Status.LastTermination)
+	}
+	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: false})
+}
+
+func TestManagedRuntimeStopStillRefusesASessionWhoseAttributionDriftedBetweenReobserveAndGuard(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	activateRuntimeStopAgent(t, store, "gen-attribution-drift")
+	// Read 3 is the Guard's: the exact $1 is still listed, now attributed to
+	// another Project. Present-with-drift is not absence and must stay refused.
+	runner := &exactManagedStopRunner{physical: "/tmp/projmux-stop", logical: defaultAppSocket, rootUID: "prj-alpha"}
+	runner.onListRead = func(read int) {
+		if read == 3 {
+			runner.rootUID = "prj-other"
+		}
+	}
+	stopStore := store.store()
+	err := executeManagedRuntimeStop(context.Background(), runner, runtimeStopProjectTarget(runner),
+		managedRuntimeStopRegistryAuthority(stopStore.snapshot), stopStore)
+	if err == nil || !strings.Contains(err.Error(), `guard refused action "stop-managed-session" before first write`) ||
+		!strings.Contains(err.Error(), "managed Project attribution drifted on exact physical route") {
+		t.Fatalf("executeManagedRuntimeStop() error = %v; want the attribution drift refused at the guard", err)
+	}
+	if runner.killed {
+		t.Fatalf("attribution-drifted Session was killed: %#v", runner.calls)
+	}
+	pane, _ := store.registry.Pane("pan-alpha-codex")
+	if pane.Status.LastTermination != nil {
+		t.Fatalf("refused stop retained its interruption receipt: %+v", pane.Status.LastTermination)
+	}
+}

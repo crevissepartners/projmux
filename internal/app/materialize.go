@@ -825,7 +825,15 @@ func (m *materializer) runMutation(ctx context.Context, action plannedRuntimeMut
 			if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
 				return err
 			}
-			return m.guardMutationAction(ctx, action)
+			err := m.guardMutationAction(ctx, action)
+			if action.Verb != mutationKillOwned {
+				return err
+			}
+			// An owned kill's goal is the exact object's absence; a concurrent
+			// removal after Reobserve is converged, not drift.
+			return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
+				return m.observeMutationEffect(ctx, action)
+			})
 		},
 		Apply: func(ctx context.Context) error {
 			var err error
@@ -1319,13 +1327,14 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 					return err
 				}
 				got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.ownershipOption()+"}")
-				if err != nil {
-					return err
+				if err == nil && got != entry.UID {
+					err = fmt.Errorf("ownership uid is %q, want %q", got, entry.UID)
 				}
-				if got != entry.UID {
-					return fmt.Errorf("ownership uid is %q, want %q", got, entry.UID)
-				}
-				return nil
+				// A concurrent writer may remove the owned object after
+				// Reobserve; its absence is the rollback's goal, not drift.
+				return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
+					return m.observeMutationEffect(ctx, action)
+				})
 			},
 			Apply: func(ctx context.Context) error {
 				_, err := runRuntimeMutationCommand(ctx, m.runner, action)
@@ -1729,28 +1738,38 @@ func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result 
 		target,
 		"exact created Project tuple and operation lease="+marker,
 		"lease-owned created Project session is absent", "-t", result.SessionID)
+	routeGuard := m.targetRouteGuard(action)
+	observeAbsent := func(ctx context.Context) (bool, error) {
+		out, err := m.routedRunner().Run(ctx, "tmux", "list-sessions", "-F", "#{session_id}")
+		if err != nil {
+			if inttmux.IsNoServerFailure(err) {
+				return true, nil
+			}
+			return false, err
+		}
+		if slices.Contains(strings.Fields(string(out)), result.SessionID) {
+			return false, nil
+		}
+		return true, nil
+	}
 	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
 		Action:           action,
-		TargetRouteGuard: m.targetRouteGuard(action),
-		Reobserve: func(ctx context.Context) (bool, error) {
-			out, err := m.routedRunner().Run(ctx, "tmux", "list-sessions", "-F", "#{session_id}")
-			if err != nil {
-				if inttmux.IsNoServerFailure(err) {
-					return true, nil
-				}
-				return false, err
-			}
-			if slices.Contains(strings.Fields(string(out)), result.SessionID) {
-				return false, nil
-			}
-			return true, nil
-		},
+		TargetRouteGuard: routeGuard,
+		Reobserve:        observeAbsent,
 		Guard: func(ctx context.Context) error {
 			owned, err := m.observeCreatedProjectReceipt(ctx, result, marker)
 			if err != nil || !owned {
-				return errors.New("created Project lease rollback containment is absent or changed")
+				err = errors.New("created Project lease rollback containment is absent or changed")
 			}
-			return nil
+			// The exact $N gone from the same printed server generation is
+			// this kill's goal, so a concurrent removal is converged. The
+			// route guard runs first, as it does before Reobserve.
+			return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
+				if err := routeGuard(ctx); err != nil {
+					return false, err
+				}
+				return observeAbsent(ctx)
+			})
 		},
 		Apply: func(ctx context.Context) error {
 			_, err := runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)

@@ -857,33 +857,43 @@ func (c *shellCommand) rollbackControlBootstrap(ctx context.Context, _ string, r
 	})
 	bindRuntimeMutationGuard(&action, "same exact bootstrap lease="+receipt.operationMarker)
 	action.Operands = []string{"-t", receipt.sessionID}
+	routeGuard := func(ctx context.Context) error {
+		if action.Target.Socket != "-S="+receipt.route.expectedSocketPath ||
+			action.Target.PhysicalSocket != receipt.route.expectedSocketPath || receipt.route.authority == nil ||
+			action.Target.RouteAuthority != receipt.route.authority.printable() {
+			return errors.New("ControlSession bootstrap rollback printable route disagrees with exact recovery authority")
+		}
+		return c.guardControlBootstrapRecoveryRoute(ctx, receipt)
+	}
+	observeAbsent := func(ctx context.Context) (bool, error) {
+		out, err := c.tmuxRunner.Run(ctx, "tmux", "-S", action.Target.PhysicalSocket, "list-sessions", "-F", "#{session_id}")
+		if err != nil {
+			if inttmux.IsNoServerFailure(err) {
+				return true, nil
+			}
+			return false, err
+		}
+		for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+			if strings.TrimSpace(line) == receipt.sessionID {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
 	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
-		Action: action,
-		TargetRouteGuard: func(ctx context.Context) error {
-			if action.Target.Socket != "-S="+receipt.route.expectedSocketPath ||
-				action.Target.PhysicalSocket != receipt.route.expectedSocketPath || receipt.route.authority == nil ||
-				action.Target.RouteAuthority != receipt.route.authority.printable() {
-				return errors.New("ControlSession bootstrap rollback printable route disagrees with exact recovery authority")
-			}
-			return c.guardControlBootstrapRecoveryRoute(ctx, receipt)
-		},
-		Reobserve: func(ctx context.Context) (bool, error) {
-			out, err := c.tmuxRunner.Run(ctx, "tmux", "-S", action.Target.PhysicalSocket, "list-sessions", "-F", "#{session_id}")
-			if err != nil {
-				if inttmux.IsNoServerFailure(err) {
-					return true, nil
-				}
-				return false, err
-			}
-			for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-				if strings.TrimSpace(line) == receipt.sessionID {
-					return false, nil
-				}
-			}
-			return true, nil
-		},
+		Action:           action,
+		TargetRouteGuard: routeGuard,
+		Reobserve:        observeAbsent,
 		Guard: func(ctx context.Context) error {
-			return c.guardControlBootstrapOwnedLease(ctx, receipt)
+			// The exact bootstrap $N gone from the same server generation is
+			// this rollback's goal, so a concurrent removal is converged. The
+			// route guard runs first, as it does before Reobserve.
+			return runtimeMutationAbsenceConverged(ctx, c.guardControlBootstrapOwnedLease(ctx, receipt), func(ctx context.Context) (bool, error) {
+				if err := routeGuard(ctx); err != nil {
+					return false, err
+				}
+				return observeAbsent(ctx)
+			})
 		},
 		Apply: func(ctx context.Context) error {
 			_, err := runRuntimeMutationCommand(ctx, explicitTmuxRunner{runner: c.tmuxRunner, target: tmuxTransport{Kind: tmuxSocketPath, Value: receipt.route.expectedSocketPath, Source: tmuxSocketPathSource}}, action)
@@ -900,26 +910,30 @@ func (c *shellCommand) clearControlBootstrapLease(ctx context.Context, socketNam
 	})
 	bindRuntimeMutationGuard(&action, "same bootstrap operation lease="+receipt.operationMarker)
 	action.Operands = []string{"-u", "-t", receipt.sessionID, createOperationEnvironment}
+	reobserve := func(ctx context.Context) (bool, error) {
+		if err := c.guardControlBootstrapOwnedLease(ctx, receipt); err != nil {
+			out, readErr := c.tmuxRunner.Run(ctx, "tmux", "-S", action.Target.PhysicalSocket, "show-environment", "-t", receipt.sessionID)
+			if readErr != nil {
+				return false, readErr
+			}
+			return sessionEnvironmentValue(string(out), createOperationEnvironment) == "", nil
+		}
+		return false, nil
+	}
 	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
 		TargetRouteGuard: func(ctx context.Context) error {
 			return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route, action)
 		},
-		Reobserve: func(ctx context.Context) (bool, error) {
-			if err := c.guardControlBootstrapOwnedLease(ctx, receipt); err != nil {
-				out, readErr := c.tmuxRunner.Run(ctx, "tmux", "-S", action.Target.PhysicalSocket, "show-environment", "-t", receipt.sessionID)
-				if readErr != nil {
-					return false, readErr
-				}
-				return sessionEnvironmentValue(string(out), createOperationEnvironment) == "", nil
-			}
-			return false, nil
-		},
+		Reobserve: reobserve,
 		Guard: func(ctx context.Context) error {
 			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route, action); err != nil {
 				return err
 			}
-			return c.guardControlBootstrapOwnedLease(ctx, receipt)
+			// The lease variable already empty is this clear's goal, so a
+			// concurrent clear is converged. A lease holding another marker,
+			// or a read error, stays refused.
+			return runtimeMutationAbsenceConverged(ctx, c.guardControlBootstrapOwnedLease(ctx, receipt), reobserve)
 		},
 		Apply: func(ctx context.Context) error {
 			_, err := runRuntimeMutationCommand(ctx, explicitTmuxRunner{runner: c.tmuxRunner, target: tmuxTransport{Kind: tmuxSocketPath, Value: receipt.route.expectedSocketPath, Source: tmuxSocketPathSource}}, action)

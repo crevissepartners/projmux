@@ -101,6 +101,25 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 		return cause
 	}
 
+	// observeAbsent is the one exact-absence predicate Reobserve and Guard
+	// share: no server behind the printed route, or the exact $N unlisted.
+	// Name or attribution drift on a listed $N stays an observation error.
+	observeAbsent := func(ctx context.Context) (bool, error) {
+		if err := guardPrintedRuntimeMutationRoute(ctx, runner, target.Route, action); err != nil {
+			if inttmux.IsNoServerFailure(err) {
+				return true, nil
+			}
+			return false, err
+		}
+		live, err := observeExactManagedRuntimeStopTarget(ctx, runner, target)
+		if err != nil {
+			if inttmux.IsNoServerFailure(err) {
+				return true, nil
+			}
+			return false, err
+		}
+		return !live, nil
+	}
 	applyAttempted := false
 	planErr := executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
@@ -108,21 +127,9 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 			return guardPrintedRuntimeMutationRoute(ctx, runner, target.Route, action)
 		},
 		Reobserve: func(ctx context.Context) (bool, error) {
-			if err := guardPrintedRuntimeMutationRoute(ctx, runner, target.Route, action); err != nil {
-				if inttmux.IsNoServerFailure(err) {
-					return true, nil
-				}
-				return false, err
-			}
-			live, err := observeExactManagedRuntimeStopTarget(ctx, runner, target)
-			if err != nil {
-				if inttmux.IsNoServerFailure(err) {
-					return true, nil
-				}
-				return false, err
-			}
-			if !live {
-				return true, nil
+			absent, err := observeAbsent(ctx)
+			if err != nil || absent {
+				return absent, err
 			}
 			managed, err := authoritative(ctx, target.RootKind, target.RootUID, target.SessionName)
 			if err != nil {
@@ -134,15 +141,15 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 			return false, nil
 		},
 		Guard: func(ctx context.Context) error {
-			if err := guardPrintedRuntimeMutationRoute(ctx, runner, target.Route, action); err != nil {
-				return err
-			}
-			live, err := observeExactManagedRuntimeStopTarget(ctx, runner, target)
+			// A concurrent writer may remove the exact Session after
+			// Reobserve. Its absence is this step's goal, so the Guard's own
+			// read reports it converged rather than drifted.
+			absent, err := observeAbsent(ctx)
 			if err != nil {
 				return err
 			}
-			if !live {
-				return errors.New("managed session disappeared before stop")
+			if absent {
+				return runtimeMutationAbsentTargetConverged("managed session " + target.SessionID)
 			}
 			managed, err := authoritative(ctx, target.RootKind, target.RootUID, target.SessionName)
 			if err != nil {
