@@ -43,7 +43,10 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() == 0 {
 		printPinUsage(stderr)
@@ -94,7 +97,10 @@ func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	kind := fs.String("kind", "", "Limit the listing to one pin kind (project or candidate)")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printPinUsage(stderr)
@@ -278,7 +284,10 @@ func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "Report the migration without writing the pin file")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printPinUsage(stderr)

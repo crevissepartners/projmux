@@ -153,7 +153,7 @@ func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) erro
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return fmt.Errorf("parse attention list flags: %w", err)
+		return usageError(fmt.Sprintf("parse attention list flags: %v", err))
 	}
 	if fs.NArg() != 0 {
 		printAttentionUsage(stderr)

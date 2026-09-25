@@ -169,7 +169,10 @@ func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceRec
 	fs.BoolVar(&opts.importOrphanMirrors, "import-orphan-mirrors", false, "import exact D3 orphan mirrors at approved L7")
 	fs.BoolVar(&opts.yes, "yes", false, "confirm the disclosed recovery loss")
 	if err := fs.Parse(args); err != nil {
-		return resourceReconcileOptions{}, err
+		if errors.Is(err, flag.ErrHelp) {
+			return resourceReconcileOptions{}, err
+		}
+		return resourceReconcileOptions{}, usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		return resourceReconcileOptions{}, usageError("reconcile resources does not accept positional arguments")
