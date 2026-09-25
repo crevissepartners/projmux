@@ -1595,12 +1595,15 @@ func TestConcurrentAgentCreatesConvergeOnOneEnsuredWindow(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, racers)
 	outs := make([]string, racers)
+	warnings := make([]*lockedBuffer, racers)
 	start := make(chan struct{})
 	for i := range racers {
+		warnings[i] = &lockedBuffer{}
 		wg.Go(func() {
 			<-start
 			cmd := fixture.command(nil)
 			cmd.agents = launcher
+			cmd.runtime.warn = warnings[i]
 			stdout, _, err := runRoute(t, cmd,
 				"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "shared", "--create-window", "-o", "uid")
 			outs[i], errs[i] = stdout, err
@@ -1609,11 +1612,7 @@ func TestConcurrentAgentCreatesConvergeOnOneEnsuredWindow(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("racer %d failed: %v", i, err)
-		}
-	}
+	requireEveryRacerSucceeded(t, errs, warnings)
 	registry := fixture.load(t)
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("the raced registry does not validate: %v", err)

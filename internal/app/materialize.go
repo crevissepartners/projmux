@@ -944,7 +944,13 @@ func (m *materializer) observeMaterializeMutationEffect(ctx context.Context, act
 		if len(action.Operands) == 0 {
 			return false, true, errors.New("clear-lease effect operands are incomplete")
 		}
-		return sessionEnvironmentValue(string(out), action.Operands[len(action.Operands)-1]) == "", true, nil
+		got := sessionEnvironmentValue(string(out), action.Operands[len(action.Operands)-1])
+		if action.LeaseMarker != "" {
+			// An owner-checked clear is done once the variable no longer holds
+			// our marker: absent, or another operation's lease it must keep.
+			return got != action.LeaseMarker, true, nil
+		}
+		return got == "", true, nil
 	case mutationWriteLayout:
 		if len(action.Operands) < 4 {
 			return false, true, errors.New("layout effect operands are incomplete")
@@ -2060,6 +2066,11 @@ func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtim
 				"same operation lease="+ledger.operationMarker,
 				"operation lease is absent",
 				"-u", "-t", sessionName, environment)
+			// This clear runs after the Registry lock is released, so the next
+			// create may already own this variable. The lease comparison
+			// therefore lives inside the single tmux write command, never in a
+			// separate read before it.
+			action.LeaseMarker = ledger.operationMarker
 			action.Order = len(steps) + 1
 			steps = append(steps, runtimeMutationStep{
 				Action:           action,
@@ -2068,27 +2079,19 @@ func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtim
 					if !wrote {
 						// The lease read above found this exact environment
 						// carrying our marker, and nothing of ours has written
-						// since: the effect (lease absent) is known pending. The
-						// answer never declares an effect present, so it cannot
-						// skip a write; the Guard below reads tmux again right
-						// before the write.
+						// since: the effect (our marker gone) is known pending.
+						// The answer never declares an effect present, so it
+						// cannot skip a write; the write itself compares the
+						// lease again inside tmux.
 						return false, nil
 					}
 					return m.observeMutationEffect(ctx, action)
 				},
 				Guard: func(ctx context.Context) error {
-					if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
-						return err
-					}
-					out, err := m.routedRunner().Run(ctx, "tmux", "show-environment", "-t", sessionName)
-					if err != nil {
-						return err
-					}
-					if sessionEnvironmentValue(string(out), environment) != ledger.operationMarker ||
-						sessionEnvironmentValue(string(out), createOperationEnvironment) != ledger.operationMarker {
-						return errors.New("create-operation lease changed")
-					}
-					return nil
+					// Only the route is guarded here. Another operation's
+					// marker is a normal race, and the owner-checked clear
+					// leaves it in place without a warning.
+					return m.guardExactRoute(ctx, false, action.Target.PhysicalSocket)
 				},
 				Apply: func(ctx context.Context) error {
 					wrote = true

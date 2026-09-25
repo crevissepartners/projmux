@@ -341,10 +341,12 @@ func assertCanonicalCreateLeaseBracketsSplit(t *testing.T, calls [][]string) {
 		switch argv[0] {
 		case "split-window":
 			split = i
-		case "set-environment":
-			if argv[len(argv)-1] == createOperationEnvironment && slices.Contains(argv, "-u") {
+		case "if-shell":
+			if ownerCheckedLeaseClearOf(argv, createOperationEnvironment) {
 				leaseClear = i
-			} else if len(argv) >= 2 && argv[len(argv)-2] == createOperationEnvironment {
+			}
+		case "set-environment":
+			if len(argv) >= 2 && argv[len(argv)-2] == createOperationEnvironment && !slices.Contains(argv, "-u") {
 				leaseSet = i
 				leaseTarget = flagValue(argv, "-t")
 			}

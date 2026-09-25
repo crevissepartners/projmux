@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -123,6 +124,10 @@ type plannedRuntimeMutation struct {
 	Operands []string                   `json:"operands,omitempty"`
 	Command  []string                   `json:"command,omitempty"`
 	Queue    *runtimeMutationQueuedKill `json:"queue,omitempty"`
+	// LeaseMarker makes a clear-lease a compare-and-unset: tmux unsets the
+	// variable only while it still holds exactly this marker, in one server
+	// command. Empty keeps the unconditional unset.
+	LeaseMarker string `json:"leaseMarker,omitempty"`
 	// Controller is an app-internal, printable binding between a controller
 	// declaration and its executable tmux argv. It is deliberately absent from
 	// the public controller.Plan JSON; only the Phase 10 execution plan carries
@@ -258,7 +263,12 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 			"status=$?; " + shellQuote("tmux") + " -S " + shellQuote(action.Queue.PhysicalSocket) +
 			" if-shell -F " + shellQuote(clearCondition) + " " + shellQuote(deferredClear) + " '' >/dev/null 2>&1 || true; exit $status"
 		return []string{"set-environment", "-g", action.Queue.Marker, action.Queue.ExpectedUID, ";", "run-shell", "-b", command}, nil
-	case mutationWriteLease, mutationClearLease:
+	case mutationClearLease:
+		if action.LeaseMarker != "" {
+			return runtimeMutationClearLeaseIfOwnedArgv(action)
+		}
+		verb = "set-environment"
+	case mutationWriteLease:
 		verb = "set-environment"
 	case mutationRenameWindow:
 		verb = "rename-window"
@@ -286,6 +296,35 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 	}
 	argv := append([]string{verb}, action.Operands...)
 	return append(argv, action.Command...), nil
+}
+
+// runtimeMutationLeaseMarkerPattern admits the create-operation marker grammar
+// (v1:<pid>:<unix>:<operation id>) and nothing a tmux format or command parser
+// would read: no '#', ',', '}', quote, '$', ';', or whitespace.
+var runtimeMutationLeaseMarkerPattern = regexp.MustCompile(`^[A-Za-z0-9:._-]+$`)
+
+// runtimeMutationClearLeaseIfOwnedArgv assembles the owner-checked lease clear.
+// The comparison and the unset run inside one if-shell, so tmux serializes them
+// against every other client command: a later create that writes its own
+// marker into the same variable between our observation and this command keeps
+// it. A read followed by a separate unset would delete that marker.
+func runtimeMutationClearLeaseIfOwnedArgv(action plannedRuntimeMutation) ([]string, error) {
+	id := exactTmuxHandle(action.Target.ID, "$")
+	if id == "" || id != action.Target.ID || len(action.Operands) != 4 ||
+		action.Operands[0] != "-u" || action.Operands[1] != "-t" || action.Operands[2] != id {
+		return nil, errors.New("runtime mutation plan: owner-checked lease clear is not exactly -u -t <exact session> <lease>")
+	}
+	variable := action.Operands[3]
+	if variable != createOperationEnvironment && variable != finalizeOperationEnvironment {
+		return nil, fmt.Errorf("runtime mutation plan: owner-checked lease clear targets unknown variable %q", variable)
+	}
+	if !runtimeMutationLeaseMarkerPattern.MatchString(action.LeaseMarker) {
+		return nil, errors.New("runtime mutation plan: owner-checked lease clear marker carries format or quote characters")
+	}
+	condition := "#{==:#{E:" + variable + "}," + action.LeaseMarker + "}"
+	// The inner command is parsed again by tmux, which would expand an unquoted
+	// $N as an environment variable; single quotes keep the exact handle.
+	return []string{"if-shell", "-F", "-t", id, condition, "set-environment -u -t '" + id + "' " + variable}, nil
 }
 
 func runtimeMutationQueueMarker(action plannedRuntimeMutation) string {
@@ -800,6 +839,9 @@ func validateRuntimeMutationActionShape(action plannedRuntimeMutation) error {
 		}
 	} else if strings.HasPrefix(action.Target.Parent, "controller.identity/") {
 		return fmt.Errorf("runtime mutation plan: controller target %q has no typed declared effect", action.Target.ID)
+	}
+	if action.LeaseMarker != "" && action.Verb != mutationClearLease {
+		return fmt.Errorf("runtime mutation plan: action %q cannot carry a lease marker", action.Verb)
 	}
 	if action.Verb == mutationWriteStableName {
 		want := []string{"-w", "-t", action.Target.ID, "-q", tmuxopts.WindowName}

@@ -319,7 +319,7 @@ func TestCreateLeaseClearReusesTheCommitProofAndReprovesAfterItsWrite(t *testing
 	calls := fixture.tmux.calls
 	clear := slices.IndexFunc(calls, func(call []string) bool {
 		argv := tmuxCommandArgv(call)
-		return len(argv) > 0 && argv[0] == "set-environment" && slices.Contains(argv, "-u")
+		return ownerCheckedLeaseClearOf(argv, "")
 	})
 	if clear < 0 {
 		t.Fatal("create window never cleared its create-operation lease")
@@ -357,8 +357,7 @@ func TestCreateLeaseClearReusesTheCommitProofAndReprovesAfterItsWrite(t *testing
 				var warnings strings.Builder
 				f.create.runtime.warn = &warnings
 				f.create.runtime.afterGuardedWrite = func() {
-					if argv := tmuxCommandArgv(f.tmux.calls[len(f.tmux.calls)-1]); len(argv) > 0 &&
-						argv[0] == "set-environment" && slices.Contains(argv, "-u") {
+					if argv := tmuxCommandArgv(f.tmux.calls[len(f.tmux.calls)-1]); ownerCheckedLeaseClearOf(argv, "") {
 						drift.apply(f.tmux)
 					}
 				}
