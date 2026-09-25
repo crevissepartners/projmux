@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -209,10 +210,42 @@ func TestAgentMessageSendWarnsOnceWhenCallerIsNotDescendantOfClaudeSource(t *tes
 		!strings.Contains(got.logOutput, "agent_uid="+agentUID) || !strings.Contains(got.logOutput, "pane_uid="+event.PaneUID) {
 		t.Fatalf("diagnostics log = %q, want the one foreign-source record", got.logOutput)
 	}
-	// The provider session, pids, and environment stay out of the journal.
-	for _, secret := range []string{lineageRegisteredID, "800", "CLAUDE_CODE_SESSION_ID"} {
-		if strings.Contains(got.logOutput, secret) {
-			t.Fatalf("diagnostics log %q carries %q", got.logOutput, secret)
+	// The provider session, pids, and environment stay out of the journal. The
+	// stamped line pins a timestamp whose nanoseconds hold the pid's digits.
+	stamped := event
+	stamped.At = "2026-09-25T05:48:00.123800Z"
+	for _, line := range []string{got.logOutput, formatOperationalEvent(stamped)} {
+		for _, secret := range []string{lineageRegisteredID, "CLAUDE_CODE_SESSION_ID"} {
+			if strings.Contains(line, secret) {
+				t.Fatalf("diagnostics log %q carries %q", line, secret)
+			}
+		}
+		if lineagePIDLeak(line, lineageForeignCaller) {
+			t.Fatalf("diagnostics log %q carries caller pid %d", line, lineageForeignCaller)
+		}
+	}
+}
+
+// lineagePIDLeak reports whether text names pid the way product output writes
+// one: "pid 800" prose or a key=800 token. Bare digits, such as a timestamp's
+// nanoseconds, are not a pid.
+func lineagePIDLeak(text string, pid int) bool {
+	return regexp.MustCompile(`(?:\bpid |=)` + strconv.Itoa(pid) + `\b`).MatchString(text)
+}
+
+func TestLineagePIDLeakMatchesOnlyPIDContext(t *testing.T) {
+	for _, test := range []struct {
+		text string
+		want bool
+	}{
+		{"2026-09-25T05:48:00.123800Z INFO agent agent.message.foreign-source success agent_uid=a1", false},
+		{"this caller (pid 800, CLAUDE_CODE_SESSION_ID=unset) is not", true},
+		{"INFO agent event success caller_pid=800 agent_uid=a1", true},
+		{"role=caller pid=800", true},
+		{"this caller (pid 8001, x) and caller_pid=8001", false},
+	} {
+		if got := lineagePIDLeak(test.text, lineageForeignCaller); got != test.want {
+			t.Errorf("lineagePIDLeak(%q) = %v, want %v", test.text, got, test.want)
 		}
 	}
 }
