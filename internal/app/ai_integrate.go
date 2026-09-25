@@ -129,17 +129,17 @@ type tmuxBellOptionSnapshot struct {
 
 func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printAIUsage(stderr)
-		return usageError("ai integrate requires <agent-kind>")
+		printRouteUsage(stderr, "agent integrate")
+		return usageError("agent integrate requires <agent-kind>")
 	}
 	target := strings.TrimSpace(args[0])
 	if target == "help" || target == "--help" || target == "-h" {
-		printAIUsage(stdout)
+		printRouteUsage(stdout, "agent integrate")
 		return nil
 	}
 	if aiprovider.IntegrationCommand(target) == "" {
-		printAIUsage(stderr)
-		return usageError(fmt.Sprintf("unknown ai integrate agent-kind: %s", args[0]))
+		printRouteUsage(stderr, "agent integrate")
+		return usageError(fmt.Sprintf("unknown agent integrate agent-kind: %s", args[0]))
 	}
 	switch target {
 	case "codex":
@@ -156,7 +156,7 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 }
 
 func (c *aiCommand) runIntegrateTmuxBell(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("ai integrate tmux-bell", flag.ContinueOnError)
+	fs := flag.NewFlagSet("agent integrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "print planned tmux bell integration commands without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed tmux bell hook wiring")
@@ -167,8 +167,8 @@ func (c *aiCommand) runIntegrateTmuxBell(args []string, stdout, stderr io.Writer
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printAIUsage(stderr)
-		return usageError("ai integrate tmux-bell does not accept positional arguments")
+		printRouteUsage(stderr, "agent integrate")
+		return usageError("agent integrate tmux-bell does not accept positional arguments")
 	}
 
 	plan, err := c.planTmuxBellIntegration(*remove)
@@ -232,7 +232,7 @@ func (c *aiCommand) runTmuxBellCommand(args []string) error {
 }
 
 func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("ai integrate claude", flag.ContinueOnError)
+	fs := flag.NewFlagSet("agent integrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "print planned Claude Code hook settings changes without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed Claude Code hook wiring")
@@ -243,8 +243,8 @@ func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) 
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printAIUsage(stderr)
-		return usageError("ai integrate claude does not accept positional arguments")
+		printRouteUsage(stderr, "agent integrate")
+		return usageError("agent integrate claude does not accept positional arguments")
 	}
 
 	plan, err := c.planClaudeHookIntegration(*remove)
@@ -269,7 +269,7 @@ func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) 
 }
 
 func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("ai integrate codex", flag.ContinueOnError)
+	fs := flag.NewFlagSet("agent integrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "print planned Codex config changes without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed Codex wiring")
@@ -280,8 +280,8 @@ func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) e
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printAIUsage(stderr)
-		return usageError("ai integrate codex does not accept positional arguments")
+		printRouteUsage(stderr, "agent integrate")
+		return usageError("agent integrate codex does not accept positional arguments")
 	}
 
 	plan, err := c.planCodexIntegration(*remove)

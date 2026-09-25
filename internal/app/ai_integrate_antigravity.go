@@ -72,7 +72,7 @@ type jsonObjectMember struct {
 }
 
 func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("ai integrate antigravity", flag.ContinueOnError)
+	fs := flag.NewFlagSet("agent integrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "print planned Antigravity hook changes without writing")
 	remove := fs.Bool("remove", false, "remove the projmux-managed Antigravity hook entry")
@@ -83,8 +83,8 @@ func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Wri
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printAIUsage(stderr)
-		return usageError("ai integrate antigravity does not accept positional arguments")
+		printRouteUsage(stderr, "agent integrate")
+		return usageError("agent integrate antigravity does not accept positional arguments")
 	}
 
 	hookPlan, err := c.planAntigravityHookIntegration(*remove)

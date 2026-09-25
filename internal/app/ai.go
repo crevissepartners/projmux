@@ -21,6 +21,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/app/initcmd"
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -246,9 +247,11 @@ func (l aiNotifyLookup) PaneFormat(paneID, format string) string {
 	return l.cmd.readTmuxDisplayMessageTrimmed(paneID, format)
 }
 
+// Run dispatches the argv the routes forwarding into the ai handler hand it.
+// Its own rejections print no usage: they serve the retired `ai` root, which
+// has no catalog route, so the reason stands alone.
 func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printAIUsage(stderr)
 		return errors.New("ai requires a subcommand")
 	}
 
@@ -278,20 +281,19 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "topic":
 		return c.runTopic(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printAIUsage(stdout)
 		return nil
 	default:
-		printAIUsage(stderr)
 		return fmt.Errorf("unknown ai subcommand: %s", args[0])
 	}
 }
 
+// runDirectProvider serves `internal agent-pane launch-provider`, which the
+// catalog does not list, so its rejections print the reason alone.
 func (c *aiCommand) runDirectProvider(args []string, stderr io.Writer) error {
 	if len(args) != 2 {
-		printAIUsage(stderr)
 		return usageError("internal agent-pane launch-provider requires <provider> <right|down>")
 	}
-	direction, err := parseAISplitDirection(args[1:], "internal agent-pane launch-provider", stderr)
+	direction, err := parseAISplitDirection(args[1:], "internal agent-pane launch-provider")
 	if err != nil {
 		return err
 	}
@@ -306,7 +308,7 @@ func (c *aiCommand) runDirectProvider(args []string, stderr io.Writer) error {
 }
 
 func (c *aiCommand) runDirectShell(args []string, stderr io.Writer) error {
-	direction, err := parseAISplitDirection(args, "internal agent-pane launch-shell", stderr)
+	direction, err := parseAISplitDirection(args, "internal agent-pane launch-shell")
 	if err != nil {
 		return err
 	}
@@ -315,13 +317,13 @@ func (c *aiCommand) runDirectShell(args []string, stderr io.Writer) error {
 
 func (c *aiCommand) runStatus(args []string, stderr io.Writer) error {
 	if len(args) == 0 {
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "agent status")
 		return errors.New("ai status requires a subcommand")
 	}
 	switch args[0] {
 	case "set":
 		if len(args) < 2 || len(args) > 3 {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent status")
 			return errors.New("ai status set requires <thinking|waiting|idle> [pane]")
 		}
 		paneID := strings.TrimSpace(c.env("TMUX_PANE"))
@@ -330,10 +332,10 @@ func (c *aiCommand) runStatus(args []string, stderr io.Writer) error {
 		}
 		return c.applyAIStatus(args[1], paneID)
 	case "help", "--help", "-h":
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "agent status")
 		return nil
 	default:
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "agent status")
 		return fmt.Errorf("unknown ai status subcommand: %s", args[0])
 	}
 }
@@ -510,6 +512,8 @@ func (c *aiCommand) setAIPaneBadgeKind(paneID, kind string) error {
 	return c.setAIPaneOption(paneID, aiPaneBadgeKindOption, kind)
 }
 
+// runNotify keeps the retired `ai notify` argv. No catalog route replaces it
+// one to one, so its rejections print the reason alone.
 func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
 	action := "notify"
 	paneID := strings.TrimSpace(c.env("TMUX_PANE"))
@@ -525,7 +529,6 @@ func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
 		action = args[0]
 		paneID = strings.TrimSpace(args[1])
 	default:
-		printAIUsage(stderr)
 		return errors.New("ai notify accepts [notify|reset] [pane]")
 	}
 
@@ -538,10 +541,8 @@ func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
 		defer func() { c.notifyDeliveryOwnsTopLevel = previous }()
 		return c.notifyAIForce(paneID)
 	case "help", "--help", "-h":
-		printAIUsage(stderr)
 		return nil
 	default:
-		printAIUsage(stderr)
 		return fmt.Errorf("unknown ai notify action: %s", action)
 	}
 }
@@ -668,8 +669,8 @@ func (c *aiCommand) notifyAIWithMode(paneID string, force bool) error {
 
 func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	if len(args) > 1 {
-		printAIUsage(stderr)
-		return errors.New("ai watch-title accepts at most 1 [pane] argument")
+		printRouteUsage(stderr, "internal agent-hook watch-title")
+		return errors.New("internal agent-hook watch-title accepts at most 1 [pane] argument")
 	}
 	paneID := strings.TrimSpace(c.env("TMUX_PANE"))
 	if len(args) == 1 {
@@ -785,27 +786,27 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 
 func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "agent topic")
 		return errors.New("ai topic requires a subcommand")
 	}
 	switch args[0] {
 	case "set":
 		rest, paneID, err := parseAITopicArgs(args[1:])
 		if err != nil {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent topic")
 			return err
 		}
 		if len(rest) == 0 {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent topic")
 			return errors.New("ai topic set requires <text>")
 		}
 		if len(rest) > 1 {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent topic")
 			return errors.New("ai topic set accepts a single <text> argument")
 		}
 		text := strings.TrimSpace(rest[0])
 		if text == "" {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent topic")
 			return errors.New("ai topic set requires non-empty <text>")
 		}
 		paneID, err = c.resolveTopicPaneID(paneID)
@@ -829,11 +830,11 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 	case "clear":
 		rest, paneID, err := parseAITopicArgs(args[1:])
 		if err != nil {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent topic")
 			return err
 		}
 		if len(rest) > 0 {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent topic")
 			return errors.New("ai topic clear takes no positional arguments")
 		}
 		paneID, err = c.resolveTopicPaneID(paneID)
@@ -857,11 +858,11 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 	case "get":
 		rest, paneID, err := parseAITopicArgs(args[1:])
 		if err != nil {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent topic")
 			return err
 		}
 		if len(rest) > 0 {
-			printAIUsage(stderr)
+			printRouteUsage(stderr, "agent topic")
 			return errors.New("ai topic get takes no positional arguments")
 		}
 		paneID, err = c.resolveTopicPaneID(paneID)
@@ -878,10 +879,10 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, c.readTmuxPaneOption(paneID, aiPaneTopicOption))
 		return nil
 	case "help", "--help", "-h":
-		printAIUsage(stdout)
+		printRouteUsage(stdout, "agent topic")
 		return nil
 	default:
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "agent topic")
 		return fmt.Errorf("unknown ai topic subcommand: %s", args[0])
 	}
 }
@@ -960,8 +961,9 @@ const (
 // allowed to live, and its whole job is to turn the saved mode into one of the
 // intents or pickers the rest of the UI already has.
 func (c *aiCommand) runLaunchDefault(args []string, stderr io.Writer) error {
-	direction, err := parseAISplitDirection(args, "internal agent-pane launch-default", stderr)
+	direction, err := parseAISplitDirection(args, "internal agent-pane launch-default")
 	if err != nil {
+		printRouteUsage(stderr, "internal agent-pane launch-default")
 		return err
 	}
 	mode := c.getMode()
@@ -995,12 +997,13 @@ func (c *aiCommand) runPicker(args []string, stderr io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	direction, err := parseAISplitDirection(fs.Args(), "ai picker", stderr)
+	direction, err := parseAISplitDirection(fs.Args(), "ai picker")
 	if err != nil {
+		printRouteUsage(stderr, "internal agent-pane picker")
 		return err
 	}
 	if *shellOnly && *resumeOnly {
-		printAIUsage(stderr)
+		printRouteUsage(stderr, "internal agent-pane picker")
 		return errors.New("ai picker cannot combine --shell and --resume")
 	}
 	if *shellOnly {
@@ -1234,7 +1237,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		if isNoSelectionExit(err) {
 			return nil
 		}
-		return fmt.Errorf("run ai settings picker: %w", err)
+		return fmt.Errorf("run config edit picker: %w", err)
 	}
 	if result.Key != "enter" || result.Value == "" {
 		return nil
@@ -3417,21 +3420,22 @@ func (c *aiCommand) sleepFor(d time.Duration) {
 	c.sleep(d)
 }
 
-func parseAISplitDirection(args []string, command string, stderr io.Writer) (string, error) {
+// parseAISplitDirection reads the optional [right|down] operand of an
+// `internal agent-pane` launch. It prints no usage: the caller names the route
+// it serves when it prints one.
+func parseAISplitDirection(args []string, command string) (string, error) {
 	direction := "right"
 	switch len(args) {
 	case 0:
 	case 1:
 		direction = strings.TrimSpace(args[0])
 	default:
-		printAIUsage(stderr)
 		return "", fmt.Errorf("%s accepts at most 1 [right|down] argument", command)
 	}
 	switch direction {
 	case "right", "down":
 		return direction, nil
 	default:
-		printAIUsage(stderr)
 		return "", fmt.Errorf("%s direction must be right or down", command)
 	}
 }
@@ -4349,23 +4353,20 @@ func parsePositiveInt(value string) int {
 	return n
 }
 
-func printAIUsage(w io.Writer) {
+// printRouteUsage prints the catalog Usage of route, the one route a rejected
+// call reached, in the `Usage:` block every handler prints. A route that
+// declares no Usage (hidden plumbing with no synopsis of its own) prints
+// nothing, so the reason line stands alone.
+func printRouteUsage(w io.Writer, route string) {
+	tokens := strings.Fields(route)
+	path, resolved, ok := cli.Resolve(tokens)
+	if !ok || !slices.Equal(path, tokens) || len(resolved.Usage) == 0 {
+		return
+	}
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux create agent --provider <claude|codex|antigravity> [--project <ref>] [--window <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [-o <mode>] [-- <extra-arg>...]")
-	fmt.Fprintln(w, "  projmux create pane [--project <ref>] [--window <ref>]... [--create-window] [--all-windows | --primary-window] [--placement right|down] [-o <mode>]")
-	fmt.Fprintln(w, "  projmux config edit [--get|--set <mode>]")
-	fmt.Fprintln(w, "  projmux agent status set <thinking|waiting|idle> [pane]")
-	fmt.Fprintln(w, "  projmux create notification [flags]")
-	fmt.Fprintln(w, "  projmux internal agent-hook watch-title [pane]")
-	fmt.Fprintln(w, "  projmux internal agent-hook ingest codex-hook [--pane <pane_uid|pane_id>] < payload.json")
-	fmt.Fprintln(w, "  projmux internal agent-hook ingest claude-hook [--pane <pane_uid|pane_id>] < payload.json")
-	fmt.Fprintln(w, "  projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop>] [--pane <pane_uid|pane_id>] < payload.json")
-	fmt.Fprintln(w, "  projmux internal agent-hook ingest bell --pane <pane_id>")
-	fmt.Fprintln(w, "  projmux diagnostics agent-hook [--tail N] [--json] [--path]")
-	fmt.Fprintln(w, "  projmux agent integrate <codex|claude|antigravity|tmux-bell> [--dry-run] [--remove]")
-	fmt.Fprintln(w, "  projmux agent topic set <text> [--pane <id>]")
-	fmt.Fprintln(w, "  projmux agent topic clear [--pane <id>]")
-	fmt.Fprintln(w, "  projmux agent topic get [--pane <id>]")
+	for _, line := range resolved.Usage {
+		fmt.Fprintln(w, "  "+line)
+	}
 }
 
 // printConfigEditUsage prints the synopsis of `config edit`, the public route

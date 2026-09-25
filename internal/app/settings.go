@@ -719,7 +719,7 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 	case strings.HasPrefix(value, settingsActionPrefixAI):
 		mode := strings.TrimPrefix(value, settingsActionPrefixAI)
 		if c.ai == nil {
-			return errors.New("ai settings are not configured")
+			return errors.New("the AI split mode is not configured")
 		}
 		return c.ai.setMode(mode)
 	case strings.HasPrefix(value, settingsActionPrefixDesktopNotifyMode):
