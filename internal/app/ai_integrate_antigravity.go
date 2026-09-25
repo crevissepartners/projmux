@@ -84,7 +84,7 @@ func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Wri
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
-		return errors.New("ai integrate antigravity does not accept positional arguments")
+		return usageError("ai integrate antigravity does not accept positional arguments")
 	}
 
 	hookPlan, err := c.planAntigravityHookIntegration(*remove)

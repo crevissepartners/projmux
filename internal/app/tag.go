@@ -61,7 +61,7 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 		rest := fs.Args()[1:]
 		if len(rest) > 0 && rest[0] == "project" {
 			printTagUsage(stderr)
-			return fmt.Errorf("unknown tag project subcommand: %s", rest[0])
+			return usageError(fmt.Sprintf("unknown tag project subcommand: %s", rest[0]))
 		}
 		return c.Run(rest, stdout, stderr)
 	case "list":
@@ -75,14 +75,14 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	default:
 		printTagUsage(stderr)
-		return fmt.Errorf("unknown tag subcommand: %s", fs.Arg(0))
+		return usageError(fmt.Sprintf("unknown tag subcommand: %s", fs.Arg(0)))
 	}
 }
 
 func (c *tagCommand) runList(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printTagUsage(stderr)
-		return fmt.Errorf("tag list does not accept positional arguments")
+		return usageError("tag list does not accept positional arguments")
 	}
 
 	store, err := c.requireStore()
@@ -132,7 +132,7 @@ func (c *tagCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 func (c *tagCommand) runClear(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printTagUsage(stderr)
-		return fmt.Errorf("tag clear does not accept positional arguments")
+		return usageError("tag clear does not accept positional arguments")
 	}
 
 	store, err := c.requireStore()

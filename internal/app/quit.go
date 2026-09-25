@@ -50,7 +50,7 @@ func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printQuitUsage(stderr)
-		return errors.New("quit does not accept positional arguments")
+		return usageError("quit does not accept positional arguments")
 	}
 
 	if !*yes && !*force {

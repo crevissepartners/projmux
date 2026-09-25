@@ -130,7 +130,7 @@ type tmuxBellOptionSnapshot struct {
 func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printAIUsage(stderr)
-		return errors.New("ai integrate requires <agent-kind>")
+		return usageError("ai integrate requires <agent-kind>")
 	}
 	target := strings.TrimSpace(args[0])
 	if target == "help" || target == "--help" || target == "-h" {
@@ -139,7 +139,7 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 	}
 	if aiprovider.IntegrationCommand(target) == "" {
 		printAIUsage(stderr)
-		return fmt.Errorf("unknown ai integrate agent-kind: %s", args[0])
+		return usageError(fmt.Sprintf("unknown ai integrate agent-kind: %s", args[0]))
 	}
 	switch target {
 	case "codex":
@@ -168,7 +168,7 @@ func (c *aiCommand) runIntegrateTmuxBell(args []string, stdout, stderr io.Writer
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
-		return errors.New("ai integrate tmux-bell does not accept positional arguments")
+		return usageError("ai integrate tmux-bell does not accept positional arguments")
 	}
 
 	plan, err := c.planTmuxBellIntegration(*remove)
@@ -244,7 +244,7 @@ func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) 
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
-		return errors.New("ai integrate claude does not accept positional arguments")
+		return usageError("ai integrate claude does not accept positional arguments")
 	}
 
 	plan, err := c.planClaudeHookIntegration(*remove)
@@ -281,7 +281,7 @@ func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) e
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
-		return errors.New("ai integrate codex does not accept positional arguments")
+		return usageError("ai integrate codex does not accept positional arguments")
 	}
 
 	plan, err := c.planCodexIntegration(*remove)
