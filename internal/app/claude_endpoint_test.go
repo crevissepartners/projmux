@@ -106,6 +106,8 @@ func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	var leaseDir string
+	requireClaudeLeaseDirRemoved(t, func() string { return leaseDir })
 	provider := exec.Command("sleep", "60")
 	if err := provider.Start(); err != nil {
 		t.Fatal(err)
@@ -149,6 +151,7 @@ func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 	if !ok {
 		t.Fatal("valid SessionStart refused")
 	}
+	leaseDir = claudeActivationLeaseDir(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation)
 	if _, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 		return intmetadata.DefaultMutator().BeginClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration.Authority)
 	}); err != nil {
@@ -357,6 +360,9 @@ func TestClaudeCoordinationSocketReplacementInvalidatesWithoutRemovingReplacemen
 	}
 	replacement.SetUnlinkOnClose(false)
 	defer replacement.Close()
+	// The helper must never unlink this replacement, so the test removes it and
+	// the lease directory it keeps under the fixed /tmp root.
+	t.Cleanup(func() { _ = os.Remove(path); _ = os.Remove(filepath.Dir(path)) })
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
