@@ -214,6 +214,9 @@ jobs:
       - name: Check module tidiness
         run: make mod-tidy-check
 
+  # tmux is installed so the real-tmux Go tests in `internal/app` run here, and
+  # PROJMUX_REAL_TMUX_STRICT=1 turns a missing tmux into a test failure instead
+  # of a silent skip that would count as a pass.
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -228,11 +231,22 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install tmux
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            echo "tmux before install: $(command -v tmux) $(tmux -V)"
+          else
+            echo "tmux before install: absent"
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+          tmux -V
+
       - name: Check pinned deadcode baseline
         run: make deadcode
 
       - name: Run unit tests
-        run: make test
+        run: PROJMUX_REAL_TMUX_STRICT=1 make test
 
       - name: Vet
         run: make vet
