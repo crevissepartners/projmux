@@ -84,7 +84,7 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 	if fs.NArg() != 0 {
 		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "notification reconcile")
-		return usageError("notify reconcile does not accept positional arguments")
+		return usageError("notification reconcile does not accept positional arguments")
 	}
 
 	store, err := c.requireStore()

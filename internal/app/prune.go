@@ -130,7 +130,7 @@ func (c *pruneCommand) runEphemeral(args []string, _ io.Writer, stderr io.Writer
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "runtime prune")
-		return usageError("prune ephemeral does not accept positional arguments")
+		return usageError("runtime prune does not accept positional arguments")
 	}
 	if c.inventory == nil {
 		return fmt.Errorf("resolve ephemeral sessions to prune: inventory resolver is not configured")

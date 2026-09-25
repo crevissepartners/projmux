@@ -281,7 +281,7 @@ func TestRuntimeStopUnknownFlagsAreUsageErrorsBeforeStoreAndTmux(t *testing.T) {
 	}{
 		{name: "flag", args: []string{"tagged", "--zz"}, want: "runtime stop: unknown flag --zz"},
 		{name: "session then flag", args: []string{"tagged", "s", "--zz"}, want: "runtime stop: unknown flag --zz"},
-		{name: "empty session", args: []string{"tagged", ""}, want: "kill tagged requires non-empty tagged sessions"},
+		{name: "empty session", args: []string{"tagged", ""}, want: "runtime stop requires non-empty tagged sessions"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

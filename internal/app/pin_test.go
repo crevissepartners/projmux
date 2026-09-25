@@ -372,10 +372,10 @@ func TestPinCommandRejectsInvalidUsage(t *testing.T) {
 	}{
 		{name: "missing subcommand", args: nil, want: "pin requires a subcommand"},
 		{name: "unknown subcommand", args: []string{"unknown"}, want: "unknown pin subcommand: unknown"},
-		{name: "list args", args: []string{"list", "extra"}, want: "pin list does not accept positional arguments"},
-		{name: "add missing dir", args: []string{"add"}, want: "pin add requires exactly 1 <dir|uid:uid> argument"},
-		{name: "clear args", args: []string{"clear", "extra"}, want: "pin clear does not accept positional arguments"},
-		{name: "migrate args", args: []string{"migrate", "extra"}, want: "pin migrate does not accept positional arguments"},
+		{name: "list args", args: []string{"list", "extra"}, want: "pin project list does not accept positional arguments"},
+		{name: "add missing dir", args: []string{"add"}, want: "pin project add requires exactly 1 <dir|uid:uid> argument"},
+		{name: "clear args", args: []string{"clear", "extra"}, want: "pin project clear does not accept positional arguments"},
+		{name: "migrate args", args: []string{"migrate", "extra"}, want: "pin project migrate does not accept positional arguments"},
 	}
 
 	for _, tt := range tests {

@@ -74,7 +74,7 @@ func newNotifyCommand(livePanes livePaneLister) *notifyCommand {
 func (c *notifyCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printNotifyQueueHelp(stderr)
-		return usageError("notify requires a subcommand")
+		return usageError("notification requires a subcommand")
 	}
 
 	switch args[0] {
@@ -90,7 +90,7 @@ func (c *notifyCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return printRouteHelp(stdout, "notification")
 	default:
 		printNotifyQueueHelp(stderr)
-		return usageError(fmt.Sprintf("unknown notify subcommand: %s", args[0]))
+		return usageError(fmt.Sprintf("unknown notification subcommand: %s", args[0]))
 	}
 }
 
@@ -131,7 +131,7 @@ func (c *notifyCommand) locale() i18n.Locale {
 // notifyQueueSummary heads the usage every notify refusal and help prints: the
 // queue/attention boundary a synopsis cannot state.
 const notifyQueueSummary = "Pending AI notify queue. Attention is live pane state; notify rows remain until explicit ack.\n" +
-	"Use `notify list --live` to explain queue/live drift and `notify reconcile` to repair AI reply entries.\n\n"
+	"Use `get notifications --live` to explain queue/live drift and `notification reconcile` to repair AI reply entries.\n\n"
 
 // notifyListSummary heads the `get notifications` usage its FlagSet prints.
 const notifyListSummary = "Pending AI notify queue entries only; rows remain until explicit ack.\n" +
@@ -169,17 +169,17 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 	if fs.NArg() != 0 {
 		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
-		return usageError("notify push does not accept positional arguments")
+		return usageError("create notification does not accept positional arguments")
 	}
 	if strings.TrimSpace(*text) == "" {
 		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
-		return usageError("notify push requires --text")
+		return usageError("create notification requires --text")
 	}
 	if strings.TrimSpace(*target) == "" {
 		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
-		return usageError("notify push requires --target")
+		return usageError("create notification requires --target")
 	}
 	if err := notify.ValidateSeverity(*severity); err != nil {
 		fmt.Fprint(stderr, notifyQueueSummary)
@@ -194,7 +194,7 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 	if *ttlSecs <= 0 {
 		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "create notification")
-		return usageError("notify push requires positive --ttl")
+		return usageError("create notification requires positive --ttl")
 	}
 
 	parsed, err := notify.ParseTarget(*target)
@@ -279,19 +279,19 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	if fs.NArg() != 0 {
 		fmt.Fprint(stderr, notifyQueueSummary)
 		printRouteUsage(stderr, "get notifications")
-		return usageError("notify list does not accept positional arguments")
+		return usageError("get notifications does not accept positional arguments")
 	}
 	if *limit < 0 {
-		return usageError("notify list --limit must be >= 0")
+		return usageError("get notifications --limit must be >= 0")
 	}
 	if *ui != "table" && *ui != "sidebar" {
-		return usageError("notify list --ui must be table or sidebar")
+		return usageError("get notifications --ui must be table or sidebar")
 	}
 	if *ui == "sidebar" && *asJSON {
-		return usageError("notify list --ui=sidebar cannot be combined with --json")
+		return usageError("get notifications --ui=sidebar cannot be combined with --json")
 	}
 	if *ui == "sidebar" && *live {
-		return usageError("notify list --ui=sidebar cannot be combined with --live")
+		return usageError("get notifications --ui=sidebar cannot be combined with --live")
 	}
 	for _, s := range severities {
 		if err := notify.ValidateSeverity(s); err != nil {
@@ -1568,7 +1568,7 @@ func (c *notifyCommand) runAck(route string, args []string, stdout, stderr io.Wr
 	if *all {
 		if fs.NArg() != 0 {
 			printAckUsage()
-			return usageError("notify ack --all does not accept positional arguments")
+			return usageError(route + " --all does not accept positional arguments")
 		}
 		removed, err := store.AckAll()
 		if err != nil {
@@ -1580,12 +1580,12 @@ func (c *notifyCommand) runAck(route string, args []string, stdout, stderr io.Wr
 
 	if fs.NArg() != 1 {
 		printAckUsage()
-		return usageError("notify ack requires exactly 1 <id> argument or --all")
+		return usageError(route + " requires exactly 1 <id> argument or --all")
 	}
 	id := strings.TrimSpace(fs.Arg(0))
 	if id == "" {
 		printAckUsage()
-		return usageError("notify ack requires a non-empty <id> argument")
+		return usageError(route + " requires a non-empty <id> argument")
 	}
 	if err := store.Ack(id); err != nil {
 		if errors.Is(err, notify.ErrNotFound) {

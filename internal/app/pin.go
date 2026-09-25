@@ -59,7 +59,7 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 	}
 	if fs.NArg() == 0 {
 		printPinHelp(stderr, route)
-		return usageError("pin requires a subcommand")
+		return usageError(route + " requires a subcommand")
 	}
 
 	switch fs.Arg(0) {
@@ -93,7 +93,7 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 		return printRouteHelp(stdout, "pin")
 	default:
 		printPinHelp(stderr, route)
-		return usageError(fmt.Sprintf("unknown pin subcommand: %s", fs.Arg(0)))
+		return usageError(fmt.Sprintf("unknown %s subcommand: %s", route, fs.Arg(0)))
 	}
 }
 
@@ -117,7 +117,7 @@ func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "pin project")
 		printPinNotes(stderr)
-		return usageError("pin list does not accept positional arguments")
+		return usageError("pin project list does not accept positional arguments")
 	}
 	filter, err := parsePinKindFilter(*kind)
 	if err != nil {
@@ -199,7 +199,7 @@ func reportPinResolution(stderr io.Writer, path string, resolution pins.Resoluti
 }
 
 func (c *pinCommand) runAdd(args []string, stdout, stderr io.Writer) error {
-	target, err := requireSinglePinArg("pin add", args, stderr)
+	target, err := requireSinglePinArg("pin project add", args, stderr)
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func (c *pinCommand) runAdd(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *pinCommand) runRemove(args []string, stdout, stderr io.Writer) error {
-	target, err := requireSinglePinArg("pin remove", args, stderr)
+	target, err := requireSinglePinArg("pin project remove", args, stderr)
 	if err != nil {
 		return err
 	}
@@ -241,7 +241,7 @@ func (c *pinCommand) runRemove(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
-	target, err := requireSinglePinArg("pin toggle", args, stderr)
+	target, err := requireSinglePinArg("pin project toggle", args, stderr)
 	if err != nil {
 		return err
 	}
@@ -272,7 +272,7 @@ func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printRouteUsage(stderr, "pin project")
 		printPinNotes(stderr)
-		return usageError("pin clear does not accept positional arguments")
+		return usageError("pin project clear does not accept positional arguments")
 	}
 
 	authority, err := c.requireAuthority()
@@ -307,7 +307,7 @@ func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "pin project")
 		printPinNotes(stderr)
-		return usageError("pin migrate does not accept positional arguments")
+		return usageError("pin project migrate does not accept positional arguments")
 	}
 
 	authority, err := c.requireAuthority()

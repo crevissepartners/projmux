@@ -410,7 +410,7 @@ func TestSessionsCommandRejectsInvalidUsage(t *testing.T) {
 		want string
 	}{
 		{name: "invalid ui", args: []string{"--ui=dialog"}, want: "invalid --ui value"},
-		{name: "positional args", args: []string{"extra"}, want: "sessions does not accept positional arguments"},
+		{name: "positional args", args: []string{"extra"}, want: "runtime sessions does not accept positional arguments"},
 	}
 
 	for _, tt := range tests {

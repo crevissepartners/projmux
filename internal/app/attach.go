@@ -145,11 +145,11 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 	}
 	if fs.NArg() != 0 {
 		printRouteUsage(stderr, "runtime attach")
-		return usageError("attach auto does not accept positional arguments")
+		return usageError("runtime attach does not accept positional arguments")
 	}
 	if *fallback != "home" && *fallback != "ephemeral" {
 		printRouteUsage(stderr, "runtime attach")
-		return fmt.Errorf("attach auto fallback must be one of: home, ephemeral")
+		return fmt.Errorf("runtime attach fallback must be one of: home, ephemeral")
 	}
 
 	homeDir, err := c.resolveHomeDir()

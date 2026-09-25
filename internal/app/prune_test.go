@@ -196,7 +196,7 @@ func TestPruneCommandRejectsInvalidUsage(t *testing.T) {
 		{
 			name:      "positional arguments",
 			args:      []string{"ephemeral", "extra"},
-			want:      "prune ephemeral does not accept positional arguments",
+			want:      "runtime prune does not accept positional arguments",
 			wantUsage: true,
 		},
 		{

@@ -80,7 +80,7 @@ func TestAgentUsagePositionalArgumentIsUsageError(t *testing.T) {
 		if !coremetadata.IsUsageError(err) {
 			t.Fatalf("Run(%q) error = %v (%T), want a usage error", args, err, err)
 		}
-		if got, want := err.Error(), "usage does not accept positional arguments"; got != want {
+		if got, want := err.Error(), "agent usage does not accept positional arguments"; got != want {
 			t.Fatalf("Run(%q) error text = %q, want %q", args, got, want)
 		}
 		if stderr.Len() == 0 {

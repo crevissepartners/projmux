@@ -48,7 +48,7 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() == 0 {
 		printRouteUsage(stderr, "runtime tag")
-		return errors.New("tag requires a subcommand")
+		return errors.New("runtime tag requires a subcommand")
 	}
 
 	switch fs.Arg(0) {
@@ -61,7 +61,7 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 		rest := fs.Args()[1:]
 		if len(rest) > 0 && rest[0] == "project" {
 			printRouteUsage(stderr, "runtime tag")
-			return usageError(fmt.Sprintf("unknown tag project subcommand: %s", rest[0]))
+			return usageError(fmt.Sprintf("unknown runtime tag subcommand: %s", rest[0]))
 		}
 		return c.Run(rest, stdout, stderr)
 	case "list":
@@ -74,14 +74,14 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return printRouteHelp(stdout, "runtime tag")
 	default:
 		printRouteUsage(stderr, "runtime tag")
-		return usageError(fmt.Sprintf("unknown tag subcommand: %s", fs.Arg(0)))
+		return usageError(fmt.Sprintf("unknown runtime tag subcommand: %s", fs.Arg(0)))
 	}
 }
 
 func (c *tagCommand) runList(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printRouteUsage(stderr, "runtime tag")
-		return usageError("tag list does not accept positional arguments")
+		return usageError("runtime tag list does not accept positional arguments")
 	}
 
 	store, err := c.requireStore()
@@ -104,7 +104,7 @@ func (c *tagCommand) runList(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *tagCommand) runToggle(args []string, stdout, stderr io.Writer) error {
-	name, err := requireSingleTagArg("tag toggle", args, stderr)
+	name, err := requireSingleTagArg("runtime tag toggle", args, stderr)
 	if err != nil {
 		return err
 	}
@@ -131,7 +131,7 @@ func (c *tagCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 func (c *tagCommand) runClear(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printRouteUsage(stderr, "runtime tag")
-		return usageError("tag clear does not accept positional arguments")
+		return usageError("runtime tag clear does not accept positional arguments")
 	}
 
 	store, err := c.requireStore()
