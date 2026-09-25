@@ -124,8 +124,8 @@ func aiRouteUsageTestApp(ai *aiCommand) *App {
 	return app
 }
 
-// runAIRouteUsageRow drives row and returns its error, stdout, and stderr.
-func runAIRouteUsageRow(t *testing.T, row aiRouteUsageRow) (error, string, string) {
+// runAIRouteUsageRow drives row and returns its stdout, stderr, and error.
+func runAIRouteUsageRow(t *testing.T, row aiRouteUsageRow) (string, string, error) {
 	t.Helper()
 	ai := testAICommand(t.TempDir())
 	ai.stdin = strings.NewReader("")
@@ -136,7 +136,7 @@ func runAIRouteUsageRow(t *testing.T, row aiRouteUsageRow) (error, string, strin
 	} else {
 		err = ai.Run(row.ai, &stdout, &stderr)
 	}
-	return err, stdout.String(), stderr.String()
+	return stdout.String(), stderr.String(), err
 }
 
 func (row aiRouteUsageRow) name() string {
@@ -201,7 +201,7 @@ func TestAIHandlersPrintOnlyTheirRouteUsage(t *testing.T) {
 	isolateRuntimeWindowFlagParseEnv(t)
 	for _, row := range aiRouteUsageRows {
 		t.Run(row.name(), func(t *testing.T) {
-			err, stdout, stderr := runAIRouteUsageRow(t, row)
+			stdout, stderr, err := runAIRouteUsageRow(t, row)
 			if got := row.exit.of(err); got != row.exit {
 				t.Fatalf("%s: exit class = %d (err %v), want %d", row.route, got, err, row.exit)
 			}
@@ -229,7 +229,7 @@ func TestAIHandlerRejectionsWithoutARoutePrintNoUsage(t *testing.T) {
 	isolateRuntimeWindowFlagParseEnv(t)
 	for _, row := range aiRouteUsageReasonOnlyRows {
 		t.Run(row.name(), func(t *testing.T) {
-			err, stdout, stderr := runAIRouteUsageRow(t, row)
+			stdout, stderr, err := runAIRouteUsageRow(t, row)
 			if got := row.exit.of(err); got != row.exit {
 				t.Fatalf("%s: exit class = %d (err %v), want %d", row.name(), got, err, row.exit)
 			}
