@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import concurrent.futures
+import contextlib
 import json
 import os
 import selectors
@@ -16,6 +17,21 @@ import tempfile
 import socket
 import unittest
 from unittest import mock
+
+
+HARNESS_DEADLINE = 30  # seconds: long enough that load cannot trip it, so expiry means a hang
+EXPIRED = f"HARNESS_DEADLINE={HARNESS_DEADLINE}s expired"
+
+
+@contextlib.contextmanager
+def harness_deadline(what):
+    """Report a harness wait (or the product deadline it was handed) that ran out as a hang."""
+    try: yield
+    except (subprocess.TimeoutExpired, concurrent.futures.TimeoutError) as error:
+        raise AssertionError(f"{what}: {EXPIRED}") from error
+    except RuntimeError as error:
+        if "deadline" not in str(error): raise
+        raise AssertionError(f"{what}: {EXPIRED}: {error}") from error
 
 
 @unittest.skipUnless(hasattr(os, "pidfd_open"), "live canary cleanup requires Linux pidfd")
@@ -44,10 +60,11 @@ class DialogueCleanupTest(unittest.TestCase):
 
     @staticmethod
     def release(child):
-        if child.poll() is None:
-            child.communicate("release\n", timeout=5)
-        else:
-            child.communicate(timeout=5)
+        with harness_deadline("writer release"):
+            if child.poll() is None:
+                child.communicate("release\n", timeout=HARNESS_DEADLINE)
+            else:
+                child.communicate(timeout=HARNESS_DEADLINE)
 
     def test_run_failure_cleanup_waits_and_preserves_external_audit_after_removal(self):
         child = self.writer()
@@ -79,7 +96,7 @@ class DialogueCleanupTest(unittest.TestCase):
         try:
             with selectors.DefaultSelector() as poller:
                 poller.register(read_fd, selectors.EVENT_READ)
-                self.assertTrue(poller.select(5), "cleanup did not reach the process-exit barrier")
+                self.assertTrue(poller.select(HARNESS_DEADLINE), f"cleanup did not reach the process-exit barrier: {EXPIRED}")
             self.assertEqual(os.read(read_fd, 1), b"w")
             self.assertTrue(self.root.exists())
             self.assertIsNone(cleanup.poll())
@@ -87,7 +104,8 @@ class DialogueCleanupTest(unittest.TestCase):
         finally:
             os.close(read_fd)
             self.release(child)
-        stdout, stderr = cleanup.communicate(timeout=5)
+        with harness_deadline("cleanup exit"):
+            stdout, stderr = cleanup.communicate(timeout=HARNESS_DEADLINE)
         self.assertEqual(cleanup.returncode, 1, (stdout, stderr))  # Preserve the original canary failure.
         self.assertFalse(self.root.exists())
         self.assertEqual(child.returncode, 0)
@@ -107,14 +125,14 @@ class DialogueCleanupTest(unittest.TestCase):
         before=root.stat(); waiting=threading.Event()
         setup=runpy.run_path(str(pathlib.Path(__file__).resolve().parents[1]/'scripts/agent-dialogue-canary-setup.py'))
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future=executor.submit(setup['finish_setup_failure'],root,sys.executable,'pmx-partial-fixture-'+str(os.getpid()),(before.st_dev,before.st_ino),on_wait=waiting.set,timeout=5)
+            future=executor.submit(setup['finish_setup_failure'],root,sys.executable,'pmx-partial-fixture-'+str(os.getpid()),(before.st_dev,before.st_ino),on_wait=waiting.set,timeout=HARNESS_DEADLINE)
             try:
-                self.assertTrue(waiting.wait(5))
+                self.assertTrue(waiting.wait(HARNESS_DEADLINE), f"cleanup did not reach the writer wait: {EXPIRED}")
                 self.assertTrue(root.exists())
                 self.assertFalse(future.done())
                 self.assertIsNone(child.poll())
             finally: self.release(child)
-            future.result(timeout=5)
+            with harness_deadline("setup failure cleanup"): future.result(timeout=HARNESS_DEADLINE)
         self.assertFalse(root.exists())
         self.assertEqual(child.returncode,0)
 
@@ -146,16 +164,16 @@ class DialogueCleanupTest(unittest.TestCase):
         def teardown(_):
             parent.stdin.write("exit\n"); parent.stdin.flush()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self.code["close_owned_writers"], self.root, teardown, (), 5, waiting.set)
+            future = executor.submit(self.code["close_owned_writers"], self.root, teardown, (), HARNESS_DEADLINE, waiting.set)
             try:
-                self.assertTrue(waiting.wait(5))
-                parent.wait(timeout=5)
+                self.assertTrue(waiting.wait(HARNESS_DEADLINE), f"cleanup did not reach the writer wait: {EXPIRED}")
+                with harness_deadline("writer parent exit"): parent.wait(timeout=HARNESS_DEADLINE)
                 self.assertFalse(future.done())
                 self.assertTrue(self.root.exists())
             finally:
                 os.write(write_fd, b"x"); os.close(write_fd)
-            proof = future.result(timeout=5)
-        parent.communicate(timeout=5)
+            with harness_deadline("owned writer close"): proof = future.result(timeout=HARNESS_DEADLINE)
+        with harness_deadline("writer parent exit"): parent.communicate(timeout=HARNESS_DEADLINE)
         self.assertGreaterEqual(len(proof["writers"]), 2)
         self.assertTrue((self.root / "state/receipt").exists())
 
@@ -182,7 +200,7 @@ class DialogueCleanupTest(unittest.TestCase):
         credentials.write_text("fixture only")
         finish = "finish_cleanup() {" + self.source.split("finish_cleanup() {", 1)[1].split("\ntrap finish_cleanup EXIT", 1)[0]
         shell = "set -euo pipefail\nroot=" + shlex.quote(str(root)) + "\naudit_event() { return 1; }\ncleanup_owned() { return 1; }\n" + finish + "\ntrap finish_cleanup EXIT\nfalse\n"
-        result = subprocess.run(["bash", "-c", shell], text=True, capture_output=True, timeout=5)
+        with harness_deadline("fixture shell"): result = subprocess.run(["bash", "-c", shell], text=True, capture_output=True, timeout=HARNESS_DEADLINE)
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(root.exists())
         self.assertFalse(credentials.exists())
@@ -234,14 +252,15 @@ class OfflineDialogueCleanupTest(unittest.TestCase):
         try:
             with selectors.DefaultSelector() as poller:
                 poller.register(read_fd, selectors.EVENT_READ)
-                self.assertTrue(poller.select(5), "delete intent did not follow writer capture")
+                self.assertTrue(poller.select(HARNESS_DEADLINE), f"delete intent did not follow writer capture: {EXPIRED}")
             self.assertEqual(os.read(read_fd, 1), b"d")
             self.assertTrue(self.root.exists())
             self.assertIsNone(child.poll())
             self.assertIsNone(cleanup.poll())
         finally:
             DialogueCleanupTest.release(child)
-        stdout, stderr = cleanup.communicate(timeout=5)
+        with harness_deadline("cleanup exit"):
+            stdout, stderr = cleanup.communicate(timeout=HARNESS_DEADLINE)
         self.assertEqual(cleanup.returncode, 7, (stdout, stderr))
         self.assertFalse(self.root.exists())
 
@@ -250,7 +269,7 @@ class OfflineDialogueCleanupTest(unittest.TestCase):
         shell = ("set -euo pipefail\ndialogue_cleanup() { return 1; }\n"
                  "smoke_cleanup_env() { rm -rf -- " + shlex.quote(str(self.root)) + "; }\n" + finish +
                  "\ntrap dialogue_finish_cleanup EXIT\nexit 7\n")
-        result = subprocess.run(["bash", "-c", shell], capture_output=True, text=True, timeout=5)
+        with harness_deadline("fixture shell"): result = subprocess.run(["bash", "-c", shell], capture_output=True, text=True, timeout=HARNESS_DEADLINE)
         self.assertEqual(result.returncode, 1)
         self.assertTrue(self.root.exists())
         self.assertIn("root retained", result.stderr)
@@ -264,7 +283,7 @@ class OfflineDialogueCleanupTest(unittest.TestCase):
                  "\ndialogue_cleanup() { return 0; }\nrm() { echo attempt >> " + shlex.quote(str(attempts)) + "; return 1; }\n"
                  'smoke_cleanup_env() { rm -rf -- "$dialogue_root"; }\n' + finish + "\n" + removal +
                  "\ntrap dialogue_finish_cleanup EXIT\nif ! dialogue_remove_root; then exit 9; fi\n")
-        result = subprocess.run(["bash", "-c", shell], capture_output=True, text=True, timeout=5)
+        with harness_deadline("fixture shell"): result = subprocess.run(["bash", "-c", shell], capture_output=True, text=True, timeout=HARNESS_DEADLINE)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(attempts.read_text(), "attempt\n")
         self.assertTrue(self.root.exists())
@@ -359,7 +378,7 @@ class DialogueEvidenceTest(unittest.TestCase):
             parent = pathlib.Path(temporary); root = parent/'owned'; credential=parent/'auth'; credential.write_text('fixture authentication only'); credential.chmod(0o600)
             binary=parent/'candidate'; binary.write_text('#!/bin/sh\nexit 97\n'); binary.chmod(0o755)
             env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(root),PMX_DIALOGUE_CANARY_RECEIPT=str(parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(binary),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(binary),PMX_DIALOGUE_REAL_CODEX_BIN=str(binary),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CODEX_AUTH_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
-            result=subprocess.run(['bash',str(self.repo/'scripts/agent-dialogue-live-canary.sh'),'prepare'],env=env,capture_output=True,text=True,timeout=5)
+            with harness_deadline("fixture shell"): result=subprocess.run(['bash',str(self.repo/'scripts/agent-dialogue-live-canary.sh'),'prepare'],env=env,capture_output=True,text=True,timeout=HARNESS_DEADLINE)
             self.assertEqual(result.returncode,0,result.stderr)
             plan=json.loads((root/'cleanup-plan.json').read_text())
             self.assertEqual(plan['candidateSHA256'],hashlib.sha256(binary.read_bytes()).hexdigest())
@@ -505,7 +524,7 @@ class DialogueAuditTest(unittest.TestCase):
         env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(self.root),PMX_DIALOGUE_CANARY_RECEIPT=str(self.parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(candidate),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(candidate),PMX_DIALOGUE_REAL_CODEX_BIN=str(candidate),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CODEX_AUTH_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
         self.audit.path.unlink()
         env['PMX_DIALOGUE_LIVE_CANARY']='1'
-        result=subprocess.run([sys.executable,str(self.repo/'scripts/agent-dialogue-canary-setup.py')],env=env,capture_output=True,text=True,timeout=5)
+        with harness_deadline("fixture shell"): result=subprocess.run([sys.executable,str(self.repo/'scripts/agent-dialogue-canary-setup.py')],env=env,capture_output=True,text=True,timeout=HARNESS_DEADLINE)
         self.assertNotEqual(result.returncode,0); self.assertFalse(self.root.exists())
         self.assertIn('without group/world write',result.stderr)
         self.assertEqual(credential.read_text(),'fixture authentication only')
@@ -525,7 +544,7 @@ class DialogueAuditTest(unittest.TestCase):
                 audit_command='return 1' if unavailable=='audit' else 'python3 '+shlex.quote(str(self.repo/'scripts/agent-dialogue-canary-setup.py'))+' audit "$root" "$@"'
                 shell='set -euo pipefail\nroot='+shlex.quote(str(self.root))+'\nroot_identity='+str(identity.st_dev)+':'+str(identity.st_ino)+'\nreceipt_path='+shlex.quote(str(receipt))+'\ncanary_receipt_json="{}"\n'
                 shell+='cleanup_owned() { rm -f -- "$root/home/.claude/.credentials.json"; }\naudit_event() { '+audit_command+'; }\n'+finish+'\ntrap finish_cleanup EXIT\ntrue\n'
-                result=subprocess.run(['bash','-c',shell],capture_output=True,text=True,timeout=5)
+                with harness_deadline("fixture shell"): result=subprocess.run(['bash','-c',shell],capture_output=True,text=True,timeout=HARNESS_DEADLINE)
                 self.assertNotEqual(result.returncode,0)
                 self.assertTrue(self.root.exists()); self.assertFalse(receipt.exists()); self.assertFalse(credential.exists())
 
