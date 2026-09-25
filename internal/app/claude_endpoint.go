@@ -130,14 +130,21 @@ func runClaudeEndpointRegistration(args []string) error {
 	if !ok {
 		return nil
 	}
-	_, _, err = store.UpdateConvergent(func(current *coremetadata.Registry) error {
+	registerClaudeEndpoint(bootstrap, startClaudeEndpointHelper)
+	return nil
+}
+
+// registerClaudeEndpoint is the hook's part of one registration once its
+// bootstrap is built: start is startClaudeEndpointHelper outside tests.
+func registerClaudeEndpoint(bootstrap claudeEndpointBootstrap, start func(claudeEndpointBootstrap) error) {
+	store := intmetadata.NewStore(bootstrap.RegistryPath)
+	_, _, err := store.UpdateConvergent(func(current *coremetadata.Registry) error {
 		return intmetadata.DefaultMutator().BeginClaudeRegistration(current, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration.Authority)
 	})
 	if err != nil {
-		return nil
+		return
 	}
-	_ = startClaudeEndpointHelper(bootstrap)
-	return nil
+	_ = start(bootstrap)
 }
 
 func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string, data []byte, env func(string) string, parentPID int) (claudeEndpointBootstrap, bool) {

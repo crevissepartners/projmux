@@ -53,6 +53,12 @@ func (m Mutator) BeginClaudeRegistration(reg *Registry, paneUID, agentUID, gener
 	return nil
 }
 
+// BeginClaudeRegistrationAfter is the helper's admission claim for the
+// SessionStart that observed priorRegistrationGeneration on the pane.
+func (m Mutator) BeginClaudeRegistrationAfter(reg *Registry, paneUID, agentUID, generation, priorRegistrationGeneration string, authority ClaudeAuthorityRef) error {
+	return m.BeginClaudeRegistration(reg, paneUID, agentUID, generation, authority)
+}
+
 func (m Mutator) RecordClaudeRegistration(reg *Registry, paneUID, agentUID, generation string, registration ClaudeRegistration) error {
 	const op = "record Claude registration"
 	pane, ok := reg.Pane(paneUID)
