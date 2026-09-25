@@ -65,3 +65,35 @@ func TestPickerOptionsPreservesRecorderStateSlice(t *testing.T) {
 		t.Fatalf("PickerOptions recorder = %p, want %p", options.Recorder, recorder)
 	}
 }
+
+func TestPickerCommandFromBindingKeepsParensInsideCommand(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		action string
+		want   string
+	}{
+		{name: "plain no tail", action: "execute-silent(cycle {2})", want: "cycle {2}"},
+		{name: "plain refresh tail", action: "execute-silent(cycle {2})+refresh-preview", want: "cycle {2}"},
+		{name: "outer whitespace trimmed", action: "  execute-silent( cycle {2} )+refresh-preview  ", want: "cycle {2}"},
+		{name: "paren in path no tail", action: "execute-silent('/tmp/a)b/projmux' cycle {2})", want: "'/tmp/a)b/projmux' cycle {2}"},
+		{name: "paren in path refresh tail", action: "execute-silent('/tmp/a)b/projmux' cycle {2} 'next')+refresh-preview", want: "'/tmp/a)b/projmux' cycle {2} 'next'"},
+		{name: "paren in path multiple tail actions", action: "execute-silent('/tmp/(x)/projmux' cycle {2})+refresh-preview+other-action", want: "'/tmp/(x)/projmux' cycle {2}"},
+		{name: "space and single quote in path", action: `execute-silent('/tmp/it'\''s a)dir/projmux' cycle {2})+refresh-preview`, want: `'/tmp/it'\''s a)dir/projmux' cycle {2}`},
+		{name: "no prefix", action: "cycle {2})+refresh-preview", want: ""},
+		{name: "other action", action: "execute(cycle {2})+refresh-preview", want: ""},
+		{name: "no closing paren", action: "execute-silent(cycle {2}", want: ""},
+		{name: "garbage after closing paren", action: "execute-silent(cycle {2})x", want: ""},
+		{name: "garbage after tail", action: "execute-silent(cycle {2})+refresh-preview junk", want: ""},
+		{name: "empty tail action", action: "execute-silent(cycle {2})+", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := PickerCommandFromBinding(tt.action); got != tt.want {
+				t.Fatalf("PickerCommandFromBinding(%q) = %q, want %q", tt.action, got, tt.want)
+			}
+		})
+	}
+}

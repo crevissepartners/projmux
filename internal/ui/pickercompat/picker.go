@@ -1,6 +1,7 @@
 package pickercompat
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -135,6 +136,14 @@ func pickerInitialIndex(options Options) (int, bool) {
 	return 0, false
 }
 
+// bindingActionTail matches the chained actions allowed after the closing
+// paren of execute-silent(...), such as "+refresh-preview".
+var bindingActionTail = regexp.MustCompile(`^(\+[A-Za-z][A-Za-z0-9-]*)*$`)
+
+// PickerCommandFromBinding returns <cmd> from "execute-silent(<cmd>)[+<action>...]".
+// The command is shell-quoted and may itself contain ")" (for example a binary
+// path like /tmp/a)b/projmux), while the action tail never does, so the closing
+// paren is the last ")" in the binding rather than the first.
 func PickerCommandFromBinding(action string) string {
 	action = strings.TrimSpace(action)
 	const prefix = "execute-silent("
@@ -142,9 +151,9 @@ func PickerCommandFromBinding(action string) string {
 		return ""
 	}
 	rest := strings.TrimPrefix(action, prefix)
-	before, _, ok := strings.Cut(rest, ")")
-	if !ok {
+	end := strings.LastIndex(rest, ")")
+	if end < 0 || !bindingActionTail.MatchString(rest[end+1:]) {
 		return ""
 	}
-	return strings.TrimSpace(before)
+	return strings.TrimSpace(rest[:end])
 }
