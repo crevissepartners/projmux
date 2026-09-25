@@ -34,6 +34,19 @@ type nativeTransport struct {
 	enabled bool
 	ensure  func(context.Context) (codexappserver.Health, error)
 	open    func(context.Context) (nativeClient, error)
+	// settle, when set, replaces the real nativeEventSettle timer so tests
+	// can decide when the queued-event window closes. Production leaves it nil.
+	settle func() (<-chan time.Time, func())
+}
+
+// settleWindow returns the channel that closes the queued-event window and a
+// func that releases it.
+func (t nativeTransport) settleWindow() (<-chan time.Time, func()) {
+	if t.settle != nil {
+		return t.settle()
+	}
+	timer := time.NewTimer(nativeEventSettle)
+	return timer.C, func() { timer.Stop() }
 }
 
 func defaultNativeTransport() nativeTransport {
@@ -98,7 +111,9 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 		return a.collectFallback(ctx, nativeReasonFromError(err))
 	}
 
-	response, eventWarnings := mergeQueuedRateLimitEvents(response, client.Notifications())
+	settle, stopSettle := a.native.settleWindow()
+	response, eventWarnings := mergeQueuedRateLimitEvents(response, client.Notifications(), settle)
+	stopSettle()
 	snaps, rowWarnings, hardFailure := normalizeNativeResponse(response, a.now().UTC())
 	if hardFailure {
 		return a.collectFallback(ctx, usage.ReasonAppServerProtocol)
@@ -373,16 +388,14 @@ func cloneInt64(value *int64) *int64 {
 	return &copy
 }
 
-// mergeQueuedRateLimitEvents drains only notifications already delivered for
-// this read. It never waits beyond the request and never invokes rollout. Each
-// valid sparse event is merged into the backward-compatible native snapshot
-// and, when present, its matching authoritative map bucket.
-func mergeQueuedRateLimitEvents(response json.RawMessage, events <-chan codexappserver.Notification) (json.RawMessage, []string) {
+// mergeQueuedRateLimitEvents drains only notifications delivered for this
+// read before settle fires. It never waits beyond settle and never invokes
+// rollout. Each valid sparse event is merged into the backward-compatible
+// native snapshot and, when present, its matching authoritative map bucket.
+func mergeQueuedRateLimitEvents(response json.RawMessage, events <-chan codexappserver.Notification, settle <-chan time.Time) (json.RawMessage, []string) {
 	merged := append(json.RawMessage(nil), response...)
 	var warnings []string
 	index := 0
-	settle := time.NewTimer(nativeEventSettle)
-	defer settle.Stop()
 	for events != nil {
 		select {
 		case event, ok := <-events:
@@ -398,7 +411,7 @@ func mergeQueuedRateLimitEvents(response json.RawMessage, events <-chan codexapp
 			if reason != "" {
 				warnings = append(warnings, fmt.Sprintf("event %d: %s", index, reason))
 			}
-		case <-settle.C:
+		case <-settle:
 			return merged, warnings
 		}
 	}

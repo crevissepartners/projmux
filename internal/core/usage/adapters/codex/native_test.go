@@ -280,19 +280,20 @@ func TestNativeEventUpdateFlowsThroughManagerStoreAndThrottle(t *testing.T) {
 			"rateLimits": {"limitId":"codex","limitName":"General","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}},
 			"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":"General","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}}}
 		}`),
-		events: make(chan codexappserver.Notification, 1),
+		// Unbuffered: the send below completes only once the merge loop has
+		// taken the event, so settle can close strictly after it.
+		events: make(chan codexappserver.Notification),
 	}
-	go func() {
-		time.Sleep(2 * time.Millisecond)
-		client.events <- codexappserver.Notification{
-			Method: methodRateLimitsUpdated,
-			Params: json.RawMessage(`{"rateLimits":{"limitName":null,"primary":{"usedPercent":73,"windowDurationMins":300,"resetsAt":1787380999}}}`),
-		}
-	}()
+	settled := make(chan time.Time)
 	adapter := NewWithRoot(filepath.Join(t.TempDir(), "unused-rollout"))
 	adapter.now = func() time.Time { return now }
 	openCount := 0
+	settleCount := 0
 	adapter.native = availableNative(client)
+	adapter.native.settle = func() (<-chan time.Time, func()) {
+		settleCount++
+		return settled, func() {}
+	}
 	originalOpen := adapter.native.open
 	adapter.native.open = func(ctx context.Context) (nativeClient, error) {
 		openCount++
@@ -304,9 +305,19 @@ func TestNativeEventUpdateFlowsThroughManagerStoreAndThrottle(t *testing.T) {
 	}
 	store := usage.NewStore(t.TempDir())
 	manager := usage.NewManager(registry, store, func() time.Time { return now })
+	go func() {
+		client.events <- codexappserver.Notification{
+			Method: methodRateLimitsUpdated,
+			Params: json.RawMessage(`{"rateLimits":{"limitName":null,"primary":{"usedPercent":73,"windowDurationMins":300,"resetsAt":1787380999}}}`),
+		}
+		close(settled)
+	}()
 	collected, err := manager.MaybeCollect(context.Background(), 30*time.Second)
 	if err != nil || !collected {
 		t.Fatalf("MaybeCollect = %v, %v", collected, err)
+	}
+	if settleCount != 1 {
+		t.Fatalf("settle windows = %d, want 1", settleCount)
 	}
 	state, err := store.LoadState()
 	if err != nil || len(state.Snapshots) != 1 {
@@ -327,6 +338,40 @@ func TestNativeEventUpdateFlowsThroughManagerStoreAndThrottle(t *testing.T) {
 	}
 	if raw, ok := client.params[0].(json.RawMessage); !ok || string(raw) != "null" {
 		t.Fatalf("rate-limit params = %#v, want explicit null", client.params[0])
+	}
+}
+
+func TestNativeEventAfterSettleIsNotMerged(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	client := &fakeNativeClient{
+		response: json.RawMessage(`{
+			"rateLimits": {"limitId":"codex","limitName":"General","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}},
+			"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":"General","primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1787380200}}}
+		}`),
+		events: make(chan codexappserver.Notification, 1),
+	}
+	// The window is already closed and no event is queued, so settle is the
+	// only ready case in the merge loop.
+	settled := make(chan time.Time)
+	close(settled)
+	adapter := NewWithRoot(filepath.Join(t.TempDir(), "unused-rollout"))
+	adapter.now = func() time.Time { return now }
+	adapter.native = availableNative(client)
+	adapter.native.settle = func() (<-chan time.Time, func()) { return settled, func() {} }
+	snaps, err := adapter.Collect(context.Background())
+	if err != nil || len(snaps) != 1 {
+		t.Fatalf("Collect = %#v, %v", snaps, err)
+	}
+	if snaps[0].Pct != 11 || snaps[0].Source != usage.SourceAppServer {
+		t.Fatalf("snapshot after settle = %#v, want the read's 11%% app-server row", snaps[0])
+	}
+	client.events <- codexappserver.Notification{
+		Method: methodRateLimitsUpdated,
+		Params: json.RawMessage(`{"rateLimits":{"limitName":null,"primary":{"usedPercent":73,"windowDurationMins":300,"resetsAt":1787380999}}}`),
+	}
+	if len(client.events) != 1 {
+		t.Fatalf("late event queue = %d, want the event left undrained", len(client.events))
 	}
 }
 
