@@ -39,7 +39,7 @@ func (c *profileCommand) store() (profile.Store, error) {
 // Run dispatches `projmux profile <verb>`.
 func (c *profileCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printProfileUsage(stderr)
+		printRouteUsage(stderr, "profile")
 		return usageError("profile requires a subcommand")
 	}
 	rest := args[1:]
@@ -53,10 +53,10 @@ func (c *profileCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "delete":
 		return c.runDelete(rest, stdout, stderr)
 	case "help", "--help", "-h":
-		printProfileUsage(stdout)
+		printRouteUsage(stdout, "profile")
 		return nil
 	default:
-		printProfileUsage(stderr)
+		printRouteUsage(stderr, "profile")
 		return usageError("unknown profile subcommand: " + args[0])
 	}
 }
@@ -83,7 +83,7 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	if len(operands) != 0 {
-		printProfileUsage(stderr)
+		printRouteUsage(stderr, "profile list")
 		return usageError("profile list does not accept positional arguments")
 	}
 	store, err := c.store()
@@ -122,7 +122,7 @@ func (c *profileCommand) runShow(args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	if len(operands) != 1 {
-		printProfileUsage(stderr)
+		printRouteUsage(stderr, "profile show")
 		return usageError("profile show requires exactly one <name>")
 	}
 	store, err := c.store()
@@ -154,7 +154,7 @@ func (c *profileCommand) runSet(args []string, stdout, stderr io.Writer) error {
 		fromStdin = true
 	case len(operands) == 1:
 	default:
-		printProfileUsage(stderr)
+		printRouteUsage(stderr, "profile set")
 		return usageError("profile set requires exactly one <name> and at most one of --file <path> or -")
 	}
 	name := operands[0]
@@ -206,7 +206,7 @@ func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	if len(operands) != 1 {
-		printProfileUsage(stderr)
+		printRouteUsage(stderr, "profile delete")
 		return usageError("profile delete requires exactly one <name>")
 	}
 	name := operands[0]
@@ -225,12 +225,4 @@ func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 	}
 	_, err = fmt.Fprintf(stdout, "deleted profile %s\n", name)
 	return err
-}
-
-func printProfileUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux profile list")
-	fmt.Fprintln(w, "  projmux profile show <name>")
-	fmt.Fprintln(w, "  projmux profile set <name> [--file <path> | -]")
-	fmt.Fprintln(w, "  projmux profile delete <name> --yes")
 }

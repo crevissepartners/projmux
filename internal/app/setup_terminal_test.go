@@ -82,7 +82,7 @@ func TestSetupTerminalHelpAndFlagsOmitDryRun(t *testing.T) {
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("setupCommand.Run(terminal --help) error = %v, want flag.ErrHelp", err)
 	}
-	for _, want := range []string{"Usage of projmux setup terminal:", "-apply", "-config", "-allow-symlink"} {
+	for _, want := range []string{"Usage of setup terminal:", "-apply", "-config", "-allow-symlink"} {
 		if !strings.Contains(help.String(), want) {
 			t.Fatalf("canonical help missing %q:\n%s", want, help.String())
 		}

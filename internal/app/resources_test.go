@@ -481,12 +481,12 @@ func TestAppRunResourcesCLIAndDefaultCadence(t *testing.T) {
 		t.Fatalf("resources help = %q stderr = %q", stdout.String(), stderr.String())
 	}
 
-	// The command still owns its own usage text for direct invocation.
+	// Direct invocation prints the route's catalog usage block.
 	var direct bytes.Buffer
 	if err := newResourceCommand().Run([]string{"--help"}, &direct, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(direct.String(), "Usage: projmux resources") {
+	if direct.String() != "Usage:\n  projmux resources\n" {
 		t.Fatalf("resources command help = %q", direct.String())
 	}
 
@@ -518,10 +518,9 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 		detail      string
 		caveat      string
 		unavailable string
-		help        string
 	}{
-		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "› ", header: "Host CPU", footer: "Enter: drill down", unassigned: "No project match", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
-		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "› ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "프로젝트 일치 없음", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
+		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "› ", header: "Host CPU", footer: "Enter: drill down", unassigned: "No project match", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin"},
+		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "› ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "프로젝트 일치 없음", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -534,11 +533,6 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 			options := cmd.pickerOptions(view, &resourceLifecycle{trigger: make(chan struct{})})
 			if options.Title != tt.title || options.Prompt != tt.prompt || options.Locale != tt.locale {
 				t.Fatalf("picker chrome = title %q prompt %q locale %q", options.Title, options.Prompt, options.Locale)
-			}
-			var help bytes.Buffer
-			printResourcesUsage(&help, view.text)
-			if !strings.Contains(help.String(), tt.help) {
-				t.Fatalf("localized help %q missing %q", help.String(), tt.help)
 			}
 			items, header, footer := renderResourceView(view)
 			for _, want := range []string{tt.header, "CPU", "RSS", "1s", "ready"} {

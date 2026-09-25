@@ -118,7 +118,7 @@ func (l attentionLookup) PaneFormat(paneID, format string) string {
 
 func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printAttentionUsage(stderr)
+		printRouteUsage(stderr, "attention")
 		return usageError("attention requires a subcommand")
 	}
 
@@ -134,10 +134,10 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "window":
 		return c.runWindow(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printAttentionUsage(stdout)
+		printRouteUsage(stdout, "attention")
 		return nil
 	default:
-		printAttentionUsage(stderr)
+		printRouteUsage(stderr, "attention")
 		return usageError(fmt.Sprintf("unknown attention subcommand: %s", args[0]))
 	}
 }
@@ -145,7 +145,11 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("attention list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { printAttentionListUsage(stderr) }
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Live tmux pane attention state; does not read or mutate the notify queue.")
+		fmt.Fprintln(stderr)
+		printRouteUsage(stderr, "attention list")
+	}
 	asJSON := fs.Bool("json", false, "emit json instead of tabular output")
 	all := fs.Bool("all", false, "include panes without attention state")
 
@@ -156,7 +160,7 @@ func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) erro
 		return flagParseError(fmt.Errorf("parse attention list flags: %w", err))
 	}
 	if fs.NArg() != 0 {
-		printAttentionUsage(stderr)
+		printRouteUsage(stderr, "attention list")
 		return usageError("attention list does not accept positional arguments")
 	}
 
@@ -180,7 +184,7 @@ func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) erro
 }
 
 func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
-	paneID, err := c.resolveOptionalAttentionTarget(args, "attention toggle", stderr)
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention toggle", func() { printRouteUsage(stderr, "attention toggle") })
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -202,7 +206,7 @@ func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
-	paneID, err := c.resolveOptionalAttentionTarget(args, "attention clear", stderr)
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention clear", func() { printRouteUsage(stderr, "attention clear") })
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -233,7 +237,7 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
-	paneID, err := c.resolveOptionalAttentionTarget(args, "attention arm", stderr)
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention arm", func() { printRouteUsage(stderr, "attention arm") })
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -283,11 +287,11 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 func parseAttentionWindowArgs(args []string, stderr io.Writer) (windowID, style string, err error) {
 	args, err = splitOperands("attention window", args)
 	if err != nil {
-		printAttentionUsage(stderr)
+		printRouteUsage(stderr, "attention window")
 		return "", "", err
 	}
 	if len(args) > 2 {
-		printAttentionUsage(stderr)
+		printRouteUsage(stderr, "attention window")
 		return "", "", usageError("attention window accepts at most 2 arguments")
 	}
 	if len(args) > 0 {
@@ -304,14 +308,14 @@ func parseAttentionWindowArgs(args []string, stderr io.Writer) (windowID, style 
 // parseOptionalAttentionTarget returns the optional pane target and whether an
 // operand was supplied at all. Unknown flags are rejected before the arity
 // check, and a bare `--` with nothing after it counts as no target.
-func parseOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, bool, error) {
+func parseOptionalAttentionTarget(args []string, command string, printUsage func()) (string, bool, error) {
 	operands, err := splitOperands(command, args)
 	if err != nil {
-		printAttentionUsage(stderr)
+		printUsage()
 		return "", false, err
 	}
 	if len(operands) > 1 {
-		printAttentionUsage(stderr)
+		printUsage()
 		return "", false, usageError(fmt.Sprintf("%s accepts at most 1 target argument", command))
 	}
 	if len(operands) == 0 {
@@ -348,8 +352,8 @@ func splitOperands(command string, args []string) ([]string, error) {
 // only the exact pane that invoked the command, so both halves of tmux's
 // inherited client receipt must be present and the pane must still reobserve as
 // itself before the first attention handler read or write.
-func (c *attentionCommand) resolveOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, error) {
-	paneID, explicit, err := parseOptionalAttentionTarget(args, command, stderr)
+func (c *attentionCommand) resolveOptionalAttentionTarget(args []string, command string, printUsage func()) (string, error) {
+	paneID, explicit, err := parseOptionalAttentionTarget(args, command, printUsage)
 	if err != nil || explicit {
 		return paneID, err
 	}
@@ -747,20 +751,4 @@ func trimAttentionPrefix(title string) string {
 
 func hasAttentionPrefix(title string) bool {
 	return strings.HasPrefix(title, "✳") || strings.HasPrefix(title, "✔")
-}
-
-func printAttentionUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux attention toggle [pane]")
-	fmt.Fprintln(w, "  projmux attention clear [pane]")
-	fmt.Fprintln(w, "  projmux attention arm [pane]")
-	fmt.Fprintln(w, "  projmux attention list [--json] [--all]")
-	fmt.Fprintln(w, "  projmux attention window [window] [style]")
-}
-
-func printAttentionListUsage(w io.Writer) {
-	fmt.Fprintln(w, "Live tmux pane attention state; does not read or mutate the notify queue.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux attention list [--json] [--all]")
 }

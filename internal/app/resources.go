@@ -90,12 +90,11 @@ func newResourceCommand() *resourceCommand {
 }
 
 func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
-	// The usage text is non-interactive public route output, so it is en-US
-	// and reads no locale. Only the interactive inspector below, a TUI
-	// surface, resolves the operator's locale.
-	text := resourceText{locale: i18n.FallbackLocale}
+	// The usage text is non-interactive public route output, so it is the
+	// catalog synopsis and reads no locale. Only the interactive inspector
+	// below, a TUI surface, resolves the operator's locale.
 	if hasHelpArg(args) {
-		printResourcesUsage(stdout, text)
+		printRouteUsage(stdout, "resources")
 		return nil
 	}
 	fs := flag.NewFlagSet("resources", flag.ContinueOnError)
@@ -107,7 +106,7 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printResourcesUsage(stderr, text)
+		printRouteUsage(stderr, "resources")
 		return usageError("resources does not accept positional arguments")
 	}
 	if c.collector == nil {
@@ -152,11 +151,6 @@ func (c *resourceCommand) collectionBudget() time.Duration {
 
 func hasHelpArg(args []string) bool {
 	return slices.Contains(args, "-h") || slices.Contains(args, "--help") || slices.Contains(args, "help")
-}
-
-func printResourcesUsage(w io.Writer, text resourceText) {
-	fmt.Fprintf(w, "%s: projmux resources\n", text.value(i18n.KeyHelpUsageCommand, "Usage"))
-	fmt.Fprintln(w, "  "+text.value("picker.resources.help", "Open the read-only Project → Window → Pane resource inspector."))
 }
 
 func (c *resourceCommand) refreshInterval() time.Duration {

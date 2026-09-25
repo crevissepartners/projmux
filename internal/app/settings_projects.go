@@ -154,7 +154,7 @@ func (c *settingsCommand) runProjectPickerSection(stdout, stderr io.Writer) erro
 	for {
 		options, err := c.sectionOptions(settingsSectionProject)
 		if err != nil {
-			printSettingsUsage(stderr)
+			printRouteUsage(stderr, "settings")
 			return err
 		}
 		result, err := c.runPicker(options)
@@ -212,7 +212,7 @@ func (c *settingsCommand) runProjectPickerSection(stdout, stderr io.Writer) erro
 				return err
 			}
 		default:
-			printSettingsUsage(stderr)
+			printRouteUsage(stderr, "settings")
 			return fmt.Errorf("unknown project picker settings action: %s", action)
 		}
 	}

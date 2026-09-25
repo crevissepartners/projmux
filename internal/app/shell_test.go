@@ -505,7 +505,7 @@ func TestShellUsageOmitsStartupSelectors(t *testing.T) {
 	t.Parallel()
 
 	var usage bytes.Buffer
-	printShellUsage(&usage)
+	printRouteUsage(&usage, "shell")
 	for _, removed := range []string{"--saved", "--layout", "--empty"} {
 		if strings.Contains(usage.String(), removed) {
 			t.Fatalf("usage = %q, want no %q", usage.String(), removed)

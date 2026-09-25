@@ -311,3 +311,20 @@ func padName(name string) string {
 	}
 	return name + strings.Repeat(" ", nameColumnWidth-len(name))
 }
+
+// WriteRouteUsage writes the catalog Usage of route, the exact canonical path
+// a rejected call reached, as the `Usage:` block handlers print under their
+// reason. A route the catalog does not resolve exactly, or one that declares
+// no Usage (hidden plumbing without a synopsis of its own), writes nothing so
+// the reason line stands alone.
+func WriteRouteUsage(w io.Writer, route string) {
+	tokens := strings.Fields(route)
+	path, resolved, ok := Resolve(tokens)
+	if !ok || !slices.Equal(path, tokens) || len(resolved.Usage) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Usage:")
+	for _, line := range resolved.Usage {
+		fmt.Fprintln(w, "  "+line)
+	}
+}

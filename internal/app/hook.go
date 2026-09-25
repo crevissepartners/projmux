@@ -72,7 +72,7 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
-		printHookUsage(stderr)
+		printRouteUsage(stderr, "hook")
 		return usageError("hook requires a subcommand")
 	}
 	switch fs.Arg(0) {
@@ -87,10 +87,10 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "untrust":
 		return c.runUntrust(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printHookUsage(stdout)
+		printRouteUsage(stdout, "hook")
 		return nil
 	default:
-		printHookUsage(stderr)
+		printRouteUsage(stderr, "hook")
 		return usageError("unknown hook subcommand: " + fs.Arg(0))
 	}
 }
@@ -119,7 +119,7 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printHookUsage(stderr)
+		printRouteUsage(stderr, "hook list")
 		return usageError("hook list does not accept positional arguments")
 	}
 	flags := 0
@@ -129,7 +129,7 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	if flags > 1 {
-		printHookUsage(stderr)
+		printRouteUsage(stderr, "hook list")
 		return usageError("hook list: --global, --project, and --effective are mutually exclusive")
 	}
 	scope := hookListScopeContext
@@ -285,11 +285,11 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if *global && *project {
-		printHookUsage(stderr)
+		printRouteUsage(stderr, "hook edit")
 		return usageError("hook edit: --global and --project are mutually exclusive")
 	}
 	if fs.NArg() != 1 {
-		printHookUsage(stderr)
+		printRouteUsage(stderr, "hook edit")
 		return usageError("hook edit requires exactly one <event> argument")
 	}
 	event := strings.TrimSpace(fs.Arg(0))
@@ -530,7 +530,7 @@ func (c *hookCommand) runValidate(args []string, stdout, stderr io.Writer) error
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printHookUsage(stderr)
+		printRouteUsage(stderr, "hook validate")
 		return usageError("hook validate does not accept positional arguments")
 	}
 	globalPath, globalCfg, globalErr := c.loadGlobal()
@@ -588,7 +588,7 @@ func validateHookEvents(cfg hooks.ProjectConfig) error {
 // --- trust / untrust -----------------------------------------------------
 
 func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
-	repo, err := c.resolveTrustTarget("hook trust", args, stderr)
+	repo, err := c.resolveTrustTarget("hook trust", args, func() { printRouteUsage(stderr, "hook trust") })
 	if err != nil {
 		return err
 	}
@@ -605,7 +605,7 @@ func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error {
-	repo, err := c.resolveTrustTarget("hook untrust", args, stderr)
+	repo, err := c.resolveTrustTarget("hook untrust", args, func() { printRouteUsage(stderr, "hook untrust") })
 	if err != nil {
 		return err
 	}
@@ -626,11 +626,12 @@ func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error 
 }
 
 // resolveTrustTarget rejects unknown flags before it reads the project
-// context or the trust store; command names the verb in that rejection.
-func (c *hookCommand) resolveTrustTarget(command string, args []string, stderr io.Writer) (string, error) {
+// context or the trust store; command names the verb in that rejection, and
+// printUsage prints that verb's catalog usage under every refusal.
+func (c *hookCommand) resolveTrustTarget(command string, args []string, printUsage func()) (string, error) {
 	args, err := splitOperands(command, args)
 	if err != nil {
-		printHookUsage(stderr)
+		printUsage()
 		return "", err
 	}
 	switch len(args) {
@@ -640,14 +641,14 @@ func (c *hookCommand) resolveTrustTarget(command string, args []string, stderr i
 			return "", err
 		}
 		if repo == "" {
-			printHookUsage(stderr)
+			printUsage()
 			return "", usageError("trust/untrust requires <project> or a project context")
 		}
 		return repo, nil
 	case 1:
 		raw := strings.TrimSpace(args[0])
 		if raw == "" {
-			printHookUsage(stderr)
+			printUsage()
 			return "", usageError("trust/untrust <project> must not be empty")
 		}
 		abs, err := filepath.Abs(raw)
@@ -656,7 +657,7 @@ func (c *hookCommand) resolveTrustTarget(command string, args []string, stderr i
 		}
 		return filepath.Clean(abs), nil
 	default:
-		printHookUsage(stderr)
+		printUsage()
 		return "", usageError("trust/untrust takes at most one <project> argument")
 	}
 }
@@ -774,16 +775,4 @@ func supportedHookEventList() string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
-}
-
-func printHookUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux hook list [--global|--project|--effective]")
-	fmt.Fprintln(w, "  projmux hook edit [--global | --project] [--editor] <event>")
-	fmt.Fprintln(w, "  projmux hook validate")
-	fmt.Fprintln(w, "  projmux hook trust [<project>]")
-	fmt.Fprintln(w, "  projmux hook untrust [<project>]")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Events:")
-	fmt.Fprintln(w, "  "+supportedHookEventList())
 }

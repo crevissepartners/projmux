@@ -73,7 +73,7 @@ func newNotifyCommand(livePanes livePaneLister) *notifyCommand {
 // Run dispatches the configured notify subcommands.
 func (c *notifyCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printNotifyUsage(stderr)
+		printNotifyQueueHelp(stderr)
 		return usageError("notify requires a subcommand")
 	}
 
@@ -87,10 +87,10 @@ func (c *notifyCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "reconcile":
 		return c.runReconcile(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printNotifyUsage(stdout)
+		printNotifyQueueHelp(stdout)
 		return nil
 	default:
-		printNotifyUsage(stderr)
+		printNotifyQueueHelp(stderr)
 		return usageError(fmt.Sprintf("unknown notify subcommand: %s", args[0]))
 	}
 }
@@ -119,10 +119,29 @@ func (c *notifyCommand) locale() i18n.Locale {
 	return appLocale(c.homeDir, c.lookupEnv)
 }
 
+// notifyQueueSummary heads the notification usage on the notify handler's own
+// help and dispatch refusals: the queue/attention boundary a synopsis cannot
+// state.
+const notifyQueueSummary = "Pending AI notify queue. Attention is live pane state; notify rows remain until explicit ack.\n" +
+	"Use `notify list --live` to explain queue/live drift and `notify reconcile` to repair AI reply entries.\n\n"
+
+// notifyListSummary heads the `get notifications` usage its FlagSet prints.
+const notifyListSummary = "Pending AI notify queue entries only; rows remain until explicit ack.\n" +
+	"Use `--live` to explain queue entries against live pane attention state without mutating either surface.\n" +
+	"Use `--ui=sidebar` for the interactive right-side notify list.\n" +
+	"Use `projmux attention list` for live pane attention state only.\n\n"
+
+// printNotifyQueueHelp prints the queue summary and the catalog usage of the
+// `notification` route the notify handler's dispatch serves.
+func printNotifyQueueHelp(w io.Writer) {
+	fmt.Fprint(w, notifyQueueSummary)
+	printRouteUsage(w, "notification")
+}
+
 // --- push --------------------------------------------------------------------
 
 func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("notify push", flag.ContinueOnError)
+	fs := flag.NewFlagSet("create notification", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	var (
@@ -140,33 +159,33 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(fmt.Errorf("parse notify push flags: %w", err))
 	}
 	if fs.NArg() != 0 {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "create notification")
 		return usageError("notify push does not accept positional arguments")
 	}
 	if strings.TrimSpace(*text) == "" {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "create notification")
 		return usageError("notify push requires --text")
 	}
 	if strings.TrimSpace(*target) == "" {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "create notification")
 		return usageError("notify push requires --target")
 	}
 	if err := notify.ValidateSeverity(*severity); err != nil {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "create notification")
 		return usageError(err.Error())
 	}
 	if err := notify.ValidateSource(*source); err != nil {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "create notification")
 		return usageError(err.Error())
 	}
 	if *ttlSecs <= 0 {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "create notification")
 		return usageError("notify push requires positive --ttl")
 	}
 
 	parsed, err := notify.ParseTarget(*target)
 	if err != nil {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "create notification")
 		return usageError(err.Error())
 	}
 	parsed.Socket = strings.TrimSpace(*socket)
@@ -216,9 +235,12 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 // --- list --------------------------------------------------------------------
 
 func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("notify list", flag.ContinueOnError)
+	fs := flag.NewFlagSet("get notifications", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { printNotifyListUsage(stderr) }
+	fs.Usage = func() {
+		fmt.Fprint(stderr, notifyListSummary)
+		printRouteUsage(stderr, "get notifications")
+	}
 
 	var (
 		asJSON     = fs.Bool("json", false, "emit json instead of tabular output")
@@ -239,7 +261,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(fmt.Errorf("parse notify list flags: %w", err))
 	}
 	if fs.NArg() != 0 {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "get notifications")
 		return usageError("notify list does not accept positional arguments")
 	}
 	if *limit < 0 {
@@ -1509,7 +1531,7 @@ func (c *notifyCommand) statusbarDecoration() config.StatusbarDecoration {
 // --- ack ---------------------------------------------------------------------
 
 func (c *notifyCommand) runAck(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("notify ack", flag.ContinueOnError)
+	fs := flag.NewFlagSet("notification ack", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	all := fs.Bool("all", false, "remove every queued entry")
 
@@ -1524,7 +1546,7 @@ func (c *notifyCommand) runAck(args []string, stdout, stderr io.Writer) error {
 
 	if *all {
 		if fs.NArg() != 0 {
-			printNotifyUsage(stderr)
+			printRouteUsage(stderr, "notification ack")
 			return usageError("notify ack --all does not accept positional arguments")
 		}
 		removed, err := store.AckAll()
@@ -1536,12 +1558,12 @@ func (c *notifyCommand) runAck(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if fs.NArg() != 1 {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "notification ack")
 		return usageError("notify ack requires exactly 1 <id> argument or --all")
 	}
 	id := strings.TrimSpace(fs.Arg(0))
 	if id == "" {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "notification ack")
 		return usageError("notify ack requires a non-empty <id> argument")
 	}
 	if err := store.Ack(id); err != nil {
@@ -2024,34 +2046,4 @@ func (m *multiFlag) Set(value string) error {
 	}
 	*m = append(*m, value)
 	return nil
-}
-
-func printNotifyUsage(w io.Writer) {
-	fmt.Fprintln(w, "Pending AI notify queue. Attention is live pane state; notify rows remain until explicit ack.")
-	fmt.Fprintln(w, "Use `notify list --live` to explain queue/live drift and `notify reconcile` to repair AI reply entries.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]")
-	fmt.Fprintln(w, "                        [--severity info|warn|critical] [--source ai|k8s|git|external]")
-	fmt.Fprintln(w, "                        [--ttl <seconds>] [--id <s>] [--json]")
-	fmt.Fprintln(w, "  projmux get notifications [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>] [--severity ...] [--source ...]")
-	fmt.Fprintln(w, "  projmux notification ack <id> | --all")
-	fmt.Fprintln(w, "  projmux notification reconcile [--json]")
-}
-
-func printNotifyListUsage(w io.Writer) {
-	fmt.Fprintln(w, "Pending AI notify queue entries only; rows remain until explicit ack.")
-	fmt.Fprintln(w, "Use `--live` to explain queue entries against live pane attention state without mutating either surface.")
-	fmt.Fprintln(w, "Use `--ui=sidebar` for the interactive right-side notify list.")
-	fmt.Fprintln(w, "Use `projmux attention list` for live pane attention state only.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux get notifications [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>] [--severity ...] [--source ...]")
-}
-
-func printNotifyReconcileUsage(w io.Writer) {
-	fmt.Fprintln(w, "Repair the pending AI notify queue from live tmux pane attention state.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux notification reconcile [--json]")
 }

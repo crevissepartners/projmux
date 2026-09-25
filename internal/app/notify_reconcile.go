@@ -66,9 +66,13 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 }
 
 func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr io.Writer, ownsTopLevel bool) error {
-	fs := flag.NewFlagSet("notify reconcile", flag.ContinueOnError)
+	fs := flag.NewFlagSet("notification reconcile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { printNotifyReconcileUsage(stderr) }
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Repair the pending AI notify queue from live tmux pane attention state.")
+		fmt.Fprintln(stderr)
+		printRouteUsage(stderr, "notification reconcile")
+	}
 	asJSON := fs.Bool("json", false, "emit json instead of human output")
 
 	if err := fs.Parse(args); err != nil {
@@ -78,7 +82,7 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 		return flagParseError(fmt.Errorf("parse notify reconcile flags: %w", err))
 	}
 	if fs.NArg() != 0 {
-		printNotifyUsage(stderr)
+		printRouteUsage(stderr, "notification reconcile")
 		return usageError("notify reconcile does not accept positional arguments")
 	}
 

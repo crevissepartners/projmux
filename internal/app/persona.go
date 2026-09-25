@@ -145,7 +145,7 @@ func (c *personaCommand) runList(args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	if len(operands) != 0 {
-		printPersonaUsage(stderr, c.spelling())
+		printPersonaUsage(stderr, c.spelling()+" list")
 		return usageError(c.spelling() + " list does not accept positional arguments")
 	}
 	store, err := c.store()
@@ -190,7 +190,7 @@ func personaNameOperand(spelling string, args []string, stderr io.Writer) (strin
 		return "", err
 	}
 	if len(operands) != 1 {
-		printPersonaUsage(stderr, strings.Fields(spelling)[0])
+		printPersonaUsage(stderr, spelling)
 		return "", usageError(spelling + " requires exactly one <name>")
 	}
 	return operands[0], nil
@@ -212,7 +212,7 @@ func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
 		fromStdin = true
 	case len(operands) == 1:
 	default:
-		printPersonaUsage(stderr, c.spelling())
+		printPersonaUsage(stderr, c.spelling()+" set")
 		return usageError(c.spelling() + " set requires exactly one <name> and at most one of --file <path> or -")
 	}
 	name := operands[0]
@@ -264,7 +264,7 @@ func (c *personaCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	if len(operands) != 1 {
-		printPersonaUsage(stderr, c.spelling())
+		printPersonaUsage(stderr, c.spelling()+" delete")
 		return usageError(c.spelling() + " delete requires exactly one <name>")
 	}
 	name := operands[0]
@@ -387,11 +387,35 @@ func openFileUnderParent(path string) (*os.File, error) {
 	return root.Open(filepath.Base(path))
 }
 
-func printPersonaUsage(w io.Writer, noun string) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux "+noun+" list")
-	fmt.Fprintln(w, "  projmux "+noun+" show <name>")
-	fmt.Fprintln(w, "  projmux "+noun+" edit <name>")
-	fmt.Fprintln(w, "  projmux "+noun+" set <name> [--file <path> | -]")
-	fmt.Fprintln(w, "  projmux "+noun+" delete <name> --yes")
+// printPersonaUsage prints the catalog usage of route, the `<noun> [verb]`
+// route a rejected persona or instructions call reached. The two nouns share
+// this handler, so each route is spelled out once here and every
+// printRouteUsage call names a literal catalog path.
+func printPersonaUsage(w io.Writer, route string) {
+	switch route {
+	case "persona":
+		printRouteUsage(w, "persona")
+	case "persona list":
+		printRouteUsage(w, "persona list")
+	case "persona show":
+		printRouteUsage(w, "persona show")
+	case "persona edit":
+		printRouteUsage(w, "persona edit")
+	case "persona set":
+		printRouteUsage(w, "persona set")
+	case "persona delete":
+		printRouteUsage(w, "persona delete")
+	case "instructions":
+		printRouteUsage(w, "instructions")
+	case "instructions list":
+		printRouteUsage(w, "instructions list")
+	case "instructions show":
+		printRouteUsage(w, "instructions show")
+	case "instructions edit":
+		printRouteUsage(w, "instructions edit")
+	case "instructions set":
+		printRouteUsage(w, "instructions set")
+	case "instructions delete":
+		printRouteUsage(w, "instructions delete")
+	}
 }

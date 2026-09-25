@@ -83,26 +83,26 @@ func newSessionsCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionsCo
 
 // Run manages the recent-session picker surface.
 func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("sessions", flag.ContinueOnError)
+	fs := flag.NewFlagSet("runtime sessions", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printSessionsUsage(stderr)
+		printRouteUsage(stderr, "runtime sessions")
 	}
 
 	ui := fs.String(switchUIFlag, switchUIPopup, "recent-session surface to prepare")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printSessionsUsage(stderr)
+			printRouteUsage(stderr, "runtime sessions")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printSessionsUsage(stderr)
+		printRouteUsage(stderr, "runtime sessions")
 		return usageError("sessions does not accept positional arguments")
 	}
 	if err := validateSwitchUI(*ui); err != nil {
-		printSessionsUsage(stderr)
+		printRouteUsage(stderr, "runtime sessions")
 		return err
 	}
 	// Bright Phase 2 (B3): the sessions picker rows render with the resolved
@@ -406,9 +406,4 @@ func rowsToEntries(rows []intrender.SessionRow) []intpickercompat.Entry {
 		})
 	}
 	return entries
-}
-
-func printSessionsUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux runtime sessions [--ui popup|sidebar]")
 }

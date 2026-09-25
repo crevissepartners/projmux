@@ -26,19 +26,19 @@ func (c *previewCommand) runSelect(args []string, stdout, stderr io.Writer) erro
 
 func parsePreviewSelectArgs(args []string, stderr io.Writer) (string, string, string, error) {
 	if len(args) != 2 && len(args) != 3 {
-		printPreviewUsage(stderr)
+		printRouteUsage(stderr, "internal preview select")
 		return "", "", "", fmt.Errorf("preview select requires 2 or 3 arguments: <session> <window> [pane]")
 	}
 
 	sessionName := strings.TrimSpace(args[0])
 	if sessionName == "" {
-		printPreviewUsage(stderr)
+		printRouteUsage(stderr, "internal preview select")
 		return "", "", "", fmt.Errorf("preview select requires a non-empty <session> argument")
 	}
 
 	windowIndex := strings.TrimSpace(args[1])
 	if windowIndex == "" {
-		printPreviewUsage(stderr)
+		printRouteUsage(stderr, "internal preview select")
 		return "", "", "", fmt.Errorf("preview select requires a non-empty <window> argument")
 	}
 
@@ -46,7 +46,7 @@ func parsePreviewSelectArgs(args []string, stderr io.Writer) (string, string, st
 	if len(args) == 3 {
 		paneIndex = strings.TrimSpace(args[2])
 		if paneIndex == "" {
-			printPreviewUsage(stderr)
+			printRouteUsage(stderr, "internal preview select")
 			return "", "", "", fmt.Errorf("preview select requires a non-empty <pane> argument when provided")
 		}
 	}

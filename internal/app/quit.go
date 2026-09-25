@@ -49,7 +49,7 @@ func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printQuitUsage(stderr)
+		printRouteUsage(stderr, "quit")
 		return usageError("quit does not accept positional arguments")
 	}
 
@@ -160,9 +160,4 @@ func tmuxServerMissing(err error) bool {
 	return strings.Contains(msg, "no server running") ||
 		strings.Contains(msg, "can't find server") ||
 		strings.Contains(msg, "failed to connect")
-}
-
-func printQuitUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux quit [--yes|--force]")
 }

@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/usage"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -2172,17 +2174,25 @@ func TestStaleLevelCorrectness(t *testing.T) {
 	}
 }
 
-func TestUsageHelpDocumentsForceFlag(t *testing.T) {
+func TestUsagePositionalRejectionPrintsCatalogUsage(t *testing.T) {
 	t.Parallel()
 
-	out := &bytes.Buffer{}
-	printUsageHelp(out)
-	body := out.String()
-	if !strings.Contains(body, "--force") {
-		t.Fatalf("help missing --force flag: %s", body)
+	var stdout, stderr bytes.Buffer
+	err := New(nil).Run([]string{"x"}, &stdout, &stderr)
+	var input *coremetadata.InputError
+	if !errors.As(err, &input) {
+		t.Fatalf("Run(x) err = %v, want an input error", err)
 	}
-	if !strings.Contains(body, "-f") {
-		t.Fatalf("help missing -f shorthand: %s", body)
+	var want bytes.Buffer
+	cli.WriteRouteUsage(&want, "agent usage")
+	if want.Len() == 0 || stderr.String() != want.String() {
+		t.Fatalf("stderr = %q, want the agent usage catalog block %q", stderr.String(), want.String())
+	}
+	if !strings.Contains(stderr.String(), "--force") {
+		t.Fatalf("usage missing --force flag: %s", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want none", stdout.String())
 	}
 }
 

@@ -94,7 +94,7 @@ func (k unmanagedSessionKiller) KillSession(ctx context.Context, sessionName str
 
 // Run manages kill subcommands.
 func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("kill", flag.ContinueOnError)
+	fs := flag.NewFlagSet("runtime stop", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	if err := fs.Parse(args); err != nil {
@@ -104,7 +104,7 @@ func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
-		printKillUsage(stderr)
+		printRouteUsage(stderr, "runtime stop")
 		return errors.New("kill requires a subcommand")
 	}
 
@@ -112,10 +112,10 @@ func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "tagged":
 		return c.runTagged(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printKillUsage(stdout)
+		printRouteUsage(stdout, "runtime stop")
 		return nil
 	default:
-		printKillUsage(stderr)
+		printRouteUsage(stderr, "runtime stop")
 		return fmt.Errorf("unknown kill subcommand: %s", fs.Arg(0))
 	}
 }
@@ -165,7 +165,7 @@ func (c *killCommand) resolveTaggedTargets(args []string, stderr io.Writer) ([]s
 	if len(args) != 0 {
 		operands, err := splitOperands("runtime stop", args)
 		if err != nil {
-			printKillUsage(stderr)
+			printRouteUsage(stderr, "runtime stop")
 			return nil, err
 		}
 		args = operands
@@ -280,7 +280,7 @@ func normalizeTaggedItems(command string, args []string, stderr io.Writer) ([]st
 	for _, arg := range args {
 		target := strings.TrimSpace(arg)
 		if target == "" {
-			printKillUsage(stderr)
+			printRouteUsage(stderr, "runtime stop")
 			return nil, fmt.Errorf("%s requires non-empty tagged sessions", command)
 		}
 		if _, ok := seen[target]; ok {
@@ -292,10 +292,4 @@ func normalizeTaggedItems(command string, args []string, stderr io.Writer) ([]st
 	}
 
 	return targets, nil
-}
-
-func printKillUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux runtime stop")
-	fmt.Fprintln(w, "  projmux runtime stop <session>...")
 }

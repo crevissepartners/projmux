@@ -106,7 +106,7 @@ func defaultStatusNotifyStore() (notifyStore, error) {
 
 func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printStatusUsage(stderr)
+		printRouteUsage(stderr, "internal status")
 		return errors.New("status requires a subcommand")
 	}
 	// Bright Phase 2 (B1): the status segment subprocesses render with the
@@ -129,17 +129,17 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "resources":
 		return c.runResources(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printStatusUsage(stdout)
+		printRouteUsage(stdout, "internal status")
 		return nil
 	default:
-		printStatusUsage(stderr)
+		printRouteUsage(stderr, "internal status")
 		return fmt.Errorf("unknown status subcommand: %s", args[0])
 	}
 }
 
 func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 	if len(args) > 1 {
-		printStatusUsage(stderr)
+		printRouteUsage(stderr, "internal status git")
 		return errors.New("status git accepts at most 1 [path] argument")
 	}
 	path := ""
@@ -311,18 +311,9 @@ func (c *statusCommand) statusCommandLimit() time.Duration {
 	return defaultStatusCommandLimit
 }
 
-func printStatusUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux internal status git [path]")
-	fmt.Fprintln(w, "  projmux internal status project")
-	fmt.Fprintln(w, "  projmux internal status usage [--max-width N]")
-	fmt.Fprintln(w, "  projmux internal status notify [--max-width N]")
-	fmt.Fprintln(w, "  projmux internal status resources")
-}
-
 func (c *statusCommand) runResources(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
-		printStatusUsage(stderr)
+		printRouteUsage(stderr, "internal status resources")
 		return errors.New("status resources does not accept positional arguments")
 	}
 	if !systemstatus.Supported() {
@@ -910,7 +901,7 @@ func resolveProjectDisplayName(in projectidentity.Inputs, f projectidentity.FS) 
 // never fails loudly.
 func (c *statusCommand) runProject(args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 {
-		printStatusUsage(stderr)
+		printRouteUsage(stderr, "internal status project")
 		return errors.New("status project accepts no arguments")
 	}
 	if c.env("TMUX") == "" {

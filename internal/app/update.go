@@ -254,7 +254,7 @@ func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "apply":
 		return c.runApply(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printUpdateUsage(stdout)
+		printRouteUsage(stdout, "update")
 		return nil
 	default:
 		return usageError(fmt.Sprintf("unknown update subcommand: %s", args[0]))
@@ -2162,15 +2162,6 @@ func writeUpdateJSON(w io.Writer, st updateStatus) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(st)
-}
-
-func printUpdateUsage(w io.Writer) {
-	fmt.Fprintln(w, "projmux update")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux update status [--json]")
-	fmt.Fprintln(w, "  projmux update check  [--json]")
-	fmt.Fprintln(w, "  projmux update apply  [--dry-run] [--no-apply]")
 }
 
 func compareUpdateState(current, latest string) string {

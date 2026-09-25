@@ -117,7 +117,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printShellUsage(stderr)
+		printRouteUsage(stderr, "shell")
 		return usageError("shell does not accept positional arguments")
 	}
 	sessionExplicit := flagSetExplicitly(fs, "session")
@@ -1350,9 +1350,4 @@ func loginShellCommand(shell string) []string {
 	default:
 		return []string{shell}
 	}
-}
-
-func printShellUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux shell [--socket <name>] [--session <name>] [--config <path>] [--bin <path>] [--no-install]")
 }

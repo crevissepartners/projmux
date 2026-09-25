@@ -3481,6 +3481,13 @@ func TestTmuxCommandRejectsInvalidUsage(t *testing.T) {
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
 			}
+			// pane-menu has no catalog route, so its reason stands alone.
+			if strings.Contains(tt.name, "pane-menu") {
+				if stderr.Len() != 0 {
+					t.Fatalf("stderr = %q, want the reason alone", stderr.String())
+				}
+				return
+			}
 			if !strings.Contains(stderr.String(), "Usage:") {
 				t.Fatalf("stderr = %q, want usage text", stderr.String())
 			}

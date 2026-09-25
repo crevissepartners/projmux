@@ -25,7 +25,7 @@ func newDiagnosticsCommand() *diagnosticsCommand {
 
 func (c *diagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printDiagnosticsUsage(stderr)
+		printRouteUsage(stderr, "diagnostics")
 		return usageError("diagnostics requires a subcommand")
 	}
 	switch args[0] {
@@ -36,10 +36,10 @@ func (c *diagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error 
 	case "report":
 		return c.runReport(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printDiagnosticsUsage(stdout)
+		printRouteUsage(stdout, "diagnostics")
 		return nil
 	default:
-		printDiagnosticsUsage(stderr)
+		printRouteUsage(stderr, "diagnostics")
 		return usageError(fmt.Sprintf("unknown diagnostics subcommand: %s", args[0]))
 	}
 }
@@ -59,7 +59,7 @@ func (c *diagnosticsCommand) runLog(args []string, stdout, stderr io.Writer) err
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printDiagnosticsUsage(stderr)
+		printRouteUsage(stderr, "diagnostics log")
 		return usageError("diagnostics log does not accept positional arguments")
 	}
 	if *tail < 0 {
@@ -181,10 +181,4 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		parts = append(parts, "message="+event.Message)
 	}
 	return strings.Join(parts, " ")
-}
-
-func printDiagnosticsUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux diagnostics log [--tail N] [--json] [--level LEVEL] [--component NAME] [--path]")
-	fmt.Fprintln(w, "  projmux diagnostics report [--output <path>]")
 }
