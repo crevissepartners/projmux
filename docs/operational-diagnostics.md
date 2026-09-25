@@ -16,8 +16,15 @@ no generic metadata map. Runtime lifecycle records add only closed
 attach, switch, kill, and config apply; codes are stable failure/health
 classifications and never carry routing identity or subprocess details.
 
-Command and subcommand names come from static allowlists. Unknown argv values,
-paths, flags, and arguments are dropped. Messages have control/format
+Command and subcommand names come from static allowlists. The allowlist covers
+every route of the CLI route graph, `internal <namespace>` included, and its
+direct child subcommand; a sweep test over the graph enforces this. Routes
+covered only for this purpose gain error attribution: whether a success is
+recorded still follows the state-changing rules below. An alias records the
+canonical child name (`get project` records `get projects`). Unknown argv stays
+unnamed, and argv values, paths, flags, and arguments are dropped. A log written
+by a newer binary may carry names an older reader does not know; that reader
+skips those lines. Messages have control/format
 characters removed, whitespace normalized, the current home path abbreviated
 to `~`, and length capped at 512 Unicode code points. Top-level outcomes never
 copy `error.Error()` into the journal: their message is one of three stable,

@@ -14,13 +14,18 @@ type CommandClass struct {
 }
 
 var commandRules = map[string]commandRule{
+	// The second block below names the remaining routes of the CLI route graph
+	// (`internal <namespace>` included) for error attribution only. None of
+	// them is state-changing, so their successes still write nothing; the same
+	// holds for the child subcommands added to rules in this first block.
+	// TestEveryCatalogRouteClassifiesItsCommand keeps the table complete.
 	"ai":             {subcommands: stringSet("split", "picker", "settings", "status", "notify", "watch-title", "ingest", "integrate", "topic"), changing: stringSet("split", "picker", "settings", "notify", "watch-title", "integrate")},
 	"attention":      {subcommands: stringSet("toggle", "clear", "arm", "list", "window"), changing: stringSet("toggle")},
-	"attach":         {alwaysChanging: true, subcommands: stringSet("auto")},
+	"attach":         {alwaysChanging: true, subcommands: stringSet("auto", "project")},
 	"current":        {alwaysChanging: true},
-	"diagnostics":    {subcommands: stringSet("log", "report")},
+	"diagnostics":    {subcommands: stringSet("log", "report", "agent-hook")},
 	"doctor":         {},
-	"focus":          {alwaysChanging: true},
+	"focus":          {alwaysChanging: true, subcommands: stringSet("project", "window", "pane")},
 	"hook":           {subcommands: stringSet("list", "edit", "validate", "trust", "untrust"), changing: stringSet("edit", "trust", "untrust")},
 	"key-broker":     {alwaysChanging: true},
 	"kill":           {alwaysChanging: true, subcommands: stringSet("tagged")},
@@ -28,7 +33,7 @@ var commandRules = map[string]commandRule{
 	"pin":            {subcommands: stringSet("list", "add", "remove", "toggle", "clear"), changing: stringSet("add", "remove", "toggle", "clear")},
 	"popup-wait-key": {},
 	"preview":        {subcommands: stringSet("cycle-pane", "cycle-window", "select"), changing: stringSet("cycle-pane", "cycle-window", "select")},
-	"prune":          {subcommands: stringSet("ephemeral"), changing: stringSet("ephemeral"), recordedSubcommands: stringSet("session-state")},
+	"prune":          {subcommands: stringSet("ephemeral", "agent", "project"), changing: stringSet("ephemeral"), recordedSubcommands: stringSet("session-state")},
 	"quit":           {alwaysChanging: true},
 	"resources":      {},
 	"sessions":       {alwaysChanging: true},
@@ -47,6 +52,30 @@ var commandRules = map[string]commandRule{
 	"version":        {},
 	"welcome":        {},
 	"window":         {subcommands: stringSet("record", "recent"), changing: stringSet("recent")},
+
+	"agent":           {subcommands: stringSet("status", "topic", "resume", "instructions", "persona", "turn", "approval", "review", "integrate", "usage", "capabilities", "message", "wait", "question")},
+	"config":          {subcommands: stringSet("edit", "providers", "locale", "agent-questions", "render", "apply")},
+	"create":          {subcommands: stringSet("project", "window", "pane", "agent", "notification", "codex", "claude", "antigravity")},
+	"delete":          {subcommands: stringSet("project", "window", "pane", "agent", "notification"), aliases: pluralAliases("project", "window", "pane", "agent", "notification")},
+	"describe":        {subcommands: stringSet("project", "window", "pane", "agent"), aliases: pluralAliases("project", "window", "pane", "agent")},
+	"get":             {subcommands: stringSet("projects", "windows", "panes", "agents", "runtime", "notifications", "pane"), aliases: map[string]string{"project": "projects", "window": "windows", "agent": "agents", "notification": "notifications"}},
+	"help":            {},
+	"instructions":    {subcommands: stringSet("list", "show", "edit", "set", "delete")},
+	"label":           {subcommands: stringSet("project", "window", "pane", "agent"), aliases: pluralAliases("project", "window", "pane", "agent")},
+	"notification":    {subcommands: stringSet("ack", "reconcile")},
+	"open":            {subcommands: stringSet("project")},
+	"persona":         {subcommands: stringSet("list", "show", "edit", "set", "delete")},
+	"profile":         {subcommands: stringSet("list", "show", "set", "delete")},
+	"rebind":          {subcommands: stringSet("project")},
+	"reconcile":       {subcommands: stringSet("resources", "registry")},
+	"rename":          {subcommands: stringSet("project", "window", "pane", "agent"), aliases: pluralAliases("project", "window", "pane", "agent")},
+	"runtime":         {subcommands: stringSet("sessions", "diagnostics", "attach", "stop", "tag", "prune")},
+	"start":           {subcommands: stringSet("project")},
+	"stop":            {subcommands: stringSet("project")},
+	"unregister":      {subcommands: stringSet("project"), aliases: pluralAliases("project")},
+	"agent-pane":      {internalOnly: true, subcommands: stringSet("launch-default", "picker", "launch-selection")},
+	"supervise":       {internalOnly: true},
+	"activation-exec": {internalOnly: true},
 }
 
 // recordedOnlyCommandRules keeps the classes that retired routes wrote into
@@ -59,11 +88,29 @@ var recordedOnlyCommandRules = map[string]commandRule{
 
 type commandRule struct {
 	alwaysChanging bool
-	subcommands    map[string]struct{}
-	changing       map[string]struct{}
+	// internalOnly marks a rule that only an `internal <namespace>` route owns.
+	// The same word as a top-level argv is an unknown root and stays unnamed;
+	// a recorded class, which carries no `internal` prefix, still reads back.
+	internalOnly bool
+	subcommands  map[string]struct{}
+	changing     map[string]struct{}
 	// recordedSubcommands are retired subcommands accepted only when an old
 	// record is read back.
 	recordedSubcommands map[string]struct{}
+	// aliases maps a route alias token onto its canonical child name. Dispatch
+	// normalizes the alias before the handler runs, so recording the canonical
+	// name keeps one operation under one subcommand in the journal.
+	aliases map[string]string
+}
+
+// pluralAliases maps the plural spelling of each canonical singular child onto
+// that child, mirroring the resource verbs' route aliases.
+func pluralAliases(names ...string) map[string]string {
+	out := make(map[string]string, len(names))
+	for _, name := range names {
+		out[name+"s"] = name
+	}
+	return out
 }
 
 // internalNamespaceToken is the hidden CLI namespace that owns machine-invoked
@@ -133,12 +180,15 @@ func classify(args []string, recorded bool) CommandClass {
 	if !ok && recorded {
 		rule, ok = recordedOnlyCommandRules[command]
 	}
-	if !ok {
+	if !ok || (rule.internalOnly && !internal && !recorded) {
 		return CommandClass{}
 	}
 	out := CommandClass{Command: command, StateChanging: rule.alwaysChanging}
 	if len(args) > 1 {
 		candidate := strings.TrimSpace(args[1])
+		if canonical, ok := rule.aliases[candidate]; ok {
+			candidate = canonical
+		}
 		if _, ok := rule.subcommands[candidate]; ok {
 			out.Subcommand = candidate
 			_, out.StateChanging = rule.changing[candidate]

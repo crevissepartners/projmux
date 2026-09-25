@@ -124,6 +124,31 @@ func TestDiagnosticsLogViewsSameReaderFixture(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsLogRendersCatalogRouteCommand(t *testing.T) {
+	stateHome := t.TempDir()
+	path := filepath.Join(stateHome, "projmux", "logs", diagnostics.LogFileName)
+	event := diagnosticsFixture("catalog-route", "error", "cli")
+	event.Command, event.Subcommand = "get", "pane"
+	if err := diagnostics.NewStore(path).Append(event); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &diagnosticsCommand{lookupEnv: func(name string) string {
+		if name == "XDG_STATE_HOME" {
+			return stateHome
+		}
+		return ""
+	}, homeDir: func() (string, error) { return "/unused", nil }}
+	var textOut bytes.Buffer
+	if err := cmd.Run([]string{"log"}, &textOut, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"command=get pane", "run_id=catalog-route"} {
+		if !strings.Contains(textOut.String(), want) {
+			t.Fatalf("text output %q missing %q", textOut.String(), want)
+		}
+	}
+}
+
 func TestDiagnosticsLogMissingFileAndUsage(t *testing.T) {
 	cmd := &diagnosticsCommand{lookupEnv: func(string) string { return t.TempDir() }, homeDir: os.UserHomeDir}
 	var out bytes.Buffer
