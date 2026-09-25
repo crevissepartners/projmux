@@ -98,7 +98,10 @@ func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() == 0 {
 		printKillUsage(stderr)

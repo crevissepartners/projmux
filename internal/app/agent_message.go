@@ -387,7 +387,10 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	fs.StringVar(&sourceRef, "source", "", "explicit source Agent ref; anchors the source instead of inheriting the active Pane")
 	positionals, err := parseWithPositionals(fs, args[:separator])
 	if err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if len(positionals) != 1 || strings.TrimSpace(args[separator+1]) == "" {
 		return usageError(spelling + " requires one <target-agent-ref> and non-empty text")

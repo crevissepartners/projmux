@@ -77,7 +77,10 @@ func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Wri
 	dryRun := fs.Bool("dry-run", false, "print planned Antigravity hook changes without writing")
 	remove := fs.Bool("remove", false, "remove the projmux-managed Antigravity hook entry")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
