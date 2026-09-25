@@ -140,7 +140,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printUsageHelp(stderr)
-		return fmt.Errorf("usage does not accept positional arguments")
+		return &coremetadata.InputError{Detail: "usage does not accept positional arguments"}
 	}
 
 	modelScope, explicitModel := c.modelScope(*model)

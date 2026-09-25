@@ -116,7 +116,7 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("setup does not accept positional arguments")
+		return usageError("setup does not accept positional arguments")
 	}
 
 	if *nonInteractive {

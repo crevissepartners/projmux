@@ -50,7 +50,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() == 0 {
 		printPinUsage(stderr)
-		return errors.New("pin requires a subcommand")
+		return usageError("pin requires a subcommand")
 	}
 
 	switch fs.Arg(0) {
@@ -61,7 +61,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 		rest := fs.Args()[1:]
 		if len(rest) > 0 && rest[0] == "project" {
 			printPinUsage(stderr)
-			return fmt.Errorf("unknown pin project subcommand: %s", rest[0])
+			return usageError(fmt.Sprintf("unknown pin project subcommand: %s", rest[0]))
 		}
 		return c.Run(rest, stdout, stderr)
 	case "list":
@@ -81,7 +81,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	default:
 		printPinUsage(stderr)
-		return fmt.Errorf("unknown pin subcommand: %s", fs.Arg(0))
+		return usageError(fmt.Sprintf("unknown pin subcommand: %s", fs.Arg(0)))
 	}
 }
 
@@ -104,7 +104,7 @@ func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printPinUsage(stderr)
-		return fmt.Errorf("pin list does not accept positional arguments")
+		return usageError("pin list does not accept positional arguments")
 	}
 	filter, err := parsePinKindFilter(*kind)
 	if err != nil {
@@ -257,7 +257,7 @@ func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printPinUsage(stderr)
-		return fmt.Errorf("pin clear does not accept positional arguments")
+		return usageError("pin clear does not accept positional arguments")
 	}
 
 	authority, err := c.requireAuthority()
@@ -291,7 +291,7 @@ func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printPinUsage(stderr)
-		return fmt.Errorf("pin migrate does not accept positional arguments")
+		return usageError("pin migrate does not accept positional arguments")
 	}
 
 	authority, err := c.requireAuthority()

@@ -146,7 +146,7 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 	}
 	if fs.NArg() != 0 {
 		printAttachUsage(stderr)
-		return fmt.Errorf("attach auto does not accept positional arguments")
+		return usageError("attach auto does not accept positional arguments")
 	}
 	if *fallback != "home" && *fallback != "ephemeral" {
 		printAttachUsage(stderr)

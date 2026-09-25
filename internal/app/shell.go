@@ -117,7 +117,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printShellUsage(stderr)
-		return errors.New("shell does not accept positional arguments")
+		return usageError("shell does not accept positional arguments")
 	}
 	sessionExplicit := flagSetExplicitly(fs, "session")
 

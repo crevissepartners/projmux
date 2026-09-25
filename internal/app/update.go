@@ -244,7 +244,7 @@ func newUpdateCommand() *updateCommand {
 
 func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("update requires a subcommand")
+		return usageError("update requires a subcommand")
 	}
 	switch args[0] {
 	case "status":
@@ -257,7 +257,7 @@ func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printUpdateUsage(stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown update subcommand: %s", args[0])
+		return usageError(fmt.Sprintf("unknown update subcommand: %s", args[0]))
 	}
 }
 
@@ -273,7 +273,7 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("update apply does not accept positional arguments")
+		return usageError("update apply does not accept positional arguments")
 	}
 
 	installer := c.detectInstaller()
@@ -1203,7 +1203,7 @@ func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error
 		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("update status does not accept positional arguments")
+		return usageError("update status does not accept positional arguments")
 	}
 
 	st, err := c.status()
@@ -1227,7 +1227,7 @@ func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error 
 		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("update check does not accept positional arguments")
+		return usageError("update check does not accept positional arguments")
 	}
 
 	cache, err := c.fetchAndSaveLatestAvailability(context.Background())

@@ -283,7 +283,7 @@ func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error 
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
-		return errors.New("diagnostics agent-hook does not accept positional arguments")
+		return usageError("diagnostics agent-hook does not accept positional arguments")
 	}
 
 	path, err := c.aiIngestLogPath()

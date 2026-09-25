@@ -61,7 +61,7 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() == 0 {
 		printWindowUsage(stderr)
-		return errors.New("window requires a subcommand")
+		return usageError("window requires a subcommand")
 	}
 
 	switch fs.Arg(0) {
@@ -74,7 +74,7 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	default:
 		printWindowUsage(stderr)
-		return fmt.Errorf("unknown window subcommand: %s", fs.Arg(0))
+		return usageError(fmt.Sprintf("unknown window subcommand: %s", fs.Arg(0)))
 	}
 }
 
@@ -154,7 +154,7 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 	}
 	if fs.NArg() != 0 {
 		printWindowRecentUsage(stderr)
-		return fmt.Errorf("window recent does not accept positional arguments")
+		return usageError("window recent does not accept positional arguments")
 	}
 	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 
@@ -244,7 +244,7 @@ func (c *recentWindowCommand) RunRecord(args []string, _ io.Writer, stderr io.Wr
 	}
 	if fs.NArg() != 0 {
 		printWindowRecordUsage(stderr)
-		return fmt.Errorf("window record does not accept positional arguments")
+		return usageError("window record does not accept positional arguments")
 	}
 
 	// Sidebar live switches are previews: while the sidebar popup marker

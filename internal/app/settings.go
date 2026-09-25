@@ -138,7 +138,7 @@ func (c *settingsCommand) statFile(path string) (os.FileInfo, error) {
 func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printSettingsUsage(stderr)
-		return errors.New("settings does not accept positional arguments")
+		return usageError("settings does not accept positional arguments")
 	}
 	if c.nativePicker == nil {
 		return errors.New("native picker is not configured")

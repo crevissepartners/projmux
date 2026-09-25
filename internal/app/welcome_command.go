@@ -57,7 +57,7 @@ func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printWelcomeUsage(stderr)
-		return errors.New("welcome does not accept positional arguments")
+		return usageError("welcome does not accept positional arguments")
 	}
 	if *popup || *force {
 		return c.runPopup(*force)

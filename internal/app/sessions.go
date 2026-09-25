@@ -99,7 +99,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printSessionsUsage(stderr)
-		return fmt.Errorf("sessions does not accept positional arguments")
+		return usageError("sessions does not accept positional arguments")
 	}
 	if err := validateSwitchUI(*ui); err != nil {
 		printSessionsUsage(stderr)
