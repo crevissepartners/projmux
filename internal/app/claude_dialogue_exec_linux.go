@@ -80,7 +80,10 @@ func runClaudeDialogueExec(args []string) (runErr error) {
 	}
 	defer diagnostics.Close()
 	defer providerDiagnostics.Close()
-	initial := []byte("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Reply READY.\"}}\n")
+	initial, err := claudeDialogueProbeFrame()
+	if err != nil {
+		return err
+	}
 	if _, err := keepalive.Write(initial); err != nil {
 		return err
 	}
@@ -130,6 +133,16 @@ func runClaudeDialogueExec(args []string) (runErr error) {
 	// The existing public provider launch resolves this executable/argv. There
 	// is no shell interpretation here, and the admitted provider PID is retained.
 	return unix.Exec(native[0], native, environment)
+}
+
+// claudeDialogueProbeFrame builds the readiness probe from the same user frame
+// type the provider push path marshals.
+func claudeDialogueProbeFrame() ([]byte, error) {
+	frame, err := json.Marshal(claudeProviderUserFrame{Type: "user", Message: claudeProviderUserMessage{Role: "user", Content: "Reply READY."}})
+	if err != nil {
+		return nil, err
+	}
+	return append(frame, '\n'), nil
 }
 
 func runClaudeDialogueObserver(args []string, stdout io.Writer) error {
