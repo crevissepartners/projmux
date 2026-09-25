@@ -1226,6 +1226,200 @@ func TestRegistryLockDeadlineIsMeasuredOnTheInjectedClock(t *testing.T) {
 	assertNoStagedGarbage(t, store)
 }
 
+// expectedLiveHolder is the holder text for this process, which the timeout
+// tests use as the observable owner. Where /proc is absent the command name
+// cannot be read, and the error must say so instead of inventing one.
+func expectedLiveHolder(t *testing.T) string {
+	t.Helper()
+	command := "command unavailable"
+	if data, err := os.ReadFile("/proc/self/comm"); err == nil {
+		command = strings.TrimSuffix(string(data), "\n")
+	}
+	return fmt.Sprintf("holder: pid %d (%s), running", os.Getpid(), command)
+}
+
+// TestRegistryLockTimeoutNamesTheWaitAndTheLiveHolder pins what a timeout
+// reports when the holder is observable: the time this acquisition actually
+// waited, which can exceed the granted budget on a loaded machine, and the pid,
+// liveness, and command of the process the marker names. Both lock layers end
+// in the same report.
+func TestRegistryLockTimeoutNamesTheWaitAndTheLiveHolder(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a held kernel lock", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewStore(PathFor(t.TempDir()))
+		holdRegistryFlock(t, store)
+		writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", os.Getpid()))
+		// Readings: the deadline at +0, the expired check at +30.0064s, and the
+		// report at +60.0128s, which rounds to the millisecond.
+		store.SetClock(steppingClock(fixedNow, 30*time.Second+6400*time.Microsecond))
+
+		lease, err := store.acquireLockWithDeadline(t.Context(), 30*time.Second, func(time.Duration) {})
+		if lease != nil {
+			lease.release()
+			t.Fatal("a lease was granted while another writer held the kernel lock")
+		}
+		if !errors.Is(err, ErrLockTimeout) {
+			t.Fatalf("error = %v, want %v", err, ErrLockTimeout)
+		}
+		t.Logf("timeout error: %s", err)
+		for _, want := range []string{
+			"after 30s (waited 1m0.013s)",
+			"another writer holds the registry lock",
+			expectedLiveHolder(t),
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("timeout error = %q, want it to contain %q", err, want)
+			}
+		}
+		if err := os.Remove(store.lockPath); err != nil {
+			t.Fatalf("remove marker fixture: %v", err)
+		}
+		assertNoStagedGarbage(t, store)
+	})
+
+	t.Run("a marker-only holder", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewStore(PathFor(t.TempDir()))
+		writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", os.Getpid()))
+		// Readings: the deadline, four expiry checks 250ms apart, and the report.
+		store.SetClock(steppingClock(fixedNow, 250*time.Millisecond))
+
+		lease, err := store.acquireLockWithDeadline(t.Context(), time.Second, func(time.Duration) {})
+		if lease != nil {
+			lease.release()
+			t.Fatal("a lease was granted while a marker-only install held the lock")
+		}
+		if !errors.Is(err, ErrLockTimeout) {
+			t.Fatalf("error = %v, want %v", err, ErrLockTimeout)
+		}
+		t.Logf("timeout error: %s", err)
+		for _, want := range []string{
+			"after 1s (waited 1.25s)",
+			"an install without the kernel lock still holds the marker",
+			expectedLiveHolder(t),
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("timeout error = %q, want it to contain %q", err, want)
+			}
+		}
+		if err := os.Remove(store.lockPath); err != nil {
+			t.Fatalf("remove marker fixture: %v", err)
+		}
+		assertNoStagedGarbage(t, store)
+	})
+}
+
+// TestRegistryLockTimeoutNeverGuessesAnUnobservableHolder covers every way the
+// marker can fail to name a running owner while the kernel lock is held. Each
+// is reported as unobservable with its reason, and none is presented as the
+// holder: a pid printed there is one an operator will act on.
+func TestRegistryLockTimeoutNeverGuessesAnUnobservableHolder(t *testing.T) {
+	t.Parallel()
+
+	gone := exitedPID(t)
+	for _, test := range []struct {
+		name  string
+		write func(*testing.T, *Store)
+		want  string
+	}{
+		{name: "no marker", write: func(*testing.T, *Store) {}, want: "holder: not observable: no lock marker"},
+		{name: "a reaped owner", write: func(t *testing.T, store *Store) {
+			t.Helper()
+			writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", gone))
+		}, want: fmt.Sprintf("holder: not observable: lock marker names pid %d, which is no longer running", gone)},
+		{name: "an empty marker", write: func(t *testing.T, store *Store) {
+			t.Helper()
+			writeLegacyMarker(t, store, "")
+		}, want: "holder: not observable: lock marker records no pid"},
+		{name: "a malformed marker", write: func(t *testing.T, store *Store) {
+			t.Helper()
+			writeLegacyMarker(t, store, "owner=not-a-pid\n")
+		}, want: "holder: not observable: lock marker records no pid"},
+		{name: "an unreadable marker", write: func(t *testing.T, store *Store) {
+			t.Helper()
+			if err := os.Mkdir(store.lockPath, 0o700); err != nil {
+				t.Fatalf("replace the marker with an unreadable directory: %v", err)
+			}
+		}, want: "holder: not observable: lock marker unreadable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := NewStore(PathFor(t.TempDir()))
+			holdRegistryFlock(t, store)
+			test.write(t, store)
+			store.SetClock(steppingClock(fixedNow, time.Minute))
+
+			lease, err := store.acquireLockWithDeadline(t.Context(), 30*time.Second, func(time.Duration) {})
+			if lease != nil {
+				lease.release()
+				t.Fatal("a lease was granted while another writer held the kernel lock")
+			}
+			if !errors.Is(err, ErrLockTimeout) {
+				t.Fatalf("error = %v, want %v", err, ErrLockTimeout)
+			}
+			t.Logf("timeout error: %s", err)
+			got := err.Error()
+			if !strings.Contains(got, test.want) {
+				t.Fatalf("timeout error = %q, want it to contain %q", got, test.want)
+			}
+			if strings.Contains(got, "holder: pid ") {
+				t.Fatalf("timeout error = %q presents an unobserved pid as the holder", got)
+			}
+			if err := os.RemoveAll(store.lockPath); err != nil {
+				t.Fatalf("remove marker fixture: %v", err)
+			}
+			assertNoStagedGarbage(t, store)
+		})
+	}
+}
+
+// TestRegistryLockTimeoutLeavesTheRegistryBytesUntouched follows a timeout
+// through the public mutation path. A mutation that never got the lock must not
+// have run and must not have written: the registry on disk is byte-for-byte and
+// inode-for-inode the one the holder is still working against.
+func TestRegistryLockTimeoutLeavesTheRegistryBytesUntouched(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	registerProject(t, store, "/src/projmux")
+	registryBytes := readFile(t, store.Path())
+	registryBefore := fileFingerprint(t, store.Path())
+
+	holdRegistryFlock(t, store)
+	writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", os.Getpid()))
+	store.SetClock(steppingClock(fixedNow, time.Minute))
+
+	ran := false
+	_, err := store.Update(func(*coremetadata.Registry) error {
+		ran = true
+		return nil
+	})
+	if !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("Update = %v, want %v", err, ErrLockTimeout)
+	}
+	if ran {
+		t.Fatal("the mutation ran without the registry lock")
+	}
+	if got := readFile(t, store.Path()); got != registryBytes {
+		t.Fatalf("a timed-out Update changed the registry bytes:\n--- got ---\n%s\n--- want ---\n%s", got, registryBytes)
+	}
+	if got := fileFingerprint(t, store.Path()); got != registryBefore {
+		t.Fatalf("registry fingerprint = %s, want the unchanged %s", got, registryBefore)
+	}
+	if owner, ok := observedLockOwnerPID(store.lockPath); !ok || owner != os.Getpid() {
+		t.Fatalf("marker owner after a timed-out Update = %d (parsed=%t), want it untouched", owner, ok)
+	}
+	if err := os.Remove(store.lockPath); err != nil {
+		t.Fatalf("remove marker fixture: %v", err)
+	}
+	assertNoStagedGarbage(t, store)
+}
+
 // TestRegistryLockReclaimsAMarkerOnlyWhenItsOwnerIsGone covers the stale
 // predicate from both sides. A dead owner is reclaimed immediately instead of
 // after a fixed wall-clock window, and everything that does not prove the owner

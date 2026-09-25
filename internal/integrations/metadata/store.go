@@ -36,6 +36,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"golang.org/x/sys/unix"
 
@@ -1461,7 +1462,7 @@ func (s *Store) acquireRegistryFlock(ctx context.Context, deadline time.Time, ti
 	remaining := deadline.Sub(s.clock())
 	if remaining <= 0 {
 		_ = held.Close()
-		return nil, s.lockTimeoutError(timeout, "another writer holds the registry lock")
+		return nil, s.lockTimeoutError(deadline, timeout, "another writer holds the registry lock")
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
@@ -1491,7 +1492,7 @@ func (s *Store) acquireRegistryFlock(ctx context.Context, deadline time.Time, ti
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("metadata: acquire registry lock on %s: %w", s.flockPath, err)
 		}
-		return nil, s.lockTimeoutError(timeout, "another writer holds the registry lock")
+		return nil, s.lockTimeoutError(deadline, timeout, "another writer holds the registry lock")
 	}
 }
 
@@ -1558,24 +1559,93 @@ func (s *Store) lockWaitExpired(ctx context.Context, deadline time.Time, timeout
 	if s.clock().Before(deadline) {
 		return nil
 	}
-	return s.lockTimeoutError(timeout, "an install without the kernel lock still holds the marker")
+	return s.lockTimeoutError(deadline, timeout, "an install without the kernel lock still holds the marker")
 }
 
-func (s *Store) lockTimeoutError(timeout time.Duration, cause string) error {
-	return fmt.Errorf("metadata: acquire lock on %s: %w after %s: %s", s.lockPath, ErrLockTimeout, timeout, cause)
+// lockTimeoutError reports a wait that ran out, with what the waiter can still
+// observe about why. The granted budget alone cannot tell a machine that was
+// slow to schedule the waiter from a holder that never let go, so the error also
+// carries how long this acquisition actually waited and who the marker names as
+// holder at the deadline. Both are read here, once, on the failure path only.
+func (s *Store) lockTimeoutError(deadline time.Time, timeout time.Duration, cause string) error {
+	waited := s.clock().Sub(deadline.Add(-timeout)).Round(time.Millisecond)
+	return fmt.Errorf("metadata: acquire lock on %s: %w after %s (waited %s): %s; holder: %s",
+		s.lockPath, ErrLockTimeout, timeout, waited, cause, describeLockHolder(s.lockPath))
 }
 
-func observedLockOwnerPID(path string) (int, bool) {
-	data, err := os.ReadFile(path) // #nosec G304 -- path is the Store's own private registry lock sibling
+// describeLockHolder names the marker's owner only when that owner is observed
+// running. Anything less is reported as unobservable, with the reason, rather
+// than as a pid: an operator who acts on a guessed holder kills the wrong
+// process.
+func describeLockHolder(path string) string {
+	pid, marker := readLockMarker(path)
+	switch marker {
+	case lockMarkerMissing:
+		return "not observable: no lock marker"
+	case lockMarkerUnreadable:
+		return "not observable: lock marker unreadable"
+	case lockMarkerNoPID:
+		return "not observable: lock marker records no pid"
+	}
+	if !processAlive(pid) {
+		return fmt.Sprintf("not observable: lock marker names pid %d, which is no longer running", pid)
+	}
+	command, ok := processCommand(pid)
+	if !ok {
+		command = "command unavailable"
+	}
+	return fmt.Sprintf("pid %d (%s), running", pid, command)
+}
+
+// processCommand reads the command name Linux exposes for pid. Other platforms
+// have no /proc, and a name that would break the single-line error is refused
+// rather than escaped, so both report the command as unavailable.
+func processCommand(pid int) (string, bool) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "comm")) // #nosec G304 -- fixed /proc path built from an integer pid
 	if err != nil {
-		return 0, false
+		return "", false
+	}
+	command := strings.TrimSuffix(string(data), "\n")
+	if command == "" || strings.IndexFunc(command, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return "", false
+	}
+	return command, true
+}
+
+// lockMarkerState is what reading the legacy marker established. The stale
+// predicate needs only "owner pid or not"; the timeout error also needs to say
+// which of the ways a marker can fail to name an owner it hit.
+type lockMarkerState int
+
+const (
+	lockMarkerOwner lockMarkerState = iota
+	lockMarkerMissing
+	lockMarkerUnreadable
+	lockMarkerNoPID
+)
+
+func readLockMarker(path string) (int, lockMarkerState) {
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the Store's own private registry lock sibling
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return 0, lockMarkerMissing
+	case err != nil:
+		return 0, lockMarkerUnreadable
 	}
 	raw, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "pid=")
 	if !ok || raw == "" || strings.ContainsAny(raw, " \t\r\n") {
-		return 0, false
+		return 0, lockMarkerNoPID
 	}
 	pid, err := strconv.Atoi(raw)
-	return pid, err == nil && pid > 0
+	if err != nil || pid <= 0 {
+		return 0, lockMarkerNoPID
+	}
+	return pid, lockMarkerOwner
+}
+
+func observedLockOwnerPID(path string) (int, bool) {
+	pid, marker := readLockMarker(path)
+	return pid, marker == lockMarkerOwner
 }
 
 func (s *Store) lockJitter() time.Duration {
