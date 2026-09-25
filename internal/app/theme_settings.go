@@ -14,7 +14,7 @@ import (
 )
 
 // Theme is a global user preference. Settings only edits the global [theme] in
-// ~/.config/projmux/config.toml and shows the resolved global > built-in
+// ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml and shows the resolved global > built-in
 // fallback effective values. Project-local [theme] is deprecated migration
 // data and is not editable or resolvable here.
 

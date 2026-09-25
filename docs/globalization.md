@@ -400,9 +400,12 @@ Fallback and warning policy:
 
 - `en-US` and `ko-KR` are the only supported UI locales in Phase 5.
 - Unsupported locale tags such as `ja-JP` or `fr-FR` fall back to `en-US`.
-- Settings displays the unsupported tag, its source (`PROJMUX_LOCALE`,
-  `~/.config/projmux/config.toml`, `LC_ALL`, `LC_MESSAGES`, or `LANG`), and
-  the effective `en-US` fallback.
+- Settings displays the unsupported tag, its source (`PROJMUX_LOCALE`, the
+  global config file, `LC_ALL`, `LC_MESSAGES`, or `LANG`), and the effective
+  `en-US` fallback. The global config source is the resolved
+  `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/config.toml`, shown as `~/...`
+  under `$HOME` and as an absolute path otherwise; with the default
+  environment it reads `~/.config/projmux/config.toml`.
 - Project-local locale override is intentionally out of scope. Any parser
   support for `[ui] locale` exists only because global and project config share
   the same TOML implementation; runtime locale resolution consumes only the

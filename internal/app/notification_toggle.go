@@ -25,7 +25,7 @@ import (
 // Resolution priority (highest first):
 //  1. env `PROJMUX_DESKTOP_NOTIFY_MODE=off|none|notify` (case-insensitive)
 //  2. env `PROJMUX_DESKTOP_NOTIFY` (legacy on/off, mapped: off→none, on→notify)
-//  3. saved config `~/.config/projmux/desktop-notify-mode`
+//  3. saved config `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/desktop-notify-mode`
 //  4. tmux global option `@projmux_desktop_notify_mode`
 //  5. tmux global option `@projmux_desktop_notify` (legacy `1`/`0`, same mapping)
 //  6. default = `notify` on every platform (WSL + Windows Terminal included)

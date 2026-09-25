@@ -20,7 +20,7 @@ func (c *settingsCommand) localeSettingsEntry() intpickercompat.Entry {
 			SearchKey: "appearance language locale unreadable PROJMUX_LOCALE ui.locale",
 		}
 	}
-	desc := fmt.Sprintf("%s - %s", setting, localeResolutionSummary(locale, resolution))
+	desc := fmt.Sprintf("%s - %s", setting, localeResolutionSummary(locale, resolution, c.globalConfigDisplayPath()))
 	if resolution.HasUnsupportedLocale() {
 		desc = settingsCatalogTextLocale(locale, "warning") + " - " + desc
 	}
@@ -89,7 +89,7 @@ func (c *settingsCommand) localeEntries() []intpickercompat.Entry {
 	}
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label:     settingsLabelInfoLocale(locale, "Current", string(resolution.Locale), localeResolutionSourceLabel(resolution)),
+			Label:     settingsLabelInfoLocale(locale, "Current", string(resolution.Locale), localeResolutionSourceLabel(resolution, c.globalConfigDisplayPath())),
 			Value:     settingsNoopValue,
 			SearchKey: "current locale " + string(resolution.Locale) + " " + string(resolution.Source),
 		},
@@ -101,7 +101,7 @@ func (c *settingsCommand) localeEntries() []intpickercompat.Entry {
 	)
 	if resolution.HasUnsupportedLocale() {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabelDimLocale(locale, "Warning", localeUnsupportedWarning(locale, resolution)),
+			Label:     settingsLabelDimLocale(locale, "Warning", localeUnsupportedWarning(locale, resolution, c.globalConfigDisplayPath())),
 			Value:     settingsNoopValue,
 			SearchKey: "warning unsupported locale fallback en-US",
 		})
@@ -150,19 +150,27 @@ func (c *settingsCommand) setGlobalLocale(value string) error {
 	return nil
 }
 
-func localeResolutionSummary(locale i18n.Locale, resolution i18n.LocaleResolution) string {
-	if locale == i18n.Locale("ko-KR") {
-		return string(resolution.Locale) + " · " + localeResolutionSourceLabel(resolution)
-	}
-	return string(resolution.Locale) + " from " + localeResolutionSourceLabel(resolution)
+// globalConfigDisplayPath is the config.toml the locale resolution read, as
+// Settings shows it.
+func (c *settingsCommand) globalConfigDisplayPath() string {
+	return configFileDisplayPath(c.homeDir, c.lookupEnv, "config.toml")
 }
 
-func localeResolutionSourceLabel(resolution i18n.LocaleResolution) string {
+func localeResolutionSummary(locale i18n.Locale, resolution i18n.LocaleResolution, configPath string) string {
+	if locale == i18n.Locale("ko-KR") {
+		return string(resolution.Locale) + " · " + localeResolutionSourceLabel(resolution, configPath)
+	}
+	return string(resolution.Locale) + " from " + localeResolutionSourceLabel(resolution, configPath)
+}
+
+// localeResolutionSourceLabel names where the locale came from. configPath is
+// the global config.toml as Settings shows it, used when that file set it.
+func localeResolutionSourceLabel(resolution i18n.LocaleResolution, configPath string) string {
 	switch resolution.Source {
 	case i18n.LocaleSourceEnv:
 		return i18n.LocaleEnvName + " env"
 	case i18n.LocaleSourceConfig:
-		return "~/.config/projmux/config.toml"
+		return configPath
 	case i18n.LocaleSourceLCAll, i18n.LocaleSourceLCMessages, i18n.LocaleSourceLANG:
 		return string(resolution.Source) + " env"
 	case i18n.LocaleSourceOverride:
@@ -172,7 +180,7 @@ func localeResolutionSourceLabel(resolution i18n.LocaleResolution) string {
 	}
 }
 
-func localeUnsupportedWarning(locale i18n.Locale, resolution i18n.LocaleResolution) string {
+func localeUnsupportedWarning(locale i18n.Locale, resolution i18n.LocaleResolution, configPath string) string {
 	raw := strings.TrimSpace(string(resolution.UnsupportedLocale))
 	if raw == "" {
 		raw = strings.TrimSpace(resolution.UnsupportedRaw)
@@ -183,7 +191,7 @@ func localeUnsupportedWarning(locale i18n.Locale, resolution i18n.LocaleResoluti
 	template := settingsCatalogTextLocale(locale, "Unsupported locale {locale} from {source}; using {fallback}.")
 	replacer := strings.NewReplacer(
 		"{locale}", raw,
-		"{source}", localeResolutionSourceLabel(resolution),
+		"{source}", localeResolutionSourceLabel(resolution, configPath),
 		"{fallback}", string(i18n.FallbackLocale),
 	)
 	return replacer.Replace(template)
