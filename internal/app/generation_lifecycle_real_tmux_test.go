@@ -19,7 +19,7 @@ func TestGenerationLifecycleProjectionUsesIsolatedRealTmuxAndExactCleanup(t *tes
 	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	root, err := os.MkdirTemp("", "p1tmux-")
+	root, err := os.MkdirTemp("/tmp", "p1tmux-")
 	if err != nil {
 		t.Fatal(err)
 	}

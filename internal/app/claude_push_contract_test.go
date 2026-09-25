@@ -155,7 +155,7 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 	}
 
 	t.Run("foreign provider socket", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "foreign.sock")
+		path := filepath.Join(shortTempDomain(t), "foreign.sock")
 		listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 		if err != nil {
 			t.Fatal(err)

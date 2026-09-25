@@ -19,7 +19,7 @@ type singleWriteRecorder struct {
 }
 
 func TestClaudeProviderPushFinalRouteCheckPrecedesSoleWrite(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "provider.sock")
+	path := filepath.Join(shortTempDomain(t), "provider.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)

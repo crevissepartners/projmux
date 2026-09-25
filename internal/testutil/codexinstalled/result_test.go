@@ -133,6 +133,10 @@ func TestManagedIdentityMismatchNeverAuthorizesForeignPID(t *testing.T) {
 }
 
 func TestQualificationRunnerCleanupRetiresOnlyExactOwnedProcess(t *testing.T) {
+	// Cleanup requires the root's parent to be os.TempDir(), so point TMPDIR
+	// itself (inherited by the helper) at /tmp to keep the socket inside the
+	// path bound; the root below is still removed by its own cleanup.
+	t.Setenv("TMPDIR", "/tmp")
 	root, err := os.MkdirTemp("", qualificationRootPrefix)
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +255,13 @@ func TestDirectProcessExitWaitIsIndependentlyBounded(t *testing.T) {
 }
 
 func TestDirectResidualSocketReplacementIsPreserved(t *testing.T) {
-	root := t.TempDir()
+	// A short root keeps app-server.sock inside the Unix socket path bound
+	// even when the test tree's own temp directory is already past it.
+	root, err := os.MkdirTemp("/tmp", "pxres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	codexHome := filepath.Join(root, "codex-home")
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		t.Fatal(err)

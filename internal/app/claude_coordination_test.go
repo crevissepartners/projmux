@@ -118,11 +118,7 @@ func newClaudeCoordinationTestFixture(t *testing.T) *claudeCoordinationTestFixtu
 		coremetadata.ClaudeRegistration{Authority: authority}); err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.MkdirTemp("", "pmx-coordination-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root := shortTempDomain(t)
 	registryPath := intmetadata.PathFor(filepath.Join(root, "state"))
 	requireClaudeLeaseDirRemoved(t, func() string { return claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration) })
 	store := intmetadata.NewStore(registryPath)
