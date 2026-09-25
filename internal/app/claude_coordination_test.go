@@ -124,6 +124,7 @@ func newClaudeCoordinationTestFixture(t *testing.T) *claudeCoordinationTestFixtu
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	registryPath := intmetadata.PathFor(filepath.Join(root, "state"))
+	requireClaudeLeaseDirRemoved(t, func() string { return claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration) })
 	store := intmetadata.NewStore(registryPath)
 	if _, err := store.Update(func(reg *coremetadata.Registry) error { *reg = h.registry.Clone(); return nil }); err != nil {
 		t.Fatal(err)
