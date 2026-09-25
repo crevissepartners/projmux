@@ -588,7 +588,7 @@ func validateHookEvents(cfg hooks.ProjectConfig) error {
 // --- trust / untrust -----------------------------------------------------
 
 func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
-	repo, err := c.resolveTrustTarget(args, stderr)
+	repo, err := c.resolveTrustTarget("hook trust", args, stderr)
 	if err != nil {
 		return err
 	}
@@ -605,7 +605,7 @@ func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error {
-	repo, err := c.resolveTrustTarget(args, stderr)
+	repo, err := c.resolveTrustTarget("hook untrust", args, stderr)
 	if err != nil {
 		return err
 	}
@@ -625,7 +625,14 @@ func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error 
 	return err
 }
 
-func (c *hookCommand) resolveTrustTarget(args []string, stderr io.Writer) (string, error) {
+// resolveTrustTarget rejects unknown flags before it reads the project
+// context or the trust store; command names the verb in that rejection.
+func (c *hookCommand) resolveTrustTarget(command string, args []string, stderr io.Writer) (string, error) {
+	args, err := splitOperands(command, args)
+	if err != nil {
+		printHookUsage(stderr)
+		return "", err
+	}
 	switch len(args) {
 	case 0:
 		repo, err := c.resolveProjectContext()

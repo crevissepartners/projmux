@@ -119,7 +119,7 @@ func (l attentionLookup) PaneFormat(paneID, format string) string {
 func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printAttentionUsage(stderr)
-		return errors.New("attention requires a subcommand")
+		return usageError("attention requires a subcommand")
 	}
 
 	switch args[0] {
@@ -138,7 +138,7 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	default:
 		printAttentionUsage(stderr)
-		return fmt.Errorf("unknown attention subcommand: %s", args[0])
+		return usageError(fmt.Sprintf("unknown attention subcommand: %s", args[0]))
 	}
 }
 
@@ -157,7 +157,7 @@ func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) erro
 	}
 	if fs.NArg() != 0 {
 		printAttentionUsage(stderr)
-		return fmt.Errorf("attention list does not accept positional arguments")
+		return usageError("attention list does not accept positional arguments")
 	}
 
 	rows, err := c.listAttentionPanes()
@@ -247,13 +247,15 @@ func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) error {
-	// Bright Phase 2 (B1): the window badge glyph renders with the resolved
-	// effective theme instead of the zero-value fallback role map.
-	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
+	// Arguments are validated before the theme is resolved so a usage
+	// rejection never reads config.
 	windowID, style, err := parseAttentionWindowArgs(args, stderr)
 	if err != nil {
 		return err
 	}
+	// Bright Phase 2 (B1): the window badge glyph renders with the resolved
+	// effective theme instead of the zero-value fallback role map.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	if windowID == "" {
 		_, err := fmt.Fprint(stdout, " ")
 		return err
@@ -279,9 +281,14 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 }
 
 func parseAttentionWindowArgs(args []string, stderr io.Writer) (windowID, style string, err error) {
+	args, err = splitOperands("attention window", args)
+	if err != nil {
+		printAttentionUsage(stderr)
+		return "", "", err
+	}
 	if len(args) > 2 {
 		printAttentionUsage(stderr)
-		return "", "", errors.New("attention window accepts at most 2 arguments")
+		return "", "", usageError("attention window accepts at most 2 arguments")
 	}
 	if len(args) > 0 {
 		windowID = strings.TrimSpace(args[0])
@@ -294,15 +301,46 @@ func parseAttentionWindowArgs(args []string, stderr io.Writer) (windowID, style 
 	return windowID, style, nil
 }
 
-func parseOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, error) {
-	if len(args) > 1 {
+// parseOptionalAttentionTarget returns the optional pane target and whether an
+// operand was supplied at all. Unknown flags are rejected before the arity
+// check, and a bare `--` with nothing after it counts as no target.
+func parseOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, bool, error) {
+	operands, err := splitOperands(command, args)
+	if err != nil {
 		printAttentionUsage(stderr)
-		return "", fmt.Errorf("%s accepts at most 1 target argument", command)
+		return "", false, err
 	}
-	if len(args) == 0 {
-		return "", nil
+	if len(operands) > 1 {
+		printAttentionUsage(stderr)
+		return "", false, usageError(fmt.Sprintf("%s accepts at most 1 target argument", command))
 	}
-	return strings.TrimSpace(args[0]), nil
+	if len(operands) == 0 {
+		return "", false, nil
+	}
+	return strings.TrimSpace(operands[0]), true, nil
+}
+
+// splitOperands separates the positional operands of a flagless subcommand
+// from anything that looks like a flag. The subcommands that use it accept no
+// flags, so before the first bare `--` every token that starts with `-` and is
+// not exactly `-` is rejected as a usage error naming the token verbatim
+// ("<command>: unknown flag <token>"). A lone `-` is an operand. The first bare
+// `--` ends option parsing: it is dropped and every later token, including
+// `-x` and another `--`, is an operand. All tokens are scanned before the
+// caller applies its arity checks, so an unknown flag wins over "too many
+// arguments". It never prints; callers print their own usage text.
+func splitOperands(command string, args []string) ([]string, error) {
+	operands := make([]string, 0, len(args))
+	for i, tok := range args {
+		if tok == "--" {
+			return append(operands, args[i+1:]...), nil
+		}
+		if strings.HasPrefix(tok, "-") && tok != "-" {
+			return nil, usageError(fmt.Sprintf("%s: unknown flag %s", command, tok))
+		}
+		operands = append(operands, tok)
+	}
+	return operands, nil
 }
 
 // resolveOptionalAttentionTarget keeps explicit targets byte-for-byte on their
@@ -311,8 +349,8 @@ func parseOptionalAttentionTarget(args []string, command string, stderr io.Write
 // inherited client receipt must be present and the pane must still reobserve as
 // itself before the first attention handler read or write.
 func (c *attentionCommand) resolveOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, error) {
-	paneID, err := parseOptionalAttentionTarget(args, command, stderr)
-	if err != nil || len(args) != 0 {
+	paneID, explicit, err := parseOptionalAttentionTarget(args, command, stderr)
+	if err != nil || explicit {
 		return paneID, err
 	}
 
