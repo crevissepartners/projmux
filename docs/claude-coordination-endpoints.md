@@ -17,19 +17,26 @@ Managed Agent/Pane names and Claude session titles are not route authority.
 Renaming an unchanged UID/activation preserves its registration. Phase 1 does
 not discover unmanaged provider names or observe live Claude `/rename` events.
 Competing session/process/helper claims for an exact activation are refused;
-the exact child's next SessionStart atomically claims a new registration
-generation before launching its helper. Delayed admission and cleanup from an
-older generation cannot overwrite or clear that newer registration.
+the helper launched by the exact child's next SessionStart claims a new
+registration generation and records it Ready in one Registry transaction, so
+no claimed-but-not-Ready registration is ever published. The claim is a
+compare-and-set on the registration generation the hook observed, so delayed
+admission and cleanup from an older generation cannot overwrite or clear a
+newer registration.
 
 The activation gate records the actual child PID and kernel birth identity
 before replacing itself with Claude. The separate managed SessionStart hook
-uses `exec`, making the registered provider its direct parent. The helper
-verifies the complete helper → hook → provider process chain while the hook
-waits for a bounded startup acknowledgement. The hook's wait bounds only the
-hook: when it ends without the acknowledgement, the hook releases the helper
-instead of killing it, and a helper whose acknowledgement nobody reads keeps
-the registration it recorded. A released helper that cannot record, or whose
-generation is no longer current, exits and removes its lease files by itself.
+uses `exec`, making the registered provider its direct parent. The hook never
+takes or waits on the Registry lock: it reads the Registry lock-free, starts
+the helper, and waits only for a bounded startup acknowledgement, all inside
+Claude's hook timeout. The helper verifies the complete helper → hook →
+provider process chain, then claims and records the registration in its own
+lifetime, bounded by the Registry lock acquisition timeout. The hook's wait
+bounds only the hook: when it ends without the acknowledgement, the hook
+releases the helper instead of killing it, and a helper whose acknowledgement
+nobody reads still records and keeps its registration. A released helper that
+cannot record, or whose generation is no longer current, exits without writing
+and removes its lease files by itself.
 A nested unmanaged Claude cannot
 register its own endpoint through inherited activation environment variables.
 The creator-selected Registry path travels only in private Claude activation

@@ -79,10 +79,15 @@ type claudeEndpointBootstrap struct {
 	PaneUID      string
 	Generation   string
 	Registration coremetadata.ClaudeRegistration
-	HookProcess  coremetadata.ProcessIdentity
-	Socket       string
-	Token        string
-	ReplyTool    *claudeReplyToolPolicy
+	// PriorRegistrationGeneration is the registrationGeneration the hook saw
+	// on the pane when it built this bootstrap. The helper's claim is a CAS on
+	// it, so a helper whose hook looked before a newer SessionStart claimed
+	// cannot overwrite that newer registration.
+	PriorRegistrationGeneration string
+	HookProcess                 coremetadata.ProcessIdentity
+	Socket                      string
+	Token                       string
+	ReplyTool                   *claudeReplyToolPolicy
 }
 
 func (claudeEndpointBootstrap) String() string   { return "[private Claude registration]" }
@@ -130,14 +135,21 @@ func runClaudeEndpointRegistration(args []string) error {
 	if !ok {
 		return nil
 	}
-	_, _, err = store.UpdateConvergent(func(current *coremetadata.Registry) error {
-		return intmetadata.DefaultMutator().BeginClaudeRegistration(current, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration.Authority)
-	})
-	if err != nil {
-		return nil
-	}
-	_ = startClaudeEndpointHelper(bootstrap)
+	registerClaudeEndpoint(bootstrap, startClaudeEndpointHelper)
 	return nil
+}
+
+// registerClaudeEndpoint is the hook's part of one registration once its
+// bootstrap is built: start is startClaudeEndpointHelper outside tests.
+//
+// Claude cancels this hook at its 5s timeout, so the hook takes no Registry
+// lock at all: it starts the helper straight from its lock-free bootstrap. The
+// helper claims and records the registration in one transaction in its own
+// lifetime, bounded by the Registry lock acquisition timeout. A hook cancelled
+// before its helper admits the registration therefore leaves the pane as it
+// found it, never with a claimed registration that nothing will make Ready.
+func registerClaudeEndpoint(bootstrap claudeEndpointBootstrap, start func(claudeEndpointBootstrap) error) {
+	_ = start(bootstrap)
 }
 
 func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string, data []byte, env func(string) string, parentPID int) (claudeEndpointBootstrap, bool) {
@@ -195,9 +207,10 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 		return claudeEndpointBootstrap{}, false
 	}
 	return claudeEndpointBootstrap{RegistryPath: registryPath, AgentUID: agent.Metadata.UID, PaneUID: paneUID, Generation: generation,
-		Registration: coremetadata.ClaudeRegistration{Authority: authority},
-		HookProcess:  hookProcess,
-		Socket:       socket, Token: token, ReplyTool: replyTool}, true
+		Registration:                coremetadata.ClaudeRegistration{Authority: authority},
+		PriorRegistrationGeneration: pane.Status.Activation.Claude.RegistrationGeneration,
+		HookProcess:                 hookProcess,
+		Socket:                      socket, Token: token, ReplyTool: replyTool}, true
 }
 
 // claudeEndpointHelperRoute is the internal route word of the per-agent
@@ -257,12 +270,14 @@ type claudeHelperProcess interface {
 // awaitClaudeHelperAdmission releases the helper however the wait ends. The
 // hook's wait budget says nothing about whether the registration is valid:
 // killing a helper still waiting on the Registry lock when the deadline passes
-// stops it before Record and leaves a live Claude with only its Begin.
-// A released helper settles by itself. Its Record is a CAS on the exact
-// registrationGeneration, so a stale helper cannot overwrite a newer one; if
-// Record fails, or the helper is stale, it exits and its defers remove the
-// lease socket, owner receipt, and coordination socket. Its lock wait is
-// bounded by the Registry lock acquisition timeout (defaultLockTimeout in
+// stops it before it claims and records its registration.
+// A released helper settles by itself. Its claim (Begin) and Record run in one
+// transaction; Begin is a CAS on the registrationGeneration the hook observed
+// and Record a CAS on the exact registrationGeneration, so a stale helper
+// cannot overwrite a newer one. If the transaction fails, or the helper is
+// stale, it exits without writing and its defers remove the lease socket,
+// owner receipt, and coordination socket. Its lock wait is bounded by the
+// Registry lock acquisition timeout (defaultLockTimeout in
 // internal/integrations/metadata/store.go).
 func awaitClaudeHelperAdmission(readAck claudeHelperAck, deadline time.Time, helper claudeHelperProcess) error {
 	_ = readAck.SetReadDeadline(deadline)
@@ -559,6 +574,12 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 	_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 		if actual, _, err := claudeadapter.Process(bootstrap.Registration.Authority.Process.PID); err != nil || actual != bootstrap.Registration.Authority.Process {
 			return errors.New("claude provider process is unavailable")
+		}
+		// Begin and Record commit together, so no helper ever publishes a
+		// claimed registration without Ready.
+		if err := mutator.BeginClaudeRegistrationAfter(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation,
+			bootstrap.PriorRegistrationGeneration, bootstrap.Registration.Authority); err != nil {
+			return err
 		}
 		return mutator.RecordClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration)
 	})

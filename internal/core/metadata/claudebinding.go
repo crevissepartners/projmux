@@ -34,23 +34,63 @@ func (m Mutator) RecordClaudeProcess(reg *Registry, paneUID, agentUID, generatio
 	return nil
 }
 
-// BeginClaudeRegistration is the SessionStart hook's admission claim. A newer
-// claim fences out an older helper still starting, before either can be Ready.
+// BeginClaudeRegistration claims a new registration generation
+// unconditionally. A newer claim fences out an older helper still starting,
+// before either can be Ready.
 func (m Mutator) BeginClaudeRegistration(reg *Registry, paneUID, agentUID, generation string, authority ClaudeAuthorityRef) error {
 	const op = "begin Claude registration"
+	pane, ok := claudeRegistrationClaimTarget(reg, paneUID, agentUID, generation, authority)
+	if !ok {
+		return stateErr(op, ErrInvalidRegistry, "exact managed Claude activation is unavailable")
+	}
+	m.claimClaudeRegistration(reg, pane, authority)
+	return nil
+}
+
+// BeginClaudeRegistrationAfter is the helper's admission claim for the
+// SessionStart hook that observed priorRegistrationGeneration on the pane
+// before it started the helper. It is a CAS: the claim succeeds only while the
+// pane still carries that generation, and is a no-op success when it already
+// carries the helper's own. Any other generation belongs to a SessionStart that
+// claimed after the hook looked, so this stale helper writes nothing.
+func (m Mutator) BeginClaudeRegistrationAfter(reg *Registry, paneUID, agentUID, generation, priorRegistrationGeneration string, authority ClaudeAuthorityRef) error {
+	const op = "begin Claude registration"
+	pane, ok := claudeRegistrationClaimTarget(reg, paneUID, agentUID, generation, authority)
+	if !ok {
+		return stateErr(op, ErrInvalidRegistry, "exact managed Claude activation is unavailable")
+	}
+	binding := pane.Status.Activation.Claude
+	switch binding.RegistrationGeneration {
+	case authority.RegistrationGeneration:
+		if binding.RegistrationSessionID != authority.SessionID {
+			return stateErr(op, ErrInvalidRegistry, "competing Claude registration claim")
+		}
+		return nil
+	case priorRegistrationGeneration:
+		m.claimClaudeRegistration(reg, pane, authority)
+		return nil
+	default:
+		return stateErr(op, ErrInvalidRegistry, "newer Claude registration claim")
+	}
+}
+
+func claudeRegistrationClaimTarget(reg *Registry, paneUID, agentUID, generation string, authority ClaudeAuthorityRef) (*Pane, bool) {
 	pane, ok := reg.Pane(paneUID)
 	agent, found := reg.Agent(agentUID)
 	if !ok || !found || agent.Spec.Provider != "claude" || agent.Status.Phase != PhaseRunning || agent.Status.PaneRef != paneUID ||
 		pane.Spec.Role != PaneRoleAgent || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindAgent || pane.Metadata.OwnerUID() != agentUID ||
 		pane.Status.Activation.AgentUID != agentUID || pane.Status.Activation.Generation != generation || generation == "" ||
 		pane.Status.Activation.Claude == nil || pane.Status.Activation.Claude.Process != authority.Process || !authority.Valid() {
-		return stateErr(op, ErrInvalidRegistry, "exact managed Claude activation is unavailable")
+		return nil, false
 	}
+	return pane, true
+}
+
+func (m Mutator) claimClaudeRegistration(reg *Registry, pane *Pane, authority ClaudeAuthorityRef) {
 	pane.Status.Activation.Claude.RegistrationSessionID = authority.SessionID
 	pane.Status.Activation.Claude.RegistrationGeneration = authority.RegistrationGeneration
 	pane.Status.Activation.Claude.Registration = nil
 	reg.UpdatedAt = m.clock()().UTC()
-	return nil
 }
 
 func (m Mutator) RecordClaudeRegistration(reg *Registry, paneUID, agentUID, generation string, registration ClaudeRegistration) error {
