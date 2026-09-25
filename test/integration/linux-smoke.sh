@@ -3556,6 +3556,82 @@ termination_await_journal_receipt() {
   exit 1
 }
 
+# The replay loop returns on any outcome other than the holds-deferral: it may
+# have converged before the Pane died, lost the release handoff, left the
+# runtime unverified, or hit its pass bound. A judgement that then fails has to
+# name which of those the replay took and who held the controller lease, or the
+# failure cannot be told apart from a product regression. This dump is called
+# only on failure branches, right before their exit, and never fails itself.
+declare -A termination_replay_attempt=() termination_replay_returned_at=()
+termination_dump_controller_state() {
+  local report_label="$1" runtime_id="$2" pane_uid="$3"
+  (
+    local err_file="$termination_root/receipt-converge-$report_label.err"
+    local controller_dir="$termination_root/state/projmux/controller"
+    local journal="$termination_root/state/projmux/termination-receipts.jsonl"
+    local key lock_file inode holders holder_pid events_dir event_file workers panes rows
+    echo ">> termination controller state ($report_label): replay"
+    echo "attempt=${termination_replay_attempt[$report_label]:-unknown} returned_at=${termination_replay_returned_at[$report_label]:-unknown} dumped_at=$(date +%s.%N || true)"
+    if [[ -e "$err_file" ]]; then
+      cat "$err_file" || true
+    else
+      echo "replay stderr absent: $err_file"
+    fi
+    key="$(printf '%s\0%s' -S "$termination_socket_path" | sha256sum | cut -c1-16 || true)"
+    lock_file="$controller_dir/$key.lock"
+    echo ">> termination controller state ($report_label): lease"
+    if [[ -e "$lock_file" ]]; then
+      inode="$(stat -c %i "$lock_file" 2>/dev/null || true)"
+      echo "lock=$lock_file exists=yes inode=$inode"
+      holders=""
+      if [[ -n "$inode" && -r /proc/locks ]]; then
+        # A blocked waiter's row carries an extra `->` field, so the pid is
+        # located as the field before the dev:inode triple rather than by column.
+        holders="$(awk -v inode="$inode" '{
+          for (i = 2; i <= NF; i++) {
+            n = split($i, parts, ":")
+            if (n == 3 && parts[3] == inode) {
+              print $(i - 1) (index($0, "->") ? " waiting" : " holding")
+              break
+            }
+          }
+        }' /proc/locks 2>/dev/null || true)"
+      fi
+      if [[ -z "$holders" ]]; then
+        echo "holder=none"
+      else
+        while read -r holder_pid holder_state; do
+          echo "pid=$holder_pid state=$holder_state args=$(tr '\0' ' ' <"/proc/$holder_pid/cmdline" 2>/dev/null || true)"
+        done <<<"$holders"
+      fi
+    else
+      echo "lock=$lock_file exists=no"
+    fi
+    echo ">> termination controller state ($report_label): pending events"
+    events_dir="$controller_dir/$key.events"
+    if compgen -G "$events_dir/*" >/dev/null 2>&1; then
+      for event_file in "$events_dir"/*; do
+        echo "event=$(basename "$event_file" || true) body=$(cat "$event_file" 2>/dev/null || true)"
+      done
+    else
+      echo "events=none"
+    fi
+    echo ">> termination controller state ($report_label): in-flight workers"
+    # shellcheck disable=SC2009 # pgrep -f also matches the shell running this pipeline and cannot print etimes.
+    workers="$(ps -eo pid=,etimes=,args= 2>/dev/null | grep -F 'internal tmux converge' | grep -F -- "$termination_socket_path" || true)"
+    echo "${workers:-workers=none}"
+    echo ">> termination controller state ($report_label): runtime pane $runtime_id"
+    panes="$(termination_tmux list-panes -a -F '#{pane_id} dead=#{pane_dead} uid=#{@projmux_pane_uid}' 2>/dev/null | awk -v id="$runtime_id" '$1 == id' || true)"
+    echo "${panes:-absent}"
+    echo ">> termination controller state ($report_label): journal rows for $pane_uid"
+    rows=""
+    if [[ -n "$pane_uid" && -e "$journal" ]]; then
+      rows="$(grep -F -- "$pane_uid" "$journal" 2>/dev/null || true)"
+    fi
+    echo "${rows:-journal=none}"
+  ) >&2 || true
+}
+
 termination_replay_pane_exited_hook() {
   local pane_uid="$1" want_class="$2" runtime_id="$3" report_label="$4"
   local converge_status
@@ -3564,7 +3640,9 @@ termination_replay_pane_exited_hook() {
     exit 1
   fi
   termination_await_journal_receipt "$pane_uid" "$want_class"
+  termination_replay_attempt[$report_label]=0
   for _ in $(seq 1 100); do
+    termination_replay_attempt[$report_label]=$((termination_replay_attempt[$report_label] + 1))
     set +e
     termination_pmx internal tmux converge \
       --socket-path "$termination_socket_path" \
@@ -3574,9 +3652,11 @@ termination_replay_pane_exited_hook() {
       2>"$termination_root/receipt-converge-$report_label.err"
     converge_status=$?
     set -e
+    termination_replay_returned_at[$report_label]="$(date +%s.%N)"
     if [[ "$converge_status" != "0" ]]; then
       echo "pane-exited replay for $pane_uid exited $converge_status" >&2
       cat "$termination_root/receipt-converge-$report_label.err" >&2
+      termination_dump_controller_state "$report_label" "$runtime_id" "$pane_uid"
       exit 1
     fi
     if ! grep -q "deferred: another controller worker holds" \
@@ -3587,11 +3667,12 @@ termination_replay_pane_exited_hook() {
   done
   echo "pane-exited replay stayed behind the generated hook lease for $pane_uid" >&2
   cat "$termination_root/receipt-converge-$report_label.err" >&2
+  termination_dump_controller_state "$report_label" "$runtime_id" "$pane_uid"
   exit 1
 }
 
 termination_await_receipt() {
-  local pane_uid="$1" want_class="$2"
+  local pane_uid="$1" want_class="$2" report_label="$3" runtime_id="$4"
   for _ in $(seq 1 200); do
     # A runtime-created pass can briefly record reconcile/unknown before the
     # supervisor's append becomes visible. Phase 6 explicitly refines that
@@ -3604,6 +3685,7 @@ termination_await_receipt() {
   done
   echo "no termination receipt was recorded for $pane_uid" >&2
   termination_pmx describe pane "uid:$pane_uid" -o json >&2 || true
+  termination_dump_controller_state "$report_label" "$runtime_id" "$pane_uid"
   exit 1
 }
 
@@ -3631,18 +3713,20 @@ termination_case() {
       echo "clean shell Pane $pane_uid survived exact runtime-exit cascade" >&2
       cat "$termination_root/receipt-converge-$label.err" >&2
       cat "$termination_root/clean-pane-present.json" >&2
+      termination_dump_controller_state "$label" "$runtime_id" "$pane_uid"
       exit 1
     fi
     termination_await_journal_receipt "$pane_uid" normal
     if ! awk -v pane="\"paneUID\":\"$pane_uid\"" -v generation="\"generation\":\"$activation\"" \
       'index($0, pane) && index($0, generation) { found = 1 } END { exit !found }' "$termination_root/state/projmux/termination-receipts.jsonl"; then
       echo "clean shell Pane $pane_uid lost its pre-delete journal evidence" >&2
+      termination_dump_controller_state "$label" "$runtime_id" "$pane_uid"
       exit 1
     fi
     echo ">> termination case $label uid=$pane_uid class=normal registry=deleted journal=preserved"
     return
   fi
-  termination_await_receipt "$pane_uid" "$want_class"
+  termination_await_receipt "$pane_uid" "$want_class" "$label" "$runtime_id"
   local got_class got_code got_signal got_source got_generation activation
   got_class="$(termination_receipt_field "$pane_uid" classification)"
   got_code="$(termination_receipt_field "$pane_uid" exitCode)"
@@ -3652,14 +3736,17 @@ termination_case() {
   activation="$(termination_activation_generation "$pane_uid")"
   if [[ "$got_class" != "$want_class" || "$got_code" != "$want_code" || "$got_signal" != "$want_signal" ]]; then
     echo "termination case $label recorded class=$got_class code=$got_code signal=$got_signal, want class=$want_class code=$want_code signal=$want_signal" >&2
+    termination_dump_controller_state "$label" "$runtime_id" "$pane_uid"
     exit 1
   fi
   if [[ "$got_source" != "supervisor" ]]; then
     echo "termination case $label recorded source=$got_source, want supervisor" >&2
+    termination_dump_controller_state "$label" "$runtime_id" "$pane_uid"
     exit 1
   fi
   if [[ -z "$activation" || "$got_generation" != "$activation" ]]; then
     echo "termination case $label receipt generation '$got_generation' is not the Pane's activation generation '$activation'" >&2
+    termination_dump_controller_state "$label" "$runtime_id" "$pane_uid"
     exit 1
   fi
   echo ">> termination case $label uid=$pane_uid class=$got_class generation=$activation"
@@ -3805,15 +3892,18 @@ termination_provider_case() {
       [[ "$got_source" != "supervisor" || "$got_generation" != "$activation" ]]; then
       echo "clean provider $provider did not retain an exact Offline Agent: agent=$agent_uid pane=$pane_ref" >&2
       cat "$termination_root/agent.json" >&2
+      termination_dump_controller_state "provider-$provider" "$runtime_id" "$pane_ref"
       exit 1
     fi
     if termination_pmx describe pane "uid:$pane_ref" -o json >"$termination_root/clean-provider-pane-present.json" 2>/dev/null; then
       echo "clean provider $provider retained released Pane row $pane_ref" >&2
       cat "$termination_root/clean-provider-pane-present.json" >&2
+      termination_dump_controller_state "provider-$provider" "$runtime_id" "$pane_ref"
       exit 1
     fi
     if termination_tmux list-panes -t "$termination_main_window_id" -F '#{@projmux_pane_uid}' | grep -Fx "$pane_ref" >/dev/null; then
       echo "clean provider $provider left exact dead runtime Pane $pane_ref" >&2
+      termination_dump_controller_state "provider-$provider" "$runtime_id" "$pane_ref"
       exit 1
     fi
     termination_pmx get panes --project "uid:$termination_project_uid" \
@@ -3862,16 +3952,19 @@ termination_provider_case() {
   if [[ "$got_class" != "$want_class" || "$got_code" != "$want_code" || "$got_signal" != "$want_signal" ]]; then
     echo "termination provider case $provider recorded class=$got_class code=$got_code signal=$got_signal, want class=$want_class code=$want_code signal=$want_signal" >&2
     cat "$termination_root/agent.json" >&2
+    termination_dump_controller_state "provider-$provider" "$runtime_id" "$pane_ref"
     exit 1
   fi
   if [[ "$got_source" != "supervisor" ]]; then
     echo "termination provider case $provider recorded source=$got_source, want supervisor" >&2
     cat "$termination_root/agent.json" >&2
+    termination_dump_controller_state "provider-$provider" "$runtime_id" "$pane_ref"
     exit 1
   fi
   if [[ "$got_generation" != "$activation" ]]; then
     echo "termination provider case $provider receipt generation '$got_generation' is not the managed Pane's activation generation '$activation'" >&2
     cat "$termination_root/agent.json" >&2
+    termination_dump_controller_state "provider-$provider" "$runtime_id" "$pane_ref"
     exit 1
   fi
   if ! termination_pmx describe pane "uid:$pane_ref" -o json >/dev/null; then
