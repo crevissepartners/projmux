@@ -698,7 +698,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		}
 		if usedNative {
 			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.runner, paneID, contextDir, workTitle, plan.topic, nativeThreadID); err != nil {
-				return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
+				return fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", spelling, paneID, err)
 			}
 			if nativeLifecycleCapable {
 				nativeLifecycleTargetAfterCommit = codexLifecycleObserverTarget{
@@ -713,7 +713,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			PaneID: paneID, Provider: plan.provider, ContextDir: contextDir, Title: workTitle,
 			Topic: plan.topic, TopicManual: strings.TrimSpace(plan.topic) != "", ConversationID: plan.conversationID,
 		}); err != nil {
-			return tmuxError("%s: bind resumed Agent Pane %s presentation metadata: %v", spelling, paneID, err)
+			return fmt.Errorf("%s: bind resumed Agent Pane %s presentation metadata: %w", spelling, paneID, err)
 		}
 		return nil
 	}, r.create.exactProjectOwnershipGuard(plan.projectUID)); err != nil {

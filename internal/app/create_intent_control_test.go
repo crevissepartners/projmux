@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -968,12 +970,75 @@ func TestCanonicalProducerNegativeAuditHasZeroHiddenStderr(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "phase12 exact split refusal") {
 		t.Fatalf("error = %v, want exact materializer reason", err)
 	}
-	var coded interface{ ExitCode() int }
-	if errors.As(err, &coded) {
-		t.Fatalf("canonical UI error exposes subprocess ExitCode %d; cmd/projmux would hide stderr", coded.ExitCode())
+	if !cli.ClassifyFailure(err, IsUsageError(err)).Print {
+		t.Fatalf("canonical UI error %v would be hidden by cmd/projmux", err)
 	}
 	if fx.store.writes != 0 || fx.store.snapshot() != before {
 		t.Fatalf("failed canonical materialization committed Registry state")
+	}
+}
+
+// TestCanonicalProducerSubprocessFailureKeepsItsCause drives a UI create whose
+// tmux split fails with a real exit status 1: the returned error keeps the
+// subprocess cause, and cmd/projmux prints it once, exits 1, and journals a
+// runtime outcome.
+func TestCanonicalProducerSubprocessFailureKeepsItsCause(t *testing.T) {
+	fx := canonicalFixture(t, true)
+	fx.tmux.fail = []string{"split-window"}
+	fx.tmux.failMessage = "exact split refusal"
+	fx.tmux.failCause = exec.Command("sh", "-c", "exit 1").Run()
+	_, err := fx.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.originID,
+	}, ioDiscard{}, ioDiscard{})
+	if err == nil || !strings.Contains(err.Error(), "exact split refusal") {
+		t.Fatalf("error = %v, want exact materializer reason", err)
+	}
+	assertPrintedRuntimeSubprocessFailure(t, []string{"internal", "agent-pane", "launch-shell", "right"}, err)
+}
+
+// TestVisibleCanonicalCreateErrorFollowsTheEntrypointVerdict pins which UI
+// create errors keep their chain: one the entrypoint prints is returned
+// unchanged, and one it would stay silent on becomes plain text the popup and
+// the entrypoint both show.
+func TestVisibleCanonicalCreateErrorFollowsTheEntrypointVerdict(t *testing.T) {
+	t.Parallel()
+	subprocessExit := exec.Command("sh", "-c", "exit 1").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(subprocessExit, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("sh exit 1 = %v, want *exec.ExitError with code 1", subprocessExit)
+	}
+	wrapped := fmt.Errorf("split tmux pane %q: %w", "%1", subprocessExit)
+	plain := errors.New("plain refusal")
+	for _, tt := range []struct {
+		name      string
+		err       error
+		unchanged bool
+	}{
+		{name: "wrapped exit error", err: wrapped, unchanged: true},
+		{name: "plain error", err: plain, unchanged: true},
+		{name: "bare exit error", err: subprocessExit},
+		{name: "app coder", err: focusExitError{code: focusExitNotResolved, err: wrapped}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := visibleCanonicalCreateError(tt.err)
+			if got.Error() != tt.err.Error() {
+				t.Fatalf("text = %q, want %q", got, tt.err)
+			}
+			if tt.unchanged != (got == tt.err) {
+				t.Fatalf("returned %T %v unchanged=%v, want unchanged=%v", got, got, got == tt.err, tt.unchanged)
+			}
+			verdict := cli.ClassifyFailure(got, IsUsageError(got))
+			if !verdict.Print || verdict.ExitCode != 1 {
+				t.Fatalf("verdict = %+v, want printed with exit 1", verdict)
+			}
+			var coded interface{ ExitCode() int }
+			if !tt.unchanged && errors.As(got, &coded) {
+				t.Fatalf("converted error still carries exit coder %d", coded.ExitCode())
+			}
+		})
+	}
+	if visibleCanonicalCreateError(nil) != nil {
+		t.Fatal("nil error was not kept nil")
 	}
 }
 

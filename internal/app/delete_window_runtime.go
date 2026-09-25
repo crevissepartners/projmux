@@ -131,7 +131,7 @@ func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRo
 		if inttmux.IsNoServerFailure(err) {
 			return nil, true, nil
 		}
-		return nil, false, tmuxError("delete window: inventory exact tmux socket: %v", err)
+		return nil, false, fmt.Errorf("delete window: inventory exact tmux socket: %w", err)
 	}
 	out = []byte(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep))
 	var rows []liveWindowRow
@@ -265,7 +265,7 @@ func (r *tmuxWindowDeleteRuntime) currentInvocationWindow(ctx context.Context) (
 	inheritedSocket, _, _ := strings.Cut(strings.TrimSpace(r.getenv("TMUX")), ",")
 	serverSocket, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
-		return "", "", tmuxError("delete window: inspect exact caller socket: %v", err)
+		return "", "", fmt.Errorf("delete window: inspect exact caller socket: %w", err)
 	}
 	if strings.TrimSpace(string(serverSocket)) != inheritedSocket {
 		return "", "", nil
@@ -273,7 +273,7 @@ func (r *tmuxWindowDeleteRuntime) currentInvocationWindow(ctx context.Context) (
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", strings.TrimSpace(r.getenv("TMUX_PANE")),
 		"-F", tmuxRowFormat("#{socket_path}", "#{window_id}"))
 	if err != nil {
-		return "", "", tmuxError("delete window: inspect exact caller pane %s: %v", strings.TrimSpace(r.getenv("TMUX_PANE")), err)
+		return "", "", fmt.Errorf("delete window: inspect exact caller pane %s: %w", strings.TrimSpace(r.getenv("TMUX_PANE")), err)
 	}
 	rows := splitTmuxRows(string(out), 2)
 	if len(rows) != 1 || strings.TrimSpace(rows[0][0]) != inheritedSocket {
@@ -319,7 +319,7 @@ func (r *tmuxWindowDeleteRuntime) killAll(ctx context.Context, targets []windowL
 	}
 	err := executeRuntimeMutationPlan(ctx, steps)
 	if err != nil {
-		return applied, tmuxError("delete window: kill exact live Window batch: %v", err)
+		return applied, fmt.Errorf("delete window: kill exact live Window batch: %w", err)
 	}
 	return applied, nil
 }
@@ -357,7 +357,7 @@ func (r *tmuxWindowDeleteRuntime) queueSelfKill(ctx context.Context, targets []w
 			Apply: func(ctx context.Context) error {
 				_, err := runRuntimeMutationCommand(ctx, r.routed(), action)
 				if err != nil {
-					return tmuxError("queue exact live Window %s in session %s (%s) for self-target deletion: %v",
+					return fmt.Errorf("queue exact live Window %s in session %s (%s) for self-target deletion: %w",
 						target.WindowID, target.SessionName, target.SessionID, err)
 				}
 				attempted = true
@@ -369,7 +369,7 @@ func (r *tmuxWindowDeleteRuntime) queueSelfKill(ctx context.Context, targets []w
 		}
 	}
 	if err := executeRuntimeMutationPlan(ctx, steps); err != nil {
-		return tmuxError("queue exact self-target Window deletion: %v", err)
+		return fmt.Errorf("queue exact self-target Window deletion: %w", err)
 	}
 	return nil
 }
@@ -404,7 +404,7 @@ func (r *tmuxWindowDeleteRuntime) revalidateQueuedWindow(ctx context.Context, ta
 	}
 	out, err := r.routed().Run(ctx, "tmux", "show-options", "-wqv", "-t", target.WindowID, tmuxopts.WindowUID)
 	if err != nil {
-		return tmuxError("revalidate exact live Window %s before self-target queue: %v", target.WindowID, err)
+		return fmt.Errorf("revalidate exact live Window %s before self-target queue: %w", target.WindowID, err)
 	}
 	observed := strings.TrimSpace(string(out))
 	if observed != target.UID {
@@ -447,7 +447,7 @@ func (r *tmuxWindowDeleteRuntime) revalidateMutationTarget(ctx context.Context, 
 	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.WindowUID+"}")
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", target.WindowID, "-F", format)
 	if err != nil {
-		return tmuxError("revalidate exact live Window %s: %v", target.WindowID, err)
+		return fmt.Errorf("revalidate exact live Window %s: %w", target.WindowID, err)
 	}
 	rows := splitTmuxRows(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep), 5)
 	if len(rows) != 1 {

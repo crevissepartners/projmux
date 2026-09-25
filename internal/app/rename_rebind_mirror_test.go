@@ -410,6 +410,34 @@ func TestLiveMirrorFailureIsNonzeroAfterDurableRegistryCommit(t *testing.T) {
 	}
 }
 
+// TestLiveMirrorSubprocessFailureKeepsCauseAfterDurableRegistryCommit pins a
+// tmux mirror write that fails after the Registry commit: the committed-mirror
+// error keeps its retry text and its tmux cause, and cmd/projmux prints it once
+// and exits with the child's code under a runtime journal kind.
+func TestLiveMirrorSubprocessFailureKeepsCauseAfterDurableRegistryCommit(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	mirror := &fakeMutationMirror{paneTarget: "%7", writeErr: realTmuxExitFailure(t, "can't find pane: %7")}
+	cmd := newTestRenameCommand(store)
+	cmd.mirror = mirror
+	args := []string{"pane", "log", "--project", "alpha", "--window", "main", "--name", "audit"}
+	stdout, _, err := runRoute(t, cmd, args...)
+	if err == nil || stdout != "" {
+		t.Fatalf("live mirror failure = %v stdout=%q, want nonzero with zero stdout bytes", err, stdout)
+	}
+	for _, want := range []string{"committed Registry state but could not converge its exact live tmux mirror", "can't find pane", "projmux reconcile resources"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("committed-mirror error = %v, want it to contain %q", err, want)
+		}
+	}
+	assertPrintedRuntimeSubprocessFailure(t, append([]string{"rename"}, args...), err)
+	pane, _ := store.registry.Pane("pan-alpha-log")
+	if pane.Metadata.Name != "audit" || store.writes != 1 {
+		t.Fatalf("Registry did not retain retryable drift: pane=%+v writes=%d", pane.Metadata, store.writes)
+	}
+}
+
 func TestRebindImmediatelyConvergesOnlyProjectPathAndSurfacesFailure(t *testing.T) {
 	t.Parallel()
 

@@ -930,7 +930,7 @@ func (c *createCommand) openWindowAgentPane(
 		return "", err
 	}
 	if err := c.bindAgentPane(ctx, paneID, provider, launch.workspace.CWD, launch.title, "", flags); err != nil {
-		return "", tmuxError("%s: bind Agent Pane %s presentation metadata: %v", canonicalCreateWindow, paneID, err)
+		return "", fmt.Errorf("%s: bind Agent Pane %s presentation metadata: %w", canonicalCreateWindow, paneID, err)
 	}
 	return paneID, nil
 }
