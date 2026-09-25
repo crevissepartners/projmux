@@ -1208,7 +1208,14 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if strings.TrimSpace(*set) != "" {
-		return c.setMode(*set)
+		// An unknown word is the caller's mistake: refuse it before anything
+		// touches the mode file, instead of saving it as selective.
+		mode, ok := validAIMode(*set)
+		if !ok {
+			return usageError(fmt.Sprintf("unknown AI mode %q; --set must be one of: %s",
+				mode, strings.Join(aiModes, ", ")))
+		}
+		return c.setMode(mode)
 	}
 
 	if c.nativePicker == nil {
@@ -4206,13 +4213,22 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
+// aiModes is the one list of AI split modes, in the order a refusal names
+// them. normalizeAIMode and validAIMode both read it.
+var aiModes = []string{aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeSelective, aiModeResume, aiModeShell}
+
+// validAIMode trims mode and reports whether it is one of aiModes. Matching is
+// case-sensitive.
+func validAIMode(mode string) (string, bool) {
+	mode = strings.TrimSpace(mode)
+	return mode, slices.Contains(aiModes, mode)
+}
+
 func normalizeAIMode(mode string) string {
-	switch strings.TrimSpace(mode) {
-	case aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeSelective, aiModeResume, aiModeShell:
-		return strings.TrimSpace(mode)
-	default:
-		return aiModeSelective
+	if valid, ok := validAIMode(mode); ok {
+		return valid
 	}
+	return aiModeSelective
 }
 
 func runExternalCommand(ctx context.Context, name string, args ...string) error {
