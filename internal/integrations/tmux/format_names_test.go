@@ -376,6 +376,7 @@ type formatConst struct {
 
 type formatScanner struct {
 	root       string
+	suffix     string // source file suffix: ".go", or ".go.txt" for fixtures
 	modulePath string
 	known      map[string]bool
 	fset       *token.FileSet
@@ -388,11 +389,13 @@ type formatScanner struct {
 	fileHits   map[string]bool
 }
 
-// scanTmuxFormats scans every non-test Go file under root/<dir> for dirs.
-func scanTmuxFormats(t *testing.T, root, modulePath string, dirs []string) *formatScanReport {
+// scanTmuxFormats scans every non-test Go source file (name ending in suffix
+// but not in "_test"+suffix) under root/<dir> for dirs.
+func scanTmuxFormats(t *testing.T, root, modulePath, suffix string, dirs []string) *formatScanReport {
 	t.Helper()
 	s := &formatScanner{
 		root:       root,
+		suffix:     suffix,
 		modulePath: modulePath,
 		known:      loadKnownFormatNames(t),
 		fset:       token.NewFileSet(),
@@ -437,7 +440,7 @@ func (s *formatScanner) walk(path string, d os.DirEntry, err error) error {
 		}
 		return nil
 	}
-	if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+	if !strings.HasSuffix(name, s.suffix) || strings.HasSuffix(name, "_test"+s.suffix) {
 		return nil
 	}
 	file, err := parser.ParseFile(s.fset, path, nil, parser.SkipObjectResolution)
@@ -688,7 +691,7 @@ func formatModulePath(t *testing.T, root string) string {
 
 func TestTmuxFormatNamesInRepositoryAreKnown(t *testing.T) {
 	root := formatRepoRoot(t)
-	report := scanTmuxFormats(t, root, formatModulePath(t, root), []string{"internal", "cmd"})
+	report := scanTmuxFormats(t, root, formatModulePath(t, root), ".go", []string{"internal", "cmd"})
 
 	t.Log(report.summary())
 	for _, u := range report.Unresolved {
@@ -708,23 +711,26 @@ func TestTmuxFormatNamesInRepositoryAreKnown(t *testing.T) {
 	}
 }
 
+// The fixtures under testdata/formatguard are Go source named *.go.txt:
+// `gosec ./...` type-checks testdata Go files and the fixtures import a fake
+// module, so a .go name would break the security scan.
 func TestTmuxFormatGuardRejectsUnknownNames(t *testing.T) {
 	root := filepath.Join("testdata", "formatguard")
-	report := scanTmuxFormats(t, root, "example.com/formatguard", []string{"internal", "cmd"})
+	report := scanTmuxFormats(t, root, "example.com/formatguard", ".go.txt", []string{"internal", "cmd"})
 	t.Log(report.summary())
 
 	want := []formatFinding{
-		{Path: "cmd/tool/main.go", Line: 8, Name: "mouse_window"},
-		{Path: "internal/app/app.go", Line: 12, Name: "client_active_pane"},
-		{Path: "internal/app/app.go", Line: 18, Name: "no_such_var_xyz"},
+		{Path: "cmd/tool/main.go.txt", Line: 8, Name: "mouse_window"},
+		{Path: "internal/app/app.go.txt", Line: 12, Name: "client_active_pane"},
+		{Path: "internal/app/app.go.txt", Line: 18, Name: "no_such_var_xyz"},
 	}
 	if !reflect.DeepEqual(report.Unknown, want) {
 		t.Errorf("findings = %v, want %v", report.Unknown, want)
 	}
 
 	wantUnresolved := []formatUnresolved{
-		{Path: "internal/app/app.go", Line: 29, Reason: `format name "…" is built at runtime`},
-		{Path: "internal/app/app.go", Line: 33, Reason: `format name "%s" contains a fmt verb`},
+		{Path: "internal/app/app.go.txt", Line: 29, Reason: `format name "…" is built at runtime`},
+		{Path: "internal/app/app.go.txt", Line: 33, Reason: `format name "%s" contains a fmt verb`},
 	}
 	if !reflect.DeepEqual(report.Unresolved, wantUnresolved) {
 		t.Errorf("unresolved = %v, want %v", report.Unresolved, wantUnresolved)
