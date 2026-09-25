@@ -1,31 +1,143 @@
 package app
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
-// TestAIModeSetMatchesTheCentralNewWindowModeSet keeps normalizeAIMode and
-// config.AINewWindowModes from drifting: getMode trusts
-// config.ValidAINewWindowMode for the TUI file.
+// TestAIModeSetMatchesTheCentralNewWindowModeSet guards drift between
+// config.AINewWindowModes, the one product-code list of AI modes, and the app
+// layer: every central mode must survive normalizeAIMode and validAIMode
+// unchanged, and every aiMode* string constant, `ai settings` picker row, and
+// Settings AI default-mode row must name a mode in the central list. A mode
+// added on only one side fails here.
 func TestAIModeSetMatchesTheCentralNewWindowModeSet(t *testing.T) {
-	appModes := []string{aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeSelective, aiModeResume, aiModeShell}
-	if len(appModes) != len(config.AINewWindowModes) {
-		t.Fatalf("app modes %v, config modes %v", appModes, config.AINewWindowModes)
-	}
-	for _, mode := range appModes {
-		if got, ok := config.ValidAINewWindowMode(mode); !ok || got != mode {
-			t.Errorf("config.ValidAINewWindowMode(%q) = %q, %v", mode, got, ok)
-		}
-	}
 	for _, mode := range config.AINewWindowModes {
 		if got := normalizeAIMode(mode); got != mode {
-			t.Errorf("normalizeAIMode(%q) = %q", mode, got)
+			t.Errorf("normalizeAIMode(%q) = %q, want it unchanged", mode, got)
+		}
+		if got, ok := validAIMode(mode); !ok || got != mode {
+			t.Errorf("validAIMode(%q) = %q, %v, want %q, true", mode, got, ok, mode)
 		}
 	}
+
+	constants := aiModeStringConstants(t)
+	if len(constants) < 6 || constants["aiModeSelective"] != aiModeSelective {
+		t.Fatalf("discovered aiMode* constants %v, want at least the six known modes including aiModeSelective", constants)
+	}
+	for name, mode := range constants {
+		assertCentralAIMode(t, mode, "constant "+name)
+	}
+
+	home := t.TempDir()
+	ai := testAICommand(home)
+	paths, err := configPaths(ai.homeDir, ai.lookupEnv)
+	if err != nil {
+		t.Fatalf("configPaths() error = %v", err)
+	}
+	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), config.KnownAIAgentProviders()); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+
+	pickerModes := 0
+	sawProvider := false
+	for _, row := range ai.settingsRows() {
+		if row.Value == "" {
+			continue
+		}
+		pickerModes++
+		if _, ok := aiModeProvider(row.Value); ok {
+			sawProvider = true
+		}
+		assertCentralAIMode(t, row.Value, "settingsRows")
+	}
+	if pickerModes == 0 || !sawProvider {
+		t.Fatalf("settingsRows gave %d mode rows (provider row: %v), want mode rows including a provider", pickerModes, sawProvider)
+	}
+
+	settings := &settingsCommand{
+		ai:        ai,
+		homeDir:   ai.homeDir,
+		lookupEnv: ai.lookupEnv,
+	}
+	settingsModes := 0
+	for _, entry := range settings.aiEntries() {
+		mode, ok := strings.CutPrefix(entry.Value, settingsActionPrefixAI)
+		if !ok {
+			continue
+		}
+		settingsModes++
+		assertCentralAIMode(t, mode, "aiEntries")
+	}
+	if settingsModes == 0 {
+		t.Fatal("aiEntries gave no mode rows")
+	}
+}
+
+func assertCentralAIMode(t *testing.T, mode, source string) {
+	t.Helper()
+	if !slices.Contains(config.AINewWindowModes, mode) {
+		t.Errorf("%s names AI mode %q, which is not in config.AINewWindowModes %v", source, mode, config.AINewWindowModes)
+	}
+}
+
+// aiModeStringConstants parses the package's non-test sources and returns
+// every string constant whose name starts with aiMode, keyed by name. Types
+// and funcs with that prefix, such as aiModeController, are not constants.
+func aiModeStringConstants(t *testing.T) map[string]string {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob package sources: %v", err)
+	}
+	fset := token.NewFileSet()
+	constants := map[string]string{}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			decl, ok := node.(*ast.GenDecl)
+			if !ok || decl.Tok != token.CONST {
+				return true
+			}
+			for _, spec := range decl.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, ident := range value.Names {
+					if !strings.HasPrefix(ident.Name, "aiMode") || i >= len(value.Values) {
+						continue
+					}
+					lit, ok := value.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					mode, err := strconv.Unquote(lit.Value)
+					if err != nil {
+						t.Fatalf("unquote %s in %s: %v", ident.Name, name, err)
+					}
+					constants[ident.Name] = mode
+				}
+			}
+			return true
+		})
+	}
+	return constants
 }
 
 // newAIModeTestCommand is an aiCommand whose config home is a temp

@@ -15,7 +15,9 @@ import (
 const AINewWindowModeFileName = "ai-new-window-mode"
 
 // AINewWindowModes is the value set of AINewWindowModeFileName, the same
-// words the TUI split default accepts. Callers must not modify it.
+// words the TUI split default accepts. It is the one product-code list of AI
+// modes: the app layer validates against it and its refusals name the modes in
+// this order. Callers must not modify it.
 var AINewWindowModes = []string{"claude", "codex", "antigravity", "selective", "resume", "shell"}
 
 func (p Paths) AINewWindowModeFile() string {
