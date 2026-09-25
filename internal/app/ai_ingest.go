@@ -461,19 +461,11 @@ func composeBellNotifyText(info bellPaneInfo) string {
 }
 
 func (c *aiCommand) aiIngestLogPath() (string, error) {
-	homeDir, err := c.homeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	paths, err := config.Homes{
-		HomeDir:    homeDir,
-		ConfigHome: c.env("XDG_CONFIG_HOME"),
-		StateHome:  c.env("XDG_STATE_HOME"),
-	}.Paths()
+	stateDir, err := c.aiStateDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(paths.StateDir, aiIngestLogName), nil
+	return filepath.Join(stateDir, aiIngestLogName), nil
 }
 
 func (c *aiCommand) appendAIIngestLog(entry aiIngestLogEntry) {

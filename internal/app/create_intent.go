@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -324,6 +325,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 	}
 	if plan != nil {
 		plan.startLifecycleObserver(opened)
+		c.recordIntentAgentSessionHistory(opened, stderr)
 		writeIntentAgentNotices(stderr, opened.notices)
 	}
 	return placement, c.writeResults(stdout, canonicalCreateWindow, cli.OutputModeDefault, coremetadata.KindWindow, []createResult{result})
@@ -818,6 +820,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		return createdPaneRuntime{}, err
 	}
 	plan.startLifecycleObserver(opened)
+	c.recordIntentAgentSessionHistory(opened, stderr)
 	writeIntentAgentNotices(stderr, opened.notices)
 	return createdPaneRuntime{paneID: opened.paneID}, c.writeResults(stdout, canonicalCreateAgent, cli.OutputModeDefault, coremetadata.KindAgent, []createResult{result})
 }
@@ -874,6 +877,11 @@ type intentAgentOpened struct {
 	// notices are the stderr lines the committed create discloses: launch
 	// values a resume-picker create could not inherit or re-pass.
 	notices []string
+	// sessionHistory is the Claude session history line a resume-picker
+	// create appends once its transaction has committed; sessionHistoryOK
+	// says there is one.
+	sessionHistory   sessionhistory.Record
+	sessionHistoryOK bool
 }
 
 // prepareIntentAgent is the preflight of one UI Agent answer. It runs before
@@ -1088,6 +1096,8 @@ func (c *createCommand) openIntentAgent(
 		}
 	}
 	notices = append(notices, flags.profileLaunch.notices()...)
+	var sessionHistory sessionhistory.Record
+	var sessionHistoryOK bool
 	// A resume-picker selection already carries provider-owned conversation
 	// identity before the provider starts. Persist that exact normalized
 	// identity now, in the same transaction that owns the Agent and Pane,
@@ -1101,9 +1111,13 @@ func (c *createCommand) openIntentAgent(
 			endpoint := plan.nativeRoute.Endpoint
 			observation.Endpoint = &endpoint
 		}
-		if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, observation); err != nil {
+		recorded, changed, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, observation)
+		if err != nil {
 			return intentAgentOpened{}, MapMetadataError(err)
 		}
+		// The line itself is appended only after the caller's transaction
+		// commits (recordIntentAgentSessionHistory).
+		sessionHistory, sessionHistoryOK = claudeSessionHistoryRecord(agent.Metadata.UID, changed, recorded.Status.SessionRef)
 		if plan.nativeCatalogResume {
 			storedAgent, _ := working.Agent(agent.Metadata.UID)
 			storedAgent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent}
@@ -1207,7 +1221,8 @@ func (c *createCommand) openIntentAgent(
 	if target.equalize {
 		c.runtime.equalizeSplitLayout(ctx, target.anchorPaneID, target.placement)
 	}
-	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID, notices: notices}
+	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID, notices: notices,
+		sessionHistory: sessionHistory, sessionHistoryOK: sessionHistoryOK}
 	if usedNative {
 		if err := bindNativeCodexPaneOnRoute(ctx, plan.nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, "", nativeThreadID); err != nil {
 			return intentAgentOpened{}, fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", canonicalCreateAgent, paneID, err)

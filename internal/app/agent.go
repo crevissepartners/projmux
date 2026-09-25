@@ -211,6 +211,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runWait(rest, stdout, stderr)
 	case "question":
 		return c.runQuestion(rest, stdout, stderr)
+	case "sessions":
+		return c.runSessions(rest, stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("agent %s is not available; this release implements: %s",
 			args[0], strings.Join(agentSubcommands, ", ")))

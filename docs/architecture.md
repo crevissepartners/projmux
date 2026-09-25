@@ -743,6 +743,44 @@ Agent provider session ref:
   hook whose provider contradicts the Agent's `spec.provider` is refused with
   zero mutations.
 
+Agent session history (Claude):
+
+- `status.sessionRef` holds one conversation and is overwritten when an Agent
+  moves to another one. The conversations a **Claude** Agent left are kept in
+  an append-only file outside the Registry,
+  `<state>/agent-session-history.jsonl` (next to `deletion-records.jsonl`;
+  `${XDG_STATE_HOME:-$HOME/.local/state}/projmux` by default). The Registry
+  schema and its version are unchanged.
+- One line is appended each time a committed Registry write replaces a Claude
+  Agent's `status.sessionRef` with a different conversation (the mutator's own
+  `SameConversation` verdict, so a re-observation appends nothing). The writers
+  are the closed set of `RecordAgentSessionRef` callers -- the hook ingest path,
+  the managed-Agent interaction commit, and the resume-picker create -- pinned
+  by `TestClaudeSessionRefWritersRecordHistory`. The append runs after the
+  commit and never fails its caller: a hook logs one `session-history` line to
+  `ai-ingest.log`, a create prints one
+  `agent session history not recorded: append-failed` line on stderr.
+- Each line is `{"agentUID","provider","sessionId","transcriptPath","observedAt","source"}`:
+  `provider` is `claude`, `observedAt` is the ref's RFC 3339 UTC observation
+  time, and `transcriptPath` is the path the hook reported (never read).
+  `source` is `observed` for every appended line; the read side adds `current`
+  for the Registry's ref; `estimated` is reserved for a later backfill and
+  nothing produces it yet. Lines are one framed `O_APPEND` write under an
+  exclusive `flock`, then `fsync`; the file is `0600` in a `0700` directory.
+  Readers skip and count an unparsable line.
+- `projmux agent sessions list <agent-ref> [-o json]` and the Go read function
+  `sessionhistory.List(stateDir, agent)` return the same rows: history joined
+  with the Registry's current ref, one row per `(agentUID, sessionId)` in
+  `observedAt` order. A conversation seen more than once keeps its latest
+  observation time and transcript path, and is `current` when the Registry
+  names it. The JSON envelope adds `agentName` and `corruptLines`.
+- Non-guarantees: no session end time is recorded; conversations from before
+  this history existed appear only as the `current` row; Codex and Antigravity
+  conversation changes are not recorded; a line edited or deleted by hand is
+  not recovered; the history is kept after the Agent is deleted; the Registry
+  commit and the append are not atomic, so a crash between them loses that one
+  line. There is no retention policy.
+
 Agent launch argv (workspace / task boundary):
 
 - One Agent launch hands the provider CLI two independent things in a single

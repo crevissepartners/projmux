@@ -73,6 +73,7 @@ const (
 	aiIngestReasonSemanticDeliverFailed aiIngestReason = "semantic delivery failed"
 	aiIngestReasonAuthorityFenceFailed  aiIngestReason = "authority fence unavailable"
 	aiIngestReasonReadinessWriteFailed  aiIngestReason = "startup readiness write failed"
+	aiIngestReasonSessionHistoryFailed  aiIngestReason = "session history append failed"
 )
 
 // Provider-originated text used to be spliced into the reason. These tokens
@@ -183,6 +184,7 @@ var aiIngestReasons = func() []aiIngestReason {
 		aiIngestReasonSemanticDeliverFailed,
 		aiIngestReasonAuthorityFenceFailed,
 		aiIngestReasonReadinessWriteFailed,
+		aiIngestReasonSessionHistoryFailed,
 
 		aiIngestReasonToolError,
 		aiIngestReasonTerminationUnknown,
