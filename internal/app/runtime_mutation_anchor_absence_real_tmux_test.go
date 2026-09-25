@@ -26,7 +26,7 @@ func TestAbsentAnchorPaneAnswersBlankReceiptThroughRealTmux(t *testing.T) {
 	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	root, err := os.MkdirTemp("", "pma-")
+	root, err := os.MkdirTemp("/tmp", "pma-")
 	if err != nil {
 		t.Fatal(err)
 	}

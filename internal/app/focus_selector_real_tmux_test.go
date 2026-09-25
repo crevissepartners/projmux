@@ -23,7 +23,7 @@ func TestFocusPaneUIDSelectsThePaneOnAnIsolatedTmux(t *testing.T) {
 	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	root, err := os.MkdirTemp("", "pfu-")
+	root, err := os.MkdirTemp("/tmp", "pfu-")
 	if err != nil {
 		t.Fatal(err)
 	}

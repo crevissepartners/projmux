@@ -341,7 +341,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.MkdirTemp("", "pce-process-")
+	root, err := os.MkdirTemp("/tmp", "pce-process-")
 	if err != nil {
 		t.Fatal(err)
 	}

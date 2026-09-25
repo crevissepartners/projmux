@@ -101,7 +101,7 @@ func TestClaudeEndpointHookMigrationPreservesStatusAndUserHooks(t *testing.T) {
 
 func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 	t.Helper()
-	root, err := os.MkdirTemp("", "pce-test-")
+	root, err := os.MkdirTemp("/tmp", "pce-test-")
 	if err != nil {
 		t.Fatal(err)
 	}

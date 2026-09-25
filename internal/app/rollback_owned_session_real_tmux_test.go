@@ -48,7 +48,7 @@ func TestRollbackRemovesAnOwnedSessionThroughRealTmux(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			root, err := os.MkdirTemp("", "pkos-")
+			root, err := os.MkdirTemp("/tmp", "pkos-")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -16,13 +16,16 @@ and humans run the same entrypoints.
   the helper rather than its own `exec.LookPath("tmux")` skip, and the source
   audit `TestRealTmuxSkipIsOwnedByOneHelper` fails on any other skip.
   The CI Unit Tests job installs tmux and runs
-  `PROJMUX_REAL_TMUX_STRICT=1 make test` with a TMPDIR of at least 64 bytes,
+  `PROJMUX_REAL_TMUX_STRICT=1 make test` with a TMPDIR of at least 100 bytes,
   so a missing tmux there fails the job instead of skipping those tests.
 - A Go test that opens a unix socket must put it under a short root (the
   `/tmp` + `os.MkdirTemp` idiom, e.g. codexbroker `newRuntimeDomain`,
   `internal/app` `shortTempDomain`) rather than `t.TempDir()`, because the
   socket path has a platform bound (Linux 108B, macOS 104B) and the long CI
-  TMPDIR fails such a test.
+  TMPDIR fails such a test. Real-tmux tests put their `TMUX_TMPDIR` or
+  `tmux -S` root under `os.MkdirTemp("/tmp", …)` the same way, and the
+  liveguard private root, which holds a guarded package's `TMUX_TMPDIR` and
+  `XDG_STATE_HOME`, is made under `/tmp` too.
 - Picker unit coverage includes the backend-neutral item/action contract,
   native title-focused filtering, numeric selection, and shared close actions.
 - `make test-integration` builds `test/docker/Dockerfile` and runs

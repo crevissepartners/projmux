@@ -45,10 +45,11 @@ type installReplacementFleet struct {
 
 func newInstallReplacementFleet(t *testing.T, source string) *installReplacementFleet {
 	t.Helper()
-	// A short root. The broker's socket path is derived from the state domain
-	// and the discovery contract refuses one that would exceed the platform
-	// bound, which the test tree's own temp directory already does.
-	root, err := os.MkdirTemp("", "pmxfleet")
+	// A short root under /tmp, whatever TMPDIR is. The broker's socket path is
+	// derived from the state domain and the discovery contract refuses one that
+	// would exceed the platform bound, which the test tree's own temp directory
+	// already does.
+	root, err := os.MkdirTemp("/tmp", "pmxfleet")
 	if err != nil {
 		t.Fatalf("MkdirTemp() = %v", err)
 	}

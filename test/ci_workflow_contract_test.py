@@ -69,7 +69,7 @@ def step_script(step: str) -> str:
 UNIT_TEST_COMMAND = 'TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test'
 UNIT_TEST_MKDIR = 'mkdir -p "$tmpdir"'
 UNIT_TEST_ECHO = 'echo "TMPDIR=$tmpdir (${#tmpdir} bytes)"'
-UNIT_TEST_TMPDIR_MIN_BYTES = 64
+UNIT_TEST_TMPDIR_MIN_BYTES = 100
 TMUX_INSTALL = "sudo apt-get install --yes tmux"
 
 
@@ -102,10 +102,11 @@ def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
     tests and runs them with PROJMUX_REAL_TMUX_STRICT=1, so a missing tmux
     fails the job instead of counting skipped tests as a pass.
 
-    The tests also run under a created TMPDIR of at least 64 bytes, printed
+    The tests also run under a created TMPDIR of at least 100 bytes, printed
     with its length. A unix socket path has a platform bound (Linux 108B,
     macOS 104B), and the runner's short default TMPDIR would hide a socket test
-    under t.TempDir() that breaks on a longer TMPDIR such as macOS's.
+    under t.TempDir() that breaks on a longer TMPDIR such as macOS's; at 100
+    bytes a socket under t.TempDir() has almost no room left under either.
     """
     if re.search(r"(?m)^\s+(?:if|continue-on-error|env):", unit):
         raise AssertionError("unit job must not use if:, continue-on-error:, or env:")
@@ -214,6 +215,11 @@ class CIWorkflowContractTest(unittest.TestCase):
             ),
             "short TMPDIR": unit.replace(
                 f"tmpdir={tmpdir}\n", "tmpdir=/tmp/projmux-unit\n"
+            ),
+            # A literal 99 bytes, not the constant, so lowering the floor
+            # itself fails here.
+            "TMPDIR one byte under the floor": unit.replace(
+                f"tmpdir={tmpdir}\n", f"tmpdir={tmpdir[:99]}\n"
             ),
             "TMPDIR not created": unit.replace(f"          {UNIT_TEST_MKDIR}\n", ""),
             "TMPDIR length not printed": unit.replace(f"          {UNIT_TEST_ECHO}\n", ""),
