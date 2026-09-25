@@ -1213,7 +1213,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		mode, ok := validAIMode(*set)
 		if !ok {
 			return usageError(fmt.Sprintf("unknown AI mode %q; --set must be one of: %s",
-				mode, strings.Join(aiModes, ", ")))
+				mode, strings.Join(config.AINewWindowModes, ", ")))
 		}
 		return c.setMode(mode)
 	}
@@ -4213,15 +4213,12 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-// aiModes is the one list of AI split modes, in the order a refusal names
-// them. normalizeAIMode and validAIMode both read it.
-var aiModes = []string{aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeSelective, aiModeResume, aiModeShell}
-
-// validAIMode trims mode and reports whether it is one of aiModes. Matching is
-// case-sensitive.
+// validAIMode trims mode and reports whether it is one of the central
+// config.AINewWindowModes list. Matching is case-sensitive. The --set refusal
+// names the modes in that list's order. normalizeAIMode reads it too.
 func validAIMode(mode string) (string, bool) {
 	mode = strings.TrimSpace(mode)
-	return mode, slices.Contains(aiModes, mode)
+	return mode, slices.Contains(config.AINewWindowModes, mode)
 }
 
 func normalizeAIMode(mode string) string {
