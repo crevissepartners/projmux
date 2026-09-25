@@ -25,7 +25,10 @@ and humans run the same entrypoints.
   TMPDIR fails such a test. Real-tmux tests put their `TMUX_TMPDIR` or
   `tmux -S` root under `os.MkdirTemp("/tmp", …)` the same way, and the
   liveguard private root, which holds a guarded package's `TMUX_TMPDIR` and
-  `XDG_STATE_HOME`, is made under `/tmp` too.
+  `XDG_STATE_HOME`, is made under `/tmp` too. Its owner holds a lock file in
+  that root for its whole life, so a later guarded owner reclaims the roots of
+  killed runs, whose lock is free, and leaves roots without that lock file
+  alone.
 - Picker unit coverage includes the backend-neutral item/action contract,
   native title-focused filtering, numeric selection, and shared close actions.
 - `make test-integration` builds `test/docker/Dockerfile` and runs
