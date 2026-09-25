@@ -390,7 +390,8 @@ func TestWindowDeleteRuntimeQueueRevalidatesEveryMirrorBeforeQueueing(t *testing
 
 // racedAwayWindowRunner answers one exact app server whose Window @10 is listed
 // by the first `list-windows -a` (the plan's first-loop Reobserve) and is gone
-// from every later read, as if a concurrent writer killed it right after.
+// from every later read, as if a concurrent writer killed it right after. The
+// Guard's exact lookup then fails and its absence re-read lists no @10.
 type racedAwayWindowRunner struct {
 	listReads int
 	calls     []recordedTmuxCall
@@ -459,8 +460,8 @@ func TestWindowDeleteKillAllTreatsAWindowKilledBetweenReobserveAndGuardAsAbsent(
 	if err != nil || applied != 0 {
 		t.Fatalf("killAll() = applied %d, err %v; want the concurrently removed Window treated as absent with zero kills", applied, err)
 	}
-	if runner.listReads != 1 {
-		t.Fatalf("list-windows reads = %d, want exactly the first-loop Reobserve", runner.listReads)
+	if runner.listReads != 2 {
+		t.Fatalf("list-windows reads = %d, want the first-loop Reobserve plus the Guard's absence re-read", runner.listReads)
 	}
 	for _, call := range runner.calls {
 		if slices.Contains(call.args, "kill-window") {

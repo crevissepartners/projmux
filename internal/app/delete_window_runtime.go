@@ -305,15 +305,11 @@ func (r *tmuxWindowDeleteRuntime) killAll(ctx context.Context, targets []windowL
 				if filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(r.expectedSocketPath) {
 					return errors.New("delete window: printable physical socket disagrees with bound execution route")
 				}
-				// kill-window's goal is the exact Window's absence. When a
-				// concurrent writer removed it after Reobserve, the exact-id
-				// lookup on the guarded server either fails as a missing
-				// window or reads a row the Reobserve predicate then proves
-				// absent; both are converged, every other drift is refused.
+				// kill-window's goal is the exact Window's absence. A Guard
+				// refusal is converged only when one re-read of the Reobserve
+				// predicate proves the exact Window gone; every other drift
+				// stays refused.
 				err := r.revalidateMutationTarget(ctx, target, target.UID)
-				if tmuxWindowNotFoundFailure(err) {
-					return runtimeMutationAbsentTargetConverged("Window " + target.WindowID)
-				}
 				return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
 					return r.observeWindowMutationEffect(ctx, target, target.UID, true, attempted)
 				})
@@ -407,19 +403,6 @@ func (r *tmuxWindowDeleteRuntime) observeWindowMutationEffect(ctx context.Contex
 		return row[0] == target.SessionID && row[2] == wantUID, nil
 	}
 	return absent, nil
-}
-
-// tmuxWindowNotFoundFailure reports only a typed tmux exit whose isolated
-// stderr is tmux's missing-window answer to an exact-id lookup. Generic exits,
-// composed errors, and runner failures are never read as absence.
-func tmuxWindowNotFoundFailure(err error) bool {
-	var carrier interface{ CommandFailure() inttmux.CommandFailure }
-	if !errors.As(err, &carrier) {
-		return false
-	}
-	failure := carrier.CommandFailure()
-	return failure.Kind == inttmux.CommandFailureExit &&
-		strings.HasPrefix(strings.ToLower(strings.TrimSpace(failure.Stderr)), "can't find window")
 }
 
 func (r *tmuxWindowDeleteRuntime) revalidateQueuedWindow(ctx context.Context, target windowLiveDeleteTarget) error {
