@@ -567,11 +567,15 @@ func intentAgentFlags(intent agentPaneIntent, argv []string, conversation string
 	return flags, nil
 }
 
-// visibleCanonicalCreateError prevents a subprocess ExitCode from escaping a
-// UI create. cmd/projmux deliberately suppresses its default stderr print for
-// such errors because subprocess-owning commands are expected to have printed;
-// canonical create owns the diagnostic instead, so it preserves the exact text
-// on a plain error that the originating popup/client can display.
+// visibleCanonicalCreateError prevents any ExitCode coder from escaping a UI
+// create and preserves the exact text on a plain error that the originating
+// popup/client can display. For an app-defined coder this keeps the message
+// visible, because cmd/projmux stays silent for those. For a wrapped
+// subprocess exit error it pins the exit code to 1 instead of forwarding the
+// child's code, and keeps a caller outside a lifecycle-owned command from being
+// journaled by the top-level diagnostics outcome as a non-success exit (kind
+// exit) instead of a runtime failure. Once that diagnostics classification
+// changes, the subprocess case can keep its cause.
 func visibleCanonicalCreateError(err error) error {
 	if err == nil {
 		return nil

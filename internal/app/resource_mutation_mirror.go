@@ -47,9 +47,11 @@ func inheritedResourceMutationMirror(lookupEnv func(string) string, runner tmuxC
 
 func committedMirrorError(verb string, kind coremetadata.Kind, uid string, err error) error {
 	// Keep this as an app-level operational error instead of unwrapping the
-	// subprocess error. An exec.ExitError implements ExitCode; exposing it would
-	// make cmd/projmux treat the failure as a command that already printed its
-	// own diagnostic and suppress this required recovery message on stderr.
+	// subprocess error. An exposed exec.ExitError would make cmd/projmux forward
+	// the child's exit code instead of exiting 1, and a caller outside a
+	// lifecycle-owned command would be journaled by the top-level diagnostics
+	// outcome as a non-success exit (kind exit) instead of a runtime failure.
+	// Once that diagnostics classification changes, this can wrap its cause.
 	return fmt.Errorf("%s %s %q committed Registry state but could not converge its exact live tmux mirror: %v; retry on the same exact socket with `projmux reconcile resources`",
 		verb, strings.ToLower(string(kind)), uid, err)
 }

@@ -1701,11 +1701,7 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 			if c.diagnostics != nil {
 				c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplyFailed)
 			}
-			// Do not preserve an underlying exec.ExitError here. main treats any
-			// wrapped ExitCode as already presented to the operator, while the tmux
-			// runner captured its stderr. This boundary must print the explicit
-			// authority refusal instead of silently forwarding the runner's code.
-			return rollbackManagedIngest(fmt.Errorf("bind config apply to exact live tmux server -L %s: %v", socketName, listErr))
+			return rollbackManagedIngest(fmt.Errorf("bind config apply to exact live tmux server -L %s: %w", socketName, listErr))
 		}
 		if err := writeGenerated(); err != nil {
 			return rollbackManagedIngest(err)
