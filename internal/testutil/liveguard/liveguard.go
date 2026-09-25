@@ -260,7 +260,7 @@ func guardOptedIn(names []string) bool {
 // named after its parent so that parent can sweep it (guardSweepHelperRoots).
 func guardPrivateRoot() (string, bool, error) {
 	if inherited := os.Getenv(rootEnv); inherited != "" {
-		if info, err := os.Stat(inherited); err == nil && info.IsDir() {
+		if info, err := os.Stat(inherited); err == nil && info.IsDir() { // #nosec G703 -- read-only check of the root a guarded parent test binary exported; nothing is opened or written through it here.
 			return inherited, false, nil
 		}
 	}
