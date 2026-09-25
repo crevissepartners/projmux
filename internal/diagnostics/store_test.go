@@ -561,6 +561,49 @@ func TestRecordOutcomeClassifiesUsageAndExitErrorsOnce(t *testing.T) {
 	}
 }
 
+// TestRecordOutcomeKindFollowsTheEntrypointFailureVerdict pins the top-level
+// kind to the verdict the entrypoint prints by: a wrapped subprocess
+// *exec.ExitError is printed, so it is a runtime failure, while a bare one or
+// an app-defined coder stays a silent coded exit.
+func TestRecordOutcomeKindFollowsTheEntrypointFailureVerdict(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("sh not found: %v", err)
+	}
+	var exitErr *exec.ExitError
+	if runErr := exec.Command(sh, "-c", "exit 3").Run(); !errors.As(runErr, &exitErr) {
+		t.Fatalf("sh -c 'exit 3' = %v, want *exec.ExitError", runErr)
+	}
+	tests := []struct {
+		name        string
+		err         error
+		usage       bool
+		wantKind    string
+		wantMessage string
+	}{
+		{name: "plain error", err: errors.New("boom"), wantKind: "runtime", wantMessage: "command failed"},
+		{name: "usage error", err: errors.New("bad flag"), usage: true, wantKind: "usage", wantMessage: "invalid command usage"},
+		{name: "wrapped exit error", err: fmt.Errorf("switch tmux session: %w", exitErr), wantKind: "runtime", wantMessage: "command failed"},
+		{name: "bare exit error", err: exitErr, wantKind: "exit", wantMessage: "command completed with a non-success status"},
+		{name: "app coder", err: outcomeExitError{code: 2}, wantKind: "exit", wantMessage: "command completed with a non-success status"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
+			if err := RecordOutcome(store, []string{"switch", "demo"}, "run", "0.8.4", "tmux", time.Now(), tt.err, tt.usage, false); err != nil {
+				t.Fatal(err)
+			}
+			events, err := store.Read()
+			if err != nil || len(events) != 1 {
+				t.Fatalf("events = %#v, err = %v", events, err)
+			}
+			if got := events[0]; got.Event != "command.outcome" || got.Result != "error" || got.Kind != tt.wantKind || got.Message != tt.wantMessage {
+				t.Fatalf("outcome = event %q result %q kind %q message %q, want command.outcome error %q %q", got.Event, got.Result, got.Kind, got.Message, tt.wantKind, tt.wantMessage)
+			}
+		})
+	}
+}
+
 func TestRecordOutcomeRetiredCLIIsStrictlyNoWrite(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
 	for _, args := range [][]string{

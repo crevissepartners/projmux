@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	corefocus "github.com/crevissepartners/projmux/internal/core/focus"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
@@ -178,10 +178,10 @@ func (c *focusCommand) dispatch(opts focusOptions, stdout, stderr io.Writer) (ru
 	}
 	diagnosticsSocket = socket
 	if err != nil {
-		// The entrypoint prints this error itself unless it carries a silent
-		// exit coder (for example the not-resolved focusExitError). JSON mode
-		// keeps its historical dispatch line; its output is out of scope here.
-		if opts.JSON || !cliPrintsFailure(err) {
+		// The entrypoint prints this error itself unless its verdict is silent
+		// (for example the not-resolved focusExitError). JSON mode keeps its
+		// historical dispatch line; its output is out of scope here.
+		if opts.JSON || !cli.ClassifyFailure(err, IsUsageError(err)).Print {
 			fmt.Fprintln(stderr, err.Error())
 		}
 		return err
@@ -224,10 +224,10 @@ func (c *focusCommand) dispatch(opts focusOptions, stdout, stderr io.Writer) (ru
 			returned = focusExitError{code: focusExitNotResolved, err: err}
 		}
 		// On non-JSON output paths the failure gets one short stderr line:
-		// dispatch writes it only when the CLI entrypoint will not, judged on
-		// the error actually returned. The JSON path already conveys the
-		// failure via ok:false.
-		if !opts.JSON && !cliPrintsFailure(returned) {
+		// dispatch writes it only when the CLI entrypoint will not, judged by
+		// the entrypoint's own verdict on the error actually returned. The
+		// JSON path already conveys the failure via ok:false.
+		if !opts.JSON && !cli.ClassifyFailure(returned, IsUsageError(returned)).Print {
 			fmt.Fprintln(stderr, err.Error())
 		}
 		return returned
@@ -238,21 +238,6 @@ func (c *focusCommand) dispatch(opts focusOptions, stdout, stderr io.Writer) (ru
 		}
 	}
 	return nil
-}
-
-// cliPrintsFailure reports whether the cmd/projmux executeCLI entrypoint will
-// itself print err to stderr, and mirrors its rule exactly: an error with no
-// ExitCode coder is printed, and so is a subprocess *exec.ExitError that is
-// wrapped in outer context; an app-defined coder such as focusExitError, or a
-// bare *exec.ExitError, stays silent. dispatch owns the failure line only
-// where the entrypoint stays silent, so each failure reaches stderr once.
-func cliPrintsFailure(err error) bool {
-	var coded interface{ ExitCode() int }
-	if !errors.As(err, &coded) {
-		return true
-	}
-	exitErr, ok := coded.(*exec.ExitError)
-	return ok && error(exitErr) != err
 }
 
 func focusResultIsUnresolvedID(res focusResult) bool {
