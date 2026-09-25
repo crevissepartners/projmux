@@ -1131,6 +1131,8 @@ Allowed effects:
 projmux config edit [--get|--set <mode>]
 ```
 
+`--get` prints the TUI split default `tmux-ai-split-mode` when it holds a valid mode, else the central `ai-new-window-mode`, else `selective`. `--set` writes only `tmux-ai-split-mode`.
+
 ### `projmux config providers`
 
 List AI providers as enabled or disabled; --enable or --disable changes one
@@ -3333,6 +3335,8 @@ Allowed effects:
 projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
+Output modes (`-o`): `json`
+
 ### `projmux reconcile registry`
 
 Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source
@@ -3353,6 +3357,8 @@ Allowed effects:
 ```
 projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
+
+Output modes (`-o`): `json`
 
 ## `projmux rebind`
 
@@ -3422,10 +3428,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>
-projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]
-projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
-projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name> [-o <mode>]
+projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>] [-o <mode>]
+projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
+projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
 ```
 
 Subcommands:
@@ -3457,7 +3463,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>
+projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name> [-o <mode>]
 ```
 
 Aliases: `projects`
@@ -3482,7 +3488,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]
+projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>] [-o <mode>]
 ```
 
 Aliases: `windows`
@@ -3507,7 +3513,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
 ```
 
 Aliases: `panes`
@@ -3532,7 +3538,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
 ```
 
 Aliases: `agents`
@@ -3579,7 +3585,7 @@ Allowed effects:
 
 ```
 projmux runtime sessions [--ui popup|sidebar]
-projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
+projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]
 projmux runtime attach [--keep <n>] [--fallback home|ephemeral]
 projmux runtime stop [<session>...]
 projmux runtime tag list|clear
@@ -3639,7 +3645,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
+projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]
 ```
 
 ### `projmux runtime attach`
@@ -3942,7 +3948,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux switch
+projmux switch [--ui popup|sidebar]
 ```
 
 Canonical spelling: `projmux create project`, `projmux open project`

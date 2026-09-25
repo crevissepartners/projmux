@@ -15,7 +15,12 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `agent models` joined the Agent domain: one row
+// The baseline last moved when the output projections were held to what the
+// parsers take: `get notifications`, which forwards to the notify queue and
+// rejects `-o`, lost the shared catalog it never accepted, and `reconcile
+// resources|registry` declare the `json` projection their parsers already
+// accepted.
+// Before that, it moved when `agent models` joined the Agent domain: one row
 // with a json projection that lists the Claude model names projmux suggests
 // for --model, a suggestion rather than an allowlist.
 // Before that, it moved when `profile list|show|set|delete` joined the graph
@@ -70,7 +75,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "7505dfdf78996aebfcda155bc58ba744763ce3ed6fa8f60777c1fb8634b3d21c"
+	const want = "5968a862e685b5a9cb80f97694cf7de4e75ec149e2787d7f7f39de986186b2a5"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}
