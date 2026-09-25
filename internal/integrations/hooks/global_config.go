@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -24,18 +25,17 @@ func resolveGlobalConfigDir(getenv func(string) string, homeDir func() (string, 
 	if homeDir == nil {
 		homeDir = os.UserHomeDir
 	}
-	configHome := strings.TrimSpace(getenv("XDG_CONFIG_HOME"))
-	if configHome == "" {
-		home, err := homeDir()
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(home) == "" {
-			return "", errors.New("home directory is required to resolve global config path")
-		}
-		configHome = filepath.Join(home, ".config")
+	if configHome, err := config.ResolveConfigHome("", getenv("XDG_CONFIG_HOME")); err == nil {
+		return configHome, nil
 	}
-	return configHome, nil
+	home, err := homeDir()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", errors.New("home directory is required to resolve global config path")
+	}
+	return config.ResolveConfigHome(home, getenv("XDG_CONFIG_HOME"))
 }
 
 // GlobalConfigPath returns the absolute path to the global projmux config.toml

@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,38 @@ func TestGlobalConfigPathFallsBackToHome(t *testing.T) {
 	want := filepath.Join(home, ".config", "projmux", "config.toml")
 	if got != want {
 		t.Fatalf("GlobalConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestGlobalConfigPathBlankXDGAndMissingHome(t *testing.T) {
+	t.Parallel()
+
+	homeErr := errors.New("no home")
+	for _, tc := range []struct {
+		name    string
+		xdg     string
+		home    string
+		homeErr error
+		want    string
+		wantErr string
+	}{
+		{name: "blank XDG falls back to home", xdg: " ", home: "/h", want: "/h/.config/projmux/config.toml"},
+		{name: "blank XDG and home error", xdg: "\t", homeErr: homeErr, wantErr: "no home"},
+		{name: "blank XDG and blank home", xdg: " ", home: " ", wantErr: "home directory is required to resolve global config path"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(string) string { return tc.xdg }
+			got, err := GlobalConfigPath(getenv, func() (string, error) { return tc.home, tc.homeErr })
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("GlobalConfigPath() = %q, %v; want error %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("GlobalConfigPath() = %q, %v; want %q", got, err, tc.want)
+			}
+		})
 	}
 }
 

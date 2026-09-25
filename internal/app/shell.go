@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -1215,13 +1216,11 @@ func (c *shellCommand) defaultShell() string {
 }
 
 func (c *shellCommand) defaultConfigPath() string {
-	configHome := strings.TrimRight(c.env("XDG_CONFIG_HOME"), string(os.PathSeparator))
-	if configHome == "" {
-		homeDir, err := c.home()
-		if err != nil || strings.TrimSpace(homeDir) == "" {
-			configHome = ".config"
-		} else {
-			configHome = filepath.Join(homeDir, ".config")
+	configHome, err := config.ResolveConfigHome("", c.env("XDG_CONFIG_HOME"))
+	if err != nil {
+		configHome = ".config"
+		if homeDir, err := c.home(); err == nil && strings.TrimSpace(homeDir) != "" {
+			configHome, _ = config.ResolveConfigHome(homeDir, c.env("XDG_CONFIG_HOME"))
 		}
 	}
 	return filepath.Join(configHome, "projmux", "tmux.conf")

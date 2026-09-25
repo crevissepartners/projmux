@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -238,8 +237,8 @@ func (c *aiCommand) aiHookCatalogOverridePath(provider string) (string, error) {
 // environment and home directory, so integration reads the same files a test
 // with a fake HOME or XDG_CONFIG_HOME prepared.
 func (c *aiCommand) aiConfigPaths() (config.Paths, error) {
-	configHome := strings.TrimSpace(c.env("XDG_CONFIG_HOME"))
-	if configHome == "" {
+	configHome, err := config.ResolveConfigHome("", c.env("XDG_CONFIG_HOME"))
+	if err != nil {
 		homeDir := c.homeDir
 		if homeDir == nil {
 			homeDir = os.UserHomeDir
@@ -248,7 +247,12 @@ func (c *aiCommand) aiConfigPaths() (config.Paths, error) {
 		if err != nil {
 			return config.Paths{}, fmt.Errorf("resolve home directory: %w", err)
 		}
-		configHome = filepath.Join(home, ".config")
+		configHome, err = config.ResolveConfigHome(home, c.env("XDG_CONFIG_HOME"))
+		if err != nil {
+			// An empty home keeps the config home relative to the working
+			// directory, as it always has.
+			configHome = ".config"
+		}
 	}
 	return config.DefaultPaths(configHome, ""), nil
 }

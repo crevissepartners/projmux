@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -458,11 +459,11 @@ func (c *doctorCommand) evaluateReplacement(broker *codexBrokerDiagnostic) docto
 }
 
 func doctorGeneratedConfigPath(lookupEnv func(string) string, homeDir func() (string, error)) (string, error) {
-	configHome := ""
-	if lookupEnv != nil {
-		configHome = strings.TrimSpace(lookupEnv("XDG_CONFIG_HOME"))
+	if lookupEnv == nil {
+		lookupEnv = func(string) string { return "" }
 	}
-	if configHome == "" {
+	configHome, err := config.ResolveConfigHome("", lookupEnv("XDG_CONFIG_HOME"))
+	if err != nil {
 		if homeDir == nil {
 			homeDir = os.UserHomeDir
 		}
@@ -470,7 +471,9 @@ func doctorGeneratedConfigPath(lookupEnv func(string) string, homeDir func() (st
 		if err != nil || strings.TrimSpace(home) == "" {
 			return "", errors.New("resolve generated config home")
 		}
-		configHome = filepath.Join(home, ".config")
+		if configHome, err = config.ResolveConfigHome(home, lookupEnv("XDG_CONFIG_HOME")); err != nil {
+			return "", errors.New("resolve generated config home")
+		}
 	}
 	return filepath.Join(configHome, "projmux", "tmux.conf"), nil
 }
