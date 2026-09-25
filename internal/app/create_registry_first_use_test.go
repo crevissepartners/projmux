@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -335,6 +336,28 @@ func TestASecondMutationExtendsTheExistingRegistryWithoutRenumbering(t *testing.
 	}
 }
 
+// requireEveryRacerSucceeded fails with every racer's error, not only the
+// first, together with the materializer warnings each racer wrote. A race that
+// breaks one create usually leaves its cause in another racer's warnings.
+func requireEveryRacerSucceeded(t *testing.T, errs []error, warnings []*lockedBuffer) {
+	t.Helper()
+	var report strings.Builder
+	for i, err := range errs {
+		if err != nil {
+			fmt.Fprintf(&report, "racer %d failed: %v\n", i, err)
+		}
+	}
+	if report.Len() == 0 {
+		return
+	}
+	for i, warning := range warnings {
+		if text := warning.String(); text != "" {
+			fmt.Fprintf(&report, "racer %d warnings:\n%s", i, text)
+		}
+	}
+	t.Fatal(report.String())
+}
+
 // TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow is the
 // fake-tmux/on-disk owner for lost-update and Registry owner convergence. Real
 // tmux materialization and mirror convergence belong to L06 E2E.
@@ -348,11 +371,15 @@ func TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow(t *test
 	var wg sync.WaitGroup
 	errs := make([]error, racers)
 	outs := make([]string, racers)
+	warnings := make([]*lockedBuffer, racers)
 	start := make(chan struct{})
 	for i := range racers {
+		warnings[i] = &lockedBuffer{}
 		wg.Go(func() {
 			<-start
-			stdout, _, err := runRoute(t, fixture.command(nil),
+			cmd := fixture.command(nil)
+			cmd.runtime.warn = warnings[i]
+			stdout, _, err := runRoute(t, cmd,
 				"pane", "--project", "alpha", "--window", "shared", "--create-window", "-o", "uid")
 			outs[i], errs[i] = stdout, err
 		})
@@ -360,11 +387,7 @@ func TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow(t *test
 	close(start)
 	wg.Wait()
 
-	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("racer %d failed: %v", i, err)
-		}
-	}
+	requireEveryRacerSucceeded(t, errs, warnings)
 
 	registry := fixture.load(t)
 	if err := registry.Validate(); err != nil {

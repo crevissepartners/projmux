@@ -50,6 +50,9 @@ func routeIdentityReads(calls [][]string) int {
 var routeIdentityWriteVerbs = []string{
 	"set-option", "set-environment", "split-window", "new-window", "new-session", "resize-pane",
 	"rename-window", "kill-session", "kill-window", "kill-pane", "select-pane", "select-window", "switch-client",
+	// The owner-checked create-operation lease clear is an if-shell whose
+	// body is a set-environment -u.
+	"if-shell",
 }
 
 func isRouteIdentityWrite(argv []string) bool {

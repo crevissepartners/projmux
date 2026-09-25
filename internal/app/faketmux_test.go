@@ -55,6 +55,10 @@ type fakeTmux struct {
 	// where a topology owner guard reads, so a test can move a runtime object
 	// after planning committed to it and before any mutation runs.
 	beforeOwnerInventory func(*fakeTmux)
+	// beforeDispatch sees every routed command after it is recorded and before
+	// the server model serves it, with f.mu held. It may change fake state
+	// directly but must not call Run.
+	beforeDispatch func(*fakeTmux, []string)
 	// appMarker is the server-global @projmux_app value. It defaults to the
 	// app-owned marker because every fixture in this package models a server
 	// projmux started; a standalone fixture clears it.
@@ -393,8 +397,29 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	if len(args) > 0 && args[0] == "new-session" {
 		f.serverAbsent = false
 	}
-	var out []byte
-	var err error
+	if f.beforeDispatch != nil {
+		f.beforeDispatch(f, args)
+	}
+	out, err := f.dispatch(args)
+	// Only the mutating commands tmux runs lifecycle hooks after can fail
+	// after their effect; every other command answered before the check.
+	hookable := args[0] == "new-session" || args[0] == "new-window" || args[0] == "split-window" || args[0] == "set-option"
+	if err != nil || !shouldFail || !hookable {
+		return out, err
+	}
+	f.failed = true
+	message := f.failMessage
+	if message == "" {
+		message = "injected tmux failure"
+	}
+	return append(out, []byte("'exit 7' returned 7: "+message+"\n")...),
+		fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), &exec.ExitError{}, message)
+}
+
+// dispatch serves one routed tmux command. The caller holds f.mu, so a nested
+// command (the body of an if-shell) runs in the same critical section as the
+// command that carries it, the way tmux serializes one client command.
+func (f *fakeTmux) dispatch(args []string) ([]byte, error) {
 	switch args[0] {
 	case "has-session":
 		name := strings.TrimPrefix(flagValue(args, "-t"), "=")
@@ -405,11 +430,11 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		}
 		return nil, nil
 	case "new-session":
-		out, err = f.runNewSession(args)
+		return f.runNewSession(args)
 	case "new-window":
-		out, err = f.runNewWindow(args)
+		return f.runNewWindow(args)
 	case "split-window":
-		out, err = f.runSplitWindow(args)
+		return f.runSplitWindow(args)
 	case "list-windows":
 		return f.runListWindows(args)
 	case "list-panes":
@@ -419,7 +444,7 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	case "resize-pane":
 		return f.runResizePane(args)
 	case "set-option":
-		out, err = f.runSetOption(args)
+		return f.runSetOption(args)
 	case "select-pane":
 		return f.runSelectPane(args)
 	case "list-clients":
@@ -438,6 +463,8 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		return f.runKill(args)
 	case "show-options":
 		return f.runShowOptions(args)
+	case "if-shell":
+		return f.runIfShell(args)
 	case "list-sessions":
 		var b strings.Builder
 		format := flagValue(args, "-F")
@@ -464,19 +491,49 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	default:
 		return nil, fmt.Errorf("fake tmux: unsupported command %q", args[0])
 	}
-	if err != nil {
-		return out, err
+}
+
+// runIfShell models exactly the owner-checked lease clear:
+//
+//	if-shell -F -t $N '#{==:#{E:NAME},VALUE}' "set-environment -u -t '$N' NAME"
+//
+// It evaluates the condition against the target session's environment and runs
+// the body through dispatch without releasing f.mu, so compare-and-unset is
+// atomic here as it is in tmux. Any other if-shell shape is an error rather
+// than a guess.
+func (f *fakeTmux) runIfShell(args []string) ([]byte, error) {
+	if len(args) != 6 || args[1] != "-F" || args[2] != "-t" {
+		return nil, fmt.Errorf("fake tmux: if-shell: unsupported argv %q", args)
 	}
-	if shouldFail {
-		f.failed = true
-		message := f.failMessage
-		if message == "" {
-			message = "injected tmux failure"
+	session := f.session(args[3])
+	if session == nil {
+		return nil, fmt.Errorf("fake tmux: if-shell: no session %q", args[3])
+	}
+	condition, ok := strings.CutPrefix(args[4], "#{==:#{E:")
+	if ok {
+		condition, ok = strings.CutSuffix(condition, "}")
+	}
+	name, want, found := strings.Cut(condition, "},")
+	if !ok || !found || name == "" || strings.ContainsAny(name+want, "#{},") {
+		return nil, fmt.Errorf("fake tmux: if-shell: unsupported condition %q", args[4])
+	}
+	if session.env[name] != want {
+		return nil, nil
+	}
+	var body []string
+	for token := range strings.FieldsSeq(args[5]) {
+		if unquoted, quoted := strings.CutPrefix(token, "'"); quoted {
+			token, quoted = strings.CutSuffix(unquoted, "'")
+			if !quoted {
+				return nil, fmt.Errorf("fake tmux: if-shell: unbalanced quote in %q", args[5])
+			}
 		}
-		return append(out, []byte("'exit 7' returned 7: "+message+"\n")...),
-			fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), &exec.ExitError{}, message)
+		body = append(body, token)
 	}
-	return out, nil
+	if len(body) == 0 || body[0] == "if-shell" {
+		return nil, fmt.Errorf("fake tmux: if-shell: unsupported command %q", args[5])
+	}
+	return f.dispatch(body)
 }
 
 func (f *fakeTmux) runNewSession(args []string) ([]byte, error) {
