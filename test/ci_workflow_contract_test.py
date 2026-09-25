@@ -66,8 +66,33 @@ def step_script(step: str) -> str:
     return "\n".join(body)
 
 
-UNIT_TEST_RUN = "run: PROJMUX_REAL_TMUX_STRICT=1 make test"
+UNIT_TEST_COMMAND = 'TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test'
+UNIT_TEST_MKDIR = 'mkdir -p "$tmpdir"'
+UNIT_TEST_ECHO = 'echo "TMPDIR=$tmpdir (${#tmpdir} bytes)"'
+UNIT_TEST_TMPDIR_MIN_BYTES = 64
 TMUX_INSTALL = "sudo apt-get install --yes tmux"
+
+
+def unit_test_tmpdir(script: str) -> str:
+    """Return the TMPDIR the unit test step script sets, or fail on any drift."""
+    lines = script.strip("\n").split("\n")
+    if len(lines) != 4:
+        raise AssertionError(f"unit test step must be exactly four lines, got {lines!r}")
+    match = re.fullmatch(r"tmpdir=(/[^\s\"'$`]+)", lines[0])
+    if match is None:
+        raise AssertionError(f"unit test step must set an absolute tmpdir, got {lines[0]!r}")
+    tmpdir = match.group(1)
+    if len(tmpdir.encode()) < UNIT_TEST_TMPDIR_MIN_BYTES:
+        raise AssertionError(
+            f"unit test TMPDIR must be at least {UNIT_TEST_TMPDIR_MIN_BYTES} bytes,"
+            f" got {len(tmpdir.encode())}: {tmpdir!r}"
+        )
+    expected = [UNIT_TEST_MKDIR, UNIT_TEST_ECHO, UNIT_TEST_COMMAND]
+    if lines[1:] != expected:
+        raise AssertionError(
+            f"unit test step must run exactly {expected!r} after tmpdir=, got {lines[1:]!r}"
+        )
+    return tmpdir
 
 
 def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
@@ -76,6 +101,11 @@ def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
     The real-tmux Go tests skip without tmux. The job installs tmux before the
     tests and runs them with PROJMUX_REAL_TMUX_STRICT=1, so a missing tmux
     fails the job instead of counting skipped tests as a pass.
+
+    The tests also run under a created TMPDIR of at least 64 bytes, printed
+    with its length. A unix socket path has a platform bound (Linux 108B,
+    macOS 104B), and the runner's short default TMPDIR would hide a socket test
+    under t.TempDir() that breaks on a longer TMPDIR such as macOS's.
     """
     if re.search(r"(?m)^\s+(?:if|continue-on-error|env):", unit):
         raise AssertionError("unit job must not use if:, continue-on-error:, or env:")
@@ -87,10 +117,7 @@ def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
     if deadcode.strip() != "run: make deadcode":
         raise AssertionError(f"unexpected deadcode step: {deadcode.strip()!r}")
     test = workflow_step(unit, "Run unit tests")
-    if test.strip() != UNIT_TEST_RUN:
-        raise AssertionError(
-            f"unit test step must be exactly {UNIT_TEST_RUN!r}, got {test.strip()!r}"
-        )
+    unit_test_tmpdir(step_script(test))
     vet = workflow_step(unit, "Vet")
     if vet.strip() != "run: make vet":
         raise AssertionError(f"unexpected vet step: {vet.strip()!r}")
@@ -108,7 +135,7 @@ def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
         "go-version-file: go.mod",
         "      - name: Install tmux",
         "run: make deadcode",
-        UNIT_TEST_RUN,
+        UNIT_TEST_COMMAND,
         "run: make vet",
     ]
     positions = [unit.index(needle) for needle in order]
@@ -160,6 +187,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         test_block = test_marker + workflow_step(unit, "Run unit tests") + "\n"
         self.assertEqual(unit.count(install_block), 1)
         self.assertEqual(unit.count(test_block), 1)
+        tmpdir = unit_test_tmpdir(step_script(workflow_step(unit, "Run unit tests")))
         without_install = unit.replace(install_block, "")
         mutations = {
             "install step removed": without_install,
@@ -167,23 +195,88 @@ class CIWorkflowContractTest(unittest.TestCase):
                 f"          {TMUX_INSTALL}\n", ""
             ),
             "strict prefix stripped": unit.replace(
-                UNIT_TEST_RUN, "run: make test"
+                UNIT_TEST_COMMAND, 'TMPDIR="$tmpdir" make test'
             ),
             "strict moved into env": unit.replace(
-                f"        {UNIT_TEST_RUN}\n",
-                "        env:\n"
-                "          PROJMUX_REAL_TMUX_STRICT: \"1\"\n"
-                "        run: make test\n",
+                test_block,
+                test_block.replace(
+                    "        run: |\n",
+                    "        env:\n"
+                    "          PROJMUX_REAL_TMUX_STRICT: \"1\"\n"
+                    "        run: |\n",
+                ).replace(UNIT_TEST_COMMAND, 'TMPDIR="$tmpdir" make test'),
             ),
             "install after test": without_install.replace(
                 test_block, test_block + install_block
             ),
+            "long TMPDIR dropped": unit.replace(
+                UNIT_TEST_COMMAND, "PROJMUX_REAL_TMUX_STRICT=1 make test"
+            ),
+            "short TMPDIR": unit.replace(
+                f"tmpdir={tmpdir}\n", "tmpdir=/tmp/projmux-unit\n"
+            ),
+            "TMPDIR not created": unit.replace(f"          {UNIT_TEST_MKDIR}\n", ""),
+            "TMPDIR length not printed": unit.replace(f"          {UNIT_TEST_ECHO}\n", ""),
         }
         for name, mutated in mutations.items():
             with self.subTest(mutation=name):
                 self.assertNotEqual(mutated, unit)
                 with self.assertRaises(AssertionError):
                     assert_unit_job_runs_real_tmux_strict(mutated)
+
+    def test_unit_test_step_runs_make_test_under_a_created_long_tmpdir(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        script = step_script(
+            workflow_step(workflow_job(workflow, "unit"), "Run unit tests")
+        )
+        literal = unit_test_tmpdir(script)
+        self.assertGreaterEqual(len(literal.encode()), UNIT_TEST_TMPDIR_MIN_BYTES)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            calls = root / "make-calls"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            make = bin_dir / "make"
+            make.write_text(
+                '#!/bin/sh\n'
+                '{ printf "args=%s\\n" "$*"\n'
+                '  printf "tmpdir=%s\\n" "$TMPDIR"\n'
+                '  printf "strict=%s\\n" "$PROJMUX_REAL_TMUX_STRICT"\n'
+                '  if [ -d "$TMPDIR" ]; then echo exists=yes; else echo exists=no; fi\n'
+                '} > "$UNIT_TEST_CALLS"\n',
+                encoding="utf-8",
+            )
+            make.chmod(0o700)
+            # Run the real script against a long path of its own so the test
+            # leaves nothing under /tmp; the directory must not exist yet.
+            long_dir = str(root / "long")
+            long_dir += "-" + "x" * max(0, UNIT_TEST_TMPDIR_MIN_BYTES - len(long_dir))
+            self.assertGreaterEqual(len(long_dir.encode()), UNIT_TEST_TMPDIR_MIN_BYTES)
+            self.assertFalse(os.path.exists(long_dir))
+            self.assertEqual(script.count(f"tmpdir={literal}\n"), 1)
+            local_script = script.replace(f"tmpdir={literal}\n", f"tmpdir={long_dir}\n")
+
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", local_script],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **{k: v for k, v in os.environ.items() if k != "TMPDIR"},
+                    "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+                    "UNIT_TEST_CALLS": str(calls),
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(
+                f"TMPDIR={long_dir} ({len(long_dir.encode())} bytes)", result.stdout
+            )
+            self.assertEqual(
+                calls.read_text(encoding="utf-8"),
+                f"args=test\ntmpdir={long_dir}\nstrict=1\nexists=yes\n",
+            )
 
     def test_deadcode_failure_fails_unit_and_test_aggregate(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

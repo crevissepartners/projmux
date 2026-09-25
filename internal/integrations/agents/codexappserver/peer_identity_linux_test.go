@@ -55,7 +55,13 @@ func TestPeerIdentityHelperProcess(t *testing.T) {
 }
 
 func TestEndpointPeerWitnessRejectsSamePathReplacementAndSyntheticPIDReuse(t *testing.T) {
-	root := t.TempDir()
+	// A short root keeps endpoint.sock inside the Unix socket path bound even
+	// when the test tree's own temp directory is already past it.
+	root, err := os.MkdirTemp("/tmp", "pxpeer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	socketPath := filepath.Join(root, "endpoint.sock")
 	type peerProcess struct {
 		cmd      *exec.Cmd

@@ -470,11 +470,7 @@ func TestInstallReplacementDrainRequestReadsARefusedDialAsAcceptance(t *testing.
 	// A short root: the discovery contract refuses a state domain whose derived
 	// socket path would not fit the platform bound, and the test tree's own
 	// temp directory is already past it.
-	dir, err := os.MkdirTemp("", "pmxrepl")
-	if err != nil {
-		t.Fatalf("MkdirTemp() = %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := shortTempDomain(t)
 	discovery, err := codexbroker.NewDiscovery(dir, codexbroker.DefaultEndpointKey)
 	if err != nil {
 		t.Fatalf("NewDiscovery() = %v", err)

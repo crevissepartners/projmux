@@ -29,7 +29,8 @@ class NativeSourceTests(unittest.TestCase):
     def setUp(self):
         self.ns=runpy.run_path(str(REPO/'scripts/agent-dialogue-native-source.py'))
         self.globals=self.ns['launch'].__globals__
-        self.temp=tempfile.TemporaryDirectory(prefix='p4-n-')
+        # /tmp root: a long $TMPDIR would trip native-socket-path-bound.
+        self.temp=tempfile.TemporaryDirectory(prefix='p4-n-',dir='/tmp')
         self.addCleanup(self.temp.cleanup)
         self.root=pathlib.Path(self.temp.name)
         for name in ('evidence','bin','work','codex-home'):

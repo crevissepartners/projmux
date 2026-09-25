@@ -34,7 +34,7 @@ func notifyQueueTestPathWithin(root, path string) bool {
 func TestNotifyQueueRefreshTransportPublishesToSubscriber(t *testing.T) {
 	t.Parallel()
 
-	transport := newTestNotifyQueueRefreshTransport(t, t.TempDir())
+	transport := newTestNotifyQueueRefreshTransport(t, shortTempDomain(t))
 	ctx := t.Context()
 
 	events, err := transport.Subscribe(ctx)

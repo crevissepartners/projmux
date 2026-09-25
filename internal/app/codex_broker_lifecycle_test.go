@@ -258,9 +258,9 @@ func startBrokerRuntimeWithHost(t *testing.T, endpoints ...*brokerTestEndpoint) 
 	return discovery, host, &opens
 }
 
-// shortTempDomain returns a private state domain short enough that the derived
-// Unix socket path stays inside the platform bound the discovery contract
-// refuses beyond.
+// shortTempDomain returns a private state domain (or plain socket root) short
+// enough that the derived Unix socket path stays inside the platform bound the
+// discovery contract refuses beyond.
 func shortTempDomain(t *testing.T) string {
 	t.Helper()
 	base := os.TempDir()

@@ -216,7 +216,9 @@ jobs:
 
   # tmux is installed so the real-tmux Go tests in `internal/app` run here, and
   # PROJMUX_REAL_TMUX_STRICT=1 turns a missing tmux into a test failure instead
-  # of a silent skip that would count as a pass.
+  # of a silent skip that would count as a pass. The tests run under a TMPDIR of
+  # at least 64 bytes: a unix socket path has a platform bound, and a long TMPDIR
+  # keeps socket tests honest about it on any TMPDIR (macOS's default is ~49 bytes).
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -246,7 +248,11 @@ jobs:
         run: make deadcode
 
       - name: Run unit tests
-        run: PROJMUX_REAL_TMUX_STRICT=1 make test
+        run: |
+          tmpdir=/tmp/projmux-unit-tests-long-tmpdir-guard-xxxxxxxxxxxxxxxxxxxxxx
+          mkdir -p "$tmpdir"
+          echo "TMPDIR=$tmpdir (${#tmpdir} bytes)"
+          TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test
 
       - name: Vet
         run: make vet

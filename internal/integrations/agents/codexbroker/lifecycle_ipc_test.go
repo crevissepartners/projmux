@@ -105,7 +105,7 @@ type lifecycleWebSocketProvider struct {
 
 func startLifecycleWebSocketProvider(t *testing.T, bodyBytes int) *lifecycleWebSocketProvider {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "provider.sock")
+	path := filepath.Join(newRuntimeDomain(t), "provider.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatalf("listen provider: %v", err)

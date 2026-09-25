@@ -575,7 +575,7 @@ func sealJournalDir(t *testing.T, store codexRollingJournal) func() {
 // create, and recovers the broker only on the default daemon endpoint, and
 // never reads, Lstats, or writes the journal.
 func TestCodexJournalNeverDecidesNativeRoute(t *testing.T) {
-	home := t.TempDir()
+	home := shortTempDomain(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
