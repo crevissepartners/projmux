@@ -166,7 +166,10 @@ func (c *statusCommand) runGit(args []string, stdout, stderr io.Writer) error {
 
 // readGitBranch reads the branch the git segment shows for path, or a short
 // commit on a detached head, and the porcelain status its state marks come
-// from. ok is false outside a work tree.
+// from. ok is false outside a work tree. The status read skips git's optional
+// index lock: the command limit kills git outright, and a git killed while it
+// holds that lock leaves .git/index.lock behind and blocks every later write
+// to that repository.
 func (c *statusCommand) readGitBranch(path string) (branch, porcelain string, ok bool) {
 	if _, err := c.read("git", "-C", path, "rev-parse", "--is-inside-work-tree"); err != nil {
 		return "", "", false
@@ -178,7 +181,7 @@ func (c *statusCommand) readGitBranch(path string) (branch, porcelain string, ok
 	if branch == "" {
 		return "", "", false
 	}
-	return branch, c.readTrimmed("git", "-C", path, "status", "--porcelain=v1", "--branch"), true
+	return branch, c.readTrimmed("git", "--no-optional-locks", "-C", path, "status", "--porcelain=v1", "--branch"), true
 }
 
 // gitWorktreeState is what the git segment marks: uncommitted changes, staged

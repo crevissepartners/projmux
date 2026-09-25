@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -187,7 +189,7 @@ func TestStatusGitPrintsStateIndicators(t *testing.T) {
 			return []byte("true\n"), nil
 		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"}):
 			return []byte("main\n"), nil
-		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "status", "--porcelain=v1", "--branch"}):
+		case name == "git" && reflect.DeepEqual(args, []string{"--no-optional-locks", "-C", "/repo", "status", "--porcelain=v1", "--branch"}):
 			return []byte("## main...origin/main [ahead 2, behind 1]\nM  staged.go\n M dirty.go\nA  added.go\n?? new.go\n"), nil
 		default:
 			return nil, os.ErrNotExist
@@ -201,6 +203,63 @@ func TestStatusGitPrintsStateIndicators(t *testing.T) {
 	want := " #[bold,fg=colour231,bg=colour30] main #[nobold,fg=colour222]*#[bold,fg=colour231] #[nobold,fg=colour151]+2#[bold,fg=colour231] #[nobold,fg=colour153]↑2#[bold,fg=colour231] #[nobold,fg=colour181]↓1#[bold,fg=colour231] #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+// TestStatusGitLeavesAStatDirtyIndexUnwritten runs the segment against a real
+// repository whose index is stat-dirty. A git status that takes the optional
+// index lock refreshes and rewrites that index, and a status killed at the
+// command limit while holding the lock leaves .git/index.lock behind.
+func TestStatusGitLeavesAStatDirtyIndexUnwritten(t *testing.T) {
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_OPTIONAL_LOCKS", "1")
+
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=projmux", "-c", "user.email=projmux@example.invalid"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	tracked := filepath.Join(repo, "tracked.txt")
+	if err := os.WriteFile(tracked, []byte("tracked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "tracked.txt")
+	git("commit", "-q", "-m", "init")
+	stale := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(tracked, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	indexPath := filepath.Join(repo, ".git", "index")
+	before, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.readCommand = readExternalCommand
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"git", repo}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "main") {
+		t.Fatalf("stdout = %q, want the branch the segment read", stdout.String())
+	}
+
+	after, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || !after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+		t.Fatalf(".git/index was rewritten: before %v %d bytes, after %v %d bytes", before.ModTime(), before.Size(), after.ModTime(), after.Size())
+	}
+	if _, err := os.Lstat(indexPath + ".lock"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf(".git/index.lock stat error = %v, want not exist", err)
 	}
 }
 
