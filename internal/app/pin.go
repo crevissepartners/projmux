@@ -161,7 +161,7 @@ func parsePinKindFilter(value string) (pins.Kind, error) {
 	case string(pins.KindCandidate):
 		return pins.KindCandidate, nil
 	default:
-		return "", fmt.Errorf("unknown pin kind %q: use %s or %s", value, pins.KindProject, pins.KindCandidate)
+		return "", usageError(fmt.Sprintf("unknown pin kind %q: use %s or %s", value, pins.KindProject, pins.KindCandidate))
 	}
 }
 

@@ -280,10 +280,14 @@ func TestPruneCommandPropagatesSetupErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tt.cmd.Run([]string{"ephemeral", "--keep=-1"}, &bytes.Buffer{}, &bytes.Buffer{})
-			if tt.name == "killer missing" {
-				err = tt.cmd.Run([]string{"ephemeral", "--keep=0"}, &bytes.Buffer{}, &bytes.Buffer{})
+			// A negative --keep is refused as a usage error before the
+			// inventory read, so only the plan error row spells it; the
+			// inventory rows use a valid keep count to reach the inventory.
+			keep := "--keep=0"
+			if tt.name == "plan error" {
+				keep = "--keep=-1"
 			}
+			err := tt.cmd.Run([]string{"ephemeral", keep}, &bytes.Buffer{}, &bytes.Buffer{})
 			if err == nil {
 				t.Fatal("expected error")
 			}

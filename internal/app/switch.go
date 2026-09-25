@@ -347,7 +347,7 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if anchorPane != "" && exactTmuxHandle(anchorPane, "%") == "" {
 		printRouteUsage(stderr, "switch")
 		printSwitchNotes(stderr)
-		return errors.New("switch --anchor requires an exact %N Pane handle")
+		return usageError("switch --anchor requires an exact %N Pane handle")
 	}
 
 	ctx := context.Background()
@@ -519,7 +519,7 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 	}
 	if err := validateSwitchUI(*ui); err != nil {
 		printRouteUsage(stderr, "switch preview")
-		return usageError(err.Error())
+		return err
 	}
 	if fs.NArg() > 1 {
 		printRouteUsage(stderr, "switch preview")
@@ -1552,12 +1552,14 @@ func bestSwitchCandidateMatch(path string, candidatePaths []string) string {
 	return best
 }
 
+// validateSwitchUI rejects an unknown --ui value as a usage error, so every
+// route that takes --ui exits 2 on a bad value without wrapping it itself.
 func validateSwitchUI(ui string) error {
 	switch ui {
 	case switchUIPopup, switchUISidebar:
 		return nil
 	default:
-		return fmt.Errorf("invalid --ui value %q: expected %q or %q", ui, switchUIPopup, switchUISidebar)
+		return usageError(fmt.Sprintf("invalid --ui value %q: expected %q or %q", ui, switchUIPopup, switchUISidebar))
 	}
 }
 
@@ -1936,12 +1938,20 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 		return usageError("switch sidebar-open requires --anchor")
 	}
 	if exactTmuxHandle(anchorPane, "%") == "" {
-		return errors.New("switch sidebar-open --anchor requires an exact %N Pane handle")
+		printRouteUsage(stderr, "switch sidebar-open")
+		return usageError("switch sidebar-open --anchor requires an exact %N Pane handle")
 	}
 	openTarget := cleanOptionalPath(*target)
 	if openTarget == "" {
 		printRouteUsage(stderr, "switch sidebar-open")
 		return usageError("switch sidebar-open requires --path")
+	}
+	// The startup mode is a flag value, so it is refused as a usage error
+	// before any session lookup or client environment override.
+	openMode, ok := projectStartupCandidateFromValue(strings.TrimSpace(*mode))
+	if !ok {
+		printRouteUsage(stderr, "switch sidebar-open")
+		return usageError(fmt.Sprintf("switch sidebar-open: unknown startup mode %q", strings.TrimSpace(*mode)))
 	}
 	openSession := strings.TrimSpace(*sessionName)
 	if openSession == "" {
@@ -1955,10 +1965,6 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	if targetClient != "" {
 		restoreLookup := c.withSidebarOpenClientEnv(targetClient)
 		defer restoreLookup()
-	}
-	openMode, ok := projectStartupCandidateFromValue(strings.TrimSpace(*mode))
-	if !ok {
-		return fmt.Errorf("switch sidebar-open: unknown startup mode %q", strings.TrimSpace(*mode))
 	}
 	ctx := context.Background()
 	if c.validateProjectOpenRoute == nil {

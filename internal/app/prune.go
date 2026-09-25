@@ -132,6 +132,13 @@ func (c *pruneCommand) runEphemeral(args []string, _ io.Writer, stderr io.Writer
 		printRouteUsage(stderr, "runtime prune")
 		return usageError("runtime prune does not accept positional arguments")
 	}
+	// A negative --keep is a flag value error: refuse it before the inventory
+	// read. The reason text is the one PruneEphemeralTargets reports, which
+	// stays in place as defense for other callers.
+	if *keepCount < 0 {
+		printRouteUsage(stderr, "runtime prune")
+		return usageError("plan ephemeral prune: " + lifecycle.ErrEphemeralKeepCountInvalid.Error())
+	}
 	if c.inventory == nil {
 		return fmt.Errorf("resolve ephemeral sessions to prune: inventory resolver is not configured")
 	}

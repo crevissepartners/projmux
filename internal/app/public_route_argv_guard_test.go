@@ -35,10 +35,13 @@ import (
 //	D-bare <route>                           a parent route with no subcommand
 //	D-sub  <route> zz-argv-guard-sub         a parent route with an unknown subcommand
 //	C      <route> zz-argv-guard-pos         a leaf route that takes no positional operand
+//	V      <route> --<flag> zz-value-guard   a flag whose synopsis declares a closed value set
 //
 // A new public route is covered the moment it enters the catalog. A route that
 // may not answer a form with exit 2 needs a reviewed row in
 // publicRouteArgvGuardExceptions, and the guard fails when a row goes stale.
+// Form V is keyed by route and flag rather than by route, so it has its own
+// reviewed table, publicRouteArgvValueGuardRows, with the same staleness rule.
 
 const (
 	// publicRouteArgvGuardChildEnv carries one probe (JSON) to the re-executed
@@ -409,6 +412,9 @@ type publicRouteArgvChildRequest struct {
 type publicRouteArgvChildResult struct {
 	Code  int    `json:"code"`
 	Error string `json:"error"`
+	// Stderr and StdoutBytes are what the handler wrote; form V reads them.
+	Stderr      string `json:"stderr"`
+	StdoutBytes int    `json:"stdout_bytes"`
 }
 
 // TestPublicRouteArgvGuardChildProcess is the re-executed half of the guard.
@@ -430,7 +436,7 @@ func TestPublicRouteArgvGuardChildProcess(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	err := RunWithLifecycleDiagnostics(request.Argv, &stdout, &stderr, nil)
-	result := publicRouteArgvChildResult{Code: publicRouteArgvExitCode(err)}
+	result := publicRouteArgvChildResult{Code: publicRouteArgvExitCode(err), Stderr: stderr.String(), StdoutBytes: stdout.Len()}
 	if err != nil {
 		result.Error = err.Error()
 	}
@@ -444,6 +450,7 @@ func TestPublicRouteArgvGuardChildProcess(t *testing.T) {
 type publicRouteArgvProbe struct {
 	route    string
 	form     string
+	flag     string // form V only
 	argv     []string
 	behavior *publicRouteArgvGuardRow
 	result   publicRouteArgvChildResult
@@ -867,5 +874,373 @@ func TestPublicRouteArgvGuardRowIntegrityChecks(t *testing.T) {
 	rows := append(slices.Clone(base), publicRouteArgvGuardRow{route: "op2", form: "C", kind: publicRouteArgvUndeclaredOperandRow, reason: "r"})
 	if problems := checkPublicRouteArgvGuardRows(rows, nodes); !strings.Contains(strings.Join(problems, "\n"), "now declares an operand") {
 		t.Errorf("stale undeclared-operand row not reported: %q", problems)
+	}
+}
+
+// Form V: a flag value outside the closed value set the catalog synopsis
+// declares for it. docs/cli-guide.md "Exit codes" lists a bad enum as a usage
+// error, so the probe must exit 2 with nothing on stdout, and its stderr must
+// name the probe value, which proves the refusal is about this value and not an
+// earlier unrelated usage error (a missing required flag, say).
+const (
+	publicRouteArgvFormValue  = "V"
+	publicRouteArgvGuardValue = "zz-value-guard"
+)
+
+// publicRouteArgvValueSet is one flag whose synopsis declares a closed value
+// set, such as `[--ui popup|sidebar]`.
+type publicRouteArgvValueSet struct {
+	flag   string // "--ui"
+	values []string
+}
+
+var publicRouteArgvValueLiteral = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// publicRouteArgvDeclaredValueSets returns the flags in synopsis tokens (after
+// the route path) whose value is spelled as two or more literal words joined by
+// `|`: `--ui popup|sidebar` or `--ui=popup|sidebar`. A `<...>` placeholder is
+// not a closed set, even with `|` inside (`<name|absolute-path>`,
+// `<seconds|unlimited>`), and neither is a set with a placeholder alternative
+// (`shell|<provider>`).
+func publicRouteArgvDeclaredValueSets(rest []string) []publicRouteArgvValueSet {
+	var out []publicRouteArgvValueSet
+	for i, token := range rest {
+		core := strings.TrimRight(strings.TrimLeft(token, "[{"), "]}.")
+		if core == "--" {
+			return out
+		}
+		if !strings.HasPrefix(core, "--") {
+			continue
+		}
+		name, value, inline := strings.Cut(core, "=")
+		if !inline {
+			// A flag that closes its bracket group has no value.
+			if strings.HasSuffix(token, "]") || strings.HasSuffix(token, "}") || i+1 >= len(rest) {
+				continue
+			}
+			value = strings.TrimRight(strings.TrimLeft(rest[i+1], "[{"), "]}.")
+		}
+		alternatives := strings.Split(value, "|")
+		if len(alternatives) < 2 || !strings.HasPrefix(name, "--") || len(name) < 3 {
+			continue
+		}
+		closed := true
+		for _, alternative := range alternatives {
+			if !publicRouteArgvValueLiteral.MatchString(alternative) {
+				closed = false
+				break
+			}
+		}
+		if closed {
+			out = append(out, publicRouteArgvValueSet{flag: name, values: alternatives})
+		}
+	}
+	return out
+}
+
+// valueSets returns the closed value-set flags the route's own synopsis lines
+// declare. On a parent route only a line that documents the bare route (no
+// subcommand word) counts, so `projmux switch preview [--ui ...]` is the
+// preview leaf's flag, not the switch parent's.
+func (n publicRouteArgvGuardNode) valueSets() []publicRouteArgvValueSet {
+	var out []publicRouteArgvValueSet
+	for _, line := range n.synopsis {
+		rest, _ := publicRouteArgvSynopsisRest(line, n.path)
+		if n.parent && len(rest) > 0 && !strings.HasPrefix(strings.TrimLeft(rest[0], "[{"), "-") {
+			continue
+		}
+		for _, set := range publicRouteArgvDeclaredValueSets(rest) {
+			if !slices.ContainsFunc(out, func(seen publicRouteArgvValueSet) bool { return seen.flag == set.flag }) {
+				out = append(out, set)
+			}
+		}
+	}
+	return out
+}
+
+// publicRouteArgvValueRowKind says how a form V row is checked.
+type publicRouteArgvValueRowKind int
+
+const (
+	// publicRouteArgvValueStaticRow: not executed, because a probe that got
+	// past the value check could launch a provider, reach tmux, or write
+	// state. The value check is pinned by the per-site test named in the
+	// reason. Static check: the synopsis still declares the value set.
+	publicRouteArgvValueStaticRow publicRouteArgvValueRowKind = iota
+	// publicRouteArgvValueUnechoedRow: executed, but the route's reason text
+	// (which must not change) does not name the refused value. The probe must
+	// still exit 2 with nothing on stdout, and its stderr must contain echo,
+	// the reason text that identifies this flag's value refusal. The row is
+	// stale once stderr names the probe value.
+	publicRouteArgvValueUnechoedRow
+)
+
+func (k publicRouteArgvValueRowKind) String() string {
+	switch k {
+	case publicRouteArgvValueStaticRow:
+		return "static"
+	case publicRouteArgvValueUnechoedRow:
+		return "unechoed"
+	default:
+		return "unknown(" + strconv.Itoa(int(k)) + ")"
+	}
+}
+
+type publicRouteArgvValueRow struct {
+	route  string
+	flag   string
+	kind   publicRouteArgvValueRowKind
+	reason string
+	echo   string // unechoed rows only
+}
+
+const (
+	publicRouteArgvValueCreateReason = "a create route that gets past its flag checks reaches a provider launch and tmux; the value check is pinned by the per-site create tests (create_agent_test.go, create_resource_test.go, create_test.go, split_cwd_test.go)"
+	publicRouteArgvValueNotifyReason = "the value check follows the required --text/--target checks, so the probe would have to spell them and would enqueue a notification if the check regressed; pinned by notify_test.go `bad severity`"
+)
+
+// publicRouteArgvValueGuardRows is the closed, reviewed form V exception table.
+var publicRouteArgvValueGuardRows = []publicRouteArgvValueRow{
+	{route: "create pane", flag: "--placement", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create pane", flag: "--cwd-from", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create agent", flag: "--placement", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create agent", flag: "--cwd-from", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create codex", flag: "--placement", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create codex", flag: "--cwd-from", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create claude", flag: "--placement", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create claude", flag: "--cwd-from", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create antigravity", flag: "--placement", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create antigravity", flag: "--cwd-from", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
+	{route: "create notification", flag: "--severity", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueNotifyReason},
+
+	{route: "diagnostics log", flag: "--level", kind: publicRouteArgvValueUnechoedRow, echo: "diagnostics log --level must be info or error", reason: "the reason text names the allowed values, not the refused one"},
+	{route: "get notifications", flag: "--ui", kind: publicRouteArgvValueUnechoedRow, echo: "get notifications --ui must be table or sidebar", reason: "the reason text names the allowed values, not the refused one"},
+	{route: "runtime attach", flag: "--fallback", kind: publicRouteArgvValueUnechoedRow, echo: "runtime attach fallback must be one of: home, ephemeral", reason: "the reason text names the allowed values, not the refused one"},
+}
+
+// checkPublicRouteArgvValueRows returns every integrity problem in rows
+// against the declared value-set flags of the public route set.
+func checkPublicRouteArgvValueRows(rows []publicRouteArgvValueRow, nodes []publicRouteArgvGuardNode) []string {
+	declared := map[string]bool{}
+	for _, node := range nodes {
+		for _, set := range node.valueSets() {
+			declared[node.name()+"\x00"+set.flag] = true
+		}
+	}
+	var problems []string
+	seen := map[string]bool{}
+	for _, row := range rows {
+		label := fmt.Sprintf("value row {%q, %s, %s}", row.route, row.flag, row.kind)
+		if strings.TrimSpace(row.reason) == "" {
+			problems = append(problems, label+": empty reason")
+		}
+		key := row.route + "\x00" + row.flag
+		if seen[key] {
+			problems = append(problems, label+": duplicate route/flag")
+		}
+		seen[key] = true
+		if !declared[key] {
+			problems = append(problems, label+": stale: the synopsis no longer declares a closed value set for this flag")
+		}
+		switch row.kind {
+		case publicRouteArgvValueStaticRow:
+			if row.echo != "" {
+				problems = append(problems, label+": a static row is not executed and carries no echo text")
+			}
+		case publicRouteArgvValueUnechoedRow:
+			if strings.TrimSpace(row.echo) == "" {
+				problems = append(problems, label+": an unechoed row needs the reason text that identifies the refusal")
+			}
+		default:
+			problems = append(problems, label+": unknown kind")
+		}
+	}
+	return problems
+}
+
+// publicRouteArgvValueVerdict judges one executed form V probe. It returns ""
+// for a pass.
+func publicRouteArgvValueVerdict(probe publicRouteArgvProbe, row *publicRouteArgvValueRow) string {
+	label := fmt.Sprintf("%s %s %s", probe.route, probe.flag, publicRouteArgvFormValue)
+	if probe.failure != "" {
+		return fmt.Sprintf("%s: %s did not report an exit class: %s", label, probe.spelling(), probe.failure)
+	}
+	got := probe.result
+	if got.Code != 2 {
+		return fmt.Sprintf("%s: %s exited %d (%s), want 2 (usage error)", label, probe.spelling(), got.Code, got.Error)
+	}
+	if got.StdoutBytes != 0 {
+		return fmt.Sprintf("%s: %s wrote %d stdout bytes, want 0", label, probe.spelling(), got.StdoutBytes)
+	}
+	// The entrypoint prints the returned reason after the handler's stderr.
+	stderr := got.Stderr + "\n" + got.Error
+	named := strings.Contains(stderr, publicRouteArgvGuardValue)
+	if row == nil {
+		if !named {
+			return fmt.Sprintf("%s: %s exited 2 but stderr does not name %q, so the usage error may not be this flag's value refusal (reason %q)", label, probe.spelling(), publicRouteArgvGuardValue, got.Error)
+		}
+		return ""
+	}
+	if named {
+		return fmt.Sprintf("%s: %s now names %q on stderr; the %s row is stale, remove it (reason was: %s)", label, probe.spelling(), publicRouteArgvGuardValue, row.kind, row.reason)
+	}
+	if !strings.Contains(stderr, row.echo) {
+		return fmt.Sprintf("%s: %s exited 2 but stderr does not carry %q, so the usage error may not be this flag's value refusal (reason %q)", label, probe.spelling(), row.echo, got.Error)
+	}
+	return ""
+}
+
+// TestPublicRouteArgvGuardEveryValueSetFlagRejectsBadValueWithUsageExit is the
+// form V guard.
+func TestPublicRouteArgvGuardEveryValueSetFlagRejectsBadValueWithUsageExit(t *testing.T) {
+	t.Parallel()
+	started := time.Now()
+	nodes := publicRouteArgvGuardRoutes()
+	if problems := checkPublicRouteArgvValueRows(publicRouteArgvValueGuardRows, nodes); len(problems) > 0 {
+		t.Fatalf("value exception table integrity:\n  %s", strings.Join(problems, "\n  "))
+	}
+	rows := map[string]*publicRouteArgvValueRow{}
+	for i := range publicRouteArgvValueGuardRows {
+		row := &publicRouteArgvValueGuardRows[i]
+		rows[row.route+"\x00"+row.flag] = row
+	}
+
+	declared, static, routes := 0, 0, map[string]bool{}
+	var probes []publicRouteArgvProbe
+	for _, node := range nodes {
+		for _, set := range node.valueSets() {
+			declared++
+			routes[node.name()] = true
+			if row := rows[node.name()+"\x00"+set.flag]; row != nil && row.kind == publicRouteArgvValueStaticRow {
+				static++
+				continue
+			}
+			if slices.Contains(set.values, publicRouteArgvGuardValue) {
+				t.Fatalf("%s %s declares the probe value %q as allowed", node.name(), set.flag, publicRouteArgvGuardValue)
+			}
+			probes = append(probes, publicRouteArgvProbe{
+				route: node.name(),
+				form:  publicRouteArgvFormValue,
+				flag:  set.flag,
+				argv:  append(append([]string{}, node.path...), set.flag, publicRouteArgvGuardValue),
+			})
+		}
+	}
+	if declared == 0 {
+		t.Fatal("no public route declares a closed flag value set; the synopsis detector is broken")
+	}
+	runPublicRouteArgvProbes(t, probes)
+
+	var failures []string
+	for _, probe := range probes {
+		if failure := publicRouteArgvValueVerdict(probe, rows[probe.route+"\x00"+probe.flag]); failure != "" {
+			failures = append(failures, failure)
+		}
+	}
+	sort.Strings(failures)
+	t.Logf("public route value guard: %d value-set flags on %d routes; executed %d, static %d, unechoed rows %d; wall %s",
+		declared, len(routes), len(probes), static, len(publicRouteArgvValueGuardRows)-static, time.Since(started).Round(time.Millisecond))
+	if len(failures) > 0 {
+		t.Fatalf("%d public route value probe(s) did not end as this flag's usage error (exit 2):\n  %s", len(failures), strings.Join(failures, "\n  "))
+	}
+}
+
+// TestPublicRouteArgvGuardValueSetDetector pins the value-set detector on real
+// catalog synopsis lines.
+func TestPublicRouteArgvGuardValueSetDetector(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		line, path string
+		want       []string
+	}{
+		{"projmux switch [--ui popup|sidebar] [--anchor <pane>]", "switch", []string{"--ui=popup|sidebar"}},
+		{"projmux runtime sessions [--ui=popup|sidebar]", "runtime sessions", []string{"--ui=popup|sidebar"}},
+		{"projmux runtime attach [--keep <n>] [--fallback home|ephemeral]", "runtime attach", []string{"--fallback=home|ephemeral"}},
+		{"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>] [--severity info|warn|critical] [--source <source>]", "create notification", []string{"--severity=info|warn|critical"}},
+		{"projmux create pane [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]", "create pane", []string{"--placement=right|down", "--cwd-from=project|pane"}},
+		// Placeholders, open sets, and payload are not closed value sets.
+		{"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]", "agent usage", nil},
+		{"projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]", "config agent-questions", nil},
+		{"projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [-o json]", "reconcile registry", nil},
+		{"projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [-o <mode>] [-- <payload>]", "create window", nil},
+		{"projmux config edit [--get|--set <mode>]", "config edit", nil},
+		{"projmux create pane [-- --ui popup|sidebar]", "create pane", nil},
+	} {
+		rest, ok := publicRouteArgvSynopsisRest(test.line, strings.Fields(test.path))
+		if !ok {
+			t.Errorf("%q does not name route %q", test.line, test.path)
+			continue
+		}
+		var got []string
+		for _, set := range publicRouteArgvDeclaredValueSets(rest) {
+			got = append(got, set.flag+"="+strings.Join(set.values, "|"))
+		}
+		if !slices.Equal(got, test.want) {
+			t.Errorf("value sets(%q) = %q, want %q", test.line, got, test.want)
+		}
+	}
+	// A parent route owns only the flags of its bare synopsis line.
+	parent := publicRouteArgvGuardNode{path: []string{"switch"}, parent: true, synopsis: []string{
+		"projmux switch [--ui popup|sidebar]",
+		"projmux switch preview [--mode a|b] [path]",
+	}}
+	if got := parent.valueSets(); len(got) != 1 || got[0].flag != "--ui" {
+		t.Errorf("parent value sets = %+v, want only --ui", got)
+	}
+}
+
+// TestPublicRouteArgvGuardValueRowIntegrityChecks proves each form V
+// self-check and verdict fires.
+func TestPublicRouteArgvGuardValueRowIntegrityChecks(t *testing.T) {
+	t.Parallel()
+	nodes := []publicRouteArgvGuardNode{
+		{path: []string{"leaf"}, synopsis: []string{"projmux leaf [--ui a|b] [--n <x>]"}},
+	}
+	base := []publicRouteArgvValueRow{{route: "leaf", flag: "--ui", kind: publicRouteArgvValueStaticRow, reason: "r"}}
+	if problems := checkPublicRouteArgvValueRows(base, nodes); len(problems) != 0 {
+		t.Fatalf("clean table reported %q", problems)
+	}
+	for _, test := range []struct {
+		name string
+		rows []publicRouteArgvValueRow
+		want string
+	}{
+		{"empty reason", []publicRouteArgvValueRow{{route: "leaf", flag: "--ui", kind: publicRouteArgvValueStaticRow, reason: " "}}, "empty reason"},
+		{"duplicate", []publicRouteArgvValueRow{base[0], base[0]}, "duplicate route/flag"},
+		{"stale flag", []publicRouteArgvValueRow{{route: "leaf", flag: "--n", kind: publicRouteArgvValueStaticRow, reason: "r"}}, "no longer declares a closed value set"},
+		{"stale route", []publicRouteArgvValueRow{{route: "gone", flag: "--ui", kind: publicRouteArgvValueStaticRow, reason: "r"}}, "no longer declares a closed value set"},
+		{"unechoed without echo", []publicRouteArgvValueRow{{route: "leaf", flag: "--ui", kind: publicRouteArgvValueUnechoedRow, reason: "r"}}, "needs the reason text"},
+		{"static with echo", []publicRouteArgvValueRow{{route: "leaf", flag: "--ui", kind: publicRouteArgvValueStaticRow, reason: "r", echo: "e"}}, "carries no echo text"},
+		{"unknown kind", []publicRouteArgvValueRow{{route: "leaf", flag: "--ui", kind: 99, reason: "r"}}, "unknown kind"},
+	} {
+		if problems := checkPublicRouteArgvValueRows(test.rows, nodes); !strings.Contains(strings.Join(problems, "\n"), test.want) {
+			t.Errorf("%s: problems %q, want one containing %q", test.name, problems, test.want)
+		}
+	}
+
+	probe := func(code, stdout int, stderr, reason string) publicRouteArgvProbe {
+		return publicRouteArgvProbe{route: "leaf", form: publicRouteArgvFormValue, flag: "--ui", argv: []string{"leaf", "--ui", publicRouteArgvGuardValue},
+			result: publicRouteArgvChildResult{Code: code, StdoutBytes: stdout, Stderr: stderr, Error: reason}}
+	}
+	unechoed := &publicRouteArgvValueRow{route: "leaf", flag: "--ui", kind: publicRouteArgvValueUnechoedRow, reason: "r", echo: "--ui must be a or b"}
+	for _, test := range []struct {
+		name  string
+		probe publicRouteArgvProbe
+		row   *publicRouteArgvValueRow
+		want  string
+	}{
+		{"pass", probe(2, 0, "Usage:\n", `bad --ui "zz-value-guard"`), nil, ""},
+		{"exit 1", probe(1, 0, "", `bad --ui "zz-value-guard"`), nil, "exited 1"},
+		{"stdout", probe(2, 3, "", `bad --ui "zz-value-guard"`), nil, "stdout bytes"},
+		{"unrelated usage error", probe(2, 0, "Usage:\n", "leaf requires --text"), nil, "does not name"},
+		{"unechoed pass", probe(2, 0, "", "leaf --ui must be a or b"), unechoed, ""},
+		{"unechoed unrelated", probe(2, 0, "", "leaf requires --text"), unechoed, "does not carry"},
+		{"unechoed stale", probe(2, 0, "", `leaf --ui must be a or b, got "zz-value-guard"`), unechoed, "row is stale"},
+		{"no result", publicRouteArgvProbe{route: "leaf", flag: "--ui", argv: []string{"leaf"}, failure: "timed out"}, nil, "did not report"},
+	} {
+		got := publicRouteArgvValueVerdict(test.probe, test.row)
+		if (test.want == "") != (got == "") || !strings.Contains(got, test.want) {
+			t.Errorf("%s: verdict %q, want %q", test.name, got, test.want)
+		}
 	}
 }
