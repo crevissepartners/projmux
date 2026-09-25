@@ -332,6 +332,54 @@ func switchProjectEffects() *AllowedEffects {
 	)
 }
 
+// switchOpenEffects is `switch open` and `switch sidebar-open`: the picker's
+// open of one selected row without the picker. A candidate row registers the
+// Project, an offline one materializes, a fresh start replaces the desired
+// topology, a live one is focused or attached, and a trust refusal or a home
+// row changes nothing. It never stops a runtime, which is what separates it
+// from the whole switch record.
+func switchOpenEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityReused, IdentityReplaced},
+		[]AddressEffect{AddressUnchanged, AddressAllocated, AddressReleased},
+		[]TopologyEffect{TopologyUnchanged, TopologyEstablished, TopologyReplaced},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateReused, DesiredStateReplaced},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized, RuntimeAlreadyLive},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient, FocusAttachedCaller},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityExactOne},
+	)
+}
+
+// switchKillEffects is `switch kill`: the exact live session of one project
+// path is stopped, a client attached to it may be moved by tmux, and a path
+// with no live session is a zero-effect success.
+func switchKillEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeStopped},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityExactOne},
+	)
+}
+
+// switchSidebarFocusEffects is `switch sidebar-focus`: the client moves to the
+// live session of one project path, and a path with no live session is a
+// zero-effect success. It never materializes anything.
+func switchSidebarFocusEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityExactOne},
+	)
+}
+
 func rebindProjectEffects() *AllowedEffects {
 	return allowedEffects(
 		[]IdentityEffect{IdentityUnchanged},
@@ -2109,8 +2157,38 @@ var routes = []Route{
 		Invocation:  InvocationNatural,
 		Summary:     "Pick a project and compose create project with open project",
 		Disposition: DispositionShortcut,
-		Usage:       []string{"projmux switch [--ui popup|sidebar] [--anchor <pane>]"},
-		Canonical:   []string{"create project", "open project"},
+		Usage: []string{
+			"projmux switch [--ui popup|sidebar] [--anchor <pane>]",
+			"projmux switch open <path>",
+			"projmux switch toggle-tag [path]",
+			"projmux switch toggle-pin [path]",
+			"projmux switch kill [path]",
+			"projmux switch preview [--ui popup|sidebar] [path]",
+			"projmux switch settings",
+			"projmux switch cycle-pane <path> <next|prev>",
+			"projmux switch cycle-window <path> <next|prev>",
+			"projmux switch sidebar-focus <path>",
+			"projmux switch sidebar-open --path <path> --anchor <pane> [--session <name>] [--mode <mode>] [--query <text>] [--client <client>]",
+		},
+		Canonical: []string{"create project", "open project"},
+		// The dispatch verbs the picker, its preview pane, its key bindings, and
+		// the sidebar continuation run. Generated callers emit them, but each is
+		// a public route: its own usage, help, and exit 2 for misuse. Only `open`
+		// and `sidebar-open` compose create project and open project; the other
+		// verbs perform no public route's operation, so they name no canonical
+		// spelling (internal/cli shortcutRoutesWithoutACanonicalSpelling).
+		Children: []Route{
+			{Effects: switchOpenEffects(), Name: "open", Invocation: InvocationExplicit, Summary: "Open the project at a path the way the picker opens a selected row", Usage: []string{"projmux switch open <path>"}, Canonical: []string{"create project", "open project"}},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "toggle-tag", Invocation: InvocationNatural, Summary: "Toggle the picker tag on a project path; no path means the current directory", Usage: []string{"projmux switch toggle-tag [path]"}},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "toggle-pin", Invocation: InvocationNatural, Summary: "Toggle the pin on a project path; no path means the current directory", Usage: []string{"projmux switch toggle-pin [path]"}},
+			{Effects: switchKillEffects(), Name: "kill", Invocation: InvocationNatural, Summary: "Stop the tmux session of a project path; no path means the current directory", Usage: []string{"projmux switch kill [path]"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "preview", Invocation: InvocationNatural, Summary: "Render the picker preview of a project path; no path means the current directory", Usage: []string{"projmux switch preview [--ui popup|sidebar] [path]"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "settings", Invocation: InvocationNatural, Summary: "Open the picker's pin settings menu", Usage: []string{"projmux switch settings"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "cycle-pane", Invocation: InvocationExplicit, Summary: "Advance the picker preview pane cursor of a project path", Usage: []string{"projmux switch cycle-pane <path> <next|prev>"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "cycle-window", Invocation: InvocationExplicit, Summary: "Advance the picker preview window cursor of a project path", Usage: []string{"projmux switch cycle-window <path> <next|prev>"}},
+			{Effects: switchSidebarFocusEffects(), Name: "sidebar-focus", Invocation: InvocationExplicit, Summary: "Move the client to the live session of a project path; a path with no live session does nothing", Usage: []string{"projmux switch sidebar-focus <path>"}},
+			{Effects: switchOpenEffects(), Name: "sidebar-open", Invocation: InvocationExplicit, Summary: "Open a project the sidebar selected, anchored on an exact tmux Pane", Usage: []string{"projmux switch sidebar-open --path <path> --anchor <pane> [--session <name>] [--mode <mode>] [--query <text>] [--client <client>]"}, Canonical: []string{"create project", "open project"}},
+		},
 	},
 	{
 		// The canonical spelling of the Registry-only removal.

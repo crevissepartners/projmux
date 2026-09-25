@@ -64,7 +64,6 @@ type publicReasonException struct {
 
 const (
 	publicReasonHiddenReason  = "hidden plumbing: only a hidden `internal ...` spelling reaches this handler, and its reasons keep their historical spelling byte for byte"
-	publicReasonSwitchReason  = "machine-emitted sub-verb of the public `switch` token (generated tmux bindings and pickers); the catalog lists only `switch`, so the reason names the sub-verb the binding ran"
 	publicReasonNotARoute     = "an internal invariant or a non-projmux command, not an argv rejection naming a route"
 	publicReasonDynamicReason = "the spelling is the canonical route built from the dispatched kind or provider token, so it takes one catalog path per token"
 )
@@ -118,18 +117,6 @@ var publicReasonExceptions = map[string]publicReasonException{
 	`internal/app/tmux.go "internal tmux converge"`:                           {reason: publicReasonHiddenReason},
 	`internal/app/tmux.go "tmux"`:                                             {reason: publicReasonHiddenReason + " (the public `config apply` and `config render ...` spellings name themselves through tmuxReasonRoute)"},
 	`internal/app/usagecmd/usage.go "status"`:                                 {reason: publicReasonHiddenReason},
-
-	// Machine-emitted sub-verbs of the public `switch` token.
-	`internal/app/switch.go "switch cycle-pane"`:    {reason: publicReasonSwitchReason},
-	`internal/app/switch.go "switch cycle-window"`:  {reason: publicReasonSwitchReason},
-	`internal/app/switch.go "switch kill"`:          {reason: publicReasonSwitchReason},
-	`internal/app/switch.go "switch open"`:          {reason: publicReasonSwitchReason + "; `attach project` forwards here only with its one operand already checked"},
-	`internal/app/switch.go "switch preview"`:       {reason: publicReasonSwitchReason},
-	`internal/app/switch.go "switch settings"`:      {reason: publicReasonSwitchReason + "; its caller passes no operands, so the refusal never prints"},
-	`internal/app/switch.go "switch sidebar-focus"`: {reason: publicReasonSwitchReason},
-	`internal/app/switch.go "switch sidebar-open"`:  {reason: publicReasonSwitchReason},
-	`internal/app/switch.go "switch toggle-pin"`:    {reason: publicReasonSwitchReason},
-	`internal/app/switch.go "switch toggle-tag"`:    {reason: publicReasonSwitchReason},
 
 	// Text that is not a route.
 	`internal/app/agent_activation_binding.go "tmux"`:                 {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},

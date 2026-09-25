@@ -1146,10 +1146,17 @@ operator's question, so they stay reachable only as `projmux internal tmux ...`.
 ## switch
 
 ```
-projmux switch [--ui popup|sidebar]
+projmux switch [--ui popup|sidebar] [--anchor <pane>]
 projmux switch open <path>
-projmux switch toggle-tag | toggle-pin | kill | settings | preview
-projmux switch cycle-pane | cycle-window | sidebar-focus
+projmux switch toggle-tag [path]
+projmux switch toggle-pin [path]
+projmux switch kill [path]
+projmux switch preview [--ui popup|sidebar] [path]
+projmux switch settings
+projmux switch cycle-pane <path> <next|prev>
+projmux switch cycle-window <path> <next|prev>
+projmux switch sidebar-focus <path>
+projmux switch sidebar-open --path <path> --anchor <pane> [--session <name>] [--mode <mode>] [--query <text>] [--client <client>]
 ```
 
 Project picker. With no positional argument, opens the configured picker popup

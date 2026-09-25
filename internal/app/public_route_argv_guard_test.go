@@ -197,6 +197,14 @@ var publicRouteArgvOperandRoutes = []string{
 	"setup terminal",
 	"start project",
 	"stop project",
+	"switch open",
+	"switch toggle-tag",
+	"switch toggle-pin",
+	"switch kill",
+	"switch preview",
+	"switch cycle-pane",
+	"switch cycle-window",
+	"switch sidebar-focus",
 	"unregister project",
 }
 
@@ -219,6 +227,7 @@ func publicRouteArgvGuardSpecialRows() []publicRouteArgvGuardRow {
 
 		// Runnable parents (not executed for D-bare).
 		{route: "setup", form: publicRouteArgvFormBareParent, kind: publicRouteArgvRunnableParentRow, reason: "synopsis `projmux setup` documents the bare parent as the interactive terminal-key probe"},
+		{route: "switch", form: publicRouteArgvFormBareParent, kind: publicRouteArgvRunnableParentRow, reason: "synopsis `projmux switch [--ui popup|sidebar] [--anchor <pane>]` documents the bare parent as the interactive project picker"},
 	}
 }
 
