@@ -85,6 +85,7 @@ const (
 	KeyInstallReplacementRemaining   Key = "install.replacement.remaining"
 	KeyInstallReplacementImpact      Key = "install.replacement.impact"
 	KeyInstallReplacementRecovery    Key = "install.replacement.recovery"
+	KeyHookProjectScopeNote          Key = "hook.project_scope_note"
 	KeyHelpUsageCommand              Key = "help.usage.command"
 	KeyNativeKeysConsentHint         Key = "native_keys.consent_hint"
 	KeyAgentControlSendTurn          Key = "agent.control.action.send_new_turn"

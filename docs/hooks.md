@@ -1053,7 +1053,13 @@ run = "$HOME/.local/bin/projmux-post-create; $HOME/.local/bin/projmux-gh-token"
      it shows a parent file, it says that sessions created in the current
      directory do not run it:
      `note: sessions created in <dir> do not run this file's pre-create, post-create, or post-attach hooks, [startup], or [env]; only sessions created in <root> do`.
-     `projmux hook validate` prints the same note. Move the file into the
+     `projmux hook validate` prints the same note. `projmux hook trust` and
+     `projmux hook untrust` without `<project>`, and `projmux hook edit
+     <event>` without `--global` (inline or `--editor`), still act on the
+     `<root>` file from such a directory and print the same note after their
+     result line. The note is not printed from `<root>` itself, under
+     `PROJMUX_CWD`, or when you name `<project>` or `--global`. It follows the
+     UI locale; the text above is the `en-US` form. Move the file into the
      session directory, or create the session in `<root>`.
   2. Check for parse errors. If a file cannot be parsed, the whole file is
      ignored for that run and stderr shows
@@ -1101,8 +1107,10 @@ run = "$HOME/.local/bin/projmux-post-create; $HOME/.local/bin/projmux-gh-token"
   **`projmux: <event> hook: project config ".projmux/config.toml" hash changed; trusted sha256=<old> current sha256=<new>; skipping in non-interactive context`.**
   Run the same projmux command from an interactive terminal to approve the file,
   or run `projmux hook trust [<project>]`, which prints `trusted <repo>` and
-  the sha256. Set `PROJMUX_PROJECT_HOOKS=off` if project-local execution should
-  be disabled.
+  the sha256. Without `<project>` from a subdirectory, it trusts the nearest
+  project root and prints the scope note from check 1 of "Nothing happens".
+  Set `PROJMUX_PROJECT_HOOKS=off` if project-local execution should be
+  disabled.
 - **`projmux: <event> hook: ... timed out after 5s`.** Long-running work
   belongs in a backgrounded child (`(slow-thing &) >/dev/null 2>&1`). The hook
   itself must return within 5s or projmux kills it. projmux runs the hook in
