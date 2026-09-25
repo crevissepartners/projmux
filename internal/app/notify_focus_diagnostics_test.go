@@ -364,7 +364,7 @@ func TestNotifyDeliveryDiagnosticsCoalescesActualSuppressionHotPaths(t *testing.
 			return nil, os.ErrNotExist
 		}
 		switch {
-		case reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}):
+		case reflect.DeepEqual(args, []string{"list-clients", "-F", visibleClientPaneFormat}):
 			return []byte("%15\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%3", "#{@projmux_desktop_notified}"}):
 			return []byte("\n"), nil
