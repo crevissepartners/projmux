@@ -79,7 +79,8 @@ func (c *personaCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runSet(rest, stdout, stderr)
 	case "delete":
 		return c.runDelete(rest, stdout, stderr)
-	case "help", "--help", "-h":
+	// Only `persona help <more tokens>` or `instructions help <more tokens>` gets here: the help boundary answers the bare `help`, `--help`, and `-h` first.
+	case "help":
 		if c.spelling() == "instructions" {
 			return printRouteHelp(stdout, "instructions")
 		}

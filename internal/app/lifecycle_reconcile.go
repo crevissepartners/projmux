@@ -71,9 +71,6 @@ type lifecycleDirtyEvent struct {
 	// receipts is the lock-free supervisor prewrite snapshot to absorb inside
 	// the same Registry transaction, before absence projection consumes it.
 	receipts []coremetadata.TerminationEvidence
-	// pinStore is the external preference half of a final Project cascade. It is
-	// unused for Pane/Agent, non-last Window, and ControlSession outcomes.
-	pinStore pinSetStore
 	// exhaustedReplay requires the narrow startup-only normal receipt and
 	// current activation operation checks before this event may write.
 	exhaustedReplay bool

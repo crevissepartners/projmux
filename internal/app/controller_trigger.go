@@ -10,10 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -265,7 +263,6 @@ type controllerTriggerRunner struct {
 	// receipts is the append-only supervisor prewrite journal. It is read
 	// outside the Registry transaction and absorbed before lifecycle projection.
 	receipts terminationJournal
-	pins     pinSetStore
 	// newReconciler is the binding-convergence seam. Tests install a scripted
 	// reconciler; production builds the real one against the routed runner.
 	newReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
@@ -318,16 +315,11 @@ func newControllerTriggerRunner(runner tmuxCommandRunner, store *resourceStore,
 	if err != nil {
 		return nil, err
 	}
-	paths, err := config.DefaultPathsFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("resolve lifecycle pin store: %w", err)
-	}
 	return &controllerTriggerRunner{
 		runner:         runner,
 		store:          store,
 		events:         events,
 		receipts:       receipts,
-		pins:           pins.NewDefaultStore(paths),
 		newReconciler:  newReconciler,
 		newOperationID: newCreateOperationID,
 	}, nil
@@ -746,7 +738,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 			target:           target,
 			runtimeSessionID: trigger.session,
 			runtimePaneID:    trigger.hookPane, runtimeWindowID: trigger.hookWindow,
-			receipts: receipts, pinStore: r.pins,
+			receipts:        receipts,
 			exhaustedReplay: trigger.exhaustedReplay,
 			decisions:       r.teardown,
 		}
