@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 221 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 230 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -3171,7 +3171,12 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux pin project list|add|remove|toggle|clear|migrate
+projmux pin project list [--kind project|candidate]
+projmux pin project add <dir|uid:uid>
+projmux pin project remove <dir|uid:uid>
+projmux pin project toggle <dir|uid:uid>
+projmux pin project clear
+projmux pin project migrate [--dry-run]
 ```
 
 Subcommands:
@@ -3200,7 +3205,12 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux pin project list|add|remove|toggle|clear|migrate
+projmux pin project list [--kind project|candidate]
+projmux pin project add <dir|uid:uid>
+projmux pin project remove <dir|uid:uid>
+projmux pin project toggle <dir|uid:uid>
+projmux pin project clear
+projmux pin project migrate [--dry-run]
 ```
 
 Pins are presentation preferences in two kinds:
@@ -3208,6 +3218,143 @@ Pins are presentation preferences in two kinds:
   candidate  a filesystem path that no Registry Project claims
 
 Discovery roots (workdirs) are a separate collection; manage them in `projmux settings`.
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux pin project list`](#projmux-pin-project-list) | List every pin as a typed row, optionally limited to one pin kind |
+| [`projmux pin project add`](#projmux-pin-project-add) | Pin one project directory or Registry Project uid |
+| [`projmux pin project remove`](#projmux-pin-project-remove) | Unpin one project directory or Registry Project uid |
+| [`projmux pin project toggle`](#projmux-pin-project-toggle) | Pin or unpin one project directory or Registry Project uid |
+| [`projmux pin project clear`](#projmux-pin-project-clear) | Remove every pin |
+| [`projmux pin project migrate`](#projmux-pin-project-migrate) | Store the typed form of a legacy pin file, or report it with --dry-run |
+
+#### `projmux pin project list`
+
+List every pin as a typed row, optionally limited to one pin kind
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux pin project list [--kind project|candidate]
+```
+
+#### `projmux pin project add`
+
+Pin one project directory or Registry Project uid
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux pin project add <dir|uid:uid>
+```
+
+#### `projmux pin project remove`
+
+Unpin one project directory or Registry Project uid
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux pin project remove <dir|uid:uid>
+```
+
+#### `projmux pin project toggle`
+
+Pin or unpin one project directory or Registry Project uid
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux pin project toggle <dir|uid:uid>
+```
+
+#### `projmux pin project clear`
+
+Remove every pin
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=zero-or-more`
+- `domain-effect=null`
+
+```
+projmux pin project clear
+```
+
+#### `projmux pin project migrate`
+
+Store the typed form of a legacy pin file, or report it with --dry-run
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=zero-or-more`
+- `domain-effect=null`
+
+```
+projmux pin project migrate [--dry-run]
+```
 
 ## `projmux prune`
 
@@ -3608,7 +3755,8 @@ projmux runtime sessions [--ui popup|sidebar]
 projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]
 projmux runtime attach [--keep <n>] [--fallback home|ephemeral]
 projmux runtime stop [<session>...]
-projmux runtime tag list|clear
+projmux runtime tag list
+projmux runtime tag clear
 projmux runtime tag toggle <name>
 projmux runtime prune [--keep <n>]
 ```
@@ -3728,7 +3876,79 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux runtime tag list|clear
+projmux runtime tag list
+projmux runtime tag clear
+projmux runtime tag toggle <name>
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux runtime tag list`](#projmux-runtime-tag-list) | Print the tagged session names, one per line |
+| [`projmux runtime tag clear`](#projmux-runtime-tag-clear) | Clear the whole tagged session selection |
+| [`projmux runtime tag toggle`](#projmux-runtime-tag-toggle) | Tag or untag one tmux session name |
+
+#### `projmux runtime tag list`
+
+Print the tagged session names, one per line
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux runtime tag list
+```
+
+#### `projmux runtime tag clear`
+
+Clear the whole tagged session selection
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=zero-or-more`
+- `domain-effect=null`
+
+```
+projmux runtime tag clear
+```
+
+#### `projmux runtime tag toggle`
+
+Tag or untag one tmux session name
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
 projmux runtime tag toggle <name>
 ```
 

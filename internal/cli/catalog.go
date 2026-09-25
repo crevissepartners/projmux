@@ -1871,8 +1871,15 @@ var routes = []Route{
 		CanonicalOrder: 15,
 		Summary:        "Manage pinned project directories",
 		Disposition:    DispositionCanonical,
-		Usage:          []string{"projmux pin project list|add|remove|toggle|clear|migrate"},
-		Canonical:      []string{"pin project"},
+		Usage: []string{
+			"projmux pin project list [--kind project|candidate]",
+			"projmux pin project add <dir|uid:uid>",
+			"projmux pin project remove <dir|uid:uid>",
+			"projmux pin project toggle <dir|uid:uid>",
+			"projmux pin project clear",
+			"projmux pin project migrate [--dry-run]",
+		},
+		Canonical: []string{"pin project"},
 		Children: []Route{
 			// The store behind this route is a lines file of directory paths, not
 			// a Project registry: there is no uid, no ownerRef, and no resource
@@ -1885,7 +1892,14 @@ var routes = []Route{
 				Invocation:       InvocationExplicit,
 				Summary:          "Manage pinned project directories (canonical spelling)",
 				CanonicalSummary: "Manage pinned project directories",
-				Usage:            []string{"projmux pin project list|add|remove|toggle|clear|migrate"},
+				Usage: []string{
+					"projmux pin project list [--kind project|candidate]",
+					"projmux pin project add <dir|uid:uid>",
+					"projmux pin project remove <dir|uid:uid>",
+					"projmux pin project toggle <dir|uid:uid>",
+					"projmux pin project clear",
+					"projmux pin project migrate [--dry-run]",
+				},
 				Notes: []string{
 					"Pins are presentation preferences in two kinds:\n" +
 						"  project    a Registry Project uid; its root and name are projected from the Registry\n" +
@@ -1893,6 +1907,23 @@ var routes = []Route{
 					"Discovery roots (workdirs) are a separate collection; manage them in `projmux settings`.",
 				},
 				Canonical: []string{"pin project"},
+				// The verbs the pin handler dispatches. Each is a public route
+				// with its own usage, help, and exit 2 for misuse, and each is
+				// its own canonical spelling. A pin is a presentation preference
+				// outside the seven axes; only the cardinality differs per verb:
+				// one named pin, or the whole pin file. add, remove, and toggle
+				// parse no flags: their argv is the operand, taken verbatim, so a
+				// leading dash is part of the path. The pin kinds stay in the
+				// parent's Notes, which every pin verb rejection prints under its
+				// usage.
+				Children: []Route{
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "List every pin as a typed row, optionally limited to one pin kind", CanonicalSummary: "List pinned project directories", Usage: []string{"projmux pin project list [--kind project|candidate]"}, Canonical: []string{"pin project list"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "add", Invocation: InvocationExplicit, Summary: "Pin one project directory or Registry Project uid", Usage: []string{"projmux pin project add <dir|uid:uid>"}, Canonical: []string{"pin project add"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "remove", Invocation: InvocationExplicit, Summary: "Unpin one project directory or Registry Project uid", Usage: []string{"projmux pin project remove <dir|uid:uid>"}, Canonical: []string{"pin project remove"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "toggle", Invocation: InvocationExplicit, Summary: "Pin or unpin one project directory or Registry Project uid", Usage: []string{"projmux pin project toggle <dir|uid:uid>"}, Canonical: []string{"pin project toggle"}},
+					{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "clear", Invocation: InvocationFanOut, Summary: "Remove every pin", Usage: []string{"projmux pin project clear"}, Canonical: []string{"pin project clear"}},
+					{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "migrate", Invocation: InvocationFanOut, Summary: "Store the typed form of a legacy pin file, or report it with --dry-run", Usage: []string{"projmux pin project migrate [--dry-run]"}, Canonical: []string{"pin project migrate"}},
+				},
 			},
 		},
 	},
@@ -2037,7 +2068,8 @@ var routes = []Route{
 			"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]",
 			"projmux runtime attach [--keep <n>] [--fallback home|ephemeral]",
 			"projmux runtime stop [<session>...]",
-			"projmux runtime tag list|clear",
+			"projmux runtime tag list",
+			"projmux runtime tag clear",
 			"projmux runtime tag toggle <name>",
 			"projmux runtime prune [--keep <n>]",
 		},
@@ -2061,7 +2093,25 @@ var routes = []Route{
 			},
 			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeAlreadyLive}, []FocusEffect{FocusAttachedCaller}, CardinalityExactOne), Name: "attach", Invocation: InvocationExplicit, Summary: "Attach a live or ephemeral runtime without Project identity", Usage: []string{"projmux runtime attach [--keep <n>] [--fallback home|ephemeral]"}, Canonical: []string{"runtime attach"}},
 			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityOneOrMore), Name: "stop", Invocation: InvocationFanOut, Summary: "Terminate live tmux sessions by tagged selection", Usage: []string{"projmux runtime stop [<session>...]"}, Canonical: []string{"runtime stop"}},
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "tag", Invocation: InvocationFanOut, Summary: "Manage the ephemeral tagged session selection", Usage: []string{"projmux runtime tag list|clear", "projmux runtime tag toggle <name>"}, Canonical: []string{"runtime tag"}},
+			{
+				Effects:    unchangedEffects(CardinalityZeroOrMore),
+				Name:       "tag",
+				Invocation: InvocationFanOut,
+				Summary:    "Manage the ephemeral tagged session selection",
+				Usage:      []string{"projmux runtime tag list", "projmux runtime tag clear", "projmux runtime tag toggle <name>"},
+				Canonical:  []string{"runtime tag"},
+				// The verbs the tag handler dispatches, each a public route with
+				// its own usage, help, and exit 2 for misuse, and each its own
+				// canonical spelling. The tagged selection is a set of tmux
+				// session names outside the seven axes; only its cardinality
+				// differs per verb. toggle parses no flags: its argv is the
+				// session name operand, taken verbatim.
+				Children: []Route{
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "Print the tagged session names, one per line", CanonicalSummary: "List the tagged session selection", Usage: []string{"projmux runtime tag list"}, Canonical: []string{"runtime tag list"}},
+					{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "clear", Invocation: InvocationFanOut, Summary: "Clear the whole tagged session selection", Usage: []string{"projmux runtime tag clear"}, Canonical: []string{"runtime tag clear"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "toggle", Invocation: InvocationExplicit, Summary: "Tag or untag one tmux session name", Usage: []string{"projmux runtime tag toggle <name>"}, Canonical: []string{"runtime tag toggle"}},
+				},
+			},
 			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityZeroOrMore), Name: "prune", Invocation: InvocationFanOut, Summary: "Trim old ephemeral tmux sessions", Usage: []string{"projmux runtime prune [--keep <n>]"}, Canonical: []string{"runtime prune"}},
 		},
 	},

@@ -105,8 +105,12 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 // are neither and are not listed here -- they are the scan roots, owned by
 // `projmux settings` and PROJMUX_MANAGED_ROOTS.
 func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("pin project", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pin project list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "pin project list")
+		printPinNotes(stderr)
+	}
 	kind := fs.String("kind", "", "Limit the listing to one pin kind (project or candidate)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -115,13 +119,13 @@ func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRouteUsage(stderr, "pin project")
+		printRouteUsage(stderr, "pin project list")
 		printPinNotes(stderr)
 		return usageError("pin project list does not accept positional arguments")
 	}
 	filter, err := parsePinKindFilter(*kind)
 	if err != nil {
-		printRouteUsage(stderr, "pin project")
+		printRouteUsage(stderr, "pin project list")
 		printPinNotes(stderr)
 		return err
 	}
@@ -199,10 +203,12 @@ func reportPinResolution(stderr io.Writer, path string, resolution pins.Resoluti
 }
 
 func (c *pinCommand) runAdd(args []string, stdout, stderr io.Writer) error {
-	target, err := requireSinglePinArg("pin project add", args, stderr)
-	if err != nil {
-		return err
+	if len(args) != 1 {
+		printRouteUsage(stderr, "pin project add")
+		printPinNotes(stderr)
+		return pinArgCountError("pin project add")
 	}
+	target := pinTargetArg(args[0])
 	authority, err := c.requireAuthority()
 	if err != nil {
 		return err
@@ -220,10 +226,12 @@ func (c *pinCommand) runAdd(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *pinCommand) runRemove(args []string, stdout, stderr io.Writer) error {
-	target, err := requireSinglePinArg("pin project remove", args, stderr)
-	if err != nil {
-		return err
+	if len(args) != 1 {
+		printRouteUsage(stderr, "pin project remove")
+		printPinNotes(stderr)
+		return pinArgCountError("pin project remove")
 	}
+	target := pinTargetArg(args[0])
 	authority, err := c.requireAuthority()
 	if err != nil {
 		return err
@@ -241,10 +249,12 @@ func (c *pinCommand) runRemove(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
-	target, err := requireSinglePinArg("pin project toggle", args, stderr)
-	if err != nil {
-		return err
+	if len(args) != 1 {
+		printRouteUsage(stderr, "pin project toggle")
+		printPinNotes(stderr)
+		return pinArgCountError("pin project toggle")
 	}
+	target := pinTargetArg(args[0])
 	authority, err := c.requireAuthority()
 	if err != nil {
 		return err
@@ -269,8 +279,20 @@ func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
-	if len(args) != 0 {
-		printRouteUsage(stderr, "pin project")
+	fs := flag.NewFlagSet("pin project clear", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "pin project clear")
+		printPinNotes(stderr)
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return flagParseError(err)
+	}
+	if fs.NArg() != 0 {
+		printRouteUsage(stderr, "pin project clear")
 		printPinNotes(stderr)
 		return usageError("pin project clear does not accept positional arguments")
 	}
@@ -295,8 +317,12 @@ func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 // nothing is lost by migrating early; a path that two Projects claim refuses the
 // whole migration rather than picking a uid.
 func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("pin project", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pin project migrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "pin project migrate")
+		printPinNotes(stderr)
+	}
 	dryRun := fs.Bool("dry-run", false, "Report the migration without writing the pin file")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -305,7 +331,7 @@ func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRouteUsage(stderr, "pin project")
+		printRouteUsage(stderr, "pin project migrate")
 		printPinNotes(stderr)
 		return usageError("pin project migrate does not accept positional arguments")
 	}
@@ -366,21 +392,24 @@ func (c *pinCommand) readRegistry() coremetadata.Registry {
 	return registry
 }
 
-// requireSinglePinArg accepts either a directory or an explicit `uid:<uid>`.
+// pinArgCountError is the usage error (exit 2) of a single-operand pin verb
+// given no operand or more than one; the caller has printed its own usage.
+// These verbs parse no flags: every argv token, a leading dash included, is an
+// operand, so `pin project add -foo` pins the path `-foo`.
+func pinArgCountError(route string) error {
+	return usageError(fmt.Sprintf("%s requires exactly 1 <dir|uid:uid> argument", route))
+}
+
+// pinTargetArg accepts either a directory or an explicit `uid:<uid>`.
 //
 // A bare directory keeps working exactly as it always has, which is the
 // compatibility half of the split: the argv an operator already types still
 // resolves, it just now resolves to a *typed* pin instead of a bare path line.
-func requireSinglePinArg(command string, args []string, stderr io.Writer) (string, error) {
-	if len(args) != 1 {
-		printRouteUsage(stderr, "pin project")
-		printPinNotes(stderr)
-		return "", fmt.Errorf("%s requires exactly 1 <dir|uid:uid> argument", command)
+func pinTargetArg(arg string) string {
+	if strings.HasPrefix(strings.TrimSpace(arg), "uid:") {
+		return strings.TrimSpace(arg)
 	}
-	if strings.HasPrefix(strings.TrimSpace(args[0]), "uid:") {
-		return strings.TrimSpace(args[0]), nil
-	}
-	return filepath.Clean(args[0]), nil
+	return filepath.Clean(arg)
 }
 
 // printPinHelp prints the catalog usage of route, the pin dispatch level that

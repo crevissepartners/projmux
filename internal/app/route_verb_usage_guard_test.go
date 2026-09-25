@@ -166,7 +166,7 @@ func usageVerbRun(usage string) []string {
 // line (internal/cli TestParentUsageCoversEveryPublicChild), so no line spells
 // the verbs as an alternation and each verb is only ever spelled one per line.
 // create's kinds and provider shortcuts are the widest case.
-var routeVerbPinnedPositions = []string{"attention", "create", "hook", "switch", "update", "window"}
+var routeVerbPinnedPositions = []string{"attention", "create", "hook", "pin project", "runtime tag", "switch", "update", "window"}
 
 // routeVerbPinProblems reports every pin that no longer needs to be one: a
 // position an alternation already qualifies, one with no dispatcher entry, or
@@ -585,7 +585,7 @@ func TestRouteVerbGuardReportsPinnedDrift(t *testing.T) {
 	}{
 		{"alternation qualifies it", "update", "projmux update status|check|apply", "already qualified by an alternation"},
 		{"no dispatcher", "agent", "projmux agent wait <agent-ref>", "has no entry in routeVerbDispatchers"},
-		{"no public children", "pin project", "projmux pin project list", "not a public catalog route with public children"},
+		{"no public children", "runtime stop", "projmux runtime stop x", "not a public catalog route with public children"},
 		{"not a route", "nope", "projmux nope a", "not a public catalog route with public children"},
 	} {
 		lines := []routeVerbUsageLine{{run: usageVerbRun(tc.usage), source: tc.pin}}

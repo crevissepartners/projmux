@@ -297,19 +297,10 @@ type parentVerbMenu struct {
 
 // parentVerbMenus are the only bare verb menus a public route may print. A
 // menu promises no flags or operands, so a route whose verbs are children
-// prints each child's line instead.
-var parentVerbMenus = []parentVerbMenu{
-	{
-		route:  "pin project",
-		line:   "projmux pin project list|add|remove|toggle|clear|migrate",
-		reason: "Its verbs have no catalog child nodes yet, so there is no child line to copy; remove this row when the verbs become children.",
-	},
-	{
-		route:  "runtime tag",
-		line:   "projmux runtime tag list|clear",
-		reason: "Its verbs have no catalog child nodes yet, so there is no child line to copy; remove this row when the verbs become children.",
-	},
-}
+// prints each child's line instead. It is empty: every public verb menu's
+// verbs are catalog children now, and a new row must say why its verbs have
+// no child line to copy.
+var parentVerbMenus = []parentVerbMenu{}
 
 // verbMenu matches an alternation of two or more bare verbs, so a bracketed
 // flag choice such as `[--yes|--force]` is not one.

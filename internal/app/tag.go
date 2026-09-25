@@ -48,7 +48,7 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() == 0 {
 		printRouteUsage(stderr, "runtime tag")
-		return errors.New("runtime tag requires a subcommand")
+		return usageError("runtime tag requires a subcommand")
 	}
 
 	switch fs.Arg(0) {
@@ -79,8 +79,19 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *tagCommand) runList(args []string, stdout, stderr io.Writer) error {
-	if len(args) != 0 {
-		printRouteUsage(stderr, "runtime tag")
+	fs := flag.NewFlagSet("runtime tag list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "runtime tag list")
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return flagParseError(err)
+	}
+	if fs.NArg() != 0 {
+		printRouteUsage(stderr, "runtime tag list")
 		return usageError("runtime tag list does not accept positional arguments")
 	}
 
@@ -104,8 +115,11 @@ func (c *tagCommand) runList(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *tagCommand) runToggle(args []string, stdout, stderr io.Writer) error {
-	name, err := requireSingleTagArg("runtime tag toggle", args, stderr)
+	// toggle parses no flags: every argv token, a leading dash included, is
+	// the session name operand.
+	name, err := requireSingleTagArg("runtime tag toggle", args)
 	if err != nil {
+		printRouteUsage(stderr, "runtime tag toggle")
 		return err
 	}
 
@@ -129,8 +143,19 @@ func (c *tagCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *tagCommand) runClear(args []string, stdout, stderr io.Writer) error {
-	if len(args) != 0 {
-		printRouteUsage(stderr, "runtime tag")
+	fs := flag.NewFlagSet("runtime tag clear", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		printRouteUsage(stderr, "runtime tag clear")
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return flagParseError(err)
+	}
+	if fs.NArg() != 0 {
+		printRouteUsage(stderr, "runtime tag clear")
 		return usageError("runtime tag clear does not accept positional arguments")
 	}
 
@@ -156,16 +181,17 @@ func (c *tagCommand) requireStore() (tagStore, error) {
 	return c.store, nil
 }
 
-func requireSingleTagArg(command string, args []string, stderr io.Writer) (string, error) {
+// requireSingleTagArg reads the one <name> operand of a tag verb. A missing,
+// extra, or blank operand is a usage error (exit 2); the caller prints its own
+// route usage.
+func requireSingleTagArg(command string, args []string) (string, error) {
 	if len(args) != 1 {
-		printRouteUsage(stderr, "runtime tag")
-		return "", fmt.Errorf("%s requires exactly 1 <name> argument", command)
+		return "", usageError(fmt.Sprintf("%s requires exactly 1 <name> argument", command))
 	}
 
 	name := strings.TrimSpace(args[0])
 	if name == "" {
-		printRouteUsage(stderr, "runtime tag")
-		return "", fmt.Errorf("%s requires a non-empty <name> argument", command)
+		return "", usageError(fmt.Sprintf("%s requires a non-empty <name> argument", command))
 	}
 	return name, nil
 }

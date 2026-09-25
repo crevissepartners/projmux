@@ -15,7 +15,11 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when the output projections were held to what the
+// The baseline last moved when the `pin project` verbs
+// (list|add|remove|toggle|clear|migrate) and the `runtime tag` verbs
+// (list|clear|toggle) became catalog children: nine rows, each verb its own
+// canonical spelling, with no new source edge.
+// Before that, it moved when the output projections were held to what the
 // parsers take: `get notifications`, which forwards to the notify queue and
 // rejects `-o`, lost the shared catalog it never accepted, and `reconcile
 // resources|registry` declare the `json` projection their parsers already
@@ -75,7 +79,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "5968a862e685b5a9cb80f97694cf7de4e75ec149e2787d7f7f39de986186b2a5"
+	const want = "ddecda523a86006fb7e4001fe7b8e5c1e15615274ccf1e7b2fd44e62c2ade3b3"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

@@ -122,6 +122,12 @@ route=profile set identity=unchanged address=unchanged topology=unchanged desire
 route=profile delete identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=pin identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=pin project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=pin project list identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=pin project add identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=pin project remove identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=pin project toggle identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=pin project clear identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=pin project migrate identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=prune identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=prune agent identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=prune project identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
@@ -143,6 +149,9 @@ route=runtime diagnostics identity=unchanged address=unchanged topology=unchange
 route=runtime attach identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=attached-caller cardinality=exact-one domain-effect=null
 route=runtime stop identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=one-or-more domain-effect=null
 route=runtime tag identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=runtime tag list identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=runtime tag clear identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=runtime tag toggle identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=runtime prune identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=zero-or-more domain-effect=null
 route=settings identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=setup identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
