@@ -17,8 +17,8 @@ import (
 
 // cliWindowRenameRealTmuxEnv makes tmux mandatory for the public `rename
 // window` display boundary. test/integration/cli-window-rename-display.sh sets
-// it so a missing tmux fails the integration suite instead of skipping, which
-// is what keeps this assertion alive in CI: the Unit job has no tmux.
+// it so a missing tmux fails the integration suite instead of skipping. The
+// Unit job also runs it, with tmux installed and PROJMUX_REAL_TMUX_STRICT=1.
 const cliWindowRenameRealTmuxEnv = "PMX_TEST_CLI_WINDOW_RENAME_REAL_TMUX"
 
 // TestCLIWindowRenameConvergesTheTabThroughRealTmux drives the public

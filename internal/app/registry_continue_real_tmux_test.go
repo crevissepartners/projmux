@@ -21,7 +21,8 @@ import (
 
 // registryContinueRealTmuxEnv makes tmux mandatory for the Registry Continue
 // fidelity check. The L05 E2E scenario sets it, so a missing tmux fails the
-// scenario instead of skipping it; the Unit job has no tmux and skips.
+// scenario instead of skipping it; the Unit job has tmux but does not set it,
+// so the test skips there even under PROJMUX_REAL_TMUX_STRICT=1.
 const registryContinueRealTmuxEnv = "PROJMUX_REAL_TMUX_TEST"
 
 // registryContinueLiveRow is one Pane of the observed runtime, in tmux order.

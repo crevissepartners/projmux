@@ -53,20 +53,32 @@ func (r *realTmuxHelperRecorder) Skip(args ...any) {
 	runtime.Goexit()
 }
 
+func (r *realTmuxHelperRecorder) Skipf(format string, args ...any) {
+	r.skipped = true
+	runtime.Goexit()
+}
+
 func (r *realTmuxHelperRecorder) Fatalf(format string, args ...any) {
 	r.fatal = fmt.Sprintf(format, args...)
 	runtime.Goexit()
 }
 
-func runRealTmuxHelper(strictEnvs ...string) (*realTmuxHelperRecorder, string) {
+// recordRealTmuxHelper runs helper against a recorder on its own goroutine,
+// so a Skip or Fatalf ends only that goroutine.
+func recordRealTmuxHelper(helper func(testing.TB)) *realTmuxHelperRecorder {
 	recorder := &realTmuxHelperRecorder{}
-	var binary string
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		binary = requireRealTmux(recorder, strictEnvs...)
+		helper(recorder)
 	}()
 	<-done
+	return recorder
+}
+
+func runRealTmuxHelper(strictEnvs ...string) (*realTmuxHelperRecorder, string) {
+	var binary string
+	recorder := recordRealTmuxHelper(func(tb testing.TB) { binary = requireRealTmux(tb, strictEnvs...) })
 	return recorder, binary
 }
 

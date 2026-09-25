@@ -40,8 +40,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install tmux
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            echo "tmux before install: $(command -v tmux) $(tmux -V)"
+          else
+            echo "tmux before install: absent"
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+          tmux -V
+
       - name: Run unit tests
-        run: make test
+        run: |
+          tmpdir=/tmp/projmux-unit-tests-long-tmpdir-guard-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          mkdir -p "$tmpdir"
+          echo "TMPDIR=$tmpdir (${#tmpdir} bytes)"
+          TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test
 
   integration:
     name: Release Integration Tests

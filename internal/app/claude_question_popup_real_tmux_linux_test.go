@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -121,22 +122,59 @@ type realTmuxQuestionClient struct {
 // realTmuxQuestionScreenLimit bounds the retained terminal output.
 const realTmuxQuestionScreenLimit = 256 << 10
 
+// realTmuxPtyUnavailable ends a test that could not acquire the
+// pseudo-terminal its terminal client needs. It skips, unless
+// realTmuxStrictEnv is "1": then the test fails with the step and its cause,
+// so a strict runner cannot pass the popup tests without drawing a popup.
+func realTmuxPtyUnavailable(t testing.TB, step string, err error) {
+	t.Helper()
+	if os.Getenv(realTmuxStrictEnv) == "1" {
+		t.Fatalf("%s: %v; %s=1 requires the real-tmux popup tests to attach a terminal client", step, err, realTmuxStrictEnv)
+	}
+	t.Skipf("no pseudo-terminal: %s: %v", step, err)
+}
+
+// TestRealTmuxPtyUnavailableSkipsOrFails pins both answers to a pseudo-terminal
+// that cannot be acquired: a skip by default, a failure carrying the step, the
+// cause, and the strict variable under strict mode.
+func TestRealTmuxPtyUnavailableSkipsOrFails(t *testing.T) {
+	cause := errors.New("no such device")
+	for _, value := range []string{"", "0", "true"} {
+		t.Setenv(realTmuxStrictEnv, value)
+		recorder := recordRealTmuxHelper(func(tb testing.TB) { realTmuxPtyUnavailable(tb, "open /dev/ptmx", cause) })
+		if !recorder.skipped || recorder.fatal != "" {
+			t.Fatalf("%s=%q: skipped=%v fatal=%q, want a skip", realTmuxStrictEnv, value, recorder.skipped, recorder.fatal)
+		}
+	}
+
+	t.Setenv(realTmuxStrictEnv, "1")
+	recorder := recordRealTmuxHelper(func(tb testing.TB) { realTmuxPtyUnavailable(tb, "open /dev/ptmx", cause) })
+	for _, want := range []string{"open /dev/ptmx", cause.Error(), realTmuxStrictEnv + "=1"} {
+		if recorder.skipped || !strings.Contains(recorder.fatal, want) {
+			t.Fatalf("strict: skipped=%v fatal=%q, want a failure containing %q", recorder.skipped, recorder.fatal, want)
+		}
+	}
+}
+
 func (s realTmuxQuestionServer) attach(t *testing.T) *realTmuxQuestionClient {
 	t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
-		t.Skipf("no pseudo-terminal available: %v", err)
+		realTmuxPtyUnavailable(t, "open /dev/ptmx", err)
 	}
 	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
-		t.Skipf("unlock pseudo-terminal: %v", err)
+		_ = master.Close()
+		realTmuxPtyUnavailable(t, "unlock pseudo-terminal", err)
 	}
 	index, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
 	if err != nil {
-		t.Skipf("name pseudo-terminal: %v", err)
+		_ = master.Close()
+		realTmuxPtyUnavailable(t, "name pseudo-terminal", err)
 	}
 	tty, err := os.OpenFile("/dev/pts/"+strconv.Itoa(index), os.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
-		t.Skipf("open pseudo-terminal: %v", err)
+		_ = master.Close()
+		realTmuxPtyUnavailable(t, "open /dev/pts/"+strconv.Itoa(index), err)
 	}
 	defer tty.Close()
 	if err := unix.IoctlSetWinsize(int(tty.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 48, Col: 160}); err != nil {
