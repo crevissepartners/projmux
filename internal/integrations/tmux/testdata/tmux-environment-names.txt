@@ -1,0 +1,13 @@
+# tmux environment variable names that projmux reads in formats.
+# Source: tmux 3.6a man page (man tmux), FORMATS section: "The possible variables are listed in the table below, or the name of a tmux option may be used for an option's value, or the name of an environment variable."
+# Local package: tmux 3.6a-2ubuntu0.1.
+# These are environment variables projmux itself puts into the tmux environment:
+#   set with new-session -e in internal/app/shell.go and internal/app/materialize.go,
+#   removed with set-environment -u in internal/app/create_reentrancy.go;
+#   named by the constants createOperationEnvironment (internal/integrations/tmux/client.go,
+#   internal/app/create_reentrancy.go) and finalizeOperationEnvironment (internal/app/materialize.go).
+# This list is hand-maintained, not generated, so it has no regenerate command.
+# When code starts reading a new environment variable in a format, add it here.
+# One name per line, sorted (LC_ALL=C) and unique. Lines starting with # are comments.
+__projmux_create_operation
+__projmux_finalize_operation
