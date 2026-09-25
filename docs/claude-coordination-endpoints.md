@@ -25,7 +25,12 @@ The activation gate records the actual child PID and kernel birth identity
 before replacing itself with Claude. The separate managed SessionStart hook
 uses `exec`, making the registered provider its direct parent. The helper
 verifies the complete helper → hook → provider process chain while the hook
-waits for a bounded startup acknowledgement. A nested unmanaged Claude cannot
+waits for a bounded startup acknowledgement. The hook's wait bounds only the
+hook: when it ends without the acknowledgement, the hook releases the helper
+instead of killing it, and a helper whose acknowledgement nobody reads keeps
+the registration it recorded. A released helper that cannot record, or whose
+generation is no longer current, exits and removes its lease files by itself.
+A nested unmanaged Claude cannot
 register its own endpoint through inherited activation environment variables.
 The creator-selected Registry path travels only in private Claude activation
 context, independent of a tmux server's older XDG environment.
