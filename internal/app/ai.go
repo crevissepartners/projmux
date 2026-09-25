@@ -1193,11 +1193,14 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	get := fs.Bool("get", false, "print the configured AI split mode")
 	set := fs.String("set", "", "set the configured AI split mode")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
-		return errors.New("ai settings does not accept positional arguments")
+		return usageError("ai settings does not accept positional arguments")
 	}
 
 	if *get {
