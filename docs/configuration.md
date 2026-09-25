@@ -52,8 +52,11 @@ for large mounts, WSL paths, NFS paths, or temporary project roots.
 The saved workdir file is:
 
 ```text
-~/.config/projmux/workdirs
+$HOME/.config/projmux/workdirs
 ```
+
+This file does not follow `XDG_CONFIG_HOME`; see
+[Setting Layers](#setting-layers).
 
 It stores one absolute path per line. Lines beginning with `#` are comments.
 The file is read only when no env root list is set.
@@ -671,7 +674,7 @@ installed; that install stays put until its stable line ships.
 
 | Variable | Purpose |
 | --- | --- |
-| `PROJMUX_PROJDIR` | Explicit primary project root. Accepts an OS-native PATH-style multi-value: the first non-empty entry is the primary root and later entries are prepended to managed-root discovery. The primary value is memoized to `~/.config/projmux/projdir`. The legacy `PROJDIR` and `RP` env vars are no longer honored. |
+| `PROJMUX_PROJDIR` | Explicit primary project root. Accepts an OS-native PATH-style multi-value: the first non-empty entry is the primary root and later entries are prepended to managed-root discovery. The primary value is memoized to `$HOME/.config/projmux/projdir` (see [Setting Layers](#setting-layers)). The legacy `PROJDIR` and `RP` env vars are no longer honored. |
 | `PROJMUX_MANAGED_ROOTS` | Search-root override. Uses the OS-native path-list separator and takes priority over the saved workdirs file and default weak probes. |
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
 | `PROJMUX_LOCALE` | UI locale override. `auto` resumes detection; `en-US` and `ko-KR` pin supported locales. Unsupported tags fall back to `en-US` and surface a Settings warning. |
@@ -749,6 +752,9 @@ set-option -g @projmux_projdir /path/to/repos
 
 An env `PROJMUX_PROJDIR` value takes priority over the tmux option. The tmux
 option takes priority over the saved projdir file.
+
+The saved projdir file is `$HOME/.config/projmux/projdir`. It does not follow
+`XDG_CONFIG_HOME`; see [Setting Layers](#setting-layers).
 
 ## Agent Question Answering
 
@@ -1311,6 +1317,10 @@ Settings live in two layers:
 | --- | --- | --- |
 | central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
+
+Central files live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/`, except
+`projdir` and `workdirs`, which always live under `$HOME/.config/projmux/` and
+do not follow `XDG_CONFIG_HOME`.
 
 Named Agent instructions continue to use the central `personas/` directory. The `projmux instructions` and legacy `projmux persona` commands read and write the same files.
 
