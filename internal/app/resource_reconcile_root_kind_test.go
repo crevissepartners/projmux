@@ -531,6 +531,9 @@ func scanRootSliceTraversals(t *testing.T) rootSliceTraversals {
 			case ".git", ".wt", "vendor", "node_modules", "testdata":
 				return fs.SkipDir
 			}
+			if skipNestedCheckout(root, path, entry) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {

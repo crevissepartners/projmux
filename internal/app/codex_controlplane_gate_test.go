@@ -166,21 +166,7 @@ func markerCarriesReason(line string) bool {
 // merges erase the branch history that would otherwise tie the two together, so
 // the tie has to live somewhere a build can check.
 func TestControlPlaneContractCellsNameLiveTests(t *testing.T) {
-	root := repoRootForGate(t)
-	declared := map[string]bool{}
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
-			return err
-		}
-		payload, readErr := os.ReadFile(path) // #nosec G304 -- repository source under test.
-		if readErr != nil {
-			return readErr
-		}
-		for _, match := range regexp.MustCompile(`(?m)^func (Test\w+)\(`).FindAllStringSubmatch(string(payload), -1) {
-			declared[match[1]] = true
-		}
-		return nil
-	})
+	declared, err := declaredTestNames(repoRootForGate(t))
 	if err != nil {
 		t.Fatalf("walk repository: %v", err)
 	}
@@ -195,6 +181,39 @@ func TestControlPlaneContractCellsNameLiveTests(t *testing.T) {
 	if len(missing) > 0 {
 		t.Fatalf("%d contract Enforcement entr(ies) name no live test:\n  %s", len(missing), strings.Join(missing, "\n  "))
 	}
+}
+
+// declaredTestFunc matches a top-level Test function declaration.
+var declaredTestFunc = regexp.MustCompile(`(?m)^func (Test\w+)\(`)
+
+// declaredTestNames collects every Test function declared in a _test.go file
+// under root. Nested checkouts are skipped: a name declared only on another
+// branch is not a live test of this one.
+func declaredTestNames(root string) (map[string]bool, error) {
+	declared := map[string]bool{}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if skipNestedCheckout(root, path, entry) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(entry.Name(), "_test.go") {
+			return nil
+		}
+		payload, readErr := os.ReadFile(path) // #nosec G304 -- repository source under test.
+		if readErr != nil {
+			return readErr
+		}
+		for _, match := range declaredTestFunc.FindAllStringSubmatch(string(payload), -1) {
+			declared[match[1]] = true
+		}
+		return nil
+	})
+	return declared, err
 }
 
 // TestControlPlaneContractEnforcementCoversEverySurface holds the other half:
