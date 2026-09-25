@@ -53,6 +53,16 @@ func TestDiscoveryCredentialAndPermissionFailuresBindNothingAndWriteNothing(t *t
 				greeting: hello{Preferred: 1, Minimum: 1, Endpoint: "codex-app-server:other", Credential: record.Credential},
 				want:     RefusalEndpointMismatch,
 			},
+			{
+				name:     "authority-only wrong credential",
+				greeting: hello{Preferred: 1, Minimum: 1, Endpoint: discovery.Endpoint(), Credential: "not-the-credential", Purpose: authoritySessionPurpose},
+				want:     RefusalCredentialRejected,
+			},
+			{
+				name:     "authority-only foreign endpoint",
+				greeting: hello{Preferred: 1, Minimum: 1, Endpoint: "codex-app-server:other", Credential: record.Credential, Purpose: authoritySessionPurpose},
+				want:     RefusalEndpointMismatch,
+			},
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				reply := rawHandshake(t, discovery, test.greeting)
@@ -74,7 +84,7 @@ func TestDiscoveryCredentialAndPermissionFailuresBindNothingAndWriteNothing(t *t
 			t.Fatalf("readRecord() = %v", err)
 		}
 		reply := rawHandshake(t, lone, hello{
-			Preferred: 9, Minimum: 9, Endpoint: lone.Endpoint(), Credential: loneRecord.Credential,
+			Preferred: 9, Minimum: 9, Endpoint: lone.Endpoint(), Credential: loneRecord.Credential, Purpose: authoritySessionPurpose,
 		})
 		if reply.Kind != replyRefused || reply.Refusal != RefusalDrainRequired {
 			t.Fatalf("unshared protocol reply = %+v, want a drain-required refusal", reply)

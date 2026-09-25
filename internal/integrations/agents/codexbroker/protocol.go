@@ -119,6 +119,7 @@ type hello struct {
 }
 
 const lifecycleSessionPurpose = "lifecycle-v1"
+const authoritySessionPurpose = "authority-check-v1"
 
 func (h hello) protocol() ProtocolRange {
 	return ProtocolRange{Preferred: h.Preferred, Minimum: h.Minimum}

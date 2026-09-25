@@ -23,6 +23,7 @@ type session struct {
 	version       int
 	id            string
 	lifecycleOnly bool
+	authorityOnly bool
 
 	out        chan wireReply
 	closed     chan struct{}
@@ -46,7 +47,7 @@ func (h *Host) serveSession(conn *net.UnixConn) {
 	}
 	defer h.untrack(conn)
 	reader := bufio.NewReaderSize(conn, frameBufferBytes)
-	version, sessionID, lifecycleOnly, ok := h.authenticate(conn, reader)
+	version, sessionID, lifecycleOnly, authorityOnly, ok := h.authenticate(conn, reader)
 	if !ok {
 		return
 	}
@@ -58,6 +59,7 @@ func (h *Host) serveSession(conn *net.UnixConn) {
 		version:       version,
 		id:            sessionID,
 		lifecycleOnly: lifecycleOnly,
+		authorityOnly: authorityOnly,
 		out:           make(chan wireReply, sessionBacklog),
 		closed:        make(chan struct{}),
 		departed:      make(chan struct{}),
@@ -164,6 +166,10 @@ func (s *session) refuse(id uint64, reason Refusal) {
 
 // handle dispatches one client request.
 func (s *session) handle(request wireRequest) {
+	if s.authorityOnly && request.Kind != requestAuthority {
+		s.refuse(request.ID, RefusalRequestUnknown)
+		return
+	}
 	if s.lifecycleOnly && request.Kind != requestLifecycle && request.Kind != requestCancel {
 		s.refuse(request.ID, RefusalRequestUnknown)
 		return
