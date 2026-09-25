@@ -128,6 +128,8 @@ func TestExactAgentControlDeliverChoosesFromOneLifecycleRead(t *testing.T) {
 	}{
 		{name: "idle starts", snapshot: idle, wantStart: 1},
 		{name: "active steers observed turn", snapshot: active, wantSteer: 1},
+		{name: "system error after failed turn starts", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError, TurnID: "turn-old", TurnState: codexappserver.TurnStateFailed}, wantStart: 1},
+		{name: "system error without turn starts", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError}, wantStart: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			wire := &fakeExactControlWire{snapshot: test.snapshot}
@@ -135,6 +137,38 @@ func TestExactAgentControlDeliverChoosesFromOneLifecycleRead(t *testing.T) {
 			response := epoch.Handle(t.Context(), agentControlRequest{Operation: agentControlOpDeliver, Identity: identity, Epoch: "epoch-1", Text: "input"})
 			if !response.OK || wire.reads != 1 || wire.start != test.wantStart || wire.steer != test.wantSteer || wire.writes() != 1 {
 				t.Fatalf("response=%+v reads=%d start=%d steer=%d writes=%d", response, wire.reads, wire.start, wire.steer, wire.writes())
+			}
+		})
+	}
+}
+
+func TestExactAgentControlDeliverRefusalNamesSystemErrorTurnInProgress(t *testing.T) {
+	identity := phase6Identity()
+	snapshot := activeWithThreadState(codexappserver.ThreadStateSystemError)
+	wire := &fakeExactControlWire{snapshot: snapshot}
+	epoch := newCodexControlEpoch(wire, identity, "epoch-1", snapshot, func(codexLifecycleIdentity) bool { return true })
+	response := epoch.Handle(t.Context(), agentControlRequest{Operation: agentControlOpDeliver, Identity: identity, Epoch: "epoch-1", Text: "input"})
+	want := "fresh exact turn state cannot take a write (thread=system-error turn=in-progress); turn write refused"
+	if response.OK || response.Code != "turn-state-unavailable" || response.Message != want || wire.reads != 1 || wire.writes() != 0 {
+		t.Fatalf("response=%+v reads=%d writes=%d", response, wire.reads, wire.writes())
+	}
+}
+
+func TestExactAgentControlCachedSystemErrorAfterFailedTurnAdvertisesStart(t *testing.T) {
+	identity := phase6Identity()
+	for _, test := range []struct {
+		name      string
+		snapshot  codexappserver.LifecycleSnapshot
+		wantStart bool
+	}{
+		{name: "failed turn", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError, TurnID: "turn-1", TurnState: codexappserver.TurnStateFailed}, wantStart: true},
+		{name: "turn in progress", snapshot: activeWithThreadState(codexappserver.ThreadStateSystemError)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			epoch := newCodexControlEpoch(&fakeExactControlWire{}, identity, "epoch-1", test.snapshot, func(codexLifecycleIdentity) bool { return true })
+			availability := epoch.availability()
+			if availability.Start != test.wantStart || availability.Steer || availability.Interrupt {
+				t.Fatalf("availability=%+v", availability)
 			}
 		})
 	}
@@ -246,6 +280,8 @@ func TestExactAgentControlSteerFreshLifecycleAcceptanceTable(t *testing.T) {
 		wantCode  string
 		wantSteer int
 		wantOrder []string
+		// wantMessage, when set, is the exact refusal line.
+		wantMessage string
 	}{
 		{name: "same exact active", fresh: active, wantOK: true, wantSteer: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-steer:thread-1:turn-1"}},
 		{name: "same exact waiting approval", fresh: activeWithThreadState(codexappserver.ThreadStateWaitingOnApproval), wantOK: true, wantSteer: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-steer:thread-1:turn-1"}},
@@ -257,6 +293,8 @@ func TestExactAgentControlSteerFreshLifecycleAcceptanceTable(t *testing.T) {
 		{name: "fresh read error", freshErr: errors.New("private upstream detail"), wantCode: "turn-state-unavailable", wantOrder: []string{"lifecycle-read:thread-1"}},
 		{name: "fresh wrong thread", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-other", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-state-unavailable", wantOrder: []string{"lifecycle-read:thread-1"}},
 		{name: "fresh malformed state", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-state-unavailable", wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh system error failed turn", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError, TurnID: "turn-1", TurnState: codexappserver.TurnStateFailed}, wantCode: "turn-state-unavailable", wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: "fresh exact turn state cannot take a write (thread=system-error turn=failed); steer write refused"},
+		{name: "fresh system error without turn", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError}, wantCode: "turn-state-unavailable", wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: "fresh exact turn state cannot take a write (thread=system-error turn=none); steer write refused"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			wire := &fakeExactControlWire{snapshot: test.fresh, snapshotErr: test.freshErr}
@@ -269,6 +307,9 @@ func TestExactAgentControlSteerFreshLifecycleAcceptanceTable(t *testing.T) {
 			}
 			if wire.start != 0 || wire.interrupt != 0 || len(wire.responses) != 0 || strings.Contains(response.Message, "private") || strings.Contains(strings.Join(wire.operations, " "), "private") {
 				t.Fatalf("unexpected mutation or private detail: response=%+v wire=%+v", response, wire)
+			}
+			if test.wantMessage != "" && response.Message != test.wantMessage {
+				t.Fatalf("message=%q want %q", response.Message, test.wantMessage)
 			}
 			if response.OK && (response.Acceptance != agentControlAcceptanceProvider || response.Delivery != agentControlDeliveryUnconfirmed) {
 				t.Fatalf("success receipt=%+v", response)
@@ -377,6 +418,8 @@ func TestExactAgentControlStartFreshLifecycleAdmissionTable(t *testing.T) {
 		wantReads  int
 		wantStarts int
 		wantOrder  []string
+		// wantMessage lists substrings a refusal line must carry.
+		wantMessage []string
 	}{
 		{name: "cached active fresh same active", cached: active, fresh: active, wantCode: "turn-in-progress", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
 		{name: "cached active fresh later active", cached: active, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-later", TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-in-progress", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
@@ -386,14 +429,20 @@ func TestExactAgentControlStartFreshLifecycleAdmissionTable(t *testing.T) {
 		{name: "cached active fresh later terminal", cached: active, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-later", TurnState: codexappserver.TurnStateInterrupted}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
 		{name: "cached idle fresh failed terminal", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-later", TurnState: codexappserver.TurnStateFailed}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
 		{name: "cached active fresh never started", cached: active, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
-		{name: "fresh read error", cached: idle, freshErr: errors.New("private provider detail"), wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
-		{name: "fresh read timeout", cached: idle, freshErr: context.DeadlineExceeded, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
-		{name: "fresh wrong thread", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-other", ThreadState: codexappserver.ThreadStateIdle}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh read error", cached: idle, freshErr: errors.New("private provider detail"), wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: []string{"fresh exact turn state is unavailable; new turn write refused"}},
+		{name: "fresh read timeout", cached: idle, freshErr: context.DeadlineExceeded, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: []string{"fresh exact turn state is unavailable; new turn write refused"}},
+		{name: "fresh wrong thread", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-other", ThreadState: codexappserver.ThreadStateIdle}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: []string{"returned a different thread; new turn write refused"}},
 		{name: "fresh active without turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
-		{name: "fresh idle with active turn", cached: idle, fresh: activeWithThreadState(codexappserver.ThreadStateIdle), wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh idle with active turn", cached: idle, fresh: activeWithThreadState(codexappserver.ThreadStateIdle), wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: []string{"cannot take a write (thread=idle turn=in-progress); new turn write refused"}},
 		{name: "fresh active with terminal turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
-		{name: "fresh terminal without turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnState: codexappserver.TurnStateCompleted}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
-		{name: "fresh system error", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh terminal without turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnState: codexappserver.TurnStateCompleted}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: []string{"thread=idle turn=completed"}},
+		{name: "fresh system error", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
+		{name: "fresh system error failed turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError, TurnID: "turn-later", TurnState: codexappserver.TurnStateFailed}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
+		{name: "fresh system error completed turn", cached: active, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
+		{name: "fresh system error interrupted turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError, TurnID: "turn-later", TurnState: codexappserver.TurnStateInterrupted}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
+		{name: "fresh system error in progress turn", cached: idle, fresh: activeWithThreadState(codexappserver.ThreadStateSystemError), wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: []string{"system-error", "in-progress", "; new turn write refused"}},
+		{name: "fresh unrecognized states", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: "private-thread-state", TurnID: "turn-later", TurnState: "private-turn-state"}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: []string{"(thread=unknown turn=unknown)"}},
+		{name: "fresh not loaded without turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateNotLoaded}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}, wantMessage: []string{"(thread=not-loaded turn=none)"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			wire := &fakeExactControlWire{snapshot: test.fresh, snapshotErr: test.freshErr}
@@ -404,6 +453,11 @@ func TestExactAgentControlStartFreshLifecycleAdmissionTable(t *testing.T) {
 			}
 			if wire.steer != 0 || wire.interrupt != 0 || len(wire.responses) != 0 || strings.Contains(response.Message, "private") || strings.Contains(strings.Join(wire.operations, " "), "private") {
 				t.Fatalf("unexpected mutation or private detail: response=%+v wire=%+v", response, wire)
+			}
+			for _, want := range test.wantMessage {
+				if !strings.Contains(response.Message, want) {
+					t.Fatalf("message %q lacks %q", response.Message, want)
+				}
 			}
 		})
 	}

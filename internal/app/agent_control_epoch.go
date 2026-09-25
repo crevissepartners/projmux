@@ -202,11 +202,46 @@ func (e *codexControlEpoch) classifyTurnState(snapshot codexappserver.LifecycleS
 		refusal := refusedControl(code, reason+"; "+write+" refused")
 		return freshTurnState{refusal: &refusal}
 	}
-	if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
-		refusal := refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; "+write+" refused")
-		return freshTurnState{refusal: &refusal}
+	var reason string
+	switch {
+	case err != nil:
+		// The read error can carry provider detail, so the line never quotes it.
+		reason = "fresh exact turn state is unavailable"
+	case snapshot.ThreadID != e.identity.ThreadID:
+		reason = "fresh exact turn state read returned a different thread"
+	case !validFreshStartSnapshot(snapshot), write == agentControlWriteSteer && snapshot.ThreadState == codexappserver.ThreadStateSystemError:
+		// Only a new turn may follow a system error; steer keeps refusing it here.
+		reason = "fresh exact turn state cannot take a write (thread=" + string(closedThreadState(snapshot.ThreadState)) + " turn=" + closedTurnStateLabel(snapshot.TurnState) + ")"
+	default:
+		return freshTurnState{snapshot: snapshot}
 	}
-	return freshTurnState{snapshot: snapshot}
+	refusal := refusedControl("turn-state-unavailable", reason+"; "+write+" refused")
+	return freshTurnState{refusal: &refusal}
+}
+
+// closedThreadState keeps a refusal line to the closed thread-state set, so a
+// state the normalizer never produced cannot put provider text on the line.
+func closedThreadState(state codexappserver.ThreadState) codexappserver.ThreadState {
+	switch state {
+	case codexappserver.ThreadStateNotLoaded, codexappserver.ThreadStateIdle, codexappserver.ThreadStateActive,
+		codexappserver.ThreadStateWaitingOnApproval, codexappserver.ThreadStateWaitingOnUserInput, codexappserver.ThreadStateSystemError:
+		return state
+	default:
+		return codexappserver.ThreadStateUnknown
+	}
+}
+
+// closedTurnStateLabel is closedThreadState for the latest turn; a thread with
+// no turn reads as none.
+func closedTurnStateLabel(state codexappserver.TurnState) string {
+	switch state {
+	case "":
+		return "none"
+	case codexappserver.TurnStateInProgress, codexappserver.TurnStateCompleted, codexappserver.TurnStateFailed, codexappserver.TurnStateInterrupted:
+		return string(state)
+	default:
+		return string(codexappserver.TurnStateUnknown)
+	}
 }
 
 func (e *codexControlEpoch) Revoke() {
@@ -508,8 +543,10 @@ func (e *codexControlEpoch) HasActionableRequest(requestID string) bool {
 	return e.active && matches == 1 && actionable
 }
 
+// canStart admits a new turn on an idle thread or on one a provider error left
+// in system-error, as long as its latest turn is not still in progress.
 func (e *codexControlEpoch) canStart() bool {
-	return e.threadState == codexappserver.ThreadStateIdle && (e.turnID == "" || e.turnState == codexappserver.TurnStateCompleted || e.turnState == codexappserver.TurnStateFailed || e.turnState == codexappserver.TurnStateInterrupted)
+	return (e.threadState == codexappserver.ThreadStateIdle || e.threadState == codexappserver.ThreadStateSystemError) && (e.turnID == "" || e.turnState == codexappserver.TurnStateCompleted || e.turnState == codexappserver.TurnStateFailed || e.turnState == codexappserver.TurnStateInterrupted)
 }
 
 func validFreshStartSnapshot(snapshot codexappserver.LifecycleSnapshot) bool {
@@ -517,7 +554,9 @@ func validFreshStartSnapshot(snapshot codexappserver.LifecycleSnapshot) bool {
 	switch snapshot.ThreadState {
 	case codexappserver.ThreadStateActive, codexappserver.ThreadStateWaitingOnApproval, codexappserver.ThreadStateWaitingOnUserInput:
 		return turnID != "" && snapshot.TurnState == codexappserver.TurnStateInProgress
-	case codexappserver.ThreadStateIdle:
+	case codexappserver.ThreadStateIdle, codexappserver.ThreadStateSystemError:
+		// A provider error fails the turn and leaves the thread in system-error;
+		// app-server still starts the next turn there and returns it to idle.
 		if turnID == "" {
 			return snapshot.TurnState == "" || snapshot.TurnState == codexappserver.TurnStateUnknown
 		}
