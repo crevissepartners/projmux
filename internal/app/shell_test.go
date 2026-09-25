@@ -586,7 +586,7 @@ func TestShellTmuxExecRunnerReturnsClosedTypedFailures(t *testing.T) {
 			}
 			var exitCoder interface{ ExitCode() int }
 			if errors.As(err, &exitCoder) {
-				t.Fatalf("typed shell failure exposed ExitCode %d and would suppress CLI stderr", exitCoder.ExitCode())
+				t.Fatalf("typed shell failure exposed ExitCode %d; shell tmux failures must keep exit code 1 and the runtime diagnostics kind", exitCoder.ExitCode())
 			}
 		})
 	}
@@ -656,7 +656,7 @@ func TestShellTypedPrepareFailuresReachCLIAndClosedJournal(t *testing.T) {
 			}
 			var exitCoder interface{ ExitCode() int }
 			if errors.As(err, &exitCoder) {
-				t.Fatalf("Run() exposed ExitCode %d and would suppress CLI stderr", exitCoder.ExitCode())
+				t.Fatalf("Run() exposed ExitCode %d; shell tmux failures must keep exit code 1 and the runtime diagnostics kind", exitCoder.ExitCode())
 			}
 			if len(writer.events) != 2 {
 				t.Fatalf("journal events = %#v, want one lifecycle pair", writer.events)

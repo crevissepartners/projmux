@@ -23,14 +23,14 @@ import (
 // tmuxError renders a tmux subprocess failure as a plain error.
 //
 // The cause is deliberately not wrapped with %w. A failed tmux command carries
-// an *exec.ExitError, and *exec.ExitError satisfies the `error + ExitCode() int`
-// interface cmd/projmux uses to let a command pick its own exit code -- which
-// also suppresses main's default stderr print, because a command that chose its
-// own code is expected to have printed its own diagnostic. Propagating that
-// wrap would turn every tmux failure on this path into a silent exit 1.
+// an *exec.ExitError, and a wrapped one would make cmd/projmux forward the
+// child's exit code instead of exiting 1. Callers outside a lifecycle-owned
+// command would also be journaled by the top-level diagnostics outcome as a
+// non-success exit (kind exit) instead of a runtime failure. Once that
+// diagnostics classification changes, this can wrap its cause.
 func tmuxError(format string, args ...any) error {
 	// fmt.Errorf without a %w verb returns a plain error, which is exactly the
-	// point: the cause's text is preserved, its identity is not.
+	// point: the cause's text is preserved, its exit code is not.
 	return fmt.Errorf(format, args...)
 }
 

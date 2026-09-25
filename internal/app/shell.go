@@ -1017,11 +1017,14 @@ type shellTmuxExecRunner struct {
 
 // shellTmuxCommandError keeps the subprocess cause visible to the operator and
 // exposes only the integrations/tmux failure projection to classifiers. It
-// deliberately does not unwrap the raw *exec.ExitError: cmd/projmux treats an
-// error with ExitCode() as a command-owned diagnostic and suppresses its own
-// stderr print. The shell runner has not printed that diagnostic, so exposing
-// the subprocess exit coder here would turn an ordinary failure into a silent
-// exit 1.
+// deliberately does not unwrap the raw *exec.ExitError, for two reasons. It
+// pins the command's exit code to 1 instead of forwarding tmux's own code (a
+// signal-killed tmux would otherwise surface as 255). And the same runner backs
+// attach's home-session preparation, which returns this error without a
+// lifecycle-owned outcome, so the top-level diagnostics outcome would journal an
+// exposed exit coder as a non-success exit (kind exit) instead of a runtime
+// failure. Once RecordOutcome stops classifying a wrapped exit error as exit,
+// this can unwrap its cause.
 type shellTmuxCommandError struct {
 	name    string
 	args    []string

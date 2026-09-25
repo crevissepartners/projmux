@@ -6,12 +6,14 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -124,6 +126,98 @@ func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
 				t.Fatal("apply lifecycle did not own terminal outcome")
 			}
 		})
+	}
+}
+
+// appExitCommandFailure is a typed tmux failure whose chain carries a real
+// *exec.ExitError, like the production integrations/tmux command error.
+type appExitCommandFailure struct {
+	cause   *exec.ExitError
+	failure inttmux.CommandFailure
+}
+
+func (e appExitCommandFailure) Error() string {
+	return "tmux -S /private/socket list-sessions: " + e.cause.Error() + ": " + e.failure.Stderr
+}
+func (e appExitCommandFailure) Unwrap() error { return e.cause }
+func (e appExitCommandFailure) CommandFailure() inttmux.CommandFailure {
+	return e.failure
+}
+
+func TestTmuxApplyBindFailureKeepsExitErrorCauseInsideLifecycle(t *testing.T) {
+	t.Parallel()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	var exitErr *exec.ExitError
+	if runErr := exec.Command(sh, "-c", "exit 1").Run(); !errors.As(runErr, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("sh exit 1 = %v, want *exec.ExitError with code 1", runErr)
+	}
+	runnerErr := appExitCommandFailure{
+		cause:   exitErr,
+		failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "failed to connect to server: Permission denied"},
+	}
+	home := t.TempDir()
+	writer := &appLifecycleWriter{}
+	recorder := diagnostics.NewLifecycleRecorder(writer, "apply-exit-cause", "0.10.0", "tmux")
+	cmd := &tmuxCommand{
+		diagnostics: recorder,
+		executable:  func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:   func(string) string { return home },
+		writeFile:   os.WriteFile,
+		runner:      &recordingTmuxRunner{err: runnerErr},
+	}
+	application := &App{lifecycle: recorder, tmux: cmd}
+	started := time.Now()
+	err = application.Run([]string{"internal", "tmux", "apply", "--config", filepath.Join(home, "tmux.conf")}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("Run() error = nil, want bind refusal")
+	}
+
+	// The operator text is byte-identical to the former %v rendering and fits
+	// on one stderr line.
+	if want := "bind config apply to exact live tmux server -L projmux: " + runnerErr.Error(); err.Error() != want {
+		t.Fatalf("Run() error = %q, want %q", err.Error(), want)
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("Run() error spans lines: %q", err.Error())
+	}
+
+	// The cause is wrapped, not returned bare, so cmd/projmux prints it once and
+	// exits with its code; that rule is covered by
+	// TestExecuteCLIPrintsWrappedSubprocessExitErrorOnceWithItsCode.
+	var gotExit *exec.ExitError
+	if !errors.As(err, &gotExit) || gotExit.ExitCode() != 1 {
+		t.Fatalf("Run() error = %#v, want wrapped *exec.ExitError with code 1", err)
+	}
+	if err == error(gotExit) {
+		t.Fatal("Run() returned the bare *exec.ExitError")
+	}
+
+	// The lifecycle owns the terminal outcome and journals it as runtime.
+	if len(writer.events) != 2 {
+		t.Fatalf("events = %#v, want start and one outcome", writer.events)
+	}
+	outcome := writer.events[1]
+	if outcome.Operation != string(diagnostics.OperationTmuxApply) || outcome.Result != "error" || outcome.Kind != "runtime" || outcome.Code != string(diagnostics.CodeTmuxApplyFailed) {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+	if !recorder.RecordedOutcome() {
+		t.Fatal("apply lifecycle did not own terminal outcome")
+	}
+
+	// The top-level outcome therefore never sees the exposed exit coder.
+	store := diagnostics.NewStore(filepath.Join(t.TempDir(), "events.jsonl"))
+	if recordErr := diagnostics.RecordOutcome(store, []string{"config", "apply"}, "apply-exit-cause", "0.10.0", "tmux", started, err, false, recorder.RecordedOutcome()); recordErr != nil {
+		t.Fatalf("RecordOutcome() error = %v", recordErr)
+	}
+	events, readErr := store.Read()
+	if readErr != nil {
+		t.Fatalf("store.Read() error = %v", readErr)
+	}
+	if len(events) != 0 {
+		t.Fatalf("top-level outcome events = %#v, want none", events)
 	}
 }
 
