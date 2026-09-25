@@ -23,11 +23,13 @@ import (
 // writes it, and never mints a uid from a path. Pins stay preferences, typed by
 // which of the two they point at.
 
-// pinSetStore is the file half of the pin collection.
+// pinSetStore is the file half of the pin collection. Load is the unlocked read
+// every rendering surface uses; Update is the only write, and it runs one
+// read-decide-write under the pin file's lock.
 type pinSetStore interface {
 	Path() string
 	Load() (pins.Set, error)
-	Save(pins.Set) error
+	Update(func(pins.Set) (pins.Set, bool, error)) error
 }
 
 // pinAuthority resolves stored pins against Registry Project identity.
@@ -87,7 +89,8 @@ func (a pinAuthority) resolved() (pins.Resolution, error) {
 //
 // An already-typed file costs one read and no write. An ambiguous one is refused
 // with the pin file byte-identical, because the write is the last thing that
-// happens and every refusal happens before it.
+// happens and every refusal happens before it. The read, the resolution and the
+// write share one pin-file lock; the Registry snapshot is read before it.
 func (a pinAuthority) migrate() (pins.Resolution, error) {
 	return a.runMigration(true)
 }
@@ -98,21 +101,40 @@ func (a pinAuthority) planMigration() (pins.Resolution, error) {
 }
 
 func (a pinAuthority) runMigration(write bool) (pins.Resolution, error) {
-	stored, resolver, err := a.read()
+	if !write {
+		stored, resolver, err := a.read()
+		if err != nil {
+			return pins.Resolution{}, err
+		}
+		resolution := resolver.Resolve(stored)
+		if len(resolution.Ambiguous) > 0 {
+			return resolution, a.ambiguousMigration(resolution)
+		}
+		return resolution, nil
+	}
+	if a.store == nil {
+		return pins.Resolution{}, errNoPinStore
+	}
+	refs, err := a.refs()
 	if err != nil {
 		return pins.Resolution{}, err
 	}
-	resolution := resolver.Resolve(stored)
-	if len(resolution.Ambiguous) > 0 {
-		return resolution, &pins.AmbiguousMigrationError{Path: a.store.Path(), Ambiguous: resolution.Ambiguous}
-	}
-	if !write || stored.Format.Typed() {
-		return resolution, nil
-	}
-	if err := a.store.Save(resolution.Set); err != nil {
-		return resolution, err
-	}
-	return resolution, nil
+	var resolution pins.Resolution
+	err = a.store.Update(func(stored pins.Set) (pins.Set, bool, error) {
+		resolution = pins.Resolver{Projects: refs}.Resolve(stored)
+		if len(resolution.Ambiguous) > 0 {
+			return stored, false, a.ambiguousMigration(resolution)
+		}
+		if stored.Format.Typed() {
+			return stored, false, nil
+		}
+		return resolution.Set, true, nil
+	})
+	return resolution, err
+}
+
+func (a pinAuthority) ambiguousMigration(resolution pins.Resolution) error {
+	return &pins.AmbiguousMigrationError{Path: a.store.Path(), Ambiguous: resolution.Ambiguous}
 }
 
 // read loads the stored set together with the resolver that types it.
@@ -336,22 +358,31 @@ func (a pinAuthority) pinTargetForSelector(value string) (pins.Pin, error) {
 // mutate migrates first, then applies one typed change, and writes only when the
 // result differs. A repeated pin action therefore reaches the filesystem zero
 // times.
+//
+// The migration, the change and the write happen in one locked pin-file update,
+// so an overlapping pin write cannot land between them and be dropped. The
+// Registry snapshot the migration resolves against is read before the lock.
 func (a pinAuthority) mutate(apply func(pins.Set) pins.Set) error {
-	if _, err := a.migrate(); err != nil {
-		return err
+	if a.store == nil {
+		return errNoPinStore
 	}
-	stored, err := a.store.Load()
+	refs, err := a.refs()
 	if err != nil {
 		return err
 	}
-	if !stored.Format.Typed() {
-		return fmt.Errorf("pin file %s still holds legacy path lines", a.store.Path())
-	}
-	next := apply(stored)
-	if next.Equal(stored) {
-		return nil
-	}
-	return a.store.Save(next)
+	return a.store.Update(func(stored pins.Set) (pins.Set, bool, error) {
+		resolution := pins.Resolver{Projects: refs}.Resolve(stored)
+		if len(resolution.Ambiguous) > 0 {
+			return stored, false, a.ambiguousMigration(resolution)
+		}
+		// Resolve always returns a typed set, so a legacy file is migrated here
+		// and written even when the change itself is a no-op.
+		next := apply(resolution.Set)
+		if stored.Format.Typed() && next.Equal(stored) {
+			return stored, false, nil
+		}
+		return next, true, nil
+	})
 }
 
 // add pins a typed target.
@@ -391,19 +422,19 @@ func (a pinAuthority) toggle(pin pins.Pin) (bool, error) {
 //
 // Unlike the other mutations it accepts a legacy file: dropping every preference
 // needs no Registry lookup, and the empty typed envelope it leaves behind is the
-// migrated state. An already-empty typed file is a write-free no-op.
+// migrated state. An already-empty typed file is a write-free no-op. It takes the
+// pin-file lock like every other mutation, so it cannot erase or be erased by an
+// overlapping one.
 func (a pinAuthority) clear() error {
 	if a.store == nil {
 		return errNoPinStore
 	}
-	stored, err := a.store.Load()
-	if err != nil {
-		return err
-	}
-	if len(stored.Pins) == 0 && stored.Format == pins.FormatTyped {
-		return nil
-	}
-	return a.store.Save(pins.Set{Format: pins.FormatTyped})
+	return a.store.Update(func(stored pins.Set) (pins.Set, bool, error) {
+		if len(stored.Pins) == 0 && stored.Format == pins.FormatTyped {
+			return stored, false, nil
+		}
+		return pins.Set{Format: pins.FormatTyped}, true, nil
+	})
 }
 
 // pinValidated re-runs the constructor validation on a pin built elsewhere, so a

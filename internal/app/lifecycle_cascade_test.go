@@ -186,6 +186,19 @@ func (s *lifecyclePinStore) Save(set pins.Set) error {
 	return nil
 }
 
+// Update mirrors pins.Store.Update: load, decide, save only when asked to.
+func (s *lifecyclePinStore) Update(update func(pins.Set) (pins.Set, bool, error)) error {
+	stored, err := s.Load()
+	if err != nil {
+		return err
+	}
+	next, write, err := update(stored)
+	if err != nil || !write {
+		return err
+	}
+	return s.Save(next)
+}
+
 func renameFixtureProjectUID(t *testing.T, registry *coremetadata.Registry, oldUID, newUID string) {
 	t.Helper()
 	for i := range registry.Projects {

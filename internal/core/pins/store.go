@@ -6,7 +6,8 @@ import (
 )
 
 // Store is the file half of the pin collection: it reads and it writes, and it
-// decides nothing.
+// decides nothing. Update runs a caller's decision under the pin file's lock,
+// but the decision stays the caller's.
 //
 // Every rule about what a pin means -- which kind a path resolves to, when a
 // legacy file may be rewritten, when a mutation is a no-op -- lives in pure
@@ -19,6 +20,9 @@ import (
 // happened to look like at that moment.
 type Store struct {
 	file state.LinesFile
+	// afterLoad is a test seam run inside a locked update after the stored set
+	// was parsed.
+	afterLoad func()
 }
 
 // NewStore builds a pin store for the provided file path.
@@ -49,10 +53,42 @@ func (s Store) Load() (Set, error) {
 
 // Save replaces the file with the typed envelope of set, atomically.
 func (s Store) Save(set Set) error {
+	if err := validSet(set); err != nil {
+		return err
+	}
+	return s.file.Write(format(set))
+}
+
+// Update runs one read-modify-write of the pin file under its exclusive lock, so
+// overlapping updates never drop each other's changes. update receives the
+// stored set exactly as Load would return it and returns the next set and
+// whether to write it. write=false or an error writes nothing; a returned set
+// holding an invalid pin is refused the same way Save refuses it.
+func (s Store) Update(update func(Set) (Set, bool, error)) error {
+	return s.file.Update(func(lines []string) ([]string, bool, error) {
+		stored, err := parse(lines)
+		if err != nil {
+			return nil, false, err
+		}
+		if s.afterLoad != nil {
+			s.afterLoad()
+		}
+		next, write, err := update(stored)
+		if err != nil || !write {
+			return nil, false, err
+		}
+		if err := validSet(next); err != nil {
+			return nil, false, err
+		}
+		return format(next), true, nil
+	})
+}
+
+func validSet(set Set) error {
 	for _, pin := range set.Pins {
 		if _, err := validPin(pin); err != nil {
 			return err
 		}
 	}
-	return s.file.Write(format(set))
+	return nil
 }
