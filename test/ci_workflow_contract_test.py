@@ -66,22 +66,60 @@ def step_script(step: str) -> str:
     return "\n".join(body)
 
 
+UNIT_TEST_RUN = "run: PROJMUX_REAL_TMUX_STRICT=1 make test"
+TMUX_INSTALL = "sudo apt-get install --yes tmux"
+
+
+def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
+    """Fail unless the Unit Tests job installs tmux and runs strict unit tests.
+
+    The real-tmux Go tests skip without tmux. The job installs tmux before the
+    tests and runs them with PROJMUX_REAL_TMUX_STRICT=1, so a missing tmux
+    fails the job instead of counting skipped tests as a pass.
+    """
+    if re.search(r"(?m)^\s+(?:if|continue-on-error|env):", unit):
+        raise AssertionError("unit job must not use if:, continue-on-error:, or env:")
+    for needle in ("uses: actions/setup-go@", "go-version-file: go.mod"):
+        if needle not in unit:
+            raise AssertionError(f"unit job is missing: {needle}")
+
+    deadcode = workflow_step(unit, "Check pinned deadcode baseline")
+    if deadcode.strip() != "run: make deadcode":
+        raise AssertionError(f"unexpected deadcode step: {deadcode.strip()!r}")
+    test = workflow_step(unit, "Run unit tests")
+    if test.strip() != UNIT_TEST_RUN:
+        raise AssertionError(
+            f"unit test step must be exactly {UNIT_TEST_RUN!r}, got {test.strip()!r}"
+        )
+    vet = workflow_step(unit, "Vet")
+    if vet.strip() != "run: make vet":
+        raise AssertionError(f"unexpected vet step: {vet.strip()!r}")
+
+    install = workflow_step(unit, "Install tmux")
+    install_script = step_script(install)
+    if TMUX_INSTALL not in install_script.splitlines():
+        raise AssertionError(f"Install tmux step must run: {TMUX_INSTALL}")
+    if "tmux -V" not in install_script:
+        raise AssertionError("Install tmux step must print tmux -V")
+    if re.search(r"(?m)^\s+(?:if|continue-on-error):", install):
+        raise AssertionError("Install tmux step must not be conditional")
+
+    order = [
+        "go-version-file: go.mod",
+        "      - name: Install tmux",
+        "run: make deadcode",
+        UNIT_TEST_RUN,
+        "run: make vet",
+    ]
+    positions = [unit.index(needle) for needle in order]
+    if positions != sorted(positions):
+        raise AssertionError(f"unit job steps must run in order: {order}")
+
+
 class CIWorkflowContractTest(unittest.TestCase):
     def test_required_unit_job_runs_pinned_deadcode_without_bypass(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        unit = workflow_job(workflow, "unit")
-        deadcode = workflow_step(unit, "Check pinned deadcode baseline")
-        self.assertEqual(deadcode.strip(), "run: make deadcode")
-        self.assertNotRegex(unit, r"(?m)^\s+(?:if|continue-on-error|env):")
-        self.assertIn("uses: actions/setup-go@", unit)
-        self.assertIn("go-version-file: go.mod", unit)
-        self.assertLess(
-            unit.index("go-version-file: go.mod"), unit.index("run: make deadcode")
-        )
-        self.assertLess(unit.index("run: make deadcode"), unit.index("run: make test"))
-        vet = workflow_step(unit, "Vet")
-        self.assertEqual(vet.strip(), "run: make vet")
-        self.assertLess(unit.index("run: make test"), unit.index("run: make vet"))
+        assert_unit_job_runs_real_tmux_strict(workflow_job(workflow, "unit"))
 
         # The repository tool directive and module version pin the scanner;
         # a runner must not install a floating tool or substitute a waiver.
@@ -108,6 +146,44 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotIn("continue-on-error:", aggregate)
         self.assertIn("      - unit\n", aggregate)
         self.assertIn("--required unit ", aggregate)
+
+    def test_unit_job_contract_rejects_a_missing_tmux_install_or_strict_env(
+        self,
+    ) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        unit = workflow_job(workflow, "unit")
+        assert_unit_job_runs_real_tmux_strict(unit)
+
+        install_marker = "      - name: Install tmux\n"
+        install_block = install_marker + workflow_step(unit, "Install tmux") + "\n"
+        test_marker = "      - name: Run unit tests\n"
+        test_block = test_marker + workflow_step(unit, "Run unit tests") + "\n"
+        self.assertEqual(unit.count(install_block), 1)
+        self.assertEqual(unit.count(test_block), 1)
+        without_install = unit.replace(install_block, "")
+        mutations = {
+            "install step removed": without_install,
+            "apt-get install line removed": unit.replace(
+                f"          {TMUX_INSTALL}\n", ""
+            ),
+            "strict prefix stripped": unit.replace(
+                UNIT_TEST_RUN, "run: make test"
+            ),
+            "strict moved into env": unit.replace(
+                f"        {UNIT_TEST_RUN}\n",
+                "        env:\n"
+                "          PROJMUX_REAL_TMUX_STRICT: \"1\"\n"
+                "        run: make test\n",
+            ),
+            "install after test": without_install.replace(
+                test_block, test_block + install_block
+            ),
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(mutation=name):
+                self.assertNotEqual(mutated, unit)
+                with self.assertRaises(AssertionError):
+                    assert_unit_job_runs_real_tmux_strict(mutated)
 
     def test_deadcode_failure_fails_unit_and_test_aggregate(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
