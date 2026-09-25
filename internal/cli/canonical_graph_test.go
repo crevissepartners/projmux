@@ -15,7 +15,11 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when the `pin project` verbs
+// The baseline last moved when `agent sessions list` joined the Agent domain:
+// one row with a json projection that lists the Claude conversations an Agent
+// has moved through, from the append-only session history and the Registry's
+// current `status.sessionRef`.
+// Before that, it moved when the `pin project` verbs
 // (list|add|remove|toggle|clear|migrate) and the `runtime tag` verbs
 // (list|clear|toggle) became catalog children: nine rows, each verb its own
 // canonical spelling, with no new source edge.
@@ -79,7 +83,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "ddecda523a86006fb7e4001fe7b8e5c1e15615274ccf1e7b2fd44e62c2ade3b3"
+	const want = "73b5154ea075196f66e1502645c606731b2fe00e28e5bd28f7ad53a9693ec0f5"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

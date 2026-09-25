@@ -157,6 +157,7 @@ var publicRouteArgvOperandRoutes = []string{
 	"agent question disable",
 	"agent question list",
 	"agent question answer",
+	"agent sessions list",
 	"attention toggle",
 	"attention clear",
 	"attention arm",

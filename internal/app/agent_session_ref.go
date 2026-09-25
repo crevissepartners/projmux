@@ -7,6 +7,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -229,20 +230,26 @@ func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.Agent
 	mutator := intmetadata.DefaultMutator()
 	mutator.Now = clock
 
+	var history sessionhistory.Record
+	var recordHistory bool
 	_, err = c.updateRegistry(func(working *coremetadata.Registry) error {
+		recordHistory = false
 		if _, ok := working.Agent(agentUID); !ok {
 			return errAgentSessionRefNoop
 		}
-		_, changed, err := mutator.RecordAgentSessionRef(working, agentUID, obs)
+		updated, changed, err := mutator.RecordAgentSessionRef(working, agentUID, obs)
 		if err != nil {
 			return err
 		}
 		if !changed {
 			return errAgentSessionRefNoop
 		}
+		history, recordHistory = claudeSessionHistoryRecord(agentUID, changed, updated.Status.SessionRef)
 		return nil
 	})
-	_ = err
+	if err == nil {
+		c.recordClaudeSessionHistory(history, recordHistory)
+	}
 }
 
 // managedAgentForPane resolves only the current live Pane binding of a
@@ -465,6 +472,8 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 	}
 	var committed coremetadata.Agent
 	var previous coremetadata.AgentInteractionKind
+	var history sessionhistory.Record
+	var recordHistory bool
 	_, err = c.updateRegistry(func(working *coremetadata.Registry) error {
 		current, ok := working.Agent(agent.Metadata.UID)
 		if !ok || current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != agent.Status.PaneRef {
@@ -479,10 +488,13 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 				return fmt.Errorf("managed Agent activation generation changed before interaction commit")
 			}
 		}
+		recordHistory = false
 		if hasObservation {
-			if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, obs); err != nil {
+			recorded, changed, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, obs)
+			if err != nil {
 				return err
 			}
+			history, recordHistory = claudeSessionHistoryRecord(agent.Metadata.UID, changed, recorded.Status.SessionRef)
 		}
 		if hasNativeObservation && binding.codex != nil {
 			nativeObservation.AgentUID = binding.agent.Metadata.UID
@@ -513,6 +525,7 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 		return nil
 	})
 	if err == nil {
+		c.recordClaudeSessionHistory(history, recordHistory)
 		c.releaseHeldAfterOperatorAnswer(committed, previous, kind)
 	}
 	return committed, true, err

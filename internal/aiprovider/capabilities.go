@@ -157,6 +157,7 @@ var agentActions = []AgentAction{
 	{ID: "question.disable", Group: "question", Route: "agent question disable", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionRegistryCommit)},
 	{ID: "question.list", Group: "question", Route: "agent question list", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionRegistryRead)},
 	{ID: "question.answer", Group: "question", Route: "agent question answer", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionLocalConfigCommit)},
+	{ID: "sessions.list", Group: "sessions", Route: "agent sessions list", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionRegistryRead)},
 }
 
 // IntegrationTarget is a target accepted by `agent integrate`. tmux-bell is a
