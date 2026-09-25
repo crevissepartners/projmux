@@ -18,6 +18,9 @@ and humans run the same entrypoints.
   The CI Unit Tests job installs tmux and runs
   `PROJMUX_REAL_TMUX_STRICT=1 make test` with a TMPDIR of at least 100 bytes,
   so a missing tmux there fails the job instead of skipping those tests.
+  The same switch turns on the isolated real-tmux smokes in
+  `internal/integrations/tmux` and `internal/integrations/metadata`, which
+  otherwise wait for their own opt-in variable.
 - A Go test that opens a unix socket must put it under a short root (the
   `/tmp` + `os.MkdirTemp` idiom, e.g. codexbroker `newRuntimeDomain`,
   `internal/app` `shortTempDomain`) rather than `t.TempDir()`, because the

@@ -4,9 +4,15 @@ package tmux
 
 import (
 	"context"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -103,13 +109,8 @@ func TestResourceAttributionRealTmuxReadOnlySmoke(t *testing.T) {
 // server to create a positive setsid boundary. It never touches an existing
 // server and kills the isolated server during cleanup.
 func TestResourceAttributionTransientSetsidSmoke(t *testing.T) {
-	if os.Getenv("PROJMUX_RESOURCE_TRANSIENT_SMOKE") != "1" {
-		t.Skip("set PROJMUX_RESOURCE_TRANSIENT_SMOKE=1 to run isolated real-tmux setsid smoke")
-	}
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux unavailable")
-	}
-	smokeRoot := t.TempDir()
+	requireIsolatedTmuxSmoke(t, "PROJMUX_RESOURCE_TRANSIENT_SMOKE")
+	smokeRoot := isolatedTmuxSmokeRoot(t, "pmx-rsetsid-")
 	socket := "projmux-resource-setsid-" + filepath.Base(smokeRoot)
 	ctx := context.Background()
 	runner := resourceSmokeRunner{socket: socket, tmuxTmpDir: smokeRoot, configFile: "/dev/null"}
@@ -150,14 +151,9 @@ func TestResourceAttributionTransientSetsidSmoke(t *testing.T) {
 // whose pane has no project option, then proves that the typed current path is
 // resolved in memory without writing any tmux metadata.
 func TestResourceProjectFallbackTransientSmoke(t *testing.T) {
-	if os.Getenv("PROJMUX_RESOURCE_PROJECT_FALLBACK_SMOKE") != "1" {
-		t.Skip("set PROJMUX_RESOURCE_PROJECT_FALLBACK_SMOKE=1 to run isolated real-tmux project fallback smoke")
-	}
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux unavailable")
-	}
+	requireIsolatedTmuxSmoke(t, "PROJMUX_RESOURCE_PROJECT_FALLBACK_SMOKE")
 
-	smokeRoot := t.TempDir()
+	smokeRoot := isolatedTmuxSmokeRoot(t, "pmx-rfallback-")
 	currentPath, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -199,6 +195,50 @@ func TestResourceProjectFallbackTransientSmoke(t *testing.T) {
 	t.Logf("sanitized fallback smoke: panes=%d fallback_project_panes=%d project=%q", len(after), snapshot.Projects[0].PaneCount, projectRoot)
 }
 
+// realTmuxStrictEnv is the switch the CI Unit Tests job sets, the same one
+// internal/app's requireRealTmux reads. Only the value "1" enables it.
+const realTmuxStrictEnv = "PROJMUX_REAL_TMUX_STRICT"
+
+// requireIsolatedTmuxSmoke is the one gate of this package's isolated
+// real-tmux smokes. A smoke runs when its own opt-in variable or
+// realTmuxStrictEnv is "1" and skips otherwise. Once either is set, a missing
+// tmux fails naming that variable, so a run meant to exercise real tmux cannot
+// pass by skipping. TestIsolatedTmuxSmokesSkipOnlyThroughTheGate keeps every
+// other skip out of those smokes.
+func requireIsolatedTmuxSmoke(t testing.TB, optInEnv string) {
+	t.Helper()
+	enabledBy := ""
+	switch {
+	case os.Getenv(optInEnv) == "1":
+		enabledBy = optInEnv
+	case os.Getenv(realTmuxStrictEnv) == "1":
+		enabledBy = realTmuxStrictEnv
+	default:
+		t.Skipf("set %s=1 or %s=1 to run this isolated real-tmux smoke", optInEnv, realTmuxStrictEnv)
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Fatalf("%s=1 requires tmux: %v", enabledBy, err)
+	}
+}
+
+// isolatedTmuxSmokeRoot returns a short private root under /tmp for a smoke's
+// TMUX_TMPDIR. t.TempDir() follows TMPDIR, which the CI Unit Tests job makes
+// longer than 100 bytes, and the tmux socket below it has a 108-byte bound.
+// The root is removed after the smoke's own server cleanup has run.
+func isolatedTmuxSmokeRoot(t testing.TB, prefix string) string {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", prefix)
+	if err != nil {
+		t.Fatalf("create isolated tmux smoke root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove isolated tmux smoke root %q: %v", root, err)
+		}
+	})
+	return root
+}
+
 type resourceSmokeRunner struct {
 	socket     string
 	tmuxTmpDir string
@@ -220,7 +260,7 @@ func resourceSmokeEnvironment(tmuxTmpDir string) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
-		if name == "TMUX" || name == "TMUX_PANE" || tmuxTmpDir != "" && name == "TMUX_TMPDIR" {
+		if name == "TMUX" || name == "TMUX_PANE" || name == "__PROJMUX_RUNTIME_ANCHOR_PANE" || tmuxTmpDir != "" && name == "TMUX_TMPDIR" {
 			continue
 		}
 		env = append(env, entry)
@@ -246,5 +286,186 @@ func cleanupIsolatedResourceSmoke(t *testing.T, runner resourceSmokeRunner, smok
 	}
 	if output, err := runner.Run(context.Background(), "tmux", "kill-server"); err != nil {
 		t.Errorf("kill isolated tmux server %q: %v: %s", socketPath, err, output)
+	}
+}
+
+// isolatedTmuxSmokeGateRecorder stands in for the test handed to
+// requireIsolatedTmuxSmoke so the self-tests can watch a skip or a failure
+// without taking either themselves. Skipf and Fatalf end the goroutine the way
+// testing does.
+type isolatedTmuxSmokeGateRecorder struct {
+	testing.TB
+	skipped bool
+	fatal   string
+}
+
+func (r *isolatedTmuxSmokeGateRecorder) Helper() {}
+
+func (r *isolatedTmuxSmokeGateRecorder) Skipf(format string, args ...any) {
+	r.skipped = true
+	runtime.Goexit()
+}
+
+func (r *isolatedTmuxSmokeGateRecorder) Fatalf(format string, args ...any) {
+	r.fatal = fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+
+func runIsolatedTmuxSmokeGate(optInEnv string) *isolatedTmuxSmokeGateRecorder {
+	recorder := &isolatedTmuxSmokeGateRecorder{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		requireIsolatedTmuxSmoke(recorder, optInEnv)
+	}()
+	<-done
+	return recorder
+}
+
+// TestIsolatedTmuxSmokeGateSkipsOrFails pins the gate's answers: without the
+// opt-in or strict mode a smoke skips whether or not tmux exists; with either
+// one set it runs when tmux exists and fails naming the variable when not.
+func TestIsolatedTmuxSmokeGateSkipsOrFails(t *testing.T) {
+	const optIn = "PMX_TEST_ISOLATED_TMUX_SMOKE_GATE"
+	withTmux := t.TempDir()
+	if err := os.WriteFile(filepath.Join(withTmux, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	withoutTmux := t.TempDir()
+
+	for _, path := range []string{withTmux, withoutTmux} {
+		t.Setenv("PATH", path)
+		for _, value := range []string{"", "0", "true"} {
+			t.Setenv(optIn, value)
+			t.Setenv(realTmuxStrictEnv, value)
+			recorder := runIsolatedTmuxSmokeGate(optIn)
+			if !recorder.skipped || recorder.fatal != "" {
+				t.Fatalf("PATH=%s %s=%q %s=%q: skipped=%v fatal=%q, want a skip", path, optIn, value, realTmuxStrictEnv, value, recorder.skipped, recorder.fatal)
+			}
+		}
+	}
+
+	for _, enabledBy := range []string{optIn, realTmuxStrictEnv} {
+		t.Setenv(optIn, "")
+		t.Setenv(realTmuxStrictEnv, "")
+		t.Setenv(enabledBy, "1")
+
+		t.Setenv("PATH", withTmux)
+		if recorder := runIsolatedTmuxSmokeGate(optIn); recorder.skipped || recorder.fatal != "" {
+			t.Fatalf("%s=1 with tmux: skipped=%v fatal=%q, want the smoke to run", enabledBy, recorder.skipped, recorder.fatal)
+		}
+
+		t.Setenv("PATH", withoutTmux)
+		if _, err := exec.LookPath("tmux"); err == nil {
+			t.Fatal("tmux is still reachable on the emptied PATH")
+		}
+		recorder := runIsolatedTmuxSmokeGate(optIn)
+		if recorder.skipped || !strings.HasPrefix(recorder.fatal, enabledBy+"=1 requires tmux") {
+			t.Fatalf("%s=1 without tmux: skipped=%v fatal=%q, want a failure naming %s", enabledBy, recorder.skipped, recorder.fatal, enabledBy)
+		}
+	}
+}
+
+// TestIsolatedTmuxSmokesSkipOnlyThroughTheGate reads this file and requires
+// each isolated smoke to open with requireIsolatedTmuxSmoke under its own
+// opt-in variable and to call no Skip of its own, so strict mode leaves it no
+// path to a skip.
+func TestIsolatedTmuxSmokesSkipOnlyThroughTheGate(t *testing.T) {
+	smokes := map[string]string{
+		"TestResourceAttributionTransientSetsidSmoke": "PROJMUX_RESOURCE_TRANSIENT_SMOKE",
+		"TestResourceProjectFallbackTransientSmoke":   "PROJMUX_RESOURCE_PROJECT_FALLBACK_SMOKE",
+	}
+	auditIsolatedTmuxSmokeGate(t, "resources_smoke_linux_test.go", smokes)
+}
+
+func auditIsolatedTmuxSmokeGate(t *testing.T, filename string, smokes map[string]string) {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filename, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, declaration := range file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		optIn, ok := smokes[fn.Name.Name]
+		if !ok {
+			continue
+		}
+		seen++
+		if len(fn.Body.List) == 0 || !isIsolatedTmuxSmokeGateCall(fn.Body.List[0], optIn) {
+			t.Errorf("%s must open with requireIsolatedTmuxSmoke(t, %q)", fn.Name.Name, optIn)
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if selector, ok := call.Fun.(*ast.SelectorExpr); ok {
+				switch selector.Sel.Name {
+				case "Skip", "Skipf", "SkipNow":
+					t.Errorf("%s: %s calls %s; only requireIsolatedTmuxSmoke may skip", fset.Position(call.Pos()), fn.Name.Name, selector.Sel.Name)
+				}
+			}
+			return true
+		})
+	}
+	if seen != len(smokes) {
+		t.Fatalf("audited %d of %d smokes in %s", seen, len(smokes), filename)
+	}
+}
+
+func isIsolatedTmuxSmokeGateCall(statement ast.Stmt, optIn string) bool {
+	expression, ok := statement.(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	call, ok := expression.X.(*ast.CallExpr)
+	if !ok || len(call.Args) != 2 {
+		return false
+	}
+	if name, ok := call.Fun.(*ast.Ident); !ok || name.Name != "requireIsolatedTmuxSmoke" {
+		return false
+	}
+	literal, ok := call.Args[1].(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return false
+	}
+	value, err := strconv.Unquote(literal.Value)
+	return err == nil && value == optIn
+}
+
+// TestResourceSmokeEnvironmentStripsTheInheritedClient proves no smoke tmux
+// call can address the caller's server: the inherited client variables and
+// TMUX_TMPDIR are dropped and the smoke's own TMUX_TMPDIR is the only one.
+func TestResourceSmokeEnvironmentStripsTheInheritedClient(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1,0")
+	t.Setenv("TMUX_PANE", "%1")
+	t.Setenv("__PROJMUX_RUNTIME_ANCHOR_PANE", "%1")
+	t.Setenv("TMUX_TMPDIR", "/tmp/caller")
+	t.Setenv("PMX_TEST_KEPT", "kept")
+
+	env := resourceSmokeEnvironment("/tmp/smoke")
+	tmuxTmpDirs := 0
+	kept := false
+	for _, entry := range env {
+		name, value, _ := strings.Cut(entry, "=")
+		switch name {
+		case "TMUX", "TMUX_PANE", "__PROJMUX_RUNTIME_ANCHOR_PANE":
+			t.Fatalf("smoke environment kept inherited %s", entry)
+		case "TMUX_TMPDIR":
+			tmuxTmpDirs++
+			if value != "/tmp/smoke" {
+				t.Fatalf("smoke TMUX_TMPDIR = %q, want /tmp/smoke", value)
+			}
+		case "PMX_TEST_KEPT":
+			kept = true
+		}
+	}
+	if tmuxTmpDirs != 1 || !kept {
+		t.Fatalf("smoke environment: TMUX_TMPDIR entries=%d unrelated variable kept=%v", tmuxTmpDirs, kept)
 	}
 }
