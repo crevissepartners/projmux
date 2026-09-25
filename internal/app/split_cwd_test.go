@@ -27,6 +27,9 @@ type paneCWDRunner struct {
 }
 
 func (r *paneCWDRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	argv := tmuxCommandArgv(args)
 	if name == "tmux" && len(argv) > 0 && argv[0] == "display-message" && flagValue(argv, "-F") == "#{pane_current_path}" {
 		target := flagValue(argv, "-t")

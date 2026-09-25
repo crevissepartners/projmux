@@ -21,7 +21,10 @@ type metadataMirrorPlanRunner struct {
 	calls                                                                [][]string
 }
 
-func (r *metadataMirrorPlanRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *metadataMirrorPlanRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	if name != "tmux" {
 		return nil, errors.New("unexpected executable")
 	}

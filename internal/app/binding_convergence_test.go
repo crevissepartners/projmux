@@ -32,6 +32,9 @@ type routedTmuxRunner struct {
 }
 
 func (r *routedTmuxRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	if name != "tmux" || len(args) < 3 || args[0] != "-L" && args[0] != "-S" {
 		return nil, fmt.Errorf("routed fake requires explicit tmux -L/-S, got %s %v", name, args)
 	}

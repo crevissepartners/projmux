@@ -2055,6 +2055,10 @@ func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation,
 	// scope closes before rollback, so unwinding re-proves identity in full.
 	c.runtime.openRouteIdentityCache(operationID)
 	defer c.runtime.closeRouteIdentityCache()
+	// A pane launched without a command of its own resolves the server's
+	// default-shell/default-command. Read them now, before the lock; the launch
+	// uses them only while the route still reads through the same socket.
+	defer c.runtime.prefetchPaneDefaults(ctx)()
 	guard := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
 		var selected liveSessionIdentity
 		for _, candidate := range guards {

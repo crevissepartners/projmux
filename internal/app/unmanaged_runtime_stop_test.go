@@ -18,7 +18,10 @@ type unmanagedStopRunner struct {
 	anchorPane string
 }
 
-func (r *unmanagedStopRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+func (r *unmanagedStopRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	r.calls = append(r.calls, append([]string(nil), args...))
 	joined := strings.Join(args, " ")
 	switch {

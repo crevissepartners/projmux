@@ -138,6 +138,23 @@ func (c *runtimeRouteIdentityCache) reuse(key runtimeRouteIdentityKey) bool {
 	return true
 }
 
+// wouldReuse answers what reuse would answer for key right now, with none of
+// its effects: no reuse is counted and nothing is invalidated. A caller uses
+// it only to decide how many values to read in one tmux invocation; the proof
+// itself still asks reuse at its usual point.
+func (c *runtimeRouteIdentityCache) wouldReuse(key runtimeRouteIdentityKey) bool {
+	if c == nil || !key.complete() {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.open || (c.bound != "" && c.bound != key.routeTarget()) {
+		return false
+	}
+	_, ok := c.proved[key]
+	return ok
+}
+
 // record stores the result of a verification that just succeeded against tmux.
 func (c *runtimeRouteIdentityCache) record(key runtimeRouteIdentityKey) {
 	if c == nil || !key.complete() {

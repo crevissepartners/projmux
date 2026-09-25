@@ -82,10 +82,21 @@ func (m *materializer) environment(name string) string {
 // at startup, so the values are read from the same exact server the pane is
 // created on rather than guessed from this process's environment.
 func (m *materializer) defaultPaneCommand(ctx context.Context) (resolvedPaneCommand, error) {
+	if memo := m.paneDefaults; memo != nil && m.expectedSocketPath != "" && memo.socket == filepath.Clean(m.expectedSocketPath) {
+		return m.resolvePaneCommand(memo.shell, memo.command), nil
+	}
 	shell, err := m.read(ctx, "show-options", "-gv", "default-shell")
 	if err != nil {
 		return resolvedPaneCommand{}, fmt.Errorf("read tmux default-shell: %w", err)
 	}
+	command, err := m.read(ctx, "show-options", "-gv", "default-command")
+	if err != nil {
+		return resolvedPaneCommand{}, fmt.Errorf("read tmux default-command: %w", err)
+	}
+	return m.resolvePaneCommand(shell, command), nil
+}
+
+func (m *materializer) resolvePaneCommand(shell, command string) resolvedPaneCommand {
 	shell = strings.TrimSpace(shell)
 	if shell == "" {
 		shell = m.environment("SHELL")
@@ -93,14 +104,56 @@ func (m *materializer) defaultPaneCommand(ctx context.Context) (resolvedPaneComm
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	command, err := m.read(ctx, "show-options", "-gv", "default-command")
-	if err != nil {
-		return resolvedPaneCommand{}, fmt.Errorf("read tmux default-command: %w", err)
-	}
 	if command = strings.TrimSpace(command); command != "" {
-		return resolvedPaneCommand{argv: []string{shell, "-c", command}, argv0: filepath.Base(shell)}, nil
+		return resolvedPaneCommand{argv: []string{shell, "-c", command}, argv0: filepath.Base(shell)}
 	}
-	return resolvedPaneCommand{argv: []string{shell}, argv0: "-" + filepath.Base(shell)}, nil
+	return resolvedPaneCommand{argv: []string{shell}, argv0: "-" + filepath.Base(shell)}
+}
+
+// paneDefaultsMemo is the default-shell/default-command pair read before the
+// Registry lock, keyed by the exact physical socket it was read through.
+type paneDefaultsMemo struct {
+	socket  string
+	shell   string
+	command string
+}
+
+var (
+	paneDefaultsReadShell   = routeRead{"show-options", "-gv", "default-shell"}
+	paneDefaultsReadCommand = routeRead{"show-options", "-gv", "default-command"}
+)
+
+// prefetchPaneDefaults reads, before a create takes the Registry lock, the two
+// options defaultPaneCommand would otherwise read while the lock is held, in
+// one tmux invocation through the same routed runner, and returns the clear
+// the caller defers to the end of its transaction.
+//
+// It is best effort and silent. No bound physical socket yet (no server before
+// the first create) or a failed read leaves no memo, and defaultPaneCommand
+// then reads inside the lock exactly as it always did, with the same error
+// texts. The memo answers only while the route still reads through the socket
+// it was taken from.
+//
+// Trade-off: the values are read a few milliseconds earlier than before, ahead
+// of the lock rather than under it. They are best-effort launch configuration
+// for the new pane's process, not a Registry decision, so nothing the lock
+// protects depends on them being read under it.
+func (m *materializer) prefetchPaneDefaults(ctx context.Context) func() {
+	clearMemo := func() {
+		if m != nil {
+			m.paneDefaults = nil
+		}
+	}
+	if m == nil || m.expectedSocketPath == "" || !filepath.IsAbs(m.expectedSocketPath) {
+		return clearMemo
+	}
+	socket := filepath.Clean(m.expectedSocketPath)
+	sections, err := readTmuxSequence(ctx, m.routedRunner(), paneDefaultsReadShell, paneDefaultsReadCommand)
+	if err != nil {
+		return clearMemo
+	}
+	m.paneDefaults = &paneDefaultsMemo{socket: socket, shell: strings.TrimSpace(sections[0]), command: strings.TrimSpace(sections[1])}
+	return clearMemo
 }
 
 // supervisedLaunch returns the argv a managed pane should be created with.

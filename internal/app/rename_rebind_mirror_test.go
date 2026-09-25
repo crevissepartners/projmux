@@ -39,7 +39,10 @@ type mutationRoutingRunner struct {
 	renameWindowErr                     error
 }
 
-func (r *mutationRoutingRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *mutationRoutingRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	call := append([]string{name}, args...)
 	r.calls = append(r.calls, call)
 	argv := tmuxCommandArgv(args)

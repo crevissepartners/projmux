@@ -47,7 +47,10 @@ type sidebarPopupStopRunner struct {
 	calls      []recordedTmuxCall
 }
 
-func (r *sidebarPopupStopRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *sidebarPopupStopRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	r.calls = append(r.calls, recordedTmuxCall{name: name, args: slices.Clone(args)})
 	if name != "tmux" || len(args) < 3 {
 		return nil, fmt.Errorf("unexpected stop command: %s %v", name, args)

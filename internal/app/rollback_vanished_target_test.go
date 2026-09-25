@@ -25,6 +25,9 @@ type rollbackTmuxSeam struct {
 }
 
 func (r *rollbackTmuxSeam) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	lostServer := appTypedCommandFailure{failure: inttmux.CommandFailure{
 		Kind: inttmux.CommandFailureExit, Stderr: "server exited unexpectedly",
 	}}

@@ -941,6 +941,9 @@ type staleRestartRunner struct {
 }
 
 func (r *staleRestartRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	out, err := r.base.Run(ctx, name, args...)
 	if argv := tmuxCommandArgv(args); !r.fired && err == nil && len(argv) > 0 && argv[0] == "split-window" {
 		r.fired = true

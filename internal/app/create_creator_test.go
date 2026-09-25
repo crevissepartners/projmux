@@ -35,6 +35,9 @@ type creatorAnswerRunner struct {
 }
 
 func (r *creatorAnswerRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	out, err := r.tmux.Run(ctx, name, args...)
 	if err != nil || r.rewrite == nil || !isCreatorQuery(args) {
 		return out, err

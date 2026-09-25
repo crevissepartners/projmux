@@ -207,7 +207,10 @@ type lastTargetDeleteRunner struct {
 	calls  []recordedTmuxCall
 }
 
-func (r *lastTargetDeleteRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *lastTargetDeleteRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
 	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != testDeleteTarget.Value {
 		return nil, fmt.Errorf("last-target delete runner requires exact -S routing: %s %v", name, args)
@@ -1077,7 +1080,10 @@ type lifecycleSiblingCleanupRunner struct {
 	ownerUID string
 }
 
-func (r *lifecycleSiblingCleanupRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *lifecycleSiblingCleanupRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	r.calls = append(r.calls, recordedTmuxCall{name: name, args: slices.Clone(args)})
 	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != testDeleteTarget.Value {
 		return nil, fmt.Errorf("lifecycle cleanup requires exact -S routing: %s %v", name, args)
@@ -1291,7 +1297,10 @@ type statefulPaneDeleteRunner struct {
 
 func paneSetFailureKey(paneID, value string) string { return paneID + "\x00" + value }
 
-func (r *statefulPaneDeleteRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *statefulPaneDeleteRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if handled, out, err := answerTmuxReadSequence(ctx, name, args, r.Run); handled {
+		return out, err
+	}
 	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
 	if name != "tmux" || len(args) < 3 || (args[0] != "-L" && args[0] != "-S") {
 		return nil, errors.New("stateful Pane delete runner requires exact -L/-S routing")
