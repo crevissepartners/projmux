@@ -749,6 +749,12 @@ var runtimeProjectionCatalog = []OutputMode{
 	OutputModeNone,
 }
 
+// jsonOnlyOutputModes is the `-o` catalog of the reconcile routes, whose
+// parsers accept `json` and nothing else. A plan or repair report is not a
+// Registry resource, so the Registry projections have nothing to print, and
+// the default human report is what omitting `-o` gives.
+var jsonOnlyOutputModes = []OutputMode{OutputModeJSON}
+
 // routes is the maintained manifest of the current CLI surface: the canonical
 // and Shortcut top-level nodes plus the hidden internal plumbing namespace.
 // Top-level order is the historical primary help order and is load bearing for
@@ -1049,7 +1055,10 @@ var routes = []Route{
 				Invocation: InvocationNatural,
 				Summary:    "Edit the AI split-mode configuration",
 				Usage:      []string{"projmux config edit [--get|--set <mode>]"},
-				Canonical:  []string{"config edit"},
+				Notes: []string{
+					"`--get` prints the TUI split default `tmux-ai-split-mode` when it holds a valid mode, else the central `ai-new-window-mode`, else `selective`. `--set` writes only `tmux-ai-split-mode`.",
+				},
+				Canonical: []string{"config edit"},
 			},
 			{
 				Effects:          unchangedEffects(CardinalityUnchanged),
@@ -1593,7 +1602,7 @@ var routes = []Route{
 					},
 				},
 			},
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "notifications", Invocation: InvocationFanOut, Summary: "List pending notification rows", Aliases: []string{"notification"}, Usage: []string{"projmux get notifications [--json] [--live] [--limit <n>] [--ui table|sidebar] [--client <tty>] [--severity <severity>]... [--source <source>]..."}, Canonical: []string{"get notifications"}, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "notifications", Invocation: InvocationFanOut, Summary: "List pending notification rows", Aliases: []string{"notification"}, Usage: []string{"projmux get notifications [--json] [--live] [--limit <n>] [--ui table|sidebar] [--client <tty>] [--severity <severity>]... [--source <source>]..."}, Canonical: []string{"get notifications"}},
 			{
 				Effects:          unchangedEffects(CardinalityExactOne),
 				Name:             "pane",
@@ -1869,6 +1878,7 @@ var routes = []Route{
 				CanonicalSummary: "Preview or repair Registry and exact tmux resource drift",
 				Usage:            []string{"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]"},
 				Canonical:        []string{"reconcile resources"},
+				Outputs:          jsonOnlyOutputModes,
 			},
 			{
 				Effects:    reconcileRegistryEffects(),
@@ -1877,6 +1887,7 @@ var routes = []Route{
 				Summary:    "Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source",
 				Usage:      []string{"projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]"},
 				Canonical:  []string{"reconcile registry"},
+				Outputs:    jsonOnlyOutputModes,
 			},
 		},
 	},
@@ -1909,17 +1920,17 @@ var routes = []Route{
 		Summary:        "Rename a Projmux resource metadata.name",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
-			"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>",
-			"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]",
-			"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
-			"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
+			"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name> [-o <mode>]",
+			"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>] [-o <mode>]",
+			"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]",
+			"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]",
 		},
 		Canonical: []string{"rename project", "rename window", "rename pane", "rename agent"},
 		Children: []Route{
-			{Effects: renameResourceEffects(), Name: "project", Invocation: InvocationNatural, Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Rename a Projmux Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}, Outputs: receiptOnlyOutputModes},
-			{Effects: renameResourceEffects(), Name: "window", Invocation: InvocationNatural, Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession, no selector means the active Window, and the tmux tab is renamed with it", CanonicalSummary: "Rename a Projmux Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}, Outputs: receiptOnlyOutputModes},
-			{Effects: renameResourceEffects(), Name: "pane", Invocation: InvocationNatural, Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", CanonicalSummary: "Rename a Projmux Pane resource; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}, Outputs: receiptOnlyOutputModes},
-			{Effects: renameResourceEffects(), Name: "agent", Invocation: InvocationNatural, Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", CanonicalSummary: "Rename an Agent stable resource name only", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}, Outputs: receiptOnlyOutputModes},
+			{Effects: renameResourceEffects(), Name: "project", Invocation: InvocationNatural, Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Rename a Projmux Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name> [-o <mode>]"}, Canonical: []string{"rename project"}, Outputs: receiptOnlyOutputModes},
+			{Effects: renameResourceEffects(), Name: "window", Invocation: InvocationNatural, Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession, no selector means the active Window, and the tmux tab is renamed with it", CanonicalSummary: "Rename a Projmux Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"rename window"}, Outputs: receiptOnlyOutputModes},
+			{Effects: renameResourceEffects(), Name: "pane", Invocation: InvocationNatural, Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", CanonicalSummary: "Rename a Projmux Pane resource; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"rename pane"}, Outputs: receiptOnlyOutputModes},
+			{Effects: renameResourceEffects(), Name: "agent", Invocation: InvocationNatural, Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", CanonicalSummary: "Rename an Agent stable resource name only", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"rename agent"}, Outputs: receiptOnlyOutputModes},
 		},
 	},
 	{
@@ -1943,7 +1954,7 @@ var routes = []Route{
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux runtime sessions [--ui popup|sidebar]",
-			"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]",
+			"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]",
 			"projmux runtime attach [--keep <n>] [--fallback home|ephemeral]",
 			"projmux runtime stop [<session>...]",
 			"projmux runtime tag list|clear",
@@ -1965,7 +1976,7 @@ var routes = []Route{
 				Name:       "diagnostics",
 				Invocation: InvocationNatural,
 				Summary:    "Inspect every tmux object on one exact server, with attribution and safe actions",
-				Usage:      []string{"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]"},
+				Usage:      []string{"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]"},
 				Canonical:  []string{"runtime diagnostics"},
 			},
 			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeAlreadyLive}, []FocusEffect{FocusAttachedCaller}, CardinalityExactOne), Name: "attach", Invocation: InvocationExplicit, Summary: "Attach a live or ephemeral runtime without Project identity", Usage: []string{"projmux runtime attach [--keep <n>] [--fallback home|ephemeral]"}, Canonical: []string{"runtime attach"}},
@@ -2066,7 +2077,7 @@ var routes = []Route{
 		Invocation:  InvocationNatural,
 		Summary:     "Pick a project and compose create project with open project",
 		Disposition: DispositionShortcut,
-		Usage:       []string{"projmux switch"},
+		Usage:       []string{"projmux switch [--ui popup|sidebar]"},
 		Canonical:   []string{"create project", "open project"},
 	},
 	{
