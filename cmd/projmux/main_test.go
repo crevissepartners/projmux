@@ -384,6 +384,15 @@ func TestFlagValueRefusalsExitTwoAndJournalAsUsage(t *testing.T) {
 		{[]string{"runtime", "attach", "--fallback", "bogus"}, "runtime attach fallback must be one of: home, ephemeral"},
 		{[]string{"runtime", "attach", "--keep", "-1"}, "plan auto attach: ephemeral keep count must be non-negative"},
 		{[]string{"runtime", "prune", "--keep", "-1"}, "plan ephemeral prune: ephemeral keep count must be non-negative"},
+		// The workspace refusals keep the resolver's `create agent` prefix on
+		// every spelling; each precedes the Settings gate, the Registry, and
+		// tmux, so none of these rows can reach a provider.
+		{[]string{"create", "agent", "--provider", "claude", "--cwd", "rel/path"}, `create agent: --cwd "rel/path": must be an absolute existing directory`},
+		{[]string{"create", "codex", "--add-dir", "rel"}, `create agent: --add-dir "rel": must be an absolute existing directory`},
+		{[]string{"create", "claude", "--add-dir", "rel"}, `create agent: --add-dir "rel": must be an absolute existing directory`},
+		{[]string{"create", "claude", "--add-dir", "/a", "--add-dir", "/a/"}, `create agent: --add-dir "/a/" duplicates the effective workspace or another explicit root`},
+		{[]string{"create", "agent", "--provider", "codex", "--cwd", "/a", "--add-dir", "/a"}, `create agent: --add-dir "/a" duplicates the effective workspace or another explicit root`},
+		{[]string{"create", "antigravity", "--add-dir", "/tmp"}, `create agent: provider "antigravity" does not support additional writable roots`},
 	} {
 		t.Run(strings.Join(test.argv, " "), func(t *testing.T) {
 			store := diagnostics.NewStore(filepath.Join(t.TempDir(), "diagnostics.jsonl"))

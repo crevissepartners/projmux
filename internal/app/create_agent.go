@@ -168,6 +168,13 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err := requireClaudeDialogueMode(provider, flags.dialogueReplyOnly, flags.payload); err != nil {
 		return err
 	}
+	// A --cwd or --add-dir value no state can rescue is refused here, before
+	// the Registry lock, under the route's own Usage block; the resolver inside
+	// the transaction keeps the checks that need the Registry or the filesystem.
+	if err := refuseStatelessAgentWorkspace(provider, flags.cwd, flags.addDirs); err != nil {
+		printCreateAgentUsage(stderr, shortcutProvider)
+		return err
+	}
 	if flags.dialogueReplyOnly {
 		if _, ok := c.agents.(claudeDialogueLauncher); !ok {
 			return errors.New("claude reply-only launcher is unavailable")
@@ -188,6 +195,22 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 		}
 	}
 	return c.createAgent(spelling, provider, flags, shape, stdout, stderr)
+}
+
+// printCreateAgentUsage prints the catalog Usage of the create spelling a
+// refusal reached. Each route is spelled as a literal so the usage guards can
+// resolve it against the catalog.
+func printCreateAgentUsage(stderr io.Writer, shortcutProvider string) {
+	switch shortcutProvider {
+	case "":
+		printRouteUsage(stderr, "create agent")
+	case aiModeCodex:
+		printRouteUsage(stderr, "create codex")
+	case aiModeClaude:
+		printRouteUsage(stderr, "create claude")
+	case aiModeAntigravity:
+		printRouteUsage(stderr, "create antigravity")
+	}
 }
 
 // createAgent is the shared body of every canonical Agent create.
