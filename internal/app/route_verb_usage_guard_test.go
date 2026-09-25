@@ -53,7 +53,7 @@ var routeVerbDispatchers = map[string]routeVerbDispatcher{
 	"get runtime": {file: "internal/app/get_runtime.go", fn: "(*getCommand).runRuntime",
 		table: getRuntimeDispatchedKinds, uses: []string{"cli.CanonicalGrandchildToken", "runtimeKindTokens"}},
 	"hook":        {file: "internal/app/hook.go", fn: "(*hookCommand).Run", tag: "fs.Arg(0)"},
-	"pin project": {file: "internal/app/pin.go", fn: "(*pinCommand).Run", tag: "fs.Arg(0)", passThrough: []string{"project"}},
+	"pin project": {file: "internal/app/pin.go", fn: "(*pinCommand).runLevel", tag: "fs.Arg(0)", passThrough: []string{"project"}},
 	"runtime tag": {file: "internal/app/tag.go", fn: "(*tagCommand).Run", tag: "fs.Arg(0)", passThrough: []string{"project"}},
 	"update":      {file: "internal/app/update.go", fn: "(*updateCommand).Run", tag: "args[0]"},
 	"window":      {file: "internal/app/recent_window.go", fn: "(*windowCommand).Run", tag: "fs.Arg(0)"},

@@ -24,6 +24,13 @@ type forwardedRouteUsageRow struct {
 	argv  []string
 }
 
+// parentLevelUsageRows are public child routes whose flag error lands on a
+// FlagSet the parent handler owns: the handler consumes the child token and
+// parses again, so that parse must be named after the child.
+var parentLevelUsageRows = []forwardedRouteUsageRow{
+	{route: "pin project", argv: []string{"pin", "project", "--zz"}},
+}
+
 // forwardedRouteUsageFlag is an unknown flag no parser defines.
 const forwardedRouteUsageFlag = "--zz-forward-guard"
 
@@ -207,6 +214,27 @@ func TestForwardedRoutesPrintTheirOwnUsage(t *testing.T) {
 				t.Error(problem)
 			}
 		})
+	}
+}
+
+// TestParentLevelFlagSetsNameTheChildRoute drives the child routes whose flag
+// error a parent-level FlagSet parses, and pins the `Usage of <child>:`
+// header: the FlagSet guard alone accepts the parent name because it
+// resolves to some catalog route.
+func TestParentLevelFlagSetsNameTheChildRoute(t *testing.T) {
+	isolateRuntimeWindowFlagParseEnv(t)
+	for _, row := range parentLevelUsageRows {
+		var stdout, stderr bytes.Buffer
+		err := New().Run(row.argv, &stdout, &stderr)
+		if err == nil || !IsUsageError(err) {
+			t.Fatalf("%v: err = %v, want a usage error", row.argv, err)
+		}
+		if !strings.Contains(stderr.String(), "Usage of "+row.route+":\n") {
+			t.Errorf("%v: stderr = %q, want `Usage of %s:`", row.argv, stderr.String(), row.route)
+		}
+		for _, problem := range forwardedRouteUsageProblems(row.route, stderr.String()) {
+			t.Error(problem)
+		}
 	}
 }
 

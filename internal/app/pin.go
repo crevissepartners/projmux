@@ -39,7 +39,16 @@ func newPinCommand() *pinCommand {
 
 // Run manages the configured pin subcommands.
 func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("pin", flag.ContinueOnError)
+	return c.runLevel("pin", args, stdout, stderr)
+}
+
+// runLevel parses one pin dispatch level. route is the spelling being parsed:
+// `pin` for the top level, and `pin project` once the canonical kind token is
+// consumed, so a flag error there prints `Usage of pin project:`. The route
+// gate only lets `pin project …` through, so every public flag error lands on
+// the `pin project` level.
+func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	if err := fs.Parse(args); err != nil {
@@ -49,7 +58,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
-		printPinHelp(stderr)
+		printPinHelp(stderr, route)
 		return usageError("pin requires a subcommand")
 	}
 
@@ -64,7 +73,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 			printPinNotes(stderr)
 			return usageError(fmt.Sprintf("unknown pin project subcommand: %s", rest[0]))
 		}
-		return c.Run(rest, stdout, stderr)
+		return c.runLevel("pin project", rest, stdout, stderr)
 	case "list":
 		return c.runList(fs.Args()[1:], stdout, stderr)
 	case "add":
@@ -78,10 +87,10 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "migrate":
 		return c.runMigrate(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printPinHelp(stdout)
+		printPinHelp(stdout, route)
 		return nil
 	default:
-		printPinHelp(stderr)
+		printPinHelp(stderr, route)
 		return usageError(fmt.Sprintf("unknown pin subcommand: %s", fs.Arg(0)))
 	}
 }
@@ -372,10 +381,15 @@ func requireSinglePinArg(command string, args []string, stderr io.Writer) (strin
 	return filepath.Clean(args[0]), nil
 }
 
-// printPinHelp prints the catalog usage of the `pin` route its dispatch serves,
-// then the pin kinds a synopsis cannot state.
-func printPinHelp(w io.Writer) {
-	printRouteUsage(w, "pin")
+// printPinHelp prints the catalog usage of route, the pin dispatch level that
+// rejected the call (`pin` or `pin project`), then the pin kinds a synopsis
+// cannot state.
+func printPinHelp(w io.Writer, route string) {
+	if route == "pin project" {
+		printRouteUsage(w, "pin project")
+	} else {
+		printRouteUsage(w, "pin")
+	}
 	printPinNotes(w)
 }
 
