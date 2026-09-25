@@ -121,6 +121,8 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--dialogue-reply-only]
+projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent turn start|steer <agent-ref> -- <text>
@@ -901,7 +903,11 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux attention toggle|clear|arm|list|window
+projmux attention toggle [pane]
+projmux attention clear [pane]
+projmux attention arm [pane]
+projmux attention list [--json] [--all]
+projmux attention window [window] [style]
 ```
 
 Subcommands:
@@ -2072,6 +2078,7 @@ projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [
 projmux get pane --current -o cwd
 projmux get pane [--current] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
 projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
+projmux get notifications [--json] [--live] [--limit <n>] [--ui table|sidebar] [--client <tty>] [--severity <severity>]... [--source <source>]...
 ```
 
 Subcommands:
@@ -2354,7 +2361,11 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux hook list|edit|validate|trust|untrust
+projmux hook list [--global | --project | --effective]
+projmux hook edit [--global | --project] [--editor] <event>
+projmux hook validate
+projmux hook trust [<project>]
+projmux hook untrust [<project>]
 ```
 
 Events:
@@ -4032,7 +4043,9 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux update status|check|apply
+projmux update status [--json]
+projmux update check [--json]
+projmux update apply [--dry-run] [--no-apply]
 ```
 
 Subcommands:
@@ -4147,7 +4160,8 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux window record|recent
+projmux window record
+projmux window recent
 ```
 
 Subcommands:

@@ -161,10 +161,31 @@ func usageVerbRun(usage string) []string {
 }
 
 // routeVerbPinnedPositions are verb positions that stay qualified although no
-// line spells them as an alternation. create's Usage copies each child's line
-// verbatim (internal/cli TestParentUsageLinesCopyTheChildLine), so its kinds
-// and provider shortcuts are only ever spelled one per line.
-var routeVerbPinnedPositions = []string{"create"}
+// line spells them as an alternation: parents whose Usage copies each child
+// line (internal/cli TestParentUsageCoversEveryPublicChild), so no line spells
+// the verbs as an alternation and each verb is only ever spelled one per line.
+// create's kinds and provider shortcuts are the widest case.
+var routeVerbPinnedPositions = []string{"attention", "create", "hook", "update", "window"}
+
+// routeVerbPinProblems reports every pin that no longer needs to be one: a
+// position an alternation already qualifies, one with no dispatcher entry, or
+// one that is not a public route with public children (parents).
+func routeVerbPinProblems(lines []routeVerbUsageLine, pinned []string, parents map[string]bool, dispatchers map[string]routeVerbDispatcher) []string {
+	qualified := routeVerbPositions(lines)
+	var problems []string
+	for _, position := range pinned {
+		if _, ok := qualified[position]; ok {
+			problems = append(problems, fmt.Sprintf("pinned verb position %q is already qualified by an alternation", position))
+		}
+		if _, ok := dispatchers[position]; !ok {
+			problems = append(problems, fmt.Sprintf("pinned verb position %q has no entry in routeVerbDispatchers", position))
+		}
+		if !parents[position] {
+			problems = append(problems, fmt.Sprintf("pinned verb position %q is not a public catalog route with public children", position))
+		}
+	}
+	return problems
+}
 
 // routeVerbPositions returns, per qualified verb position, the verbs the lines
 // spell there and the routes those lines belong to.
@@ -198,10 +219,9 @@ func routeVerbPositions(lines []routeVerbUsageLine, pinned ...string) map[string
 	return positions
 }
 
-// catalogRouteVerbUsage walks every public route (the `internal` subtree is
-// skipped) into Usage lines and returns their qualified verb positions.
-func catalogRouteVerbUsage(t *testing.T) map[string]*routeVerbUsage {
-	t.Helper()
+// catalogRouteVerbLines walks every public route (the `internal` subtree is
+// skipped) into Usage lines.
+func catalogRouteVerbLines() []routeVerbUsageLine {
 	var lines []routeVerbUsageLine
 	var walk func(nodes []cli.Route, prefix []string)
 	walk = func(nodes []cli.Route, prefix []string) {
@@ -217,7 +237,37 @@ func catalogRouteVerbUsage(t *testing.T) map[string]*routeVerbUsage {
 		}
 	}
 	walk(cli.Routes(), nil)
-	return routeVerbPositions(lines, routeVerbPinnedPositions...)
+	return lines
+}
+
+// catalogPublicParents returns the path of every non-hidden route outside the
+// internal namespace that has at least one non-hidden child.
+func catalogPublicParents() map[string]bool {
+	parents := map[string]bool{}
+	var walk func(nodes []cli.Route, prefix []string)
+	walk = func(nodes []cli.Route, prefix []string) {
+		for _, node := range nodes {
+			if node.Hidden || (len(prefix) == 0 && node.Name == "internal") {
+				continue
+			}
+			path := append(append([]string{}, prefix...), node.Name)
+			for _, child := range node.Children {
+				if !child.Hidden {
+					parents[strings.Join(path, " ")] = true
+				}
+			}
+			walk(node.Children, path)
+		}
+	}
+	walk(cli.Routes(), nil)
+	return parents
+}
+
+// catalogRouteVerbUsage returns the qualified verb positions of every public
+// route's Usage lines, pins included.
+func catalogRouteVerbUsage(t *testing.T) map[string]*routeVerbUsage {
+	t.Helper()
+	return routeVerbPositions(catalogRouteVerbLines(), routeVerbPinnedPositions...)
 }
 
 // dispatcherVerbs returns the verbs d dispatches: table() for a lookup, else
@@ -378,7 +428,10 @@ func TestCatalogRouteVerbAlternationsMatchDispatchers(t *testing.T) {
 	t.Parallel()
 	repoRoot := filepath.Join("..", "..")
 	positions := catalogRouteVerbUsage(t)
-	t.Logf("found %d qualified verb positions in public route Usage", len(positions))
+	t.Logf("found %d qualified verb positions in public route Usage (%d pinned)", len(positions), len(routeVerbPinnedPositions))
+	for _, problem := range routeVerbPinProblems(catalogRouteVerbLines(), routeVerbPinnedPositions, catalogPublicParents(), routeVerbDispatchers) {
+		t.Error(problem)
+	}
 
 	for _, position := range slices.Sorted(maps.Keys(positions)) {
 		if _, ok := routeVerbDispatchers[position]; !ok {
@@ -470,6 +523,74 @@ func TestRouteVerbGuardReportsDrift(t *testing.T) {
 			if !strings.Contains(drift, fragment) {
 				t.Errorf("%q: drift %q lacks %q", tc.usage, drift, fragment)
 			}
+		}
+	}
+}
+
+// TestRouteVerbGuardReportsPinnedDrift feeds one-verb-per-line Usage through a
+// pinned position, so a parent that copies its child lines is still held to
+// its dispatcher, and proves each stale-pin check fires.
+func TestRouteVerbGuardReportsPinnedDrift(t *testing.T) {
+	t.Parallel()
+	repoRoot := filepath.Join("..", "..")
+	for _, tc := range []struct {
+		position string
+		usage    []string
+		want     []string
+	}{
+		{"update", []string{"projmux update status [--json]", "projmux update check [--json]"}, []string{"missing from Usage [apply]", "extra in Usage []"}},
+		{"update", []string{"projmux update status [--json]", "projmux update check [--json]", "projmux update apply [--dry-run]", "projmux update rollback"}, []string{"missing from Usage []", "extra in Usage [rollback]"}},
+		{"window", []string{"projmux window record"}, []string{"missing from Usage [recent]"}},
+		{"update", []string{"projmux update status [--json]", "projmux update check [--json]", "projmux update apply [--dry-run] [--no-apply]"}, nil},
+	} {
+		var lines []routeVerbUsageLine
+		for _, usage := range tc.usage {
+			lines = append(lines, routeVerbUsageLine{run: usageVerbRun(usage), source: tc.position})
+		}
+		if _, ok := routeVerbPositions(lines)[tc.position]; ok {
+			t.Fatalf("%q: synthetic lines qualify %q without the pin", tc.usage, tc.position)
+		}
+		usage, ok := routeVerbPositions(lines, tc.position)[tc.position]
+		if !ok {
+			t.Fatalf("%q: pin did not qualify %q", tc.usage, tc.position)
+		}
+		d := routeVerbDispatchers[tc.position]
+		dispatched, problem := dispatcherVerbs(t, repoRoot, d)
+		if problem != "" {
+			t.Fatalf("%q: %s", tc.usage, problem)
+		}
+		drift := routeVerbDrift(tc.position, usage, d, dispatched)
+		if tc.want == nil {
+			if drift != "" {
+				t.Errorf("%q: unexpected drift: %s", tc.usage, drift)
+			}
+			continue
+		}
+		for _, fragment := range tc.want {
+			if !strings.Contains(drift, fragment) {
+				t.Errorf("%q: drift %q lacks %q", tc.usage, drift, fragment)
+			}
+		}
+	}
+
+	parents := catalogPublicParents()
+	copied := []routeVerbUsageLine{{run: usageVerbRun("projmux update status [--json]"), source: "update"}}
+	if problems := routeVerbPinProblems(copied, []string{"update"}, parents, routeVerbDispatchers); len(problems) != 0 {
+		t.Errorf("clean pin reported %q", problems)
+	}
+	for _, tc := range []struct {
+		name, pin, usage string
+		want             string
+	}{
+		{"alternation qualifies it", "update", "projmux update status|check|apply", "already qualified by an alternation"},
+		{"no dispatcher", "agent", "projmux agent wait <agent-ref>", "has no entry in routeVerbDispatchers"},
+		{"no public children", "pin project", "projmux pin project list", "not a public catalog route with public children"},
+		{"not a route", "nope", "projmux nope a", "not a public catalog route with public children"},
+	} {
+		lines := []routeVerbUsageLine{{run: usageVerbRun(tc.usage), source: tc.pin}}
+		problems := routeVerbPinProblems(lines, []string{tc.pin}, parents, routeVerbDispatchers)
+		if !strings.Contains(strings.Join(problems, "\n"), tc.want) {
+			t.Errorf("%s: problems %q, want one containing %q", tc.name, problems, tc.want)
 		}
 	}
 }

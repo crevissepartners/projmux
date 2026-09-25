@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -228,6 +229,145 @@ func parentChildUsageViolations(routes []Route, summaries []parentUsageSummary) 
 	return violations
 }
 
+// parentChildCoverage counts what parentChildCoverageViolations checked.
+type parentChildCoverage struct {
+	parents, copied, summarized int
+}
+
+// parentChildCoverageViolations reports every public child that no line of
+// its public parent's Usage names with a verbatim copy of one of the child's
+// own lines. A line a summary row excuses covers every child it names, since
+// the row already says why the parent condenses that child.
+func parentChildCoverageViolations(routes []Route, summaries []parentUsageSummary) ([]string, parentChildCoverage) {
+	excused := map[string]bool{}
+	for _, row := range summaries {
+		excused[row.parent+"\x00"+row.line] = true
+	}
+	var violations []string
+	var counts parentChildCoverage
+	for _, node := range publicRouteNodes(routes) {
+		var children []string
+		for _, child := range node.route.Children {
+			if !child.Hidden {
+				children = append(children, child.Name)
+			}
+		}
+		if len(children) == 0 {
+			continue
+		}
+		counts.parents++
+		parent := strings.Join(node.path, " ")
+		copied, summarized := map[string]bool{}, map[string]bool{}
+		for _, line := range node.route.Usage {
+			named, ok := namedChildren(node.path, node.route, line)
+			if !ok {
+				continue
+			}
+			for _, n := range named {
+				childPath := append(append([]string{}, node.path...), n.child.Name)
+				switch {
+				case slices.Contains(effectiveUsage(childPath, n.child), n.line):
+					copied[n.child.Name] = true
+				case excused[parent+"\x00"+line]:
+					summarized[n.child.Name] = true
+				}
+			}
+		}
+		for _, name := range children {
+			switch {
+			case copied[name]:
+				counts.copied++
+			case summarized[name]:
+				counts.summarized++
+			default:
+				violations = append(violations, fmt.Sprintf("%s usage names no copy of any %s usage line", parent, parent+" "+name))
+			}
+		}
+	}
+	return violations, counts
+}
+
+// parentVerbMenu declares one public Usage line that stays a bare verb menu,
+// `projmux <path> a|b|c` with nothing after the alternation.
+type parentVerbMenu struct {
+	route  string
+	line   string
+	reason string
+}
+
+// parentVerbMenus are the only bare verb menus a public route may print. A
+// menu promises no flags or operands, so a route whose verbs are children
+// prints each child's line instead.
+var parentVerbMenus = []parentVerbMenu{
+	{
+		route:  "pin project",
+		line:   "projmux pin project list|add|remove|toggle|clear|migrate",
+		reason: "Its verbs have no catalog child nodes yet, so there is no child line to copy; remove this row when the verbs become children.",
+	},
+	{
+		route:  "runtime tag",
+		line:   "projmux runtime tag list|clear",
+		reason: "Its verbs have no catalog child nodes yet, so there is no child line to copy; remove this row when the verbs become children.",
+	},
+}
+
+// verbMenu matches an alternation of two or more bare verbs, so a bracketed
+// flag choice such as `[--yes|--force]` is not one.
+var verbMenu = regexp.MustCompile(`^[a-z][a-z0-9-]*(\|[a-z][a-z0-9-]*)+$`)
+
+// isVerbMenu reports whether line is a bare verb menu at path: the rest of the
+// line after `projmux <path> ` is one verb alternation and nothing else, the
+// case namedChildren leaves to the verb guard.
+func isVerbMenu(path []string, line string) bool {
+	rest, ok := strings.CutPrefix(line, "projmux "+strings.Join(path, " ")+" ")
+	return ok && verbMenu.MatchString(rest)
+}
+
+// verbMenuViolations reports every bare verb menu a public route prints
+// without a row, and every row that no longer matches the tree it excuses.
+func verbMenuViolations(routes []Route, menus []parentVerbMenu) []string {
+	excused := map[string]bool{}
+	for _, row := range menus {
+		excused[row.route+"\x00"+row.line] = true
+	}
+	var violations []string
+	byPath := map[string]publicRouteNode{}
+	for _, node := range publicRouteNodes(routes) {
+		path := strings.Join(node.path, " ")
+		byPath[path] = node
+		for _, line := range node.route.Usage {
+			if isVerbMenu(node.path, line) && !excused[path+"\x00"+line] {
+				violations = append(violations, fmt.Sprintf("%s usage %q is a bare verb menu; print each child's usage line instead", path, line))
+			}
+		}
+	}
+	for _, row := range menus {
+		if strings.TrimSpace(row.reason) == "" {
+			violations = append(violations, fmt.Sprintf("verb menu row %q under %q has no reason", row.line, row.route))
+		}
+		node, ok := byPath[row.route]
+		if !ok {
+			violations = append(violations, fmt.Sprintf("stale verb menu row %q: route %q is not a public route", row.line, row.route))
+			continue
+		}
+		if !slices.Contains(node.route.Usage, row.line) {
+			violations = append(violations, fmt.Sprintf("stale verb menu row %q: not a %s usage line", row.line, row.route))
+			continue
+		}
+		if !isVerbMenu(node.path, row.line) {
+			violations = append(violations, fmt.Sprintf("stale verb menu row %q: not a bare verb menu of %s", row.line, row.route))
+			continue
+		}
+		for _, child := range node.route.Children {
+			if !child.Hidden {
+				violations = append(violations, fmt.Sprintf("stale verb menu row %q: %s has public children now, so its usage must copy their lines", row.line, row.route))
+				break
+			}
+		}
+	}
+	return violations
+}
+
 // emptyLeafUsageViolations reports every public leaf that declares no Usage,
 // so help would fall back to a bare `projmux <path>` that hides its flags.
 func emptyLeafUsageViolations(routes []Route) []string {
@@ -249,6 +389,30 @@ func TestParentUsageLinesCopyTheChildLine(t *testing.T) {
 	for _, violation := range parentChildUsageViolations(Routes(), parentUsageSummaries) {
 		t.Error(violation)
 	}
+}
+
+// TestParentUsageCoversEveryPublicChild makes every public parent's help list
+// each public child with that child's own line, so a reader of the parent
+// sees every child's flags and operands without opening the child's help.
+func TestParentUsageCoversEveryPublicChild(t *testing.T) {
+	t.Parallel()
+
+	violations, counts := parentChildCoverageViolations(Routes(), parentUsageSummaries)
+	for _, violation := range violations {
+		t.Error(violation)
+	}
+	t.Logf("checked %d public parents: %d children covered by a copied line, %d by a summary row", counts.parents, counts.copied, counts.summarized)
+}
+
+// TestPublicUsageHasNoBareVerbMenu keeps a bare `a|b|c` verb menu out of
+// public help except where the verbs have no child line to copy yet.
+func TestPublicUsageHasNoBareVerbMenu(t *testing.T) {
+	t.Parallel()
+
+	for _, violation := range verbMenuViolations(Routes(), parentVerbMenus) {
+		t.Error(violation)
+	}
+	t.Logf("%d verb menu rows", len(parentVerbMenus))
 }
 
 // TestPublicLeafRoutesDeclareUsage keeps every public leaf's flags visible in
@@ -510,5 +674,152 @@ func TestEmptyUsageGuardReportsAPublicLeafWithoutUsage(t *testing.T) {
 	tree[2].Children[0].Usage = nil
 	if got := emptyLeafUsageViolations(tree); len(got) != 0 {
 		t.Fatalf("hidden or internal leaves were reported: %q", got)
+	}
+}
+
+// withTopLevelUsage returns Routes() with the named top-level route's Usage
+// replaced by edit's result. Routes shares Usage arrays with the package
+// catalog, so edit receives a clone and the slice is replaced, never written
+// through.
+func withTopLevelUsage(t *testing.T, name string, edit func([]string) []string) []Route {
+	t.Helper()
+	routes := Routes()
+	for i := range routes {
+		if routes[i].Name == name {
+			routes[i].Usage = edit(slices.Clone(routes[i].Usage))
+			return routes
+		}
+	}
+	t.Fatalf("no top-level route %q", name)
+	return nil
+}
+
+func TestParentCoverageGuardReportsAnUncoveredChild(t *testing.T) {
+	t.Parallel()
+
+	// The synthetic tree is covered; its hidden child and the internal
+	// namespace name no line and are not reported.
+	if got, _ := parentChildCoverageViolations(guardTestTree(), nil); len(got) != 0 {
+		t.Fatalf("coverage guard rejected a covered tree: %q", got)
+	}
+
+	tree := guardTestTree()
+	tree[0].Children = append(slices.Clone(tree[0].Children), Route{Name: "other", Usage: []string{"projmux verb other [--x]"}})
+	got, _ := parentChildCoverageViolations(tree, nil)
+	if len(got) != 1 || !strings.Contains(got[0], "verb usage names no copy of any verb other usage line") {
+		t.Errorf("uncovered child: want one violation naming verb and verb other, got %q", got)
+	}
+
+	// A differing line covers its child only through a summary row.
+	summary := parentUsageSummary{parent: "verb", line: "projmux verb thing ...", reason: "x"}
+	tree = guardTestTree()
+	tree[0].Usage = []string{summary.line}
+	if got, _ := parentChildCoverageViolations(tree, nil); len(got) != 1 || !strings.Contains(got[0], "verb thing") {
+		t.Errorf("differing line without a row: want one violation naming verb thing, got %q", got)
+	}
+	got, counts := parentChildCoverageViolations(tree, []parentUsageSummary{summary})
+	if len(got) != 0 || counts != (parentChildCoverage{parents: 1, summarized: 1}) {
+		t.Errorf("summary-covered child: want no violation and one summarized child, got %q %+v", got, counts)
+	}
+
+	// The same omission on the real catalog, one parent at a time.
+	for _, tc := range []struct {
+		parent, child string
+		drop          func(string) bool
+	}{
+		{"attention", "attention toggle", func(line string) bool { return strings.HasPrefix(line, "projmux attention toggle ") }},
+		{"get", "get notifications", func(line string) bool { return strings.HasPrefix(line, "projmux get notifications ") }},
+		{"agent", "agent instructions", func(line string) bool { return strings.HasPrefix(line, "projmux agent instructions ") }},
+	} {
+		routes := withTopLevelUsage(t, tc.parent, func(usage []string) []string {
+			before := len(usage)
+			kept := slices.DeleteFunc(usage, tc.drop)
+			if len(kept) == before {
+				t.Fatalf("%s has no %s usage line to drop", tc.parent, tc.child)
+			}
+			return kept
+		})
+		want := tc.parent + " usage names no copy of any " + tc.child + " usage line"
+		if got, _ := parentChildCoverageViolations(routes, parentUsageSummaries); len(got) != 1 || got[0] != want {
+			t.Errorf("dropped %s line: want exactly %q, got %q", tc.child, want, got)
+		}
+	}
+}
+
+func TestVerbMenuGuardReportsMenusAndStaleRows(t *testing.T) {
+	t.Parallel()
+
+	menuTree := func() []Route {
+		tree := guardTestTree()
+		tree[1].Usage = []string{"projmux leaf a|b"}
+		return tree
+	}
+	row := parentVerbMenu{route: "leaf", line: "projmux leaf a|b", reason: "x"}
+
+	if got := verbMenuViolations(guardTestTree(), nil); len(got) != 0 {
+		t.Fatalf("menu guard rejected a tree without menus: %q", got)
+	}
+	if got := verbMenuViolations(menuTree(), nil); len(got) != 1 || !strings.Contains(got[0], `leaf usage "projmux leaf a|b" is a bare verb menu`) {
+		t.Errorf("unexcused menu: want one violation, got %q", got)
+	}
+	if got := verbMenuViolations(menuTree(), []parentVerbMenu{row}); len(got) != 0 {
+		t.Errorf("excused menu: want no violation, got %q", got)
+	}
+
+	// A flag choice is not a verb menu, and hidden or internal routes are out
+	// of scope.
+	tree := guardTestTree()
+	tree[1].Usage = []string{"projmux leaf [--yes|--force]"}
+	tree[0].Children[1].Usage = []string{"projmux verb secret a|b"}
+	tree[2].Usage = []string{"projmux internal a|b"}
+	if got := verbMenuViolations(tree, nil); len(got) != 0 {
+		t.Errorf("flag choice, hidden, or internal menu reported: %q", got)
+	}
+
+	cases := map[string]struct {
+		mutate func([]Route)
+		row    parentVerbMenu
+		want   string
+	}{
+		"route not public": {
+			row:  parentVerbMenu{route: "nope", line: "projmux nope a|b", reason: "x"},
+			want: `route "nope" is not a public route`,
+		},
+		"line absent from route": {
+			row:  parentVerbMenu{route: "leaf", line: "projmux leaf c|d", reason: "x"},
+			want: "not a leaf usage line",
+		},
+		"line not a menu": {
+			row:  parentVerbMenu{route: "leaf", line: "projmux leaf [--json]", reason: "x"},
+			want: "not a bare verb menu of leaf",
+		},
+		"reason missing": {
+			mutate: func(tree []Route) { tree[1].Usage = []string{"projmux leaf a|b"} },
+			row:    parentVerbMenu{route: "leaf", line: "projmux leaf a|b", reason: " "},
+			want:   "has no reason",
+		},
+		"route has public children": {
+			mutate: func(tree []Route) { tree[0].Usage = append(slices.Clone(tree[0].Usage), "projmux verb thing|things") },
+			row:    parentVerbMenu{route: "verb", line: "projmux verb thing|things", reason: "x"},
+			want:   "verb has public children now",
+		},
+	}
+	for name, tc := range cases {
+		tree := guardTestTree()
+		if tc.mutate != nil {
+			tc.mutate(tree)
+		}
+		got := verbMenuViolations(tree, []parentVerbMenu{tc.row})
+		if len(got) != 1 || !strings.Contains(got[0], tc.want) {
+			t.Errorf("%s: want one violation containing %q, got %q", name, tc.want, got)
+		}
+	}
+
+	// The menu update used to print must fail against the real catalog.
+	const menu = "projmux update status|check|apply"
+	routes := withTopLevelUsage(t, "update", func(usage []string) []string { return append([]string{menu}, usage...) })
+	got := verbMenuViolations(routes, parentVerbMenus)
+	if len(got) != 1 || !strings.Contains(got[0], `update usage "`+menu+`" is a bare verb menu`) {
+		t.Fatalf("re-inserted update menu: want one violation, got %q", got)
 	}
 }
