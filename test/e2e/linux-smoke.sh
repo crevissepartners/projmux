@@ -5872,6 +5872,13 @@ if topology_tmux list-sessions >"$topology_root/agent-only-dry-run-sessions.out"
 fi
 
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/agent-only-execute.json"
+# The provider shim appends its argv inside the new Agent Pane after reconcile
+# returns, so wait on the same bound as topology_assert_exact_resume before the
+# exact-once judgement. A timeout falls through to that judgement, which still
+# fails zero or duplicate launches with the argv dump.
+topology_agent_only_expected="$((topology_agent_only_launches_before + 1))"
+topology_agent_only_launch_reached() { [[ "$(wc -l <"$topology_agent_argv")" -ge "$topology_agent_only_expected" ]]; }
+smoke_wait_until 10 "Agent-only provider argv receipt" topology_agent_only_launch_reached || true
 topology_agent_only_launches_after="$(wc -l <"$topology_agent_argv")"
 if [[ "$((topology_agent_only_launches_after - topology_agent_only_launches_before))" != "1" ]] ||
   ! tail -n 1 "$topology_agent_argv" | grep -F "resume topology-thread" >/dev/null; then
