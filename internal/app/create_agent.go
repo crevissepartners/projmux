@@ -608,9 +608,13 @@ func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget)
 		}
 		var committed coremetadata.Agent
 		if _, updateErr := c.store.update(func(registry *coremetadata.Registry) error {
-			agentUID, generation, bound := exactAgentActivationBinding(*registry, target.paneUID, target.paneID)
-			if !bound || agentUID != target.agentUID || generation != target.generation {
-				return fmt.Errorf("create agent: activation binding changed for uid:%s Pane %s", target.agentUID, target.paneID)
+			check := checkAgentActivationBinding(*registry, target.paneUID, target.paneID,
+				&agentActivationBindingExpectation{AgentUID: target.agentUID, Generation: target.generation})
+			if !check.bound() {
+				return &agentActivationBindingError{
+					command: "create agent", stage: agentBindingStageBeforeRecording,
+					paneUID: target.paneUID, paneID: target.paneID, check: check,
+				}
 			}
 			updated, setErr := c.store.mutator().SetAgentActivation(registry, target.agentUID, state, source, reason)
 			committed = updated.Clone()
