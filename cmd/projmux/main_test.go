@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +43,64 @@ func TestExecuteCLIPreservesOutputAndExitSemanticsAndRecordsOnce(t *testing.T) {
 			}, &stderr)
 			if code != tt.wantCode || stderr.String() != tt.wantStderr || records != 1 || !errors.Is(recorded, tt.err) {
 				t.Fatalf("code=%d stderr=%q records=%d recorded=%v", code, stderr.String(), records, recorded)
+			}
+		})
+	}
+}
+
+// testWrappingExitError is an app-defined coder that wraps a subprocess
+// failure; errors.As stops at it, so its own code and silence win.
+type testWrappingExitError struct {
+	code  int
+	cause error
+}
+
+func (e testWrappingExitError) Error() string { return "app displayed: " + e.cause.Error() }
+func (e testWrappingExitError) ExitCode() int { return e.code }
+func (e testWrappingExitError) Unwrap() error { return e.cause }
+
+// subprocessExitError returns a real *exec.ExitError whose code is 3, so a
+// test can tell it apart from the default exit code 1.
+func subprocessExitError(t *testing.T) *exec.ExitError {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("sh not found: %v", err)
+	}
+	runErr := exec.Command(sh, "-c", "exit 3").Run()
+	var exitErr *exec.ExitError
+	if !errors.As(runErr, &exitErr) || runErr != error(exitErr) || exitErr.ExitCode() != 3 {
+		t.Fatalf("sh -c 'exit 3' = %v, want a bare *exec.ExitError with code 3", runErr)
+	}
+	return exitErr
+}
+
+func TestExecuteCLIPrintsWrappedSubprocessExitErrorOnceWithItsCode(t *testing.T) {
+	t.Parallel()
+	exitErr := subprocessExitError(t)
+	wrapped := fmt.Errorf("switch tmux session %q: %w", "demo", exitErr)
+	doubly := fmt.Errorf("attach: %w", wrapped)
+	tests := []struct {
+		name       string
+		err        error
+		wantCode   int
+		wantStderr string
+	}{
+		{name: "wrapped exit error prints once", err: wrapped, wantCode: 3, wantStderr: wrapped.Error() + "\n"},
+		{name: "doubly wrapped exit error prints once", err: doubly, wantCode: 3, wantStderr: doubly.Error() + "\n"},
+		{name: "bare exit error stays silent", err: exitErr, wantCode: 3},
+		{name: "app coder stays silent", err: testExitError{code: 4}, wantCode: 4},
+		{name: "app coder wrapping exit error stays silent", err: testWrappingExitError{code: 5, cause: exitErr}, wantCode: 5},
+		{name: "plain error", err: errors.New("runtime failed"), wantCode: 1, wantStderr: "runtime failed\n"},
+		{name: "usage error", err: &app.UsageError{Message: "bad usage"}, wantCode: 2, wantStderr: "bad usage\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			records := 0
+			code := executeCLI(func() error { return tt.err }, func(error) { records++ }, &stderr)
+			if code != tt.wantCode || stderr.String() != tt.wantStderr || records != 1 {
+				t.Fatalf("code=%d stderr=%q records=%d, want code=%d stderr=%q records=1", code, stderr.String(), records, tt.wantCode, tt.wantStderr)
 			}
 		})
 	}

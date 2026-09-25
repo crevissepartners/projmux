@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app"
@@ -13,9 +14,12 @@ import (
 )
 
 // exitCoder lets specific commands request a non-default exit code while
-// still flowing through the app.Run error channel. The command is expected to
-// have already written any user-facing diagnostic, so main suppresses the
-// default stderr print for these.
+// still flowing through the app.Run error channel. A command that returns an
+// app-defined coder or a bare subprocess *exec.ExitError is expected to have
+// already written any user-facing diagnostic (pass-through child output), so
+// main suppresses the default stderr print for these. A subprocess
+// *exec.ExitError wrapped with outer context is printed once, so the non-zero
+// exit carries its reason, and keeps the ExitError's code.
 type exitCoder interface {
 	error
 	ExitCode() int
@@ -55,6 +59,11 @@ func executeCLI(invoke func() error, record func(error), stderr io.Writer) int {
 
 	var coded exitCoder
 	if errors.As(err, &coded) {
+		// Only the wrapping context is new to the user; a bare ExitError's
+		// child already spoke for itself.
+		if exitErr, ok := coded.(*exec.ExitError); ok && error(exitErr) != err {
+			fmt.Fprintln(stderr, err)
+		}
 		return coded.ExitCode()
 	}
 
