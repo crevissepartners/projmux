@@ -6,11 +6,27 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // LinesFile stores newline-delimited text in a simple inspectable file.
 type LinesFile struct {
 	path string
+	// lockWaitLimit bounds how long Update waits for the lock; zero means
+	// LockWaitLimit.
+	lockWaitLimit time.Duration
+	hooks         *linesHooks
+}
+
+// linesHooks are test seams set only by in-package tests. A nil hooks pointer
+// or a nil field means the production behavior.
+type linesHooks struct {
+	// afterContendedLock runs when the non-blocking lock attempt found the
+	// lock held, before Update blocks on it.
+	afterContendedLock func()
+	// afterRead runs under the lock after Update read the current lines and
+	// before it calls the update function.
+	afterRead func()
 }
 
 // NewLinesFile builds a file-backed line store for the provided path.

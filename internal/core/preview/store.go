@@ -13,6 +13,9 @@ var ErrInvalidSessionName = errors.New("invalid session name")
 // Store manages file-backed preview selection state keyed by session name.
 type Store struct {
 	file state.LinesFile
+	// afterLoad is a test seam run inside a locked update after the stored
+	// rows were parsed.
+	afterLoad func()
 }
 
 // CycleResult reports the cursor chosen by a persisted cycle operation.
@@ -117,25 +120,14 @@ func (s Store) WriteSelection(sessionName, windowIndex, paneIndex string) error 
 		return err
 	}
 
-	rows, err := s.load()
-	if err != nil {
-		return err
-	}
-
-	lines := make([]string, 0, len(rows)+1)
-	for _, row := range rows {
-		if row.SessionName == sessionName {
-			continue
-		}
-		lines = append(lines, row.line())
-	}
-
-	lines = append(lines, Selection{
+	next := Selection{
 		SessionName: sessionName,
 		WindowIndex: windowIndex,
 		PaneIndex:   paneIndex,
-	}.line())
-	return s.file.Write(lines)
+	}
+	return s.update(func(rows []Selection) ([]string, bool, error) {
+		return replaceRow(rows, next), true, nil
+	})
 }
 
 // Delete removes the persisted preview selection for sessionName. Missing
@@ -146,24 +138,18 @@ func (s Store) Delete(sessionName string) error {
 		return err
 	}
 
-	rows, err := s.load()
-	if err != nil {
-		return err
-	}
-
-	lines := make([]string, 0, len(rows))
-	found := false
-	for _, row := range rows {
-		if row.SessionName == sessionName {
-			found = true
-			continue
+	return s.update(func(rows []Selection) ([]string, bool, error) {
+		lines := make([]string, 0, len(rows))
+		found := false
+		for _, row := range rows {
+			if row.SessionName == sessionName {
+				found = true
+				continue
+			}
+			lines = append(lines, row.line())
 		}
-		lines = append(lines, row.line())
-	}
-	if !found {
-		return nil
-	}
-	return s.file.Write(lines)
+		return lines, found, nil
+	})
 }
 
 // CyclePaneSelection loads a session's stored selection, applies pane cycling,
@@ -194,36 +180,84 @@ func (s Store) cycleSelection(
 	direction Direction,
 	cycle cycleFunc,
 ) (CycleResult, error) {
-	selection, found, err := s.ReadSelection(sessionName)
+	sessionName, err := validateSessionName(sessionName)
 	if err != nil {
 		return CycleResult{}, err
 	}
 
-	cursor, ok, err := cycle(CycleInputs{
-		StoredWindowIndex: selection.WindowIndex,
-		StoredPaneIndex:   selection.PaneIndex,
-		Windows:           windows,
-		Panes:             panes,
-	}, direction)
-	if err != nil {
-		return CycleResult{}, err
-	}
-	if !ok {
-		return CycleResult{}, nil
-	}
-
-	changed := !found || selection.WindowIndex != cursor.WindowIndex || selection.PaneIndex != cursor.PaneIndex
-	if changed {
-		if err := s.WriteSelection(sessionName, cursor.WindowIndex, cursor.PaneIndex); err != nil {
-			return CycleResult{}, err
+	// The cursor is computed from the row read under the lock, so a
+	// concurrent writer cannot slip between reading and persisting it.
+	var result CycleResult
+	err = s.update(func(rows []Selection) ([]string, bool, error) {
+		result = CycleResult{}
+		var selection Selection
+		found := false
+		for _, row := range rows {
+			if row.SessionName == sessionName {
+				selection, found = row, true
+				break
+			}
 		}
-	}
 
-	return CycleResult{
-		Cursor:   cursor,
-		Selected: true,
-		Changed:  changed,
-	}, nil
+		cursor, ok, err := cycle(CycleInputs{
+			StoredWindowIndex: selection.WindowIndex,
+			StoredPaneIndex:   selection.PaneIndex,
+			Windows:           windows,
+			Panes:             panes,
+		}, direction)
+		if err != nil || !ok {
+			return nil, false, err
+		}
+
+		changed := !found || selection.WindowIndex != cursor.WindowIndex || selection.PaneIndex != cursor.PaneIndex
+		result = CycleResult{
+			Cursor:   cursor,
+			Selected: true,
+			Changed:  changed,
+		}
+		if !changed {
+			return nil, false, nil
+		}
+		if err := validateCell(cursor.WindowIndex); err != nil {
+			return nil, false, err
+		}
+		if err := validateCell(cursor.PaneIndex); err != nil {
+			return nil, false, err
+		}
+		return replaceRow(rows, Selection{
+			SessionName: sessionName,
+			WindowIndex: cursor.WindowIndex,
+			PaneIndex:   cursor.PaneIndex,
+		}), true, nil
+	})
+	if err != nil {
+		return CycleResult{}, err
+	}
+	return result, nil
+}
+
+// update runs a locked read-modify-write of the stored rows. apply returns the
+// next lines and whether to write them.
+func (s Store) update(apply func([]Selection) ([]string, bool, error)) error {
+	return s.file.Update(func(lines []string) ([]string, bool, error) {
+		rows := parseRows(lines)
+		if s.afterLoad != nil {
+			s.afterLoad()
+		}
+		return apply(rows)
+	})
+}
+
+// replaceRow drops the session's old row and appends next at the end.
+func replaceRow(rows []Selection, next Selection) []string {
+	lines := make([]string, 0, len(rows)+1)
+	for _, row := range rows {
+		if row.SessionName == next.SessionName {
+			continue
+		}
+		lines = append(lines, row.line())
+	}
+	return append(lines, next.line())
 }
 
 func (s Store) load() ([]Selection, error) {
@@ -231,7 +265,10 @@ func (s Store) load() ([]Selection, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseRows(lines), nil
+}
 
+func parseRows(lines []string) []Selection {
 	rows := make([]Selection, 0, len(lines))
 	for _, line := range lines {
 		row, ok := parseSelection(line)
@@ -240,7 +277,7 @@ func (s Store) load() ([]Selection, error) {
 		}
 		rows = append(rows, row)
 	}
-	return rows, nil
+	return rows
 }
 
 func parseSelection(line string) (Selection, bool) {
