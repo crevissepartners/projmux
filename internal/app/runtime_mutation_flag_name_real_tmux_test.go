@@ -28,7 +28,7 @@ func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
 	requireRealTmux(t, flagShapedWindowNameRealTmuxEnv)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	root, err := os.MkdirTemp("", "pfn-")
+	root, err := os.MkdirTemp("/tmp", "pfn-")
 	if err != nil {
 		t.Fatal(err)
 	}

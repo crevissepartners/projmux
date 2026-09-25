@@ -49,7 +49,7 @@ const (
 
 func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentRealTmux {
 	t.Helper()
-	root, err := os.MkdirTemp("", "ppi-")
+	root, err := os.MkdirTemp("/tmp", "ppi-")
 	if err != nil {
 		t.Fatal(err)
 	}

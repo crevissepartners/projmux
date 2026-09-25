@@ -533,7 +533,7 @@ func TestGeneratedRenameBindingDeliversHostileResponsesVerbatimThroughRealTmux(t
 	requireRealTmux(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	root, err := os.MkdirTemp("", "prn-")
+	root, err := os.MkdirTemp("/tmp", "prn-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,10 +21,13 @@ const (
 	// A "spawn-dropped-helper" fixture starts helperModeEnv's mode with an
 	// environment of only that mode, plus TMPDIR=helperTmpEnv when set, and
 	// through /bin/sh when helperViaShEnv is set so its parent is not the
-	// guard owner.
+	// guard owner. That shell reports its pid after helperShellPidMarker, so
+	// a test can find the root the helper names after it.
 	helperModeEnv  = "PMX_TEST_LIVEGUARD_HELPER_MODE"
 	helperTmpEnv   = "PMX_TEST_LIVEGUARD_HELPER_TMPDIR"
 	helperViaShEnv = "PMX_TEST_LIVEGUARD_HELPER_VIA_SH"
+
+	helperShellPidMarker = "liveguard helper shell pid="
 
 	// fixtureOptInEnv is the opt-in gate every guard fixture child runs with.
 	fixtureOptInEnv = "PMX_TEST_LIVEGUARD_FIXTURE_OPT_IN"
@@ -115,7 +118,7 @@ func exitIfLiveMachineGuardChild() {
 			}
 			command := exec.Command(os.Args[0], "-test.run=^$") // #nosec G204 -- re-executes this test binary as a fixed guard fixture.
 			if os.Getenv(helperViaShEnv) != "" {
-				command = exec.Command("/bin/sh", "-c", `"$0" -test.run='^$'; exit $?`, os.Args[0]) // #nosec G204 -- re-executes this test binary as a fixed guard fixture.
+				command = exec.Command("/bin/sh", "-c", `echo "`+helperShellPidMarker+`$$" >&2; "$0" -test.run='^$'; exit $?`, os.Args[0]) // #nosec G204 -- re-executes this test binary as a fixed guard fixture.
 			}
 			command.Env = env
 			command.Stderr = os.Stderr
@@ -274,15 +277,6 @@ func TestLiveMachineGuardAuditsAHelperThatDropsItsEnvironment(t *testing.T) {
 func TestLiveMachineGuardSweepsOnlyTheRootsOfItsOwnHelpers(t *testing.T) {
 	t.Parallel()
 
-	roots := func(tmp string) []string {
-		t.Helper()
-		found, err := filepath.Glob(filepath.Join(tmp, rootPrefix+"*"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return found
-	}
-
 	swept := t.TempDir()
 	child := runLiveMachineGuardChild(t, []string{
 		liveMachineGuardChildEnv + "=spawn-dropped-helper",
@@ -293,9 +287,7 @@ func TestLiveMachineGuardSweepsOnlyTheRootsOfItsOwnHelpers(t *testing.T) {
 	if child.code != 0 {
 		t.Fatalf("owner exit = %d, want 0; stderr:\n%s", child.code, child.stderr)
 	}
-	if left := roots(swept); len(left) != 0 {
-		t.Fatalf("the owner did not sweep its dropped helper's root: %v", left)
-	}
+	requireNoHelperRoots(t, child)
 
 	control := t.TempDir()
 	child = runLiveMachineGuardChild(t, []string{
@@ -308,7 +300,12 @@ func TestLiveMachineGuardSweepsOnlyTheRootsOfItsOwnHelpers(t *testing.T) {
 	if child.code != 0 {
 		t.Fatalf("control owner exit = %d, want 0; stderr:\n%s", child.code, child.stderr)
 	}
-	if left := roots(control); len(left) != 1 {
+	_, after, ok := strings.Cut(child.stderr, helperShellPidMarker)
+	shellPid, _, _ := strings.Cut(after, "\n")
+	if _, err := strconv.Atoi(shellPid); !ok || err != nil {
+		t.Fatalf("control helper shell did not report its pid:\n%s", child.stderr)
+	}
+	if left := ownedRootsIn(t, "/tmp", shellPid); len(left) != 1 {
 		t.Fatalf("control helper under a shell left %v, want exactly one root; the sweep above proves nothing without it", left)
 	}
 }
@@ -318,41 +315,48 @@ func TestLiveMachineGuardSweepsOnlyTheRootsOfItsOwnHelpers(t *testing.T) {
 // so it must not own a root. Joined to an inherited root it leaves nothing in
 // its temp directory; the control shows the root a helper that makes its own
 // leaves behind where no owner sweeps.
+//
+// Each helper runs under its own shell, so the root it would make is named
+// after that shell (guardPrivateRoot) and no parallel test's helper shares the
+// name.
 func TestLiveMachineGuardLeavesNoRootBehindAHelperThatExits(t *testing.T) {
 	t.Parallel()
 
-	roots := func(tmp string) []string {
-		t.Helper()
-		found, err := filepath.Glob(filepath.Join(tmp, rootPrefix+"*"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return found
-	}
-
-	joined := t.TempDir()
-	child := runLiveMachineGuardChild(t, []string{
+	joined := runLiveMachineGuardChildUnderShell(t, []string{
 		liveMachineGuardChildEnv + "=helper-exits",
 		rootEnv + "=" + activeRoot,
-		"TMPDIR=" + joined,
 	})
-	if child.code != 0 {
-		t.Fatalf("joined helper exit = %d, want 0; stderr:\n%s", child.code, child.stderr)
+	if joined.code != 0 {
+		t.Fatalf("joined helper exit = %d, want 0; stderr:\n%s", joined.code, joined.stderr)
 	}
-	if left := roots(joined); len(left) != 0 {
-		t.Fatalf("a helper that joined the inherited root left %v", left)
+	for _, dir := range []string{"/tmp", joined.tmp} {
+		if left := ownedRootsIn(t, dir, strconv.Itoa(joined.pid)); len(left) != 0 {
+			t.Fatalf("a helper that joined the inherited root left %v", left)
+		}
 	}
 
-	own := t.TempDir()
-	if control := runLiveMachineGuardChild(t, []string{
-		liveMachineGuardChildEnv + "=helper-exits",
-		"TMPDIR=" + own,
-	}); control.code != 0 {
+	control := runLiveMachineGuardChildUnderShell(t, []string{liveMachineGuardChildEnv + "=helper-exits"})
+	if control.code != 0 {
 		t.Fatalf("control helper exit = %d, want 0; stderr:\n%s", control.code, control.stderr)
 	}
-	if left := roots(own); len(left) != 1 {
+	if left := ownedRootsIn(t, "/tmp", strconv.Itoa(control.pid)); len(left) != 1 {
 		t.Fatalf("control helper with its own root left %v, want exactly one root; the join above proves nothing without it", left)
 	}
+}
+
+// ownedRootsIn returns the private roots in dir named after parentPid, the
+// roots a guarded process started by parentPid makes, and removes them when
+// the test ends.
+func ownedRootsIn(t *testing.T, dir, parentPid string) []string {
+	t.Helper()
+	found, err := filepath.Glob(filepath.Join(dir, rootPrefix+"p"+parentPid+"-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range found {
+		t.Cleanup(func() { _ = os.RemoveAll(root) })
+	}
+	return found
 }
 
 type guardChild struct {
@@ -368,8 +372,22 @@ type guardChild struct {
 // private one.
 func runLiveMachineGuardChild(t *testing.T, env []string) guardChild {
 	t.Helper()
-	child := guardChild{tmp: t.TempDir()}
 	command := exec.Command(os.Args[0], "-test.run=^$") // #nosec G204 -- re-executes this test binary as a fixed guard fixture.
+	return runGuardChildCommand(t, command, env)
+}
+
+// runLiveMachineGuardChildUnderShell is runLiveMachineGuardChild with the
+// fixture started by /bin/sh; the returned pid is the shell's, the parent a
+// root the fixture makes is named after.
+func runLiveMachineGuardChildUnderShell(t *testing.T, env []string) guardChild {
+	t.Helper()
+	command := exec.Command("/bin/sh", "-c", `"$0" -test.run='^$'; exit $?`, os.Args[0]) // #nosec G204 -- re-executes this test binary as a fixed guard fixture.
+	return runGuardChildCommand(t, command, env)
+}
+
+func runGuardChildCommand(t *testing.T, command *exec.Cmd, env []string) guardChild {
+	t.Helper()
+	child := guardChild{tmp: t.TempDir()}
 	command.Env = append(append(os.Environ(), rootEnv+"=", "TMPDIR="+child.tmp), env...)
 	for _, entry := range env {
 		if value, ok := strings.CutPrefix(entry, "TMPDIR="); ok {
@@ -407,5 +425,49 @@ func requireNoHelperRoots(t *testing.T, child guardChild) {
 		if len(left) != 0 {
 			t.Errorf("the owner left its dropped helper's root behind: %v", left)
 		}
+	}
+}
+
+// TestLiveMachineGuardRootIsUnderTmpWhateverTMPDIR pins where a new private
+// root goes: under /tmp even when TMPDIR is long, because the root holds
+// TMUX_TMPDIR and XDG_STATE_HOME and the sockets under them must fit the unix
+// socket path bound. The owner's sweep still finds a helper root there.
+//
+// It is not parallel: guardSweepHelperRoots sweeps every root named after this
+// process, which includes the live roots of the guard fixtures the parallel
+// tests start.
+func TestLiveMachineGuardRootIsUnderTmpWhateverTMPDIR(t *testing.T) {
+	longTmp := filepath.Join(t.TempDir(), strings.Repeat("x", 100))
+	if err := os.Mkdir(longTmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", longTmp)
+	t.Setenv(rootEnv, "")
+
+	root, owned, err := guardPrivateRoot()
+	if err != nil {
+		t.Fatalf("guardPrivateRoot() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	if !owned {
+		t.Errorf("guardPrivateRoot() owned = false without an inherited root")
+	}
+	if got := filepath.Dir(root); got != "/tmp" {
+		t.Errorf("guardPrivateRoot() = %q, want a root directly under /tmp, not under TMPDIR %q", root, longTmp)
+	}
+	if want := rootPrefix + "p" + strconv.Itoa(os.Getppid()) + "-"; !strings.HasPrefix(filepath.Base(root), want) {
+		t.Errorf("guardPrivateRoot() = %q, want a name starting %q", root, want)
+	}
+
+	helperRoot, err := os.MkdirTemp("/tmp", rootPrefix+"p"+strconv.Itoa(os.Getpid())+"-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(helperRoot) })
+	if failed := guardSweepHelperRoots(); failed {
+		t.Errorf("guardSweepHelperRoots() = true, want the empty helper root %s to pass its audit", helperRoot)
+	}
+	if _, err := os.Stat(helperRoot); !os.IsNotExist(err) {
+		t.Errorf("guardSweepHelperRoots() left the helper root %s under /tmp (stat err %v)", helperRoot, err)
 	}
 }

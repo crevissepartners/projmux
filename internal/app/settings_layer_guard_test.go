@@ -429,7 +429,7 @@ func newSettingsLayerGuardEnv(t *testing.T) *settingsLayerGuardEnv {
 			t.Fatal(err)
 		}
 	}
-	tmuxTmp, err := os.MkdirTemp("", "pmxg")
+	tmuxTmp, err := os.MkdirTemp("/tmp", "pmxg")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -58,7 +58,7 @@ func TestRealTmuxRegistryContinueFieldFidelity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	root, err := os.MkdirTemp("", "prc-")
+	root, err := os.MkdirTemp("/tmp", "prc-")
 	if err != nil {
 		t.Fatal(err)
 	}

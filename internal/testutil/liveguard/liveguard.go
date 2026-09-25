@@ -258,13 +258,16 @@ func guardOptedIn(names []string) bool {
 // owns it. A process started by a guarded test binary joins the root it
 // inherited while that root still exists; any other process makes a new one,
 // named after its parent so that parent can sweep it (guardSweepHelperRoots).
+// A new root is made under /tmp, whatever TMPDIR is: it holds TMUX_TMPDIR and
+// XDG_STATE_HOME, so the tmux and broker sockets under it must stay within the
+// unix socket path bound (104 bytes on macOS, 108 on Linux).
 func guardPrivateRoot() (string, bool, error) {
 	if inherited := os.Getenv(rootEnv); inherited != "" {
 		if info, err := os.Stat(inherited); err == nil && info.IsDir() { // #nosec G703 -- read-only check of the root a guarded parent test binary exported; nothing is opened or written through it here.
 			return inherited, false, nil
 		}
 	}
-	root, err := os.MkdirTemp("", fmt.Sprintf("%sp%d-", rootPrefix, os.Getppid()))
+	root, err := os.MkdirTemp("/tmp", fmt.Sprintf("%sp%d-", rootPrefix, os.Getppid()))
 	return root, err == nil, err
 }
 
@@ -376,10 +379,10 @@ func guardAuditRoot(root, origin string) bool {
 // an environment of its own (cmd.Env = []string{...}) drops rootEnv and TMPDIR
 // with it: the helper cannot join, makes a root of its own, and then ends in
 // os.Exit inside m.Run or is killed, so it never removes it. guardPrivateRoot
-// names such a root after its parent, so the owner finds it here in its own
-// temp directory or /tmp (where a helper without TMPDIR puts it). Only the
-// process that made a root, or this owner of its maker, removes it; a joined
-// process never does.
+// makes such a root under /tmp, named after its parent, so the owner finds it
+// there. The owner also scans its own temp directory, where a helper built
+// before roots moved to /tmp put one. Only the process that made a root, or
+// this owner of its maker, removes it; a joined process never does.
 func guardSweepHelperRoots() bool {
 	failed := false
 	pattern := fmt.Sprintf("%sp%d-*", rootPrefix, os.Getpid())

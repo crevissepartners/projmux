@@ -29,7 +29,7 @@ func TestGeneratedWindowRenameProjectsFlagShapedNamesThroughRealTmux(t *testing.
 	requireRealTmux(t, flagShapedWindowNameRealTmuxEnv)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	root, err := os.MkdirTemp("", "pfr-")
+	root, err := os.MkdirTemp("/tmp", "pfr-")
 	if err != nil {
 		t.Fatal(err)
 	}

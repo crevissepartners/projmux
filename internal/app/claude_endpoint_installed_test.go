@@ -31,7 +31,7 @@ func TestClaudeEndpointInstalledSourceGate(t *testing.T) {
 	if !filepath.IsAbs(binary) || !filepath.IsAbs(claude) || !filepath.IsAbs(claudeConfig) {
 		t.Fatal("installed source gate paths must be absolute")
 	}
-	root, err := os.MkdirTemp("", "pce-real-")
+	root, err := os.MkdirTemp("/tmp", "pce-real-")
 	if err != nil {
 		t.Fatal(err)
 	}

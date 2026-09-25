@@ -29,7 +29,7 @@ type realTmuxQuestionServer struct {
 func startRealTmuxQuestionServer(t *testing.T) realTmuxQuestionServer {
 	t.Helper()
 	requireRealTmux(t)
-	root, err := os.MkdirTemp("", "pqa-")
+	root, err := os.MkdirTemp("/tmp", "pqa-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -50,7 +50,7 @@ type splitFocusRealTmux struct {
 
 func newSplitFocusRealTmux(t *testing.T, ctx context.Context) *splitFocusRealTmux {
 	t.Helper()
-	root, err := os.MkdirTemp("", "psf-")
+	root, err := os.MkdirTemp("/tmp", "psf-")
 	if err != nil {
 		t.Fatal(err)
 	}

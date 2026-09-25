@@ -53,7 +53,7 @@ type realTmuxNameHandoffServer struct {
 func startRealTmuxNameHandoffServer(t *testing.T, ctx context.Context) realTmuxNameHandoffServer {
 	t.Helper()
 	requireRealTmux(t, resumedPaneNameRealTmuxEnv)
-	root, err := os.MkdirTemp("", "pnh-")
+	root, err := os.MkdirTemp("/tmp", "pnh-")
 	if err != nil {
 		t.Fatal(err)
 	}
