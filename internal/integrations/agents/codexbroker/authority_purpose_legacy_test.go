@@ -4,10 +4,16 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"testing"
 	"time"
 )
+
+// legacyProbeLiveness only bounds a fixture or probe that stops making
+// progress. It never decides the verdict, so scheduler delay cannot turn a
+// correct answer into host-unavailable.
+const legacyProbeLiveness = 30 * time.Second
 
 // This fixture speaks the previous host's purpose gate. It is wire-level
 // compatibility evidence; it does not execute a historical production binary.
@@ -44,7 +50,7 @@ func TestAuthorityProbeFallsBackOnlyBeforeLegacyHostDrain(t *testing.T) {
 						seen <- purposes
 						return
 					}
-					_ = conn.SetDeadline(time.Now().Add(time.Second))
+					_ = conn.SetDeadline(time.Now().Add(legacyProbeLiveness))
 					reader := bufio.NewReader(conn)
 					frame, err := readFrame(reader)
 					if err != nil {
@@ -74,13 +80,17 @@ func TestAuthorityProbeFallsBackOnlyBeforeLegacyHostDrain(t *testing.T) {
 							}
 						}
 					}
+					// Like the real host, keep the connection open after the
+					// reply until the client closes it, so the client reads
+					// the reply before it can observe EOF.
+					_, _ = io.Copy(io.Discard, reader)
 					_ = conn.Close()
 				}
 				seen <- purposes
 			}()
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), legacyProbeLiveness)
 			defer cancel()
-			err = ProbeAuthority(ctx, discovery, DialConfig{Timeout: 500 * time.Millisecond}, "legacy-runtime", "thread-one", Fence{Connection: 1, Binding: 1})
+			err = ProbeAuthority(ctx, discovery, DialConfig{Timeout: legacyProbeLiveness}, "legacy-runtime", "thread-one", Fence{Connection: 1, Binding: 1})
 			if RefusalOf(err) != test.want {
 				t.Fatalf("legacy authority probe = %v, want %s", err, test.want)
 			}
@@ -90,7 +100,7 @@ func TestAuthorityProbeFallsBackOnlyBeforeLegacyHostDrain(t *testing.T) {
 					(test.accepts == 2 && purposes[1] != "") {
 					t.Fatalf("legacy handshakes = %q", purposes)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(legacyProbeLiveness):
 				t.Fatal("legacy handshake fixture did not finish")
 			}
 		})
