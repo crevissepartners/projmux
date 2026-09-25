@@ -20,20 +20,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
-// tmuxError renders a tmux subprocess failure as a plain error.
-//
-// The cause is deliberately not wrapped with %w. A failed tmux command carries
-// an *exec.ExitError, and a wrapped one would make cmd/projmux forward the
-// child's exit code instead of exiting 1. Callers outside a lifecycle-owned
-// command would also be journaled by the top-level diagnostics outcome as a
-// non-success exit (kind exit) instead of a runtime failure. Once that
-// diagnostics classification changes, this can wrap its cause.
-func tmuxError(format string, args ...any) error {
-	// fmt.Errorf without a %w verb returns a plain error, which is exactly the
-	// point: the cause's text is preserved, its exit code is not.
-	return fmt.Errorf(format, args...)
-}
-
 // tmuxCommandRunner is the narrow subprocess seam the materializer shares with
 // the resource metadata mirror. Production wires the same ExecRunner into both,
 // so a test can replace one object and observe every tmux call the operation
@@ -108,7 +94,7 @@ func (m *materializer) finalizeSessionStartup(ctx context.Context, result intmux
 		}
 		return matched == 1, nil
 	}); err != nil {
-		return tmuxError("finalize tmux session %q startup: %v", sessionName, err)
+		return fmt.Errorf("finalize tmux session %q startup: %w", sessionName, err)
 	}
 	return nil
 }
@@ -1406,7 +1392,7 @@ func (m *materializer) ensureSessionAt(
 	startsFreshServer := m.expectedSocketPath == ""
 	exists, err := m.sessions.SessionExists(ctx, sessionName)
 	if err != nil {
-		return intmux.NewSessionResult{}, tmuxError("check tmux session %q: %v", sessionName, err)
+		return intmux.NewSessionResult{}, fmt.Errorf("check tmux session %q: %w", sessionName, err)
 	}
 	if exists {
 		identity, err := m.requireOwnedSession(ctx, project, sessionName)
@@ -1519,7 +1505,7 @@ func (m *materializer) ensureSessionAt(
 			m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
 		}
 		lifecycle.AbortPersistentSessionCreate()
-		return intmux.NewSessionResult{}, tmuxError("materialize tmux session %q: %v", sessionName, ensureErr)
+		return intmux.NewSessionResult{}, fmt.Errorf("materialize tmux session %q: %w", sessionName, ensureErr)
 	}
 	if exactTmuxHandle(result.SessionID, "$") == "" || exactTmuxHandle(result.WindowID, "@") == "" || exactTmuxHandle(result.PaneID, "%") == "" {
 		if startsFreshServer {
@@ -1896,7 +1882,7 @@ func (m *materializer) sessionIdentities(ctx context.Context) ([]liveSessionIden
 		if inttmux.IsNoServerFailure(err) {
 			return nil, err
 		}
-		return nil, tmuxError("list tmux session identities: %v", err)
+		return nil, fmt.Errorf("list tmux session identities: %w", err)
 	}
 	rows, parseErr := strictTmuxRows(out, 4)
 	if parseErr != nil {
@@ -1934,7 +1920,7 @@ func (m *materializer) claimRuntimeUID(ctx context.Context, kind runtimeObjectKi
 		"Registry uid is mirrored for rollback ownership",
 		args...)
 	if _, err := m.runMutation(ctx, action); err != nil {
-		claimErr := tmuxError("claim created tmux %s %s: %v", kind, target, err)
+		claimErr := fmt.Errorf("claim created tmux %s %s: %w", kind, target, err)
 		if got := m.option(ctx, target, "#{"+ownershipOption+"}"); got == uid {
 			return true, claimErr
 		}
@@ -2083,7 +2069,7 @@ func (m *materializer) markCreateOperation(ctx context.Context, sessionName stri
 		return errors.New("materialize tmux session: create-operation lease is missing")
 	}
 	if err := m.guardExactRoute(ctx, false); err != nil {
-		return tmuxError("mark tmux session %q for create operation: %v", sessionName, err)
+		return fmt.Errorf("mark tmux session %q for create operation: %w", sessionName, err)
 	}
 	action := materializeMutationAction(mutationWriteLease,
 		m.boundMutationTarget("session", sessionName, "session:"+sessionName),
@@ -2091,7 +2077,7 @@ func (m *materializer) markCreateOperation(ctx context.Context, sessionName stri
 		"operation lease is installed",
 		"-t", sessionName, createOperationEnvironment, ledger.operationMarker)
 	if _, err := m.runMutation(ctx, action); err != nil {
-		return tmuxError("mark tmux session %q for create operation: %v", sessionName, err)
+		return fmt.Errorf("mark tmux session %q for create operation: %w", sessionName, err)
 	}
 	ledger.markSession(sessionName)
 	return nil
@@ -2195,7 +2181,7 @@ func (m *materializer) windowRuntimeInventory(ctx context.Context, sessionName s
 	out, err := m.read(ctx, "list-windows", "-t", sessionName, "-F",
 		tmuxRowFormat("#{"+tmuxopts.WindowUID+"}", "#{session_id}", "#{window_id}"))
 	if err != nil {
-		return nil, tmuxError("list tmux windows of session %q: %v", sessionName, err)
+		return nil, fmt.Errorf("list tmux windows of session %q: %w", sessionName, err)
 	}
 	inventory := make(map[string][]runtimeOwner)
 	for _, fields := range splitTmuxRows(out, 3) {
@@ -2228,7 +2214,7 @@ func (m *materializer) panesOf(ctx context.Context, windowID string) ([][2]strin
 	out, err := m.read(ctx, "list-panes", "-t", windowID, "-F",
 		tmuxRowFormat("#{"+tmuxopts.PaneUID+"}", "#{pane_id}"))
 	if err != nil {
-		return nil, tmuxError("list tmux panes of window %q: %v", windowID, err)
+		return nil, fmt.Errorf("list tmux panes of window %q: %w", windowID, err)
 	}
 	rows := splitTmuxRows(out, 2)
 	panes := make([][2]string, 0, len(rows))
@@ -2258,7 +2244,7 @@ type runtimeOwners map[string]runtimeOwnerSet
 func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd string, command []string) (windowCreateResult, error) {
 	beforeWindows, beforePanes, beforeErr := m.runtimeOwners(ctx)
 	if beforeErr != nil {
-		return windowCreateResult{}, tmuxError("inventory tmux runtime before window create: %v", beforeErr)
+		return windowCreateResult{}, fmt.Errorf("inventory tmux runtime before window create: %w", beforeErr)
 	}
 	args := []string{"-d", "-P", "-F", tmuxRowFormat("#{window_id}", "#{pane_id}"), "-t", sessionID + ":"}
 	if strings.TrimSpace(name) != "" {
@@ -2316,9 +2302,9 @@ func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd strin
 	}
 	if inventoryErr != nil {
 		m.warnCompositeWindowResult(output)
-		inventoryFailure := tmuxError("inventory tmux runtime after window create: %v", inventoryErr)
+		inventoryFailure := fmt.Errorf("inventory tmux runtime after window create: %w", inventoryErr)
 		if createErr != nil {
-			return windowCreateResult{}, errors.Join(tmuxError("create tmux window in session %q: %v", sessionID, createErr), inventoryFailure)
+			return windowCreateResult{}, errors.Join(fmt.Errorf("create tmux window in session %q: %w", sessionID, createErr), inventoryFailure)
 		}
 		return windowCreateResult{}, inventoryFailure
 	}
@@ -2327,12 +2313,12 @@ func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd strin
 		m.warnUnclaimedOwners("window", beforeWindows, afterWindows)
 		m.warnUnclaimedOwners("pane", beforePanes, afterPanes)
 		if createErr != nil {
-			return windowCreateResult{}, errors.Join(tmuxError("create tmux window in session %q: %v", sessionID, createErr), attributionErr)
+			return windowCreateResult{}, errors.Join(fmt.Errorf("create tmux window in session %q: %w", sessionID, createErr), attributionErr)
 		}
 		return windowCreateResult{}, attributionErr
 	}
 	if createErr != nil {
-		return result, tmuxError("create tmux window in session %q: %v", sessionID, createErr)
+		return result, fmt.Errorf("create tmux window in session %q: %w", sessionID, createErr)
 	}
 	return result, nil
 }
@@ -2504,7 +2490,7 @@ func splitPlacementFlag(placement string) string {
 func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string) (string, error) {
 	before, beforeErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
 	if beforeErr != nil {
-		return "", tmuxError("list tmux panes around %q before split: %v", anchorPaneID, beforeErr)
+		return "", fmt.Errorf("list tmux panes around %q before split: %w", anchorPaneID, beforeErr)
 	}
 	args := []string{"-d", "-P", "-F", "#{pane_id}", splitPlacementFlag(placement), "-t", anchorPaneID}
 	if strings.TrimSpace(cwd) != "" {
@@ -2557,7 +2543,7 @@ func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, c
 		} else {
 			id = ""
 		}
-		return id, tmuxError("split tmux pane %q: %v", anchorPaneID, err)
+		return id, fmt.Errorf("split tmux pane %q: %w", anchorPaneID, err)
 	}
 	id = exactTmuxHandle(id, "%")
 	if id == "" {

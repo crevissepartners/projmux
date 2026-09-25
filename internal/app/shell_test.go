@@ -9,14 +9,17 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -541,16 +544,19 @@ func TestShellTmuxExecRunnerReturnsClosedTypedFailures(t *testing.T) {
 		wantKind     inttmux.CommandFailureKind
 		wantNoServer bool
 		wantCause    string
+		// wantExitCode is the subprocess code the error unwraps to; 0 means
+		// the failure has no *exec.ExitError cause at all.
+		wantExitCode int
 	}{
 		{
 			name: "genuine absent socket", command: "/bin/sh",
 			args:     []string{"-c", `printf '%s\n' 'no server running on /private/cold-start.sock' >&2; exit 1`},
-			wantKind: inttmux.CommandFailureExit, wantNoServer: true, wantCause: "exit status 1",
+			wantKind: inttmux.CommandFailureExit, wantNoServer: true, wantCause: "exit status 1", wantExitCode: 1,
 		},
 		{
 			name: "generic nonzero", command: "/bin/sh",
 			args:     []string{"-c", `printf '%s\n' 'generic tmux refusal' >&2; exit 9`},
-			wantKind: inttmux.CommandFailureExit, wantCause: "exit status 9",
+			wantKind: inttmux.CommandFailureExit, wantCause: "exit status 9", wantExitCode: 9,
 		},
 		{
 			name: "permission failure", command: permissionDenied,
@@ -584,90 +590,176 @@ func TestShellTmuxExecRunnerReturnsClosedTypedFailures(t *testing.T) {
 			if len(output) > 0 && strings.TrimSpace(string(output)) != failure.Stderr {
 				t.Fatalf("output = %q, typed stderr = %q", output, failure.Stderr)
 			}
-			var exitCoder interface{ ExitCode() int }
-			if errors.As(err, &exitCoder) {
-				t.Fatalf("typed shell failure exposed ExitCode %d; shell tmux failures must keep exit code 1 and the runtime diagnostics kind", exitCoder.ExitCode())
+			var exitErr *exec.ExitError
+			if got := errors.As(err, &exitErr); got != (tt.wantExitCode != 0) {
+				t.Fatalf("errors.As(*exec.ExitError) = %v, want %v (error %v)", got, tt.wantExitCode != 0, err)
+			}
+			if tt.wantExitCode != 0 && exitErr.ExitCode() != tt.wantExitCode {
+				t.Fatalf("subprocess cause exit code = %d, want %d", exitErr.ExitCode(), tt.wantExitCode)
 			}
 		})
 	}
 }
 
+// runShellPrepareFailure drives `projmux shell` for a Project default target
+// whose canonical startup fails with prepareErr while the absent-session probe
+// fails too, so the prepare failure is returned. It returns the finished
+// lifecycle recorder, its events, and the command error.
+func runShellPrepareFailure(t *testing.T, prepareErr error) (*diagnostics.LifecycleRecorder, *appLifecycleWriter, error) {
+	t.Helper()
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "project")
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	probeErr := &shellTmuxCommandError{
+		name: "tmux", args: []string{"-L", "projmux", "has-session"}, cause: errors.New("exit status 1"),
+		failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /private/cold-start.sock"},
+	}
+	tmux := &scriptedShellTmuxRunner{errors: map[string]error{
+		shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "repos-project"): probeErr,
+	}}
+	writer := &appLifecycleWriter{}
+	recorder := diagnostics.NewLifecycleRecorder(writer, "shell-typed-failure", "0.13.0", "tmux")
+	finish := recorder.BeginCommand()
+	cmd := &shellCommand{
+		diagnostics: recorder,
+		executable:  func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:   func(string) string { return "" },
+		homeDir:     func() (string, error) { return home, nil },
+		writeFile:   os.WriteFile,
+		runCommand: func(context.Context, []string, string, ...string) error {
+			t.Fatal("failed prepare reached foreground attach")
+			return nil
+		},
+		tmuxRunner:     tmux,
+		getwd:          func() (string, error) { return project, nil },
+		projectSession: func(context.Context, string, shellTarget) error { return prepareErr },
+	}
+	err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{})
+	finish(err)
+	return recorder, writer, err
+}
+
+// assertShellPrepareFailureOutcome pins the entrypoint result of a shell
+// prepare failure: one session.attach lifecycle pair with wantCode and no
+// top-level outcome, stderr exactly one line, and exit 1.
+func assertShellPrepareFailureOutcome(t *testing.T, err error, recorder *diagnostics.LifecycleRecorder, writer *appLifecycleWriter, wantCode diagnostics.Code, rawStderr string) {
+	t.Helper()
+	if len(writer.events) != 2 {
+		t.Fatalf("journal events = %#v, want one lifecycle pair", writer.events)
+	}
+	outcome := writer.events[1]
+	if outcome.Operation != string(diagnostics.OperationSessionAttach) || outcome.Code != string(wantCode) || outcome.Result != "error" {
+		t.Fatalf("journal outcome = %#v, want session.attach/%s/error", outcome, wantCode)
+	}
+	if outcome.Message != "" || strings.Contains(fmt.Sprint(outcome), rawStderr) {
+		t.Fatalf("journal leaked raw stderr: %#v", outcome)
+	}
+	got := runEntrypointSteps(t, []string{"shell", "--no-install"}, err, recorder)
+	if got.stderr != err.Error()+"\n" || got.exitCode != 1 {
+		t.Fatalf("entrypoint stderr=%q exit=%d, want exactly one line %q and exit 1", got.stderr, got.exitCode, err.Error()+"\n")
+	}
+	if len(got.topLevel) != 0 {
+		t.Fatalf("top-level outcome = %#v, want none after the lifecycle outcome", got.topLevel)
+	}
+}
+
 func TestShellTypedPrepareFailuresReachCLIAndClosedJournal(t *testing.T) {
 	t.Parallel()
+	subprocessExit := exec.Command("sh", "-c", "exit 1").Run()
 	tests := []struct {
 		name      string
 		failure   inttmux.CommandFailure
+		cause     error
 		wantCode  diagnostics.Code
 		wantCause string
 	}{
 		{
 			name: "absent socket", failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /private/cold-start.sock"},
-			wantCode: diagnostics.CodeSessionTmuxSocketUnreachable, wantCause: "no server running",
+			cause: subprocessExit, wantCode: diagnostics.CodeSessionTmuxSocketUnreachable, wantCause: "no server running",
 		},
 		{
 			name: "generic exit", failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "generic tmux refusal"},
-			wantCode: diagnostics.CodeSessionTmuxExit, wantCause: "generic tmux refusal",
+			cause: subprocessExit, wantCode: diagnostics.CodeSessionTmuxExit, wantCause: "generic tmux refusal",
 		},
 		{
 			name: "permission", failure: inttmux.CommandFailure{Kind: inttmux.CommandFailurePermission, Stderr: "permission denied"},
+			cause:    &os.PathError{Op: "fork/exec", Path: "tmux", Err: os.ErrPermission},
 			wantCode: diagnostics.CodeSessionTmuxPermission, wantCause: "permission denied",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			home := t.TempDir()
-			project := filepath.Join(home, "source", "repos", "project")
-			if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
-				t.Fatal(err)
-			}
 			prepareErr := &shellTmuxCommandError{
 				name: "tmux", args: []string{"-L", "projmux", "display-message"},
-				cause: errors.New("injected command failure"), failure: tt.failure,
+				cause: tt.cause, failure: tt.failure,
 			}
-			configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-			probeErr := &shellTmuxCommandError{
-				name: "tmux", args: []string{"-L", "projmux", "has-session"}, cause: errors.New("exit status 1"),
-				failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /private/cold-start.sock"},
-			}
-			tmux := &scriptedShellTmuxRunner{errors: map[string]error{
-				shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "repos-project"): probeErr,
-			}}
-			writer := &appLifecycleWriter{}
-			recorder := diagnostics.NewLifecycleRecorder(writer, "shell-typed-failure", "0.13.0", "tmux")
-			finish := recorder.BeginCommand()
-			cmd := &shellCommand{
-				diagnostics: recorder,
-				executable:  func() (string, error) { return "/tmp/projmux", nil },
-				lookupEnv:   func(string) string { return "" },
-				homeDir:     func() (string, error) { return home, nil },
-				writeFile:   os.WriteFile,
-				runCommand: func(context.Context, []string, string, ...string) error {
-					t.Fatal("failed prepare reached foreground attach")
-					return nil
-				},
-				tmuxRunner:     tmux,
-				getwd:          func() (string, error) { return project, nil },
-				projectSession: func(context.Context, string, shellTarget) error { return prepareErr },
-			}
-			err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{})
-			finish(err)
+			recorder, writer, err := runShellPrepareFailure(t, prepareErr)
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.wantCause) {
 				t.Fatalf("Run() error = %v, want cause %q", err, tt.wantCause)
 			}
-			var exitCoder interface{ ExitCode() int }
-			if errors.As(err, &exitCoder) {
-				t.Fatalf("Run() exposed ExitCode %d; shell tmux failures must keep exit code 1 and the runtime diagnostics kind", exitCoder.ExitCode())
+			if !errors.Is(err, tt.cause) {
+				t.Fatalf("Run() error = %v, want its subprocess cause %v reachable", err, tt.cause)
 			}
-			if len(writer.events) != 2 {
-				t.Fatalf("journal events = %#v, want one lifecycle pair", writer.events)
+			assertShellPrepareFailureOutcome(t, err, recorder, writer, tt.wantCode, tt.failure.Stderr)
+		})
+	}
+}
+
+// sessionCheckFailure fails the materializer's session existence check with
+// err, which is the "check tmux session" site canonical shell startup reaches
+// through ensureSessionAt.
+type sessionCheckFailure struct {
+	*fakeSessionMaterializer
+	err error
+}
+
+func (s sessionCheckFailure) SessionExists(context.Context, string) (bool, error) {
+	return false, s.err
+}
+
+// TestShellPrepareFailureThroughMaterializerKeepsTmuxCode pins the
+// session.attach code of a `projmux shell` startup failure raised by a
+// materializer tmux site: the site keeps its typed tmux cause, so
+// shellTmuxFailureDiagnosticCode classifies the tmux failure itself instead of
+// the generic session_attach_failed.
+func TestShellPrepareFailureThroughMaterializerKeepsTmuxCode(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, stderr string
+		wantCode     diagnostics.Code
+	}{
+		{name: "tmux exit", stderr: "generic tmux refusal", wantCode: diagnostics.CodeSessionTmuxExit},
+		{name: "no server", stderr: "no server running on /x", wantCode: diagnostics.CodeSessionTmuxSocketUnreachable},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newFakeTmux()
+			target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
+			routed := explicitTmuxRunner{runner: server, target: target}
+			runtime := &materializer{
+				runner: routed, mirror: intmetadata.NewMirror(routed), target: target,
+				sessions: sessionCheckFailure{fakeSessionMaterializer: &fakeSessionMaterializer{tmux: server}, err: realTmuxExitFailure(t, tt.stderr)},
 			}
-			outcome := writer.events[1]
-			if outcome.Operation != string(diagnostics.OperationSessionAttach) || outcome.Code != string(tt.wantCode) || outcome.Result != "error" {
-				t.Fatalf("journal outcome = %#v, want session.attach/%s/error", outcome, tt.wantCode)
+			project := coremetadata.Project{
+				Metadata: coremetadata.ObjectMeta{UID: "prj-project", Name: "project"},
+				Spec:     coremetadata.ProjectSpec{Root: "/work/project"},
 			}
-			if outcome.Message != "" || strings.Contains(fmt.Sprint(outcome), tt.failure.Stderr) {
-				t.Fatalf("journal leaked raw stderr: %#v", outcome)
+			_, prepareErr := runtime.ensureSessionAt(context.Background(), project, "repos-project", project.Spec.Root, "", newRuntimeLedger("op-shell"))
+			if prepareErr == nil || !strings.Contains(prepareErr.Error(), `check tmux session "repos-project"`) {
+				t.Fatalf("ensureSessionAt error = %v, want the session check failure", prepareErr)
 			}
+			if got := shellTmuxFailureDiagnosticCode(prepareErr); got != tt.wantCode {
+				t.Fatalf("shellTmuxFailureDiagnosticCode = %q, want %q", got, tt.wantCode)
+			}
+
+			recorder, writer, err := runShellPrepareFailure(t, prepareErr)
+			var exitErr *exec.ExitError
+			if err == nil || !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+				t.Fatalf("Run() error = %v, want the materializer's subprocess cause", err)
+			}
+			assertShellPrepareFailureOutcome(t, err, recorder, writer, tt.wantCode, tt.stderr)
 		})
 	}
 }

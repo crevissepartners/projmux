@@ -1015,16 +1015,10 @@ type shellTmuxExecRunner struct {
 	env func() []string
 }
 
-// shellTmuxCommandError keeps the subprocess cause visible to the operator and
-// exposes only the integrations/tmux failure projection to classifiers. It
-// deliberately does not unwrap the raw *exec.ExitError, for two reasons. It
-// pins the command's exit code to 1 instead of forwarding tmux's own code (a
-// signal-killed tmux would otherwise surface as 255). And the same runner backs
-// attach's home-session preparation, which returns this error without a
-// lifecycle-owned outcome, so the top-level diagnostics outcome would journal an
-// exposed exit coder as a non-success exit (kind exit) instead of a runtime
-// failure. Once RecordOutcome stops classifying a wrapped exit error as exit,
-// this can unwrap its cause.
+// shellTmuxCommandError keeps the subprocess cause visible to the operator,
+// wraps it for errors.As/Is, and exposes the integrations/tmux failure
+// projection to classifiers. cli.ClassifyFailure decides whether the
+// entrypoint prints it and which exit code and journal kind it gets.
 type shellTmuxCommandError struct {
 	name    string
 	args    []string
@@ -1041,6 +1035,8 @@ func (e *shellTmuxCommandError) Error() string {
 }
 
 func (e *shellTmuxCommandError) CommandFailure() inttmux.CommandFailure { return e.failure }
+
+func (e *shellTmuxCommandError) Unwrap() error { return e.cause }
 
 func (r shellTmuxExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)

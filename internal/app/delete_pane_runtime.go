@@ -332,7 +332,7 @@ func (r *tmuxPaneDeleteRuntime) revalidateMutationTarget(ctx context.Context, ta
 	format := tmuxRowFormat(columns...)
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", target.PaneID, "-F", format)
 	if err != nil {
-		return tmuxError("revalidate exact live Pane %s on %s %s: %v", target.PaneID, r.target.Flag(), r.target.Value, err)
+		return fmt.Errorf("revalidate exact live Pane %s on %s %s: %w", target.PaneID, r.target.Flag(), r.target.Value, err)
 	}
 	rows := splitTmuxRows(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep), len(columns))
 	if len(rows) != 1 {
@@ -401,7 +401,7 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 	)
 	out, err := r.routed().Run(ctx, "tmux", "list-panes", "-a", "-F", format)
 	if err != nil {
-		return nil, tmuxError("delete pane: inventory exact tmux socket: %v", err)
+		return nil, fmt.Errorf("delete pane: inventory exact tmux socket: %w", err)
 	}
 	out = []byte(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep))
 	var rows []livePaneDeleteRow
@@ -432,9 +432,9 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 func (r *tmuxPaneDeleteRuntime) exactSocketPath(ctx context.Context) (string, error) {
 	if err := r.observeSocketIdentity(ctx); err != nil {
 		if inttmux.IsNoServerFailure(err) {
-			return "", tmuxError("delete pane: exact tmux socket is unavailable (no-server); absence is not Registry deletion authority and nothing was changed: %v", err)
+			return "", fmt.Errorf("delete pane: exact tmux socket is unavailable (no-server); absence is not Registry deletion authority and nothing was changed: %w", err)
 		}
-		return "", tmuxError("delete pane: exact tmux socket observation failed: %v", err)
+		return "", fmt.Errorf("delete pane: exact tmux socket observation failed: %w", err)
 	}
 	if strings.TrimSpace(r.expectedSocketPath) == "" {
 		return "", errors.New("delete pane: exact tmux socket identity is empty; absence is not Registry deletion authority and nothing was changed")
@@ -934,7 +934,7 @@ func (r *tmuxPaneDeleteRuntime) currentInvocationPane(ctx context.Context) (stri
 	inheritedSocket, _, _ := strings.Cut(strings.TrimSpace(r.getenv("TMUX")), ",")
 	serverSocket, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
-		return "", "", tmuxError("delete pane: inspect exact caller socket: %v", err)
+		return "", "", fmt.Errorf("delete pane: inspect exact caller socket: %w", err)
 	}
 	if strings.TrimSpace(string(serverSocket)) != inheritedSocket {
 		return "", "", nil
@@ -942,7 +942,7 @@ func (r *tmuxPaneDeleteRuntime) currentInvocationPane(ctx context.Context) (stri
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", strings.TrimSpace(r.getenv("TMUX_PANE")),
 		"-F", tmuxRowFormat("#{socket_path}", "#{pane_id}"))
 	if err != nil {
-		return "", "", tmuxError("delete pane: inspect exact caller pane %s: %v", strings.TrimSpace(r.getenv("TMUX_PANE")), err)
+		return "", "", fmt.Errorf("delete pane: inspect exact caller pane %s: %w", strings.TrimSpace(r.getenv("TMUX_PANE")), err)
 	}
 	rows := splitTmuxRows(string(out), 2)
 	if len(rows) != 1 || strings.TrimSpace(rows[0][0]) != inheritedSocket {
@@ -1036,7 +1036,7 @@ func (r *tmuxPaneDeleteRuntime) rollbackReplacements(ctx context.Context, receip
 func (r *tmuxPaneDeleteRuntime) kill(ctx context.Context, target paneLiveDeleteTarget) error {
 	_, err := r.killAll(ctx, []paneLiveDeleteTarget{target})
 	if err != nil {
-		return tmuxError("delete pane: kill exact live Pane %s in Window %s session %s (%s): %v",
+		return fmt.Errorf("delete pane: kill exact live Pane %s in Window %s session %s (%s): %w",
 			target.PaneID, target.WindowID, target.SessionName, target.SessionID, err)
 	}
 	return nil
@@ -1088,10 +1088,10 @@ func (r *tmuxPaneDeleteRuntime) tombstoneSelfKill(ctx context.Context, targets [
 		marked := targets[:applied]
 		if strings.Contains(err.Error(), "owned reverse rollback incomplete") {
 			return fmt.Errorf("%w; rollback of earlier exact Pane tombstone(s) %s was incomplete; Registry resources remain authoritative and the reported tombstone drift cannot be orphan-imported",
-				tmuxError("tombstone exact live Pane before Registry commit: %v", err), paneDeleteIDs(marked))
+				fmt.Errorf("tombstone exact live Pane before Registry commit: %w", err), paneDeleteIDs(marked))
 		}
 		return fmt.Errorf("%w; earlier exact Pane tombstone(s) %s were restored and Registry resources remain unchanged",
-			tmuxError("tombstone exact live Pane before Registry commit: %v", err), paneDeleteIDs(marked))
+			fmt.Errorf("tombstone exact live Pane before Registry commit: %w", err), paneDeleteIDs(marked))
 	}
 	return nil
 }
@@ -1131,7 +1131,7 @@ func (r *tmuxPaneDeleteRuntime) queueSelfKill(ctx context.Context, targets []pan
 		queued := ordered[:queuedCount]
 		remaining := ordered[queuedCount:]
 		return fmt.Errorf("%w; queued exact Pane(s) %s may complete, while tombstoned unqueued Pane(s) %s remain as retryable drift and cannot be orphan-imported",
-			tmuxError("queue exact live Pane plan for self-target deletion: %v", err),
+			fmt.Errorf("queue exact live Pane plan for self-target deletion: %w", err),
 			paneDeleteIDs(queued), paneDeleteIDs(remaining))
 	}
 	return nil

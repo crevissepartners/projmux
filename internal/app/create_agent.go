@@ -493,7 +493,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			// result is reported.
 			if usedNative {
 				if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workWorkspace.CWD, workTitle, "", nativeBinding.ThreadID); err != nil {
-					return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
+					return fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", spelling, paneID, err)
 				}
 				if nativeLifecycleCapable {
 					nativeLifecycleTargets = append(nativeLifecycleTargets, codexLifecycleObserverTarget{
@@ -506,7 +506,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				}
 			} else if err := c.bindAgentPane(ctx, paneID, provider, workWorkspace.CWD, workTitle,
 				declaredPlainCodexLane(provider, flags, prompt), flags); err != nil {
-				return tmuxError("%s: bind Agent Pane %s presentation metadata: %v", spelling, paneID, err)
+				return fmt.Errorf("%s: bind Agent Pane %s presentation metadata: %w", spelling, paneID, err)
 			}
 			if len(flags.payload) > 0 && !usedNative {
 				activationTargets = append(activationTargets, agentActivationTarget{

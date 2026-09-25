@@ -87,75 +87,62 @@ func assertNoPaneDeleteTmuxKill(t *testing.T, runner *recordingTmuxRunner) {
 	}
 }
 
-type paneDeleteExitCommandFailure struct {
-	failure inttmux.CommandFailure
-}
-
-func (e paneDeleteExitCommandFailure) Error() string {
-	return "typed tmux command failure: " + e.failure.Stderr
-}
-
-func (e paneDeleteExitCommandFailure) CommandFailure() inttmux.CommandFailure {
-	return e.failure
-}
-
-func (e paneDeleteExitCommandFailure) ExitCode() int { return 1 }
-
-func TestPaneDeletePreflightFlattensExitCodeAfterTypedSocketClassification(t *testing.T) {
+// TestPaneDeleteSocketObservationFailureKeepsSubprocessCause pins the delete
+// pane preflight's socket observation failures, with and without a typed
+// no-server classification: the diagnostic keeps its wording, the tmux cause
+// stays reachable, and cmd/projmux prints the error once and exits with the
+// child's code under a runtime journal kind.
+func TestPaneDeleteSocketObservationFailureKeepsSubprocessCause(t *testing.T) {
 	registry := resourceFixtureRegistry(t)
 	plan := exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
-	exitFailure := paneDeleteExitCommandFailure{failure: inttmux.CommandFailure{
-		Kind: inttmux.CommandFailureExit, Stderr: "no server running on " + testDeleteTarget.Value,
-	}}
-	newRuntime := func() *tmuxPaneDeleteRuntime {
-		runtime, runner, _ := newPaneRuntimeFixture(t, "")
-		key := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value,
-			"display-message", "-p", "-F", "#{socket_path}")
-		runner.errors = map[string]error{key: exitFailure}
-		return runtime
-	}
-
-	observationErr := newRuntime().observeSocketIdentity(context.Background())
-	if !inttmux.IsNoServerFailure(observationErr) {
-		t.Fatalf("direct observation lost typed no-server evidence: %v", observationErr)
-	}
-	var observedExit interface{ ExitCode() int }
-	if !errors.As(observationErr, &observedExit) {
-		t.Fatalf("direct observation lost subprocess exit identity: %v", observationErr)
-	}
-
-	_, preflightErr := newRuntime().preflight(context.Background(), registry, plan)
-	if preflightErr == nil || !strings.Contains(preflightErr.Error(), "unavailable (no-server)") ||
-		!strings.Contains(preflightErr.Error(), "absence is not Registry deletion authority") {
-		t.Fatalf("preflight diagnostic = %v", preflightErr)
-	}
-	var escapedExit interface{ ExitCode() int }
-	if errors.As(preflightErr, &escapedExit) {
-		t.Fatalf("CLI-facing preflight leaked subprocess ExitCode identity: %T %v", escapedExit, preflightErr)
-	}
-	if inttmux.IsNoServerFailure(preflightErr) {
-		t.Fatalf("CLI-facing preflight leaked internal typed no-server carrier: %v", preflightErr)
-	}
-}
-
-func TestPaneDeletePreflightFlattensOtherSocketExitFailures(t *testing.T) {
-	registry := resourceFixtureRegistry(t)
-	plan := exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
-	runtime, runner, _ := newPaneRuntimeFixture(t, "")
 	key := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value,
 		"display-message", "-p", "-F", "#{socket_path}")
-	runner.errors = map[string]error{key: paneDeleteExitCommandFailure{failure: inttmux.CommandFailure{
-		Kind: inttmux.CommandFailureExit, Stderr: "failed to connect to server: permission denied",
-	}}}
+	for _, tt := range []struct {
+		name, stderr string
+		want         []string
+		wantNoServer bool
+	}{
+		{
+			name: "no server", stderr: "no server running on " + testDeleteTarget.Value,
+			want:         []string{"unavailable (no-server)", "absence is not Registry deletion authority"},
+			wantNoServer: true,
+		},
+		{
+			name: "other exit", stderr: "failed to connect to server: permission denied",
+			want: []string{"exact tmux socket observation failed", "permission denied"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			failure := realTmuxExitFailure(t, tt.stderr)
+			newRuntime := func() *tmuxPaneDeleteRuntime {
+				runtime, runner, _ := newPaneRuntimeFixture(t, "")
+				runner.errors = map[string]error{key: failure}
+				return runtime
+			}
 
-	_, err := runtime.preflight(context.Background(), registry, plan)
-	if err == nil || !strings.Contains(err.Error(), "exact tmux socket observation failed") ||
-		!strings.Contains(err.Error(), "permission denied") {
-		t.Fatalf("generic socket observation diagnostic = %v", err)
-	}
-	var escapedExit interface{ ExitCode() int }
-	if errors.As(err, &escapedExit) {
-		t.Fatalf("generic CLI-facing preflight leaked subprocess ExitCode identity: %T %v", escapedExit, err)
+			_, preflightErr := newRuntime().preflight(context.Background(), registry, plan)
+			if preflightErr == nil {
+				t.Fatal("preflight succeeded; want the socket observation failure")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(preflightErr.Error(), want) {
+					t.Fatalf("preflight diagnostic = %v, want %q", preflightErr, want)
+				}
+			}
+			if got := inttmux.IsNoServerFailure(preflightErr); got != tt.wantNoServer {
+				t.Fatalf("IsNoServerFailure(preflight) = %v, want %v: %v", got, tt.wantNoServer, preflightErr)
+			}
+
+			store := newFakeResourceStore(t)
+			cmd := newTestDeleteCommand(store, false, false, nil)
+			cmd.panes = newRuntime()
+			args := []string{"pane", "uid:pan-alpha-log", "--dry-run"}
+			_, _, err := runRoute(t, cmd, args...)
+			if err == nil || !strings.Contains(err.Error(), tt.want[0]) {
+				t.Fatalf("delete route error = %v, want %q", err, tt.want[0])
+			}
+			assertPrintedRuntimeSubprocessFailure(t, append([]string{"delete"}, args...), err)
+		})
 	}
 }
 

@@ -207,6 +207,42 @@ func TestManagedProjectionRoutingFailureKeepsCommit(t *testing.T) {
 	}
 }
 
+// TestManagedAIStatusProjectionFailureNamesThePaneWrite pins the ingest reason
+// of a hook whose managed status commit landed but whose Pane projection write
+// was refused: the committed-mirror error keeps the pane-write sentinel, so
+// aiIngestFailureReason records the write token instead of the operation.
+func TestManagedAIStatusProjectionFailureNamesThePaneWrite(t *testing.T) {
+	tc := managedProjectionCases("%7")[0]
+	if tc.args[0] != "ingest" {
+		t.Fatalf("case %q is not the hook ingest path", tc.name)
+	}
+	h := prepareManagedProjection(t)
+	h.cmd.runCommand = func(context.Context, string, ...string) error {
+		if h.updates == 0 {
+			return nil
+		} // Hook markers precede the managed commit.
+		return errors.New("fixture write refused")
+	}
+	err := runManagedProjectionCase(h, tc, &bytes.Buffer{}, &bytes.Buffer{})
+	if !errors.Is(err, errAIPaneWriteUnavailable) {
+		t.Fatalf("ingest error = %v, want the pane-write sentinel reachable", err)
+	}
+	if got := aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err); got != aiPaneWriteReasonUnavailable {
+		t.Fatalf("aiIngestFailureReason = %q, want %q", got, aiPaneWriteReasonUnavailable)
+	}
+	path, pathErr := h.cmd.aiIngestLogPath()
+	if pathErr != nil {
+		t.Fatalf("aiIngestLogPath() error = %v", pathErr)
+	}
+	payload, readErr := os.ReadFile(path) // #nosec G304 -- test-owned temp home.
+	if readErr != nil {
+		t.Fatalf("read ingest log: %v", readErr)
+	}
+	if want := `"reason":"` + aiPaneWriteReasonUnavailable + `"`; !strings.Contains(string(payload), want) {
+		t.Fatalf("ingest log = %s, want %s", payload, want)
+	}
+}
+
 func runManagedProjectionCase(h *sessionRefHarness, tc managedProjectionCase, out, errOut *bytes.Buffer) error {
 	args := append([]string{}, tc.args...)
 	if tc.args[0] == "ingest" {

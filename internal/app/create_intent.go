@@ -1210,7 +1210,7 @@ func (c *createCommand) openIntentAgent(
 	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID, notices: notices}
 	if usedNative {
 		if err := bindNativeCodexPaneOnRoute(ctx, plan.nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, "", nativeThreadID); err != nil {
-			return intentAgentOpened{}, tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
+			return intentAgentOpened{}, fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", canonicalCreateAgent, paneID, err)
 		}
 		if plan.nativeLifecycleCapable {
 			opened.lifecycle = codexLifecycleObserverTarget{
@@ -1223,13 +1223,13 @@ func (c *createCommand) openIntentAgent(
 		}
 	} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, title,
 		declaredPlainCodexLane(provider, flags, ""), flags); err != nil {
-		return intentAgentOpened{}, tmuxError("%s: bind Agent Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
+		return intentAgentOpened{}, fmt.Errorf("%s: bind Agent Pane %s presentation metadata: %w", canonicalCreateAgent, paneID, err)
 	}
 	if err := c.runtime.runIdentityWrites(ctx, "pane", paneID, pane.Metadata.UID, []identityPlanWrite{
 		{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption}, effect: "legacy AI topic projection absent"},
 		{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicManualOption}, effect: "legacy manual-topic projection absent"},
 	}); err != nil {
-		return intentAgentOpened{}, tmuxError("%s: clear compatibility topic projections on Pane %s: %v", canonicalCreateAgent, paneID, err)
+		return intentAgentOpened{}, fmt.Errorf("%s: clear compatibility topic projections on Pane %s: %w", canonicalCreateAgent, paneID, err)
 	}
 	return opened, nil
 }

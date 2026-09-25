@@ -40,6 +40,9 @@ type fakeTmux struct {
 	fail        []string
 	failMessage string
 	failed      bool
+	// failCause replaces the pre-mutation failure's zero *exec.ExitError, so
+	// a test that asserts the exit code can inject a real one.
+	failCause error
 	// failAfterMutation models tmux lifecycle-hook failures: tmux has already
 	// applied the requested mutation and produced its normal output, then returns
 	// the hook's non-zero status and diagnostic in the same combined output.
@@ -382,7 +385,11 @@ func (f *fakeTmux) Run(ctx context.Context, name string, args ...string) ([]byte
 		}
 		// The real runner returns an *exec.ExitError here, which is what makes
 		// the exit-code suppression trap in cmd/projmux reachable at all.
-		return nil, fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), &exec.ExitError{}, message)
+		var cause error = &exec.ExitError{}
+		if f.failCause != nil {
+			cause = f.failCause
+		}
+		return nil, fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), cause, message)
 	}
 	if len(args) == 0 {
 		return nil, fmt.Errorf("fake tmux: empty argv")

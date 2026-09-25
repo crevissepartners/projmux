@@ -567,24 +567,20 @@ func intentAgentFlags(intent agentPaneIntent, argv []string, conversation string
 	return flags, nil
 }
 
-// visibleCanonicalCreateError prevents any ExitCode coder from escaping a UI
-// create and preserves the exact text on a plain error that the originating
-// popup/client can display. For an app-defined coder this keeps the message
-// visible, because cmd/projmux stays silent for those. For a wrapped
-// subprocess exit error it pins the exit code to 1 instead of forwarding the
-// child's code, and keeps a caller outside a lifecycle-owned command from being
-// journaled by the top-level diagnostics outcome as a non-success exit (kind
-// exit) instead of a runtime failure. Once that diagnostics classification
-// changes, the subprocess case can keep its cause.
+// visibleCanonicalCreateError keeps a UI create's failure text reachable by the
+// originating popup/client. An error the entrypoint would stay silent on (an
+// app-defined coder or a bare subprocess *exec.ExitError) becomes a plain error
+// carrying the same text, so it is printed and exits 1. An error the entrypoint
+// already prints, such as a wrapped subprocess exit error, is returned
+// unchanged so it keeps its cause; cli.ClassifyFailure is the one judge.
 func visibleCanonicalCreateError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var coded interface{ ExitCode() int }
-	if errors.As(err, &coded) {
-		return errors.New(err.Error())
+	if cli.ClassifyFailure(err, IsUsageError(err)).Print {
+		return err
 	}
-	return err
+	return errors.New(err.Error())
 }
 
 // canonicalArgv renders one intent as the argv an operator would type, and
