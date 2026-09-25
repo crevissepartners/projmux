@@ -644,7 +644,7 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	case "ai":
 		return false
 	case "agent":
-		if len(args) >= 2 && (args[1] == "capabilities" || args[1] == "message" || args[1] == "question" || (args[1] == "resume" && hasClaudeDialogueModeFlag(args[2:]))) {
+		if len(args) >= 2 && (args[1] == "capabilities" || args[1] == "models" || args[1] == "message" || args[1] == "question" || (args[1] == "resume" && hasClaudeDialogueModeFlag(args[2:]))) {
 			return false
 		}
 	case "create":

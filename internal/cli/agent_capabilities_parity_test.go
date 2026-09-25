@@ -18,7 +18,7 @@ func TestAgentCapabilityCatalogRoutesMatchExecutableHelpGraph(t *testing.T) {
 	}
 	var groups []string
 	for _, child := range agent.Children {
-		if child.Name != "capabilities" {
+		if child.Name != "capabilities" && child.Name != "models" {
 			groups = append(groups, child.Name)
 		}
 	}

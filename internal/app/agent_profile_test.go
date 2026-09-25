@@ -845,3 +845,22 @@ func funcDeclName(fn *ast.FuncDecl) string {
 	}
 	return fn.Name.Name
 }
+
+// TestCreateClaudeAgentFromProfileKeepsAModelOutsideTheSuggestedList holds
+// `agent models` to a suggestion: a Profile `model` outside the core list is
+// still parsed and passed to Claude unchanged.
+func TestCreateClaudeAgentFromProfileKeepsAModelOutsideTheSuggestedList(t *testing.T) {
+	t.Parallel()
+	const unlisted = "claude-opus-5"
+	if slices.Contains(profile.ClaudeModels(), unlisted) {
+		t.Fatalf("%q is listed; pick a name outside the list", unlisted)
+	}
+	f := newProfileFixture(t)
+	f.writeProfile(t, "unlisted", "model = \""+unlisted+"\"\n")
+	if _, stderr, err := f.createClaude(t, "--profile", "unlisted"); err != nil {
+		t.Fatalf("create: %v (stderr=%q)", err, stderr)
+	}
+	if got, want := f.onlyArgvTail(t, aiModeClaude), []string{"--model", unlisted, "--", "review this"}; !slices.Equal(got, want) {
+		t.Fatalf("exec argv tail = %q, want %q", got, want)
+	}
+}

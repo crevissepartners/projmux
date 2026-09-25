@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 210 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 211 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -130,6 +130,7 @@ projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <
 projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
 projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
+projmux agent models [--provider claude] [-o json]
 projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message status <message-ref> [-o json]
 projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
@@ -155,11 +156,12 @@ Subcommands:
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install, remove, or preview provider hooks and tmux-bell integration |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
 | [`projmux agent capabilities`](#projmux-agent-capabilities) | Read static provider support or one exact Agent's Registry-backed runtime eligibility |
+| [`projmux agent models`](#projmux-agent-models) | List the Claude model names projmux suggests for --model; other names are still accepted |
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`
 
 ### `projmux agent status`
 
@@ -610,6 +612,29 @@ Allowed effects:
 
 ```
 projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
+```
+
+Output modes (`-o`): `json`
+
+### `projmux agent models`
+
+List the Claude model names projmux suggests for --model; other names are still accepted
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux agent models [--provider claude] [-o json]
 ```
 
 Output modes (`-o`): `json`
