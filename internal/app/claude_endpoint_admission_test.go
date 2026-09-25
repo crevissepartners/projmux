@@ -394,3 +394,53 @@ func TestClaudeEndpointAdmissionReleasedHelperWaitingOnLockBecomesReady(t *testi
 	assertClaudeAdmissionResidue(t, residue, false)
 	assertClaudeAdmissionDirGone(t, dir)
 }
+
+// R2 (c): the supervisor removes every lease file once it reaped the provider,
+// without reading Registry. A released helper still waiting on the Registry
+// lock at that moment must not recreate them or record Ready afterwards: its
+// Record sees the provider gone, it exits, and nothing is left behind.
+func TestClaudeEndpointAdmissionReleasedHelperWaitingOnLockSurvivesSupervisorCleanup(t *testing.T) {
+	t.Parallel()
+	f := newClaudeEndpointTestFixture(t)
+	dir := cleanupClaudeAdmissionLeaseDir(t, f.bootstrap)
+	release := holdClaudeRegistryLock(t, f.store, nil)
+	helper, _, done := startReleasedClaudeHelper(t, f.bootstrap)
+	residue := claudeAdmissionResidue(t, f.bootstrap)
+	assertClaudeAdmissionResidue(t, residue, true)
+	if err := f.provider.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.provider.Wait()
+	cleanupClaudeActivationLeases(superviseSpec{RegistryPath: f.bootstrap.RegistryPath, PaneUID: f.bootstrap.PaneUID,
+		AgentUID: f.bootstrap.AgentUID, Generation: f.bootstrap.Generation})
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("helper exited while blocked on the Registry lock: %v", err)
+	default:
+	}
+	assertClaudeAdmissionResidue(t, residue, false)
+	assertClaudeAdmissionDirGone(t, dir)
+	release()
+	helper.assertReleased(t)
+	select {
+	case err := <-done:
+		if err == nil || err.Error() != "claude registration admission failed" {
+			t.Fatalf("helper exit = %v, want only its Record refusal", err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("released helper did not exit after the provider was gone")
+	}
+	if _, reason := f.route(t); reason == "" {
+		t.Fatal("registration became Ready after supervisor cleanup")
+	}
+	reg, err := f.store.LoadDegradedReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pane, _ := reg.Pane(f.bootstrap.PaneUID); pane.Status.Activation.Claude != nil && pane.Status.Activation.Claude.Registration != nil {
+		t.Fatal("helper recorded a registration after supervisor cleanup")
+	}
+	assertClaudeAdmissionResidue(t, residue, false)
+	assertClaudeAdmissionDirGone(t, dir)
+}
