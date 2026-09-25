@@ -145,6 +145,10 @@ PROJMUX_RESOURCE_PROJECT_FALLBACK_SMOKE=1 go test \
   ./internal/integrations/tmux
 ```
 
+`PROJMUX_REAL_TMUX_STRICT=1` also turns on both isolated smokes, and the CI
+Unit Tests job sets it, so they run there and a missing tmux fails them
+instead of skipping. The read-only smoke above stays opt-in.
+
 ## Phase 1 inspector
 
 The popup retains warming/partial/unavailable and overage states, renders RSS
