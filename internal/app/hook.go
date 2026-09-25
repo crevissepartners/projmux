@@ -156,22 +156,26 @@ func (c *hookCommand) printList(scope hookListScope, stdout, stderr io.Writer) e
 	if projectErr != nil {
 		fmt.Fprintf(stderr, "projmux hook: project config %q parse error: %v\n", projectPath, projectErr)
 	}
+	projectNote := ""
+	if projectCtx != "" {
+		projectNote = c.projectScopeNote()
+	}
 
 	switch scope {
 	case hookListScopeGlobal:
-		return c.writeScopeTable(stdout, "global", globalPath, globalCfg)
+		return c.writeScopeTable(stdout, "global", globalPath, globalCfg, "")
 	case hookListScopeProject:
 		if projectCtx == "" {
 			fmt.Fprintln(stdout, "no project context (run from inside a project tree or set PROJMUX_CWD)")
 			return nil
 		}
-		return c.writeScopeTable(stdout, "project", projectPath, projectCfg)
+		return c.writeScopeTable(stdout, "project", projectPath, projectCfg, projectNote)
 	case hookListScopeEffective:
-		return c.writeEffectiveTable(stdout, globalPath, projectPath, projectCtx, globalCfg, projectCfg)
+		return c.writeEffectiveTable(stdout, globalPath, projectPath, projectCtx, projectNote, globalCfg, projectCfg)
 	default:
 		// Default view: render both global and project tables so the user
 		// sees the full active set in one shot.
-		if err := c.writeScopeTable(stdout, "global", globalPath, globalCfg); err != nil {
+		if err := c.writeScopeTable(stdout, "global", globalPath, globalCfg, ""); err != nil {
 			return err
 		}
 		fmt.Fprintln(stdout)
@@ -179,12 +183,17 @@ func (c *hookCommand) printList(scope hookListScope, stdout, stderr io.Writer) e
 			fmt.Fprintln(stdout, "project: no project context (run from inside a project tree or set PROJMUX_CWD)")
 			return nil
 		}
-		return c.writeScopeTable(stdout, "project", projectPath, projectCfg)
+		return c.writeScopeTable(stdout, "project", projectPath, projectCfg, projectNote)
 	}
 }
 
-func (c *hookCommand) writeScopeTable(stdout io.Writer, scope, path string, cfg hooks.ProjectConfig) error {
+// writeScopeTable renders one config file's hooks. note, when non-empty, is
+// printed under the file path (see projectScopeNote).
+func (c *hookCommand) writeScopeTable(stdout io.Writer, scope, path string, cfg hooks.ProjectConfig, note string) error {
 	fmt.Fprintf(stdout, "%s config: %s\n", scope, path)
+	if note != "" {
+		fmt.Fprintln(stdout, note)
+	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "EVENT\tSTATE\tRUN")
 	for _, event := range hooks.SupportedEvents {
@@ -201,12 +210,15 @@ func (c *hookCommand) writeScopeTable(stdout io.Writer, scope, path string, cfg 
 	return tw.Flush()
 }
 
-func (c *hookCommand) writeEffectiveTable(stdout io.Writer, globalPath, projectPath, projectCtx string, globalCfg, projectCfg hooks.ProjectConfig) error {
+func (c *hookCommand) writeEffectiveTable(stdout io.Writer, globalPath, projectPath, projectCtx, projectNote string, globalCfg, projectCfg hooks.ProjectConfig) error {
 	fmt.Fprintf(stdout, "global config:  %s\n", globalPath)
 	if projectCtx == "" {
 		fmt.Fprintln(stdout, "project config: (no project context)")
 	} else {
 		fmt.Fprintf(stdout, "project config: %s\n", projectPath)
+		if projectNote != "" {
+			fmt.Fprintln(stdout, projectNote)
+		}
 	}
 
 	// All effective sections come straight from the shared MergeEffective
@@ -567,6 +579,11 @@ func (c *hookCommand) runValidate(args []string, stdout, stderr io.Writer) error
 			fmt.Fprintf(stdout, "project  %s   OK\n", projectPath)
 		}
 	}
+	if projectCtx != "" {
+		if note := c.projectScopeNote(); note != "" {
+			fmt.Fprintln(stdout, note)
+		}
+	}
 	if !ok {
 		return &hookValidateError{}
 	}
@@ -709,29 +726,57 @@ func (c *hookCommand) loadProject() (string, hooks.ProjectConfig, error, string)
 // resolveProjectContext mirrors the Settings UI's "what project am I in"
 // resolution but trimmed for CLI use: PROJMUX_CWD wins (so tmux-launched
 // CLI invocations inherit the pane's project), otherwise we fall back to
-// `os.Getwd()` and walk upward to the nearest `.projmux` or `.git` marker.
-// The implicit walk stops before considering the system temp root itself so
-// temp fixtures and other scratch parents do not become project contexts.
-// Returning an empty string is not an error; downstream commands decide
-// whether the context is required.
+// `os.Getwd()`. A working directory with its own `.projmux/config.toml` is
+// the context, because that is the file the hook runner reads for sessions
+// created there; otherwise we walk upward to the nearest `.projmux` or `.git`
+// marker. The implicit walk stops before considering the system temp root
+// itself so temp fixtures and other scratch parents do not become project
+// contexts. Returning an empty string is not an error; downstream commands
+// decide whether the context is required.
 func (c *hookCommand) resolveProjectContext() (string, error) {
+	root, _, err := c.resolveProjectScope()
+	return root, err
+}
+
+// resolveProjectScope returns the project context root and the directory the
+// command runs from (PROJMUX_CWD, else the working directory). The two differ
+// only when the root was found by walking up from the working directory.
+func (c *hookCommand) resolveProjectScope() (root, cwd string, err error) {
 	if c.lookupEnv != nil {
 		if raw := strings.TrimSpace(c.lookupEnv("PROJMUX_CWD")); raw != "" {
-			return filepath.Clean(raw), nil
+			cwd = filepath.Clean(raw)
+			return cwd, cwd, nil
 		}
 	}
 	if c.getwd == nil {
-		return "", nil
+		return "", "", nil
 	}
 	wd, err := c.getwd()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	wd = filepath.Clean(wd)
-	if root := nearestProjectMarker(wd, os.TempDir()); root != "" {
-		return root, nil
+	if hooks.SessionProjectConfigPath(wd) != "" {
+		return wd, wd, nil
 	}
-	return "", nil
+	if root := nearestProjectMarker(wd, os.TempDir()); root != "" {
+		return root, wd, nil
+	}
+	return "", wd, nil
+}
+
+// projectScopeNote says, when the project context was found by walking up,
+// that sessions created in the current directory do not read the context's
+// config: the hook runner reads only <session dir>/.projmux/config.toml. It
+// names the session-scoped surfaces only. send-noti is left out because its
+// dispatcher resolves the project root on its own and does run that file's
+// send-noti hook.
+func (c *hookCommand) projectScopeNote() string {
+	root, cwd, err := c.resolveProjectScope()
+	if err != nil || root == "" || root == cwd {
+		return ""
+	}
+	return fmt.Sprintf("note: sessions created in %s do not run this file's pre-create, post-create, or post-attach hooks, [startup], or [env]; only sessions created in %s do", cwd, root)
 }
 
 // nearestProjectMarker walks parent directories looking for a `.projmux` or
