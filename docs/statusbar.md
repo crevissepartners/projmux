@@ -73,11 +73,12 @@ row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
   response-complete live badge, including stale `@projmux_ai_state=waiting`
   fallback state; action-required and in-progress live badges remain visible.
   Window-list badges and app pane-border badges use the same semantic priority,
-  with display style controlled by Settings > Appearance > AI badge style and persisted in
-  `~/.config/projmux/ai-badge-style`. The default is `dot`; `emoji` renders
-  `⏳` for approval/input-required, `✅` for response-complete, and `🔄` for
-  in-progress. `off` (also accepted as `minimal` when read from disk) preserves
-  the same spacing without drawing a marker.
+  with display style controlled by Settings > Appearance > AI badge style and
+  persisted in `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-badge-style`.
+  The default is `dot`; `emoji` renders `⏳` for approval/input-required,
+  `✅` for response-complete, and `🔄` for in-progress. `off` (also accepted as
+  `minimal` when read from disk) preserves the same spacing without drawing a
+  marker.
   The session, pwd, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
   handler. The standalone config also wraps the right-side `projmux`
@@ -477,14 +478,14 @@ git-provider, or bell icon), or `emoji`. Git branch decoration follows
 fox-style mark, and other remotes use a generic git branch mark. Saving
 visibility or Resources regenerates the app/standalone config and source-loads
 the generated app config when Settings is running inside tmux. The legacy
-`~/.config/projmux/statusbar-decoration` and
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/statusbar-decoration` and
 `@projmux_statusbar_decoration` remain fallback defaults for older configs.
 Settings > Theme controls the bottom status bar background through
 `status_background`; `surface` controls popup and native frame backgrounds.
 
-Resources uses `~/.config/projmux/live-resources` as its single saved enabled
-state; there is no separate Resources visibility file or duplicate toggle. CPU
-sampling state is an internal,
+Resources uses `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/live-resources` as
+its single saved enabled state; there is no separate Resources visibility file
+or duplicate toggle. CPU sampling state is an internal,
 atomically replaced file under `${XDG_STATE_HOME:-~/.local/state}/projmux/`
 and is not a user-edited setting.
 

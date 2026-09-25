@@ -1003,10 +1003,10 @@ it does not retroactively change the current shell. Open new panes via tmux
 ## Troubleshooting
 
 - **Nothing happens.** Check the execute bit on the global hook
-  (`ls -l ~/.config/projmux/hooks/<event>`) or the project hook
-  (`ls -l .projmux/<event> .projmux/hooks/<event>`). A missing bit makes
-  projmux skip hook files silently by design. `.projmux/config.toml` does not
-  need an execute bit.
+  (`ls -l "${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/<event>"`) or the
+  project hook (`ls -l .projmux/<event> .projmux/hooks/<event>`). A missing
+  bit makes projmux skip hook files silently by design. `.projmux/config.toml`
+  does not need an execute bit.
 - **`project hook ... requires trust; skipping in non-interactive context`** or
   **`project config ... requires trust; skipping in non-interactive context`.**
   Run the same projmux command from an interactive terminal to approve the file,
