@@ -1,10 +1,16 @@
 package app
 
 import (
+	"bytes"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 // TestConfigDomainForwardsRawArgvToTheTmuxHandler is the config-domain parity
@@ -230,5 +236,197 @@ func TestConfigRouteIsWiredIntoTheApplicationGraph(t *testing.T) {
 	}
 	if _, ok := app.routeHandlers()["tmux"]; ok {
 		t.Fatal("the retired pre-namespace tmux route still has a handler")
+	}
+}
+
+// configForwarderFixture is one App graph whose `config` alias and hidden
+// `internal tmux` spellings reach the same real ai and tmux handlers, with a
+// temp HOME, a recording tmux runner, and a lifecycle writer that observes any
+// apply diagnostics mark.
+type configForwarderFixture struct {
+	home   string
+	app    *App
+	ai     *aiCommand
+	runner *recordingTmuxRunner
+	writer *appLifecycleWriter
+}
+
+func newConfigForwarderFixture(t *testing.T) *configForwarderFixture {
+	t.Helper()
+	home := t.TempDir()
+	writer := &appLifecycleWriter{}
+	recorder := diagnostics.NewLifecycleRecorder(writer, "config-forwarder", "0.10.0", "tmux")
+	runner := &recordingTmuxRunner{}
+	tmux := &tmuxCommand{
+		diagnostics: recorder,
+		executable:  func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:     func() (string, error) { return home, nil },
+		lookupEnv:   func(string) string { return "" },
+		readFile:    os.ReadFile,
+		writeFile:   os.WriteFile,
+		runner:      runner,
+	}
+	ai := testAICommand(home)
+	app := &App{
+		lifecycle: recorder,
+		tmux:      tmux,
+		ai:        ai,
+		config: &configCommand{
+			tmux:      tmux,
+			ai:        ai,
+			homeDir:   func() (string, error) { return home, nil },
+			lookupEnv: func(string) string { return "" },
+		},
+	}
+	return &configForwarderFixture{home: home, app: app, ai: ai, runner: runner, writer: writer}
+}
+
+func (f *configForwarderFixture) files(t *testing.T) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(f.home, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+// TestConfigForwarderRejectsFlagAndArgErrorsAsUsage pins that a bad flag or an
+// extra positional argument on `config edit|apply|render <artifact>` is a usage
+// error (exit 2), classified by the receiving handler so the public alias and
+// the hidden spellings answer with the same exit code and the same text, and
+// that a rejected call has no effect.
+func TestConfigForwarderRejectsFlagAndArgErrorsAsUsage(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{name: "config edit unknown flag", args: []string{"config", "edit", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
+		{name: "config edit --set without value", args: []string{"config", "edit", "--set"}, wantErr: "flag needs an argument: -set"},
+		{name: "config edit extra arg", args: []string{"config", "edit", "extra"}, wantErr: "ai settings does not accept positional arguments"},
+		{name: "config apply unknown flag", args: []string{"config", "apply", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
+		{name: "config apply extra arg", args: []string{"config", "apply", "extra"}, wantErr: "tmux apply does not accept positional arguments"},
+		{name: "config render standalone unknown flag", args: []string{"config", "render", "standalone", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
+		{name: "config render standalone extra arg", args: []string{"config", "render", "standalone", "extra"}, wantErr: "tmux print-config does not accept positional arguments"},
+		{name: "config render app unknown flag", args: []string{"config", "render", "app", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
+		{name: "config render app extra arg", args: []string{"config", "render", "app", "extra"}, wantErr: "tmux print-app-config does not accept positional arguments"},
+		// Hidden spellings. `ai settings` has no hidden root spelling since the
+		// ai root was retired, so `config edit` is its only door.
+		{name: "internal tmux apply unknown flag", args: []string{"internal", "tmux", "apply", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
+		{name: "internal tmux apply extra arg", args: []string{"internal", "tmux", "apply", "extra"}, wantErr: "tmux apply does not accept positional arguments"},
+		{name: "internal tmux print-config unknown flag", args: []string{"internal", "tmux", "print-config", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
+		{name: "internal tmux print-config extra arg", args: []string{"internal", "tmux", "print-config", "extra"}, wantErr: "tmux print-config does not accept positional arguments"},
+		{name: "internal tmux print-app-config unknown flag", args: []string{"internal", "tmux", "print-app-config", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
+		{name: "internal tmux print-app-config extra arg", args: []string{"internal", "tmux", "print-app-config", "extra"}, wantErr: "tmux print-app-config does not accept positional arguments"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newConfigForwarderFixture(t)
+			var stdout, stderr bytes.Buffer
+			err := fixture.app.Run(test.args, &stdout, &stderr)
+			if err == nil || !IsUsageError(err) {
+				t.Fatalf("%v error = %v, want a usage error", test.args, err)
+			}
+			if err.Error() != test.wantErr {
+				t.Fatalf("%v error text = %q, want %q", test.args, err.Error(), test.wantErr)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("%v wrote stdout %q, want none", test.args, stdout.String())
+			}
+			if files := fixture.files(t); len(files) != 0 {
+				t.Fatalf("%v wrote files %v, want none", test.args, files)
+			}
+			if len(fixture.runner.calls) != 0 {
+				t.Fatalf("%v issued tmux calls %#v, want none", test.args, fixture.runner.calls)
+			}
+			if commands := cmdRecorder(fixture.ai).commands; len(commands) != 0 {
+				t.Fatalf("%v issued commands %#v, want none", test.args, commands)
+			}
+			if len(fixture.writer.events) != 0 {
+				t.Fatalf("%v recorded diagnostics %#v, want no apply mark", test.args, fixture.writer.events)
+			}
+		})
+	}
+
+	t.Run("config edit --get still prints the mode", func(t *testing.T) {
+		t.Parallel()
+		fixture := newConfigForwarderFixture(t)
+		var stdout bytes.Buffer
+		if err := fixture.app.Run([]string{"config", "edit", "--get"}, &stdout, &bytes.Buffer{}); err != nil {
+			t.Fatalf("config edit --get error = %v", err)
+		}
+		if got, want := stdout.String(), "selective\n"; got != want {
+			t.Fatalf("config edit --get stdout = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("config render standalone still renders", func(t *testing.T) {
+		t.Parallel()
+		fixture := newConfigForwarderFixture(t)
+		var stdout bytes.Buffer
+		if err := fixture.app.Run([]string{"config", "render", "standalone"}, &stdout, &bytes.Buffer{}); err != nil {
+			t.Fatalf("config render standalone error = %v", err)
+		}
+		if !strings.Contains(stdout.String(), "/tmp/projmux") {
+			t.Fatalf("config render standalone stdout does not name the fake executable:\n%s", stdout.String())
+		}
+	})
+
+	// Runtime failures stay non-usage: a binary that cannot be resolved and a
+	// config write that fails are not the caller's argv mistakes.
+	t.Run("binary resolution failure is not a usage error", func(t *testing.T) {
+		t.Parallel()
+		fixture := newConfigForwarderFixture(t)
+		fixture.app.tmux.executable = func() (string, error) { return "", errors.New("no executable") }
+		err := fixture.app.Run([]string{"config", "render", "app"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || IsUsageError(err) {
+			t.Fatalf("config render app error = %v, want a non-usage runtime error", err)
+		}
+	})
+	t.Run("apply write failure is not a usage error", func(t *testing.T) {
+		t.Parallel()
+		fixture := newConfigForwarderFixture(t)
+		fixture.app.tmux.writeFile = func(string, []byte, os.FileMode) error { return errors.New("disk full") }
+		err := fixture.app.Run([]string{"config", "apply", "--config", filepath.Join(fixture.home, "tmux.conf")}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || IsUsageError(err) {
+			t.Fatalf("config apply error = %v, want a non-usage runtime error", err)
+		}
+	})
+
+	// Help is intercepted by the root before these handlers run: it renders the
+	// catalog help on stdout and exits 0, so the handlers' flag.ErrHelp branch
+	// is never the path a user reaches. Pin that it stays that way.
+	for _, args := range [][]string{
+		{"config", "edit", "--help"},
+		{"config", "apply", "--help"},
+		{"config", "render", "standalone", "--help"},
+		{"internal", "tmux", "apply", "--help"},
+		{"internal", "tmux", "print-config", "-h"},
+	} {
+		t.Run("help "+strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			fixture := newConfigForwarderFixture(t)
+			var stdout bytes.Buffer
+			if err := fixture.app.Run(args, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("%v error = %v, want help to exit 0", args, err)
+			}
+			if !strings.HasPrefix(stdout.String(), "projmux ") {
+				t.Fatalf("%v stdout = %q, want the catalog help", args, stdout.String())
+			}
+			if files := fixture.files(t); len(files) != 0 {
+				t.Fatalf("%v wrote files %v", args, files)
+			}
+		})
 	}
 }

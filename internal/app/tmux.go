@@ -1559,11 +1559,14 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	// arguments and forwards a fixed argv, so no new public flag appears.
 	noReload := fs.Bool("no-reload", false, "migrate and write config without reloading the live tmux server")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printTmuxUsage(stderr)
-		return errors.New("tmux apply does not accept positional arguments")
+		return usageError("tmux apply does not accept positional arguments")
 	}
 	if c.diagnostics != nil {
 		c.diagnostics.Mark(diagnostics.OperationTmuxApply)
@@ -2365,11 +2368,14 @@ func (c *tmuxCommand) parseConfigBinary(args []string, name string, stderr io.Wr
 	fs.SetOutput(stderr)
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the tmux snippet")
 	if err := fs.Parse(args); err != nil {
-		return "", err
+		if errors.Is(err, flag.ErrHelp) {
+			return "", err
+		}
+		return "", usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printTmuxUsage(stderr)
-		return "", fmt.Errorf("%s does not accept positional arguments", name)
+		return "", usageError(fmt.Sprintf("%s does not accept positional arguments", name))
 	}
 	return c.resolveConfigBinary(*binaryOverride)
 }
