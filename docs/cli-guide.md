@@ -992,7 +992,7 @@ the server, and no write verb is ever sent.
 ## runtime diagnostics
 
 ```text
-projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
+projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]
 ```
 
 The interactive half of the same read. It lists every tmux object on the exact

@@ -1188,7 +1188,7 @@ func canonicalCreateFailureParts(err error, diagnostics string) (string, string)
 }
 
 func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("ai settings", flag.ContinueOnError)
+	fs := flag.NewFlagSet("config edit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	get := fs.Bool("get", false, "print the configured AI split mode")
 	set := fs.String("set", "", "set the configured AI split mode")

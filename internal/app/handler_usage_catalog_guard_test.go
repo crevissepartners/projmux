@@ -212,6 +212,29 @@ func TestConfigEditOperandPrintsOnlyItsUsage(t *testing.T) {
 	}
 }
 
+// TestConfigEditFlagErrorNamesConfigEdit pins `config edit --bogus`: still a
+// usage error whose reason and usage are printed once each, and neither names
+// the retired `ai settings` spelling (the FlagSet name the flag package prints).
+func TestConfigEditFlagErrorNamesConfigEdit(t *testing.T) {
+	t.Parallel()
+	fixture := newConfigForwarderFixture(t)
+	var stdout, stderr bytes.Buffer
+	err := fixture.app.Run([]string{"config", "edit", "--bogus"}, &stdout, &stderr)
+	if err == nil || !IsUsageError(err) {
+		t.Fatalf("config edit --bogus err = %v, want a usage error", err)
+	}
+	printed := stderr.String()
+	if n := strings.Count(printed+err.Error(), "ai settings"); n != 0 {
+		t.Errorf("config edit --bogus mentions %q %d times, want 0: reason=%q stderr=%q", "ai settings", n, err.Error(), printed)
+	}
+	if n := strings.Count(printed, "flag provided but not defined: -bogus"); n != 1 {
+		t.Errorf("config edit --bogus prints the reason %d times, want 1: stderr=%q", n, printed)
+	}
+	if n := strings.Count(printed, "Usage of config edit:"); n != 1 {
+		t.Errorf("config edit --bogus prints %q %d times, want 1: stderr=%q", "Usage of config edit:", n, printed)
+	}
+}
+
 // TestHandlerUsageCatalogGuardDetectsDrift is the negative control: the
 // checkers must name the route when fed the strings this guard replaced.
 func TestHandlerUsageCatalogGuardDetectsDrift(t *testing.T) {
