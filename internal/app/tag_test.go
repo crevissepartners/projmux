@@ -89,12 +89,12 @@ func TestTagCommandRejectsInvalidUsage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "missing subcommand", args: nil, want: "tag requires a subcommand"},
-		{name: "unknown subcommand", args: []string{"unknown"}, want: "unknown tag subcommand: unknown"},
-		{name: "list args", args: []string{"list", "extra"}, want: "tag list does not accept positional arguments"},
-		{name: "toggle missing name", args: []string{"toggle"}, want: "tag toggle requires exactly 1 <name> argument"},
-		{name: "toggle blank name", args: []string{"toggle", "   "}, want: "tag toggle requires a non-empty <name> argument"},
-		{name: "clear args", args: []string{"clear", "extra"}, want: "tag clear does not accept positional arguments"},
+		{name: "missing subcommand", args: nil, want: "runtime tag requires a subcommand"},
+		{name: "unknown subcommand", args: []string{"unknown"}, want: "unknown runtime tag subcommand: unknown"},
+		{name: "list args", args: []string{"list", "extra"}, want: "runtime tag list does not accept positional arguments"},
+		{name: "toggle missing name", args: []string{"toggle"}, want: "runtime tag toggle requires exactly 1 <name> argument"},
+		{name: "toggle blank name", args: []string{"toggle", "   "}, want: "runtime tag toggle requires a non-empty <name> argument"},
+		{name: "clear args", args: []string{"clear", "extra"}, want: "runtime tag clear does not accept positional arguments"},
 	}
 
 	for _, tt := range tests {

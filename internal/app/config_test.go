@@ -404,11 +404,11 @@ func TestConfigForwarderRejectsFlagAndArgErrorsAsUsage(t *testing.T) {
 		{name: "config edit --set without value", args: []string{"config", "edit", "--set"}, wantErr: "flag needs an argument: -set"},
 		{name: "config edit extra arg", args: []string{"config", "edit", "extra"}, wantErr: "config edit does not accept positional arguments"},
 		{name: "config apply unknown flag", args: []string{"config", "apply", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
-		{name: "config apply extra arg", args: []string{"config", "apply", "extra"}, wantErr: "tmux apply does not accept positional arguments"},
+		{name: "config apply extra arg", args: []string{"config", "apply", "extra"}, wantErr: "config apply does not accept positional arguments"},
 		{name: "config render standalone unknown flag", args: []string{"config", "render", "standalone", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
-		{name: "config render standalone extra arg", args: []string{"config", "render", "standalone", "extra"}, wantErr: "tmux print-config does not accept positional arguments"},
+		{name: "config render standalone extra arg", args: []string{"config", "render", "standalone", "extra"}, wantErr: "config render standalone does not accept positional arguments"},
 		{name: "config render app unknown flag", args: []string{"config", "render", "app", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},
-		{name: "config render app extra arg", args: []string{"config", "render", "app", "extra"}, wantErr: "tmux print-app-config does not accept positional arguments"},
+		{name: "config render app extra arg", args: []string{"config", "render", "app", "extra"}, wantErr: "config render app does not accept positional arguments"},
 		// Hidden spellings. `ai settings` has no hidden root spelling since the
 		// ai root was retired, so `config edit` is its only door.
 		{name: "internal tmux apply unknown flag", args: []string{"internal", "tmux", "apply", "--bogus"}, wantErr: "flag provided but not defined: -bogus"},

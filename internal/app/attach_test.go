@@ -145,13 +145,13 @@ func TestAttachCommandRejectsInvalidUsage(t *testing.T) {
 		{
 			name:      "positional arguments",
 			args:      []string{"auto", "extra"},
-			want:      "attach auto does not accept positional arguments",
+			want:      "runtime attach does not accept positional arguments",
 			wantUsage: true,
 		},
 		{
 			name:      "invalid fallback",
 			args:      []string{"auto", "--fallback=sideways"},
-			want:      "attach auto fallback must be one of: home, ephemeral",
+			want:      "runtime attach fallback must be one of: home, ephemeral",
 			wantUsage: true,
 		},
 	}

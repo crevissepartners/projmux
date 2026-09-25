@@ -144,7 +144,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "Flags:")
 		fmt.Fprintln(stderr, "  --force, -f   bypass per-adapter throttle and clear active backoff before refreshing.")
 		fmt.Fprintln(stderr, "                Useful when bound to a tmux key as a manual 'refresh now' gesture.")
-		return &coremetadata.InputError{Detail: "usage does not accept positional arguments"}
+		return &coremetadata.InputError{Detail: "agent usage does not accept positional arguments"}
 	}
 
 	modelScope, explicitModel := c.modelScope(*model)

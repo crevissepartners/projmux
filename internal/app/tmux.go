@@ -1373,7 +1373,7 @@ func (c *tmuxCommand) runPrintConfigAs(route string, args []string, stdout, stde
 	if route == "config render standalone" {
 		printUsage = func() { printRouteUsage(stderr, "config render standalone") }
 	}
-	binaryPath, err := c.parseConfigBinary(args, route, "tmux print-config", stderr, printUsage)
+	binaryPath, err := c.parseConfigBinary(args, route, stderr, printUsage)
 	if err != nil {
 		return err
 	}
@@ -1398,7 +1398,7 @@ func (c *tmuxCommand) runPrintAppConfigAs(route string, args []string, stdout, s
 	if route == "config render app" {
 		printUsage = func() { printRouteUsage(stderr, "config render app") }
 	}
-	binaryPath, err := c.parseConfigBinary(args, route, "tmux print-app-config", stderr, printUsage)
+	binaryPath, err := c.parseConfigBinary(args, route, stderr, printUsage)
 	if err != nil {
 		return err
 	}
@@ -1618,7 +1618,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 		} else {
 			printRouteUsage(stderr, "internal tmux apply")
 		}
-		return usageError("tmux apply does not accept positional arguments")
+		return usageError(tmuxReasonRoute(route) + " does not accept positional arguments")
 	}
 	if c.diagnostics != nil {
 		c.diagnostics.Mark(diagnostics.OperationTmuxApply)
@@ -2395,11 +2395,19 @@ func nativeLaunchKeyForPopupMode(mode string) string {
 	}
 }
 
+// tmuxReasonRoute is the route a tmux-handler refusal names: the public
+// spelling that reached the handler (`config apply`, `config render ...`)
+// verbatim, and for a hidden `internal tmux ...` spelling the historical
+// `tmux ...` name its reasons have always printed.
+func tmuxReasonRoute(route string) string {
+	return strings.TrimPrefix(route, "internal ")
+}
+
 // parseConfigBinary parses the --bin flag of a config render handler. route is
-// the spelling that reached it, which names the FlagSet; name is the
-// historical spelling its positional refusal names, and printUsage prints the
-// route's catalog usage under that refusal.
-func (c *tmuxCommand) parseConfigBinary(args []string, route, name string, stderr io.Writer, printUsage func()) (string, error) {
+// the spelling that reached it, which names the FlagSet and, through
+// tmuxReasonRoute, its positional refusal; printUsage prints the route's
+// catalog usage under that refusal.
+func (c *tmuxCommand) parseConfigBinary(args []string, route string, stderr io.Writer, printUsage func()) (string, error) {
 	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the tmux snippet")
@@ -2411,7 +2419,7 @@ func (c *tmuxCommand) parseConfigBinary(args []string, route, name string, stder
 	}
 	if fs.NArg() != 0 {
 		printUsage()
-		return "", usageError(fmt.Sprintf("%s does not accept positional arguments", name))
+		return "", usageError(tmuxReasonRoute(route) + " does not accept positional arguments")
 	}
 	return c.resolveConfigBinary(*binaryOverride)
 }

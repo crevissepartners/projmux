@@ -109,13 +109,13 @@ func TestKillCommandRejectsInvalidUsage(t *testing.T) {
 		{
 			name:      "missing subcommand",
 			args:      nil,
-			want:      "kill requires a subcommand",
+			want:      "runtime stop requires a subcommand",
 			wantUsage: true,
 		},
 		{
 			name:      "unknown subcommand",
 			args:      []string{"nope"},
-			want:      "unknown kill subcommand: nope",
+			want:      "unknown runtime stop subcommand: nope",
 			wantUsage: true,
 		},
 		{
@@ -152,7 +152,7 @@ func TestKillCommandRunTaggedRejectsBlankPositionalTarget(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "kill tagged requires non-empty tagged sessions") {
+	if !strings.Contains(err.Error(), "runtime stop requires non-empty tagged sessions") {
 		t.Fatalf("error = %v", err)
 	}
 	if !strings.Contains(stderr.String(), "Usage:") {
@@ -242,7 +242,7 @@ func TestKillCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &killCommand{
 				tagStore: staticKillTagStore{},
 			},
-			want: "load kill tags: kill tagged requires at least 1 tagged session",
+			want: "load kill tags: runtime stop requires at least 1 tagged session",
 		},
 	}
 

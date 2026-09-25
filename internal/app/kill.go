@@ -105,7 +105,7 @@ func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	if fs.NArg() == 0 {
 		printRouteUsage(stderr, "runtime stop")
-		return errors.New("kill requires a subcommand")
+		return errors.New("runtime stop requires a subcommand")
 	}
 
 	switch fs.Arg(0) {
@@ -115,7 +115,7 @@ func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return printRouteHelp(stdout, "runtime stop")
 	default:
 		printRouteUsage(stderr, "runtime stop")
-		return fmt.Errorf("unknown kill subcommand: %s", fs.Arg(0))
+		return fmt.Errorf("unknown runtime stop subcommand: %s", fs.Arg(0))
 	}
 }
 
@@ -170,7 +170,7 @@ func (c *killCommand) resolveTaggedTargets(args []string, stderr io.Writer) ([]s
 		args = operands
 	}
 	if len(args) != 0 {
-		targets, err := normalizeTaggedItems("kill tagged", args, stderr)
+		targets, err := normalizeTaggedItems("runtime stop", args, stderr)
 		if err != nil {
 			return nil, usageError(err.Error())
 		}
@@ -187,7 +187,7 @@ func (c *killCommand) resolveTaggedTargets(args []string, stderr io.Writer) ([]s
 		return nil, fmt.Errorf("load kill tags: %w", err)
 	}
 
-	targets, err = normalizeTaggedItems("kill tagged", targets, stderr)
+	targets, err = normalizeTaggedItems("runtime stop", targets, stderr)
 	if err != nil {
 		return nil, fmt.Errorf("load kill tags: %w", err)
 	}
