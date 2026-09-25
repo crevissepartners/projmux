@@ -266,7 +266,7 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return err
+		return cli.FlagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("status usage does not accept positional arguments")

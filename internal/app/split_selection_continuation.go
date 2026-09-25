@@ -161,7 +161,7 @@ func parseSplitSelectionArgs(spelling string, args []string, stderr io.Writer) (
 	generation := fs.String(splitSelectionResumeGenerationFlag, "", "resume Codex endpoint generation")
 	generationState := fs.String(splitSelectionResumeGenerationStFlag, "", "resume Codex endpoint generation state")
 	if err := fs.Parse(args); err != nil {
-		return agentPaneIntent{}, err
+		return agentPaneIntent{}, flagParseReported(err)
 	}
 	if fs.NArg() != 1 {
 		printRouteUsage(stderr, "internal agent-pane launch-selection")

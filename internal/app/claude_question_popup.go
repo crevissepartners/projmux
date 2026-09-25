@@ -462,7 +462,7 @@ func runClaudeQuestionPicker(args []string, stdout, stderr io.Writer) error {
 	storePath := fs.String("store", "", "question store file")
 	shown := fs.String("shown", "", "marker file to write once the popup runs")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return flagParseReported(err)
 	}
 	// First of all, tell the hook the popup showed. The flag is optional, so
 	// a hook from before it still runs this picker.

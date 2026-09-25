@@ -24,9 +24,11 @@ const flagParseGuardModule = "github.com/crevissepartners/projmux"
 // historical flag-error exit code instead of the public usage exit 2.
 const flagParseGuardHiddenReason = "hidden plumbing: its exit code is consumed by generated tmux config, provider hooks or supervisors, not scripts (docs/hooks.md: the question hook exits 0 on any failure; Claude Code reads hook exit 2 as blocking)"
 
-// flagParseGuardException is one parse site that may keep returning its parse
-// error without a usage marker. Only hidden `projmux internal ...` routes may
-// appear here; the guard asserts it.
+// flagParseGuardException is one parse site that may return a non-usage error
+// and so keep its historical exit 1: the parse error itself when its FlagSet
+// discards its output, or flagParseReported(err) when the flag package has
+// already printed the reason on stderr. Only hidden `projmux internal ...`
+// routes may appear here; the guard asserts it.
 type flagParseGuardException struct {
 	route  string
 	reason string
@@ -71,6 +73,9 @@ const (
 	flagParseGuardMarked flagParseGuardVerdict = iota
 	// flagParseGuardBare: every non-help return passes the parse error through.
 	flagParseGuardBare
+	// flagParseGuardReported: every non-help return constructs an error that
+	// says its reason is already on stderr but carries no usage marker.
+	flagParseGuardReported
 	// flagParseGuardOther: anything else (nil, wrapped, discarded, no return).
 	flagParseGuardOther
 )
@@ -81,6 +86,8 @@ func (v flagParseGuardVerdict) String() string {
 		return "usage-marked"
 	case flagParseGuardBare:
 		return "bare"
+	case flagParseGuardReported:
+		return "reported, not usage-marked"
 	default:
 		return "not usage-marked"
 	}
@@ -96,9 +103,9 @@ type flagParseGuardSite struct {
 	detail            string
 	helpWrapped       bool // the flag.ErrHelp branch constructs a usage marker
 	helpBranch        bool
-	// marked and reported count the non-help returns that construct a usage
-	// marker, and those whose marker says the reason is already on stderr
-	// (flagParseError).
+	// marked counts the non-help returns that construct a usage marker, and
+	// reported those whose error says the reason is already on stderr, with a
+	// usage marker (flagParseError) or without one (flagParseReported).
 	marked, reported int
 	// output is where the FlagSet writes its reason and usage: "stderr" (any
 	// writer but io.Discard, or the flag default), "discard", or a problem
@@ -141,8 +148,9 @@ type flagParseGuardReport struct {
 	sites   []flagParseGuardSite
 	markers []string
 	ctors   []string
-	// reportedMarkers and reportedCtors are the markers declaring
-	// `FailureReported() bool { return true }` and their constructors.
+	// reportedMarkers and reportedCtors are the types declaring
+	// `FailureReported() bool { return true }` and their constructors, usage
+	// markers or not.
 	reportedMarkers []string
 	reportedCtors   []string
 	wrappers        []string
@@ -439,8 +447,8 @@ type flagParseGuardAnalyzer struct {
 	files   []*flagParseGuardParsedFile
 	markers map[string]bool // importPath.Type
 	ctors   map[string]bool // importPath.func
-	// reported and reportedCtors are the subset of markers (and constructors)
-	// that tell the entrypoint the reason is already printed.
+	// reported and reportedCtors are the types (and constructors) that tell
+	// the entrypoint the reason is already printed, usage markers or not.
 	reported      map[string]bool
 	reportedCtors map[string]bool
 	report        flagParseGuardReport
@@ -604,8 +612,8 @@ func (a *flagParseGuardAnalyzer) isMarker(pf *flagParseGuardParsedFile, expr ast
 	return a.constructs(pf, expr, a.markers, a.ctors)
 }
 
-// isReported reports whether expr constructs a usage marker that tells the
-// entrypoint the reason is already printed.
+// isReported reports whether expr constructs an error that tells the
+// entrypoint the reason is already printed, usage marker or not.
 func (a *flagParseGuardAnalyzer) isReported(pf *flagParseGuardParsedFile, expr ast.Expr) bool {
 	return a.constructs(pf, expr, a.reported, a.reportedCtors)
 }
@@ -1002,7 +1010,7 @@ func (a *flagParseGuardAnalyzer) classify(c flagParseGuardCall) flagParseGuardSi
 		return unclassified("unsupported statement shape")
 	}
 
-	var marked, bare, other int
+	var marked, bare, reportedOnly, other int
 	var details []string
 	var walk func(n ast.Node, help bool)
 	walk = func(n ast.Node, help bool) {
@@ -1037,6 +1045,10 @@ func (a *flagParseGuardAnalyzer) classify(c flagParseGuardCall) flagParseGuardSi
 					if a.isReported(pf, last) {
 						site.reported++
 					}
+				case last != nil && a.isReported(pf, last):
+					reportedOnly++
+					site.reported++
+					details = append(details, "returns "+types.ExprString(last))
 				case last != nil && flagParseGuardIsIdent(last, errName):
 					bare++
 				default:
@@ -1055,14 +1067,17 @@ func (a *flagParseGuardAnalyzer) classify(c flagParseGuardCall) flagParseGuardSi
 	site.marked = marked
 	site.reprints = a.reprintsIn(pf, body, errName, c.fs)
 	switch {
-	case marked+bare+other == 0:
+	case marked+bare+reportedOnly+other == 0:
 		site.verdict = flagParseGuardOther
 		site.detail = "the error branch does not return"
-	case bare == 0 && other == 0:
+	case bare == 0 && reportedOnly == 0 && other == 0:
 		site.verdict = flagParseGuardMarked
-	case marked == 0 && other == 0:
+	case marked == 0 && reportedOnly == 0 && other == 0:
 		site.verdict = flagParseGuardBare
 		site.detail = "returns " + errName + " unchanged"
+	case marked == 0 && bare == 0 && other == 0:
+		site.verdict = flagParseGuardReported
+		site.detail = strings.Join(slices.Compact(details), "; ")
 	default:
 		site.verdict = flagParseGuardOther
 		site.detail = strings.Join(details, "; ")
@@ -1380,7 +1395,10 @@ func flagParseGuardLoadRepo(t *testing.T, repoRoot string) []flagParseGuardPacka
 
 // flagParseGuardFindings applies the guard policy to a report: every site must
 // be usage-marked on its non-help path, must pass flag.ErrHelp through, or be
-// an exception row. It returns the failures and the exception keys it used.
+// an exception row. An exception row admits any non-usage verdict (bare,
+// reported, or other); how such a site prints is flagParseOutputFindings'
+// rule. It returns the failures and the exception keys it used, so a row whose
+// site became usage-marked or disappeared is stale.
 func flagParseGuardFindings(report flagParseGuardReport, exceptions map[string]flagParseGuardException) (failures []string, used map[string]bool) {
 	used = map[string]bool{}
 	failures = append(failures, report.problems...)
@@ -1466,68 +1484,108 @@ func TestFlagParseUsageGuardEveryParserMarksUsage(t *testing.T) {
 // flagParseOutputFindings applies the output rule to a report: a flag parse
 // failure puts its reason on stderr exactly once and its usage at most once.
 // A FlagSet writing to stderr has already printed both through the flag
-// package, so the site returns flagParseError (the entrypoint stays silent)
-// and prints no usage of its own; a FlagSet with a discarded output returns a
-// plain usage error so the entrypoint prints the reason. Sites the exit-code
-// guard does not hold as usage-marked (its exception rows) are left to it.
-func flagParseOutputFindings(report flagParseGuardReport, exceptions map[string]flagParseGuardException) (failures []string) {
+// package, so the site returns an error that says so (the entrypoint stays
+// silent) and prints no usage of its own; a FlagSet with a discarded output
+// returns an error the entrypoint prints. A usage-marked site returns
+// flagParseError or a plain usage error. An exception row keeps exit 1, so it
+// returns flagParseReported or, with a discarded output, a non-reported error;
+// its exit-code verdict stays the exit-code guard's. A site that is neither is
+// left to that guard. examined counts the exception sites checked here.
+func flagParseOutputFindings(report flagParseGuardReport, exceptions map[string]flagParseGuardException) (failures []string, examined int) {
 	for _, site := range report.sites {
-		if _, ok := exceptions[site.key()]; ok || site.verdict != flagParseGuardMarked {
+		_, exception := exceptions[site.key()]
+		if !exception && site.verdict != flagParseGuardMarked {
 			continue
+		}
+		if exception {
+			examined++
 		}
 		switch site.output {
 		case "stderr":
-			if site.reported != site.marked {
+			switch {
+			case exception && site.verdict != flagParseGuardReported:
+				failures = append(failures, site.describe()+": the FlagSet writes to stderr, so the flag package has already printed the reason and the usage; this hidden route returns "+site.verdict.String()+" ("+site.detail+"), so the entrypoint prints the reason a second time; return flagParseReported(err), which keeps exit 1")
+			case !exception && site.reported != site.marked:
 				failures = append(failures, site.describe()+": the FlagSet writes to stderr, so the flag package has already printed the reason and the usage; return flagParseError(err) so the entrypoint does not print the reason a second time")
 			}
 			if len(site.reprints) > 0 {
 				failures = append(failures, site.describe()+": the parse error path prints the usage again ("+strings.Join(site.reprints, ", ")+") after the flag package printed it; print it only in the flag.ErrHelp branch, if at all")
 			}
 		case "discard":
-			if site.reported > 0 {
+			switch {
+			case exception && site.reported > 0:
+				failures = append(failures, site.describe()+": the FlagSet discards its output, so nothing printed the reason; return the parse error itself so the entrypoint prints it once")
+			case !exception && site.reported > 0:
 				failures = append(failures, site.describe()+": the FlagSet discards its output, so nothing printed the reason; return usageError(...) so the entrypoint prints it once")
 			}
 		default:
 			failures = append(failures, site.describe()+": cannot tell where the FlagSet writes its reason ("+site.output+")")
 		}
 	}
-	return failures
+	return failures, examined
 }
 
 // TestFlagParseOutputGuardPrintsReasonOnceUsageAtMostOnce holds every
-// usage-marked flag parse site in internal/app/** to the stderr shape of a
-// flag error: the reason exactly once and the usage at most once. It walks the
-// same closed site set as TestFlagParseUsageGuardEveryParserMarksUsage.
+// usage-marked flag parse site and every exception row in internal/app/** to
+// the stderr shape of a flag error: the reason exactly once and the usage at
+// most once. It walks the same closed site set as
+// TestFlagParseUsageGuardEveryParserMarksUsage.
 func TestFlagParseOutputGuardPrintsReasonOnceUsageAtMostOnce(t *testing.T) {
 	t.Parallel()
 	report := flagParseGuardAnalyze(flagParseGuardLoadRepo(t, filepath.Join("..", "..")))
-	for _, failure := range append(report.problems, flagParseOutputFindings(report, flagParseGuardExceptions)...) {
+	findings, examined := flagParseOutputFindings(report, flagParseGuardExceptions)
+	for _, failure := range append(report.problems, findings...) {
 		t.Error(failure)
 	}
-	if !slices.Contains(report.reportedMarkers, flagParseGuardModule+"/internal/cli.flagParseError") {
-		t.Errorf("cli.flagParseError not derived from a FailureReported declaration; reported markers = %v", report.reportedMarkers)
-	}
-	for _, want := range []string{flagParseGuardModule + "/internal/cli.FlagParseError", flagParseGuardModule + "/internal/app.flagParseError"} {
-		if !slices.Contains(report.reportedCtors, want) {
-			t.Errorf("%s not derived as a reported marker constructor; reported ctors = %v", want, report.reportedCtors)
+	for _, want := range []string{flagParseGuardModule + "/internal/cli.flagParseError", flagParseGuardModule + "/internal/cli.flagParseReported"} {
+		if !slices.Contains(report.reportedMarkers, want) {
+			t.Errorf("%s not derived from a FailureReported declaration; reported markers = %v", want, report.reportedMarkers)
 		}
 	}
-	outputs := map[string]int{}
+	for _, want := range []string{flagParseGuardModule + "/internal/cli.FlagParseError", flagParseGuardModule + "/internal/app.flagParseError", flagParseGuardModule + "/internal/cli.FlagParseReported", flagParseGuardModule + "/internal/app.flagParseReported"} {
+		if !slices.Contains(report.reportedCtors, want) {
+			t.Errorf("%s not derived as a reported constructor; reported ctors = %v", want, report.reportedCtors)
+		}
+	}
+	// The hidden-route constructor must stay out of the usage markers, or
+	// its sites would exit 2.
+	if slices.Contains(report.markers, flagParseGuardModule+"/internal/cli.flagParseReported") {
+		t.Errorf("cli.flagParseReported is derived as a usage marker; markers = %v", report.markers)
+	}
+	for _, ctor := range []string{flagParseGuardModule + "/internal/cli.FlagParseReported", flagParseGuardModule + "/internal/app.flagParseReported"} {
+		if slices.Contains(report.ctors, ctor) {
+			t.Errorf("%s is derived as a usage marker constructor; ctors = %v", ctor, report.ctors)
+		}
+	}
+	outputs, exceptionOutputs := map[string]int{}, map[string]int{}
+	exceptionKeys := map[string]bool{}
 	for _, site := range report.sites {
-		if _, ok := flagParseGuardExceptions[site.key()]; !ok && site.verdict == flagParseGuardMarked {
+		if _, ok := flagParseGuardExceptions[site.key()]; ok {
+			exceptionOutputs[site.output]++
+			exceptionKeys[site.key()] = true
+		} else if site.verdict == flagParseGuardMarked {
 			outputs[site.output]++
 		}
 	}
 	if outputs["stderr"] < 80 || outputs["discard"] < 3 {
 		t.Errorf("site outputs = %v; the output resolution has regressed", outputs)
 	}
-	t.Logf("flag parse output guard: %v usage-marked sites by output", outputs)
+	// Every exception row is checked, not only the usage-marked sites.
+	if examined != len(flagParseGuardExceptions) || len(exceptionKeys) != len(flagParseGuardExceptions) {
+		t.Errorf("output guard examined %d exception sites under %d keys, want one per row of the %d flagParseGuardExceptions", examined, len(exceptionKeys), len(flagParseGuardExceptions))
+	}
+	if exceptionOutputs["stderr"] == 0 || exceptionOutputs["discard"] == 0 {
+		t.Errorf("exception site outputs = %v; want both a stderr and a discarded FlagSet among the rows", exceptionOutputs)
+	}
+	t.Logf("flag parse output guard: %v usage-marked sites by output; %d exception sites checked, by output %v", outputs, examined, exceptionOutputs)
 }
 
 // TestFlagParseOutputGuardPositiveControl runs the output rule on synthetic
 // source: a plain usage error or a usage reprint on a stderr FlagSet, a
 // reported error on a discarded FlagSet, and helpers whose callers disagree
-// must fail; the idioms must pass.
+// must fail; so must an exception row that returns the bare parse error or a
+// usage marker on a stderr FlagSet, reprints the usage, or reports on a
+// discarded FlagSet. The idioms must pass.
 func TestFlagParseOutputGuardPositiveControl(t *testing.T) {
 	t.Parallel()
 	const pkgPath = "example.test/guard/internal/app"
@@ -1553,6 +1611,13 @@ func (e *flagParseUsageError) FailureReported() bool    { return true }
 func usageError(message string) error { return &UsageError{Message: message} }
 
 func flagParseError(err error) error { return &flagParseUsageError{message: err.Error()} }
+
+type flagParseReportedError struct{ cause error }
+
+func (e *flagParseReportedError) Error() string         { return e.cause.Error() }
+func (e *flagParseReportedError) FailureReported() bool { return true }
+
+func flagParseReported(err error) error { return &flagParseReportedError{cause: err} }
 
 func printFooUsage(w io.Writer) {}
 
@@ -1686,6 +1751,64 @@ func idiomHelperCaller(args []string, stderr io.Writer) error {
 	}
 	return nil
 }
+
+func hiddenBare(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("hidden-bare", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return nil
+}
+
+func hiddenUsage(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("hidden-usage", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func hiddenReprint(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("hidden-reprint", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		printFooUsage(stderr)
+		return flagParseReported(err)
+	}
+	return nil
+}
+
+func hiddenDiscardReported(args []string) error {
+	fs := flag.NewFlagSet("hidden-discard-reported", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return flagParseReported(err)
+	}
+	return nil
+}
+
+func hiddenIdiomStderr(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("hidden-idiom-stderr", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return flagParseReported(err)
+	}
+	return nil
+}
+
+func hiddenIdiomDiscard(args []string) error {
+	fs := flag.NewFlagSet("hidden-idiom-discard", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return nil
+}
 `
 	report := flagParseGuardAnalyze([]flagParseGuardPackage{{
 		importPath: pkgPath,
@@ -1695,10 +1818,28 @@ func idiomHelperCaller(args []string, stderr io.Writer) error {
 	if len(report.problems) != 0 {
 		t.Fatalf("positive control: analyzer problems: %v", report.problems)
 	}
-	failures := flagParseOutputFindings(report, nil)
+	exceptions := map[string]flagParseGuardException{}
+	for _, key := range []string{
+		"synthetic/app.go hiddenBare hidden-bare",
+		"synthetic/app.go hiddenUsage hidden-usage",
+		"synthetic/app.go hiddenReprint hidden-reprint",
+		"synthetic/app.go hiddenDiscardReported hidden-discard-reported",
+		"synthetic/app.go hiddenIdiomStderr hidden-idiom-stderr",
+		"synthetic/app.go hiddenIdiomDiscard hidden-idiom-discard",
+	} {
+		exceptions[key] = flagParseGuardException{route: "internal synthetic", reason: flagParseGuardHiddenReason}
+	}
+	failures, examined := flagParseOutputFindings(report, exceptions)
 	joined := strings.Join(failures, "\n")
 	t.Logf("positive control failures:\n%s", joined)
+	if examined != len(exceptions) {
+		t.Errorf("positive control: examined %d exception sites, want %d", examined, len(exceptions))
+	}
 	for _, want := range []string{
+		`func hiddenBare, FlagSet "hidden-bare" (FlagSet.Parse): the FlagSet writes to stderr, so the flag package has already printed the reason and the usage; this hidden route returns bare`,
+		`func hiddenUsage, FlagSet "hidden-usage" (FlagSet.Parse): the FlagSet writes to stderr, so the flag package has already printed the reason and the usage; this hidden route returns usage-marked`,
+		`func hiddenReprint, FlagSet "hidden-reprint" (FlagSet.Parse): the parse error path prints the usage again (printFooUsage)`,
+		`func hiddenDiscardReported, FlagSet "hidden-discard-reported" (FlagSet.Parse): the FlagSet discards its output, so nothing printed the reason; return the parse error itself`,
 		`func stderrPlain, FlagSet "stderr-plain" (FlagSet.Parse): the FlagSet writes to stderr`,
 		`func defaultPlain, FlagSet "default-plain" (FlagSet.Parse): the FlagSet writes to stderr`,
 		`func stderrReprint, FlagSet "stderr-reprint" (FlagSet.Parse): the parse error path prints the usage again (printFooUsage)`,
@@ -1711,19 +1852,21 @@ func idiomHelperCaller(args []string, stderr io.Writer) error {
 			t.Errorf("positive control: missing failure containing %q", want)
 		}
 	}
-	for _, clean := range []string{"idiom-stderr", "idiom-discard", "idiom-helper"} {
+	for _, clean := range []string{`"idiom-stderr"`, `"idiom-discard"`, `"idiom-helper"`, `"hidden-idiom-stderr"`, `"hidden-idiom-discard"`} {
 		if strings.Contains(joined, clean) {
-			t.Errorf("positive control: %q must pass the output guard", clean)
+			t.Errorf("positive control: %s must pass the output guard", clean)
 		}
 	}
-	if len(failures) != 7 {
-		t.Errorf("positive control: got %d failures, want 7", len(failures))
+	if len(failures) != 11 {
+		t.Errorf("positive control: got %d failures, want 11", len(failures))
 	}
 }
 
 // TestFlagParseUsageGuardPositiveControl runs the same analyzer and policy on
 // synthetic source: bare returns, directly or through wrappers of wrappers,
-// wrapped help, and unfollowable FlagSets must fail; the idiom must pass.
+// wrapped help, a reported error without a usage marker outside the exception
+// rows, and unfollowable FlagSets must fail; the idiom and a reported hidden
+// exception row must pass.
 func TestFlagParseUsageGuardPositiveControl(t *testing.T) {
 	t.Parallel()
 	const pkgPath = "example.test/guard/internal/app"
@@ -1744,6 +1887,13 @@ func (e *UsageError) MetadataUsageError() bool { return true }
 func usageError(message string) error { return &UsageError{Message: message} }
 
 func usagef(format string, args ...any) error { return usageError(fmt.Sprintf(format, args...)) }
+
+type reportedError struct{ cause error }
+
+func (e *reportedError) Error() string         { return e.cause.Error() }
+func (e *reportedError) FailureReported() bool { return true }
+
+func flagParseReported(err error) error { return &reportedError{cause: err} }
 
 func wrap(fs *flag.FlagSet, args []string) ([]string, error) {
 	if err := fs.Parse(args); err != nil {
@@ -1827,6 +1977,22 @@ func idiomLiteral(args []string) error {
 	return nil
 }
 
+func reportedPublic(args []string) error {
+	fs := flag.NewFlagSet("reported-public", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return flagParseReported(err)
+	}
+	return nil
+}
+
+func hiddenReported(args []string) error {
+	fs := flag.NewFlagSet("hidden-reported", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return flagParseReported(err)
+	}
+	return nil
+}
+
 type holder struct{ fs *flag.FlagSet }
 
 func escapes() *holder {
@@ -1839,11 +2005,18 @@ func escapes() *holder {
 		scan:       true,
 		files:      []flagParseGuardFile{{name: "synthetic/app.go", src: []byte(src)}},
 	}})
-	failures, _ := flagParseGuardFindings(report, nil)
+	const hiddenKey = "synthetic/app.go hiddenReported hidden-reported"
+	failures, used := flagParseGuardFindings(report, map[string]flagParseGuardException{
+		hiddenKey: {route: "internal synthetic", reason: flagParseGuardHiddenReason},
+	})
 	joined := strings.Join(failures, "\n")
 	t.Logf("positive control failures:\n%s", joined)
+	if !used[hiddenKey] {
+		t.Errorf("positive control: the reported hidden exception row was not used")
+	}
 
 	for _, want := range []string{
+		`func reportedPublic, FlagSet "reported-public" (FlagSet.Parse): the parse error path is reported, not usage-marked`,
 		`func bareDirect, FlagSet "bare-direct" (FlagSet.Parse): the parse error path is bare`,
 		`func bareViaWrapper, FlagSet "bare-wrapper" (parse wrapper wrapWrap): the parse error path is not usage-marked`,
 		`func helpWrapped, FlagSet "help-wrapped" (FlagSet.Parse): the flag.ErrHelp branch returns a usage error`,
@@ -1854,13 +2027,13 @@ func escapes() *holder {
 			t.Errorf("positive control: missing failure containing %q", want)
 		}
 	}
-	for _, clean := range []string{"idiom-direct", "idiom-wrapper", "idiom-literal", "func wrap,", "func wrapWrap,"} {
+	for _, clean := range []string{"idiom-direct", "idiom-wrapper", "idiom-literal", "hidden-reported", "func wrap,", "func wrapWrap,"} {
 		if strings.Contains(joined, clean) {
 			t.Errorf("positive control: %q must pass the guard", clean)
 		}
 	}
-	if len(failures) != 5 {
-		t.Errorf("positive control: got %d failures, want 5", len(failures))
+	if len(failures) != 6 {
+		t.Errorf("positive control: got %d failures, want 6", len(failures))
 	}
 	if !slices.Equal(report.wrappers, []string{pkgPath + ".wrap", pkgPath + ".wrapWrap"}) {
 		t.Errorf("positive control: wrappers = %v, want wrap and wrapWrap", report.wrappers)
@@ -1869,8 +2042,8 @@ func escapes() *holder {
 	for _, site := range report.sites {
 		sites = append(sites, site.flagSet+"="+site.verdict.String())
 	}
-	want := []string{"bare-direct=bare", "bare-wrapper=not usage-marked", "help-wrapped=usage-marked", "idiom-direct=usage-marked", "idiom-wrapper=usage-marked", "idiom-literal=usage-marked"}
+	want := []string{"bare-direct=bare", "bare-wrapper=not usage-marked", "help-wrapped=usage-marked", "idiom-direct=usage-marked", "idiom-wrapper=usage-marked", "idiom-literal=usage-marked", "reported-public=reported, not usage-marked", "hidden-reported=reported, not usage-marked"}
 	if !slices.Equal(sites, want) {
-		t.Errorf("positive control: sites = %v, want the six parse sites (wrapper internals are not sites)", sites)
+		t.Errorf("positive control: sites = %v, want the eight parse sites (wrapper internals are not sites)", sites)
 	}
 }

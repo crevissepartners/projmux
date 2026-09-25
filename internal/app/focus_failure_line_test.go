@@ -313,3 +313,152 @@ func TestFocusDispatchJSONResolveFailureKeepsHistoricalLine(t *testing.T) {
 		})
 	}
 }
+
+// focusReportedTestError is an error whose reason its producer already wrote
+// to stderr, like a FlagSet parse failure.
+type focusReportedTestError struct{ reason string }
+
+func (e focusReportedTestError) Error() string         { return e.reason }
+func (e focusReportedTestError) FailureReported() bool { return true }
+
+// TestFocusDispatchNeverReprintsAReportedFailure drives a reported error into
+// both dispatch sites that decide whether focus owes its own stderr line (the
+// resolve site and the execute site) and adds the line its producer already
+// wrote plus what the entrypoint prints: the reason reaches stderr exactly
+// once. A silent coded exit that is not reported still gets its one line from
+// dispatch, and the hidden route's own flag parse failure prints its reason
+// once with the historical exit 1.
+func TestFocusDispatchNeverReprintsAReportedFailure(t *testing.T) {
+	t.Parallel()
+	const reason = "flag provided but not defined: -zz"
+	unresolvedWindowID := func(selectErr error) func(args []string) ([]byte, error) {
+		return func(args []string) ([]byte, error) {
+			switch {
+			case containsArg(args, "list-sessions"):
+				return []byte("100" + focusFieldSeparator + "workspace" + focusFieldSeparator + "1\n"), nil
+			case containsArg(args, "list-clients"):
+				return []byte("/dev/pts/0" + focusFieldSeparator + "workspace\n"), nil
+			case containsArg(args, "select-window"):
+				return nil, selectErr
+			}
+			return nil, nil
+		}
+	}
+	tests := []struct {
+		name     string
+		args     []string
+		respond  func(args []string) ([]byte, error)
+		registry func() (coremetadata.Registry, error)
+		// reason is the text that must reach stderr exactly once.
+		reason string
+		// reported is true when the injected error's producer already wrote
+		// reason, so dispatch and the entrypoint must both stay silent.
+		reported bool
+		want     cli.Failure
+	}{
+		{
+			name: "resolve flag parse reported",
+			args: []string{"project", "uid:proj-1"},
+			registry: func() (coremetadata.Registry, error) {
+				return coremetadata.Registry{}, cli.FlagParseReported(errors.New(reason))
+			},
+			reason:   reason,
+			reported: true,
+			want:     cli.Failure{ExitCode: 1, Kind: cli.FailureRuntime, Reported: true},
+		},
+		{
+			name: "resolve flag parse usage error",
+			args: []string{"project", "uid:proj-1"},
+			registry: func() (coremetadata.Registry, error) {
+				return coremetadata.Registry{}, cli.FlagParseError(errors.New(reason))
+			},
+			reason:   reason,
+			reported: true,
+			want:     cli.Failure{ExitCode: 2, Kind: cli.FailureUsage, Reported: true},
+		},
+		{
+			name: "resolve reported error",
+			args: []string{"project", "uid:proj-1"},
+			registry: func() (coremetadata.Registry, error) {
+				return coremetadata.Registry{}, focusReportedTestError{reason: "registry locked"}
+			},
+			reason:   "registry locked",
+			reported: true,
+			want:     cli.Failure{ExitCode: 1, Kind: cli.FailureRuntime, Reported: true},
+		},
+		{
+			name:     "execute flag parse reported",
+			args:     []string{"--target", "workspace"},
+			respond:  func(args []string) ([]byte, error) { return nil, cli.FlagParseReported(errors.New(reason)) },
+			reason:   reason,
+			reported: true,
+			want:     cli.Failure{ExitCode: 1, Kind: cli.FailureRuntime, Reported: true},
+		},
+		{
+			name:     "execute reported error",
+			args:     []string{"--target", "workspace"},
+			respond:  func(args []string) ([]byte, error) { return nil, focusReportedTestError{reason: "inventory locked"} },
+			reason:   "inventory locked",
+			reported: true,
+			want:     cli.Failure{ExitCode: 1, Kind: cli.FailureRuntime, Reported: true},
+		},
+		{
+			name:     "execute not-resolved exit wrapping a reported error",
+			args:     []string{"--target", "workspace:@5"},
+			respond:  unresolvedWindowID(cli.FlagParseReported(errors.New(reason))),
+			reason:   reason,
+			reported: true,
+			want:     cli.Failure{ExitCode: focusExitNotResolved, Kind: cli.FailureExit, Reported: true},
+		},
+		{
+			name:    "execute silent coded exit",
+			args:    []string{"--target", "workspace"},
+			respond: func(args []string) ([]byte, error) { return nil, nil },
+			reason:  `focus: session "workspace" not found and no fallback matched`,
+			want:    cli.Failure{ExitCode: focusExitNotResolved, Kind: cli.FailureExit},
+		},
+		{
+			name:    "resolve silent coded exit",
+			args:    []string{"window", "main", "-p", "workspace"},
+			respond: func(args []string) ([]byte, error) { return nil, errors.New("gone") },
+			reason:  `window "main" in session "workspace"`,
+			want:    cli.Failure{ExitCode: focusExitNotResolved, Kind: cli.FailureExit},
+		},
+		{
+			// The hidden route's own FlagSet writes the reason and its usage.
+			name:   "internal focus flag parse failure",
+			args:   []string{"--zz"},
+			reason: reason,
+			want:   cli.Failure{ExitCode: 1, Kind: cli.FailureRuntime, Reported: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd := newFocusTestCommand(&focusFakeRunner{respond: tt.respond}, nil, nil)
+			cmd.loadRegistry = tt.registry
+			var stdout, stderr bytes.Buffer
+			err := cmd.Run(tt.args, &stdout, &stderr)
+			if err == nil {
+				t.Fatalf("Run returned nil, want failure (stdout=%q stderr=%q)", stdout.String(), stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			if got := cli.ClassifyFailure(err, IsUsageError(err)); got != tt.want {
+				t.Fatalf("verdict = %+v, want %+v (err=%v)", got, tt.want, err)
+			}
+			producer := ""
+			if tt.reported {
+				producer = tt.reason + "\n"
+				if stderr.Len() != 0 {
+					t.Fatalf("dispatch stderr = %q, want nothing for a reported failure", stderr.String())
+				}
+			}
+			total := producer + stderr.String() + entrypointFailureLine(err)
+			if got := strings.Count(total, tt.reason); got != 1 {
+				t.Fatalf("total stderr = %q (dispatch %q), want %q exactly once, got %d", total, stderr.String(), tt.reason, got)
+			}
+		})
+	}
+}

@@ -349,7 +349,7 @@ func (c *statusCommand) runNotify(args []string, stdout, stderr io.Writer) error
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return err
+		return flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("status notify does not accept positional arguments")
