@@ -50,7 +50,10 @@ func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	popup := fs.Bool("popup", false, "show pending attach welcome in a tmux popup")
 	force := fs.Bool("force", false, "show popup even when no attach welcome is pending")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printWelcomeUsage(stderr)

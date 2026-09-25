@@ -110,7 +110,10 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 	timeout := fs.Duration("timeout", defaultProbeTimeout, "per-key wait timeout (e.g. 5s)")
 	nonInteractive := fs.Bool("non-interactive", false, "skip TTY raw probe; just print the expected key map")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("setup does not accept positional arguments")

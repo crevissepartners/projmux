@@ -326,7 +326,10 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	anchor := fs.String("anchor", "", "exact tmux Pane that anchors Project sidebar continuation")
 	if err := fs.Parse(args); err != nil {
 		printSwitchUsage(stderr)
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		printSwitchUsage(stderr)
@@ -380,7 +383,10 @@ func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) er
 
 	if err := fs.Parse(args); err != nil {
 		printSwitchUsage(stderr)
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() > 1 {
 		printSwitchUsage(stderr)
@@ -407,7 +413,10 @@ func (c *switchCommand) runTogglePin(args []string, stdout, stderr io.Writer) er
 
 	if err := fs.Parse(args); err != nil {
 		printSwitchUsage(stderr)
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() > 1 {
 		printSwitchUsage(stderr)
@@ -434,7 +443,10 @@ func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
 
 	if err := fs.Parse(args); err != nil {
 		printSwitchUsage(stderr)
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() > 1 {
 		printSwitchUsage(stderr)
@@ -473,7 +485,10 @@ func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
 	}
 	if err := fs.Parse(args); err != nil {
 		printSwitchUsage(stderr)
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 1 {
 		printSwitchUsage(stderr)
@@ -492,7 +507,10 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 
 	if err := fs.Parse(args); err != nil {
 		printSwitchUsage(stderr)
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if err := validateSwitchUI(*ui); err != nil {
 		printSwitchUsage(stderr)
@@ -1838,7 +1856,10 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	client := fs.String("client", "", "tmux client to restore sidebar popup")
 	anchor := fs.String("anchor", "", "exact tmux Pane that anchors Project materialization")
 	if err := fs.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("switch sidebar-open does not accept positional arguments")
