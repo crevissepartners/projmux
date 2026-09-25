@@ -46,6 +46,8 @@ type fakeNativeCreate struct {
 	workspace    coremetadata.AgentWorkspace
 	instructions string
 	policy       codexappserver.ThreadPolicy
+	model        string
+	effort       string
 	prompt       string
 	generation   string
 }
@@ -62,12 +64,12 @@ type orderedNativeThreadClient struct {
 	closeErr error
 }
 
-func (c *orderedNativeThreadClient) StartThread(context.Context, string, []string, string, codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error) {
+func (c *orderedNativeThreadClient) StartThreadWithModel(context.Context, string, []string, string, codexappserver.ThreadPolicy, string) (codexappserver.ThreadBinding, error) {
 	*c.events = append(*c.events, "thread/start")
 	return codexappserver.ThreadBinding{ThreadID: "thread-production-order"}, nil
 }
 
-func (c *orderedNativeThreadClient) StartTurn(context.Context, string, string, string) (string, error) {
+func (c *orderedNativeThreadClient) StartTurnWithOptions(context.Context, string, string, string, string, string) (string, error) {
 	*c.events = append(*c.events, "turn/start")
 	return "turn-production-order", nil
 }
@@ -124,7 +126,7 @@ func (f *fakeNativeThreadController) Resolve(_ context.Context, endpoint coremet
 func (f *fakeNativeThreadController) Create(_ context.Context, route codexNativeEndpointRoute, input codexNativeCreateInput) (codexappserver.ThreadBinding, error) {
 	f.creates = append(f.creates, fakeNativeCreate{
 		route: route, workspace: input.Workspace, instructions: input.DeveloperInstructions, policy: input.Policy,
-		prompt: input.Prompt, generation: input.RequestKey,
+		model: input.Model, effort: input.Effort, prompt: input.Prompt, generation: input.RequestKey,
 	})
 	binding := f.createBinding
 	if binding.ThreadID == "" && f.createErr == nil {
@@ -391,6 +393,8 @@ type fakeNativePanePlan struct {
 	route     codexNativeEndpointRoute
 	workspace coremetadata.AgentWorkspace
 	threadID  string
+	model     string
+	effort    string
 }
 
 type fakeNativePaneBinding struct {
@@ -400,6 +404,13 @@ type fakeNativePaneBinding struct {
 func (f *fakeNativePaneLauncher) PlanNativeCodexResume(route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (string, []string, error) {
 	f.plans = append(f.plans, fakeNativePanePlan{route: route, workspace: workspace, threadID: threadID})
 	return "codex:native", []string{route.TUIExecutable, "resume", "--remote", "unix://" + route.SocketPath, threadID}, nil
+}
+
+func (f *fakeNativePaneLauncher) PlanNativeCodexResumeWithOptions(route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID, model, effort string) (string, []string, error) {
+	f.plans = append(f.plans, fakeNativePanePlan{route: route, workspace: workspace, threadID: threadID, model: model, effort: effort})
+	argv := append([]string{route.TUIExecutable}, codexLaunchOptionArgs(model, effort)...)
+	argv = append(argv, "resume", "--remote", "unix://"+route.SocketPath, threadID)
+	return "codex:native", argv, nil
 }
 
 func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) codexObserverStartupResult {

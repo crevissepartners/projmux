@@ -215,8 +215,6 @@ func TestCodexCreateResultsDiscloseAllowDenyModelAndEffortButNotSandboxOrApprova
 	want := []cli.ReceiptProfileItem{
 		{Item: profileItemAllow, Provider: aiModeCodex, Reason: profileReasonCodexCommandRulesUnsupported},
 		{Item: profileItemDeny, Provider: aiModeCodex, Reason: profileReasonCodexCommandRulesUnsupported},
-		{Item: profileItemModel, Provider: aiModeCodex, Reason: profileReasonProviderOptionUnsupported},
-		{Item: profileItemEffort, Provider: aiModeCodex, Reason: profileReasonProviderOptionUnsupported},
 	}
 	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
 	var disclosed []string
@@ -241,6 +239,9 @@ func TestCodexCreateResultsDiscloseAllowDenyModelAndEffortButNotSandboxOrApprova
 	}
 	if native.creates[0].policy != (codexappserver.ThreadPolicy{Sandbox: codexappserver.SandboxWorkspaceWrite, ApprovalPolicy: codexappserver.ApprovalOnRequest}) {
 		t.Fatalf("thread/start policy = %+v", native.creates[0].policy)
+	}
+	if native.creates[0].model != "opus" || native.creates[0].effort != "high" {
+		t.Fatalf("native model/effort = %q/%q", native.creates[0].model, native.creates[0].effort)
 	}
 
 	stdout, _, err = runRoute(t, create, codexNativeCreateArgs("--profile", "guard", "--name", "json", "-o", "receipt")...)
@@ -287,8 +288,7 @@ func TestCodexNativeCreateRefusesAThreadWhosePolicyDiffers(t *testing.T) {
 // Task 2's TestCodexRefusesAProfileWithAnyPermission: off the native fresh
 // lane (here --interactive-only) Codex, like every provider but Claude,
 // refuses a profile carrying any permission, with its stable token and
-// nothing created; a permission-free profile applies and discloses the model
-// and effort Codex does not take, and its instructions follow the persona lane
+// nothing created; a permission-free profile applies model and effort, and its instructions follow the persona lane
 // rule --instructions follows.
 func TestCodexRefusesAProfileWithAnyPermissionOffTheNativeFreshLane(t *testing.T) {
 	t.Parallel()
@@ -318,20 +318,15 @@ func TestCodexRefusesAProfileWithAnyPermissionOffTheNativeFreshLane(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tail := f.onlyArgvTail(t, aiModeCodex); slices.Contains(tail, "--model") || slices.Contains(tail, "opus") {
-		t.Fatalf("codex exec argv tail = %q carries the profile model", tail)
+	if tail, want := f.onlyArgvTail(t, aiModeCodex), []string{"-m", "opus", "-c", "model_reasoning_effort=high", "-C", "/srv/alpha"}; !slices.Equal(tail, want) {
+		t.Fatalf("codex exec argv tail = %q, want %q", tail, want)
 	}
-	for _, line := range []string{
-		"profile-not-applied item=model provider=codex reason=" + profileReasonProviderOptionUnsupported,
-		"profile-not-applied item=effort provider=codex reason=" + profileReasonProviderOptionUnsupported,
-	} {
-		if !strings.Contains(stdout, line+"\n") {
-			t.Fatalf("stdout = %q, want %q", stdout, line)
-		}
+	if strings.Contains(stdout, profileReasonProviderOptionUnsupported) {
+		t.Fatalf("Codex profile model or effort was skipped: %q", stdout)
 	}
 	agent := f.createdAgent(t)
-	if agent.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != digest || agent.Metadata.Annotations[coremetadata.AnnotationAgentEffort] != "" {
-		t.Fatalf("codex Agent annotations = %v, want the profile pair and no effort", agent.Metadata.Annotations)
+	if agent.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != digest || agent.Metadata.Annotations[coremetadata.AnnotationAgentEffort] != "high" {
+		t.Fatalf("codex Agent annotations = %v, want the profile pair and high effort", agent.Metadata.Annotations)
 	}
 
 	if _, err := f.personas.Write("go-reviewer", []byte("x\n")); err != nil {

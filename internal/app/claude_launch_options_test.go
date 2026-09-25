@@ -45,10 +45,11 @@ func TestCreateClaudeAgentAcceptsAModelOutsideTheSuggestedList(t *testing.T) {
 func TestCreateAgentRefusesModelAndEffortItCannotHonor(t *testing.T) {
 	t.Parallel()
 	for name, args := range map[string][]string{
-		"another provider": {"agent", "--provider", "codex", "--interactive-only", "--model", "gpt-6"},
-		"unknown effort":   {"agent", "--provider", "claude", "--effort", "extreme"},
-		"option as model":  {"agent", "--provider", "claude", "--model", "--dangerously-skip-permissions"},
-		"model with space": {"agent", "--provider", "claude", "--model", "opus sonnet"},
+		"another provider":     {"agent", "--provider", "antigravity", "--model", "gpt-6"},
+		"codex unknown effort": {"agent", "--provider", "codex", "--effort", "extreme"},
+		"unknown effort":       {"agent", "--provider", "claude", "--effort", "extreme"},
+		"option as model":      {"agent", "--provider", "claude", "--model", "--dangerously-skip-permissions"},
+		"model with space":     {"agent", "--provider", "claude", "--model", "opus sonnet"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -79,7 +80,20 @@ func TestClaudeLaunchOptionsPrecedeTheWorkspaceArguments(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("argv tail = %q, want %q", got, want)
 	}
-	if _, _, err := cmd.PlanAgentLaunchWithOptions(aiModeCodex, workspace, nil, "x", "", ""); err == nil {
-		t.Fatal("codex accepted Claude launch options")
+	if _, _, err := cmd.PlanAgentLaunchWithOptions(aiModeAntigravity, workspace, nil, "x", "", ""); err == nil {
+		t.Fatal("antigravity accepted model launch options")
+	}
+}
+
+func TestCodexNativeResumeReappliesModelAndEffort(t *testing.T) {
+	cmd := agentLaunchArgvTestCommand(t)
+	route := nativeTestRoute("generation-model", coremetadata.CodexGenerationCurrent)
+	_, argv, err := cmd.PlanNativeCodexResumeWithOptions(route, coremetadata.AgentWorkspace{CWD: "/work/owner"}, "thread-model", "gpt-6", "high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-m", "gpt-6", "-c", "model_reasoning_effort=high", "-C", "/work/owner", "resume", "--remote", "unix://" + route.SocketPath, "thread-model"}
+	if got := execArgvTail(t, argv, aiModeCodex); !slices.Equal(got, want) {
+		t.Fatalf("native resume argv = %q, want %q", got, want)
 	}
 }

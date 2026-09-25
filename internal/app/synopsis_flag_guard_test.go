@@ -56,8 +56,6 @@ const synopsisProviderShortcutReason = "registered by the shared Agent create pa
 // already in its Usage, or (category c) is no longer refused, is stale.
 var synopsisFlagExceptions = map[string]synopsisFlagException{
 	"create codex provider":                  {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/create_agent.go:(*createCommand).resolveCreateProvider", probe: []string{"create", "codex", "--provider", "codex"}},
-	"create codex model":                     {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/claude_launch_options.go:requireClaudeLaunchOptions", probe: []string{"create", "codex", "--model", "opus"}},
-	"create codex effort":                    {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/claude_launch_options.go:requireClaudeLaunchOptions", probe: []string{"create", "codex", "--effort", "high"}},
 	"create codex dialogue-reply-only":       {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/claude_dialogue_profile.go:requireClaudeDialogueMode", probe: []string{"create", "codex", "--dialogue-reply-only"}},
 	"create claude provider":                 {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/create_agent.go:(*createCommand).resolveCreateProvider", probe: []string{"create", "claude", "--provider", "claude"}},
 	"create claude interactive-only":         {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/codex_native_thread.go:requireInteractiveOnlyProvider", probe: []string{"create", "claude", "--interactive-only"}},

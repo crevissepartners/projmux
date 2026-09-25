@@ -78,13 +78,15 @@ type codexNativeCreateInput struct {
 	Workspace             coremetadata.AgentWorkspace
 	DeveloperInstructions string
 	Policy                codexappserver.ThreadPolicy
+	Model                 string
+	Effort                string
 	Prompt                string
 	RequestKey            string
 }
 
 type codexNativeThreadClient interface {
-	StartThread(context.Context, string, []string, string, codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error)
-	StartTurn(context.Context, string, string, string) (string, error)
+	StartThreadWithModel(context.Context, string, []string, string, codexappserver.ThreadPolicy, string) (codexappserver.ThreadBinding, error)
+	StartTurnWithOptions(context.Context, string, string, string, string, string) (string, error)
 	BootstrapThread(context.Context, string, string, []string) (codexappserver.ThreadSnapshot, error)
 	Close() error
 }
@@ -399,7 +401,7 @@ func (controller defaultCodexNativeThreadController) Create(ctx context.Context,
 			_ = client.Close()
 		}
 	}()
-	binding, err := client.StartThread(ctx, workspace.CWD, workspace.AdditionalWritableRoots, input.DeveloperInstructions, input.Policy)
+	binding, err := client.StartThreadWithModel(ctx, workspace.CWD, workspace.AdditionalWritableRoots, input.DeveloperInstructions, input.Policy, input.Model)
 	if err != nil {
 		return binding, err
 	}
@@ -412,7 +414,7 @@ func (controller defaultCodexNativeThreadController) Create(ctx context.Context,
 		closed = true
 		return binding, controller.awaitDurableResume(ctx, route, workspace, binding.ThreadID)
 	}
-	binding.TurnID, err = client.StartTurn(ctx, binding.ThreadID, input.Prompt, input.RequestKey)
+	binding.TurnID, err = client.StartTurnWithOptions(ctx, binding.ThreadID, input.Prompt, input.RequestKey, input.Model, input.Effort)
 	return binding, err
 }
 
@@ -477,6 +479,21 @@ func (defaultCodexNativeThreadController) CanFallback(err error) bool {
 type codexNativeAgentLauncher interface {
 	PlanNativeCodexResume(codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) (title string, argv []string, err error)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
+}
+
+type codexNativeOptionsLauncher interface {
+	PlanNativeCodexResumeWithOptions(codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, string, string) (title string, argv []string, err error)
+}
+
+func planNativeCodexResumeOptions(launcher codexNativeAgentLauncher, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID, model, effort string) (string, []string, error) {
+	if model == "" && effort == "" {
+		return launcher.PlanNativeCodexResume(route, workspace, threadID)
+	}
+	withOptions, ok := launcher.(codexNativeOptionsLauncher)
+	if !ok {
+		return "", nil, errors.New("native Codex options launcher is unavailable")
+	}
+	return withOptions.PlanNativeCodexResumeWithOptions(route, workspace, threadID, model, effort)
 }
 
 func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeThreadController, ref *coremetadata.AgentSessionRef, agentRef string) (codexNativeEndpointRoute, error) {

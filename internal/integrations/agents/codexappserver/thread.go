@@ -180,6 +180,10 @@ func openReadyThreadClient(ctx context.Context, projmuxVersion string, experimen
 // thread that was asked for, and no caller may launch it as if it were. A zero
 // policy sends neither key and checks nothing.
 func (c *Client) StartThread(ctx context.Context, cwd string, roots []string, developerInstructions string, policy ThreadPolicy) (ThreadBinding, error) {
+	return c.StartThreadWithModel(ctx, cwd, roots, developerInstructions, policy, "")
+}
+
+func (c *Client) StartThreadWithModel(ctx context.Context, cwd string, roots []string, developerInstructions string, policy ThreadPolicy, model string) (ThreadBinding, error) {
 	if err := policy.validate(); err != nil {
 		return ThreadBinding{}, err
 	}
@@ -189,7 +193,7 @@ func (c *Client) StartThread(ctx context.Context, cwd string, roots []string, de
 	}
 	var result threadResult
 	if err := c.Request(ctx, methodThreadStart, threadStartParams{
-		CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots,
+		CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots, Model: model,
 		DeveloperInstructions: developerInstructions,
 		Sandbox:               policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy,
 	}, &result); err != nil {
@@ -256,6 +260,10 @@ func (c *Client) ResumeThread(ctx context.Context, threadID, cwd string, roots [
 // StartTurn submits one text input and returns the exact turn id. The prompt is
 // never retained by the adapter.
 func (c *Client) StartTurn(ctx context.Context, threadID, prompt, requestKey string) (string, error) {
+	return c.StartTurnWithOptions(ctx, threadID, prompt, requestKey, "", "")
+}
+
+func (c *Client) StartTurnWithOptions(ctx context.Context, threadID, prompt, requestKey, model, effort string) (string, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" || prompt == "" {
 		return "", fmt.Errorf("%w: turn/start requires thread and prompt", ErrProtocol)
@@ -265,6 +273,8 @@ func (c *Client) StartTurn(ctx context.Context, threadID, prompt, requestKey str
 		ThreadID:            threadID,
 		Input:               []wireUserInput{{Type: "text", Text: prompt}},
 		ClientUserMessageID: strings.TrimSpace(requestKey),
+		Model:               model,
+		Effort:              effort,
 	}, &result); err != nil {
 		return "", err
 	}

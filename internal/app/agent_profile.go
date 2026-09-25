@@ -249,7 +249,7 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 	} {
 		switch {
 		case overlap.value == "":
-		case !claude:
+		case !claude && provider != aiModeCodex:
 			launch.skip(overlap.item, provider, profileReasonProviderOptionUnsupported)
 		case *overlap.flag != "":
 			launch.skip(overlap.item, provider, profileReasonOverriddenByFlag)

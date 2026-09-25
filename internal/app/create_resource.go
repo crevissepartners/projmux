@@ -420,8 +420,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.Var(&out.addDirs, "add-dir", "repeatable additional writable root")
 		fs.BoolVar(&out.interactiveOnly, "interactive-only", false,
 			"codex only: launch a plain interactive CLI Agent with no native thread binding")
-		fs.StringVar(&out.model, "model", "", "claude only: model alias or full name the new session runs")
-		fs.StringVar(&out.effort, "effort", "", "claude only: effort level: "+strings.Join(claudeEffortLevels, "|"))
+		fs.StringVar(&out.model, "model", "", "claude or codex: model name the new session runs")
+		fs.StringVar(&out.effort, "effort", "", "claude or codex: effort level: "+strings.Join(claudeEffortLevels, "|"))
 		fs.StringVar(&out.persona, "instructions", "", "stored instructions the new session starts with; claude always, codex only with a prompt; manage with projmux instructions")
 		fs.StringVar(&legacyPersona, "persona", "", "alias of --instructions")
 		fs.StringVar(&out.profile, "profile", "", "named Agent profile the new session starts with; none turns off role mapping; manage with projmux profile")
