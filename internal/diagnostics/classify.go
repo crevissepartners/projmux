@@ -3,6 +3,8 @@ package diagnostics
 import (
 	"strconv"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/cli"
 )
 
 // CommandClass is the privacy-safe outcome classification. Only values in the
@@ -149,9 +151,25 @@ func stripInternalNamespace(args []string) []string {
 
 // Classify discards every non-allowlisted argv value. It may inspect known
 // flags to decide whether a command mutates state, but it never returns them.
+//
+// The shared CLI help boundary owns the help verdict. When it answers the raw
+// argv as help, no handler runs, so the class keeps its command and subcommand
+// but is never state-changing, whatever flags precede the help flag
+// (`update apply --yes --help`). The check runs on the argv exactly as the
+// boundary sees it, before compatibility or internal-namespace rewriting.
+// directHelpIntent only adds the help spellings the boundary leaves to
+// handlers or declines.
 func Classify(args []string) CommandClass {
-	return classify(args, false)
+	class := classify(args, false)
+	if boundaryHelpRequested(args) {
+		class.StateChanging = false
+	}
+	return class
 }
+
+// boundaryHelpRequested is the CLI help boundary's verdict. It is a variable
+// only so the catalog guard's negative control can disable it.
+var boundaryHelpRequested = cli.HelpRequested
 
 // classifyRecorded is Classify for a command class read back from an existing
 // log. It also accepts the classes of retired routes, so historical records
@@ -197,7 +215,8 @@ func classify(args []string, recorded bool) CommandClass {
 			out.Subcommand = candidate
 		}
 	}
-	// A direct help intent is never a mutation.
+	// A direct help intent is never a mutation. Classify applies the boundary's
+	// own verdict on top; this covers what the boundary does not answer.
 	if directHelpIntent(args[1:]) {
 		out.StateChanging = false
 		return out
@@ -275,13 +294,21 @@ func normalizeCanonicalCompatibility(args []string) []string {
 }
 
 // directHelpIntent reports whether the arguments after the top-level command
-// express a direct help intent.
+// express a direct help intent the CLI help boundary does not answer itself.
+//
+// The boundary (cli.HelpRequested, applied by Classify) owns every help flag
+// under a route graph root, wherever it sits before `--`. This scan is the
+// conservative fallback for the rest: the bare `help` word that handlers
+// answer (`settings help`, `update help extra`) and help
+// flags under roots outside the route graph (retired roots, `--version`),
+// which the boundary declines.
 //
 // The scan walks positional subcommand words so nested help is recognized
 // (`ai settings --help`, `ai topic set --help`), and stops at the first
-// flag-looking token: a token after a flag can be that flag's value, and
-// misreading a value as help would suppress a real mutation record (for example
-// `upgrade --ref --help`). It also stops at a bare `--`, which begins payload.
+// flag-looking token: outside the boundary a token after a flag can be that
+// flag's value, and misreading a value as help would suppress a real mutation
+// record (for example `upgrade --ref --help`, whose retired root the boundary
+// does not resolve). It also stops at a bare `--`, which begins payload.
 //
 // The bare `help` word counts only in the first position. Later on it can be a
 // real positional value — `pin add help` pins a directory named "help" — so
@@ -308,7 +335,9 @@ func directHelpIntent(args []string) bool {
 // The flag package returns flag.ErrHelp for every such spelling regardless of
 // any value, and the CLI help boundary answers all of them with exit 0, so none
 // of them may be scored as a state change. Missing a spelling here records a
-// phantom state-changing success row for a mutation that never ran.
+// phantom state-changing success row for a mutation that never ran. The same
+// holds for a help flag after other flags (`update apply --yes --help`), which
+// is why Classify takes the boundary's verdict instead of relying on this scan.
 func isHelpFlagArg(arg string) bool {
 	if !strings.HasPrefix(arg, "-") {
 		return false

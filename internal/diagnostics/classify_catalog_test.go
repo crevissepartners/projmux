@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -100,6 +101,134 @@ func TestEveryCatalogRouteClassifiesItsCommand(t *testing.T) {
 		}
 		t.Fatalf("sweep did not report the removed get rule; failures = %q", failures)
 	})
+}
+
+// catalogHelpShapes are the help spellings appended to every route graph
+// spelling, including a help flag after a boolean flag and after a flag value.
+var catalogHelpShapes = [][]string{
+	{"--help"},
+	{"-h"},
+	{"--help=x"},
+	{"--json", "--help"},
+	{"--yes", "--help"},
+	{"--file", "y", "--help"},
+}
+
+// catalogHelpClassificationFailures returns every route graph spelling and
+// help shape that the CLI help boundary answers as help but Classify scores as
+// a state change. It reads the boundary through cli.HelpRequested directly, so
+// disabling Classify's own use of the boundary cannot shrink the checked set.
+//
+// A route whose class leaves the subcommand open (`pin project`, `runtime tag`)
+// dispatches its verbs in the handler, below the route graph, so the sweep also
+// extends it with each subcommand its classification rule allowlists
+// (`pin project add --json --help`).
+func catalogHelpClassificationFailures() (failures []string, checked, helpTrue int) {
+	seen := map[string]bool{}
+	check := func(argv []string) {
+		key := strings.Join(argv, " ")
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		checked++
+		if !cli.HelpRequested(argv) {
+			return
+		}
+		helpTrue++
+		if got := Classify(argv); got.StateChanging {
+			failures = append(failures, fmt.Sprintf("%q: help request classified as a state change (%q/%q)", strings.Join(argv, " "), got.Command, got.Subcommand))
+		}
+	}
+	var visit func(nodes []cli.Route, prefix []string)
+	visit = func(nodes []cli.Route, prefix []string) {
+		for _, node := range nodes {
+			spellings := append([]string{node.Name}, node.Aliases...)
+			for _, token := range spellings {
+				path := append(slices.Clone(prefix), token)
+				for _, shape := range catalogHelpShapes {
+					check(append(slices.Clone(path), shape...))
+				}
+				if len(node.Children) > 0 {
+					check(append(slices.Clone(path), "help"))
+				}
+				class := Classify(path)
+				if class.Command == "" || class.Subcommand != "" {
+					continue
+				}
+				rule := commandRules[class.Command]
+				verbs := slices.Sorted(maps.Keys(rule.subcommands))
+				verbs = append(verbs, slices.Sorted(maps.Keys(rule.aliases))...)
+				for _, verb := range verbs {
+					for _, shape := range catalogHelpShapes {
+						check(append(append(slices.Clone(path), verb), shape...))
+					}
+				}
+			}
+			visit(node.Children, append(slices.Clone(prefix), node.Name))
+		}
+	}
+	visit(cli.Routes(), nil)
+	return failures, checked, helpTrue
+}
+
+// TestCatalogHelpIsNeverAStateChange's negative control swaps the
+// package-global boundaryHelpRequested, so neither it nor its subtest may call
+// t.Parallel.
+func TestCatalogHelpIsNeverAStateChange(t *testing.T) {
+	failures, checked, helpTrue := catalogHelpClassificationFailures()
+	t.Logf("checked %d argv; the help boundary answers %d as help", checked, helpTrue)
+	if failures != nil {
+		t.Fatalf("%d help requests classify as state changes:\n%s", len(failures), strings.Join(failures, "\n"))
+	}
+	// Every spelling answers at least the three bare help flag shapes, so a
+	// smaller help set means the sweep stopped covering the catalog.
+	if spellings := len(catalogSpellings(cli.Routes(), nil)); helpTrue < 3*spellings {
+		t.Fatalf("help set has %d argv, want at least %d (3 per each of %d spellings)", helpTrue, 3*spellings, spellings)
+	}
+
+	t.Run("negative control: a classifier ignoring the boundary is reported", func(t *testing.T) {
+		original := boundaryHelpRequested
+		boundaryHelpRequested = func([]string) bool { return false }
+		t.Cleanup(func() { boundaryHelpRequested = original })
+		failures, _, _ := catalogHelpClassificationFailures()
+		for _, want := range []string{`"update apply --yes --help"`, `"update check --json --help"`, `"hook trust --yes --help"`, `"pin project add --json --help"`} {
+			if !slices.ContainsFunc(failures, func(failure string) bool { return strings.HasPrefix(failure, want+":") }) {
+				t.Errorf("sweep did not report %s; failures = %q", want, failures)
+			}
+		}
+	})
+}
+
+// TestMutationsTheBoundaryDoesNotAnswerStayStateChanging pins that following
+// the help boundary suppresses only real help: argv the boundary leaves to a
+// handler still records its mutation.
+func TestMutationsTheBoundaryDoesNotAnswerStayStateChanging(t *testing.T) {
+	t.Parallel()
+	for _, argv := range [][]string{
+		{"pin", "project", "add", "/tmp/x"},
+		// A leaf's `help` word is an operand: a directory named "help".
+		{"pin", "project", "add", "help"},
+		{"pin", "add", "help"},
+		{"update", "apply", "--yes"},
+		{"update", "check"},
+		{"update", "check", "--json"},
+		{"hook", "trust"},
+		{"hook", "trust", "--yes"},
+		// A help flag after `--` is payload, not a help request.
+		{"update", "apply", "--", "--help"},
+		{"pin", "project", "add", "--", "--help"},
+		// Near-miss spellings are ordinary flags.
+		{"update", "apply", "--helper"},
+		{"hook", "trust", "-h5"},
+	} {
+		if cli.HelpRequested(argv) {
+			t.Fatalf("cli.HelpRequested(%q) = true; the control needs argv the boundary does not answer", argv)
+		}
+		if got := Classify(argv); !got.StateChanging {
+			t.Errorf("Classify(%q) = %#v, want a state change", argv, got)
+		}
+	}
 }
 
 func TestUnknownArgvStaysUnclassified(t *testing.T) {
