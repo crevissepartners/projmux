@@ -56,6 +56,7 @@ type Event struct {
 	Classification     string `json:"classification,omitempty"`
 	WindowUID          string `json:"window_uid,omitempty"`
 	PaneUID            string `json:"pane_uid,omitempty"`
+	AgentUID           string `json:"agent_uid,omitempty"`
 }
 
 // NewRunID creates one opaque correlation ID for a process invocation.
@@ -111,8 +112,8 @@ func SanitizeMessage(message, home string) string {
 
 var (
 	allowedLevels     = stringSet("info", "error")
-	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent)
+	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -277,6 +278,12 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 }
 
 func validateEventShape(event Event) error {
+	if event.Event == agentMessageForeignSourceEvent {
+		return validateAgentMessageForeignSourceEvent(event)
+	}
+	if event.Component == "agent" || event.AgentUID != "" {
+		return fmt.Errorf("agent message fields on unrelated event")
+	}
 	if event.Event == createOutcomeEvent {
 		return validateCreateOutcomeEvent(event)
 	}

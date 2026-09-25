@@ -18,25 +18,44 @@ import (
 // The public CLI caller must descend from the exact registered provider birth.
 // Same UID, inherited environment, a session ID, or a reply ref alone is not
 // authority. Every parent identity is observed again before accepting a chain.
+// A lineage that cannot be read is not a descendant here.
 func claudeProviderDescendant(peer, provider coremetadata.ProcessIdentity) bool {
+	descendant, err := claudeProviderLineage(localipc.Process, peer, provider)
+	return err == nil && descendant
+}
+
+// errClaudeLineageUnknown is a lineage walk that could not finish: a process
+// in the chain could not be read, changed identity while it was read, or the
+// chain was deeper than the walk bound.
+var errClaudeLineageUnknown = errors.New("claude provider lineage is unknown")
+
+// claudeProviderLineage is the one ancestry walk. It tells a chain that
+// provably does not reach the provider (false, nil) from one it could not read
+// (false, errClaudeLineageUnknown). read is localipc.Process outside tests.
+func claudeProviderLineage(read func(int) (coremetadata.ProcessIdentity, int, error),
+	peer, provider coremetadata.ProcessIdentity,
+) (bool, error) {
 	current := peer
 	for range 16 {
-		actual, parent, err := localipc.Process(current.PID)
-		if err != nil || actual != current || actual.OwnerUID != provider.OwnerUID {
-			return false
+		actual, parent, err := read(current.PID)
+		if err != nil || actual != current {
+			return false, errClaudeLineageUnknown
+		}
+		if actual.OwnerUID != provider.OwnerUID {
+			return false, nil
 		}
 		if actual == provider {
-			return current != peer
+			return current != peer, nil
 		}
 		if parent <= 1 || parent == current.PID {
-			return false
+			return false, nil
 		}
-		current, _, err = localipc.Process(parent)
+		current, _, err = read(parent)
 		if err != nil {
-			return false
+			return false, errClaudeLineageUnknown
 		}
 	}
-	return false
+	return false, errClaudeLineageUnknown
 }
 
 func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, registryPath string,

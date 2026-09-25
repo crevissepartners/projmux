@@ -101,6 +101,14 @@ guards. The generated Window rename also runs through the same transaction
 and is not recorded, because it is not a create. Every other event family
 rejects `lock_held_ms` and the `create` component.
 
+An accepted `agent message send` whose Claude source Agent's registered
+Claude process is not an ancestor of the sender writes one `component=agent`,
+`event=agent.message.foreign-source` `info`/`success` record. It adds only the
+opaque source `agent_uid` (`agent-…`) and its `pane_uid` (`pane-…`); the
+provider session id, process ids, and environment shown in the stderr warning
+are never recorded, and every other event family rejects `agent_uid` and the
+`agent` component. A journal failure never changes the send.
+
 projmux no longer emits `session-state.outcome` records. Project snapshots
 were removed, and the retained `internal tmux autosave-session-state` route is
 a no-op that writes nothing. Records written by older versions keep their

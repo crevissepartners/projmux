@@ -557,6 +557,20 @@ correlated model reply is a separate envelope with the original
 self-claims that envelope. Message lifecycle updates neither Agent interaction
 state nor tmux badges.
 
+`--source` names the source Agent; it does not prove the caller is that Agent.
+When the source is a Claude Agent with a registered Claude process and the
+sending process does not descend from that process, the send still proceeds
+exactly as before (same receipt, delivery, and exit status), but it prints one
+`agent message send: warning:` line on stderr naming the source Agent UID, its
+registered Claude session, the caller pid, and `CLAUDE_CODE_SESSION_ID` when
+set, and records one `agent.message.foreign-source` event readable with
+`projmux diagnostics log --component agent`. It usually means another Claude
+session, such as a `claude --resume` in another terminal or a background
+session left by `/exit` "Move to background", is sending as that Agent: end
+that session, or send from the registered one. Nothing is judged when the
+process lineage cannot be read, and a Claude `--reply-to` is already refused
+for such a caller.
+
 Claude messaging is opt-in through `projmux agent integrate claude`. The
 integration installs no receiver waiter or `asyncRewake`; ingress is immediate
 through the exact registered provider socket. Capability JSON keeps Claude
