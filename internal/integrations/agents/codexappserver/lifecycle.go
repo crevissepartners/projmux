@@ -17,6 +17,12 @@ const (
 	maxReadinessDelay       = 250 * time.Millisecond
 )
 
+// daemonStartWaitDelay matches the WaitDelay of hooks.(*Runner).runCommand.
+// It force-closes the inherited stdout/stderr pipes after the start command
+// exits (or is killed), so a spawned daemon that keeps them open cannot block
+// cmd.Wait indefinitely.
+const daemonStartWaitDelay = 250 * time.Millisecond
+
 // TriggerKind is the closed caller-intent vocabulary for daemon lifecycle.
 // Only TriggerNativeUserAction is allowed to mutate daemon state.
 type TriggerKind string
@@ -313,12 +319,18 @@ func runDaemonStart(ctx context.Context, timeout time.Duration, lookPath func(st
 	stderr := boundedStartCapture{remaining: maxStartStderrBytes}
 	cmd.Stdout = discardWriter{}
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = daemonStartWaitDelay
 	err = cmd.Run()
 	if err == nil {
 		return startSucceeded
 	}
 	if errors.Is(startCtx.Err(), context.DeadlineExceeded) {
 		return startTimedOut
+	}
+	// The start command exited 0 but a daemon it spawned still held the output
+	// pipes; WaitDelay closed them. The start itself succeeded.
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		return startSucceeded
 	}
 	if errors.Is(err, exec.ErrNotFound) {
 		return startExecutableMissing
