@@ -319,29 +319,34 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 	}
 
 	ui := fs.String(switchUIFlag, switchUIPopup, "future sessionizer surface to prepare")
 	anchor := fs.String("anchor", "", "exact tmux Pane that anchors Project sidebar continuation")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return usageError("switch does not accept positional arguments")
 	}
 	if err := validateSwitchUI(*ui); err != nil {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return err
 	}
 	anchorPane := strings.TrimSpace(*anchor)
 	if anchorPane != "" && exactTmuxHandle(anchorPane, "%") == "" {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return errors.New("switch --anchor requires an exact %N Pane handle")
 	}
 
@@ -375,28 +380,32 @@ func (c *switchCommand) plan(ui, anchorPane string) (switchPlan, error) {
 }
 
 func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch toggle-tag", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 	}
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return fmt.Errorf("switch toggle-tag accepts at most 1 [path] argument")
 	}
 
 	target, err := c.resolveToggleTagTarget(fs.Args())
 	if err != nil {
 		if strings.Contains(err.Error(), "switch toggle-tag requires") {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 		}
 		return err
 	}
@@ -405,28 +414,32 @@ func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) er
 }
 
 func (c *switchCommand) runTogglePin(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch toggle-pin", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 	}
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return fmt.Errorf("switch toggle-pin accepts at most 1 [path] argument")
 	}
 
 	target, err := c.resolveSwitchTarget(fs.Args(), "switch toggle-pin")
 	if err != nil {
 		if strings.Contains(err.Error(), "switch toggle-pin requires") {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 		}
 		return err
 	}
@@ -435,28 +448,32 @@ func (c *switchCommand) runTogglePin(args []string, stdout, stderr io.Writer) er
 }
 
 func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch kill", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 	}
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() > 1 {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return fmt.Errorf("switch kill accepts at most 1 [path] argument")
 	}
 
 	target, err := c.resolveSwitchTarget(fs.Args(), "switch kill")
 	if err != nil {
 		if strings.Contains(err.Error(), "switch kill requires") {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 		}
 		return err
 	}
@@ -478,46 +495,53 @@ func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch open", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 1 {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return fmt.Errorf("switch open requires exactly 1 argument: <path>")
 	}
 	return c.openProjectTargetPath(context.Background(), cleanOptionalPath(fs.Arg(0)))
 }
 
 func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch preview", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 	}
 	ui := fs.String(switchUIFlag, switchUIPopup, "preview surface to render")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 			return err
 		}
 		return flagParseError(err)
 	}
 	if err := validateSwitchUI(*ui); err != nil {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return err
 	}
 	if fs.NArg() > 1 {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return fmt.Errorf("switch preview accepts at most 1 [path] argument")
 	}
 	if fs.NArg() == 1 && strings.TrimSpace(fs.Arg(0)) == switchSettingsSentinel {
@@ -535,7 +559,8 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 	target, err := c.resolveSwitchTarget(fs.Args(), "switch preview")
 	if err != nil {
 		if strings.Contains(err.Error(), "switch preview requires") {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 		}
 		return err
 	}
@@ -576,13 +601,16 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 			return nil
 		}
 
-		if err := c.executeSettingsAction(action, stdout, stderr); err != nil {
+		if err := c.executeSettingsAction(action, stdout, stderr, func() { printRouteUsage(stderr, "switch"); printSwitchNotes(stderr) }); err != nil {
 			return err
 		}
 	}
 }
 
-func (c *switchCommand) executeSettingsAction(action string, stdout, stderr io.Writer) error {
+// executeSettingsAction runs one switch-owned pin action. printUsage prints
+// the usage of the route whose picker produced action (`switch` or
+// `settings`) under an unknown action.
+func (c *switchCommand) executeSettingsAction(action string, stdout, stderr io.Writer, printUsage func()) error {
 	switch {
 	case action == "add-interactive":
 		return c.runAddPinInteractive(stdout)
@@ -601,7 +629,7 @@ func (c *switchCommand) executeSettingsAction(action string, stdout, stderr io.W
 		target := strings.TrimPrefix(action, "pin:")
 		return c.togglePin(target, stdout)
 	default:
-		printSwitchUsage(stderr)
+		printUsage()
 		return fmt.Errorf("unknown switch settings action: %s", action)
 	}
 }
@@ -1027,21 +1055,24 @@ func (c *switchCommand) runCycle(command string, args []string, stderr io.Writer
 
 func (c *switchCommand) parseCycleArgs(command string, args []string, stderr io.Writer) (string, corepreview.Direction, error) {
 	if len(args) != 2 {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return "", "", fmt.Errorf("%s requires exactly 2 arguments: <path> <next|prev>", command)
 	}
 
 	target, err := c.resolveSwitchTarget(args[:1], command)
 	if err != nil {
 		if strings.Contains(err.Error(), "requires a non-empty") {
-			printSwitchUsage(stderr)
+			printRouteUsage(stderr, "switch")
+			printSwitchNotes(stderr)
 		}
 		return "", "", err
 	}
 
 	direction, err := parsePreviewDirection(args[1])
 	if err != nil {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return "", "", fmt.Errorf("%s: %w", command, err)
 	}
 
@@ -1284,7 +1315,7 @@ func (c *switchCommand) executeProjdirSettingsAction(action string, stdout, stde
 	case "clear":
 		return c.clearSavedProjdir(stdout)
 	default:
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "settings")
 		return fmt.Errorf("unknown project root settings action: %s", action)
 	}
 }
@@ -1847,7 +1878,7 @@ func (c *switchCommand) lookupEnvValue(name string) string {
 }
 
 func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
-	fs := flag.NewFlagSet("switch sidebar-open", flag.ContinueOnError)
+	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	target := fs.String("path", "", "project path to open")
 	sessionName := fs.String("session", "", "target session name")
@@ -2053,7 +2084,8 @@ func buildShellCommand(binaryPath string, args []string, env map[string]string) 
 
 func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Writer) error {
 	if len(args) != 1 {
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "switch")
+		printSwitchNotes(stderr)
 		return fmt.Errorf("switch sidebar-focus requires exactly 1 argument: <path>")
 	}
 
@@ -3329,26 +3361,6 @@ func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePat
 	return existingBySession, nil
 }
 
-func printSwitchUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux switch [--ui popup|sidebar]")
-	fmt.Fprintln(w, "  projmux switch toggle-tag [path]")
-	fmt.Fprintln(w, "  projmux switch toggle-pin [path]")
-	fmt.Fprintln(w, "  projmux switch kill [path]")
-	fmt.Fprintln(w, "  projmux switch open <path>")
-	fmt.Fprintln(w, "  projmux switch settings")
-	fmt.Fprintln(w, "  projmux switch preview [path]")
-	fmt.Fprintln(w, "  projmux switch cycle-pane <path> <next|prev>")
-	fmt.Fprintln(w, "  projmux switch cycle-window <path> <next|prev>")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Options:")
-	fmt.Fprintln(w, "  --ui string   Candidate surface to prepare (popup or sidebar) (default \"popup\")")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Picker Actions:")
-	fmt.Fprintln(w, "  ctrl-x        Stop only the focused Project runtime, preserve its Project UID and desired Window/Pane topology, and reopen the picker")
-	fmt.Fprintln(w, "  alt-p         Toggle a pin on the focused candidate and reopen the picker")
-}
-
 // settingsEntries renders the picker's own pin menu.
 //
 // A remove row carries the pin's typed reference -- a uid for a managed pin, the
@@ -3613,7 +3625,7 @@ func (c *switchCommand) executeWorkdirSettingsAction(action string, stdout, stde
 	case strings.HasPrefix(action, "remove:"):
 		return c.removeWorkdir(strings.TrimPrefix(action, "remove:"), stdout)
 	default:
-		printSwitchUsage(stderr)
+		printRouteUsage(stderr, "settings")
 		return fmt.Errorf("unknown workdir settings action: %s", action)
 	}
 }
@@ -3820,4 +3832,16 @@ func (c *switchCommand) clearPins() error {
 		return fmt.Errorf("clear switch pins: %w", err)
 	}
 	return nil
+}
+
+// printSwitchNotes prints the switch options and picker actions under the
+// switch usage block.
+func printSwitchNotes(w io.Writer) {
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Options:")
+	fmt.Fprintln(w, "  --ui string   Candidate surface to prepare (popup or sidebar) (default \"popup\")")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Picker Actions:")
+	fmt.Fprintln(w, "  ctrl-x        Stop only the focused Project runtime, preserve its Project UID and desired Window/Pane topology, and reopen the picker")
+	fmt.Fprintln(w, "  alt-p         Toggle a pin on the focused candidate and reopen the picker")
 }

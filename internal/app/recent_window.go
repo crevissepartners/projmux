@@ -50,17 +50,17 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("window", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printWindowUsage(stderr)
+		printRouteUsage(stderr, "window")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printWindowUsage(stderr)
+			printRouteUsage(stderr, "window")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
-		printWindowUsage(stderr)
+		printRouteUsage(stderr, "window")
 		return usageError("window requires a subcommand")
 	}
 
@@ -70,20 +70,12 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "recent":
 		return c.recent.Run(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printWindowUsage(stdout)
+		printRouteUsage(stdout, "window")
 		return nil
 	default:
-		printWindowUsage(stderr)
+		printRouteUsage(stderr, "window")
 		return usageError(fmt.Sprintf("unknown window subcommand: %s", fs.Arg(0)))
 	}
-}
-
-func printWindowUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: projmux window <command>")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  record  Record the active tmux window in the recent queue")
-	fmt.Fprintln(w, "  recent  Pick a recent tmux window across projects")
 }
 
 type recentWindowCommand struct {
@@ -143,17 +135,17 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 	fs := flag.NewFlagSet("window recent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printWindowRecentUsage(stderr)
+		printRouteUsage(stderr, "window recent")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printWindowRecentUsage(stderr)
+			printRouteUsage(stderr, "window recent")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printWindowRecentUsage(stderr)
+		printRouteUsage(stderr, "window recent")
 		return usageError("window recent does not accept positional arguments")
 	}
 	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
@@ -225,25 +217,21 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 	return nil
 }
 
-func printWindowRecentUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: projmux window recent")
-}
-
 func (c *recentWindowCommand) RunRecord(args []string, _ io.Writer, stderr io.Writer) error {
 	fs := flag.NewFlagSet("window record", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		printWindowRecordUsage(stderr)
+		printRouteUsage(stderr, "window record")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printWindowRecordUsage(stderr)
+			printRouteUsage(stderr, "window record")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printWindowRecordUsage(stderr)
+		printRouteUsage(stderr, "window record")
 		return usageError("window record does not accept positional arguments")
 	}
 
@@ -268,10 +256,6 @@ func (c *recentWindowCommand) RunRecord(args []string, _ io.Writer, stderr io.Wr
 		return fmt.Errorf("record recent window: %w", err)
 	}
 	return nil
-}
-
-func printWindowRecordUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: projmux window record")
 }
 
 func (c *recentWindowCommand) recentStore(socket string) (recentWindowStore, error) {

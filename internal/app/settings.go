@@ -137,7 +137,7 @@ func (c *settingsCommand) statFile(path string) (os.FileInfo, error) {
 
 func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
-		printSettingsUsage(stderr)
+		printRouteUsage(stderr, "settings")
 		return usageError("settings does not accept positional arguments")
 	}
 	if c.nativePicker == nil {
@@ -243,7 +243,7 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	for {
 		options, err := c.sectionOptions(section)
 		if err != nil {
-			printSettingsUsage(stderr)
+			printRouteUsage(stderr, "settings")
 			return err
 		}
 		result, err := c.runPicker(options)
@@ -756,7 +756,7 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		if c.switcher == nil {
 			return errors.New("project picker settings are not configured")
 		}
-		return c.switcher.executeSettingsAction(action, stdout, stderr)
+		return c.switcher.executeSettingsAction(action, stdout, stderr, func() { printRouteUsage(stderr, "settings") })
 	case strings.HasPrefix(value, settingsActionPrefixUpdate):
 		action := strings.TrimPrefix(value, settingsActionPrefixUpdate)
 		// The release-channel opt-in is settled before the runner check: it
@@ -813,7 +813,7 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		}
 		return c.switcher.executeWorkdirSettingsAction(action, stdout, stderr)
 	default:
-		printSettingsUsage(stderr)
+		printRouteUsage(stderr, "settings")
 		return fmt.Errorf("unknown settings action: %s", value)
 	}
 }
@@ -926,9 +926,4 @@ func (c *settingsCommand) settingsCloseBindings() []string {
 
 func settingsCloseBindings() []string {
 	return pickerCloseBindingsForPopupToggleMode(nil, nil, "ai-split-settings", "esc", "ctrl-c", "ctrl-alt-s")
-}
-
-func printSettingsUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux settings")
 }

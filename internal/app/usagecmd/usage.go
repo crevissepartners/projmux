@@ -122,9 +122,9 @@ const veryStaleAfter = 1 * time.Hour
 
 // Run implements `projmux agent usage [...]`.
 func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
+	fs := flag.NewFlagSet("agent usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	model := fs.String("model", "all", "filter by model: codex | claude | all")
+	model := fs.String("model", "all", "filter by model: "+strings.Join(aiprovider.UsageTargets(), " | "))
 	window := fs.String("window", "all", "filter by window: 5h | weekly | context | quota | all")
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the tab-aligned table")
 	// --force / -f bypasses the per-adapter throttle floor AND clears
@@ -139,7 +139,11 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printUsageHelp(stderr)
+		cli.WriteRouteUsage(stderr, "agent usage")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Flags:")
+		fmt.Fprintln(stderr, "  --force, -f   bypass per-adapter throttle and clear active backoff before refreshing.")
+		fmt.Fprintln(stderr, "                Useful when bound to a tmux key as a manual 'refresh now' gesture.")
 		return &coremetadata.InputError{Detail: "usage does not accept positional arguments"}
 	}
 
@@ -1801,16 +1805,6 @@ func truncateWithEllipsis(s string, maxWidth int) string {
 		return string(rs[:1])
 	}
 	return string(rs[:maxWidth-1]) + "…"
-}
-
-func printUsageHelp(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintf(w, "  projmux agent usage [--model %s] [--window 5h|weekly|context|quota|all] [--json] [--force|-f]\n", strings.Join(aiprovider.UsageTargets(), "|"))
-	fmt.Fprintln(w, "  projmux internal status usage [--max-width N] [--force|-f]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Flags:")
-	fmt.Fprintln(w, "  --force, -f   bypass per-adapter throttle and clear active backoff before refreshing.")
-	fmt.Fprintln(w, "                Useful when bound to a tmux key as a manual 'refresh now' gesture.")
 }
 
 // writeBackoffNote appends a one-line note to stdout when an adapter

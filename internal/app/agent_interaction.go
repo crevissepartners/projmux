@@ -403,7 +403,7 @@ func (c *agentCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 		return usageError("agent topic requires get, set, or clear")
 	}
 	action := args[0]
-	fs := flag.NewFlagSet("agent topic "+action, flag.ContinueOnError)
+	fs := flag.NewFlagSet("agent topic", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var agentRef string
 	fs.StringVar(&agentRef, "agent", "", "exact Agent reference: <name> or uid:<uid>")
@@ -470,7 +470,7 @@ func (c *agentCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 	if len(args) > 0 && (args[0] == "get" || args[0] == "set") {
 		action, args = args[0], args[1:]
 	}
-	fs := flag.NewFlagSet("agent status "+action, flag.ContinueOnError)
+	fs := flag.NewFlagSet("agent status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var agentRef string
 	fs.StringVar(&agentRef, "agent", "", "exact Agent reference: <name> or uid:<uid>")

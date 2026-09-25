@@ -56,7 +56,7 @@ func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printWelcomeUsage(stderr)
+		printRouteUsage(stderr, "welcome")
 		return usageError("welcome does not accept positional arguments")
 	}
 	if *popup || *force {
@@ -67,13 +67,6 @@ func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	// en-US and reads no locale. The popup below and the `shell` banner are TUI
 	// surfaces and keep translating.
 	return writeShellWelcome(stdout, strings.TrimSpace(version.String()), status, hasStatus, false, false, false, welcomeWidthFromEnv(c.lookupEnv), i18n.FallbackLocale)
-}
-
-func printWelcomeUsage(w io.Writer) {
-	if w == nil {
-		return
-	}
-	_, _ = io.WriteString(w, "Usage:\n  projmux welcome [--popup [--force]]\n")
 }
 
 func (c *welcomeCommand) runPopup(force bool) error {

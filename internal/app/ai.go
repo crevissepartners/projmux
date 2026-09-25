@@ -1202,7 +1202,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printConfigEditUsage(stderr)
+		printRouteUsage(stderr, "config edit")
 		return usageError("config edit does not accept positional arguments")
 	}
 
@@ -4358,20 +4358,5 @@ func parsePositiveInt(value string) int {
 // declares no Usage (hidden plumbing with no synopsis of its own) prints
 // nothing, so the reason line stands alone.
 func printRouteUsage(w io.Writer, route string) {
-	tokens := strings.Fields(route)
-	path, resolved, ok := cli.Resolve(tokens)
-	if !ok || !slices.Equal(path, tokens) || len(resolved.Usage) == 0 {
-		return
-	}
-	fmt.Fprintln(w, "Usage:")
-	for _, line := range resolved.Usage {
-		fmt.Fprintln(w, "  "+line)
-	}
-}
-
-// printConfigEditUsage prints the synopsis of `config edit`, the public route
-// runSettings serves, so a rejected call shows that route's usage alone.
-func printConfigEditUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux config edit [--get|--set <mode>]")
+	cli.WriteRouteUsage(w, route)
 }

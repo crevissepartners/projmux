@@ -108,8 +108,7 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		return c.registry.Run(args[1:], stdout, stderr)
 	}
 	if len(args) == 0 || args[0] != "resources" {
-		printResourceReconcileUsage(stderr)
-		printRegistryRecoveryUsage(stderr)
+		printRouteUsage(stderr, "reconcile")
 		return usageError("reconcile requires the resources or registry subcommand")
 	}
 	opts, err := parseResourceReconcileOptions(args[1:], stderr)
@@ -588,8 +587,4 @@ func displayPlanValue(value string) string {
 		return "<missing>"
 	}
 	return value
-}
-
-func printResourceReconcileUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--import-orphan-mirrors --yes] [--socket <name> | --socket-path <absolute>] [-o json]")
 }

@@ -72,7 +72,7 @@ func (c *sessionPopupCommand) Run(args []string, stdout, stderr io.Writer) error
 		return err
 	}
 	if fs.NArg() == 0 {
-		printSessionPopupUsage(stderr)
+		printRouteUsage(stderr, "internal session-popup")
 		return errors.New("session-popup requires a subcommand")
 	}
 
@@ -86,16 +86,16 @@ func (c *sessionPopupCommand) Run(args []string, stdout, stderr io.Writer) error
 	case "cycle-window":
 		return c.runCycleWindow(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printSessionPopupUsage(stdout)
+		printRouteUsage(stdout, "internal session-popup")
 		return nil
 	default:
-		printSessionPopupUsage(stderr)
+		printRouteUsage(stderr, "internal session-popup")
 		return fmt.Errorf("unknown session-popup subcommand: %s", fs.Arg(0))
 	}
 }
 
 func (c *sessionPopupCommand) runPreview(args []string, stdout, stderr io.Writer) error {
-	sessionName, err := parseSessionPopupSessionArg(args, "preview", stderr)
+	sessionName, err := parseSessionPopupSessionArg(args, "preview", func() { printRouteUsage(stderr, "internal session-popup preview") })
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func (c *sessionPopupCommand) runPreview(args []string, stdout, stderr io.Writer
 }
 
 func (c *sessionPopupCommand) runOpen(args []string, stderr io.Writer) error {
-	sessionName, err := parseSessionPopupSessionArg(args, "open", stderr)
+	sessionName, err := parseSessionPopupSessionArg(args, "open", func() { printRouteUsage(stderr, "internal session-popup open") })
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (c *sessionPopupCommand) runOpen(args []string, stderr io.Writer) error {
 }
 
 func (c *sessionPopupCommand) runCyclePane(args []string, stdout, stderr io.Writer) error {
-	sessionName, direction, err := parseSessionPopupCycleArgs("session-popup cycle-pane", args, stderr)
+	sessionName, direction, err := parseSessionPopupCycleArgs("session-popup cycle-pane", args, func() { printRouteUsage(stderr, "internal session-popup cycle-pane") })
 	if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func (c *sessionPopupCommand) runCyclePane(args []string, stdout, stderr io.Writ
 }
 
 func (c *sessionPopupCommand) runCycleWindow(args []string, stdout, stderr io.Writer) error {
-	sessionName, direction, err := parseSessionPopupCycleArgs("session-popup cycle-window", args, stderr)
+	sessionName, direction, err := parseSessionPopupCycleArgs("session-popup cycle-window", args, func() { printRouteUsage(stderr, "internal session-popup cycle-window") })
 	if err != nil {
 		return err
 	}
@@ -337,46 +337,38 @@ func (c *sessionPopupCommand) requireOpener() (sessionPopupOpener, error) {
 	return c.opener, nil
 }
 
-func parseSessionPopupSessionArg(args []string, subcommand string, stderr io.Writer) (string, error) {
+func parseSessionPopupSessionArg(args []string, subcommand string, printUsage func()) (string, error) {
 	if len(args) != 1 {
-		printSessionPopupUsage(stderr)
+		printUsage()
 		return "", fmt.Errorf("session-popup %s requires exactly 1 argument: <session>", subcommand)
 	}
 
 	sessionName := strings.TrimSpace(args[0])
 	if sessionName == "" {
-		printSessionPopupUsage(stderr)
+		printUsage()
 		return "", fmt.Errorf("session-popup %s requires a non-empty <session> argument", subcommand)
 	}
 
 	return sessionName, nil
 }
 
-func parseSessionPopupCycleArgs(command string, args []string, stderr io.Writer) (string, corepreview.Direction, error) {
+func parseSessionPopupCycleArgs(command string, args []string, printUsage func()) (string, corepreview.Direction, error) {
 	if len(args) != 2 {
-		printSessionPopupUsage(stderr)
+		printUsage()
 		return "", "", fmt.Errorf("%s requires exactly 2 arguments: <session> <next|prev>", command)
 	}
 
 	sessionName := strings.TrimSpace(args[0])
 	if sessionName == "" {
-		printSessionPopupUsage(stderr)
+		printUsage()
 		return "", "", fmt.Errorf("%s requires a non-empty <session> argument", command)
 	}
 
 	direction, err := parsePreviewDirection(args[1])
 	if err != nil {
-		printSessionPopupUsage(stderr)
+		printUsage()
 		return "", "", fmt.Errorf("%s: %w", command, err)
 	}
 
 	return sessionName, direction, nil
-}
-
-func printSessionPopupUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux internal session-popup preview <session>")
-	fmt.Fprintln(w, "  projmux internal session-popup open <session>")
-	fmt.Fprintln(w, "  projmux internal session-popup cycle-pane <session> <next|prev>")
-	fmt.Fprintln(w, "  projmux internal session-popup cycle-window <session> <next|prev>")
 }

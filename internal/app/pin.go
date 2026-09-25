@@ -39,7 +39,16 @@ func newPinCommand() *pinCommand {
 
 // Run manages the configured pin subcommands.
 func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("pin", flag.ContinueOnError)
+	return c.runLevel("pin", args, stdout, stderr)
+}
+
+// runLevel parses one pin dispatch level. route is the spelling being parsed:
+// `pin` for the top level, and `pin project` once the canonical kind token is
+// consumed, so a flag error there prints `Usage of pin project:`. The route
+// gate only lets `pin project …` through, so every public flag error lands on
+// the `pin project` level.
+func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	if err := fs.Parse(args); err != nil {
@@ -49,7 +58,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
-		printPinUsage(stderr)
+		printPinHelp(stderr, route)
 		return usageError("pin requires a subcommand")
 	}
 
@@ -60,10 +69,11 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "project":
 		rest := fs.Args()[1:]
 		if len(rest) > 0 && rest[0] == "project" {
-			printPinUsage(stderr)
+			printRouteUsage(stderr, "pin project")
+			printPinNotes(stderr)
 			return usageError(fmt.Sprintf("unknown pin project subcommand: %s", rest[0]))
 		}
-		return c.Run(rest, stdout, stderr)
+		return c.runLevel("pin project", rest, stdout, stderr)
 	case "list":
 		return c.runList(fs.Args()[1:], stdout, stderr)
 	case "add":
@@ -77,10 +87,10 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "migrate":
 		return c.runMigrate(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printPinUsage(stdout)
+		printPinHelp(stdout, route)
 		return nil
 	default:
-		printPinUsage(stderr)
+		printPinHelp(stderr, route)
 		return usageError(fmt.Sprintf("unknown pin subcommand: %s", fs.Arg(0)))
 	}
 }
@@ -93,7 +103,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 // are neither and are not listed here -- they are the scan roots, owned by
 // `projmux settings` and PROJMUX_MANAGED_ROOTS.
 func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("pin list", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pin project", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	kind := fs.String("kind", "", "Limit the listing to one pin kind (project or candidate)")
 	if err := fs.Parse(args); err != nil {
@@ -103,12 +113,14 @@ func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printPinUsage(stderr)
+		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return usageError("pin list does not accept positional arguments")
 	}
 	filter, err := parsePinKindFilter(*kind)
 	if err != nil {
-		printPinUsage(stderr)
+		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return err
 	}
 
@@ -256,7 +268,8 @@ func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 
 func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
-		printPinUsage(stderr)
+		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return usageError("pin clear does not accept positional arguments")
 	}
 
@@ -280,7 +293,7 @@ func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 // nothing is lost by migrating early; a path that two Projects claim refuses the
 // whole migration rather than picking a uid.
 func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("pin migrate", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pin project", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "Report the migration without writing the pin file")
 	if err := fs.Parse(args); err != nil {
@@ -290,7 +303,8 @@ func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printPinUsage(stderr)
+		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return usageError("pin migrate does not accept positional arguments")
 	}
 
@@ -357,7 +371,8 @@ func (c *pinCommand) readRegistry() coremetadata.Registry {
 // resolves, it just now resolves to a *typed* pin instead of a bare path line.
 func requireSinglePinArg(command string, args []string, stderr io.Writer) (string, error) {
 	if len(args) != 1 {
-		printPinUsage(stderr)
+		printRouteUsage(stderr, "pin project")
+		printPinNotes(stderr)
 		return "", fmt.Errorf("%s requires exactly 1 <dir|uid:uid> argument", command)
 	}
 	if strings.HasPrefix(strings.TrimSpace(args[0]), "uid:") {
@@ -366,18 +381,25 @@ func requireSinglePinArg(command string, args []string, stderr io.Writer) (strin
 	return filepath.Clean(args[0]), nil
 }
 
-func printPinUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux pin project list [--kind project|candidate]")
-	fmt.Fprintln(w, "  projmux pin project add <dir|uid:uid>")
-	fmt.Fprintln(w, "  projmux pin project remove <dir|uid:uid>")
-	fmt.Fprintln(w, "  projmux pin project toggle <dir|uid:uid>")
-	fmt.Fprintln(w, "  projmux pin project clear")
-	fmt.Fprintln(w, "  projmux pin project migrate [--dry-run]")
-	fmt.Fprintln(w, "")
+// printPinHelp prints the catalog usage of route, the pin dispatch level that
+// rejected the call (`pin` or `pin project`), then the pin kinds a synopsis
+// cannot state.
+func printPinHelp(w io.Writer, route string) {
+	if route == "pin project" {
+		printRouteUsage(w, "pin project")
+	} else {
+		printRouteUsage(w, "pin")
+	}
+	printPinNotes(w)
+}
+
+// printPinNotes prints the pin kinds and the workdir boundary under a pin
+// usage block.
+func printPinNotes(w io.Writer) {
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Pins are presentation preferences in two kinds:")
 	fmt.Fprintln(w, "  project    a Registry Project uid; its root and name are projected from the Registry")
 	fmt.Fprintln(w, "  candidate  a filesystem path that no Registry Project claims")
-	fmt.Fprintln(w, "")
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Discovery roots (workdirs) are a separate collection; manage them in `projmux settings`.")
 }

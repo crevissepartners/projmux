@@ -95,7 +95,8 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 	// surface, resolves the operator's locale.
 	text := resourceText{locale: i18n.FallbackLocale}
 	if hasHelpArg(args) {
-		printResourcesUsage(stdout, text)
+		printRouteUsage(stdout, "resources")
+		printResourcesDescription(stdout, text)
 		return nil
 	}
 	fs := flag.NewFlagSet("resources", flag.ContinueOnError)
@@ -107,7 +108,8 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printResourcesUsage(stderr, text)
+		printRouteUsage(stderr, "resources")
+		printResourcesDescription(stderr, text)
 		return usageError("resources does not accept positional arguments")
 	}
 	if c.collector == nil {
@@ -150,13 +152,14 @@ func (c *resourceCommand) collectionBudget() time.Duration {
 	return c.scanBudget
 }
 
-func hasHelpArg(args []string) bool {
-	return slices.Contains(args, "-h") || slices.Contains(args, "--help") || slices.Contains(args, "help")
+// printResourcesDescription prints the inspector description under the
+// resources usage block.
+func printResourcesDescription(w io.Writer, text resourceText) {
+	fmt.Fprintln(w, "  "+text.value("picker.resources.help", "Open the read-only Project → Window → Pane resource inspector."))
 }
 
-func printResourcesUsage(w io.Writer, text resourceText) {
-	fmt.Fprintf(w, "%s: projmux resources\n", text.value(i18n.KeyHelpUsageCommand, "Usage"))
-	fmt.Fprintln(w, "  "+text.value("picker.resources.help", "Open the read-only Project → Window → Pane resource inspector."))
+func hasHelpArg(args []string) bool {
+	return slices.Contains(args, "-h") || slices.Contains(args, "--help") || slices.Contains(args, "help")
 }
 
 func (c *resourceCommand) refreshInterval() time.Duration {

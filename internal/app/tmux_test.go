@@ -342,7 +342,7 @@ func TestConfigApplyFullSurfaceReturnsForeignMarkerRefusal(t *testing.T) {
 		return ""
 	}
 	var stdout, stderr bytes.Buffer
-	err := cmd.runApply([]string{
+	err := cmd.runApply("internal tmux apply", []string{
 		"--bin", "/tmp/projmux",
 		"--config", filepath.Join(home, ".config", "projmux", "tmux.conf"),
 		"--socket", defaultAppSocket,
@@ -381,7 +381,7 @@ func TestConfigApplySourceFailureIsNotConvergenceSuccess(t *testing.T) {
 		return ""
 	}
 	var stdout, stderr bytes.Buffer
-	err := cmd.runApply([]string{
+	err := cmd.runApply("internal tmux apply", []string{
 		"--bin", "/tmp/projmux",
 		"--config", filepath.Join(home, ".config", "projmux", "tmux.conf"),
 		"--socket", defaultAppSocket,
@@ -3480,6 +3480,13 @@ func TestTmuxCommandRejectsInvalidUsage(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
+			}
+			// pane-menu has no catalog route, so its reason stands alone.
+			if strings.Contains(tt.name, "pane-menu") {
+				if stderr.Len() != 0 {
+					t.Fatalf("stderr = %q, want the reason alone", stderr.String())
+				}
+				return
 			}
 			if !strings.Contains(stderr.String(), "Usage:") {
 				t.Fatalf("stderr = %q, want usage text", stderr.String())

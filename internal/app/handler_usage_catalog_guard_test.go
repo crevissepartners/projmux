@@ -24,13 +24,15 @@ type handlerUsageCatalogRow struct {
 
 // handlerUsageCatalogRows are the handlers whose usage line once drifted from
 // the catalog synopsis (`--ui=popup|sidebar`, `hook edit <event> [flags]`,
-// the whole `ai` listing for `config edit`).
+// the whole `ai` listing for `config edit`). Each now prints its route through
+// printRouteUsage; TestHandlerUsageHasNoHandWrittenSynopsis keeps a
+// hand-written copy from coming back.
 var handlerUsageCatalogRows = []handlerUsageCatalogRow{
-	{route: "hook edit", print: printHookUsage},
-	{route: "runtime sessions", print: printSessionsUsage},
-	{route: "runtime diagnostics", print: printRuntimeDiagnosticsUsage},
-	{route: "switch", print: printSwitchUsage},
-	{route: "config edit", print: printConfigEditUsage},
+	{route: "hook edit", print: func(w io.Writer) { printRouteUsage(w, "hook edit") }},
+	{route: "runtime sessions", print: func(w io.Writer) { printRouteUsage(w, "runtime sessions") }},
+	{route: "runtime diagnostics", print: func(w io.Writer) { printRouteUsage(w, "runtime diagnostics") }},
+	{route: "switch", print: func(w io.Writer) { printRouteUsage(w, "switch") }},
+	{route: "config edit", print: func(w io.Writer) { printRouteUsage(w, "config edit") }},
 }
 
 // handlerUsageCatalogSynopsis returns the catalog Usage lines of route.

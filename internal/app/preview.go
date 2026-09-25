@@ -69,7 +69,7 @@ func (c *previewCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if fs.NArg() == 0 {
-		printPreviewUsage(stderr)
+		printRouteUsage(stderr, "internal preview")
 		return errors.New("preview requires a subcommand")
 	}
 
@@ -81,16 +81,16 @@ func (c *previewCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "select":
 		return c.runSelect(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printPreviewUsage(stdout)
+		printRouteUsage(stdout, "internal preview")
 		return nil
 	default:
-		printPreviewUsage(stderr)
+		printRouteUsage(stderr, "internal preview")
 		return fmt.Errorf("unknown preview subcommand: %s", fs.Arg(0))
 	}
 }
 
 func (c *previewCommand) runCyclePane(args []string, stdout, stderr io.Writer) error {
-	sessionName, direction, err := parsePreviewCycleArgs("preview cycle-pane", args, stderr)
+	sessionName, direction, err := parsePreviewCycleArgs("preview cycle-pane", args, func() { printRouteUsage(stderr, "internal preview cycle-pane") })
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (c *previewCommand) runCyclePane(args []string, stdout, stderr io.Writer) e
 }
 
 func (c *previewCommand) runCycleWindow(args []string, stdout, stderr io.Writer) error {
-	sessionName, direction, err := parsePreviewCycleArgs("preview cycle-window", args, stderr)
+	sessionName, direction, err := parsePreviewCycleArgs("preview cycle-window", args, func() { printRouteUsage(stderr, "internal preview cycle-window") })
 	if err != nil {
 		return err
 	}
@@ -247,21 +247,21 @@ func (i tmuxPreviewInventory) CapturePane(ctx context.Context, paneTarget string
 	return capturer.CapturePane(ctx, paneTarget, startLine)
 }
 
-func parsePreviewCycleArgs(command string, args []string, stderr io.Writer) (string, corepreview.Direction, error) {
+func parsePreviewCycleArgs(command string, args []string, printUsage func()) (string, corepreview.Direction, error) {
 	if len(args) != 2 {
-		printPreviewUsage(stderr)
+		printUsage()
 		return "", "", fmt.Errorf("%s requires exactly 2 arguments: <session> <next|prev>", command)
 	}
 
 	sessionName := strings.TrimSpace(args[0])
 	if sessionName == "" {
-		printPreviewUsage(stderr)
+		printUsage()
 		return "", "", fmt.Errorf("%s requires a non-empty <session> argument", command)
 	}
 
 	direction, err := parsePreviewDirection(args[1])
 	if err != nil {
-		printPreviewUsage(stderr)
+		printUsage()
 		return "", "", fmt.Errorf("%s: %w", command, err)
 	}
 
@@ -276,11 +276,4 @@ func parsePreviewDirection(raw string) (corepreview.Direction, error) {
 	default:
 		return "", fmt.Errorf("direction must be <next|prev>, got %q", strings.TrimSpace(raw))
 	}
-}
-
-func printPreviewUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux internal preview cycle-pane <session> <next|prev>")
-	fmt.Fprintln(w, "  projmux internal preview cycle-window <session> <next|prev>")
-	fmt.Fprintln(w, "  projmux internal preview select <session> <window> [pane]")
 }

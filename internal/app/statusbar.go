@@ -92,7 +92,8 @@ func defaultStatusbarNotifyStore() (notifyStore, error) {
 // Run is the CLI entry: `projmux internal statusbar <subcommand> ...`.
 func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printStatusbarUsage(stderr)
+		printRouteUsage(stderr, "internal statusbar")
+		printStatusbarNotes(stderr)
 		return usageError("statusbar requires a subcommand")
 	}
 	// Bright Phase 2 (B3): statusbar popups (pwd/usage/notify) render with the
@@ -108,15 +109,18 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 		// considers current.
 		opts, err := parseStatusbarUsageRefreshArgs(args[1:])
 		if err != nil {
-			printStatusbarUsage(stderr)
+			printRouteUsage(stderr, "internal statusbar usage-refresh")
+			printStatusbarNotes(stderr)
 			return err
 		}
 		return c.handleUsage(true, opts, stdout, stderr)
 	case "help", "--help", "-h":
-		printStatusbarUsage(stdout)
+		printRouteUsage(stdout, "internal statusbar")
+		printStatusbarNotes(stdout)
 		return nil
 	default:
-		printStatusbarUsage(stderr)
+		printRouteUsage(stderr, "internal statusbar")
+		printStatusbarNotes(stderr)
 		return usageError(fmt.Sprintf("unknown statusbar subcommand: %s", args[0]))
 	}
 }
@@ -273,7 +277,8 @@ func parseStatusbarUsageRefreshArgs(args []string) (statusbarClickOptions, error
 func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) error {
 	raw, opts, err := parseStatusbarClickArgs(args)
 	if err != nil {
-		printStatusbarUsage(stderr)
+		printRouteUsage(stderr, "internal statusbar click")
+		printStatusbarNotes(stderr)
 		return err
 	}
 	// MouseX/MouseY are intentionally unused today. The fields are wired
@@ -1455,15 +1460,6 @@ func (c *statusbarCommand) displayPopupNoFallback(command string, options intmux
 	return intmux.NewRunner(c.runner).DisplayPopup(context.Background(), command, options)
 }
 
-func printStatusbarUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux internal statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-x N] [--mouse-y N]")
-	fmt.Fprintln(w, "  (--mouse-window <v> is accepted for compatibility with older bindings and ignored)")
-	fmt.Fprintln(w, "  projmux internal statusbar usage-refresh")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Range ids: session pwd git usage notify resources settings")
-}
-
 // statusbarExecRunner is the shared combined-output exec seam for the
 // statusbar and focus commands.
 type statusbarExecRunner struct{}
@@ -1479,4 +1475,12 @@ func (statusbarExecRunner) Run(ctx context.Context, name string, args ...string)
 		return out, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return out, nil
+}
+
+// printStatusbarNotes prints the click compatibility note and the range ids
+// under the statusbar usage block.
+func printStatusbarNotes(w io.Writer) {
+	fmt.Fprintln(w, "  (--mouse-window <v> is accepted for compatibility with older bindings and ignored)")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Range ids: session pwd git usage notify resources settings")
 }

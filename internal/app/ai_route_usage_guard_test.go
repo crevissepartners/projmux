@@ -20,6 +20,12 @@ import (
 // through; the AST scan below keeps every call of it a string literal.
 const aiRouteUsageHelper = "printRouteUsage"
 
+// aiRouteUsageFiles are the ai handler files whose printRouteUsage calls the
+// table below drives row by row. Calls in the other handlers are held by
+// TestHandlerUsageHasNoHandWrittenSynopsis to the same literal catalog route
+// rule, without a per-call behavior row.
+var aiRouteUsageFiles = []string{"ai.go", "ai_ingest.go", "ai_integrate.go", "ai_integrate_antigravity.go", "split_selection_continuation.go"}
+
 // aiRouteUsageCallFloor is the number of printRouteUsage calls in internal/app
 // when the retired `ai` listing was split per route. The set may grow; it must
 // not silently shrink back into a shared listing.
@@ -98,6 +104,7 @@ var aiRouteUsageRows = []aiRouteUsageRow{
 	{route: "agent topic", ai: []string{"topic", "get", "x"}, exit: aiRouteUsageExitError, reason: "ai topic get takes no positional arguments"},
 	{route: "agent topic", ai: []string{"topic", "help"}, exit: aiRouteUsageExitOK, help: true},
 	{route: "agent topic", ai: []string{"topic", "bogus"}, exit: aiRouteUsageExitError, reason: "unknown ai topic subcommand: bogus"},
+	{route: "config edit", ai: []string{"settings", "x"}, exit: aiRouteUsageExitUsage, reason: "config edit does not accept positional arguments"},
 }
 
 // aiRouteUsageReasonOnlyRows are ai handler rejections that serve no catalog
@@ -330,17 +337,31 @@ func aiRouteUsageSetProblems(calls []aiRouteUsageCall, rows []aiRouteUsageRow) [
 	return problems
 }
 
-// TestAIRouteUsageCallSetIsClosed keeps the printRouteUsage call sites and the
-// table above in lockstep: every call names a literal catalog route the table
-// drives, every table route has a call, and the call count cannot shrink.
+// aiRouteUsageFileCalls keeps the calls made from the ai handler files.
+func aiRouteUsageFileCalls(calls []aiRouteUsageCall) []aiRouteUsageCall {
+	var kept []aiRouteUsageCall
+	for _, call := range calls {
+		file, _, _ := strings.Cut(call.pos, ":")
+		if slices.Contains(aiRouteUsageFiles, file) {
+			kept = append(kept, call)
+		}
+	}
+	return kept
+}
+
+// TestAIRouteUsageCallSetIsClosed keeps the printRouteUsage call sites of the
+// ai handler files and the table above in lockstep: every call names a literal
+// catalog route the table drives, every table route has a call, and the call
+// count cannot shrink.
 func TestAIRouteUsageCallSetIsClosed(t *testing.T) {
 	t.Parallel()
 	calls, problems := scanAIRouteUsageCalls(t)
 	for _, problem := range problems {
 		t.Error(problem)
 	}
+	calls = aiRouteUsageFileCalls(calls)
 	if len(calls) < aiRouteUsageCallFloor {
-		t.Errorf("found %d %s calls, want at least %d", len(calls), aiRouteUsageHelper, aiRouteUsageCallFloor)
+		t.Errorf("found %d %s calls in %v, want at least %d", len(calls), aiRouteUsageHelper, aiRouteUsageFiles, aiRouteUsageCallFloor)
 	}
 	for _, problem := range aiRouteUsageSetProblems(calls, aiRouteUsageRows) {
 		t.Error(problem)

@@ -89,7 +89,7 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
-		printPruneUsage(stderr)
+		printRouteUsage(stderr, "prune")
 		return errors.New("prune requires a subcommand")
 	}
 
@@ -109,28 +109,28 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 		return c.agent.Run(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printPruneUsage(stdout)
+		printRouteUsage(stdout, "prune")
 		return nil
 	default:
-		printPruneUsage(stderr)
+		printRouteUsage(stderr, "prune")
 		return fmt.Errorf("unknown prune subcommand: %s", fs.Arg(0))
 	}
 }
 
 func (c *pruneCommand) runEphemeral(args []string, _ io.Writer, stderr io.Writer) error {
-	fs := flag.NewFlagSet("prune ephemeral", flag.ContinueOnError)
+	fs := flag.NewFlagSet("runtime prune", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	keepCount := fs.Int("keep", 3, "number of unattached ephemeral sessions to retain")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printPruneUsage(stderr)
+			printRouteUsage(stderr, "runtime prune")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printPruneUsage(stderr)
+		printRouteUsage(stderr, "runtime prune")
 		return usageError("prune ephemeral does not accept positional arguments")
 	}
 	if c.inventory == nil {
@@ -173,11 +173,4 @@ func (c *pruneCommand) runEphemeral(args []string, _ io.Writer, stderr io.Writer
 	}
 
 	return nil
-}
-
-func printPruneUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux runtime prune [--keep=N]")
-	fmt.Fprintln(w, "  projmux prune project")
-	fmt.Fprintln(w, "  projmux prune agent")
 }

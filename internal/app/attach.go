@@ -75,7 +75,7 @@ func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() == 0 {
-		printAttachUsage(stderr)
+		printRouteUsage(stderr, "attach")
 		return errors.New("attach requires a subcommand")
 	}
 
@@ -85,10 +85,10 @@ func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "project":
 		return c.runProject(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
-		printAttachUsage(stdout)
+		printRouteUsage(stdout, "attach")
 		return nil
 	default:
-		printAttachUsage(stderr)
+		printRouteUsage(stderr, "attach")
 		return fmt.Errorf("unknown attach subcommand: %s", fs.Arg(0))
 	}
 }
@@ -132,24 +132,24 @@ func (c *attachCommand) insideTmuxClient() bool {
 }
 
 func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) error {
-	fs := flag.NewFlagSet("attach auto", flag.ContinueOnError)
+	fs := flag.NewFlagSet("runtime attach", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	keepCount := fs.Int("keep", 3, "number of unattached ephemeral sessions to retain")
 	fallback := fs.String("fallback", "home", "fallback session policy: home or ephemeral")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			printAttachUsage(stderr)
+			printRouteUsage(stderr, "runtime attach")
 			return err
 		}
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printAttachUsage(stderr)
+		printRouteUsage(stderr, "runtime attach")
 		return usageError("attach auto does not accept positional arguments")
 	}
 	if *fallback != "home" && *fallback != "ephemeral" {
-		printAttachUsage(stderr)
+		printRouteUsage(stderr, "runtime attach")
 		return fmt.Errorf("attach auto fallback must be one of: home, ephemeral")
 	}
 
@@ -265,10 +265,4 @@ func (c *attachCommand) resolveWorkingDir() (string, error) {
 	}
 
 	return filepath.Clean(cwd), nil
-}
-
-func printAttachUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux attach project <ref>")
-	fmt.Fprintln(w, "  projmux runtime attach [--keep=N] [--fallback=home|ephemeral]")
 }

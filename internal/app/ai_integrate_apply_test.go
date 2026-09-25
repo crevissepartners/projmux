@@ -205,7 +205,7 @@ func TestTmuxApplyNoReloadMigratesManagedFilesWithoutLiveCalls(t *testing.T) {
 	cmd := managedIngestApplyFixture(home, runner)
 	configPath := filepath.Join(home, "tmux.conf")
 
-	if err := cmd.runApply([]string{"--config", configPath, "--socket", "phase0-no-reload", "--no-reload"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runApply("internal tmux apply", []string{"--config", configPath, "--socket", "phase0-no-reload", "--no-reload"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) != 0 {
@@ -275,7 +275,7 @@ func TestTmuxApplyMigratesBellOnlyThroughExactSocket(t *testing.T) {
 	}}
 	cmd := managedIngestApplyFixture(home, runner)
 	cmd.triggerRunner = &recordingTriggering{}
-	if err := cmd.runApply([]string{"--config", filepath.Join(home, "tmux.conf"), "--socket", socket}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runApply("internal tmux apply", []string{"--config", filepath.Join(home, "tmux.conf"), "--socket", socket}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	var bellWrites []recordedTmuxCall
@@ -304,7 +304,7 @@ func TestTmuxApplyBellFailureRollsBackEarlierProviderFilesAndLiveState(t *testin
 		failAt:  5,
 	}
 	cmd := managedIngestApplyFixture(home, runner)
-	err := cmd.runApply([]string{"--config", filepath.Join(home, "tmux.conf"), "--socket", runner.socket}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cmd.runApply("internal tmux apply", []string{"--config", filepath.Join(home, "tmux.conf"), "--socket", runner.socket}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "injected fifth bell mutation") {
 		t.Fatalf("apply error = %v (bell mutations=%d)", err, runner.mutations)
 	}
@@ -340,7 +340,7 @@ func TestTmuxApplyGeneratedConfigFailureRollsBackManagedFilesAndLiveState(t *tes
 		return os.WriteFile(path, data, mode)
 	}
 
-	err := cmd.runApply([]string{"--config", configPath, "--socket", runner.socket}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cmd.runApply("internal tmux apply", []string{"--config", configPath, "--socket", runner.socket}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "injected generated config write failure") {
 		t.Fatalf("apply error = %v", err)
 	}

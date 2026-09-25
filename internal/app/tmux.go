@@ -196,7 +196,7 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if fs.NArg() == 0 {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux")
 		return errors.New("tmux requires a subcommand")
 	}
 
@@ -238,14 +238,14 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "install-app":
 		return c.runInstallApp(fs.Args()[1:], stdout, stderr)
 	case "apply":
-		return c.runApply(fs.Args()[1:], stdout, stderr)
+		return c.runApply("internal tmux apply", fs.Args()[1:], stdout, stderr)
 	case "autosave-session-state":
 		return c.runAutosaveSessionState(fs.Args()[1:], stderr)
 	case "help", "--help", "-h":
-		printTmuxUsage(stdout)
+		printRouteUsage(stdout, "internal tmux")
 		return nil
 	default:
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux")
 		return fmt.Errorf("unknown tmux subcommand: %s", fs.Arg(0))
 	}
 }
@@ -272,7 +272,7 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 
 func (c *tmuxCommand) runRebalancePanes(args []string, stderr io.Writer) error {
 	if len(args) != 0 {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux rebalance-panes")
 		return fmt.Errorf("tmux rebalance-panes accepts no arguments")
 	}
 	if c.runner == nil {
@@ -417,7 +417,7 @@ func (c *tmuxCommand) replayExhaustedCleanExits(ctx context.Context, target tmux
 
 func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
 	if len(args) != 2 || strings.TrimSpace(args[0]) == "" {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux rename-pane")
 		return fmt.Errorf("tmux rename-pane requires <pane> <label>")
 	}
 	if c.runner == nil {
@@ -468,7 +468,6 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 		return err
 	}
 	if fs.NArg() != 2 || strings.TrimSpace(*client) == "" || exactTmuxHandle(fs.Arg(1), "%") == "" {
-		printTmuxUsage(stderr)
 		return errors.New("tmux pane-menu requires --client <key> <split-right|split-down|kill> <%pane>")
 	}
 
@@ -498,7 +497,6 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 			err = c.paneMenuDelete(paneID, &actionOut, &actionErr)
 		}
 	default:
-		printTmuxUsage(stderr)
 		return fmt.Errorf("unknown tmux pane-menu action: %s", action)
 	}
 
@@ -1043,13 +1041,13 @@ func (c *tmuxCommand) runPopupPreview(args []string, stderr io.Writer) error {
 
 func parseTmuxPopupPreviewArgs(args []string, stderr io.Writer) (string, error) {
 	if len(args) != 1 {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux popup-preview")
 		return "", fmt.Errorf("tmux popup-preview requires exactly 1 argument: <session>")
 	}
 
 	sessionName := strings.TrimSpace(args[0])
 	if sessionName == "" {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux popup-preview")
 		return "", fmt.Errorf("tmux popup-preview requires a non-empty <session> argument")
 	}
 
@@ -1220,7 +1218,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 		return tmuxPopupToggleMode{}, err
 	}
 	if fs.NArg() != 1 {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux popup-toggle")
 		return tmuxPopupToggleMode{}, fmt.Errorf("tmux popup-toggle requires exactly 1 argument: <mode>")
 	}
 
@@ -1247,7 +1245,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 		}
 	}
 	if _, ok := popupToggleActionIDForMode(raw); !ok {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux popup-toggle")
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
 	switch raw {
@@ -1272,7 +1270,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 
 func (c *tmuxCommand) runPopupSwitch(args []string, stderr io.Writer) error {
 	if len(args) != 0 {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux popup-switch")
 		return fmt.Errorf("tmux popup-switch accepts no arguments")
 	}
 	if c.popup == nil {
@@ -1314,7 +1312,7 @@ func (c *tmuxCommand) runPopupSwitch(args []string, stderr io.Writer) error {
 
 func (c *tmuxCommand) runPopupSessions(args []string, stderr io.Writer) error {
 	if len(args) != 0 {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux popup-sessions")
 		return fmt.Errorf("tmux popup-sessions accepts no arguments")
 	}
 	if c.popup == nil {
@@ -1364,8 +1362,19 @@ func (c *tmuxCommand) appConfigThemeSource() renderThemeSource {
 	return source
 }
 
+// runPrintConfig is the hidden `internal tmux print-config` spelling.
 func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) error {
-	binaryPath, err := c.parseConfigBinary(args, "tmux print-config", stderr)
+	return c.runPrintConfigAs("internal tmux print-config", args, stdout, stderr)
+}
+
+// runPrintConfigAs prints the standalone config; route is the spelling that
+// reached it.
+func (c *tmuxCommand) runPrintConfigAs(route string, args []string, stdout, stderr io.Writer) error {
+	printUsage := func() { printRouteUsage(stderr, "internal tmux print-config") }
+	if route == "config render standalone" {
+		printUsage = func() { printRouteUsage(stderr, "config render standalone") }
+	}
+	binaryPath, err := c.parseConfigBinary(args, route, "tmux print-config", stderr, printUsage)
 	if err != nil {
 		return err
 	}
@@ -1378,8 +1387,19 @@ func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) er
 	return err
 }
 
+// runPrintAppConfig is the hidden `internal tmux print-app-config` spelling.
 func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer) error {
-	binaryPath, err := c.parseConfigBinary(args, "tmux print-app-config", stderr)
+	return c.runPrintAppConfigAs("internal tmux print-app-config", args, stdout, stderr)
+}
+
+// runPrintAppConfigAs prints the app config; route is the spelling that
+// reached it.
+func (c *tmuxCommand) runPrintAppConfigAs(route string, args []string, stdout, stderr io.Writer) error {
+	printUsage := func() { printRouteUsage(stderr, "internal tmux print-app-config") }
+	if route == "config render app" {
+		printUsage = func() { printRouteUsage(stderr, "config render app") }
+	}
+	binaryPath, err := c.parseConfigBinary(args, route, "tmux print-app-config", stderr, printUsage)
 	if err != nil {
 		return err
 	}
@@ -1402,7 +1422,7 @@ func (c *tmuxCommand) runInstall(args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	if fs.NArg() != 0 {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux install")
 		return errors.New("tmux install does not accept positional arguments")
 	}
 
@@ -1451,7 +1471,7 @@ func (c *tmuxCommand) runInstallApp(args []string, stdout, stderr io.Writer) err
 		return err
 	}
 	if fs.NArg() != 0 {
-		printTmuxUsage(stderr)
+		printRouteUsage(stderr, "internal tmux install-app")
 		return errors.New("tmux install-app does not accept positional arguments")
 	}
 
@@ -1551,8 +1571,27 @@ func (c *tmuxCommand) reportKeymapMigrationPreflight(stderr io.Writer) {
 	writeKeymapMigrationPreflight(stderr, plan)
 }
 
-func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("tmux apply", flag.ContinueOnError)
+// RunRoute serves the public `config` spellings that forward into the tmux
+// handler, so each keeps its own FlagSet name and usage; every other spelling
+// is the hidden `internal tmux` dispatch.
+func (c *tmuxCommand) RunRoute(route string, args []string, stdout, stderr io.Writer) error {
+	switch {
+	case route == "config apply" && len(args) > 0 && args[0] == "apply":
+		return c.runApply("config apply", args[1:], stdout, stderr)
+	case route == "config render standalone" && len(args) > 0 && args[0] == "print-config":
+		return c.runPrintConfigAs("config render standalone", args[1:], stdout, stderr)
+	case route == "config render app" && len(args) > 0 && args[0] == "print-app-config":
+		return c.runPrintAppConfigAs("config render app", args[1:], stdout, stderr)
+	default:
+		return c.Run(args, stdout, stderr)
+	}
+}
+
+// runApply applies the generated config; route is the spelling that reached
+// it (`config apply` or the hidden `internal tmux apply`), which names the
+// FlagSet and picks the usage.
+func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
 	configPath := fs.String("config", "", "app tmux config path to write")
@@ -1575,7 +1614,11 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printTmuxUsage(stderr)
+		if route == "config apply" {
+			printRouteUsage(stderr, "config apply")
+		} else {
+			printRouteUsage(stderr, "internal tmux apply")
+		}
 		return usageError("tmux apply does not accept positional arguments")
 	}
 	if c.diagnostics != nil {
@@ -2014,22 +2057,6 @@ func defaultPopupSessionsOptions(ctx tmuxPopupContext) inttmux.PopupOptions {
 	}
 }
 
-func printTmuxUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux internal tmux popup-preview <session>")
-	fmt.Fprintln(w, "  projmux internal tmux popup-switch")
-	fmt.Fprintln(w, "  projmux internal tmux popup-sessions")
-	fmt.Fprintln(w, "  projmux internal tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|resource-inspector|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
-	_, _ = io.WriteString(w, "  projmux internal tmux pane-menu --client <key> <split-right|split-down|kill> <%pane>\n")
-	fmt.Fprintln(w, "  projmux internal tmux rebalance-panes")
-	fmt.Fprintln(w, "  projmux internal tmux rename-pane <pane> <label>")
-	fmt.Fprintln(w, "  projmux internal tmux print-config [--bin <path>]")
-	fmt.Fprintln(w, "  projmux internal tmux print-app-config [--bin <path>]")
-	fmt.Fprintln(w, "  projmux internal tmux install [--bin <path>] [--config <path>] [--include <path>]")
-	fmt.Fprintln(w, "  projmux internal tmux install-app [--bin <path>] [--config <path>]")
-	fmt.Fprintln(w, "  projmux internal tmux apply [--bin <path>] [--config <path>] [--socket <name>]")
-}
-
 type tmuxPopupToggleMode struct {
 	Raw        string
 	Canonical  string
@@ -2369,8 +2396,12 @@ func nativeLaunchKeyForPopupMode(mode string) string {
 	}
 }
 
-func (c *tmuxCommand) parseConfigBinary(args []string, name string, stderr io.Writer) (string, error) {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+// parseConfigBinary parses the --bin flag of a config render handler. route is
+// the spelling that reached it, which names the FlagSet; name is the
+// historical spelling its positional refusal names, and printUsage prints the
+// route's catalog usage under that refusal.
+func (c *tmuxCommand) parseConfigBinary(args []string, route, name string, stderr io.Writer, printUsage func()) (string, error) {
+	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the tmux snippet")
 	if err := fs.Parse(args); err != nil {
@@ -2380,7 +2411,7 @@ func (c *tmuxCommand) parseConfigBinary(args []string, name string, stderr io.Wr
 		return "", flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printTmuxUsage(stderr)
+		printUsage()
 		return "", usageError(fmt.Sprintf("%s does not accept positional arguments", name))
 	}
 	return c.resolveConfigBinary(*binaryOverride)

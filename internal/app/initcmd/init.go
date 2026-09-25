@@ -70,7 +70,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	terminalName, flagArgs := splitInitArgs(args)
 
 	const command = "projmux setup terminal"
-	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs := flag.NewFlagSet("setup terminal", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	apply := fs.Bool("apply", false, "write the merged config (default: preview only)")
 	configOverride := fs.String("config", "", "explicit config file path (overrides auto-detected candidates)")

@@ -609,7 +609,3 @@ func registryRecoveryDetailSuffix(info intmetadata.RegistryFileInfo) string {
 	}
 	return suffix
 }
-
-func printRegistryRecoveryUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]")
-}

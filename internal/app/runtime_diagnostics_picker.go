@@ -83,7 +83,7 @@ func (c *runtimeDiagnosticsCommand) RunNested(args []string, stdout, stderr io.W
 func (c *runtimeDiagnosticsCommand) run(args []string, stdout, stderr io.Writer, themeOwnership nativeUIThemeOwnership) error {
 	fs := flag.NewFlagSet("runtime diagnostics", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { printRuntimeDiagnosticsUsage(stderr) }
+	fs.Usage = func() { printRouteUsage(stderr, "runtime diagnostics") }
 	ui := fs.String(switchUIFlag, switchUIPopup, "runtime diagnostics surface to prepare")
 	var request runtimeTransportRequest
 	fs.StringVar(&request.socket, "socket", "", "exact tmux socket name (tmux -L)")
@@ -95,11 +95,11 @@ func (c *runtimeDiagnosticsCommand) run(args []string, stdout, stderr io.Writer,
 		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRuntimeDiagnosticsUsage(stderr)
+		printRouteUsage(stderr, "runtime diagnostics")
 		return usageError("runtime diagnostics does not accept positional arguments")
 	}
 	if err := validateSwitchUI(*ui); err != nil {
-		printRuntimeDiagnosticsUsage(stderr)
+		printRouteUsage(stderr, "runtime diagnostics")
 		return usageError(err.Error())
 	}
 	if c.reader == nil {
@@ -259,11 +259,6 @@ func (c *runtimeDiagnosticsCommand) insideTmux() bool {
 		return false
 	}
 	return strings.TrimSpace(c.lookupEnv("TMUX")) != ""
-}
-
-func printRuntimeDiagnosticsUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui popup|sidebar]")
 }
 
 func runtimeDiagnosticsFooter(locale i18n.Locale) string {
