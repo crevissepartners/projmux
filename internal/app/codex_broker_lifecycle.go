@@ -83,6 +83,21 @@ type codexBrokerObserverSession struct {
 	pumped        chan struct{}
 	pending       codexBrokerEpochRecord
 	hasPending    bool
+	// held is the pending barrier's own events that arrived between its
+	// snapshot and its first publish, and only then. The broker replays what
+	// it buffered during the barrier right after the snapshot, which includes
+	// an approval request upstream re-sent on thread/resume, so dropping these
+	// would lose a request for good. Once the barrier has been published a
+	// republish reads a fresh lifecycle snapshot that restates the gap, so
+	// events after an epoch closed are dropped rather than replayed over it.
+	held []codexbroker.Event
+	// pendingPublished records that the pending barrier has already been
+	// published once, which ends its hold window.
+	pendingPublished bool
+	// deliverMu orders delivery into a newly published epoch: publish hands
+	// it the held events and the pump delivers live ones, both under this
+	// lock. It is always taken before mu, never while mu is held.
+	deliverMu sync.Mutex
 }
 
 // newCodexBrokerObserverSessionForRoute resolves one broker singleton from the
@@ -224,7 +239,7 @@ func (s *codexBrokerObserverSession) Close() error {
 	cancel := s.openCancel
 	binding, conn, current := s.binding, s.conn, s.current
 	s.binding, s.conn, s.current, s.ready = nil, nil, nil, nil
-	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	s.pending, s.hasPending, s.held, s.pendingPublished = codexBrokerEpochRecord{}, false, nil, false
 	pumped := s.pumped
 	s.pumped = nil
 	s.mu.Unlock()
@@ -324,18 +339,7 @@ func (s *codexBrokerObserverSession) pump(binding *codexbroker.RemoteBinding, re
 				events = nil
 				continue
 			}
-			if event.Origin == codexbroker.EventOriginSnapshot {
-				s.rotateAfterPendingSuspension(
-					codexBrokerEpochRecord{fence: event.Fence, snapshot: event.Snapshot}, ready, suspends,
-				)
-				continue
-			}
-			s.mu.Lock()
-			current := s.current
-			s.mu.Unlock()
-			if current != nil {
-				current.deliver(event)
-			}
+			s.admit(event, ready, suspends)
 		case <-suspends:
 			// The connection this epoch was minted on is gone and no
 			// replacement is open yet. Ending the epoch here promptly revokes
@@ -345,6 +349,53 @@ func (s *codexBrokerObserverSession) pump(binding *codexbroker.RemoteBinding, re
 		}
 	}
 	s.endAfterStreamRevoked(binding)
+}
+
+// admit routes one ordered binding event. It is the pump's whole per-event
+// step, named so a test can drive an exact event order without racing the
+// pump goroutine.
+//
+// With no live epoch, an event stamped with the offered barrier's fence is
+// held for the epoch that barrier becomes, but only before that barrier's
+// first publish. Any other event - including one that arrives after a
+// published epoch closed and before the barrier is republished - has no epoch
+// that could own it and is dropped as before.
+func (s *codexBrokerObserverSession) admit(event codexbroker.Event, ready chan codexBrokerEpochRecord, suspends <-chan struct{}) {
+	if event.Origin == codexbroker.EventOriginSnapshot {
+		s.rotateAfterPendingSuspension(
+			codexBrokerEpochRecord{fence: event.Fence, snapshot: event.Snapshot}, ready, suspends,
+		)
+		return
+	}
+	s.deliverMu.Lock()
+	defer s.deliverMu.Unlock()
+	s.mu.Lock()
+	current := s.current
+	if current == nil {
+		if !s.hasPending || s.pendingPublished || event.Fence != s.pending.fence {
+			s.mu.Unlock()
+			return
+		}
+		if len(s.held) < codexBrokerObserverBacklog {
+			s.held = append(s.held, event)
+			s.mu.Unlock()
+			return
+		}
+		// The unpublished barrier fell a full backlog behind. This mirrors the
+		// live epoch's overflow: retire the exact binding so the next Open
+		// resyncs from a fresh barrier instead of publishing an order with a
+		// hole in it, and keep the runtime connection for the rebind.
+		binding := s.binding
+		s.binding, s.ready = nil, nil
+		s.pending, s.hasPending, s.held, s.pendingPublished = codexBrokerEpochRecord{}, false, nil, false
+		s.mu.Unlock()
+		if binding != nil {
+			_ = binding.Close()
+		}
+		return
+	}
+	s.mu.Unlock()
+	current.deliver(event)
 }
 
 // endAfterStreamRevoked ends the live epoch after one binding's ordered stream
@@ -357,7 +408,7 @@ func (s *codexBrokerObserverSession) endAfterStreamRevoked(binding *codexbroker.
 	if s.binding == binding {
 		current = s.current
 		s.current, s.binding, s.ready = nil, nil, nil
-		s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+		s.pending, s.hasPending, s.held, s.pendingPublished = codexBrokerEpochRecord{}, false, nil, false
 	}
 	s.mu.Unlock()
 	if current != nil {
@@ -390,7 +441,7 @@ func (s *codexBrokerObserverSession) retire(ready chan codexBrokerEpochRecord) {
 	s.mu.Lock()
 	current := s.current
 	s.current = nil
-	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	s.pending, s.hasPending, s.held, s.pendingPublished = codexBrokerEpochRecord{}, false, nil, false
 	s.mu.Unlock()
 	select {
 	case <-ready:
@@ -406,7 +457,7 @@ func (s *codexBrokerObserverSession) rotate(record codexBrokerEpochRecord, ready
 	s.mu.Lock()
 	current := s.current
 	s.current = nil
-	s.pending, s.hasPending = record, true
+	s.pending, s.hasPending, s.held, s.pendingPublished = record, true, nil, false
 	s.mu.Unlock()
 	if current != nil {
 		current.end(codexObserverReasonEpochRotated)
@@ -425,7 +476,19 @@ func (s *codexBrokerObserverSession) rotate(record codexBrokerEpochRecord, ready
 }
 
 // publish makes one closed barrier the live epoch.
+//
+// The events held since this barrier's snapshot are delivered on its first
+// publish only; a republish finds none. They are delivered before publish
+// returns and before any live event can reach the new epoch. deliverMu is
+// what orders them: admit takes it before it reads the current epoch and
+// keeps it through the delivery, and publish takes it before it installs the
+// epoch and keeps it until the held events are delivered, so the pump either
+// delivered to the previous state before the epoch existed or waits until the
+// held events are in. Delivery runs with mu released because an overflow
+// resyncs, which takes mu again.
 func (s *codexBrokerObserverSession) publish(record codexBrokerEpochRecord) (*codexBrokerLifecycleEpoch, error) {
+	s.deliverMu.Lock()
+	defer s.deliverMu.Unlock()
 	s.mu.Lock()
 	if s.closed || s.conn == nil || s.binding == nil || !s.hasPending || s.pending.fence != record.fence {
 
@@ -452,9 +515,14 @@ func (s *codexBrokerObserverSession) publish(record codexBrokerEpochRecord) (*co
 	epoch.binding = s.binding
 	previous := s.current
 	s.current = epoch
+	held := s.held
+	s.held, s.pendingPublished = nil, true
 	s.mu.Unlock()
 	if previous != nil {
 		previous.end(codexObserverReasonEpochRotated)
+	}
+	for _, event := range held {
+		epoch.deliver(event)
 	}
 	return epoch, nil
 }
@@ -464,7 +532,7 @@ func (s *codexBrokerObserverSession) discard() {
 	s.mu.Lock()
 	binding := s.binding
 	s.binding, s.ready, s.pumped = nil, nil, nil
-	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	s.pending, s.hasPending, s.held, s.pendingPublished = codexBrokerEpochRecord{}, false, nil, false
 	s.mu.Unlock()
 	if binding != nil {
 		_ = binding.Close()
@@ -769,7 +837,7 @@ func (s *codexBrokerObserverSession) resync(epoch *codexBrokerLifecycleEpoch) {
 	}
 	binding := s.binding
 	s.current, s.binding, s.ready = nil, nil, nil
-	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	s.pending, s.hasPending, s.held, s.pendingPublished = codexBrokerEpochRecord{}, false, nil, false
 	s.mu.Unlock()
 	if binding != nil {
 		_ = binding.Close()
@@ -819,7 +887,7 @@ func (s *codexBrokerObserverSession) refreshRoute(ctx context.Context) error {
 	s.mu.Lock()
 	current, binding, conn, pumped := s.current, s.binding, s.conn, s.pumped
 	s.current, s.binding, s.conn, s.ready, s.pumped = nil, nil, nil, nil, nil
-	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	s.pending, s.hasPending, s.held, s.pendingPublished = codexBrokerEpochRecord{}, false, nil, false
 	s.mu.Unlock()
 	if current != nil {
 		current.end(codexObserverReasonEpochRotated)
