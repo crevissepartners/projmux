@@ -227,6 +227,7 @@ type agentQuestionPrompt struct {
 	Header      string                `json:"header,omitempty"`
 	Question    string                `json:"question"`
 	MultiSelect bool                  `json:"multiSelect"`
+	IsOther     bool                  `json:"isOther"`
 	IsSecret    bool                  `json:"isSecret,omitempty"`
 	Options     []agentQuestionOption `json:"options"`
 }
@@ -258,7 +259,9 @@ func (c *agentCommand) listQuestions(request agentQuestionRequest, agent coremet
 		}
 		view := agentQuestionView{ID: record.ID, State: record.State, Disposition: record.Disposition, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers}
 		for i, question := range questions {
-			prompt := agentQuestionPrompt{Number: i + 1, ID: question.ID, Header: question.Header, Question: question.Question, MultiSelect: question.MultiSelect, IsSecret: question.IsSecret}
+			// Claude always takes free text, as its popup and BuildAnswers do;
+			// Codex takes it only when the question sets isOther.
+			prompt := agentQuestionPrompt{Number: i + 1, ID: question.ID, Header: question.Header, Question: question.Question, MultiSelect: question.MultiSelect, IsOther: record.Provider != "codex" || question.IsOther, IsSecret: question.IsSecret}
 			for j, option := range question.Options {
 				prompt.Options = append(prompt.Options, agentQuestionOption{Number: j + 1, Label: option.Label, Description: option.Description})
 			}
