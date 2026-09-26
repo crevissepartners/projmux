@@ -119,8 +119,11 @@ func TestPublicRoutesLeftoverArgsAndUnknownSubcommandsAreUsageErrors(t *testing.
 	}
 }
 
-// TestPublicRoutesHelpSubcommandStillSucceeds pins the in-handler help verbs
-// next to the refusals above: they keep printing usage and returning nil.
+// TestPublicRoutesHelpSubcommandStillSucceeds pins `<route> help` next to the
+// refusals above: it keeps printing usage and returning nil. Only `agent
+// integrate help` reaches an in-handler help branch; the CLI help boundary
+// answers `pin project help`, `runtime tag help`, `update help`, and `window
+// help` before their handlers run.
 func TestPublicRoutesHelpSubcommandStillSucceeds(t *testing.T) {
 	isolateRuntimeWindowFlagParseEnv(t)
 

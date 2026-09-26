@@ -330,8 +330,6 @@ func (c *aiCommand) runStatus(args []string, stdout, stderr io.Writer) error {
 			paneID = strings.TrimSpace(args[2])
 		}
 		return c.applyAIStatus(args[1], paneID)
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "agent status")
 	default:
 		printRouteUsage(stderr, "agent status")
 		return fmt.Errorf("unknown ai status subcommand: %s", args[0])
@@ -876,8 +874,6 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 		}
 		fmt.Fprintln(stdout, c.readTmuxPaneOption(paneID, aiPaneTopicOption))
 		return nil
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "agent topic")
 	default:
 		printRouteUsage(stderr, "agent topic")
 		return fmt.Errorf("unknown ai topic subcommand: %s", args[0])

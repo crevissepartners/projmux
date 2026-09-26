@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -2455,23 +2454,6 @@ func TestNotifyUnknownSubcommandIsUsageError(t *testing.T) {
 	}
 	if !IsUsageError(err) {
 		t.Fatalf("expected UsageError, got %v", err)
-	}
-}
-
-func TestNotifyHelpPrintsNotificationHelp(t *testing.T) {
-	t.Parallel()
-
-	cmd := newCmd(&stubNotifyStore{})
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"help"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run error = %v", err)
-	}
-	var want bytes.Buffer
-	if err := cli.WriteRouteHelp(&want, "notification"); err != nil {
-		t.Fatal(err)
-	}
-	if stdout.String() != want.String() {
-		t.Fatalf("stdout = %q, want the notification catalog help %q", stdout.String(), want.String())
 	}
 }
 

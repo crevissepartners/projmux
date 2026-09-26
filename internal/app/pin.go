@@ -87,11 +87,9 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 		return c.runClear(fs.Args()[1:], stdout, stderr)
 	case "migrate":
 		return c.runMigrate(fs.Args()[1:], stdout, stderr)
+	// Only a spelling after `--` gets here (`pin project -- help`, `-- --help`, `-- -h`): the help boundary answers `pin project help`, `--help`, and `-h` first and does not read past `--`.
 	case "help", "--help", "-h":
-		if route == "pin project" {
-			return printRouteHelp(stdout, "pin project")
-		}
-		return printRouteHelp(stdout, "pin")
+		return printRouteHelp(stdout, "pin project")
 	default:
 		printPinHelp(stderr, route)
 		return usageError(fmt.Sprintf("unknown %s subcommand: %s", route, fs.Arg(0)))

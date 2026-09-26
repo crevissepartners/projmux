@@ -18,7 +18,6 @@ import (
 	"unicode/utf16"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
-	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
@@ -2555,21 +2554,6 @@ func TestAITopicUnknownActionReturnsError(t *testing.T) {
 	}
 	if len(cmdRecorder(cmd).commands) != 0 {
 		t.Fatalf("expected no tmux commands, got %#v", cmdRecorder(cmd).commands)
-	}
-}
-
-func TestAITopicHelpPrintsAgentTopicHelp(t *testing.T) {
-	cmd := testAICommand(t.TempDir())
-	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-	if err := cmd.Run([]string{"topic", "help"}, stdout, stderr); err != nil {
-		t.Fatalf("Run topic help error = %v, want nil", err)
-	}
-	var want bytes.Buffer
-	if err := cli.WriteRouteHelp(&want, "agent topic"); err != nil {
-		t.Fatal(err)
-	}
-	if stdout.String() != want.String() || stderr.Len() != 0 {
-		t.Errorf("topic help: stdout = %q stderr = %q, want the agent topic catalog help %q", stdout.String(), stderr.String(), want.String())
 	}
 }
 

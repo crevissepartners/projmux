@@ -86,8 +86,6 @@ func (c *notifyCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runAck("notification ack", args[1:], stdout, stderr)
 	case "reconcile":
 		return c.runReconcile(args[1:], stdout, stderr)
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "notification")
 	default:
 		printNotifyQueueHelp(stderr)
 		return usageError(fmt.Sprintf("unknown notification subcommand: %s", args[0]))

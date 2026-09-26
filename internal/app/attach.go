@@ -89,8 +89,6 @@ func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runAuto(fs.Args()[1:], stdout, stderr)
 	case "project":
 		return c.runProject(fs.Args()[1:], stdout, stderr)
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "attach")
 	default:
 		printRouteUsage(stderr, "attach")
 		return fmt.Errorf("unknown attach subcommand: %s", fs.Arg(0))

@@ -65,9 +65,6 @@ func (c *profileCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runSet(rest, stdout, stderr)
 	case "delete":
 		return c.runDelete(rest, stdout, stderr)
-	// Only `profile help <more tokens>` gets here: the help boundary answers `profile help`, `--help`, and `-h` first.
-	case "help":
-		return printRouteHelp(stdout, "profile")
 	default:
 		printRouteUsage(stderr, "profile")
 		return usageError("unknown profile subcommand: " + args[0])

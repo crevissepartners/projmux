@@ -20,46 +20,30 @@ import (
 // renders the catalog help `projmux <route> --help` prints.
 const helpVerbRouteHelpPrinter = "printRouteHelp"
 
-// helpVerbSite is one route a handler `help` branch answers. argv is the
-// public spelling that reaches the branch with `help` appended; a site no
-// spelling reaches carries the reason instead, so it stays in the closed set
-// rather than dropping out of it.
+// helpVerbSite is one route a handler `help` branch answers. argv is the full
+// public spelling that reaches the branch, one the help boundary does not
+// answer first.
 type helpVerbSite struct {
-	argv        []string
-	unreachable string
-	// wordOnly marks a branch that must list only the `help` word: the help
-	// boundary answers `<argv> --help` and `<argv> -h` before the handler runs,
-	// and a leading `--` makes args[0] `--`, so a flag label there is dead.
-	wordOnly bool
+	argv []string
 }
 
 // helpVerbSites is keyed by "<file>: <route>", one row per printRouteHelp call
-// inside a help branch. The set is closed against the source both ways.
+// inside a help branch; the route's `--help` output is the reference its argv
+// must reproduce. The set is closed against the source both ways: every help
+// branch is reachable and listed with a spelling that reaches it, and a branch
+// no argv reaches is deleted rather than listed.
 var helpVerbSites = map[string]helpVerbSite{
-	"ai.go: agent status":                      {unreachable: "`agent status` dispatches to agentCommand; no route forwards `status` into the ai handler"},
-	"ai.go: agent topic":                       {unreachable: "`agent topic` dispatches to agentCommand; no route forwards `topic` into the ai handler"},
-	"ai_ingest.go: internal agent-hook ingest": {argv: []string{"internal", "agent-hook", "ingest"}},
-	"ai_integrate.go: agent integrate":         {argv: []string{"agent", "integrate"}},
-	"attach.go: attach":                        {unreachable: "the legacy `attach` gate admits only `project`, and `runtime attach` forwards with the `auto` prefix"},
-	"attention.go: attention":                  {argv: []string{"attention"}, wordOnly: true},
-	"diagnostics.go: diagnostics":              {argv: []string{"diagnostics"}, wordOnly: true},
-	"hook.go: hook":                            {argv: []string{"hook"}},
-	"kill.go: runtime stop":                    {unreachable: "`runtime stop` forwards with the `tagged` prefix"},
-	"notify.go: notification":                  {unreachable: "`notification` dispatches its children itself; no route forwards a bare verb into the notify handler"},
-	"persona.go: instructions":                 {argv: []string{"instructions"}, wordOnly: true},
-	"persona.go: persona":                      {argv: []string{"persona"}, wordOnly: true},
-	"pin.go: pin":                              {unreachable: "the legacy `pin` gate admits only `project`"},
-	"pin.go: pin project":                      {argv: []string{"pin", "project"}},
-	"preview.go: internal preview":             {argv: []string{"internal", "preview"}},
-	"profile.go: profile":                      {argv: []string{"profile"}, wordOnly: true},
-	"prune.go: prune":                          {unreachable: "the legacy `prune` gate admits only `agent` and `project`, and `runtime prune` forwards with the `ephemeral` prefix"},
-	"recent_window.go: window":                 {argv: []string{"window"}},
-	"session_popup.go: internal session-popup": {argv: []string{"internal", "session-popup"}},
-	"status.go: internal status":               {argv: []string{"internal", "status"}},
-	"statusbar.go: internal statusbar":         {argv: []string{"internal", "statusbar"}},
-	"tag.go: runtime tag":                      {argv: []string{"runtime", "tag"}},
-	"tmux.go: internal tmux":                   {argv: []string{"internal", "tmux"}},
-	"update.go: update":                        {argv: []string{"update"}, wordOnly: true},
+	"ai_ingest.go: internal agent-hook ingest": {argv: []string{"internal", "agent-hook", "ingest", "help"}},
+	"ai_integrate.go: agent integrate":         {argv: []string{"agent", "integrate", "help"}},
+	"hook.go: hook":                            {argv: []string{"hook", "--", "help"}},
+	"pin.go: pin project":                      {argv: []string{"pin", "project", "--", "help"}},
+	"preview.go: internal preview":             {argv: []string{"internal", "preview", "help"}},
+	"recent_window.go: window":                 {argv: []string{"window", "--", "help"}},
+	"session_popup.go: internal session-popup": {argv: []string{"internal", "session-popup", "help"}},
+	"status.go: internal status":               {argv: []string{"internal", "status", "help"}},
+	"statusbar.go: internal statusbar":         {argv: []string{"internal", "statusbar", "help"}},
+	"tag.go: runtime tag":                      {argv: []string{"runtime", "tag", "--", "help"}},
+	"tmux.go: internal tmux":                   {argv: []string{"internal", "tmux", "help"}},
 }
 
 // helpVerbExceptions are `help` comparisons that are not a route help verb,
@@ -74,17 +58,12 @@ var helpVerbExceptions = map[string]string{
 type helpVerbBranch struct {
 	pos, file, fn string
 	body          []ast.Stmt
-	// flags are the help flag literals ("--help", "-h") the same case clause
-	// lists beside "help"; an if statement carries none.
-	flags []string
 }
 
 // helpVerbScan is what the scan found in a set of files.
 type helpVerbScan struct {
 	// sites maps "<file>: <route>" to the position of its printRouteHelp call.
 	sites map[string]string
-	// flags maps "<file>: <route>" to the help flag labels its branch lists.
-	flags map[string][]string
 	// excepted records the exception keys a branch matched.
 	excepted map[string]bool
 	problems []string
@@ -98,19 +77,6 @@ func helpVerbLiteral(expr ast.Expr) bool {
 	}
 	value, _ := strconv.Unquote(lit.Value)
 	return value == "help"
-}
-
-// helpVerbFlagLabel returns the help flag a case label spells, or "".
-func helpVerbFlagLabel(expr ast.Expr) string {
-	lit, ok := expr.(*ast.BasicLit)
-	if !ok || lit.Kind != token.STRING {
-		return ""
-	}
-	value, _ := strconv.Unquote(lit.Value)
-	if value == "--help" || value == "-h" {
-		return value
-	}
-	return ""
 }
 
 // helpVerbCondition reports whether cond compares something with "help".
@@ -146,13 +112,7 @@ func helpVerbBranches(fset *token.FileSet, name string, file *ast.File) []helpVe
 			switch node := node.(type) {
 			case *ast.CaseClause:
 				if slices.ContainsFunc(node.List, helpVerbLiteral) {
-					var flags []string
-					for _, label := range node.List {
-						if flag := helpVerbFlagLabel(label); flag != "" {
-							flags = append(flags, flag)
-						}
-					}
-					branches = append(branches, helpVerbBranch{pos: fset.Position(node.Pos()).String(), file: name, fn: helpVerbFuncName(fn), body: node.Body, flags: flags})
+					branches = append(branches, helpVerbBranch{pos: fset.Position(node.Pos()).String(), file: name, fn: helpVerbFuncName(fn), body: node.Body})
 				}
 			case *ast.IfStmt:
 				if helpVerbCondition(node.Cond) {
@@ -180,7 +140,7 @@ func helpVerbForbiddenCall(name string) bool {
 // checks every help branch: it prints only through printRouteHelp, names its
 // route as a literal the catalog resolves exactly, and writes nothing else.
 func scanHelpVerbs(files map[string][]byte) helpVerbScan {
-	scan := helpVerbScan{sites: map[string]string{}, flags: map[string][]string{}, excepted: map[string]bool{}}
+	scan := helpVerbScan{sites: map[string]string{}, excepted: map[string]bool{}}
 	fset := token.NewFileSet()
 	names := make([]string, 0, len(files))
 	for name := range files {
@@ -237,7 +197,6 @@ func scanHelpVerbs(files map[string][]byte) helpVerbScan {
 						return true
 					}
 					scan.sites[filepath.Base(branch.file)+": "+route] = branch.pos
-					scan.flags[filepath.Base(branch.file)+": "+route] = branch.flags
 					return true
 				})
 			}
@@ -262,16 +221,11 @@ func helpVerbSetProblems(scan helpVerbScan, sites map[string]helpVerbSite, excep
 		if _, ok := scan.sites[key]; !ok {
 			problems = append(problems, key+": helpVerbSites row matches no help branch (stale)")
 		}
-		if (len(site.argv) == 0) == (site.unreachable == "") {
-			problems = append(problems, key+": helpVerbSites row needs exactly one of argv or an unreachable reason")
+		if len(site.argv) == 0 {
+			problems = append(problems, key+": helpVerbSites row has no argv; a help branch no argv reaches should be deleted, not listed")
 		}
-		if site.wordOnly && site.unreachable != "" {
-			problems = append(problems, key+": helpVerbSites row is wordOnly but unreachable; only a reachable branch can be narrowed to the help word")
-		}
-		if pos, ok := scan.sites[key]; ok && site.wordOnly {
-			for _, label := range scan.flags[key] {
-				problems = append(problems, pos+": help branch for "+key+" lists "+label+", which the help boundary answers before the handler runs")
-			}
+		if len(site.argv) > 0 && cli.HelpRequested(site.argv) {
+			problems = append(problems, key+": helpVerbSites row drives "+strconv.Quote(strings.Join(site.argv, " "))+", which the help boundary answers before the handler runs; drive a spelling that reaches the branch")
 		}
 	}
 	for key, reason := range exceptions {
@@ -306,9 +260,10 @@ func TestHandlerHelpVerbsRenderTheCatalogHelp(t *testing.T) {
 	}
 }
 
-// TestHandlerHelpVerbMatchesHelpFlag drives every reachable row: `<route>
-// help` must write the bytes `<route> --help` writes, on stdout, exit 0, and
-// nothing on stderr.
+// TestHandlerHelpVerbMatchesHelpFlag drives every reachable row through its
+// argv, a spelling the help boundary does not answer, so the handler branch
+// itself runs: it must write the bytes `<route> --help` writes, on stdout,
+// exit 0, and nothing on stderr.
 func TestHandlerHelpVerbMatchesHelpFlag(t *testing.T) {
 	isolateRuntimeWindowFlagParseEnv(t)
 	keys := make([]string, 0, len(helpVerbSites))
@@ -321,21 +276,23 @@ func TestHandlerHelpVerbMatchesHelpFlag(t *testing.T) {
 		if len(site.argv) == 0 {
 			continue
 		}
-		route := strings.Join(site.argv, " ")
-		t.Run(route, func(t *testing.T) {
+		_, routeText, _ := strings.Cut(key, ": ")
+		route := strings.Fields(routeText)
+		spelling := strings.Join(site.argv, " ")
+		t.Run(spelling, func(t *testing.T) {
 			var flagOut, flagErr bytes.Buffer
-			if err := New().Run(append(slices.Clone(site.argv), "--help"), &flagOut, &flagErr); err != nil {
-				t.Fatalf("%s --help: err = %v", route, err)
+			if err := New().Run(append(route, "--help"), &flagOut, &flagErr); err != nil {
+				t.Fatalf("%s --help: err = %v", routeText, err)
 			}
 			var verbOut, verbErr bytes.Buffer
-			if err := New().Run(append(slices.Clone(site.argv), "help"), &verbOut, &verbErr); err != nil {
-				t.Fatalf("%s help: err = %v, want nil (stderr=%q)", route, err, verbErr.String())
+			if err := New().Run(slices.Clone(site.argv), &verbOut, &verbErr); err != nil {
+				t.Fatalf("%s: err = %v, want nil (stderr=%q)", spelling, err, verbErr.String())
 			}
 			if verbErr.Len() != 0 {
-				t.Errorf("%s help: stderr = %q, want empty", route, verbErr.String())
+				t.Errorf("%s: stderr = %q, want empty", spelling, verbErr.String())
 			}
 			if verbOut.String() != flagOut.String() {
-				t.Errorf("%s help: stdout differs from %s --help\nhelp:\n%s\n--help:\n%s", route, route, verbOut.String(), flagOut.String())
+				t.Errorf("%s: stdout differs from %s --help\n%s:\n%s\n--help:\n%s", spelling, routeText, spelling, verbOut.String(), flagOut.String())
 			}
 		})
 	}
@@ -343,8 +300,9 @@ func TestHandlerHelpVerbMatchesHelpFlag(t *testing.T) {
 
 // TestHandlerHelpVerbGuardDetectsDrift is the negative control: a help branch
 // that goes back to a handler copy, prints on stderr, names a route the
-// catalog lacks, or has no row, a wordOnly branch that lists a help flag, a
-// wordOnly row with no reachable spelling, and a stale row, are each reported.
+// catalog lacks, or has no row, a row whose argv the help boundary answers
+// before the handler runs, a row with no argv, and a stale row or exception,
+// are each reported; a row driving the branch after `--` is not.
 func TestHandlerHelpVerbGuardDetectsDrift(t *testing.T) {
 	t.Parallel()
 	src := []byte(`package app
@@ -368,17 +326,17 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "profile")
+		return printRouteHelp(stdout, "hook")
 	}
 	return nil
 }
 `)
 	scan := scanHelpVerbs(map[string][]byte{"recent_window.go": src})
 	problems := strings.Join(helpVerbSetProblems(scan, map[string]helpVerbSite{
-		"recent_window.go: update":  {argv: []string{"update"}},
-		"recent_window.go: window":  {argv: []string{"window"}},
-		"recent_window.go: profile": {argv: []string{"profile"}, wordOnly: true},
-		"recent_window.go: gone":    {unreachable: "no route forwards here", wordOnly: true},
+		"recent_window.go: update": {argv: []string{"update", "help"}},
+		"recent_window.go: window": {argv: []string{"window", "--", "help"}},
+		"recent_window.go: hook":   {argv: []string{"hook", "--", "help"}},
+		"recent_window.go: gone":   {},
 	}, map[string]string{"recent_window.go: gone": "stale"}), "\n")
 	for _, want := range []string{
 		"help branch in (*windowCommand).Run writes through printRouteUsage",
@@ -387,12 +345,16 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 		"help branch for recent_window.go: attention has no helpVerbSites row",
 		"recent_window.go: window: helpVerbSites row matches no help branch (stale)",
 		"recent_window.go: gone: helpVerbExceptions row matches no help comparison (stale)",
-		"help branch for recent_window.go: profile lists --help, which the help boundary answers before the handler runs",
-		"help branch for recent_window.go: profile lists -h, which the help boundary answers before the handler runs",
-		"recent_window.go: gone: helpVerbSites row is wordOnly but unreachable",
+		"recent_window.go: gone: helpVerbSites row has no argv; a help branch no argv reaches should be deleted, not listed",
+		`recent_window.go: update: helpVerbSites row drives "update help", which the help boundary answers before the handler runs`,
 	} {
 		if !strings.Contains(problems, want) {
 			t.Errorf("guard problems do not report %q:\n%s", want, problems)
+		}
+	}
+	for _, key := range []string{"recent_window.go: window", "recent_window.go: hook"} {
+		if strings.Contains(problems, key+": helpVerbSites row drives") {
+			t.Errorf("guard reports the `-- help` row %s as answered by the help boundary:\n%s", key, problems)
 		}
 	}
 }
