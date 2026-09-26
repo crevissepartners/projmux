@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
 
@@ -47,6 +50,123 @@ func TestRecoveredBrokerRetiredBarrierCannotRepublishAuthority(t *testing.T) {
 	}
 	if authority, err := epoch.GenerationAuthority(); err == nil {
 		t.Fatalf("retired producer republished authority: %+v", authority)
+	}
+}
+
+func TestCodexObserverRetriesInitialDrainUntilExactAuthorityIsCurrent(t *testing.T) {
+	messageCommand, store, live := exactControlCLICommand(t)
+	identity, endpoint := phase6CLIIdentity(), phase6CLIEndpoint()
+	pane, _ := store.registry.Pane(identity.PaneUID)
+	pane.Status.Activation.Codex.Authority = nil
+	if _, reason := coremetadata.ResolveAgentRoute(store.registry, identity.AgentUID); reason != "Codex composite authority is unavailable" {
+		t.Fatalf("route before binding = %q", reason)
+	}
+
+	key, err := codexbroker.NewEndpointKey(endpoint.StateDomainID, endpoint.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(shortTempDomain(t), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newBrokerTestEndpoint()
+	server.respondWith("thread/read", `{"thread":{"id":"`+identity.ThreadID+`","status":{"type":"idle"},"turns":[]}}`)
+	broker, err := codexbroker.NewBroker(codexbroker.Config{
+		Endpoint: key, Opener: func(context.Context) (codexbroker.Endpoint, error) { return server, nil },
+		Lifecycle: func(context.Context, codexappserver.PeerIdentity) (codexappserver.LifecycleEndpoint, error) {
+			return &brokerTestLifecycleEndpoint{shared: server, peer: server.peer}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host.Close(); _ = broker.Close() })
+	session := newCodexBrokerObserverSessionOn(identity, "", nil, discovery, nil)
+	session.endpoint = endpoint
+	t.Cleanup(func() { _ = session.Close() })
+	command := testAICommand(t.TempDir())
+	command.loadRegistry = store.store().load
+	command.updateRegistry = store.store().update
+	command.acquireCodexAuthority = func(string) (func(), error) { return func() {}, nil }
+	sink := aiCodexLifecycleSink{command: command, runner: phase3StaticTmuxRunner{output: identity.PaneUID}}
+	startup := make(chan codexObserverStartupResult, 2)
+	allowBind := make(chan struct{})
+	opens := 0
+	observer := codexNativeObserver{
+		identity: identity, endpoint: endpoint, generationState: coremetadata.CodexGenerationCurrent,
+		sink: sink, delay: time.Millisecond,
+		open: func(ctx context.Context) (codexLifecycleConnection, error) {
+			opens++
+			if opens == 1 {
+				return nil, errors.New("drain-required")
+			}
+			select {
+			case <-allowBind:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			return session.Open(ctx)
+		},
+		reportStartup: func(result codexObserverStartupResult) { startup <- result },
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	if result := waitForCodexObserverStartupResult(t, startup, codexObserverStartupRetrying); result.Reason != string(codexObserverReasonUnavailable) {
+		t.Fatalf("first bind result = %+v", result)
+	}
+	if _, reason := coremetadata.ResolveAgentRoute(store.registry, identity.AgentUID); reason != "Codex composite authority is unavailable" {
+		t.Fatalf("route during refused bind = %q", reason)
+	}
+	close(allowBind)
+	waitForCodexObserverStartupResult(t, startup, codexObserverStartupReady)
+	current, _ := store.registry.Pane(identity.PaneUID)
+	if current.Status.Activation.Codex.Authority == nil || !current.Status.Activation.Codex.Authority.Valid() ||
+		!current.Status.Activation.Codex.Authority.Endpoint().Same(endpoint) || current.Status.Activation.Codex.Authority.BrokerRuntimeID != host.RuntimeID() {
+		t.Fatalf("recovered authority = %+v", current.Status.Activation.Codex.Authority)
+	}
+	if _, reason := coremetadata.ResolveAgentRoute(store.registry, identity.AgentUID); reason != "" {
+		t.Fatalf("route after exact binding = %q", reason)
+	}
+
+	messageStore := messagestore.NewStore(t.TempDir())
+	messageCommand.activeTarget = insideTmux(identity.PaneUID, "win-alpha-main").lookup
+	messageCommand.messagePaths = agentMessagePaths{loadRegistry: store.store().load}
+	messageCommand.messageStore = messageStore
+	messageCommand.messageRoute = liveAgentMessageRouteResolver{}
+	messageCommand.messageNow = func() time.Time { return time.Now().UTC() }
+	messageCommand.controlBinding = live
+	messageCommand.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+		return agentControlResponse{OK: true, ThreadID: identity.ThreadID, TurnID: "turn-1"}, nil
+	}
+	const ref = "message-recovered-exact-binding"
+	stdout, _, sendErr := runRoute(t, messageCommand, "message", "send", "uid:"+identity.AgentUID,
+		"--message-ref", ref, "--", "exact fixture payload")
+	stored := persistedDelivery(t, messageStore, ref)
+	if sendErr != nil || stored.Delivery.State != coremessage.StateDelivered {
+		t.Fatalf("send error=%v delivery=%+v", sendErr, stored.Delivery)
+	}
+	assertSendExitFollowsReceipt(t, stdout, sendErr, ref, stored.Delivery)
+
+	foreignRegistry := store.registry.Clone()
+	foreignPane, _ := foreignRegistry.Pane(identity.PaneUID)
+	foreign := *foreignPane.Status.Activation.Codex.Authority
+	foreign.EndpointGenerationID = "foreign-generation"
+	foreignPane.Status.Activation.Codex.Authority = &foreign
+	if _, reason := coremetadata.ResolveAgentRoute(foreignRegistry, identity.AgentUID); reason != "Codex composite authority is unavailable" {
+		t.Fatalf("foreign authority route = %q", reason)
 	}
 }
 

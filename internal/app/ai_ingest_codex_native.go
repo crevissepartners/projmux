@@ -318,6 +318,7 @@ const (
 	codexObserverStartupReady    codexObserverStartupStatus = "ready"
 	codexObserverStartupFallback codexObserverStartupStatus = "fallback"
 	codexObserverStartupStale    codexObserverStartupStatus = "stale"
+	codexObserverStartupRetrying codexObserverStartupStatus = "retrying"
 )
 
 type codexObserverStartupResult struct {
@@ -443,7 +444,9 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			o.setStartupFallback(reason, err)
+			// A broker can refuse a new bind while an older image drains.
+			// Keep this exact observer alive so it can bind when that broker exits.
+			o.setStartupRetrying(reason, err)
 			if !waitCodexObserver(ctx, delay) {
 				return nil
 			}
@@ -1089,6 +1092,15 @@ func (o *codexNativeObserver) setStartupFallback(reason codexObserverReason, fai
 	if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", string(reason)); err == nil {
 		o.journalStartupFallback(reason, failures...)
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(reason)})
+	} else if !o.sink.BindingCurrent(o.identity) {
+		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
+	}
+}
+
+func (o *codexNativeObserver) setStartupRetrying(reason codexObserverReason, failure error) {
+	if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", string(reason)); err == nil {
+		o.journalStartupFallback(reason, failure)
+		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: string(reason)})
 	} else if !o.sink.BindingCurrent(o.identity) {
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
 	}
@@ -2046,7 +2058,7 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 			terminateCodexObserverProcess(cmd)
 			return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverExited)}
 		}
-		if result.Status == codexObserverStartupReady {
+		if result.Status == codexObserverStartupReady || result.Status == codexObserverStartupRetrying {
 			settled := time.NewTimer(codexObserverStartupSettle)
 			defer settled.Stop()
 			select {
@@ -2086,6 +2098,11 @@ func parseCodexObserverStartupLine(line string) (codexObserverStartupResult, boo
 			return codexObserverStartupResult{}, false
 		}
 		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: fields[2], committed: true}, true
+	case codexObserverStartupRetrying:
+		if len(fields) != 3 || fields[2] == "" {
+			return codexObserverStartupResult{}, false
+		}
+		return codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: fields[2], committed: true}, true
 	case codexObserverStartupStale:
 		if len(fields) != 2 {
 			return codexObserverStartupResult{}, false
@@ -2110,6 +2127,8 @@ func codexObserverStartupReporter() func(codexObserverStartupResult) {
 		case codexObserverStartupReady:
 			_, _ = fmt.Fprintf(os.Stdout, "%s %s %s\n", codexObserverStartupPrefix, result.Status, result.Epoch)
 		case codexObserverStartupFallback:
+			_, _ = fmt.Fprintf(os.Stdout, "%s %s %s\n", codexObserverStartupPrefix, result.Status, result.Reason)
+		case codexObserverStartupRetrying:
 			_, _ = fmt.Fprintf(os.Stdout, "%s %s %s\n", codexObserverStartupPrefix, result.Status, result.Reason)
 		case codexObserverStartupStale:
 			_, _ = fmt.Fprintf(os.Stdout, "%s %s\n", codexObserverStartupPrefix, result.Status)

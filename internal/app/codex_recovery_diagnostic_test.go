@@ -62,7 +62,7 @@ func (e diagnosticOwnedEndpoint) ReadLifecycleSnapshot(ctx context.Context, _ st
 	return codexappserver.LifecycleSnapshot{}, syntheticDiagnosticFailure(ctx, e.mode)
 }
 
-func TestObserverFallbackJournalPreservesSafeFailureAndClosedStartup(t *testing.T) {
+func TestObserverRetryingJournalPreservesSafeFailureAndOpenStartup(t *testing.T) {
 	for _, mode := range []string{"unsupported", "catalog", "protocol", "transport"} {
 		t.Run(mode, func(t *testing.T) {
 			failure := syntheticDiagnosticFailure(t.Context(), mode)
@@ -84,12 +84,12 @@ func TestObserverFallbackJournalPreservesSafeFailureAndClosedStartup(t *testing.
 			if len(entries) != 1 || entries[0].Failure == nil || entries[0].Failure.String() != expected.String() {
 				t.Fatalf("lost observer cause: %+v", entries)
 			}
-			if startup.Status != codexObserverStartupFallback || startup.Reason != string(codexNativeReason(failure)) {
+			if startup.Status != codexObserverStartupRetrying || startup.Reason != string(codexNativeReason(failure)) {
 				t.Fatalf("startup reason changed: %+v", startup)
 			}
-			wire := fmt.Sprintf("%s fallback %s\n", codexObserverStartupPrefix, startup.Reason)
+			wire := fmt.Sprintf("%s retrying %s\n", codexObserverStartupPrefix, startup.Reason)
 			if _, ok := parseCodexObserverStartupLine(wire); !ok {
-				t.Fatal("old startup parser rejected fallback")
+				t.Fatal("startup parser rejected retrying")
 			}
 			body, _ := json.Marshal(entries[0])
 			if len(body) > maxCodexObserverFailureRecordBytes || strings.Contains(string(body), "secret") {

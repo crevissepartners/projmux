@@ -798,6 +798,7 @@ func TestCodexObserverStartupHandshakeParserIsClosed(t *testing.T) {
 	}{
 		{line: codexObserverStartupPrefix + " ready 123-1\n", want: codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: "123-1", committed: true}, ok: true},
 		{line: codexObserverStartupPrefix + " fallback control-unavailable\n", want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "control-unavailable", committed: true}, ok: true},
+		{line: codexObserverStartupPrefix + " retrying unavailable\n", want: codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: "unavailable", committed: true}, ok: true},
 		{line: codexObserverStartupPrefix + " stale\n", want: codexObserverStartupResult{Status: codexObserverStartupStale, committed: true}, ok: true},
 		{line: "ready 123-1\n"},
 		{line: codexObserverStartupPrefix + " ready\n"},
@@ -834,7 +835,7 @@ func TestCodexNativeObserverReportsExactStartupTerminalState(t *testing.T) {
 		{
 			name: "endpoint unavailable", current: true,
 			open: func(context.Context) (codexLifecycleConnection, error) { return nil, codexappserver.ErrDisconnected },
-			want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "unavailable"},
+			want: codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: "unavailable"},
 		},
 		{
 			name: "control endpoint unavailable", current: true, requireControl: true,
