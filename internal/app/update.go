@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -2096,13 +2097,15 @@ func (c *updateCommand) clock() time.Time {
 }
 
 func defaultUpdateCacheDir() (string, error) {
-	cacheHome := strings.TrimRight(os.Getenv("XDG_CACHE_HOME"), string(os.PathSeparator))
-	if cacheHome == "" {
+	cacheHome, err := config.ResolveCacheHome("", os.Getenv("XDG_CACHE_HOME"))
+	if err != nil {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", fmt.Errorf("resolve user home: %w", err)
 		}
-		cacheHome = filepath.Join(home, ".cache")
+		if cacheHome, err = config.ResolveCacheHome(home, os.Getenv("XDG_CACHE_HOME")); err != nil {
+			return "", err
+		}
 	}
 	return filepath.Join(cacheHome, "projmux"), nil
 }

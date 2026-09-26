@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -193,11 +194,11 @@ func (c *welcomeCommand) welcomeStatePath(current string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	stateHome := ""
-	if c.lookupEnv != nil {
-		stateHome = c.lookupEnv("XDG_STATE_HOME")
+	lookupEnv := c.lookupEnv
+	if lookupEnv == nil {
+		lookupEnv = func(string) string { return "" }
 	}
-	return welcomeStatePath(home, stateHome, current)
+	return welcomeStatePath(config.Homes{HomeDir: home, StateHome: lookupEnv("XDG_STATE_HOME")}, current)
 }
 
 func welcomeAutoPopupDisabled(lookupEnv func(string) string) bool {

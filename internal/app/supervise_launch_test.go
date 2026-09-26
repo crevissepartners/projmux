@@ -31,11 +31,9 @@ func TestAgentLaunchCarriesTheCreatorResolvedAbsoluteRegistryPath(t *testing.T) 
 	}
 	launch := newLaunchMaterializer(&stubDefaultsRunner{shell: "/bin/sh"}, &strings.Builder{}).
 		supervisedLaunch(context.Background(), spec, []string{"provider"})
-	stateDir, err := filepath.Abs(filepath.Join("relative state with spaces", "projmux"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantPath := intmetadata.PathFor(stateDir)
+	// A relative XDG_STATE_HOME counts as unset, so the Registry stays under
+	// HOME instead of following the creator's working directory.
+	wantPath := intmetadata.PathFor(filepath.Join(root, "home", ".local", "state", "projmux"))
 	var gotPath string
 	for i := range launch {
 		if launch[i] == "--registry-path" && i+1 < len(launch) {

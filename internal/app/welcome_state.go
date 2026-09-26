@@ -67,14 +67,11 @@ func (c *shellCommand) welcomeStatePath(current string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return welcomeStatePath(home, c.env("XDG_STATE_HOME"), current)
+	return welcomeStatePath(config.Homes{HomeDir: home, StateHome: c.env("XDG_STATE_HOME")}, current)
 }
 
-func welcomeStatePath(home, stateHome, current string) (string, error) {
-	paths, err := config.Homes{
-		HomeDir:   home,
-		StateHome: strings.TrimRight(stateHome, string(os.PathSeparator)),
-	}.Paths()
+func welcomeStatePath(homes config.Homes, current string) (string, error) {
+	paths, err := homes.Paths()
 	if err != nil {
 		return "", err
 	}

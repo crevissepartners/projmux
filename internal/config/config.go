@@ -167,21 +167,15 @@ func SaveProjdir(homeDir, value string) error {
 }
 
 // Paths resolves the effective XDG-style projmux directories from the provided
-// home values. A blank ConfigHome or StateHome counts as unset.
+// home values. A blank or relative ConfigHome or StateHome counts as unset.
 func (h Homes) Paths() (Paths, error) {
-	stateHome := strings.TrimSpace(h.StateHome)
-
-	if strings.TrimSpace(h.ConfigHome) == "" || stateHome == "" {
-		if h.HomeDir == "" {
-			return Paths{}, ErrHomeDirRequired
-		}
-	}
 	configHome, err := ResolveConfigHome(h.HomeDir, h.ConfigHome)
 	if err != nil {
 		return Paths{}, err
 	}
-	if stateHome == "" {
-		stateHome = filepath.Join(h.HomeDir, ".local", "state")
+	stateHome, err := ResolveStateHome(h.HomeDir, h.StateHome)
+	if err != nil {
+		return Paths{}, err
 	}
 
 	return DefaultPaths(configHome, stateHome), nil

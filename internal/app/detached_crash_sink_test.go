@@ -88,8 +88,17 @@ func TestResolveDetachedCrashStateDirFollowsStandardStateHomeOnly(t *testing.T) 
 		}
 		return ""
 	}
-	if _, err := resolveDetachedCrashStateDir(lookup, func() (string, error) { return home, nil }); err == nil {
-		t.Fatal("relative XDG_STATE_HOME was accepted for crash artifacts")
+	got, err = resolveDetachedCrashStateDir(lookup, func() (string, error) { return home, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".local", "state", "projmux"); got != want {
+		t.Fatalf("relative XDG_STATE_HOME state dir = %q, want the unset fallback %q", got, want)
+	}
+	if _, err := resolveDetachedCrashStateDir(lookup, func() (string, error) {
+		return "", errors.New("home unavailable")
+	}); err == nil {
+		t.Fatal("relative XDG_STATE_HOME with unavailable home was accepted for crash artifacts")
 	}
 }
 
