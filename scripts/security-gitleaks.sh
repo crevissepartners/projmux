@@ -17,8 +17,13 @@ fi
 
 case "$mode" in
 	full)
-		echo ">> gitleaks (full git history)"
-		gitleaks git --redact --no-banner --config="$config" "$repository"
+		# Without --log-opts gitleaks runs `git log --full-history --all`, which
+		# reads every fetched branch, so a finding on an open branch would fail
+		# main. Scan only history reachable from HEAD; branch commits are
+		# covered by the pull-request range scan.
+		head_commit="$(git -C "$repository" rev-parse --verify 'HEAD^{commit}')"
+		echo ">> gitleaks (history reachable from HEAD)"
+		gitleaks git --redact --no-banner --config="$config" --log-opts="$head_commit" "$repository"
 		;;
 	range)
 		base="${SECURITY_GITLEAKS_BASE:-}"

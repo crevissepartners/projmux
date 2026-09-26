@@ -105,7 +105,7 @@ and humans run the same entrypoints.
 - `make security` runs the exact three Security groups in parallel locally:
   Go vulnerability/security, Go static quality, and repository policy.
   `make security-serial` is the parity control and `make security-contract`
-  checks scanner/rule/baseline identity, PR-range/full-history secret scans,
+  checks scanner/rule/baseline identity, PR-range and HEAD-history secret scans,
   cache miss-to-hit convergence, privacy-safe artifacts, and the fail-closed
   aggregate. CI exposes their stable aggregate as `Test`.
   After adding or removing a Go package, refresh the package-set pin with
