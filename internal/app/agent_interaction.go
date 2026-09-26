@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -84,6 +85,7 @@ type codexLifecycleReducer struct {
 	pending          map[string]codexPendingApproval
 	terminalTurns    map[string]codexappserver.TurnState
 	errorNotified    bool
+	inputRequestID   string
 }
 
 func (r *codexLifecycleReducer) begin(epoch uint64, identity codexLifecycleIdentity, snapshot codexappserver.LifecycleSnapshot) codexLifecycleProjection {
@@ -99,6 +101,7 @@ func (r *codexLifecycleReducer) begin(epoch uint64, identity codexLifecycleIdent
 	r.pending = map[string]codexPendingApproval{}
 	r.terminalTurns = map[string]codexappserver.TurnState{}
 	r.errorNotified = false
+	r.inputRequestID = ""
 	if snapshot.ThreadState == codexappserver.ThreadStateNotLoaded {
 		// A not-loaded snapshot is an invalidation boundary, never evidence
 		// for a healthy provider-control-plane epoch. Return the first accepted
@@ -124,6 +127,7 @@ func (r *codexLifecycleReducer) invalidate(epoch uint64) codexLifecycleProjectio
 	r.currentTurnID = ""
 	r.currentTurnState = codexappserver.TurnStateUnknown
 	r.errorNotified = false
+	r.inputRequestID = ""
 	r.interaction = coremetadata.InteractionUnknown
 	return projection
 }
@@ -142,6 +146,7 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 		r.pending = map[string]codexPendingApproval{}
 		r.terminalTurns = map[string]codexappserver.TurnState{}
 		r.errorNotified = false
+		r.inputRequestID = ""
 		r.currentTurnID = event.TurnID
 		r.currentTurnState = codexappserver.TurnStateInProgress
 		r.threadState = codexappserver.ThreadStateActive
@@ -160,6 +165,9 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 			}
 		}
 		r.threadState = event.ThreadState
+		if event.ThreadState != codexappserver.ThreadStateWaitingOnUserInput {
+			r.inputRequestID = ""
+		}
 		r.interaction = r.liveInteraction()
 		if event.ThreadState == codexappserver.ThreadStateSystemError && !r.errorNotified {
 			projection.Notices = []codexLifecycleNotice{r.failureNotice()}
@@ -190,6 +198,14 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 			projection.Notices = r.actionableApprovalNotices()
 		}
 	case codexappserver.LifecycleRequestResolved:
+		if event.RequestID == r.inputRequestID && r.inputRequestID != "" {
+			r.inputRequestID = ""
+			if r.threadState == codexappserver.ThreadStateWaitingOnUserInput {
+				r.threadState = codexappserver.ThreadStateActive
+			}
+			r.interaction = r.liveInteraction()
+			break
+		}
 		pending, exists := r.pending[event.RequestID]
 		if !exists || pending.TurnID != r.currentTurnID {
 			return codexLifecycleProjection{}
@@ -209,6 +225,7 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 		}
 		projection.ClearNoticeIDs = r.pendingNoticeIDs()
 		r.pending = map[string]codexPendingApproval{}
+		r.inputRequestID = ""
 		r.currentTurnState = event.TurnState
 		projection.ClearProgress = true
 		r.terminalTurns[event.TurnID] = event.TurnState
@@ -261,6 +278,9 @@ func (r *codexLifecycleReducer) liveInteraction() coremetadata.AgentInteractionK
 	if r.currentTurnState == codexappserver.TurnStateCompleted {
 		return coremetadata.InteractionResponseComplete
 	}
+	if r.inputRequestID != "" && r.currentTurnState == codexappserver.TurnStateInProgress {
+		return coremetadata.InteractionInputRequired
+	}
 	switch r.threadState {
 	case codexappserver.ThreadStateIdle:
 		return coremetadata.InteractionIdle
@@ -279,6 +299,44 @@ func (r *codexLifecycleReducer) liveInteraction() coremetadata.AgentInteractionK
 		return coremetadata.InteractionIdle
 	default:
 		return coremetadata.InteractionUnknown
+	}
+}
+
+// applyUserInputRequest recognizes only the identity of Codex's native question
+// request. Its prompt and answer options never enter the lifecycle reducer.
+// Answering this request belongs to the separate question-channel task.
+func (r *codexLifecycleReducer) applyUserInputRequest(epoch uint64, notification codexappserver.Notification) (codexLifecycleProjection, bool, error) {
+	if notification.Method != "item/tool/requestUserInput" {
+		return codexLifecycleProjection{}, false, nil
+	}
+	var params struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+		ItemID   string `json:"itemId"`
+	}
+	if notification.RequestID == "" || len(notification.Params) == 0 || json.Unmarshal(notification.Params, &params) != nil ||
+		strings.TrimSpace(params.ThreadID) == "" || strings.TrimSpace(params.TurnID) == "" || strings.TrimSpace(params.ItemID) == "" {
+		return codexLifecycleProjection{}, true, fmt.Errorf("invalid Codex user input request identity")
+	}
+	if !r.active || epoch != r.epoch || params.ThreadID != r.identity.ThreadID || params.TurnID != r.currentTurnID || r.currentTurnState != codexappserver.TurnStateInProgress {
+		return codexLifecycleProjection{}, true, nil
+	}
+	r.inputRequestID = notification.RequestID
+	r.interaction = coremetadata.InteractionInputRequired
+	return codexLifecycleProjection{Accepted: true, HasStartedTurn: true, Interaction: r.interaction}, true, nil
+}
+
+// refreshProjection restates only a still-active turn or wait. In particular it
+// carries no notices, so keeping a wait fresh cannot redeliver an alert.
+func (r *codexLifecycleReducer) refreshProjection(epoch uint64) codexLifecycleProjection {
+	if !r.active || epoch != r.epoch {
+		return codexLifecycleProjection{}
+	}
+	switch r.interaction {
+	case coremetadata.InteractionInProgress, coremetadata.InteractionApprovalRequired, coremetadata.InteractionInputRequired:
+		return codexLifecycleProjection{Accepted: true, HasStartedTurn: r.currentTurnID != "", Interaction: r.interaction}
+	default:
+		return codexLifecycleProjection{}
 	}
 }
 

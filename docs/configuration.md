@@ -452,6 +452,12 @@ observer on its exact Agent UID, Pane UID/runtime handle, activation generation,
 and thread ID. While its initialized proxy connection and snapshot are current,
 the app server is the only attention authority: active, idle, waiting for input,
 and exact unresolved approval requests project the Agent interaction and badge.
+The native observer refreshes a continuing turn or wait before the 30-minute
+interaction freshness window expires. A `requestUserInput` request projects
+`input_required` even before a separate thread-status update arrives; its
+resolution or the turn's completion releases that state. This is status
+visibility only: answering a Codex question through `agent question answer`
+is not yet supported.
 An exact successful `turn/completed` projects response-complete and queues a
 completion notification with the last agent message (or `Ready` if none is
 available). A failed turn or `systemError` queues a critical `error` notification

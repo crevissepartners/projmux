@@ -79,6 +79,8 @@ const (
 	codexObserverBindingTimeout    = 3 * time.Second
 	codexObserverStartupTimeout    = 3 * time.Second
 	codexObserverStartupSettle     = 75 * time.Millisecond
+	// Recommit a live turn or wait well before its durable observation decays.
+	codexObserverInteractionRefreshInterval = coremetadata.AgentInteractionFreshFor / 3
 
 	codexObserverStartupEnvironment = "PROJMUX_INTERNAL_CODEX_OBSERVER_STARTUP"
 	codexObserverStartupPrefix      = "projmux-codex-observer-v1"
@@ -356,6 +358,7 @@ type codexNativeObserver struct {
 	reportStartup   func(codexObserverStartupResult)
 	progress        agentprogress.Reducer
 	now             func() time.Time
+	refreshTicks    <-chan time.Time
 	// transitions is the durable history sink. The pane option holds one
 	// current value, so without this an observer's connect/disconnect
 	// sequence is unobservable between two samples.
@@ -387,6 +390,12 @@ func (o *codexNativeObserver) journal(kind codexObserverTransition, epochLabel s
 func (o *codexNativeObserver) Run(ctx context.Context) error {
 	if !o.identity.valid() || o.open == nil || o.sink == nil {
 		return errors.New("codex native lifecycle observer is not configured")
+	}
+	refreshTicks := o.refreshTicks
+	if refreshTicks == nil {
+		ticker := time.NewTicker(codexObserverInteractionRefreshInterval)
+		defer ticker.Stop()
+		refreshTicks = ticker.C
 	}
 	delay := o.delay
 	if delay <= 0 {
@@ -601,6 +610,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			_ = client.Close()
 			return errors.Join(err, cleanupErr)
 		}
+		lastInteractionAt := o.currentTime()
 		if err := o.sink.SetAuthority(o.identity, codexAuthorityControlPlane, epochLabel, string(codexObserverReasonReady)); err != nil {
 			if control != nil {
 				_ = control.Close()
@@ -638,6 +648,25 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				exit = codexObserverExitCancelled
 				break eventLoop
+			case <-refreshTicks:
+				now := o.currentTime()
+				if now.Sub(lastInteractionAt) < codexObserverInteractionRefreshInterval {
+					continue
+				}
+				refresh := o.decorateGenerationProjection(o.reducer.refreshProjection(epoch))
+				if !refresh.Accepted {
+					continue
+				}
+				if err := o.sink.Apply(o.identity, refresh); err != nil {
+					if control != nil {
+						_ = control.Close()
+						control = nil
+					}
+					cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
+					_ = client.Close()
+					return errors.Join(err, cleanupErr)
+				}
+				lastInteractionAt = now
 			case <-bindingTicker.C:
 				if o.sink.BindingCurrent(o.identity) {
 					continue
@@ -700,7 +729,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 						o.lastAgentTurnID, o.lastAgentText = turnID, message
 					}
 				}
-				event, recognized, decodeErr := codexappserver.DecodeLifecycleEvent(notification)
+				requestProjection, requestRecognized, requestErr := o.reducer.applyUserInputRequest(epoch, notification)
+				if requestErr != nil {
+					exit = codexObserverExitProtocolError
+					break eventLoop
+				}
+				event, recognized, decodeErr := codexappserver.LifecycleEvent{}, requestRecognized, error(nil)
+				if !requestRecognized {
+					event, recognized, decodeErr = codexappserver.DecodeLifecycleEvent(notification)
+				}
 				if decodeErr != nil {
 					exit = codexObserverExitProtocolError
 					break eventLoop
@@ -730,7 +767,11 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					}
 					continue
 				}
-				projection = o.decorateGenerationProjection(o.reducer.apply(epoch, event))
+				if requestRecognized {
+					projection = o.decorateGenerationProjection(requestProjection)
+				} else {
+					projection = o.decorateGenerationProjection(o.reducer.apply(epoch, event))
+				}
 				if !projection.Accepted {
 					continue
 				}
@@ -776,6 +817,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					_ = client.Close()
 					return errors.Join(err, cleanupErr)
 				}
+				lastInteractionAt = o.currentTime()
 				if progressEvent, progressRecognized, progressErr := codexappserver.DecodeProgressEvent(notification, o.currentTime()); progressErr != nil {
 					exit = codexObserverExitProtocolError
 					break eventLoop
