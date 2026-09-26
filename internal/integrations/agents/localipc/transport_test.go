@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/testutil/socketreuse"
 )
 
 func TestOwnedSocketLifecycleAndSingleJSONBoundaries(t *testing.T) {
@@ -84,6 +86,8 @@ func TestOwnedSocketCleanupPreservesReplacementAndPathModeBounds(t *testing.T) {
 	if err := listener.Unix.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// Measured once sockets are known to be available, in the same /tmp.
+	socketreuse.SkipIfReplacementCollapses(t, "/tmp", InspectOwnedSocket)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}

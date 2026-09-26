@@ -392,6 +392,9 @@ func TestDiagnosticsReportPermissionDeniedSourcesAreStableOmissions(t *testing.T
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission denial fixture")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permission bits, so the denial this test stages cannot be observed")
+	}
 	cmd, stateHome, _ := testReportCommand(t)
 	operationsPath := filepath.Join(stateHome, "projmux", "logs", diagnostics.LogFileName)
 	ingestPath := filepath.Join(stateHome, "projmux", aiIngestLogName)
@@ -436,6 +439,9 @@ func TestDiagnosticsReportCleanOperationsAndDeniedOutputParent(t *testing.T) {
 
 	if runtime.GOOS == "windows" {
 		return
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permission bits, so the denied output parent this test stages cannot be observed")
 	}
 	denied := filepath.Join(t.TempDir(), reportSecret)
 	if err := os.Mkdir(denied, 0o500); err != nil {
