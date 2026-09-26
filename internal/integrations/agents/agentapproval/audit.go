@@ -37,6 +37,22 @@ const (
 	// AuditRefused is an answer that changed nothing: a late or second
 	// answer, or one naming a request that does not exist.
 	AuditRefused = "refused"
+	// AuditUncommitted follows the allowed or denied line of the same request
+	// id when that answer is confirmed not to have taken effect. It is written
+	// only on that confirmation: an answer whose outcome is unknown keeps its
+	// line alone, and one that took effect never gets this line.
+	AuditUncommitted = "uncommitted"
+)
+
+// Reasons an uncommitted line carries.
+const (
+	// UncommittedRecordWriteFailed: the allowed or denied line of a Claude
+	// answer was written, and the record write then failed before it
+	// committed, so the request is still waiting.
+	UncommittedRecordWriteFailed = "record-write-failed"
+	// UncommittedSendFailed: the allowed or denied line of a Codex answer was
+	// written, and the decision was then confirmed not to have reached Codex.
+	UncommittedSendFailed = "send-failed"
 )
 
 // AuditLine is one line of the append-only audit log. It never carries the
@@ -70,6 +86,18 @@ func auditLine(event string, record Record, now time.Time) AuditLine {
 	if event != AuditRequested && event != AuditRefused {
 		line.DecidedAt = record.UpdatedAt.UTC()
 	}
+	return line
+}
+
+// uncommittedLine is the uncommitted line that follows answer: the same
+// request, Agent, Pane, session, tool, input, and via, with reason and the
+// time at. DecidedAt stays zero because nothing was decided.
+func uncommittedLine(answer AuditLine, reason string, at time.Time) AuditLine {
+	line := answer
+	line.Event = AuditUncommitted
+	line.Reason = reason
+	line.DecidedAt = time.Time{}
+	line.At = at.UTC()
 	return line
 }
 

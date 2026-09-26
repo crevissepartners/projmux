@@ -934,7 +934,8 @@ and ignores the late output, but the audit log shows that projmux answer.
 
 `--via` is reported by the caller and recorded as given; projmux does not
 verify it. Every event (`requested`, `allowed`, `denied`, `expired`, `closed`,
-and `refused` for a late or invalid answer) is appended as one JSON line to
+`refused` for a late or invalid answer, and `uncommitted` for an answer that
+did not take effect) is appended as one JSON line to
 `<state dir>/agent-approvals/audit.jsonl` (mode 0600, rotated to one `.1`
 generation at 1 MiB) with the request id, Agent, Pane, session, subagent type,
 tool name, a bounded one-line input summary (Bash `command`, a file tool's
@@ -947,18 +948,26 @@ takes effect. If that line cannot be written, `answer` fails with an error
 naming the audit log and the request stays waiting: fix the log and answer
 again, or answer in Claude Code. The other events stay best effort and never
 fail the transition they describe. If the line was written but the request
-record then cannot be written, the answer fails and the log keeps an `allowed`
-or `denied` line for an answer that did not take effect; a later `expired` or
-`closed` line for the same request shows how it ended. The log may over-report
-an answer, never under-report one.
+record write then fails before the new record replaces the old one, the answer
+did not take effect: `answer` fails, the request stays waiting, and an
+`uncommitted` line with `reason` `record-write-failed` follows the answer line
+for the same request id. If that `uncommitted` line cannot be written either,
+`answer` says so and the log keeps the `allowed` or `denied` line alone. No
+`uncommitted` line is written when the answer took effect, or when its outcome
+is unknown, such as a crash between the line and the record write; a later
+`expired` or `closed` line for the same request shows how it ended. Read the
+log this way: an `allowed` or `denied` line followed by an `uncommitted` line
+for the same request id did not take effect. The log may over-report an answer,
+never under-report one.
 
 #### Codex Answers
 
 The same `list` and `answer` also work for a Codex Agent with an exact native
 control binding (see [cli-guide.md](cli-guide.md)). projmux stores no Codex
 request: the provider holds it, so the audit log gets only the `allowed` or
-`denied` line of an answer sent from projmux, never `requested`, `expired`,
-`closed`, or `refused`. That line carries the normalized request id, Agent,
+`denied` line of an answer sent from projmux and, when that answer is
+confirmed not to have reached Codex, its `uncommitted` line; never
+`requested`, `expired`, `closed`, or `refused`. That line carries the normalized request id, Agent,
 Pane, the approval kind as the tool name, a bounded input summary (a command
 approval's command, otherwise only the detail key names), `via`, the decision
 time, and the provider decision actually sent in `reason` as
@@ -966,8 +975,17 @@ time, and the provider decision actually sent in `reason` as
 `decline` when the request offers it and otherwise `cancel`, which also
 interrupts the turn; nothing runs either way. The line is written and synced
 before that one decision is sent; if it cannot be written nothing is sent and the request stays
-pending. If the send then fails the line stays, so the log may over-report a
-Codex answer too. An answer given in the Codex TUI or with `agent approval
+pending. If the send then fails and the decision is confirmed not to have
+reached Codex, an `uncommitted` line with `reason` `send-failed` follows the
+answer line and `answer` says the answer did not take effect. That is the case
+when the request never left projmux (the binding fence refused it, or the
+control socket could not be reached) or when the control server refused it
+before claiming the approval (`stale-epoch`, `stale-binding`, `unavailable`,
+`invalid-frame`, `ambiguous-request`, or `unsafe-decision`). Any other send
+failure may have reached Codex: the line stays alone and `answer` says the
+decision may or may not have reached Codex, so the log may over-report a Codex
+answer too. If the `uncommitted` line cannot be written, `answer` says so and
+the log keeps the answer line alone. An answer given in the Codex TUI or with `agent approval
 review` is not logged.
 
 ## Antigravity Hook Ingest

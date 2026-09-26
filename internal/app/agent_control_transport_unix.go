@@ -122,15 +122,31 @@ func (s *codexControlServer) Close() error {
 	return err
 }
 
+// errAgentControlNotSent marks a callCodexControl failure that returned before
+// any request byte was written to the control socket: the socket path, the
+// dial, or the request frame failed, so the server never saw the request.
+// Every failure from the write onward may have reached the server and is not
+// marked.
+var errAgentControlNotSent = errors.New("exact Agent control request was not sent")
+
+// agentControlNotSentError carries a failure unchanged in its text while
+// errors.Is also matches errAgentControlNotSent.
+type agentControlNotSentError struct{ err error }
+
+func (e *agentControlNotSentError) Error() string   { return e.err.Error() }
+func (e *agentControlNotSentError) Unwrap() []error { return []error{e.err, errAgentControlNotSent} }
+
+func agentControlNotSent(err error) error { return &agentControlNotSentError{err: err} }
+
 func callCodexControl(ctx context.Context, stateDir string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
 	path, err := agentControlSocketPath(stateDir, endpoint, identity)
 	if err != nil {
-		return agentControlResponse{}, err
+		return agentControlResponse{}, agentControlNotSent(err)
 	}
 	dialer := net.Dialer{Timeout: agentControlDialTimeout}
 	conn, err := dialer.DialContext(ctx, "unix", path)
 	if err != nil {
-		return agentControlResponse{}, fmt.Errorf("native Codex control endpoint unavailable: %w", err)
+		return agentControlResponse{}, agentControlNotSent(fmt.Errorf("native Codex control endpoint unavailable: %w", err))
 	}
 	defer conn.Close()
 	if deadline, ok := ctx.Deadline(); ok {
@@ -140,7 +156,7 @@ func callCodexControl(ctx context.Context, stateDir string, endpoint coremetadat
 	}
 	var requestPayload bytes.Buffer
 	if err := json.NewEncoder(&requestPayload).Encode(request); err != nil || requestPayload.Len() > agentControlMaxFrame {
-		return agentControlResponse{}, errors.New("native Codex control request exceeds the bounded frame")
+		return agentControlResponse{}, agentControlNotSent(errors.New("native Codex control request exceeds the bounded frame"))
 	}
 	if _, err := conn.Write(requestPayload.Bytes()); err != nil {
 		return agentControlResponse{}, fmt.Errorf("write native Codex control request: %w", err)
