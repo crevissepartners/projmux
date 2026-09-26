@@ -1305,13 +1305,19 @@ rules are written as a Claude settings file,
 started with `--settings <that file>`. Each resume writes it again from the
 current profile.
 
-When a profile with `sandbox` or `approval` is applied to a Codex Agent, they
-are sent as the Codex thread's `sandbox` and `approvalPolicy` on
-`thread/start` and on every native `thread/resume`: `read-only`,
-`workspace-write`, and `full-access` become `read-only`, `workspace-write`, and
-`danger-full-access`; the approval values are sent as spelled. The thread's
-answer must report the same policy, or the create or resume is refused
-(`codex-thread-policy-mismatch`). `allow` and `deny` are not given to Codex.
+When a profile with `sandbox` or `approval` is applied to a Codex Agent, the
+native lane sends them as the thread's `sandbox` and `approvalPolicy` on
+`thread/start` and every native `thread/resume`. The thread's answer must
+report the same policy, or create or resume is refused
+(`codex-thread-policy-mismatch`). Promptless and `--interactive-only` creates,
+and CLI resumes, pass the current profile policy as `codex -s <sandbox> -a
+<approval>` or `codex -s <sandbox> -a <approval> resume`. On both lanes,
+`full-access` becomes Codex's `danger-full-access`. Codex CLI accepts
+`approval = "on-request"` and `"never"`; a profile with `approval = "untrusted"`
+is refused on CLI lanes (`codex-cli-untrusted-approval-unsupported`) before
+creating a Pane or resuming the Agent. The native lane still accepts it.
+`allow` and `deny` are not given to Codex and appear as not applied in create
+receipts.
 
 ## Setting Layers
 

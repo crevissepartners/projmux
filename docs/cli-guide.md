@@ -1945,17 +1945,19 @@ Claude, `allow` and `deny` are passed as `--settings <snapshot>`. Claude does
 not get `sandbox` (`claude-sandbox-bash-only`: its sandbox confines only Bash)
 or `approval` (`claude-no-matching-permission-mode`).
 
-Codex applies `sandbox` and `approval` only on a create with a prompt, the
-native lane that starts its own app-server thread: they are sent on
-`thread/start` as the thread's `sandbox` (`full-access` is sent as
-`danger-full-access`) and `approvalPolicy`, and the thread's answer must report
-exactly that policy. A thread that reports another one refuses the create
-(`codex-thread-policy-mismatch`); nothing falls back to a launch without it.
-Codex does not get `allow` or `deny` (`codex-command-rules-unsupported`), nor
-`model` or `effort` (`provider-option-unsupported`). A Codex create without a
-prompt, or with `--interactive-only`, refuses a profile that sets any
-permission (`profile-permissions-unsupported-provider`). Any other provider
-refuses such a profile the same way and does not take `model` or `effort`
+Codex applies `sandbox` and `approval` on every create and resume lane. A
+prompted native create sends them on `thread/start`, and a native resume sends
+them on `thread/resume`; a policy mismatch refuses the operation
+(`codex-thread-policy-mismatch`). Promptless and `--interactive-only` creates
+and CLI resumes pass `-s <sandbox>` and `-a <approval>` before the workspace
+and resume arguments. `full-access` is spelled `danger-full-access` for Codex.
+The CLI accepts `approval = "on-request"` or `"never"`. It refuses a profile
+with `approval = "untrusted"` before launch
+(`codex-cli-untrusted-approval-unsupported`); the native lane still accepts it.
+Codex does not get `allow` or `deny` (`codex-command-rules-unsupported`),
+which remain visible as skipped items. Codex applies Profile `model` and
+`effort`. Any other provider refuses a profile with permissions
+(`profile-permissions-unsupported-provider`) and skips `model` and `effort`
 (`provider-option-unsupported`). The reply-only activation refuses a profile
 (`profile-lane-unsupported`).
 

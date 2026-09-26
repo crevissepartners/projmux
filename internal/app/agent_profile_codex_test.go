@@ -165,36 +165,19 @@ func TestCodexNativeCreateWithoutAProfileSendsAZeroPolicy(t *testing.T) {
 	}
 }
 
-// TestCodexProfilePermissionsAreRefusedOffTheNativeFreshLane is C-2's lane
-// rule: every Codex create that does not start its own native thread -- no
-// prompt, or --interactive-only -- and every provider but Claude and Codex
-// refuse a profile with permissions, with the stable token, before any thread,
-// Registry write, or Pane exists.
-func TestCodexProfilePermissionsAreRefusedOffTheNativeFreshLane(t *testing.T) {
+// Other providers still refuse a profile with permissions before mutation.
+func TestOtherProviderRefusesCodexProfilePermissions(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct {
-		name string
-		args []string
-		lane string
-	}{
-		{"codex without a prompt", []string{"agent", "--provider", "codex", "--profile", "readonly", "--project", "alpha", "--window", "main"}, "only on a create with a prompt"},
-		{"codex interactive-only", codexNativeCreateArgs("--profile", "readonly", "--interactive-only"), "only on a create with a prompt"},
-		{"antigravity with a prompt", []string{"agent", "--provider", "antigravity", "--profile", "readonly", "--project", "alpha", "--window", "main", "--", "review this"}, "cannot apply"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			create, store, tmux, native, _ := newCodexPersonaCreate(t)
-			codexProfileHome(t, create)
-			before, panes := store.snapshot(), tmux.paneCount()
-			stdout, _, err := runRoute(t, create, test.args...)
-			if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), profileReasonPermissionsUnsupported) ||
-				!strings.Contains(err.Error(), test.lane) || stdout != "" {
-				t.Fatalf("create = %v (stdout %q), want a %s refusal naming %q", err, stdout, profileReasonPermissionsUnsupported, test.lane)
-			}
-			if len(native.creates) != 0 || store.snapshot() != before || store.writes != 0 || tmux.paneCount() != panes {
-				t.Fatalf("refused create mutated state: creates=%+v writes=%d", native.creates, store.writes)
-			}
-		})
+	create, store, tmux, native, _ := newCodexPersonaCreate(t)
+	codexProfileHome(t, create)
+	before, panes := store.snapshot(), tmux.paneCount()
+	stdout, _, err := runRoute(t, create, "agent", "--provider", "antigravity", "--profile", "readonly", "--project", "alpha", "--window", "main", "--", "review this")
+	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), profileReasonPermissionsUnsupported) ||
+		!strings.Contains(err.Error(), "cannot apply") || stdout != "" {
+		t.Fatalf("create = %v (stdout %q), want a %s refusal", err, stdout, profileReasonPermissionsUnsupported)
+	}
+	if len(native.creates) != 0 || store.snapshot() != before || store.writes != 0 || tmux.paneCount() != panes {
+		t.Fatalf("refused create mutated state: creates=%+v writes=%d", native.creates, store.writes)
 	}
 }
 
@@ -284,28 +267,19 @@ func TestCodexNativeCreateRefusesAThreadWhosePolicyDiffers(t *testing.T) {
 	}
 }
 
-// TestCodexRefusesAProfileWithAnyPermissionOffTheNativeFreshLane replaces
-// Task 2's TestCodexRefusesAProfileWithAnyPermission: off the native fresh
-// lane (here --interactive-only) Codex, like every provider but Claude,
-// refuses a profile carrying any permission, with its stable token and
-// nothing created; a permission-free profile applies model and effort, and its instructions follow the persona lane
-// rule --instructions follows.
-func TestCodexRefusesAProfileWithAnyPermissionOffTheNativeFreshLane(t *testing.T) {
+// The plain lane accepts profile permissions; profile instructions still
+// follow the separate persona lane rule.
+func TestCodexPlainProfileLaunchKeepsModelEffortAndPersonaLaneRules(t *testing.T) {
 	t.Parallel()
 	f := newProfileFixture(t)
 	f.writeProfile(t, "sandboxed", "[permissions]\nsandbox = \"read-only\"\n")
 	f.writeProfile(t, "approving", "[permissions]\napproval = \"never\"\n")
 	f.writeProfile(t, "allowing", "[permissions]\nallow = [\"Read\"]\n")
 	for _, name := range []string{"readonly", "sandboxed", "approving", "allowing"} {
-		for _, provider := range []string{aiModeCodex, aiModeAntigravity} {
-			args := []string{"agent", "--provider", provider, "--profile", name, "--project", "alpha", "--window", "review"}
-			if provider == aiModeCodex {
-				args = append(args, "--interactive-only")
-			}
-			stdout, _, err := runRoute(t, f.create, args...)
-			if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), profileReasonPermissionsUnsupported) || stdout != "" {
-				t.Fatalf("%s --profile %s = %v (stdout %q), want a %s refusal", provider, name, err, stdout, profileReasonPermissionsUnsupported)
-			}
+		args := []string{"agent", "--provider", aiModeAntigravity, "--profile", name, "--project", "alpha", "--window", "review"}
+		stdout, _, err := runRoute(t, f.create, args...)
+		if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), profileReasonPermissionsUnsupported) || stdout != "" {
+			t.Fatalf("antigravity --profile %s = %v (stdout %q), want a %s refusal", name, err, stdout, profileReasonPermissionsUnsupported)
 		}
 	}
 	if len(f.launcher.argv) != 0 || len(f.store.registry.Agents) != 2 {
@@ -337,6 +311,75 @@ func TestCodexRefusesAProfileWithAnyPermissionOffTheNativeFreshLane(t *testing.T
 		"--project", "alpha", "--window", "review", "--name", "instructed")
 	if err == nil || !strings.Contains(err.Error(), "persona-provider-unsupported") {
 		t.Fatalf("codex plain lane with profile instructions = %v, want the persona-provider-unsupported refusal --instructions gets", err)
+	}
+}
+
+func TestCodexCLIProfileCreateCarriesPolicyAndDisclosesRules(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, content string
+		prompt        bool
+		want          []string
+	}{
+		{"promptless", "[permissions]\nsandbox = \"full-access\"\napproval = \"never\"\nallow = [\"Read\"]\ndeny = [\"Edit\"]\n", false,
+			[]string{"-s", "danger-full-access", "-a", "never", "-C", "/srv/alpha"}},
+		{"interactive-only", "[permissions]\nsandbox = \"workspace-write\"\napproval = \"on-request\"\n", true,
+			[]string{"-s", "workspace-write", "-a", "on-request", "-C", "/srv/alpha", "review this"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProfileFixture(t)
+			digest := f.writeProfile(t, "guard", test.content)
+			args := []string{"agent", "--provider", "codex", "--profile", "guard", "--project", "alpha", "--window", "review", "-o", "receipt"}
+			if test.prompt {
+				args = append(args, "--interactive-only", "--", "review this")
+			}
+			stdout, _, err := runRoute(t, f.create, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := f.onlyArgvTail(t, aiModeCodex); !slices.Equal(got, test.want) {
+				t.Fatalf("argv tail = %q, want %q", got, test.want)
+			}
+			var receipt struct {
+				Profile *cli.ReceiptProfile `json:"profile"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &receipt); err != nil || receipt.Profile == nil {
+				t.Fatalf("receipt = %q (%v)", stdout, err)
+			}
+			if receipt.Profile.Name != "guard" || receipt.Profile.Digest != digest {
+				t.Fatalf("profile receipt = %+v", receipt.Profile)
+			}
+			for _, item := range receipt.Profile.NotApplied {
+				if item.Item == profileItemSandbox || item.Item == profileItemApproval {
+					t.Fatalf("applied policy disclosed as skipped: %+v", item)
+				}
+			}
+			if !test.prompt && !slices.Equal(receipt.Profile.NotApplied, []cli.ReceiptProfileItem{
+				{Item: profileItemAllow, Provider: aiModeCodex, Reason: profileReasonCodexCommandRulesUnsupported},
+				{Item: profileItemDeny, Provider: aiModeCodex, Reason: profileReasonCodexCommandRulesUnsupported},
+			}) {
+				t.Fatalf("allow/deny disclosure = %+v", receipt.Profile.NotApplied)
+			}
+		})
+	}
+}
+
+func TestCodexCLIProfileCreateRefusesUntrustedBeforeMutation(t *testing.T) {
+	t.Parallel()
+	for _, prompt := range []bool{false, true} {
+		f := newProfileFixture(t)
+		f.writeProfile(t, "untrusted", "[permissions]\napproval = \"untrusted\"\n")
+		args := []string{"agent", "--provider", "codex", "--profile", "untrusted", "--project", "alpha", "--window", "review"}
+		if prompt {
+			args = append(args, "--interactive-only", "--", "review this")
+		}
+		before := f.store.snapshot()
+		stdout, _, err := runRoute(t, f.create, args...)
+		if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), profileReasonCodexCLIUntrusted) || stdout != "" ||
+			len(f.launcher.argv) != 0 || f.store.snapshot() != before || f.store.writes != 0 || len(splitWindowCalls(f.tmux)) != 0 {
+			t.Fatalf("prompt=%t: create=%v stdout=%q argv=%v writes=%d", prompt, err, stdout, f.launcher.argv, f.store.writes)
+		}
 	}
 }
 
@@ -503,20 +546,19 @@ func TestResumePickerNativeCodexResumeResendsTheInheritedProfilePolicy(t *testin
 	}
 }
 
-// TestCodexCLIResumeLanesRefuseAProfileWithPermissions is C-3's fail-closed
-// rule for the lanes that resume Codex through `codex resume <id>`: topology
-// replay and a rollout row of the resume picker. They cannot carry a sandbox
-// or an approval, so a profiled Agent whose profile now sets any permission is
-// not resumed; a profile without permissions resumes as it did.
-func TestCodexCLIResumeLanesRefuseAProfileWithPermissions(t *testing.T) {
+// Topology replay and rollout picker use the same CLI resume planner. The
+// current profile policy reaches both, while untrusted remains fail-closed.
+func TestCodexCLIResumeLanesApplySupportedPolicyAndRefuseUntrusted(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, content string
+		want          []string
 		refused       bool
 	}{
-		{"permissions", "[permissions]\nsandbox = \"read-only\"\n", true},
-		{"rules only", "[permissions]\ndeny = [\"Edit\"]\n", true},
-		{"no permissions", "model = \"opus\"\n", false},
+		{"permissions", "[permissions]\nsandbox = \"read-only\"\napproval = \"never\"\n", []string{"-s", "read-only", "-a", "never"}, false},
+		{"rules only", "[permissions]\ndeny = [\"Edit\"]\n", nil, false},
+		{"no permissions", "model = \"opus\"\n", nil, false},
+		{"untrusted", "[permissions]\napproval = \"untrusted\"\n", nil, true},
 	} {
 		t.Run("topology replay "+test.name, func(t *testing.T) {
 			t.Parallel()
@@ -526,7 +568,7 @@ func TestCodexCLIResumeLanesRefuseAProfileWithPermissions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeCodexProfile(t, profile.NewDefaultStore(paths), "guard", test.content)
+			digest := writeCodexProfile(t, profile.NewDefaultStore(paths), "guard", test.content)
 			launcher := &profileTopologyLauncher{fakeTopologyAgentLauncher: command.agents.(*fakeTopologyAgentLauncher), planner: planner}
 			command.agents = launcher
 			agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "codex", provider: "codex", cwd: root, ref: codexConversationRef("thread-profiled")})
@@ -541,14 +583,17 @@ func TestCodexCLIResumeLanesRefuseAProfileWithPermissions(t *testing.T) {
 			after, _ := store.registry.Agent(agent.Metadata.UID)
 			if test.refused {
 				if len(launcher.argv) != 0 || after.Status.Phase == coremetadata.PhaseRunning ||
-					!strings.Contains(stderr, profileReasonResumeUnavailable) || !strings.Contains(stderr, profileReasonLaneUnsupported) {
-					t.Fatalf("argv=%v phase=%s stderr=%q, want a %s refusal", launcher.argv, after.Status.Phase, stderr, profileReasonLaneUnsupported)
+					!strings.Contains(stderr, profileReasonResumeUnavailable) || !strings.Contains(stderr, profileReasonCodexCLIUntrusted) {
+					t.Fatalf("argv=%v phase=%s stderr=%q, want a %s refusal", launcher.argv, after.Status.Phase, stderr, profileReasonCodexCLIUntrusted)
 				}
 				return
 			}
 			if len(launcher.argv) != 1 || after.Status.Phase != coremetadata.PhaseRunning ||
-				after.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != "sha256:stale" {
-				t.Fatalf("argv=%v phase=%s annotations=%v, want the resume it had before", launcher.argv, after.Status.Phase, after.Metadata.Annotations)
+				after.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != digest {
+				t.Fatalf("argv=%v phase=%s annotations=%v, want applied digest %s", launcher.argv, after.Status.Phase, after.Metadata.Annotations, digest)
+			}
+			if got := execArgvTail(t, launcher.argv[0], aiModeCodex); !slices.Equal(got[:len(test.want)], test.want) {
+				t.Fatalf("resume argv tail = %q, want prefix %q", got, test.want)
 			}
 		})
 		t.Run("rollout picker "+test.name, func(t *testing.T) {
@@ -558,12 +603,13 @@ func TestCodexCLIResumeLanesRefuseAProfileWithPermissions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeCodexProfile(t, profile.NewDefaultStore(paths), "guard", test.content)
+			digest := writeCodexProfile(t, profile.NewDefaultStore(paths), "guard", test.content)
 			const id = "019f0000-0000-7000-8000-0000000000c4"
 			f.hold(t, "agt-beta-codex", aiModeCodex, id, profileAnnotations("guard", "sha256:stale"), nil)
 			if !test.refused {
 				agent, argv, _ := f.pick(t, false, aiModeCodex, id, aisessions.SourceCodexRollout)
-				if got := execArgvTail(t, argv, aiModeCodex); !slices.Contains(got, id) || agent.Metadata.Annotations[coremetadata.AnnotationAgentProfile] != "guard" {
+				if got := execArgvTail(t, argv, aiModeCodex); !slices.Contains(got, id) || !slices.Equal(got[:len(test.want)], test.want) ||
+					agent.Metadata.Annotations[coremetadata.AnnotationAgentProfile] != "guard" || agent.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != digest {
 					t.Fatalf("rollout resume argv tail = %q annotations = %v", got, agent.Metadata.Annotations)
 				}
 				return
@@ -573,10 +619,37 @@ func TestCodexCLIResumeLanesRefuseAProfileWithPermissions(t *testing.T) {
 				producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
 				conversationID: id, resumeSource: aisessions.SourceCodexRollout, anchorPaneID: f.originID,
 			}, ioDiscard{}, ioDiscard{})
-			if err == nil || !strings.Contains(err.Error(), profileReasonLaneUnsupported) || len(f.store.registry.Agents) != agents || len(f.launcher.argv) != 0 {
-				t.Fatalf("rollout picker = %v (agents %d -> %d, argv %v), want a %s refusal", err, agents, len(f.store.registry.Agents), f.launcher.argv, profileReasonLaneUnsupported)
+			if err == nil || !strings.Contains(err.Error(), profileReasonCodexCLIUntrusted) || len(f.store.registry.Agents) != agents || len(f.launcher.argv) != 0 {
+				t.Fatalf("rollout picker = %v (agents %d -> %d, argv %v), want a %s refusal", err, agents, len(f.store.registry.Agents), f.launcher.argv, profileReasonCodexCLIUntrusted)
 			}
 		})
+	}
+}
+
+func TestCodexCLIResumePlannerAppliesCurrentProfilePolicy(t *testing.T) {
+	t.Parallel()
+	planner := agentLaunchArgvTestCommand(t)
+	paths, err := configPaths(planner.homeDir, planner.lookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := profile.NewDefaultStore(paths)
+	digest := writeCodexProfile(t, profiles, "guard", "[permissions]\nsandbox = \"full-access\"\napproval = \"on-request\"\n")
+	launch, err := planner.PlanAgentResume(aiModeCodex, coremetadata.AgentWorkspace{CWD: "/srv/alpha"},
+		"019f0000-0000-7000-8000-0000000000c4", profileAnnotations("guard", "sha256:old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := execArgvTail(t, launch.argv, aiModeCodex)
+	wantPrefix := []string{"-s", "danger-full-access", "-a", "on-request", "-C", "/srv/alpha", "resume"}
+	if !slices.Equal(got[:len(wantPrefix)], wantPrefix) || launch.profileName != "guard" || launch.profileDigest != digest {
+		t.Fatalf("CLI resume argv=%q profile=%s/%s, want %q digest %s", got, launch.profileName, launch.profileDigest, wantPrefix, digest)
+	}
+	writeCodexProfile(t, profiles, "guard", "[permissions]\napproval = \"untrusted\"\n")
+	_, err = planner.PlanAgentResume(aiModeCodex, coremetadata.AgentWorkspace{CWD: "/srv/alpha"},
+		"019f0000-0000-7000-8000-0000000000c4", profileAnnotations("guard", digest))
+	if err == nil || !strings.Contains(err.Error(), profileReasonCodexCLIUntrusted) {
+		t.Fatalf("untrusted resume = %v, want fail-closed reason", err)
 	}
 }
 

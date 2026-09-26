@@ -16,6 +16,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -74,6 +75,12 @@ type claudeOptionsAgentLauncher interface {
 // snapshot (settingsFile). A create without one never reaches it.
 type claudeSettingsAgentLauncher interface {
 	PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error)
+}
+
+// codexPolicyAgentLauncher carries a profile's sandbox and approval on a
+// plain Codex CLI create. The native lane sends the policy to thread/start.
+type codexPolicyAgentLauncher interface {
+	PlanCodexAgentLaunchWithPolicy(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy) (title string, argv []string, err error)
 }
 
 // createCommand implements the canonical `create` verb.
