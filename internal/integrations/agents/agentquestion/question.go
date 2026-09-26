@@ -1,12 +1,8 @@
-// Package agentquestion persists the questions a Claude Agent asks through its
-// AskUserQuestion tool while its operator opted it into answering them from the
-// command line, and owns the rules an answer has to satisfy.
-//
-// A question record is written by the PreToolUse hook that holds the tool call
-// open and read back by that same hook, which hands the answer to Claude Code.
-// The answer itself is written by `projmux agent question answer`. The record
-// carries the question set exactly as Claude Code sent it and nothing else from
-// the conversation.
+// Package agentquestion persists Agent questions while their operator opted
+// into answering them from the command line, and owns answer validation.
+// Claude questions arrive through a PreToolUse hook; Codex questions arrive
+// through a blocking app-server request. In both cases, `projmux agent question
+// answer` writes the answer that the waiting provider receives.
 package agentquestion
 
 import (
@@ -46,12 +42,77 @@ type Option struct {
 	Description string `json:"description,omitempty"`
 }
 
-// Question is one AskUserQuestion question, as Claude Code sends it.
+// Question is one provider question. Codex uses ID, IsOther, and IsSecret;
+// Claude uses the remaining fields.
 type Question struct {
+	ID          string   `json:"id,omitempty"`
 	Question    string   `json:"question"`
 	Header      string   `json:"header,omitempty"`
 	Options     []Option `json:"options"`
 	MultiSelect bool     `json:"multiSelect,omitempty"`
+	IsOther     bool     `json:"isOther,omitempty"`
+	IsSecret    bool     `json:"isSecret,omitempty"`
+}
+
+// ParseCodexQuestions keeps Codex's question IDs, including text-only and
+// secret questions. Claude's stricter ParseQuestions contract is unchanged.
+func ParseCodexQuestions(raw json.RawMessage) ([]Question, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || len(raw) > MaxQuestionsBytes || raw[0] != '[' {
+		return nil, ErrInvalidQuestions
+	}
+	var questions []Question
+	if json.Unmarshal(raw, &questions) != nil || len(questions) == 0 || len(questions) > maxQuestions {
+		return nil, ErrInvalidQuestions
+	}
+	seen := make(map[string]bool, len(questions))
+	for _, question := range questions {
+		if strings.TrimSpace(question.ID) == "" || seen[question.ID] || strings.TrimSpace(question.Question) == "" || len(question.Options) > maxOptions {
+			return nil, ErrInvalidQuestions
+		}
+		seen[question.ID] = true
+		for _, option := range question.Options {
+			if strings.TrimSpace(option.Label) == "" {
+				return nil, ErrInvalidQuestions
+			}
+		}
+	}
+	return questions, nil
+}
+
+// BuildCodexAnswers validates CLI selections and stores each response array as
+// JSON under the question ID. The array is preserved for the app-server reply.
+func BuildCodexAnswers(questions []Question, selections map[int]Selection) (map[string]string, error) {
+	if len(selections) != len(questions) {
+		return nil, ErrInvalidAnswer
+	}
+	answers := make(map[string]string, len(questions))
+	for i, question := range questions {
+		selection, ok := selections[i]
+		if !ok || (selection.HasText && len(selection.Labels) != 0) {
+			return nil, ErrInvalidAnswer
+		}
+		var values []string
+		if selection.HasText {
+			if strings.TrimSpace(selection.Text) == "" || (len(question.Options) != 0 && !question.IsOther && !question.IsSecret) {
+				return nil, ErrInvalidAnswer
+			}
+			values = []string{selection.Text}
+		} else {
+			if len(selection.Labels) == 0 || len(question.Options) == 0 {
+				return nil, ErrInvalidAnswer
+			}
+			for _, label := range selection.Labels {
+				if !slices.ContainsFunc(question.Options, func(option Option) bool { return option.Label == label }) || slices.Contains(values, label) {
+					return nil, ErrInvalidAnswer
+				}
+				values = append(values, label)
+			}
+		}
+		encoded, _ := json.Marshal(values)
+		answers[question.ID] = string(encoded)
+	}
+	return answers, nil
 }
 
 // ParseQuestions decodes and validates a raw `questions` array. It accepts only
@@ -88,8 +149,8 @@ func ParseQuestions(raw json.RawMessage) ([]Question, error) {
 	return questions, nil
 }
 
-// Selection is the answer to one question before it is spelled for Claude
-// Code: option labels, or free text given explicitly as free text.
+// Selection is the answer to one question before provider encoding: option
+// labels, or free text given explicitly as free text.
 type Selection struct {
 	Labels []string
 	// Text is free text. It is used only when HasText is true, so a label that

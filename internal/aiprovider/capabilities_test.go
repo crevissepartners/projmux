@@ -71,6 +71,35 @@ func TestAgentCapabilityCatalogPinsCurrentGroupsAndDeferredVocabulary(t *testing
 	}
 }
 
+func TestQuestionCapabilitiesIncludeCodexAndKeepClaudeHook(t *testing.T) {
+	for _, tc := range []struct {
+		action    string
+		precision CompletionPrecision
+	}{
+		{"question.enable", CompletionRegistryCommit},
+		{"question.disable", CompletionRegistryCommit},
+		{"question.list", CompletionRegistryRead},
+		{"question.answer", CompletionLocalConfigCommit},
+	} {
+		for _, provider := range []ID{Codex, Claude, Antigravity} {
+			_, cell, ok := LookupAgentCapability(tc.action, provider)
+			if !ok {
+				t.Fatalf("missing %s/%s", tc.action, provider)
+			}
+			wantMode, wantPrecision := SupportUnsupported, CompletionNone
+			switch provider {
+			case Codex:
+				wantMode, wantPrecision = SupportNativeExact, tc.precision
+			case Claude:
+				wantMode, wantPrecision = SupportProviderHook, tc.precision
+			}
+			if cell.Mode != wantMode || cell.CompletionPrecision != wantPrecision {
+				t.Errorf("%s/%s = %s/%s, want %s/%s", tc.action, provider, cell.Mode, cell.CompletionPrecision, wantMode, wantPrecision)
+			}
+		}
+	}
+}
+
 func TestAgentCapabilityCatalogPinsCodexNativeAndSharedFamilies(t *testing.T) {
 	t.Parallel()
 

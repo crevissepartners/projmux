@@ -23,6 +23,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -359,6 +360,7 @@ type codexNativeObserver struct {
 	progress        agentprogress.Reducer
 	now             func() time.Time
 	refreshTicks    <-chan time.Time
+	questions       *codexQuestionChannel
 	// transitions is the durable history sink. The pane option holds one
 	// current value, so without this an observer's connect/disconnect
 	// sequence is unobservable between two samples.
@@ -641,6 +643,8 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		bindingTicker := time.NewTicker(codexObserverBindingDelay)
 		progressTicker := time.NewTicker(25 * time.Millisecond)
 		notifications := client.Notifications()
+		questionCtx, endQuestions := context.WithCancel(ctx)
+		defer endQuestions()
 		o.lastAgentTurnID, o.lastAgentText = "", ""
 	eventLoop:
 		for {
@@ -818,6 +822,14 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					return errors.Join(err, cleanupErr)
 				}
 				lastInteractionAt = o.currentTime()
+				if !requestRecognized && o.questions != nil && event.Kind == codexappserver.LifecycleRequestResolved {
+					o.questions.HandleResolved(o.identity, event)
+				}
+				if requestRecognized && o.questions != nil {
+					if responder, ok := client.(codexQuestionResponder); ok {
+						o.questions.Handle(questionCtx, o.identity, notification, responder)
+					}
+				}
 				if progressEvent, progressRecognized, progressErr := codexappserver.DecodeProgressEvent(notification, o.currentTime()); progressErr != nil {
 					exit = codexObserverExitProtocolError
 					break eventLoop
@@ -854,6 +866,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		}
 		bindingTicker.Stop()
 		progressTicker.Stop()
+		endQuestions()
 		if control != nil {
 			_ = control.Close()
 		}
@@ -2148,8 +2161,13 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		sink:            sink,
 		reportStartup:   codexObserverStartupReporter(),
 		open:            session.Open,
-		openTimeout:     codexBrokerObserverOpenTimeout,
-		transitions:     newCodexObserverLogJournal(c.appendAIIngestLog, c.now),
+		questions: &codexQuestionChannel{
+			loadRegistry: c.loadRegistry, store: defaultAgentQuestionStore,
+			answering: claudeQuestionAnswering, window: claudeQuestionWindow,
+			newID: agentquestion.NewID,
+		},
+		openTimeout: codexBrokerObserverOpenTimeout,
+		transitions: newCodexObserverLogJournal(c.appendAIIngestLog, c.now),
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {

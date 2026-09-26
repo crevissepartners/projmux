@@ -163,7 +163,7 @@ Subcommands:
 | [`projmux agent models`](#projmux-agent-models) | List model suggestions for Claude (default) or Codex (app-server); other names are still accepted |
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
-| [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line |
+| [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude or Codex Agent's questions from the command line |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude conversations an Agent has moved through, or backfill past ones from delivered message frames |
 
 Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`
@@ -777,7 +777,7 @@ Output modes (`-o`): `json`
 
 ### `projmux agent question`
 
-Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line
+Answer one exact opted-in Claude or Codex Agent's questions from the command line
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -803,16 +803,16 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux agent question enable`](#projmux-agent-question-enable) | Opt one exact Claude Agent into answering its AskUserQuestion prompts from the command line |
-| [`projmux agent question disable`](#projmux-agent-question-disable) | Opt one exact Claude Agent out and hand its waiting questions back to its own prompt |
-| [`projmux agent question list`](#projmux-agent-question-list) | List one exact Claude Agent's waiting and recent questions |
+| [`projmux agent question enable`](#projmux-agent-question-enable) | Opt one exact Claude or Codex Agent into answering questions from the command line |
+| [`projmux agent question disable`](#projmux-agent-question-disable) | Opt one exact Claude or Codex Agent out of command-line answers |
+| [`projmux agent question list`](#projmux-agent-question-list) | List one exact Claude or Codex Agent's waiting and recent questions |
 | [`projmux agent question answer`](#projmux-agent-question-answer) | Answer one waiting question by option label, option number, or explicit free text |
 
 Canonical spelling: `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`
 
 #### `projmux agent question enable`
 
-Opt one exact Claude Agent into answering its AskUserQuestion prompts from the command line
+Opt one exact Claude or Codex Agent into answering questions from the command line
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -833,7 +833,7 @@ projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window
 
 #### `projmux agent question disable`
 
-Opt one exact Claude Agent out and hand its waiting questions back to its own prompt
+Opt one exact Claude or Codex Agent out of command-line answers
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -854,7 +854,7 @@ projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--windo
 
 #### `projmux agent question list`
 
-List one exact Claude Agent's waiting and recent questions
+List one exact Claude or Codex Agent's waiting and recent questions
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -1198,7 +1198,7 @@ Subcommands:
 | [`projmux config edit`](#projmux-config-edit) | Edit the AI split-mode configuration |
 | [`projmux config providers`](#projmux-config-providers) | List AI providers as enabled or disabled; --enable or --disable changes one |
 | [`projmux config locale`](#projmux-config-locale) | Show the [ui] locale setting and its config.toml; --set stores a new one |
-| [`projmux config agent-questions`](#projmux-config-agent-questions) | Show how Claude agent questions are answered and how long they wait; --answering or --window changes them |
+| [`projmux config agent-questions`](#projmux-config-agent-questions) | Show how Claude and Codex agent questions are answered and how long they wait; --answering or --window changes them |
 | [`projmux config render`](#projmux-config-render) | Print a generated tmux config to stdout; writes nothing |
 | [`projmux config apply`](#projmux-config-apply) | Write the generated app tmux config and reload the live projmux server |
 
@@ -1274,7 +1274,7 @@ projmux config locale --set <value>
 
 ### `projmux config agent-questions`
 
-Show how Claude agent questions are answered and how long they wait; --answering or --window changes them
+Show how Claude and Codex agent questions are answered and how long they wait; --answering or --window changes them
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 

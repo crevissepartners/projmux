@@ -990,21 +990,21 @@ var routes = []Route{
 			},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "wait", Invocation: InvocationExplicit, Summary: "Wait read-only for one exact Agent's Registry-backed idle observation", Usage: []string{"projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]"}, Canonical: []string{"agent wait"}, Outputs: []OutputMode{OutputModeJSON}},
 			{
-				// The question channel answers an opted-in Claude Agent's
-				// AskUserQuestion prompt from the command line. enable and
+				// The question channel answers an opted-in Claude or Codex Agent's
+				// questions from the command line. enable and
 				// disable change one Agent annotation; list and answer read
 				// and settle the question records the installed PreToolUse
 				// hook holds open.
 				Effects:    unchangedEffects(CardinalityExactOne),
 				Name:       "question",
 				Invocation: InvocationExplicit,
-				Summary:    "Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line",
+				Summary:    "Answer one exact opted-in Claude or Codex Agent's questions from the command line",
 				Usage:      []string{"projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...", "projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...", "projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]", "projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."},
 				Canonical:  []string{"agent question enable", "agent question disable", "agent question list", "agent question answer"},
 				Children: []Route{
-					{Effects: unchangedEffects(CardinalityExactOne), Name: "enable", Invocation: InvocationExplicit, Summary: "Opt one exact Claude Agent into answering its AskUserQuestion prompts from the command line", Usage: []string{"projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."}, Canonical: []string{"agent question enable"}},
-					{Effects: unchangedEffects(CardinalityExactOne), Name: "disable", Invocation: InvocationExplicit, Summary: "Opt one exact Claude Agent out and hand its waiting questions back to its own prompt", Usage: []string{"projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."}, Canonical: []string{"agent question disable"}},
-					{Effects: unchangedEffects(CardinalityExactOne), Name: "list", Invocation: InvocationExplicit, Summary: "List one exact Claude Agent's waiting and recent questions", Usage: []string{"projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]"}, Canonical: []string{"agent question list"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "enable", Invocation: InvocationExplicit, Summary: "Opt one exact Claude or Codex Agent into answering questions from the command line", Usage: []string{"projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."}, Canonical: []string{"agent question enable"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "disable", Invocation: InvocationExplicit, Summary: "Opt one exact Claude or Codex Agent out of command-line answers", Usage: []string{"projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."}, Canonical: []string{"agent question disable"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "list", Invocation: InvocationExplicit, Summary: "List one exact Claude or Codex Agent's waiting and recent questions", Usage: []string{"projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]"}, Canonical: []string{"agent question list"}, Outputs: []OutputMode{OutputModeJSON}},
 					{Effects: unchangedEffects(CardinalityExactOne), Name: "answer", Invocation: InvocationExplicit, Summary: "Answer one waiting question by option label, option number, or explicit free text", Usage: []string{"projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."}, Canonical: []string{"agent question answer"}},
 				},
 			},
@@ -1168,7 +1168,7 @@ var routes = []Route{
 				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "agent-questions",
 				Invocation:       InvocationNatural,
-				Summary:          "Show how Claude agent questions are answered and how long they wait; --answering or --window changes them",
+				Summary:          "Show how Claude and Codex agent questions are answered and how long they wait; --answering or --window changes them",
 				CanonicalSummary: "Show or change how agent questions are answered and how long they wait",
 				Usage: []string{
 					"projmux config agent-questions",

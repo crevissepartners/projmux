@@ -15,7 +15,9 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `agent models` gained a Codex app-server
+// The baseline last moved when the question route summaries added Codex's
+// blocking app-server questions to the existing Claude CLI surface.
+// Before that, `agent models` gained a Codex app-server
 // listing; its summary now names both providers and the default Claude read.
 // Before that, `agent sessions backfill` joined the sessions group: one row
 // with a json projection that appends past Claude sessions, attributed to
@@ -88,7 +90,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "c8e24cdaf2a8debc2158794c7d035c9f911bd067aa2e72c67416fdb326e1c327"
+	const want = "0d263049b7f53c11ba07ce54a58c10c1291932e975b6c68d4e6f16896ccc4adf"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

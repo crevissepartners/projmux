@@ -578,8 +578,7 @@ func TestAgentQuestionChannelSwitchAndProviderRefusals(t *testing.T) {
 		t.Fatalf("list text = %q, %v", stdout, err)
 	}
 
-	_, _, err = runRoute(t, fixture.command, "question", "enable", "uid:agt-beta-codex")
-	if err == nil || !strings.Contains(err.Error(), "(question-provider-unsupported)") {
-		t.Fatalf("enable on a Codex Agent err = %v", err)
+	if stdout, _, err := runRoute(t, fixture.command, "question", "enable", "uid:agt-beta-codex"); err != nil || !strings.Contains(stdout, "question channel on") {
+		t.Fatalf("enable on a Codex Agent stdout=%q err=%v", stdout, err)
 	}
 }
