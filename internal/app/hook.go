@@ -89,9 +89,6 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runTrust(fs.Args()[1:], stdout, stderr)
 	case "untrust":
 		return c.runUntrust(fs.Args()[1:], stdout, stderr)
-	// Only a spelling after `--` gets here (`hook -- help`, `-- --help`, `-- -h`): the help boundary answers `hook help`, `--help`, and `-h` first and does not read past `--`.
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "hook")
 	default:
 		printRouteUsage(stderr, "hook")
 		printHookEvents(stderr)

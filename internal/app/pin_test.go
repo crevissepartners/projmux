@@ -401,11 +401,11 @@ func TestPinCommandRejectsInvalidUsage(t *testing.T) {
 // text names the two pin kinds and points workdirs somewhere else, so the surface
 // itself states which authority is which.
 func TestPinUsageSeparatesTheThreeCollections(t *testing.T) {
-	t.Parallel()
+	isolateRuntimeWindowFlagParseEnv(t)
 
-	var stdout bytes.Buffer
-	if err := pinFixture(newStubPinStore()).Run([]string{"project", "help"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	var stdout, stderr bytes.Buffer
+	if err := New().Run([]string{"pin", "project", "--help"}, &stdout, &stderr); err != nil {
+		t.Fatalf("pin project --help: err = %v (stderr=%q)", err, stderr.String())
 	}
 	out := stdout.String()
 	for _, want := range []string{

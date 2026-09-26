@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -359,6 +360,144 @@ func TestPublicParentHelpVerbGuardDetectsDrift(t *testing.T) {
 	} {
 		if !strings.Contains(childProblems, want) {
 			t.Errorf("child guard problems do not report %q:\n%s", want, childProblems)
+		}
+	}
+}
+
+// parentDashHelpTails are the help spellings placed after the bare `--`. On a
+// public parent they are payload, not a help request, so the parent refuses
+// them as a usage error instead of answering with its help.
+var parentDashHelpTails = [][]string{
+	{"--", "help"},
+	{"--", "--help"},
+	{"--", "-h"},
+}
+
+// parentDashHelpProblems runs every spelling with every parentDashHelpTails
+// tail and reports, naming the full argv, each run that is not a usage error
+// refused on stderr alone: no error, a non-usage error, anything on stdout, or
+// no refusal text. The refusal text is what the handler wrote to stderr plus
+// the error message, which the binary prints to stderr (executeCLI), so a
+// handler that only returns its usage error still refuses on stderr.
+func parentDashHelpProblems(spellings []parentHelpSpelling, run helpVerbRun, isUsage func(error) bool) []string {
+	var problems []string
+	for _, spelling := range spellings {
+		for _, tail := range parentDashHelpTails {
+			argv := append(slices.Clone(spelling.argv), tail...)
+			name := strings.Join(argv, " ")
+			stdout, stderr, err := run(slices.Clone(argv))
+			switch {
+			case err == nil:
+				problems = append(problems, name+": err = nil, want a usage error")
+			case !isUsage(err):
+				problems = append(problems, name+": err = "+err.Error()+", want a usage error")
+			}
+			if stdout != "" {
+				problems = append(problems, name+": stdout = "+dashHelpSnippet(stdout)+", want empty")
+			}
+			if stderr == "" && (err == nil || err.Error() == "") {
+				problems = append(problems, name+": stderr is empty and the error has no message, want the refusal")
+			}
+		}
+	}
+	return problems
+}
+
+// dashHelpSnippet quotes s for a problem line, truncated so a whole help page
+// does not flood the report.
+func dashHelpSnippet(s string) string {
+	const limit = 80
+	if len(s) > limit {
+		s = s[:limit] + "..."
+	}
+	return strconv.Quote(s)
+}
+
+// TestPublicParentDashHelpIsAUsageError pins the rule that a `help`, `--help`,
+// or `-h` after the bare `--` is payload on every public parent, under every
+// alias spelling of its path: the help boundary does not read past `--`, and
+// the parent refuses the payload as a usage error (exit 2) with its refusal on
+// stderr and nothing on stdout, instead of answering with its help.
+func TestPublicParentDashHelpIsAUsageError(t *testing.T) {
+	isolateRuntimeWindowFlagParseEnv(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	spellings := publicParentSpellings(cli.Routes())
+	canonical := map[string]bool{}
+	for _, spelling := range spellings {
+		canonical[spelling.canonical] = true
+	}
+	if len(canonical) < minPublicParentRoutes {
+		t.Fatalf("collected %d public parent routes, want at least %d", len(canonical), minPublicParentRoutes)
+	}
+	for _, want := range publicParentLowerBound {
+		if !canonical[want] {
+			t.Errorf("public parent %q is missing from the catalog walk", want)
+		}
+	}
+	for _, problem := range parentDashHelpProblems(spellings, appHelpVerbRun, IsUsageError) {
+		t.Error(problem)
+	}
+}
+
+// TestPublicParentDashHelpGuardDetectsDrift is the negative control: a parent
+// that answers `-- help` with its help and exit 0 (the old hook, window, pin
+// project, and runtime tag branches), a non-usage error, a usage error that
+// still writes stdout, and a usage error with nothing on stderr and no message
+// are each reported with the full argv; a proper refusal, on stderr or only as
+// the usage error's message, is not.
+func TestPublicParentDashHelpGuardDetectsDrift(t *testing.T) {
+	t.Parallel()
+	usage := errors.New("usage")
+	emptyUsage := errors.New("")
+	isUsage := func(err error) bool { return err == usage || err == emptyUsage }
+	spellings := []parentHelpSpelling{
+		{canonical: "hook", argv: []string{"hook"}},
+		{canonical: "window", argv: []string{"window"}},
+		{canonical: "get", argv: []string{"get"}},
+	}
+	run := func(argv []string) (string, string, error) {
+		last := argv[len(argv)-1]
+		switch argv[0] {
+		case "hook":
+			return "projmux hook\n", "", nil
+		case "window":
+			if last == "help" {
+				return "", "window failed\n", errors.New("runtime failure")
+			}
+			return "projmux window\n", "usage: projmux window\n", usage
+		default:
+			switch last {
+			case "-h":
+				return "", "", emptyUsage
+			case "--help":
+				return "", "", usage
+			}
+			return "", "usage: projmux get\n", usage
+		}
+	}
+	problems := parentDashHelpProblems(spellings, run, isUsage)
+	joined := strings.Join(problems, "\n")
+	for _, want := range []string{
+		"hook -- help: err = nil, want a usage error",
+		"hook -- --help: err = nil, want a usage error",
+		"hook -- -h: err = nil, want a usage error",
+		`hook -- help: stdout = "projmux hook\n", want empty`,
+		"hook -- help: stderr is empty and the error has no message, want the refusal",
+		"window -- help: err = runtime failure, want a usage error",
+		`window -- --help: stdout = "projmux window\n", want empty`,
+		"get -- -h: stderr is empty and the error has no message, want the refusal",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("guard problems do not report %q:\n%s", want, joined)
+		}
+	}
+	for _, problem := range problems {
+		for _, clean := range []string{"get -- help:", "get -- --help:", "window -- help: stdout", "window -- help: stderr"} {
+			if strings.HasPrefix(problem, clean) {
+				t.Errorf("guard reports a proper refusal: %q", problem)
+			}
 		}
 	}
 }
