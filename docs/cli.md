@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 232 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 233 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -142,6 +142,7 @@ projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--windo
 projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
 projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
+projmux agent sessions backfill [--dry-run] [-o json]
 ```
 
 Subcommands:
@@ -163,9 +164,9 @@ Subcommands:
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line |
-| [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude conversations one exact Agent has moved through |
+| [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude conversations an Agent has moved through, or backfill past ones from delivered message frames |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`
 
 ### `projmux agent status`
 
@@ -889,7 +890,7 @@ projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]..
 
 ### `projmux agent sessions`
 
-List the Claude conversations one exact Agent has moved through
+List the Claude conversations an Agent has moved through, or backfill past ones from delivered message frames
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -906,6 +907,7 @@ Allowed effects:
 
 ```
 projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
+projmux agent sessions backfill [--dry-run] [-o json]
 ```
 
 Subcommands:
@@ -913,8 +915,9 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux agent sessions list`](#projmux-agent-sessions-list) | List one exact Claude Agent's recorded and current conversations in time order |
+| [`projmux agent sessions backfill`](#projmux-agent-sessions-backfill) | Append past Claude sessions attributable to exactly one Agent by their delivered message frames as estimated history |
 
-Canonical spelling: `projmux agent sessions list`
+Canonical spelling: `projmux agent sessions list`, `projmux agent sessions backfill`
 
 #### `projmux agent sessions list`
 
@@ -935,6 +938,29 @@ Allowed effects:
 
 ```
 projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
+```
+
+Output modes (`-o`): `json`
+
+#### `projmux agent sessions backfill`
+
+Append past Claude sessions attributable to exactly one Agent by their delivered message frames as estimated history
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux agent sessions backfill [--dry-run] [-o json]
 ```
 
 Output modes (`-o`): `json`
