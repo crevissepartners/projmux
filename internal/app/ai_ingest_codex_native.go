@@ -822,6 +822,9 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					return errors.Join(err, cleanupErr)
 				}
 				lastInteractionAt = o.currentTime()
+				if !requestRecognized && o.questions != nil && event.Kind == codexappserver.LifecycleRequestResolved {
+					o.questions.HandleResolved(o.identity, event)
+				}
 				if requestRecognized && o.questions != nil {
 					if responder, ok := client.(codexQuestionResponder); ok {
 						o.questions.Handle(questionCtx, o.identity, notification, responder)

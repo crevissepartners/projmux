@@ -832,9 +832,13 @@ end the wait. A value outside the range, or a file that holds neither one
 integer nor `unlimited`, reads as `900`; a projmux older than the word also
 reads `unlimited` as `900`. It applies only in way 2 (see
 [Agent Question Answering](#agent-question-answering)); way 1 never waits.
-For Codex, an expired or disabled held request remains unanswered by projmux.
-The Agent may still be waiting in Codex's own input surface; projmux does not
-send a substitute answer.
+For Codex, an expired or disabled held request is closed in the question list.
+The same question remains visible and answerable in Codex's own input surface;
+projmux does not send a substitute answer. The Codex turn continues when the
+operator answers there.
+If Codex's input surface answers first, the question list records
+`answered-elsewhere`, and a later `agent question answer` is refused with that
+reason. A resolution after the command-line deadline remains `expired`.
 
 The installed Claude Code hook `timeout` is the fixed ceiling `604800` seconds
 (7 days) and does not depend on this file. The ceiling is the safety net for a

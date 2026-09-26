@@ -57,14 +57,15 @@ const (
 func (s State) Terminal() bool { return s != StateWaiting }
 
 var (
-	ErrNotFound       = errors.New("question not found")
-	ErrNotPending     = errors.New("question is already answered")
-	ErrExpired        = errors.New("question expired")
-	ErrClosed         = errors.New("question closed")
-	ErrCapacity       = errors.New("agent question store is at capacity")
-	ErrMalformedStore = errors.New("malformed agent question store")
-	ErrBusy           = errors.New("agent question store is busy")
-	ErrInvalidRecord  = errors.New("invalid agent question record")
+	ErrNotFound          = errors.New("question not found")
+	ErrNotPending        = errors.New("question is already answered")
+	ErrExpired           = errors.New("question expired")
+	ErrClosed            = errors.New("question closed")
+	ErrAnsweredElsewhere = errors.New("question was answered elsewhere")
+	ErrCapacity          = errors.New("agent question store is at capacity")
+	ErrMalformedStore    = errors.New("malformed agent question store")
+	ErrBusy              = errors.New("agent question store is busy")
+	ErrInvalidRecord     = errors.New("invalid agent question record")
 )
 
 var idPattern = regexp.MustCompile(`^question-[0-9a-f]{16}$`)
@@ -83,18 +84,22 @@ func ValidID(id string) bool { return idPattern.MatchString(id) }
 
 // Record is one question set and its outcome.
 type Record struct {
-	ID        string            `json:"id"`
-	Provider  string            `json:"provider,omitempty"`
-	AgentUID  string            `json:"agentUID"`
-	PaneUID   string            `json:"paneUID,omitempty"`
-	SessionID string            `json:"sessionID,omitempty"`
-	ToolUseID string            `json:"toolUseID,omitempty"`
-	Questions json.RawMessage   `json:"questions"`
-	CreatedAt time.Time         `json:"createdAt"`
-	Deadline  time.Time         `json:"deadline"`
-	State     State             `json:"state"`
-	Answers   map[string]string `json:"answers,omitempty"`
-	UpdatedAt time.Time         `json:"updatedAt"`
+	ID          string            `json:"id"`
+	Provider    string            `json:"provider,omitempty"`
+	AgentUID    string            `json:"agentUID"`
+	PaneUID     string            `json:"paneUID,omitempty"`
+	SessionID   string            `json:"sessionID,omitempty"`
+	Generation  string            `json:"generation,omitempty"`
+	RuntimeID   string            `json:"runtimeID,omitempty"`
+	RequestID   string            `json:"requestID,omitempty"`
+	ToolUseID   string            `json:"toolUseID,omitempty"`
+	Questions   json.RawMessage   `json:"questions"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	Deadline    time.Time         `json:"deadline"`
+	State       State             `json:"state"`
+	Disposition string            `json:"disposition,omitempty"`
+	Answers     map[string]string `json:"answers,omitempty"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
 }
 
 // Effective is the record as a reader must see it at now: a waiting record past
@@ -276,7 +281,7 @@ func (s *Store) Answer(id, agentUID string, answers map[string]string) (Record, 
 			return ErrNotFound
 		}
 		record := state.Records[index]
-		if err := refusalFor(record.Effective(now).State); err != nil {
+		if err := refusalFor(record.Effective(now)); err != nil {
 			return err
 		}
 		questions, err := record.ParsedQuestions()
@@ -305,8 +310,11 @@ func (s *Store) Answer(id, agentUID string, answers map[string]string) (Record, 
 }
 
 // refusalFor maps a record that cannot take an answer to its error.
-func refusalFor(state State) error {
-	switch state {
+func refusalFor(record Record) error {
+	if record.State == StateClosed && record.Disposition == "answered-elsewhere" {
+		return ErrAnsweredElsewhere
+	}
+	switch record.State {
 	case StateWaiting:
 		return nil
 	case StateAnswered:
@@ -322,11 +330,11 @@ func refusalFor(state State) error {
 // becomes expired. It returns the record as it now stands, so a caller that
 // lost the race to an answer receives the answered record.
 func (s *Store) Settle(id string) (Record, error) {
-	return s.transition(id, func(record Record, now time.Time) (State, bool) {
+	return s.transition(id, func(record Record, now time.Time) (State, string, bool) {
 		if record.State == StateWaiting && !now.Before(record.Deadline) {
-			return StateExpired, true
+			return StateExpired, "", true
 		}
-		return record.State, false
+		return record.State, "", false
 	})
 }
 
@@ -334,18 +342,32 @@ func (s *Store) Settle(id string) (Record, error) {
 // record already past its deadline expires instead. It returns the record as it
 // now stands.
 func (s *Store) Close(id string) (Record, error) {
-	return s.transition(id, func(record Record, now time.Time) (State, bool) {
+	return s.transition(id, func(record Record, now time.Time) (State, string, bool) {
 		if record.State != StateWaiting {
-			return record.State, false
+			return record.State, "", false
 		}
 		if !now.Before(record.Deadline) {
-			return StateExpired, true
+			return StateExpired, "", true
 		}
-		return StateClosed, true
+		return StateClosed, "", true
 	})
 }
 
-func (s *Store) transition(id string, next func(Record, time.Time) (State, bool)) (Record, error) {
+// CloseAnsweredElsewhere records that Codex's own input surface resolved the
+// exact request first. A CLI answer that races it is fenced by the store lock.
+func (s *Store) CloseAnsweredElsewhere(id, agentUID, sessionID, requestID string) (Record, error) {
+	return s.transition(id, func(record Record, now time.Time) (State, string, bool) {
+		if record.Provider != "codex" || record.AgentUID != agentUID || record.SessionID != sessionID || record.RequestID != requestID || requestID == "" || record.State != StateWaiting {
+			return record.State, "", false
+		}
+		if !now.Before(record.Deadline) {
+			return StateExpired, "", true
+		}
+		return StateClosed, "answered-elsewhere", true
+	})
+}
+
+func (s *Store) transition(id string, next func(Record, time.Time) (State, string, bool)) (Record, error) {
 	var out Record
 	err := s.withLock(func() error {
 		state, err := s.loadLocked()
@@ -358,12 +380,13 @@ func (s *Store) transition(id string, next func(Record, time.Time) (State, bool)
 			return ErrNotFound
 		}
 		record := state.Records[index]
-		target, changed := next(record, now)
+		target, disposition, changed := next(record, now)
 		if !changed {
 			out = record.Effective(now)
 			return nil
 		}
 		record.State = target
+		record.Disposition = disposition
 		record.UpdatedAt = now
 		if target == StateExpired {
 			record.UpdatedAt = record.Deadline
@@ -467,6 +490,9 @@ func validRecord(record Record) bool {
 		return false
 	}
 	if record.Provider != "" && record.Provider != "codex" {
+		return false
+	}
+	if record.Disposition != "" && (record.Provider != "codex" || record.State != StateClosed || record.Disposition != "answered-elsewhere") {
 		return false
 	}
 	if _, err := record.ParsedQuestions(); err != nil {

@@ -47,7 +47,7 @@ type codexUserInputResponse struct {
 // An off channel leaves the request entirely to Codex's own input surface.
 // Bad or unavailable local state has the same safe fallback.
 func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycleIdentity, notification codexappserver.Notification, responder codexQuestionResponder) {
-	if notification.Method != "item/tool/requestUserInput" || len(notification.RawRequestID) == 0 || responder == nil || c.loadRegistry == nil || c.store == nil || c.newID == nil {
+	if notification.Method != "item/tool/requestUserInput" || len(notification.RawRequestID) == 0 || notification.RequestID == "" || responder == nil || c.loadRegistry == nil || c.store == nil || c.newID == nil {
 		return
 	}
 	var params codexUserInputParams
@@ -84,13 +84,35 @@ func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycl
 	now := time.Now().UTC()
 	record, err := store.Create(agentquestion.Record{
 		ID: id, Provider: "codex", AgentUID: identity.AgentUID, PaneUID: identity.PaneUID,
-		SessionID: identity.ThreadID, ToolUseID: params.ItemID, Questions: params.Questions,
+		SessionID: identity.ThreadID, Generation: identity.Generation, RuntimeID: identity.RuntimeID,
+		RequestID: notification.RequestID, ToolUseID: params.ItemID, Questions: params.Questions,
 		CreatedAt: now, Deadline: now.Add(window),
 	})
 	if err != nil {
 		return
 	}
 	go c.waitAndAnswer(ctx, store, record, notification.RawRequestID, responder)
+}
+
+// HandleResolved marks only the matching waiting Codex request as answered in
+// Codex's own input surface. An earlier CLI answer remains answered here.
+func (c codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
+	if event.Kind != codexappserver.LifecycleRequestResolved || event.ThreadID != identity.ThreadID || event.RequestID == "" || c.store == nil {
+		return
+	}
+	store, err := c.store()
+	if err != nil {
+		return
+	}
+	records, err := store.List(identity.AgentUID)
+	if err != nil {
+		return
+	}
+	for _, record := range records {
+		if record.Provider == "codex" && record.State == agentquestion.StateWaiting && record.PaneUID == identity.PaneUID && record.SessionID == identity.ThreadID && record.Generation == identity.Generation && record.RuntimeID == identity.RuntimeID && record.RequestID == event.RequestID {
+			_, _ = store.CloseAnsweredElsewhere(record.ID, identity.AgentUID, identity.ThreadID, event.RequestID)
+		}
+	}
 }
 
 func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder) {
@@ -108,6 +130,8 @@ func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentque
 			_, _ = store.Close(record.ID)
 			return
 		case <-deadline.C:
+			// Codex also presents this request in its native TUI. Leave the
+			// provider request open so the operator can answer there.
 			_, _ = store.Settle(record.ID)
 			return
 		case <-ticker.C:

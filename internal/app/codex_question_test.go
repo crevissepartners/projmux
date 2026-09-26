@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,5 +113,121 @@ func TestCodexQuestionChannelOffAndNonblockingLeaveProviderRequestAlone(t *testi
 	channel.Handle(t.Context(), identity, notification, responder)
 	if records, _ := fixture.store.List(questionTestAgent); len(records) != 0 {
 		t.Fatal("nonblocking request entered the CLI channel")
+	}
+}
+
+func TestCodexQuestionChannelCloseAndExpiryLeaveNativePromptAnswerable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		window time.Duration
+		close  bool
+		want   agentquestion.State
+	}{
+		{name: "disable", window: time.Minute, close: true, want: agentquestion.StateClosed},
+		{name: "expiry", window: 20 * time.Millisecond, want: agentquestion.StateExpired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newQuestionFixture(t, true)
+			agent, _ := fixture.resources.registry.Agent(questionTestAgent)
+			agent.Spec.Provider = aiModeCodex
+			channel := codexQuestionChannel{
+				loadRegistry: fixture.resources.store().load,
+				store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
+				answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringClaude },
+				window:       func() time.Duration { return tc.window },
+				newID:        agentquestion.NewID,
+				poll:         time.Millisecond,
+			}
+			identity := codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: "%7", Generation: "gen-1", ThreadID: "thread-1"}
+			responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			channel.Handle(ctx, identity, codexappserver.Notification{
+				Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`),
+				Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","options":[{"label":"A"}]}]}`),
+			}, responder)
+			records, err := fixture.store.List(questionTestAgent)
+			if err != nil || len(records) != 1 {
+				t.Fatalf("waiting record count = %d, err = %v", len(records), err)
+			}
+			if tc.close {
+				if _, _, err := runRoute(t, fixture.command, "question", "disable", "uid:"+questionTestAgent); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deadline := time.After(time.Second)
+			for {
+				record, found, err := fixture.store.Get(records[0].ID)
+				if err != nil || !found {
+					t.Fatalf("record missing after %s: %v", tc.name, err)
+				}
+				if record.State == tc.want {
+					break
+				}
+				select {
+				case <-deadline:
+					t.Fatalf("record state = %s, want %s", record.State, tc.want)
+				case <-time.After(time.Millisecond):
+				}
+			}
+			select {
+			case <-responder.replies:
+				t.Fatal("close or expiry answered the native Codex prompt")
+			case <-time.After(20 * time.Millisecond):
+			}
+		})
+	}
+}
+
+func TestCodexQuestionNativeAnswerFirstRefusesLateCLIAnswer(t *testing.T) {
+	fixture := newQuestionFixture(t, true)
+	agent, _ := fixture.resources.registry.Agent(questionTestAgent)
+	agent.Spec.Provider = aiModeCodex
+	identity := codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: "%7", Generation: "gen-1", ThreadID: "thread-1"}
+	channel := codexQuestionChannel{
+		loadRegistry: fixture.resources.store().load,
+		store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
+		answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringClaude },
+		window:       func() time.Duration { return time.Minute },
+		newID:        agentquestion.NewID,
+		poll:         time.Millisecond,
+	}
+	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	channel.Handle(ctx, identity, codexappserver.Notification{
+		Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`),
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","options":[{"label":"A"}]}]}`),
+	}, responder)
+	records, err := fixture.store.List(questionTestAgent)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("waiting record count = %d, err = %v", len(records), err)
+	}
+	channel.HandleResolved(identity, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleRequestResolved, ThreadID: "thread-1", RequestID: "other"})
+	channel.HandleResolved(codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: "%7", Generation: "other", ThreadID: "thread-1"}, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleRequestResolved, ThreadID: "thread-1", RequestID: "17"})
+	record, _, err := fixture.store.Get(records[0].ID)
+	if err != nil || record.State != agentquestion.StateWaiting {
+		t.Fatalf("unrelated resolution changed record state to %s: %v", record.State, err)
+	}
+	channel.HandleResolved(identity, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleRequestResolved, ThreadID: "thread-1", RequestID: "17"})
+	record, _, err = fixture.store.Get(records[0].ID)
+	if err != nil || record.State != agentquestion.StateClosed || record.Disposition != "answered-elsewhere" {
+		t.Fatalf("native resolution state/disposition = %s/%s: %v", record.State, record.Disposition, err)
+	}
+	if _, err := fixture.store.Answer(record.ID, questionTestAgent, map[string]string{"q1": `["A"]`}); !errors.Is(err, agentquestion.ErrAnsweredElsewhere) {
+		t.Fatalf("store race refusal = %v", err)
+	}
+	_, _, err = runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, record.ID, "--index", "1=1")
+	if err == nil || !strings.Contains(err.Error(), questionReasonAnsweredElsewhere) {
+		t.Fatalf("late CLI answer refusal = %v", err)
+	}
+	stdout, _, err := runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent, "-o", "json")
+	if err != nil || !strings.Contains(stdout, `"disposition":"answered-elsewhere"`) {
+		t.Fatalf("list missing disposition: %v", err)
+	}
+	select {
+	case <-responder.replies:
+		t.Fatal("late CLI answer responded to an already resolved Codex request")
+	case <-time.After(20 * time.Millisecond):
 	}
 }

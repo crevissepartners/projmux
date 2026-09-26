@@ -28,6 +28,8 @@ const (
 	// questionReasonClosed: the prompt was canceled, or the channel was turned
 	// off, before an answer arrived.
 	questionReasonClosed = "question-closed"
+	// questionReasonAnsweredElsewhere: Codex's own input surface resolved first.
+	questionReasonAnsweredElsewhere = "question-answered-elsewhere"
 	// questionReasonInvalidAnswer: the answer does not fit the question set.
 	questionReasonInvalidAnswer = "question-invalid-answer"
 	// questionReasonChannelOff: the Agent is not opted in.
@@ -205,13 +207,14 @@ type agentQuestionList struct {
 
 // agentQuestionView is one question record.
 type agentQuestionView struct {
-	ID        string                `json:"id"`
-	State     agentquestion.State   `json:"state"`
-	CreatedAt time.Time             `json:"createdAt"`
-	Deadline  time.Time             `json:"deadline"`
-	UpdatedAt time.Time             `json:"updatedAt"`
-	Prompts   []agentQuestionPrompt `json:"prompts"`
-	Answers   map[string]string     `json:"answers,omitempty"`
+	ID          string                `json:"id"`
+	State       agentquestion.State   `json:"state"`
+	Disposition string                `json:"disposition,omitempty"`
+	CreatedAt   time.Time             `json:"createdAt"`
+	Deadline    time.Time             `json:"deadline"`
+	UpdatedAt   time.Time             `json:"updatedAt"`
+	Prompts     []agentQuestionPrompt `json:"prompts"`
+	Answers     map[string]string     `json:"answers,omitempty"`
 }
 
 // agentQuestionPrompt is one question of a record, numbered the way `answer`
@@ -251,7 +254,7 @@ func (c *agentCommand) listQuestions(request agentQuestionRequest, agent coremet
 		if err != nil {
 			continue
 		}
-		view := agentQuestionView{ID: record.ID, State: record.State, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers}
+		view := agentQuestionView{ID: record.ID, State: record.State, Disposition: record.Disposition, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers}
 		for i, question := range questions {
 			prompt := agentQuestionPrompt{Number: i + 1, ID: question.ID, Header: question.Header, Question: question.Question, MultiSelect: question.MultiSelect, IsSecret: question.IsSecret}
 			for j, option := range question.Options {
@@ -280,6 +283,9 @@ func writeAgentQuestionList(out io.Writer, result agentQuestionList, now time.Ti
 	}
 	for _, view := range result.Questions {
 		fmt.Fprintf(&b, "%s\t%s", view.ID, view.State)
+		if view.Disposition != "" {
+			fmt.Fprintf(&b, " (%s)", view.Disposition)
+		}
 		if view.State == agentquestion.StateWaiting {
 			fmt.Fprintf(&b, "\tdeadline %s (%s left)", view.Deadline.UTC().Format(time.RFC3339), view.Deadline.Sub(now).Round(time.Second))
 		}
@@ -337,7 +343,7 @@ func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coreme
 	if !found || record.AgentUID != agent.Metadata.UID {
 		return refuse(questionReasonNotFound, fmt.Sprintf("has no question %q", request.questionID))
 	}
-	if reason, detail := questionStateRefusal(record.State); reason != "" {
+	if reason, detail := questionRecordRefusal(record); reason != "" {
 		return refuse(reason, fmt.Sprintf("question %s %s", record.ID, detail))
 	}
 	questions, err := record.ParsedQuestions()
@@ -368,6 +374,13 @@ func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coreme
 	return err
 }
 
+func questionRecordRefusal(record agentquestion.Record) (string, string) {
+	if record.State == agentquestion.StateClosed && record.Disposition == "answered-elsewhere" {
+		return questionReasonAnsweredElsewhere, "was already answered in Codex's own input surface"
+	}
+	return questionStateRefusal(record.State)
+}
+
 // questionStateRefusal is the refusal for a record that cannot take an answer.
 func questionStateRefusal(state agentquestion.State) (string, string) {
 	switch state {
@@ -393,6 +406,8 @@ func questionStoreRefusal(err error) (string, string) {
 		return questionStateRefusal(agentquestion.StateExpired)
 	case errors.Is(err, agentquestion.ErrClosed):
 		return questionStateRefusal(agentquestion.StateClosed)
+	case errors.Is(err, agentquestion.ErrAnsweredElsewhere):
+		return questionReasonAnsweredElsewhere, "was already answered in Codex's own input surface"
 	case errors.Is(err, agentquestion.ErrInvalidAnswer):
 		return questionReasonInvalidAnswer, err.Error()
 	default:
