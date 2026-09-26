@@ -13,15 +13,16 @@ import (
 )
 
 type codexHookPayload struct {
-	EventName      string
-	ThreadID       string
-	SessionID      string
-	TurnID         string
-	CWD            string
-	TranscriptPath string
-	Model          string
-	ToolName       string
-	ToolInput      map[string]any
+	EventName            string
+	ThreadID             string
+	SessionID            string
+	TurnID               string
+	CWD                  string
+	TranscriptPath       string
+	Model                string
+	ToolName             string
+	ToolInput            map[string]any
+	LastAssistantMessage string
 }
 
 func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
@@ -473,14 +474,15 @@ func parseCodexHookPayload(data []byte) (codexHookPayload, error) {
 		return codexHookPayload{}, fmt.Errorf("parse codex hook payload: %w", err)
 	}
 	payload := codexHookPayload{
-		EventName:      firstString(raw, "hook_event_name", "event_name"),
-		ThreadID:       firstString(raw, "thread_id", "thread-id"),
-		SessionID:      firstString(raw, "session_id", "session-id"),
-		TurnID:         firstString(raw, "turn_id", "turn-id"),
-		CWD:            firstString(raw, "cwd", "workspace", "project_dir"),
-		TranscriptPath: firstString(raw, "transcript_path", "transcriptPath"),
-		Model:          firstString(raw, "model"),
-		ToolName:       firstString(raw, "tool_name", "toolName"),
+		EventName:            firstString(raw, "hook_event_name", "event_name"),
+		ThreadID:             firstString(raw, "thread_id", "thread-id"),
+		SessionID:            firstString(raw, "session_id", "session-id"),
+		TurnID:               firstString(raw, "turn_id", "turn-id"),
+		CWD:                  firstString(raw, "cwd", "workspace", "project_dir"),
+		TranscriptPath:       firstString(raw, "transcript_path", "transcriptPath"),
+		Model:                firstString(raw, "model"),
+		ToolName:             firstString(raw, "tool_name", "toolName"),
+		LastAssistantMessage: firstString(raw, "last-assistant-message", "last_assistant_message"),
 	}
 	if payload.CWD == "" {
 		payload.CWD = firstNestedString(raw["workspace"], "cwd", "path")

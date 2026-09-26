@@ -1086,10 +1086,14 @@ func (c *settingsCommand) aiHookProviderSummary(provider string) string {
 }
 
 func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.Entry {
+	scopeDetail := "install field is unchanged"
+	if provider == aiHookProviderCodex {
+		scopeDetail = localizeText(c.locale(), i18n.KeySettingsCodexNotifyScope, "Replies use the last message; failed turns notify with an error")
+	}
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabelInfo("Scope", "runtime action only", "install field is unchanged"),
+			Label: c.rowLabelInfo("Scope", "runtime action only", scopeDetail),
 			Value: settingsNoopValue,
 		},
 	}
@@ -1098,7 +1102,7 @@ func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.
 		entries = append(entries,
 			intpickercompat.Entry{Label: c.rowLabelInfo("Effective source", c.codexLifecycleAuthoritySummary(), "content-free runtime authority"), Value: settingsNoopValue},
 			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Approval required", semanticPolicyDescription(policies.Events[config.AISemanticApprovalRequired])), Value: settingsActionPrefixAISemanticEvent + string(config.AISemanticApprovalRequired), SearchKey: "codex native approval required notify state only quiet"},
-			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Response complete", semanticPolicyDescription(policies.Events[config.AISemanticResponseComplete])), Value: settingsActionPrefixAISemanticEvent + string(config.AISemanticResponseComplete), SearchKey: "codex native response complete notify state only quiet"},
+			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Response complete", semanticPolicyDescription(policies.Events[config.AISemanticResponseComplete])), Value: settingsActionPrefixAISemanticEvent + string(config.AISemanticResponseComplete), SearchKey: "codex native response complete last agent message notify state only quiet"},
 			intpickercompat.Entry{Label: c.rowLabelInfo("Hook fallback behavior (advanced)", c.codexHookFallbackSummary(), "raw overrides below are preserved"), Value: settingsNoopValue},
 		)
 	}

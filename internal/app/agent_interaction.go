@@ -53,6 +53,7 @@ type codexLifecycleNotice struct {
 	RequestID          string
 	Kind               codexappserver.ApprovalKind
 	ResponderAvailable bool
+	QueueOnly          bool
 }
 
 type codexLifecycleProjection struct {
@@ -82,6 +83,7 @@ type codexLifecycleReducer struct {
 	interaction      coremetadata.AgentInteractionKind
 	pending          map[string]codexPendingApproval
 	terminalTurns    map[string]codexappserver.TurnState
+	errorNotified    bool
 }
 
 func (r *codexLifecycleReducer) begin(epoch uint64, identity codexLifecycleIdentity, snapshot codexappserver.LifecycleSnapshot) codexLifecycleProjection {
@@ -96,6 +98,7 @@ func (r *codexLifecycleReducer) begin(epoch uint64, identity codexLifecycleIdent
 	r.currentTurnState = snapshot.TurnState
 	r.pending = map[string]codexPendingApproval{}
 	r.terminalTurns = map[string]codexappserver.TurnState{}
+	r.errorNotified = false
 	if snapshot.ThreadState == codexappserver.ThreadStateNotLoaded {
 		// A not-loaded snapshot is an invalidation boundary, never evidence
 		// for a healthy provider-control-plane epoch. Return the first accepted
@@ -120,6 +123,7 @@ func (r *codexLifecycleReducer) invalidate(epoch uint64) codexLifecycleProjectio
 	r.pending = nil
 	r.currentTurnID = ""
 	r.currentTurnState = codexappserver.TurnStateUnknown
+	r.errorNotified = false
 	r.interaction = coremetadata.InteractionUnknown
 	return projection
 }
@@ -137,6 +141,7 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 		projection.ClearNoticeIDs = r.pendingNoticeIDs()
 		r.pending = map[string]codexPendingApproval{}
 		r.terminalTurns = map[string]codexappserver.TurnState{}
+		r.errorNotified = false
 		r.currentTurnID = event.TurnID
 		r.currentTurnState = codexappserver.TurnStateInProgress
 		r.threadState = codexappserver.ThreadStateActive
@@ -156,6 +161,10 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 		}
 		r.threadState = event.ThreadState
 		r.interaction = r.liveInteraction()
+		if event.ThreadState == codexappserver.ThreadStateSystemError && !r.errorNotified {
+			projection.Notices = []codexLifecycleNotice{r.failureNotice()}
+			r.errorNotified = true
+		}
 		if r.interaction == coremetadata.InteractionApprovalRequired {
 			projection.Notices = r.actionableApprovalNotices()
 		}
@@ -211,12 +220,31 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 			}}
 		} else {
 			r.interaction = coremetadata.InteractionIdle
+			// A systemError may arrive before the failed turn carries its HTTP
+			// status. Refresh the same notice ID with the more specific result.
+			if event.TurnState == codexappserver.TurnStateFailed {
+				notice := r.failureNotice()
+				notice.QueueOnly = r.errorNotified
+				projection.Notices = []codexLifecycleNotice{notice}
+				r.errorNotified = true
+			}
 		}
 	default:
 		return codexLifecycleProjection{}
 	}
 	projection.Interaction = r.interaction
 	return projection
+}
+
+func (r *codexLifecycleReducer) failureNotice() codexLifecycleNotice {
+	turnID := r.currentTurnID
+	if turnID == "" {
+		turnID = "thread"
+	}
+	return codexLifecycleNotice{
+		Category: "error", ID: "ai:codex:native:error:" + r.identity.ThreadID + ":" + turnID,
+		Severity: notify.SeverityCritical, ThreadID: r.identity.ThreadID, TurnID: r.currentTurnID,
+	}
 }
 
 func (r *codexLifecycleReducer) snapshotInteraction() coremetadata.AgentInteractionKind {

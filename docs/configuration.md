@@ -447,21 +447,27 @@ or a method-not-found response are reported explicitly as unavailable. The
 initial `review/start` response is projected into Agent interaction lifecycle;
 the lifecycle observer described below owns later app-server terminal events.
 
-A natively created or resumed Codex Agent keeps a content-free lifecycle
+A natively created or resumed Codex Agent keeps a lifecycle
 observer on its exact Agent UID, Pane UID/runtime handle, activation generation,
 and thread ID. While its initialized proxy connection and snapshot are current,
 the app server is the only attention authority: active, idle, waiting for input,
 and exact unresolved approval requests project the Agent interaction and badge.
-Only an exact successful `turn/completed` projects response-complete and queues a
-completion notification; failed and interrupted turns become idle. Disconnect
+An exact successful `turn/completed` projects response-complete and queues a
+completion notification with the last agent message (or `Ready` if none is
+available). A failed turn or `systemError` queues a critical `error` notification
+and sends an OS notification when desktop delivery is enabled. HTTP 401 is
+identified without copying the provider error text or credentials. Interrupted
+turns become idle. Disconnect
 and thread unload first invalidate the epoch and clear stale attention, then
 enable hook fallback. A reconnect starts a new epoch from `thread/read`; events
 from older epochs or other identities are ignored.
 
 `describe agent` and the Codex Agent event Settings page report the effective
 lifecycle source, a closed reason, and active/pending/inactive epoch status.
-These diagnostics never retain prompts, reasoning, output, approval reasons, or
-diff content. Settings aggregates multiple live Codex Panes as counts and says
+The observer holds the latest agent message only until completion delivery;
+the notify queue applies its 80-rune text limit. These diagnostics never retain
+prompts, reasoning, output, approval reasons, or diff content. Settings
+aggregates multiple live Codex Panes as counts and says
 `mixed` when native and fallback authority coexist.
 
 Projmux does not install, bootstrap, restart, stop, or reconfigure the Codex
@@ -899,6 +905,11 @@ fallback. An explicit raw `PermissionRequest` or `Stop` runtime override takes
 precedence only during hook fallback; catalog defaults do not override this
 semantic store. Saving this file does not infer from, rewrite, or normalize the
 raw hook override file.
+
+Codex native failures are always delivered as critical `error` notifications,
+independent of those two completion/approval policy choices. A hook fallback
+`Stop` uses Codex's `last-assistant-message` payload when present; without it,
+the completion text is `Ready`.
 
 Delivery depends on the event handler. Specialized notify handlers, such as
 Codex `PermissionRequest` and `Stop`, can write the in-app notify queue and use

@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -276,6 +277,17 @@ type codexLifecycleSink interface {
 	Apply(codexLifecycleIdentity, codexLifecycleProjection) error
 }
 
+// codexNoticeContent crosses only the observer-to-delivery call. It never
+// enters a lifecycle projection, durable Registry field, or diagnostic.
+type codexNoticeContent struct {
+	Text             string
+	HTTPUnauthorized bool
+}
+
+type codexContentLifecycleSink interface {
+	ApplyWithNoticeContent(codexLifecycleIdentity, codexLifecycleProjection, codexNoticeContent) error
+}
+
 type codexGenerationLifecycleSink interface {
 	SetGenerationAuthority(codexLifecycleIdentity, coremetadata.CodexEndpointRef, coremetadata.CodexGenerationState, coremetadata.CodexAuthorityRef) error
 }
@@ -337,6 +349,8 @@ type codexNativeObserver struct {
 	openTimeout     time.Duration
 	sequence        uint64
 	reducer         codexLifecycleReducer
+	lastAgentTurnID string
+	lastAgentText   string
 	startControl    func(*codexControlEpoch) (*codexControlServer, error)
 	requireControl  bool
 	reportStartup   func(codexObserverStartupResult)
@@ -617,6 +631,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		bindingTicker := time.NewTicker(codexObserverBindingDelay)
 		progressTicker := time.NewTicker(25 * time.Millisecond)
 		notifications := client.Notifications()
+		o.lastAgentTurnID, o.lastAgentText = "", ""
 	eventLoop:
 		for {
 			select {
@@ -678,6 +693,13 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 						break eventLoop
 					}
 				}
+				if notification.Method == "turn/started" {
+					o.lastAgentTurnID, o.lastAgentText = "", ""
+				} else if notification.Method == "item/completed" {
+					if threadID, turnID, message := codexCompletedAgentMessage(notification); threadID == o.identity.ThreadID && turnID == o.reducer.currentTurnID && message != "" {
+						o.lastAgentTurnID, o.lastAgentText = turnID, message
+					}
+				}
 				event, recognized, decodeErr := codexappserver.DecodeLifecycleEvent(notification)
 				if decodeErr != nil {
 					exit = codexObserverExitProtocolError
@@ -712,6 +734,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				if !projection.Accepted {
 					continue
 				}
+				content := codexNoticeContent{}
+				if event.Kind == codexappserver.LifecycleTurnCompleted {
+					message, unauthorized := codexCompletedTurnContent(notification)
+					if message == "" && o.lastAgentTurnID == event.TurnID {
+						message = o.lastAgentText
+					}
+					content = codexNoticeContent{Text: message, HTTPUnauthorized: unauthorized}
+					o.lastAgentTurnID, o.lastAgentText = "", ""
+				}
 				responderAvailable := false
 				if control != nil {
 					responderAvailable = control.epoch.HasActionableRequest(event.RequestID)
@@ -731,7 +762,11 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					invalidated = true
 					break eventLoop
 				}
-				if err := o.sink.Apply(o.identity, projection); err != nil {
+				apply := func() error { return o.sink.Apply(o.identity, projection) }
+				if sink, ok := o.sink.(codexContentLifecycleSink); ok && (content.Text != "" || content.HTTPUnauthorized) {
+					apply = func() error { return sink.ApplyWithNoticeContent(o.identity, projection, content) }
+				}
+				if err := apply(); err != nil {
 					if control != nil {
 						_ = control.Close()
 						control = nil
@@ -1171,8 +1206,9 @@ func (o *codexNativeObserver) streamCloseExit(client codexLifecycleConnection) c
 }
 
 type aiCodexLifecycleSink struct {
-	command *aiCommand
-	runner  tmuxCommandRunner
+	command       *aiCommand
+	runner        tmuxCommandRunner
+	noticeContent codexNoticeContent
 }
 
 func (s aiCodexLifecycleSink) BindingCurrent(identity codexLifecycleIdentity) bool {
@@ -1392,7 +1428,13 @@ func (s aiCodexLifecycleSink) RebindGenerationAuthority(identity codexLifecycleI
 	return err
 }
 
+func (s aiCodexLifecycleSink) ApplyWithNoticeContent(identity codexLifecycleIdentity, projection codexLifecycleProjection, content codexNoticeContent) error {
+	s.noticeContent = content
+	return s.Apply(identity, projection)
+}
+
 func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection codexLifecycleProjection) error {
+	content := s.noticeContent
 	c := s.command
 	if c == nil || !projection.Accepted || c.updateRegistry == nil {
 		return errManagedAgentObservationIgnored
@@ -1522,7 +1564,12 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 				DurableEndpoint: projection.Endpoint, StoredAuthority: projection.Authority, PresentedAuthority: projection.Authority,
 				TargetRuntimeID: identity.RuntimeID, EventRuntimeID: identity.RuntimeID,
 			}, true)
-			if consumer.Effect != codexgeneration.MutationSemanticEffect || !consumer.Notification {
+			// A failed turn is idle for interaction controls, so the reply
+			// consumer has no attention surface. Its error notice still needs
+			// delivery while this exact generation owns the live turn.
+			errorNotice := notice.Category == "error" &&
+				(projection.GenerationState == codexgeneration.StateCurrent || projection.GenerationState == codexgeneration.StateDraining)
+			if consumer.Effect != codexgeneration.MutationSemanticEffect || (!consumer.Notification && !errorNotice) {
 				continue
 			}
 		}
@@ -1547,6 +1594,14 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 			metadata["approval_kind"] = string(notice.Kind)
 		}
 		text := "Ready"
+		if notice.Category == "response_complete" {
+			text = formatCodexStopNotifyBody(content.Text).Text
+		} else if notice.Category == "error" {
+			text = localizeText(c.locale(), i18n.KeyNotifyAIError, "Error")
+			if content.HTTPUnauthorized {
+				text += " · HTTP 401"
+			}
+		}
 		if notice.Category == "approval_required" {
 			approvalRequired := localizeText(c.locale(), i18n.KeyNotifyAIApprovalRequired, "Approval required")
 			openCodex := localizeText(c.locale(), i18n.KeyAgentControlOpenCodex, agentActionOpenCodex)
@@ -1565,10 +1620,53 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 			// The native observer is long-lived; it must not stall on the hook.
 			AsyncHooks: true,
 		}
-		_ = s.notifyAIWithInput(identity.RuntimeID, input)
+		if !notice.QueueOnly {
+			_ = s.notifyAIWithInput(identity.RuntimeID, input)
+		}
 		c.notifyProducer().PushReplyReady(input)
 	}
 	return nil
+}
+
+// These decoders keep reply text only for the current notification. They do
+// not add content to lifecycle state, diagnostics, or the broker protocol.
+func codexCompletedAgentMessage(notification codexappserver.Notification) (string, string, string) {
+	var params struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+		Item     struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(notification.Params, &params) != nil || params.Item.Type != "agentMessage" {
+		return "", "", ""
+	}
+	return strings.TrimSpace(params.ThreadID), strings.TrimSpace(params.TurnID), truncateRunes(params.Item.Text, notify.MaxTextLength)
+}
+
+func codexCompletedTurnContent(notification codexappserver.Notification) (string, bool) {
+	var params struct {
+		Turn struct {
+			Items []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"items"`
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(notification.Params, &params) != nil {
+		return "", false
+	}
+	message := ""
+	for _, item := range params.Turn.Items {
+		if item.Type == "agentMessage" && strings.TrimSpace(item.Text) != "" {
+			message = truncateRunes(item.Text, notify.MaxTextLength)
+		}
+	}
+	return message, strings.Contains(params.Turn.Error.Message, "401")
 }
 
 type routedAINotifyLookup struct{ runner tmuxCommandRunner }
