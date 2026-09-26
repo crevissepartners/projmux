@@ -5,11 +5,13 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 cache_root="${PROJMUX_E2E_BUILD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/projmux/e2e-build-cache}"
 mkdir -p "$cache_root"
+# The product binary is built inside the pinned test image, never by a host Go
+# toolchain (a DooD job container may have none). The image's toolchain is
+# already represented by test/docker/Dockerfile in the hashed list.
 source_digest="$({
   while IFS= read -r -d '' tracked; do
     sha256sum "$root/$tracked"
   done < <(git -C "$root" ls-files -z -- '*.go' go.mod go.sum test/docker/Dockerfile | sort -z)
-  go version
 } | sha256sum | awk '{print $1}')"
 attempt_root="${PROJMUX_E2E_ARTIFACTS:-$root/.bin/e2e-evidence/attempt-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$}"
 binary_dir="$attempt_root/binary"
