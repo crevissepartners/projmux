@@ -122,8 +122,9 @@ done <"$manifest"
 if [[ ! -f "$bin_dir/.versions" || -L "$bin_dir/.versions" ]] || ! cmp -s "$manifest" "$bin_dir/.versions"; then
 	tools_ok=0
 fi
-# The CI tool cache key does not hash the ShellCheck pin, so this stamp is what
-# turns a changed pin into a reinstall instead of a stale cached binary.
+# The CI tool cache key hashes the ShellCheck pin, but a bin dir restored without
+# that key (local `make security-tools`, or a cache saved under another key) still
+# relies on this stamp to turn a changed pin into a reinstall, not a stale binary.
 if [[ ! -f "$bin_dir/.shellcheck.sha256" || -L "$bin_dir/.shellcheck.sha256" ]] ||
 	! cmp -s "$shellcheck_pin" "$bin_dir/.shellcheck.sha256" ||
 	[[ ! -f "$bin_dir/shellcheck" || -L "$bin_dir/shellcheck" || ! -x "$bin_dir/shellcheck" ]] ||

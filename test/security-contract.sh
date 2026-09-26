@@ -132,12 +132,32 @@ required = (
     'schedule:',
     "hashFiles('.security/security-tools.versions')",
     "hashFiles('scripts/security-tools.sh')",
+    "hashFiles('.security/shellcheck.sha256')",
     'steps.setup-go.outputs.go-version',
     '${{ runner.os }}-${{ runner.arch }}',
 )
 for fragment in required:
     if fragment not in workflow:
         raise SystemExit(f"security contract: workflow contract missing: {fragment}")
+restore_keys = re.findall(
+    r"^      - name: Restore pinned security tools\n(?:        .*\n)*?          key: (.+)$",
+    workflow,
+    re.MULTILINE,
+)
+if len(restore_keys) != 4:
+    raise SystemExit(
+        f"security contract: expected 4 pinned tool cache restores, found {len(restore_keys)}"
+    )
+if len(set(restore_keys)) != 1:
+    raise SystemExit("security contract: pinned tool cache keys differ across security jobs")
+if "hashFiles('.security/shellcheck.sha256')" not in restore_keys[0]:
+    raise SystemExit("security contract: pinned tool cache key does not hash the ShellCheck pin")
+# The digest-verified download in make security-tools is the only ShellCheck
+# source; scripts/security.sh refuses any other version.
+if re.search(r"(?m)^\s*- name: Install shellcheck\s*$", workflow, re.IGNORECASE):
+    raise SystemExit("security contract: workflow installs ShellCheck outside make security-tools")
+if re.search(r"(?im)^.*\bapt(?:-get)?\b[^\n]*\binstall\b[^\n]*\bshellcheck\b", workflow):
+    raise SystemExit("security contract: workflow installs ShellCheck from apt")
 if workflow.count("uses: actions/cache/save@v5") != 1:
     raise SystemExit("security contract: exact tool cache must have one writer")
 if "hashFiles('go.mod')" in workflow:

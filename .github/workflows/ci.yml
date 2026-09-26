@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .bin/security-tools
-          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-manifest-${{ hashFiles('.security/security-tools.versions') }}-installer-${{ hashFiles('scripts/security-tools.sh') }}
+          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-manifest-${{ hashFiles('.security/security-tools.versions') }}-installer-${{ hashFiles('scripts/security-tools.sh') }}-shellcheck-${{ hashFiles('.security/shellcheck.sha256') }}
 
       - name: Verify pinned security tools
         run: make security-tools
@@ -85,7 +85,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .bin/security-tools
-          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-manifest-${{ hashFiles('.security/security-tools.versions') }}-installer-${{ hashFiles('scripts/security-tools.sh') }}
+          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-manifest-${{ hashFiles('.security/security-tools.versions') }}-installer-${{ hashFiles('scripts/security-tools.sh') }}-shellcheck-${{ hashFiles('.security/shellcheck.sha256') }}
 
       - name: Verify pinned security tools
         run: make security-tools
@@ -125,17 +125,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .bin/security-tools
-          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-manifest-${{ hashFiles('.security/security-tools.versions') }}-installer-${{ hashFiles('scripts/security-tools.sh') }}
+          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-manifest-${{ hashFiles('.security/security-tools.versions') }}-installer-${{ hashFiles('scripts/security-tools.sh') }}-shellcheck-${{ hashFiles('.security/shellcheck.sha256') }}
 
       - name: Verify pinned security tools
         run: make security-tools
-
-      - name: Install shellcheck
-        run: |
-          if ! command -v shellcheck >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes shellcheck
-          fi
 
       - name: Run repository policy gates
         env:
@@ -173,17 +166,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .bin/security-tools
-          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-manifest-${{ hashFiles('.security/security-tools.versions') }}-installer-${{ hashFiles('scripts/security-tools.sh') }}
+          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ steps.setup-go.outputs.go-version }}-manifest-${{ hashFiles('.security/security-tools.versions') }}-installer-${{ hashFiles('scripts/security-tools.sh') }}-shellcheck-${{ hashFiles('.security/shellcheck.sha256') }}
 
       - name: Verify pinned security tools
         run: make security-tools
-
-      - name: Install shellcheck
-        run: |
-          if ! command -v shellcheck >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes shellcheck
-          fi
 
       - name: Run the security contract gate
         env:
