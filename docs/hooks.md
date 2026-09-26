@@ -941,6 +941,16 @@ path, otherwise only the input's key names), request and decision times in
 UTC, and `via`. The full tool input lives only in the request record under
 `<state dir>/agent-approvals/`, and settled records are kept for a day.
 
+An answer's `allowed` or `denied` line is written and synced before the answer
+takes effect. If that line cannot be written, `answer` fails with an error
+naming the audit log and the request stays waiting: fix the log and answer
+again, or answer in Claude Code. The other events stay best effort and never
+fail the transition they describe. If the line was written but the request
+record then cannot be written, the answer fails and the log keeps an `allowed`
+or `denied` line for an answer that did not take effect; a later `expired` or
+`closed` line for the same request shows how it ended. The log may over-report
+an answer, never under-report one.
+
 ## Antigravity Hook Ingest
 
 `projmux internal agent-hook ingest antigravity-hook --event <event> < payload.json` accepts

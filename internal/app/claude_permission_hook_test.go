@@ -372,6 +372,116 @@ func TestClaudePermissionHookDenyFromTheCommandLine(t *testing.T) {
 	}
 }
 
+// blockPermissionAudit makes the audit log unwritable without chmod, so the
+// injection holds for root too: the log path becomes a directory, which no
+// append can open.
+func blockPermissionAudit(t *testing.T, store *agentapproval.Store) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(store.AuditPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(store.AuditPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(store.AuditPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// permissionAuditCount counts the lines of event for id.
+func permissionAuditCount(t *testing.T, store *agentapproval.Store, event, id string) int {
+	t.Helper()
+	count := 0
+	for _, line := range readPermissionAudit(t, store) {
+		if line.Event == event && line.RequestID == id {
+			count++
+		}
+	}
+	return count
+}
+
+// C-1: an answer whose allowed or denied line cannot be written takes no
+// effect: the hook prints neither decision and keeps waiting. Once the log is
+// writable the next answer is the one the hook prints, with exactly one line.
+func TestClaudePermissionHookIgnoresAnAnswerItsAuditCouldNotRecord(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPermissionFixture(t, config.AgentApprovalAnsweringProjmux)
+	blockPermissionAudit(t, fixture.approvals)
+	done := make(chan string, 1)
+	go func() {
+		var stdout bytes.Buffer
+		fixture.hook(time.Minute).run(context.Background(), []string{"--pane=" + questionTestPane},
+			strings.NewReader(permissionTestPayload("default", "Bash", permissionTestInput, "")), &stdout, &bytes.Buffer{})
+		done <- stdout.String()
+	}()
+	// The requested line cannot land while the log is a directory, so wait for
+	// the record alone.
+	id := ""
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if records, err := fixture.approvals.List(questionTestAgent); err == nil && len(records) == 1 {
+			id = records[0].ID
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if id == "" {
+		t.Fatal("the hook never recorded its permission request")
+	}
+	for _, verdict := range []string{"--deny", "--allow"} {
+		_, _, err := runRoute(t, fixture.command, "approval", "answer", "uid:"+questionTestAgent, id, verdict)
+		if !errors.Is(err, agentapproval.ErrAudit) {
+			t.Fatalf("%s err = %v, want the audit failure", verdict, err)
+		}
+	}
+	select {
+	case out := <-done:
+		t.Fatalf("the hook returned %q after answers that took no effect", out)
+	default:
+	}
+	if record, _, _ := fixture.approvals.Get(id); record.State != agentapproval.StateWaiting {
+		t.Fatalf("record = %+v, want waiting", record)
+	}
+
+	if err := os.Remove(fixture.approvals.AuditPath()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runRoute(t, fixture.command, "approval", "answer", "uid:"+questionTestAgent, id, "--allow"); err != nil {
+		t.Fatal(err)
+	}
+	assertBareAllow(t, waitHookOutput(t, done))
+	if got := permissionAuditCount(t, fixture.approvals, agentapproval.AuditAllowed, id); got != 1 {
+		t.Fatalf("allowed lines = %d, want 1", got)
+	}
+	if got := permissionAuditCount(t, fixture.approvals, agentapproval.AuditDenied, id); got != 0 {
+		t.Fatalf("denied lines = %d, want none", got)
+	}
+}
+
+// C-1: `agent approval answer` exits 1 with a message naming the audit log when
+// its line cannot be written, and the request is still listed as waiting.
+func TestAgentApprovalAnswerFailsWhenTheAuditLogCannotBeWritten(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPermissionFixture(t, config.AgentApprovalAnsweringProjmux)
+	id := "permission-00000000000000c1"
+	if _, err := fixture.approvals.Create(agentapproval.Record{
+		ID: id, AgentUID: questionTestAgent, ToolName: "Bash", ToolInput: []byte(permissionTestInput), Deadline: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blockPermissionAudit(t, fixture.approvals)
+	stdout, _, err := runRoute(t, fixture.command, "approval", "answer", "uid:"+questionTestAgent, id, "--allow")
+	if stdout != "" || publicRouteArgvExitCode(err) != 1 || !strings.Contains(err.Error(), fixture.approvals.AuditPath()) ||
+		!strings.Contains(err.Error(), "audit log") || !strings.Contains(err.Error(), "still waiting") {
+		t.Fatalf("answer stdout=%q err=%v, want exit 1 naming %s", stdout, err, fixture.approvals.AuditPath())
+	}
+	listed, _, err := runRoute(t, fixture.command, "approval", "list", "uid:"+questionTestAgent)
+	if err != nil || !strings.Contains(listed, id+"\twaiting\t") {
+		t.Fatalf("list = %q, %v; want %s still waiting", listed, err, id)
+	}
+}
+
 // Acceptance 11: a subagent's request is captured and carries its agent type in
 // the record, the audit line, and both list projections.
 func TestClaudePermissionHookCapturesSubagentRequestsWithTheirType(t *testing.T) {

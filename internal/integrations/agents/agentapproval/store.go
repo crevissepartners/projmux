@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -99,6 +100,9 @@ var (
 	ErrMalformedStore = errors.New("malformed agent approval store")
 	ErrBusy           = errors.New("agent approval store is busy")
 	ErrInvalidRecord  = errors.New("invalid agent approval record")
+	// ErrAudit is an answer refused because its allowed or denied line could
+	// not be appended to the audit log; the record was not written.
+	ErrAudit = errors.New("could not write the agent approval audit log")
 )
 
 var idPattern = regexp.MustCompile(`^permission-[0-9a-f]{16}$`)
@@ -155,6 +159,9 @@ type Store struct {
 	auditPath  string
 	auditLimit int64
 	now        func() time.Time
+	// writeHook, when set by an in-package test, fails a record write before
+	// it touches the file.
+	writeHook func() error
 }
 
 // NewStore opens the store under stateDir. Nothing is touched until the first
@@ -305,6 +312,13 @@ func (s *Store) List(agentUID string) ([]Record, error) {
 // the hook's own expiry, a second answer, or a terminal close lands on exactly
 // one side: the first transition wins. A refusal changes no record and is
 // audited as refused.
+//
+// The allowed or denied line is appended and synced before the record is
+// written, so no answer takes effect without its line. When the line cannot be
+// appended the record stays waiting and the error wraps ErrAudit. When the line
+// was appended but the record write then fails, the answer fails too and the
+// log keeps a line for an answer that did not take effect: the log may
+// over-report an answer, never under-report one.
 func (s *Store) Answer(id, agentUID string, allow bool, via string) (Record, error) {
 	var out Record
 	err := s.withLock(func() error {
@@ -338,10 +352,12 @@ func (s *Store) Answer(id, agentUID string, allow bool, via string) (Record, err
 			return err
 		}
 		state.Records = records
+		if err := s.appendAuditLocked(auditLine(event, record, now)); err != nil {
+			return fmt.Errorf("%w: %s: %w", ErrAudit, s.auditPath, err)
+		}
 		if err := s.writeLocked(state); err != nil {
 			return err
 		}
-		s.auditLocked(auditLine(event, record, now))
 		out = record
 		return nil
 	})
@@ -674,6 +690,11 @@ func decodeState(data []byte) (diskState, error) {
 }
 
 func (s *Store) writeLocked(state diskState) error {
+	if s.writeHook != nil {
+		if err := s.writeHook(); err != nil {
+			return err
+		}
+	}
 	state.Version = storeVersion
 	if state.Records == nil {
 		state.Records = []Record{}

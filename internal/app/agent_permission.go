@@ -253,6 +253,9 @@ func (c *agentCommand) answerPermissionRequest(request agentPermissionRequest, a
 		if reason, detail := permissionStoreRefusal(err); reason != "" {
 			return refuse(reason, fmt.Sprintf("permission request %q %s", request.requestID, detail))
 		}
+		if errors.Is(err, agentapproval.ErrAudit) {
+			return fmt.Errorf("%s: %w; permission request %q is still waiting", request.spelling, err, request.requestID)
+		}
 		return fmt.Errorf("%s: %w", request.spelling, err)
 	}
 	_, err = fmt.Fprintf(stdout, "%s %s for agent/%s\n", answered.ID, answered.State, agent.Metadata.Name)

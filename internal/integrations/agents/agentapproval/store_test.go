@@ -497,3 +497,160 @@ func TestStorePruneKeepsWaitingRecords(t *testing.T) {
 		t.Fatal("the oldest terminal record was not pruned")
 	}
 }
+
+// auditLinesFor counts the lines of event for id across the active audit log
+// and its rotated generation.
+func auditLinesFor(t *testing.T, store *Store, event, id string) int {
+	t.Helper()
+	count := 0
+	for _, path := range []string{store.AuditPath() + auditRotatedSuffix, store.AuditPath()} {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			continue
+		}
+		for _, line := range readAudit(t, path) {
+			if line.Event == event && line.RequestID == id {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func assertStillWaiting(t *testing.T, store *Store, id string) {
+	t.Helper()
+	record, ok, err := store.Get(id)
+	if err != nil || !ok || record.State != StateWaiting || record.Via != "" {
+		t.Fatalf("record = %+v, %v, %v; want it still waiting", record, ok, err)
+	}
+}
+
+// TestStoreAnswerFailsWhenItsAuditLineCannotBeWritten holds the write-ahead
+// rule for both verdicts: an allowed or denied line that cannot be appended
+// fails the answer with ErrAudit naming the log, and the record stays waiting.
+// Once the log is writable again the answer lands with exactly one line.
+func TestStoreAnswerFailsWhenItsAuditLineCannotBeWritten(t *testing.T) {
+	t.Parallel()
+
+	for _, allow := range []bool{true, false} {
+		store, clock := newTestStore(t)
+		createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
+		if err := os.Remove(store.AuditPath()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(store.AuditPath(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := store.Answer(testID(1), "agt-a", allow, ViaCLI)
+		if !errors.Is(err, ErrAudit) || !strings.Contains(err.Error(), store.AuditPath()) {
+			t.Fatalf("allow=%v answer err = %v, want ErrAudit naming %s", allow, err, store.AuditPath())
+		}
+		assertStillWaiting(t, store, testID(1))
+		if info, err := os.Stat(store.AuditPath()); err != nil || !info.IsDir() {
+			t.Fatalf("allow=%v the injected audit directory changed: %v, %v", allow, info, err)
+		}
+		if entries, _ := os.ReadDir(store.AuditPath()); len(entries) != 0 {
+			t.Fatalf("allow=%v a line landed inside the audit directory: %v", allow, entries)
+		}
+
+		if err := os.Remove(store.AuditPath()); err != nil {
+			t.Fatal(err)
+		}
+		answered, err := store.Answer(testID(1), "agt-a", allow, ViaCLI)
+		event, state := AuditDenied, StateDenied
+		if allow {
+			event, state = AuditAllowed, StateAllowed
+		}
+		if err != nil || answered.State != state {
+			t.Fatalf("allow=%v retry = %+v, %v", allow, answered, err)
+		}
+		if got := auditEvents(readAudit(t, store.AuditPath())); strings.Join(got, ",") != event {
+			t.Fatalf("allow=%v audit after retry = %v, want exactly one %s", allow, got, event)
+		}
+	}
+}
+
+// TestStoreAnswerAtTheAuditRotationBoundary holds the write-ahead rule when the
+// allowed line is the one that rotates the log: a rotation that fails refuses
+// the answer, and one that succeeds lands the line in the new active log.
+func TestStoreAnswerAtTheAuditRotationBoundary(t *testing.T) {
+	t.Parallel()
+
+	rotatingStore := func(t *testing.T) *Store {
+		t.Helper()
+		store, clock := newTestStore(t)
+		createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
+		info, err := os.Stat(store.AuditPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The requested line fits; any further line rotates first.
+		return store.WithAuditLimit(info.Size() + 1)
+	}
+
+	t.Run("rotation fails", func(t *testing.T) {
+		t.Parallel()
+		store := rotatingStore(t)
+		rotated := store.AuditPath() + auditRotatedSuffix
+		if err := os.MkdirAll(filepath.Join(rotated, "keep"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Answer(testID(1), "agt-a", true, ViaCLI); !errors.Is(err, ErrAudit) {
+			t.Fatalf("answer err = %v, want ErrAudit", err)
+		}
+		assertStillWaiting(t, store, testID(1))
+		if got := auditLinesFor(t, store, AuditAllowed, testID(1)); got != 0 {
+			t.Fatalf("allowed lines = %d, want none", got)
+		}
+		if got := auditEvents(readAudit(t, store.AuditPath())); strings.Join(got, ",") != AuditRequested {
+			t.Fatalf("active audit = %v, want the requested line untouched", got)
+		}
+	})
+
+	t.Run("rotation succeeds", func(t *testing.T) {
+		t.Parallel()
+		store := rotatingStore(t)
+		if _, err := store.Answer(testID(1), "agt-a", true, ViaCLI); err != nil {
+			t.Fatal(err)
+		}
+		if got := auditEvents(readAudit(t, store.AuditPath())); strings.Join(got, ",") != AuditAllowed {
+			t.Fatalf("active audit = %v, want the allowed line alone", got)
+		}
+		if got := auditEvents(readAudit(t, store.AuditPath()+auditRotatedSuffix)); strings.Join(got, ",") != AuditRequested {
+			t.Fatalf("rotated audit = %v, want the requested line", got)
+		}
+		if got := auditLinesFor(t, store, AuditAllowed, testID(1)); got != 1 {
+			t.Fatalf("allowed lines = %d, want 1", got)
+		}
+	})
+}
+
+// TestStoreAnswerRecordWriteFailureKeepsTheWrittenLine holds the accepted
+// over-report: the allowed line is written first, the record write then fails,
+// so the answer fails, the record stays waiting, and the log keeps exactly that
+// one line. A later answer lands normally with its own line.
+func TestStoreAnswerRecordWriteFailureKeepsTheWrittenLine(t *testing.T) {
+	t.Parallel()
+
+	store, clock := newTestStore(t)
+	createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
+	injected := errors.New("injected record write failure")
+	failing := *store
+	failing.writeHook = func() error { return injected }
+	if _, err := failing.Answer(testID(1), "agt-a", true, ViaCLI); !errors.Is(err, injected) || errors.Is(err, ErrAudit) {
+		t.Fatalf("answer err = %v, want the record write failure", err)
+	}
+	assertStillWaiting(t, store, testID(1))
+	if got := auditLinesFor(t, store, AuditAllowed, testID(1)); got != 1 {
+		t.Fatalf("allowed lines = %d, want the one written ahead", got)
+	}
+
+	if _, err := store.Answer(testID(1), "agt-a", true, ViaCLI); err != nil {
+		t.Fatal(err)
+	}
+	if record, _, _ := store.Get(testID(1)); record.State != StateAllowed {
+		t.Fatalf("record = %+v, want allowed", record)
+	}
+	if got := auditLinesFor(t, store, AuditAllowed, testID(1)); got != 2 {
+		t.Fatalf("allowed lines = %d, want the uncommitted one and the committed one", got)
+	}
+}
