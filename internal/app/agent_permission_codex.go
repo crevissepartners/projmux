@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -81,8 +82,11 @@ func codexPermissionAuditReason(decision codexappserver.ApprovalDecision) string
 //  4. the allowed or denied audit line is appended, with the decision to be
 //     sent in Reason as "decision=<value>"; if that fails nothing is sent and
 //     the request is still waiting.
-//  5. exactly one approval-review call sends the decision. If it fails the
-//     line stays: the log may over-report an answer, never under-report one.
+//  5. exactly one approval-review call sends the decision. If it fails and
+//     codexReviewNotDelivered confirms the decision never reached Codex, an
+//     uncommitted line (send-failed) follows the answer line. Any other
+//     failure leaves the line alone, since Codex may have taken the decision:
+//     the log may over-report an answer, never under-report one.
 //
 // The answer line names the decision sent and, for a deny, whether the turn
 // continues (decline) or stops (cancel).
@@ -132,21 +136,32 @@ func (c *agentCommand) codexPermissionApproval(request agentPermissionRequest, r
 	if err != nil {
 		return fmt.Errorf("%s: %w; approval request %q is still waiting", request.spelling, err, request.requestID)
 	}
-	if err := store.AppendAnswerAudit(agentapproval.AuditLine{
+	line := agentapproval.AuditLine{
 		Event: event, RequestID: pending.RequestID, AgentUID: agent.Metadata.UID, PaneUID: binding.Identity.PaneUID,
 		ToolName: string(pending.Kind), Input: codexPermissionSummary(pending), Via: request.via, Reason: codexPermissionAuditReason(decision),
-	}); err != nil {
+	}
+	if err := store.AppendAnswerAudit(line); err != nil {
 		return fmt.Errorf("%s: %w; approval request %q is still waiting", request.spelling, err, request.requestID)
 	}
-	// The line is on disk. From here a failed send leaves it in place: the
-	// provider may or may not have taken the decision, and the log errs on
-	// the side of recording an answer that did not land.
-	reviewed, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpReview, RequestKey: pending.RequestID, Decision: string(decision)})
-	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
+	// The line is on disk. A failed send is compensated with an uncommitted
+	// line only when the decision is confirmed not to have reached Codex;
+	// otherwise the provider may or may not have taken it, and the line stays
+	// alone, erring on the side of recording an answer that did not land.
+	reviewed, callErr := c.callControl(binding, agentControlRequest{Operation: agentControlOpReview, RequestKey: pending.RequestID, Decision: string(decision)})
+	err = callErr
+	if err == nil {
+		if refusal := reviewed.Error(); refusal != nil {
+			err = addOpenCodexBindingRecovery(refusal, binding)
+		}
 	}
-	if err := reviewed.Error(); err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, addOpenCodexBindingRecovery(err, binding))
+	if err != nil {
+		if !codexReviewNotDelivered(callErr, reviewed) {
+			return fmt.Errorf("%s: %w; the decision may or may not have reached Codex", request.spelling, err)
+		}
+		if auditErr := store.AppendUncommittedAudit(line, agentapproval.UncommittedSendFailed); auditErr != nil {
+			return fmt.Errorf("%s: %w; the decision did not reach Codex, so the answer did not take effect, but the audit log keeps its %s line: %w", request.spelling, err, event, auditErr)
+		}
+		return fmt.Errorf("%s: %w; the decision did not reach Codex, so the answer did not take effect; its %s audit line is followed by an uncommitted line", request.spelling, err, event)
 	}
 	detail := "decision " + string(decision)
 	if effect := codexPermissionDecisionEffect(decision); effect != "" {
@@ -154,6 +169,40 @@ func (c *agentCommand) codexPermissionApproval(request agentPermissionRequest, r
 	}
 	_, err = fmt.Fprintf(stdout, "%s %s for agent/%s (%s)\n", pending.RequestID, word, agent.Metadata.Name, detail)
 	return err
+}
+
+// codexReviewNotDelivered reports whether a failed approval-review call is
+// confirmed not to have delivered the decision to Codex: callErr is the
+// callControl error, and reviewed its response when callErr is nil.
+//
+// A transport error is confirmed only when no request reached the control
+// server: the consumer fence refusal (*exactAgentControlBindingError from
+// revalidateControlConsumerFence, returned before the transport is called),
+// or a callCodexControl failure marked errAgentControlNotSent (socket path,
+// dial, or request frame, all before the first byte is written). A failed
+// write or read may have reached the server.
+//
+// A refusal is confirmed only for codes returned before the claim in
+// codexControlEpoch.review (delete(e.pending, ...)) and so before
+// RespondServerRequest: Handle's preamble refuses stale-epoch, stale-binding,
+// and unavailable; the server refuses a malformed request frame as
+// invalid-frame without calling Handle; review refuses ambiguous-request and
+// unsafe-decision before the claim. response-indeterminate, timeout,
+// response-too-large, and any unknown code may follow the send.
+func codexReviewNotDelivered(callErr error, reviewed agentControlResponse) bool {
+	if callErr != nil {
+		var fence *exactAgentControlBindingError
+		return errors.As(callErr, &fence) || errors.Is(callErr, errAgentControlNotSent)
+	}
+	if reviewed.OK {
+		return false
+	}
+	switch reviewed.Code {
+	case "stale-epoch", "stale-binding", "unavailable", "invalid-frame", "ambiguous-request", "unsafe-decision":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *agentCommand) listCodexPermissionRequests(request agentPermissionRequest, agent coremetadata.Agent, answering config.AgentApprovalAnswering, approvals []agentPendingApproval, stdout io.Writer) error {

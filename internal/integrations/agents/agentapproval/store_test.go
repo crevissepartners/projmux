@@ -624,34 +624,117 @@ func TestStoreAnswerAtTheAuditRotationBoundary(t *testing.T) {
 	})
 }
 
-// TestStoreAnswerRecordWriteFailureKeepsTheWrittenLine holds the accepted
-// over-report: the allowed line is written first, the record write then fails,
-// so the answer fails, the record stays waiting, and the log keeps exactly that
-// one line. A later answer lands normally with its own line.
+// TestStoreAnswerRecordWriteFailureKeepsTheWrittenLine holds the
+// compensation for both verdicts: the answer line is written first, the
+// record write then fails before it commits, so the answer fails with
+// ErrNotCommitted, the record stays waiting, and an uncommitted line
+// (record-write-failed) with the same identity follows the answer line. A
+// later answer lands normally with its own line and nothing after it.
 func TestStoreAnswerRecordWriteFailureKeepsTheWrittenLine(t *testing.T) {
+	t.Parallel()
+
+	for _, allow := range []bool{true, false} {
+		event, state := AuditDenied, StateDenied
+		if allow {
+			event, state = AuditAllowed, StateAllowed
+		}
+		t.Run(event, func(t *testing.T) {
+			t.Parallel()
+			store, clock := newTestStore(t)
+			createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
+			clock.Advance(time.Second)
+			injected := errors.New("injected record write failure")
+			failing := *store
+			failing.writeHook = func() error {
+				clock.Advance(time.Second)
+				return injected
+			}
+			_, err := failing.Answer(testID(1), "agt-a", allow, ViaPopup)
+			if !errors.Is(err, injected) || !errors.Is(err, ErrNotCommitted) || errors.Is(err, ErrAudit) || errors.Is(err, ErrUncommittedAudit) {
+				t.Fatalf("answer err = %v, want ErrNotCommitted wrapping the record write failure", err)
+			}
+			assertStillWaiting(t, store, testID(1))
+			lines := readAudit(t, store.AuditPath())
+			if got := strings.Join(auditEvents(lines), ","); got != AuditRequested+","+event+","+AuditUncommitted {
+				t.Fatalf("audit events = %s", got)
+			}
+			answer, uncommitted := lines[1], lines[2]
+			if uncommitted.Reason != UncommittedRecordWriteFailed || uncommitted.RequestID != testID(1) ||
+				uncommitted.AgentUID != answer.AgentUID || uncommitted.PaneUID != "pan-agt-a" || uncommitted.SessionID != "sess-1" ||
+				uncommitted.ToolName != "Bash" || uncommitted.Input != answer.Input || uncommitted.Via != ViaPopup ||
+				!uncommitted.RequestedAt.Equal(answer.RequestedAt) || !uncommitted.DecidedAt.IsZero() ||
+				!uncommitted.At.Equal(storeTestEpoch.Add(2*time.Second)) || uncommitted.At.Location() != time.UTC {
+				t.Fatalf("uncommitted line = %+v after %+v", uncommitted, answer)
+			}
+
+			answered, err := store.Answer(testID(1), "agt-a", allow, ViaCLI)
+			if err != nil || answered.State != state {
+				t.Fatalf("retry = %+v, %v", answered, err)
+			}
+			lines = readAudit(t, store.AuditPath())
+			if got := strings.Join(auditEvents(lines), ","); got != AuditRequested+","+event+","+AuditUncommitted+","+event {
+				t.Fatalf("audit events after retry = %s", got)
+			}
+			if got := auditLinesFor(t, store, AuditUncommitted, testID(1)); got != 1 {
+				t.Fatalf("uncommitted lines = %d, want only the first answer's", got)
+			}
+		})
+	}
+}
+
+// A record write that fails after the new file was renamed into place
+// committed the answer: the error is returned as before, the record is
+// settled, and no uncommitted line is written.
+func TestStoreAnswerFailureAfterCommitWritesNoUncommittedLine(t *testing.T) {
 	t.Parallel()
 
 	store, clock := newTestStore(t)
 	createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
-	injected := errors.New("injected record write failure")
+	injected := errors.New("injected failure after the rename")
 	failing := *store
-	failing.writeHook = func() error { return injected }
-	if _, err := failing.Answer(testID(1), "agt-a", true, ViaCLI); !errors.Is(err, injected) || errors.Is(err, ErrAudit) {
-		t.Fatalf("answer err = %v, want the record write failure", err)
-	}
-	assertStillWaiting(t, store, testID(1))
-	if got := auditLinesFor(t, store, AuditAllowed, testID(1)); got != 1 {
-		t.Fatalf("allowed lines = %d, want the one written ahead", got)
-	}
-
-	if _, err := store.Answer(testID(1), "agt-a", true, ViaCLI); err != nil {
-		t.Fatal(err)
+	failing.afterCommitHook = func() error { return injected }
+	_, err := failing.Answer(testID(1), "agt-a", true, ViaCLI)
+	if !errors.Is(err, injected) || errors.Is(err, ErrNotCommitted) || errors.Is(err, ErrUncommittedAudit) || errors.Is(err, ErrAudit) {
+		t.Fatalf("answer err = %v, want the bare post-commit failure", err)
 	}
 	if record, _, _ := store.Get(testID(1)); record.State != StateAllowed {
 		t.Fatalf("record = %+v, want allowed", record)
 	}
-	if got := auditLinesFor(t, store, AuditAllowed, testID(1)); got != 2 {
-		t.Fatalf("allowed lines = %d, want the uncommitted one and the committed one", got)
+	if got := strings.Join(auditEvents(readAudit(t, store.AuditPath())), ","); got != AuditRequested+","+AuditAllowed {
+		t.Fatalf("audit events = %s, want no uncommitted line", got)
+	}
+}
+
+// When the record write fails before it commits and the uncommitted line
+// cannot be appended either, the answer error wraps ErrNotCommitted and
+// ErrUncommittedAudit naming the log, the record stays waiting, and the log
+// keeps the answer line alone.
+func TestStoreAnswerUncommittedLineFailure(t *testing.T) {
+	t.Parallel()
+
+	store, clock := newTestStore(t)
+	createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
+	kept := store.AuditPath() + ".kept"
+	failing := *store
+	failing.writeHook = func() error {
+		if err := os.Rename(store.AuditPath(), kept); err != nil {
+			t.Error(err)
+		}
+		if err := os.Mkdir(store.AuditPath(), 0o700); err != nil {
+			t.Error(err)
+		}
+		return errors.New("injected record write failure")
+	}
+	_, err := failing.Answer(testID(1), "agt-a", false, ViaCLI)
+	if !errors.Is(err, ErrNotCommitted) || !errors.Is(err, ErrUncommittedAudit) || errors.Is(err, ErrAudit) || !strings.Contains(err.Error(), store.AuditPath()) {
+		t.Fatalf("answer err = %v, want ErrNotCommitted and ErrUncommittedAudit naming %s", err, store.AuditPath())
+	}
+	assertStillWaiting(t, store, testID(1))
+	if entries, _ := os.ReadDir(store.AuditPath()); len(entries) != 0 {
+		t.Fatalf("a line landed inside the audit directory: %v", entries)
+	}
+	if got := strings.Join(auditEvents(readAudit(t, kept)), ","); got != AuditRequested+","+AuditDenied {
+		t.Fatalf("audit events = %s, want the denied line with nothing after it", got)
 	}
 }
 
@@ -697,5 +780,56 @@ func TestStoreAppendAnswerAuditWritesOneBoundedLine(t *testing.T) {
 	err := blocked.AppendAnswerAudit(AuditLine{Event: AuditAllowed, RequestID: "9", ToolName: "command"})
 	if err == nil || !errors.Is(err, ErrAudit) || !strings.Contains(err.Error(), blocked.AuditPath()) {
 		t.Fatalf("blocked err = %v, want ErrAudit naming %s", err, blocked.AuditPath())
+	}
+}
+
+// The uncommitted line of a provider-held answer carries the answer line's
+// identity bounded exactly as AppendAnswerAudit bounds it, the reason, the
+// store clock, and no DecidedAt. A non-answer line is refused without a write,
+// and a line that cannot be written wraps ErrUncommittedAudit, never ErrAudit,
+// and names the log.
+func TestStoreAppendUncommittedAuditFollowsTheAnswerLine(t *testing.T) {
+	t.Parallel()
+
+	store, clock := newTestStore(t)
+	longID := strings.Repeat("7", 300)
+	answer := AuditLine{
+		Event: AuditAllowed, RequestID: longID, AgentUID: "agt-a", PaneUID: "pan-a", ToolName: "command",
+		Input: "make\ntest " + strings.Repeat("x", 3*MaxInputSummaryRunes), Via: ViaWeb, Reason: "decision=accept",
+	}
+	if err := store.AppendAnswerAudit(answer); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Second)
+	if err := store.AppendUncommittedAudit(answer, UncommittedSendFailed); err != nil {
+		t.Fatal(err)
+	}
+	lines := readAudit(t, store.AuditPath())
+	if got := strings.Join(auditEvents(lines), ","); got != AuditAllowed+","+AuditUncommitted {
+		t.Fatalf("events = %s", got)
+	}
+	first, second := lines[0], lines[1]
+	if second.RequestID != first.RequestID || utf8.RuneCountInString(second.RequestID) != 128 || second.AgentUID != "agt-a" || second.PaneUID != "pan-a" ||
+		second.ToolName != "command" || second.Input != first.Input || second.Via != ViaWeb || second.Reason != UncommittedSendFailed ||
+		!second.DecidedAt.IsZero() || !second.At.Equal(storeTestEpoch.Add(time.Second)) || !second.RequestedAt.IsZero() {
+		t.Fatalf("uncommitted line = %+v after %+v", second, first)
+	}
+
+	for _, event := range []string{AuditRequested, AuditRefused, AuditUncommitted, ""} {
+		if err := store.AppendUncommittedAudit(AuditLine{Event: event, RequestID: "8"}, UncommittedSendFailed); err == nil || errors.Is(err, ErrUncommittedAudit) || errors.Is(err, ErrAudit) {
+			t.Fatalf("event %q err = %v, want a non-audit refusal", event, err)
+		}
+	}
+	if got := len(readAudit(t, store.AuditPath())); got != 2 {
+		t.Fatalf("a refused line was written: %d lines", got)
+	}
+
+	blocked, _ := newTestStore(t)
+	if err := os.MkdirAll(blocked.AuditPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := blocked.AppendUncommittedAudit(AuditLine{Event: AuditDenied, RequestID: "9", ToolName: "command"}, UncommittedSendFailed)
+	if !errors.Is(err, ErrUncommittedAudit) || errors.Is(err, ErrAudit) || !strings.Contains(err.Error(), blocked.AuditPath()) {
+		t.Fatalf("blocked err = %v, want ErrUncommittedAudit naming %s", err, blocked.AuditPath())
 	}
 }

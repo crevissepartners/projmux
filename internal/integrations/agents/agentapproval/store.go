@@ -103,6 +103,14 @@ var (
 	// ErrAudit is an answer refused because its allowed or denied line could
 	// not be appended to the audit log; the record was not written.
 	ErrAudit = errors.New("could not write the agent approval audit log")
+	// ErrNotCommitted is an answer whose allowed or denied line was written
+	// but which then did not take effect: the record write failed before it
+	// committed, so the request is still waiting.
+	ErrNotCommitted = errors.New("the answer did not take effect")
+	// ErrUncommittedAudit is an uncommitted line that could not be appended:
+	// the log keeps an allowed or denied line for an answer that did not take
+	// effect, with nothing after it to say so.
+	ErrUncommittedAudit = errors.New("could not write the uncommitted audit line")
 )
 
 var idPattern = regexp.MustCompile(`^permission-[0-9a-f]{16}$`)
@@ -162,6 +170,9 @@ type Store struct {
 	// writeHook, when set by an in-package test, fails a record write before
 	// it touches the file.
 	writeHook func() error
+	// afterCommitHook, when set by an in-package test, fails a record write
+	// after the new file was renamed into place.
+	afterCommitHook func() error
 }
 
 // NewStore opens the store under stateDir. Nothing is touched until the first
@@ -315,10 +326,18 @@ func (s *Store) List(agentUID string) ([]Record, error) {
 //
 // The allowed or denied line is appended and synced before the record is
 // written, so no answer takes effect without its line. When the line cannot be
-// appended the record stays waiting and the error wraps ErrAudit. When the line
-// was appended but the record write then fails, the answer fails too and the
-// log keeps a line for an answer that did not take effect: the log may
-// over-report an answer, never under-report one.
+// appended the record stays waiting and the error wraps ErrAudit.
+//
+// When the line was appended but the record write then fails before the new
+// file is renamed into place, the answer did not take effect and the record
+// stays waiting: an uncommitted line with reason UncommittedRecordWriteFailed
+// follows the answer line under the same lock, and the error wraps
+// ErrNotCommitted and the write failure. When that uncommitted line cannot be
+// appended either, the error also wraps ErrUncommittedAudit and names the log,
+// which then keeps a line for an answer that did not take effect. A failure
+// after the rename returns the error with no uncommitted line: the record is
+// committed and the hook acts on it. The log may over-report an answer, never
+// under-report one.
 func (s *Store) Answer(id, agentUID string, allow bool, via string) (Record, error) {
 	var out Record
 	err := s.withLock(func() error {
@@ -352,11 +371,19 @@ func (s *Store) Answer(id, agentUID string, allow bool, via string) (Record, err
 			return err
 		}
 		state.Records = records
-		if err := s.appendAuditLocked(auditLine(event, record, now)); err != nil {
+		line := auditLine(event, record, now)
+		if err := s.appendAuditLocked(line); err != nil {
 			return fmt.Errorf("%w: %s: %w", ErrAudit, s.auditPath, err)
 		}
-		if err := s.writeLocked(state); err != nil {
+		committed, err := s.writeLockedCommit(state)
+		if err != nil && committed {
 			return err
+		}
+		if err != nil {
+			if auditErr := s.appendAuditLocked(uncommittedLine(line, UncommittedRecordWriteFailed, s.clock())); auditErr != nil {
+				return fmt.Errorf("%w: %w; %w: %s: %w", ErrNotCommitted, err, ErrUncommittedAudit, s.auditPath, auditErr)
+			}
+			return fmt.Errorf("%w: %w", ErrNotCommitted, err)
 		}
 		out = record
 		return nil
@@ -385,17 +412,46 @@ func (s *Store) AppendAnswerAudit(line AuditLine) error {
 		return fmt.Errorf("%w: agent approval store path is empty", ErrAudit)
 	}
 	now := s.clock()
+	line = boundAnswerLine(line)
+	line.DecidedAt, line.At = now, now
+	if err := s.withLock(func() error { return s.appendAuditLocked(line) }); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrAudit, s.auditPath, err)
+	}
+	return nil
+}
+
+// AppendUncommittedAudit appends the uncommitted line that follows an answer
+// line AppendAnswerAudit wrote, once the caller confirmed that answer did not
+// take effect; reason says how, such as UncommittedSendFailed. line is the
+// answer line as it was passed to AppendAnswerAudit: it is bounded the same
+// way, so both lines carry the same request id, and it must be an allowed or
+// denied line. The caller never calls it when the outcome is unknown. Any
+// failure to put the line on disk wraps ErrUncommittedAudit and names the
+// audit log.
+func (s *Store) AppendUncommittedAudit(line AuditLine, reason string) error {
+	if line.Event != AuditAllowed && line.Event != AuditDenied {
+		return fmt.Errorf("agent approval audit: event %q is not an answer", line.Event)
+	}
+	if s == nil || s.path == "" {
+		return fmt.Errorf("%w: agent approval store path is empty", ErrUncommittedAudit)
+	}
+	line = uncommittedLine(boundAnswerLine(line), boundedLine(reason, 64), s.clock())
+	if err := s.withLock(func() error { return s.appendAuditLocked(line) }); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrUncommittedAudit, s.auditPath, err)
+	}
+	return nil
+}
+
+// boundAnswerLine bounds the caller-supplied fields of a provider-held answer
+// line to one line each.
+func boundAnswerLine(line AuditLine) AuditLine {
 	line.RequestID = boundedLine(line.RequestID, 128)
 	line.AgentType = boundedLine(line.AgentType, 64)
 	line.ToolName = boundedLine(line.ToolName, 128)
 	line.Input = boundedLine(line.Input, MaxInputSummaryRunes)
 	line.Via = boundedLine(line.Via, 16)
 	line.Reason = boundedLine(line.Reason, 64)
-	line.DecidedAt, line.At = now, now
-	if err := s.withLock(func() error { return s.appendAuditLocked(line) }); err != nil {
-		return fmt.Errorf("%w: %s: %w", ErrAudit, s.auditPath, err)
-	}
-	return nil
+	return line
 }
 
 // refusalFor maps a record that cannot take an answer to its error.
@@ -724,9 +780,17 @@ func decodeState(data []byte) (diskState, error) {
 }
 
 func (s *Store) writeLocked(state diskState) error {
+	_, err := s.writeLockedCommit(state)
+	return err
+}
+
+// writeLockedCommit replaces the store file and reports whether the new file
+// was renamed into place: an error with committed false left the old file,
+// and one with committed true came after the new file took its place.
+func (s *Store) writeLockedCommit(state diskState) (committed bool, err error) {
 	if s.writeHook != nil {
 		if err := s.writeHook(); err != nil {
-			return err
+			return false, err
 		}
 	}
 	state.Version = storeVersion
@@ -735,19 +799,18 @@ func (s *Store) writeLocked(state diskState) error {
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
-		return err
+		return false, err
 	}
 	data = append(data, '\n')
 	if len(data) > maxStoreBytes || len(state.Records) > maxRecords {
-		return ErrCapacity
+		return false, ErrCapacity
 	}
 	dir := filepath.Dir(s.path)
 	tmp, err := os.CreateTemp(dir, ".requests.tmp-*")
 	if err != nil {
-		return err
+		return false, err
 	}
 	tmpPath := tmp.Name()
-	committed := false
 	defer func() {
 		_ = tmp.Close()
 		if !committed {
@@ -755,23 +818,28 @@ func (s *Store) writeLocked(state diskState) error {
 		}
 	}()
 	if err := tmp.Chmod(localstate.PrivateFileMode); err != nil {
-		return err
+		return false, err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		return err
+		return false, err
 	}
 	if err := tmp.Sync(); err != nil {
-		return err
+		return false, err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return false, err
 	}
 	if err := os.Rename(tmpPath, s.path); err != nil {
-		return err
+		return false, err
 	}
 	committed = true
 	localstate.RepairPrivateFile(s.path)
-	return syncDir(dir)
+	if s.afterCommitHook != nil {
+		if err := s.afterCommitHook(); err != nil {
+			return true, err
+		}
+	}
+	return true, syncDir(dir)
 }
 
 // syncDir makes a renamed directory entry durable. A filesystem that refuses

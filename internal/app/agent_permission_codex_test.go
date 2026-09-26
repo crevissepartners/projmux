@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -412,12 +413,16 @@ func TestAgentApprovalCodexAnswerAuditsBeforeTheReview(t *testing.T) {
 	}{
 		{name: "review transport failure keeps the line", err: errors.New("broker went away")},
 		{name: "review refusal keeps the line", response: &agentControlResponse{OK: false, Code: "approval-stale", Message: "request already resolved"}},
+		{name: "indeterminate response keeps the line", response: &agentControlResponse{OK: false, Code: "response-indeterminate", Message: "native Codex control refused the exact request"}},
+		{name: "timeout keeps the line", response: &agentControlResponse{OK: false, Code: "timeout", Message: "native Codex control timed out"}},
+		{name: "oversized response keeps the line", response: &agentControlResponse{OK: false, Code: "response-too-large", Message: "exact Agent control detail is too large to display safely"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newCodexPermissionFixture(t, config.AgentApprovalAnsweringProjmux, codexCommandApproval("7"))
 			f.reviewErr, f.reviewResponse = test.err, test.response
 			stdout, _, err := runRoute(t, f.command, "approval", "answer", codexPermissionAgentRef, "7", "--allow")
-			if stdout != "" || err == nil || publicRouteArgvExitCode(err) == 0 || !strings.Contains(err.Error(), "projmux focus pane uid:pan-alpha-codex") {
+			if stdout != "" || err == nil || publicRouteArgvExitCode(err) == 0 || !strings.Contains(err.Error(), "projmux focus pane uid:pan-alpha-codex") ||
+				!strings.Contains(err.Error(), "may or may not have reached Codex") || strings.Contains(err.Error(), "uncommitted") {
 				t.Fatalf("answer = %q, %v", stdout, err)
 			}
 			if len(f.reviews()) != 1 {
@@ -426,7 +431,154 @@ func TestAgentApprovalCodexAnswerAuditsBeforeTheReview(t *testing.T) {
 			if n := permissionAuditCount(t, f.approvals, agentapproval.AuditAllowed, "7"); n != 1 {
 				t.Fatalf("allowed lines = %d, want the write-ahead line to stay", n)
 			}
+			if n := permissionAuditCount(t, f.approvals, agentapproval.AuditUncommitted, "7"); n != 0 {
+				t.Fatalf("uncommitted lines = %d, want none for an outcome that may have reached Codex", n)
+			}
 		})
+	}
+}
+
+// 7. A review failure confirmed not to have delivered the decision (a request
+// that never left projmux, or a refusal before the server claims the
+// approval) follows the answer line with an uncommitted send-failed line for
+// the same request id and says the answer did not take effect.
+func TestAgentApprovalCodexAnswerCompensatesAConfirmedUndeliveredDecision(t *testing.T) {
+	t.Parallel()
+
+	notSent := agentControlNotSent(errors.New("native Codex control endpoint unavailable: dial unix: connect: no such file or directory"))
+	for _, test := range []struct {
+		name     string
+		err      error
+		response *agentControlResponse
+	}{
+		{name: "request not sent", err: notSent},
+		{name: "stale epoch", response: &agentControlResponse{Code: "stale-epoch", Message: "exact Agent connection epoch is no longer active"}},
+		{name: "stale binding", response: &agentControlResponse{Code: "stale-binding", Message: "exact Agent binding or activation generation changed"}},
+		{name: "unavailable", response: &agentControlResponse{Code: "unavailable", Message: "native Codex control connection is unavailable"}},
+		{name: "invalid frame", response: &agentControlResponse{Code: "invalid-frame", Message: "exact Agent control request was malformed"}},
+		{name: "ambiguous request", response: &agentControlResponse{Code: "ambiguous-request", Message: "pending request identity is missing, resolved, or ambiguous"}},
+		{name: "unsafe decision", response: &agentControlResponse{Code: "unsafe-decision", Message: "decision is not a safe one-shot option for this request"}},
+	} {
+		for _, flag := range []string{"--allow", "--deny"} {
+			t.Run(test.name+flag, func(t *testing.T) {
+				f := newCodexPermissionFixture(t, config.AgentApprovalAnsweringProjmux, codexCommandApproval("7"))
+				f.reviewErr, f.reviewResponse = test.err, test.response
+				event, reason := agentapproval.AuditAllowed, "decision=accept"
+				if flag == "--deny" {
+					event, reason = agentapproval.AuditDenied, "decision=decline"
+				}
+				stdout, _, err := runRoute(t, f.command, "approval", "answer", codexPermissionAgentRef, "7", flag, "--via", "popup")
+				if stdout != "" || err == nil || publicRouteArgvExitCode(err) == 0 || !strings.Contains(err.Error(), "projmux focus pane uid:pan-alpha-codex") ||
+					!strings.Contains(err.Error(), "the decision did not reach Codex, so the answer did not take effect; its "+event+" audit line is followed by an uncommitted line") {
+					t.Fatalf("answer = %q, %v", stdout, err)
+				}
+				if len(f.reviews()) != 1 {
+					t.Fatalf("reviews = %+v", f.reviews())
+				}
+				lines := readPermissionAudit(t, f.approvals)
+				if len(lines) != 2 || lines[0].Event != event || lines[1].Event != agentapproval.AuditUncommitted {
+					t.Fatalf("audit = %+v", lines)
+				}
+				answer, uncommitted := lines[0], lines[1]
+				if uncommitted.RequestID != "7" || uncommitted.Reason != agentapproval.UncommittedSendFailed || uncommitted.AgentUID != answer.AgentUID ||
+					uncommitted.PaneUID != "pan-alpha-codex" || uncommitted.ToolName != "command" || uncommitted.Input != "make test" ||
+					uncommitted.Via != agentapproval.ViaPopup || !uncommitted.DecidedAt.IsZero() || uncommitted.At.IsZero() || answer.Reason != reason {
+					t.Fatalf("uncommitted line = %+v after %+v", uncommitted, answer)
+				}
+			})
+		}
+	}
+}
+
+// 8. When the uncommitted line of a confirmed undelivered decision cannot be
+// written, the answer still fails and says the audit log keeps its allowed
+// line for an answer that did not take effect, and why.
+func TestAgentApprovalCodexAnswerReportsAnUnwrittenUncommittedLine(t *testing.T) {
+	t.Parallel()
+
+	f := newCodexPermissionFixture(t, config.AgentApprovalAnsweringProjmux, codexCommandApproval("7"))
+	f.reviewResponse = &agentControlResponse{Code: "stale-binding", Message: "exact Agent binding or activation generation changed"}
+	kept := f.approvals.AuditPath() + ".kept"
+	f.onReview = func(agentControlRequest) {
+		if err := os.Rename(f.approvals.AuditPath(), kept); err != nil {
+			t.Error(err)
+		}
+		blockPermissionAudit(t, f.approvals)
+	}
+	stdout, _, err := runRoute(t, f.command, "approval", "answer", codexPermissionAgentRef, "7", "--allow")
+	if stdout != "" || err == nil || publicRouteArgvExitCode(err) == 0 || !errors.Is(err, agentapproval.ErrUncommittedAudit) ||
+		!strings.Contains(err.Error(), "the decision did not reach Codex, so the answer did not take effect, but the audit log keeps its allowed line: could not write the uncommitted audit line: "+f.approvals.AuditPath()) {
+		t.Fatalf("answer = %q, %v", stdout, err)
+	}
+	file, readErr := os.ReadFile(kept)
+	if readErr != nil || strings.Count(string(file), "\n") != 1 || !strings.Contains(string(file), `"event":"allowed"`) {
+		t.Fatalf("kept audit = %q, %v; want the allowed line alone", file, readErr)
+	}
+	if entries, _ := os.ReadDir(f.approvals.AuditPath()); len(entries) != 0 {
+		t.Fatalf("a line landed inside the audit directory: %v", entries)
+	}
+}
+
+// 9. A successful answer writes no uncommitted line.
+func TestAgentApprovalCodexAnswerSuccessWritesNoUncommittedLine(t *testing.T) {
+	t.Parallel()
+
+	f := newCodexPermissionFixture(t, config.AgentApprovalAnsweringProjmux, codexCommandApproval("7"))
+	if _, _, err := runRoute(t, f.command, "approval", "answer", codexPermissionAgentRef, "7", "--allow"); err != nil {
+		t.Fatal(err)
+	}
+	if n := permissionAuditCount(t, f.approvals, agentapproval.AuditUncommitted, "7"); n != 0 {
+		t.Fatalf("uncommitted lines = %d", n)
+	}
+}
+
+// codexReviewNotDelivered confirms the consumer fence refusal, which is
+// returned before the transport is called, through callControl's wrapping.
+func TestAgentApprovalCodexReviewNotDeliveredClassifiesTheFenceAndTransport(t *testing.T) {
+	t.Parallel()
+
+	binding := exactAgentControlBinding{Identity: phase6CLIIdentity(), ProjectUID: "prj", WindowUID: "win"}
+	fence := addOpenCodexBindingRecovery(&exactAgentControlBindingError{Reason: "canonical generation consumer fence is stale"}, binding)
+	notSent := addOpenCodexBindingRecovery(fmt.Errorf("exact Agent native control unavailable: %w", agentControlNotSent(errors.New("dial failed"))), binding)
+	written := addOpenCodexBindingRecovery(fmt.Errorf("exact Agent native control unavailable: %w", errors.New("write native Codex control request: broken pipe")), binding)
+	for _, test := range []struct {
+		name     string
+		err      error
+		response agentControlResponse
+		want     bool
+	}{
+		{name: "fence", err: fence, want: true},
+		{name: "not sent", err: notSent, want: true},
+		{name: "write failed", err: written},
+		{name: "ok", response: agentControlResponse{OK: true}},
+		{name: "unknown code", response: agentControlResponse{Code: "approval-stale"}},
+		{name: "empty code", response: agentControlResponse{}},
+	} {
+		if got := codexReviewNotDelivered(test.err, test.response); got != test.want {
+			t.Errorf("%s: codexReviewNotDelivered = %t, want %t", test.name, got, test.want)
+		}
+	}
+}
+
+// callCodexControl marks a dial failure and a socket path failure as not
+// sent and keeps their text.
+func TestCallCodexControlMarksADialFailureNotSent(t *testing.T) {
+	t.Parallel()
+
+	// A short root keeps the socket path under the platform bound, so the
+	// dial itself is what fails: no server listens there.
+	shortRoot, err := os.MkdirTemp("/tmp", "pmx-ns-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(shortRoot) })
+	_, err = callCodexControl(context.Background(), shortRoot, phase6CLIEndpoint(), phase6CLIIdentity(), agentControlRequest{Operation: agentControlOpApprovals})
+	if !errors.Is(err, errAgentControlNotSent) || !strings.HasPrefix(err.Error(), "native Codex control endpoint unavailable: ") {
+		t.Fatalf("err = %v, want a not-sent dial failure", err)
+	}
+	_, err = callCodexControl(context.Background(), "relative", phase6CLIEndpoint(), phase6CLIIdentity(), agentControlRequest{Operation: agentControlOpApprovals})
+	if !errors.Is(err, errAgentControlNotSent) || err.Error() != "exact Agent control requires an absolute state directory and durable endpoint/thread identity" {
+		t.Fatalf("err = %v, want a not-sent socket path failure", err)
 	}
 }
 

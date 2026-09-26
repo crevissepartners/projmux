@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1124,5 +1125,48 @@ func TestClaudePermissionHookRouteSkipsAutomaticHookMigration(t *testing.T) {
 	}
 	if !shouldRunLegacyHookMigrations([]string{"agent", "approval", "review", "uid:agt-1"}) {
 		t.Error("agent approval review stopped running the hook migration it ran before")
+	}
+}
+
+// A Claude answer that wrote its line but did not take effect is reported as
+// such: with its uncommitted line written, or with the log keeping the answer
+// line alone when that line could not be written. The request is still
+// waiting either way. The store's own record-write fault seam is not exported,
+// so the errors are spelled here as Answer wraps them.
+func TestClaudePermissionAnswerErrorNamesAnUncommittedAnswer(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("rename requests.json: no space left on device")
+	auditCause := errors.New("open audit.jsonl: is a directory")
+	for _, test := range []struct {
+		name  string
+		allow bool
+		err   error
+		want  string
+	}{
+		{
+			name: "compensated allow", allow: true, err: fmt.Errorf("%w: %w", agentapproval.ErrNotCommitted, cause),
+			want: `agent approval answer: the answer did not take effect: rename requests.json: no space left on device; permission request "permission-0000000000000001" is still waiting; its allowed audit line is followed by an uncommitted line`,
+		},
+		{
+			name: "compensated deny", err: fmt.Errorf("%w: %w", agentapproval.ErrNotCommitted, cause),
+			want: `agent approval answer: the answer did not take effect: rename requests.json: no space left on device; permission request "permission-0000000000000001" is still waiting; its denied audit line is followed by an uncommitted line`,
+		},
+		{
+			name: "compensation failed", allow: true,
+			err: fmt.Errorf("%w: %w; %w: %s: %w", agentapproval.ErrNotCommitted, cause, agentapproval.ErrUncommittedAudit, "/state/audit.jsonl", auditCause),
+			want: `agent approval answer: the answer did not take effect: rename requests.json: no space left on device; could not write the uncommitted audit line: /state/audit.jsonl: open audit.jsonl: is a directory; ` +
+				`permission request "permission-0000000000000001" is still waiting, and the audit log keeps its allowed line for this answer that did not take effect`,
+		},
+		{
+			name: "audit line not written", allow: true, err: fmt.Errorf("%w: %s: %w", agentapproval.ErrAudit, "/state/audit.jsonl", auditCause),
+			want: `agent approval answer: could not write the agent approval audit log: /state/audit.jsonl: open audit.jsonl: is a directory; permission request "permission-0000000000000001" is still waiting`,
+		},
+	} {
+		request := agentPermissionRequest{spelling: "agent approval answer", requestID: "permission-0000000000000001", allow: test.allow}
+		err := permissionAnswerError(request, test.err)
+		if err == nil || err.Error() != test.want || !errors.Is(err, test.err) {
+			t.Errorf("%s:\n got %v\nwant %s", test.name, err, test.want)
+		}
 	}
 }

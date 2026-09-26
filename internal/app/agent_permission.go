@@ -297,13 +297,32 @@ func (c *agentCommand) answerPermissionRequest(request agentPermissionRequest, a
 		if reason, detail := permissionStoreRefusal(err); reason != "" {
 			return refuse(reason, fmt.Sprintf("permission request %q %s", request.requestID, detail))
 		}
-		if errors.Is(err, agentapproval.ErrAudit) {
-			return fmt.Errorf("%s: %w; permission request %q is still waiting", request.spelling, err, request.requestID)
-		}
-		return fmt.Errorf("%s: %w", request.spelling, err)
+		return permissionAnswerError(request, err)
 	}
 	_, err = fmt.Fprintf(stdout, "%s %s for agent/%s\n", answered.ID, answered.State, agent.Metadata.Name)
 	return err
+}
+
+// permissionAnswerError spells a store failure of a Claude answer that is not
+// a refusal. An ErrAudit answer wrote nothing. An ErrNotCommitted answer wrote
+// its allowed or denied line, then did not take effect, and the store followed
+// that line with an uncommitted line, unless ErrUncommittedAudit says it could
+// not. Either way the request is still waiting.
+func permissionAnswerError(request agentPermissionRequest, err error) error {
+	event := agentapproval.AuditDenied
+	if request.allow {
+		event = agentapproval.AuditAllowed
+	}
+	switch {
+	case errors.Is(err, agentapproval.ErrAudit):
+		return fmt.Errorf("%s: %w; permission request %q is still waiting", request.spelling, err, request.requestID)
+	case errors.Is(err, agentapproval.ErrUncommittedAudit):
+		return fmt.Errorf("%s: %w; permission request %q is still waiting, and the audit log keeps its %s line for this answer that did not take effect", request.spelling, err, request.requestID, event)
+	case errors.Is(err, agentapproval.ErrNotCommitted):
+		return fmt.Errorf("%s: %w; permission request %q is still waiting; its %s audit line is followed by an uncommitted line", request.spelling, err, request.requestID, event)
+	default:
+		return fmt.Errorf("%s: %w", request.spelling, err)
+	}
 }
 
 // permissionStoreRefusal maps a store refusal onto its reason token.
