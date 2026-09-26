@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -9,6 +10,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -201,6 +204,50 @@ def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
     positions = [unit.index(needle) for needle in order]
     if positions != sorted(positions):
         raise AssertionError(f"unit job steps must run in order: {order}")
+
+
+GITHUB_COM_ONLY = "github.server_url == 'https://github.com'"
+UPLOAD_STEP_STATUS = {
+    "Upload scanner evidence": "always()",
+    "Upload contract evidence": "always()",
+    "Preserve failing attempt evidence": "failure()",
+    "Preserve passing attempt evidence": "success()",
+}
+
+
+def artifact_upload_steps(workflow: dict) -> list[tuple[str, dict]]:
+    return [
+        (job_id, step)
+        for job_id, job in workflow["jobs"].items()
+        for step in job.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+
+
+def assert_artifact_uploads_run_only_on_github_com(workflow: dict) -> int:
+    uploads = artifact_upload_steps(workflow)
+    if not uploads:
+        raise AssertionError("workflow has no actions/upload-artifact steps")
+    for job_id, step in uploads:
+        name = step.get("name")
+        where = f"job {job_id!r} step {name!r}"
+        if name not in UPLOAD_STEP_STATUS:
+            raise AssertionError(
+                f"{where}: unknown upload step; pin its status function in "
+                "UPLOAD_STEP_STATUS"
+            )
+        condition = step.get("if")
+        if not isinstance(condition, str):
+            raise AssertionError(
+                f"{where}: upload step has no string if: {condition!r}"
+            )
+        parts = [part.strip() for part in condition.split("&&")]
+        expected = [UPLOAD_STEP_STATUS[name], GITHUB_COM_ONLY]
+        if parts != expected:
+            raise AssertionError(
+                f"{where}: if must be {' && '.join(expected)!r}, got {condition!r}"
+            )
+    return len(uploads)
 
 
 class CIWorkflowContractTest(unittest.TestCase):
@@ -843,6 +890,30 @@ class CIWorkflowContractTest(unittest.TestCase):
                     f"required gate: unsuccessful children: {failed}=failure",
                     completed.stderr,
                 )
+
+    def test_artifact_uploads_run_only_on_github_com(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        )
+        # The four Security evidence uploads plus the four e2e attempt uploads.
+        self.assertEqual(assert_artifact_uploads_run_only_on_github_com(workflow), 8)
+
+    def test_artifact_upload_contract_rejects_a_missing_condition(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        )
+        for index, (job_id, step) in enumerate(artifact_upload_steps(workflow)):
+            status = UPLOAD_STEP_STATUS[step["name"]]
+            for dropped, remaining in (
+                ("server", status),
+                ("status", GITHUB_COM_ONLY),
+            ):
+                with self.subTest(job=job_id, step=step["name"], dropped=dropped):
+                    mutated = copy.deepcopy(workflow)
+                    _, target = artifact_upload_steps(mutated)[index]
+                    target["if"] = remaining
+                    with self.assertRaises(AssertionError):
+                        assert_artifact_uploads_run_only_on_github_com(mutated)
 
 
 DOCKER_INVOCATION_END = "--projmux-fake-docker-invocation-end--"
