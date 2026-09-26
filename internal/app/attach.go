@@ -67,6 +67,7 @@ func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachComman
 func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -104,6 +105,7 @@ func (c *attachCommand) runProject(args []string, stdout, stderr io.Writer) erro
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -133,6 +135,7 @@ func (c *attachCommand) insideTmuxClient() bool {
 func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) error {
 	fs := flag.NewFlagSet("runtime attach", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	keepCount := fs.Int("keep", 3, "number of unattached ephemeral sessions to retain")
 	fallback := fs.String("fallback", "home", "fallback session policy: home or ephemeral")
 

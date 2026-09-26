@@ -159,6 +159,7 @@ func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceRec
 	var opts resourceReconcileOptions
 	fs := flag.NewFlagSet("reconcile resources", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "preview drift and writes without mutation")
 	fs.StringVar(&opts.output, "output", "", "output mode: json")
 	fs.StringVar(&opts.output, "o", "", "output mode (alias of --output)")

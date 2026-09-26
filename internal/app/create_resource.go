@@ -406,6 +406,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var legacyPersona string
 	fs.Var(&out.projects, "project", "at-most-one Project scope: <name> or uid:<uid>; defaults to the active tmux runtime's managed Project")
 	fs.Var(&out.projects, "p", "at-most-one Project scope: <name> or uid:<uid> (alias of --project)")

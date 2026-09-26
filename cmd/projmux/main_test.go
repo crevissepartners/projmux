@@ -302,55 +302,52 @@ func TestSelectorCardinalityFailureReachesExitCodeTwoWithNoStdout(t *testing.T) 
 	}
 }
 
-// TestFlagParseErrorPrintsReasonOnceAndUsageAtMostOnce runs sample public routes
-// through the real app and the entrypoint: a rejected flag leaves its reason on
-// stderr exactly once, at most one usage block, nothing on stdout, and exit 2.
-// A FlagSet that writes to stderr prints the reason through the flag package;
-// one that discards its output (config providers) leaves it to the entrypoint.
-func TestFlagParseErrorPrintsReasonOnceAndUsageAtMostOnce(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	t.Setenv("TMUX_TMPDIR", t.TempDir())
-	t.Setenv("TMUX", "")
-	t.Setenv("TMUX_PANE", "")
-	t.Setenv("PROJMUX_CWD", "")
+// TestFlagParseErrorPrintsReasonThenCatalogUsage runs sample public routes
+// through the real app and the entrypoint: a rejected flag leaves its reason
+// on stderr exactly once and first, then the route's catalog `Usage:` clause
+// exactly once (the one `projmux <route> --help` prints), no flag package
+// `Usage of <name>:` listing, nothing on stdout, and exit 2. A FlagSet that
+// writes to stderr prints both through the flag package; config providers
+// discards its FlagSet output and prints its prefixed reason and the Usage
+// itself; attention toggle and hook trust parse no flags and refuse a dash
+// token the same way. TestPublicFlagParseErrorsPrintReasonThenCatalogUsage
+// drives every public route; these rows pin the reason wording too.
+func TestFlagParseErrorPrintsReasonThenCatalogUsage(t *testing.T) {
+	flagParseShapeIsolate(t)
 
-	const reason = "flag provided but not defined: -zz"
-	for _, argv := range [][]string{
-		{"switch", "--zz"},
-		{"switch", "open", "--zz"},
-		{"window", "recent", "--zz"},
-		{"window", "--zz"},
-		{"get", "agents", "--zz"},
-		{"create", "agent", "--zz"},
-		{"rename", "agent", "--zz"},
-		{"delete", "window", "--zz"},
-		{"runtime", "attach", "--zz"},
-		{"runtime", "prune", "--zz"},
-		{"config", "providers", "--zz"},
+	for _, test := range []struct {
+		argv   []string
+		reason string
+	}{
+		{[]string{"switch", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"switch", "open", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"window", "recent", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"window", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"get", "agents", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"create", "agent", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"rename", "agent", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"delete", "window", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"runtime", "attach", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"runtime", "prune", "--zz"}, "flag provided but not defined: -zz"},
+		{[]string{"config", "providers", "--zz"}, "config providers: flag provided but not defined: -zz"},
+		{[]string{"attention", "toggle", "--zz"}, "attention toggle: unknown flag --zz"},
+		{[]string{"hook", "trust", "--zz"}, "hook trust: unknown flag --zz"},
+		{[]string{"runtime", "stop", "--zz"}, "runtime stop: unknown flag --zz"},
 	} {
-		t.Run(strings.Join(argv, " "), func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			code := executeCLI(func() error { return app.New().Run(argv, &stdout, &stderr) }, func(error) {}, &stderr)
-			if code != 2 {
-				t.Errorf("exit code = %d, want 2", code)
+		t.Run(strings.Join(test.argv, " "), func(t *testing.T) {
+			usage := flagParseShapeUsageClause(t, test.argv[:len(test.argv)-1])
+			code, stdout, stderr, usageErr := flagParseShapeRun(test.argv)
+			if code != 2 || !usageErr {
+				t.Errorf("exit code = %d, journaled as usage %v; want 2, usage", code, usageErr)
 			}
-			if stdout.Len() != 0 {
-				t.Errorf("stdout = %q, want 0 bytes", stdout.String())
+			if stdout != "" {
+				t.Errorf("stdout = %q, want 0 bytes", stdout)
 			}
-			reasons, usages := 0, 0
-			for line := range strings.SplitSeq(stderr.String(), "\n") {
-				if strings.Contains(line, reason) {
-					reasons++
-				}
-				if strings.HasPrefix(line, "Usage") {
-					usages++
-				}
+			for _, problem := range flagParseShapeProblems(stderr, usage) {
+				t.Errorf("%s:\n%s", problem, stderr)
 			}
-			if reasons != 1 || usages > 1 {
-				t.Errorf("stderr has %d reason lines and %d usage blocks, want 1 and at most 1:\n%s", reasons, usages, stderr.String())
+			if want := test.reason + "\n" + usage; stderr != want {
+				t.Errorf("stderr = %q, want %q", stderr, want)
 			}
 		})
 	}

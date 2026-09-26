@@ -162,6 +162,7 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: kind, runtime: c.runtime}
 	flags.register(fs)
 	if kind == coremetadata.KindWindow || kind == coremetadata.KindPane || kind == coremetadata.KindAgent {
@@ -223,6 +224,7 @@ func (r *repeatedFlag) Set(value string) error {
 func (c *getCommand) runPane(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("get pane", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 
 	var projects, windows, panes, labels repeatedFlag
 	var current bool

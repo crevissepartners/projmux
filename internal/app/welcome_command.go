@@ -47,6 +47,7 @@ func newWelcomeCommand(update *updateCommand) *welcomeCommand {
 func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("welcome", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	popup := fs.Bool("popup", false, "show pending attach welcome in a tmux popup")
 	force := fs.Bool("force", false, "show popup even when no attach welcome is pending")
 	if err := fs.Parse(args); err != nil {

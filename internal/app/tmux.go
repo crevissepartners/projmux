@@ -1592,6 +1592,7 @@ func (c *tmuxCommand) RunRoute(route string, args []string, stdout, stderr io.Wr
 func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
 	configPath := fs.String("config", "", "app tmux config path to write")
 	socket := fs.String("socket", "projmux", "tmux -L socket name to reload")
@@ -2410,6 +2411,7 @@ func tmuxReasonRoute(route string) string {
 func (c *tmuxCommand) parseConfigBinary(args []string, route string, stderr io.Writer, printUsage func()) (string, error) {
 	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the tmux snippet")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

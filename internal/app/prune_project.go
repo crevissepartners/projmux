@@ -44,6 +44,7 @@ func (c *pruneProjectCommand) Run(args []string, stdout, stderr io.Writer) error
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	missing := fs.Bool("missing", false, "select Projects whose spec.root has disappeared")
 	olderThan := fs.String("older-than", "", "minimum age of the MissingRoot observation, for example 720h")
 	yes := fs.Bool("yes", false, "actually delete the listed Projects")

@@ -1190,6 +1190,7 @@ func canonicalCreateFailureParts(err error, diagnostics string) (string, string)
 func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("config edit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	get := fs.Bool("get", false, "print the configured AI split mode")
 	set := fs.String("set", "", "set the configured AI split mode")
 	if err := fs.Parse(args); err != nil {
@@ -4382,6 +4383,25 @@ func parsePositiveInt(value string) int {
 // nothing, so the reason line stands alone.
 func printRouteUsage(w io.Writer, route string) {
 	cli.WriteRouteUsage(w, route)
+}
+
+// setRouteUsage makes a public FlagSet print its catalog Usage after the
+// reason of a flag parse failure (cli.SetRouteUsage). Every public FlagSet
+// that writes to stderr calls it; hidden `internal ...` FlagSets keep the flag
+// package default.
+func setRouteUsage(fs *flag.FlagSet) {
+	cli.SetRouteUsage(fs)
+}
+
+// usageRefusal refuses a flag the route does not define when no FlagSet
+// printed the reason: it prints reason, then the catalog Usage of route, on
+// stderr, the shape a FlagSet with setRouteUsage prints, and returns a usage
+// error that says its reason is already printed, so the entrypoint prints
+// nothing more (exit 2).
+func usageRefusal(stderr io.Writer, route, reason string) error {
+	fmt.Fprintln(stderr, reason)
+	printRouteUsage(stderr, route)
+	return flagParseError(errors.New(reason))
 }
 
 // printRouteHelp answers a handler's own `help` verb with the catalog help of

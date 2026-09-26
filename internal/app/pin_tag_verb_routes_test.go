@@ -62,8 +62,8 @@ func pinVerbNotes() string {
 
 // verbMisuseCheck asserts one rejected verb call: a usage error (exit 2)
 // keeping reason want, stderr exactly the verb's own usage block and tail (or,
-// for a flag error, one flag reason line and then that block), and no parent
-// synopsis line.
+// for a flag error, one flag reason line and then only the usage block), and
+// no parent synopsis line.
 func verbMisuseCheck(t *testing.T, route, name, want, tail string, err error, stderr string) {
 	t.Helper()
 	if err == nil || !IsUsageError(err) {
@@ -83,9 +83,11 @@ func verbMisuseCheck(t *testing.T, route, name, want, tail string, err error, st
 			t.Errorf("%s stderr = %q, want exactly the %s usage block %q", name, stderr, route, block)
 		}
 	} else {
+		// A flag error prints the reason and then only the catalog Usage,
+		// the shape every public flag parse failure shares.
 		reason, rest, _ := strings.Cut(stderr, "\n")
-		if !strings.HasPrefix(reason, "flag provided but not defined: ") || rest != block {
-			t.Errorf("%s stderr = %q, want one flag reason line and then exactly the %s usage block %q", name, stderr, route, block)
+		if !strings.HasPrefix(reason, "flag provided but not defined: ") || rest != usage.String() {
+			t.Errorf("%s stderr = %q, want one flag reason line and then exactly the %s usage block %q", name, stderr, route, usage.String())
 		}
 	}
 	for line := range strings.SplitSeq(stderr, "\n") {
@@ -99,8 +101,9 @@ func verbMisuseCheck(t *testing.T, route, name, want, tail string, err error, st
 // argv its parser refuses (add, remove, and toggle parse no flags, so only
 // list, clear, and migrate have an unknown-flag row), through the canonical spelling and the store and
 // Registry fixtures: the error is a usage error (exit 2) that keeps its
-// message, stderr is the verb's own usage block and the pin kinds, and
-// nothing is written or printed on stdout.
+// message, stderr is the verb's own usage block and the pin kinds (a flag
+// error: the reason and the usage block only), and nothing is written or
+// printed on stdout.
 func TestPinVerbMisuseIsItsOwnRouteUsageError(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

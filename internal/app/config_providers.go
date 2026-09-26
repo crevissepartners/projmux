@@ -25,13 +25,14 @@ import (
 // provider it touched.
 func (c *configCommand) runProviders(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("config providers", flag.ContinueOnError)
-	// The usage error carries the message. The flag package's own usage dump
-	// would put a second, differently worded copy on stderr.
+	// The refusal prints the prefixed reason and the catalog Usage. The flag
+	// package's own output would put a second, differently worded copy of
+	// the reason on stderr.
 	fs.SetOutput(io.Discard)
 	enable := fs.String("enable", "", "enable one AI provider")
 	disable := fs.String("disable", "", "disable one AI provider")
 	if err := fs.Parse(args); err != nil {
-		return usageError("config providers: " + err.Error())
+		return usageRefusal(stderr, "config providers", "config providers: "+err.Error())
 	}
 	if fs.NArg() != 0 {
 		return usageError(fmt.Sprintf("config providers does not accept positional arguments: %s", strings.Join(fs.Args(), " ")))

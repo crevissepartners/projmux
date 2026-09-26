@@ -144,6 +144,7 @@ func personaRefusal(spelling string, err error) error {
 func (c *personaCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(c.spelling()+" list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	operands, err := parsePersonaArgs(fs, args)
 	if err != nil {
 		return err
@@ -189,6 +190,7 @@ func (c *personaCommand) runShow(args []string, stdout, stderr io.Writer) error 
 func personaNameOperand(spelling string, args []string, stderr io.Writer) (string, error) {
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	operands, err := parsePersonaArgs(fs, args)
 	if err != nil {
 		return "", err
@@ -203,6 +205,7 @@ func personaNameOperand(spelling string, args []string, stderr io.Writer) (strin
 func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(c.spelling()+" set", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	file := fs.String("file", "", "read the named "+c.spelling()+" from this file; - reads stdin")
 	operands, err := parsePersonaArgs(fs, args)
 	if err != nil {
@@ -262,6 +265,7 @@ func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
 func (c *personaCommand) runDelete(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(c.spelling()+" delete", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	yes := fs.Bool("yes", false, "confirm the deletion")
 	operands, err := parsePersonaArgs(fs, args)
 	if err != nil {

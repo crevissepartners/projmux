@@ -22,12 +22,13 @@ import (
 // from <config.toml path>`; a store prints `locale <value>`.
 func (c *configCommand) runLocale(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("config locale", flag.ContinueOnError)
-	// The usage error carries the message. The flag package's own usage dump
-	// would put a second, differently worded copy on stderr.
+	// The refusal prints the prefixed reason and the catalog Usage. The flag
+	// package's own output would put a second, differently worded copy of
+	// the reason on stderr.
 	fs.SetOutput(io.Discard)
 	value := fs.String("set", "", "store the [ui] locale setting")
 	if err := fs.Parse(args); err != nil {
-		return usageError("config locale: " + err.Error())
+		return usageRefusal(stderr, "config locale", "config locale: "+err.Error())
 	}
 	if fs.NArg() != 0 {
 		return usageError(fmt.Sprintf("config locale does not accept positional arguments: %s", strings.Join(fs.Args(), " ")))
@@ -77,7 +78,7 @@ func (c *configCommand) runAgentQuestions(args []string, stdout, stderr io.Write
 	answering := fs.String("answering", "", "store how agent questions are answered")
 	window := fs.String("window", "", "store how long an agent question waits")
 	if err := fs.Parse(args); err != nil {
-		return usageError("config agent-questions: " + err.Error())
+		return usageRefusal(stderr, "config agent-questions", "config agent-questions: "+err.Error())
 	}
 	if fs.NArg() != 0 {
 		return usageError(fmt.Sprintf("config agent-questions does not accept positional arguments: %s", strings.Join(fs.Args(), " ")))

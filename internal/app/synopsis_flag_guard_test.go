@@ -984,6 +984,9 @@ func (w *synopsisWalk) call(call *ast.CallExpr, fr *synopsisFrame) bool {
 		callee = f.Name
 	case *ast.SelectorExpr:
 		if id, ok := f.X.(*ast.Ident); ok && w.e.imports[fr.file][id.Name] && !w.e.isLocal(id.Name, fr) {
+			if synopsisUsageOnlySetters[types.ExprString(call.Fun)] {
+				return false
+			}
 			w.problem(fr, call.Pos(), "the FlagSet is handed to "+types.ExprString(call.Fun)+" in another package; the guard cannot follow its registrations")
 			return false
 		}
@@ -1019,6 +1022,10 @@ func (w *synopsisWalk) call(call *ast.CallExpr, fr *synopsisFrame) bool {
 	}
 	return false
 }
+
+// synopsisUsageOnlySetters are the functions of another package that only set
+// a FlagSet's Usage and register no flag, so the walk need not follow them.
+var synopsisUsageOnlySetters = map[string]bool{"cli.SetRouteUsage": true}
 
 func (w *synopsisWalk) bindParams(inner *synopsisFrame, ft *ast.FuncType, args []ast.Expr, caller *synopsisFrame) {
 	i := 0

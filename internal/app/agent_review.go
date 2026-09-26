@@ -107,6 +107,7 @@ func (c *agentCommand) runReview(args []string, stdout, stderr io.Writer) error 
 	const spelling = "agent review"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var agentRef, base, commit, instructions string
 	fs.StringVar(&agentRef, "agent", "", "exact Agent reference: <name> or uid:<uid>")
 	fs.StringVar(&base, "base", "", "review changes against a base branch")

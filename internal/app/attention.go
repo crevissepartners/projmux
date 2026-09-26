@@ -145,11 +145,7 @@ func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
 func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("attention list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Live tmux pane attention state; does not read or mutate the notify queue.")
-		fmt.Fprintln(stderr)
-		printRouteUsage(stderr, "attention list")
-	}
+	setRouteUsage(fs)
 	asJSON := fs.Bool("json", false, "emit json instead of tabular output")
 	all := fs.Bool("all", false, "include panes without attention state")
 
@@ -184,7 +180,7 @@ func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) erro
 }
 
 func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
-	paneID, err := c.resolveOptionalAttentionTarget(args, "attention toggle", func() { printRouteUsage(stderr, "attention toggle") })
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention toggle", stderr, func() { printRouteUsage(stderr, "attention toggle") })
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -206,7 +202,7 @@ func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
-	paneID, err := c.resolveOptionalAttentionTarget(args, "attention clear", func() { printRouteUsage(stderr, "attention clear") })
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention clear", stderr, func() { printRouteUsage(stderr, "attention clear") })
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -237,7 +233,7 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
-	paneID, err := c.resolveOptionalAttentionTarget(args, "attention arm", func() { printRouteUsage(stderr, "attention arm") })
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention arm", stderr, func() { printRouteUsage(stderr, "attention arm") })
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -285,9 +281,8 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 }
 
 func parseAttentionWindowArgs(args []string, stderr io.Writer) (windowID, style string, err error) {
-	args, err = splitOperands("attention window", args)
+	args, err = splitOperands("attention window", args, stderr)
 	if err != nil {
-		printRouteUsage(stderr, "attention window")
 		return "", "", err
 	}
 	if len(args) > 2 {
@@ -308,10 +303,9 @@ func parseAttentionWindowArgs(args []string, stderr io.Writer) (windowID, style 
 // parseOptionalAttentionTarget returns the optional pane target and whether an
 // operand was supplied at all. Unknown flags are rejected before the arity
 // check, and a bare `--` with nothing after it counts as no target.
-func parseOptionalAttentionTarget(args []string, command string, printUsage func()) (string, bool, error) {
-	operands, err := splitOperands(command, args)
+func parseOptionalAttentionTarget(args []string, command string, stderr io.Writer, printUsage func()) (string, bool, error) {
+	operands, err := splitOperands(command, args, stderr)
 	if err != nil {
-		printUsage()
 		return "", false, err
 	}
 	if len(operands) > 1 {
@@ -332,15 +326,17 @@ func parseOptionalAttentionTarget(args []string, command string, printUsage func
 // `--` ends option parsing: it is dropped and every later token, including
 // `-x` and another `--`, is an operand. All tokens are scanned before the
 // caller applies its arity checks, so an unknown flag wins over "too many
-// arguments". It never prints; callers print their own usage text.
-func splitOperands(command string, args []string) ([]string, error) {
+// arguments". An unknown flag is refused like a FlagSet parse failure: the
+// reason, then the catalog Usage of command, on stderr (usageRefusal).
+// Callers print their own usage text for every other refusal.
+func splitOperands(command string, args []string, stderr io.Writer) ([]string, error) {
 	operands := make([]string, 0, len(args))
 	for i, tok := range args {
 		if tok == "--" {
 			return append(operands, args[i+1:]...), nil
 		}
 		if strings.HasPrefix(tok, "-") && tok != "-" {
-			return nil, usageError(fmt.Sprintf("%s: unknown flag %s", command, tok))
+			return nil, usageRefusal(stderr, command, fmt.Sprintf("%s: unknown flag %s", command, tok))
 		}
 		operands = append(operands, tok)
 	}
@@ -352,8 +348,8 @@ func splitOperands(command string, args []string) ([]string, error) {
 // only the exact pane that invoked the command, so both halves of tmux's
 // inherited client receipt must be present and the pane must still reobserve as
 // itself before the first attention handler read or write.
-func (c *attentionCommand) resolveOptionalAttentionTarget(args []string, command string, printUsage func()) (string, error) {
-	paneID, explicit, err := parseOptionalAttentionTarget(args, command, printUsage)
+func (c *attentionCommand) resolveOptionalAttentionTarget(args []string, command string, stderr io.Writer, printUsage func()) (string, error) {
+	paneID, explicit, err := parseOptionalAttentionTarget(args, command, stderr, printUsage)
 	if err != nil || explicit {
 		return paneID, err
 	}

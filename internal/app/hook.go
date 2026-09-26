@@ -66,6 +66,7 @@ func defaultEditorRunner(command string, args []string, stdout, stderr io.Writer
 func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -111,6 +112,7 @@ const (
 func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	globalOnly := fs.Bool("global", false, "only show global config entries")
 	projectOnly := fs.Bool("project", false, "only show project config entries")
 	effective := fs.Bool("effective", false, "show merged effective view with source labels")
@@ -291,6 +293,7 @@ func (c *hookCommand) writeEffectiveTable(stdout io.Writer, globalPath, projectP
 func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook edit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	global := fs.Bool("global", false, "edit the global config.toml entry")
 	project := fs.Bool("project", false, "force a project-local override in .projmux/config.toml")
 	useEditor := fs.Bool("editor", false, "open the config.toml file in $EDITOR instead of the inline prompt")
@@ -547,6 +550,7 @@ func (e *editorParseError) ExitCode() int { return 1 }
 func (c *hookCommand) runValidate(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -618,7 +622,7 @@ func validateHookEvents(cfg hooks.ProjectConfig) error {
 // --- trust / untrust -----------------------------------------------------
 
 func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
-	repo, fromContext, err := c.resolveTrustTarget("hook trust", args, func() { printRouteUsage(stderr, "hook trust"); printHookEvents(stderr) })
+	repo, fromContext, err := c.resolveTrustTarget("hook trust", args, stderr, func() { printRouteUsage(stderr, "hook trust"); printHookEvents(stderr) })
 	if err != nil {
 		return err
 	}
@@ -640,7 +644,7 @@ func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error {
-	repo, fromContext, err := c.resolveTrustTarget("hook untrust", args, func() { printRouteUsage(stderr, "hook untrust"); printHookEvents(stderr) })
+	repo, fromContext, err := c.resolveTrustTarget("hook untrust", args, stderr, func() { printRouteUsage(stderr, "hook untrust"); printHookEvents(stderr) })
 	if err != nil {
 		return err
 	}
@@ -664,14 +668,14 @@ func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error 
 }
 
 // resolveTrustTarget rejects unknown flags before it reads the project
-// context or the trust store; command names the verb in that rejection, and
-// printUsage prints that verb's catalog usage under every refusal.
+// context or the trust store; command names the verb in that rejection, which
+// prints only the reason and the catalog Usage (splitOperands). printUsage
+// prints that verb's usage under every other refusal.
 // fromContext reports that the target is the project context rather than an
 // explicit <project> argument, so only then can a scope note apply.
-func (c *hookCommand) resolveTrustTarget(command string, args []string, printUsage func()) (repo string, fromContext bool, err error) {
-	args, err = splitOperands(command, args)
+func (c *hookCommand) resolveTrustTarget(command string, args []string, stderr io.Writer, printUsage func()) (repo string, fromContext bool, err error) {
+	args, err = splitOperands(command, args, stderr)
 	if err != nil {
-		printUsage()
 		return "", false, err
 	}
 	switch len(args) {

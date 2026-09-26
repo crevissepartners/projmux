@@ -609,7 +609,11 @@ func TestNotifyReconcileRejectsPositionalArgs(t *testing.T) {
 	}
 }
 
-func TestNotifyReconcileHelpDescribesRecoveryPath(t *testing.T) {
+// TestNotifyReconcileHelpPrintsCatalogUsage pins the leaf's own --help, which only a direct handler call
+// reaches (the shared help boundary answers every CLI help spelling first): the
+// flag package prints the catalog Usage of `notification reconcile`, never its default
+// `Usage of notification reconcile:` listing.
+func TestNotifyReconcileHelpPrintsCatalogUsage(t *testing.T) {
 	t.Parallel()
 
 	cmd := newReconcileCmd(&memNotifyStore{}, &reconcileTmuxRunner{})
@@ -617,8 +621,10 @@ func TestNotifyReconcileHelpDescribesRecoveryPath(t *testing.T) {
 	if err := cmd.Run([]string{"reconcile", "--help"}, &bytes.Buffer{}, &stderr); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if !strings.Contains(stderr.String(), "Repair the pending AI notify queue") {
-		t.Fatalf("stderr = %q, want recovery path", stderr.String())
+	var want bytes.Buffer
+	printRouteUsage(&want, "notification reconcile")
+	if want.Len() == 0 || stderr.String() != want.String() {
+		t.Fatalf("stderr = %q, want the notification reconcile catalog Usage %q", stderr.String(), want.String())
 	}
 }
 

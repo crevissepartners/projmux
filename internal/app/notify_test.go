@@ -2475,7 +2475,11 @@ func TestNotifyHelpPrintsNotificationHelp(t *testing.T) {
 	}
 }
 
-func TestNotifyListHelpDescribesPendingQueueBoundary(t *testing.T) {
+// TestNotifyListHelpPrintsCatalogUsage pins the leaf's own --help, which only a direct handler call
+// reaches (the shared help boundary answers every CLI help spelling first): the
+// flag package prints the catalog Usage of `get notifications`, never its default
+// `Usage of get notifications:` listing.
+func TestNotifyListHelpPrintsCatalogUsage(t *testing.T) {
 	t.Parallel()
 
 	cmd := newCmd(&stubNotifyStore{})
@@ -2483,11 +2487,10 @@ func TestNotifyListHelpDescribesPendingQueueBoundary(t *testing.T) {
 	if err := cmd.Run([]string{"list", "--help"}, &bytes.Buffer{}, &stderr); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if !strings.Contains(stderr.String(), "Pending AI notify queue entries only") {
-		t.Fatalf("stderr = %q, want pending queue boundary", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "projmux attention list") {
-		t.Fatalf("stderr = %q, want live attention pointer", stderr.String())
+	var want bytes.Buffer
+	printRouteUsage(&want, "get notifications")
+	if want.Len() == 0 || stderr.String() != want.String() {
+		t.Fatalf("stderr = %q, want the get notifications catalog Usage %q", stderr.String(), want.String())
 	}
 }
 

@@ -46,6 +46,11 @@ var handlerSynopsisExceptions = map[string]handlerSynopsisException{}
 // Each call must name its route as a string literal that resolves exactly.
 var handlerRouteUsagePrinters = []string{"printRouteUsage", "cli.WriteRouteUsage"}
 
+// handlerRouteUsageForwarders are the package functions that hand their own
+// route parameter to a printer: printRouteUsage, and usageRefusal, which
+// prints a refused flag's reason and then its route's catalog Usage.
+var handlerRouteUsageForwarders = []string{"printRouteUsage", "usageRefusal"}
+
 // handlerRouteUsageCallFloor is the number of route usage calls in
 // internal/app/** when every handler printer moved onto the catalog and the
 // `help` verbs moved to printRouteHelp (handler_help_verb_guard_test.go). The
@@ -145,8 +150,8 @@ func scanHandlerSynopsis(files []handlerSynopsisFile) handlerSynopsisScan {
 		ast.Inspect(file, func(node ast.Node) bool {
 			switch node := node.(type) {
 			case *ast.FuncDecl:
-				// The helper itself forwards its route parameter.
-				return node.Recv != nil || node.Name.Name != handlerRouteUsagePrinters[0]
+				// The helpers themselves forward their route parameter.
+				return node.Recv != nil || !slices.Contains(handlerRouteUsageForwarders, node.Name.Name)
 			case *ast.BasicLit:
 				if node.Kind != token.STRING {
 					return true

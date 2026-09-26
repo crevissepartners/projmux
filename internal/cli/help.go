@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"slices"
@@ -374,6 +375,45 @@ func WriteRouteUsage(w io.Writer, route string) {
 	for _, line := range resolved.Usage {
 		fmt.Fprintln(w, "  "+line)
 	}
+}
+
+// SetRouteUsage makes fs answer a flag parse failure with the catalog Usage of
+// the public route it is named after. The flag package prints the reason line
+// to fs.Output() and then calls fs.Usage, so a rejected flag prints the reason
+// once, then the `Usage:` block `projmux <route> --help` prints, instead of
+// the flag package's own `Usage of <route>:` default listing. The FlagSet name
+// must be the exact canonical route; help flags never reach a public FlagSet,
+// because the shared help boundary answers them first.
+//
+// A FlagSet named after a hidden route (a leaf shared with `projmux internal
+// ...` plumbing, such as the one `config apply` and `internal tmux apply`
+// reach) keeps the flag package default, so hidden output never changes.
+func SetRouteUsage(fs *flag.FlagSet) {
+	if !publicRoute(fs.Name()) {
+		return
+	}
+	fs.Usage = func() { WriteRouteUsage(fs.Output(), fs.Name()) }
+}
+
+// publicRoute reports whether route is the exact canonical path of a catalog
+// route with no hidden node on its path.
+func publicRoute(route string) bool {
+	tokens := strings.Fields(route)
+	if len(tokens) == 0 {
+		return false
+	}
+	current, ok := LookupRoute(tokens[0])
+	if !ok || current.Hidden || current.Name != tokens[0] {
+		return false
+	}
+	for _, token := range tokens[1:] {
+		child, found := findChild(current, token)
+		if !found || child.Hidden || child.Name != token {
+			return false
+		}
+		current = child
+	}
+	return true
 }
 
 // WriteRouteHelp writes the help `projmux <route> --help` prints, for the

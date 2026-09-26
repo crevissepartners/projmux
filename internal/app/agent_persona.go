@@ -301,6 +301,7 @@ func parseAgentPersonaArgs(args []string, noun string, stderr io.Writer) (agentP
 	request := agentPersonaRequest{action: args[0], spelling: "agent " + noun + " " + args[0]}
 	fs := flag.NewFlagSet(request.spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	request.flags = resourceQueryFlags{kind: coremetadata.KindAgent}
 	request.flags.register(fs)
 	fs.BoolVar(&request.yes, "yes", false, "restart the Agent even when its interaction shows a turn in progress or unknown")

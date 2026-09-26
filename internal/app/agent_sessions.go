@@ -45,6 +45,7 @@ func (c *agentCommand) runSessions(args []string, stdout, stderr io.Writer) erro
 	const spelling = "agent sessions list"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: coremetadata.KindAgent}
 	flags.register(fs)
 	var output string
@@ -132,6 +133,7 @@ func (c *agentCommand) runSessionsBackfill(args []string, stdout, stderr io.Writ
 	const spelling = "agent sessions backfill"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var dryRun bool
 	var output string
 	fs.BoolVar(&dryRun, "dry-run", false, "report what would be appended and write nothing")

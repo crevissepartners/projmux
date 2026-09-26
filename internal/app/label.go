@@ -62,6 +62,7 @@ func (c *labelCommand) runKind(token string, kind coremetadata.Kind, args []stri
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: kind, active: c.activeTarget, runtime: c.runtime}
 	// A generic descendant write resolves an explicit name inside the exact root
 	// that owns the active Window, exactly as `rename` does. A Project has no

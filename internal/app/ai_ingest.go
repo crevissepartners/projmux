@@ -271,6 +271,7 @@ func (c *aiCommand) runIngestBell(args []string, stderr io.Writer) error {
 func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("diagnostics agent-hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	tail := fs.Int("tail", 50, "number of recent log entries to print")
 	jsonOut := fs.Bool("json", false, "print raw JSONL entries")
 	pathOnly := fs.Bool("path", false, "print the ingest log path")

@@ -248,19 +248,16 @@ func TestAgentMessageStatusLabelsOperatorInputAndKeepsAgentOutput(t *testing.T) 
 // TestAgentMessageSendFlagSetCannotNameAnOrigin pins every flag agent message
 // send accepts. None of them sets an origin, and no Envelope the send path
 // builds names one, so no flag combination produces operator input: a new flag
-// has to be added here on purpose.
+// has to be added here on purpose. The flags are read from the FlagSet
+// registrations in runMessageSend, because a flag error or -h prints the
+// catalog Usage, not the FlagSet's own listing.
 func TestAgentMessageSendFlagSetCannotNameAnOrigin(t *testing.T) {
 	_, stderr, err := runRoute(t, &agentCommand{}, "message", "send", "-h", "--", "text")
 	if err == nil {
 		t.Fatal("send -h did not stop at usage")
 	}
-	var flags []string
-	for _, match := range regexp.MustCompile(`(?m)^\s+-([a-z-]+)`).FindAllStringSubmatch(stderr, -1) {
-		flags = append(flags, match[1])
-	}
-	slices.Sort(flags)
-	if want := []string{"message-ref", "reply-to", "source", "ttl"}; !slices.Equal(flags, want) {
-		t.Fatalf("agent message send flags = %v, want %v\n%s", flags, want, stderr)
+	if strings.Contains(stderr, "Usage of ") {
+		t.Fatalf("send -h printed the flag package default usage:\n%s", stderr)
 	}
 
 	source, err := os.ReadFile("agent_message.go")
@@ -271,6 +268,45 @@ func TestAgentMessageSendFlagSetCannotNameAnOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var flags []string
+	registrations := regexp.MustCompile(`^(Bool|Duration|Float64|Func|Int|Int64|String|TextVar|Uint|Uint64|Var|BoolFunc)(Var)?$`)
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "runMessageSend" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if receiver, ok := selector.X.(*ast.Ident); !ok || receiver.Name != "fs" || !registrations.MatchString(selector.Sel.Name) {
+				return true
+			}
+			index := 0
+			if strings.HasSuffix(selector.Sel.Name, "Var") {
+				index = 1
+			}
+			if index >= len(call.Args) {
+				t.Fatalf("fs.%s call has no flag name argument", selector.Sel.Name)
+			}
+			name, ok := call.Args[index].(*ast.BasicLit)
+			if !ok || name.Kind != token.STRING {
+				t.Fatalf("fs.%s registers a flag whose name is not a string literal", selector.Sel.Name)
+			}
+			flags = append(flags, strings.Trim(name.Value, `"`))
+			return true
+		})
+	}
+	slices.Sort(flags)
+	if want := []string{"message-ref", "reply-to", "source", "ttl"}; !slices.Equal(flags, want) {
+		t.Fatalf("agent message send flags = %v, want %v", flags, want)
+	}
+
 	envelopes := 0
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch node := node.(type) {

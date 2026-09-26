@@ -264,6 +264,7 @@ func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
 func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("update apply", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "print installer-specific update command without running it")
 	noApply := fs.Bool("no-apply", false, "skip reloading tmux after 'projmux config apply'")
 	if err := fs.Parse(args); err != nil {
@@ -1195,6 +1196,7 @@ func (c *updateCommand) loadUsableCache() (updateCache, bool, error) {
 func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("update status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1219,6 +1221,7 @@ func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error
 func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("update check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

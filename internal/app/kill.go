@@ -96,6 +96,7 @@ func (k unmanagedSessionKiller) KillSession(ctx context.Context, sessionName str
 func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("runtime stop", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -162,9 +163,8 @@ func (e cleanupKillSessionExecutor) KillSession(ctx context.Context, sessionName
 // after a bare `--` fall through to the tag store exactly like no arguments.
 func (c *killCommand) resolveTaggedTargets(args []string, stderr io.Writer) ([]string, error) {
 	if len(args) != 0 {
-		operands, err := splitOperands("runtime stop", args)
+		operands, err := splitOperands("runtime stop", args, stderr)
 		if err != nil {
-			printRouteUsage(stderr, "runtime stop")
 			return nil, err
 		}
 		args = operands

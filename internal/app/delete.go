@@ -277,6 +277,7 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: kind}
 	flags.register(fs)
 	dryRun := fs.Bool("dry-run", false, "print the full target and cascade plan without deleting anything")

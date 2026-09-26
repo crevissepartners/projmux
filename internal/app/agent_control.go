@@ -459,6 +459,7 @@ func (c *agentCommand) runApproval(args []string, stdout, stderr io.Writer) erro
 	}
 	fs := flag.NewFlagSet("agent approval review", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var requestID string
 	fs.StringVar(&requestID, "request", "", "normalized pending request id")
 	refs, err := parseWithPositionals(fs, args[1:])

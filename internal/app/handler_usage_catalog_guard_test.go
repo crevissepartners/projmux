@@ -215,8 +215,8 @@ func TestConfigEditOperandPrintsOnlyItsUsage(t *testing.T) {
 }
 
 // TestConfigEditFlagErrorNamesConfigEdit pins `config edit --bogus`: still a
-// usage error whose reason and usage are printed once each, and neither names
-// the retired `ai settings` spelling (the FlagSet name the flag package prints).
+// usage error whose reason and catalog Usage are printed once each, and
+// neither names the retired `ai settings` spelling.
 func TestConfigEditFlagErrorNamesConfigEdit(t *testing.T) {
 	t.Parallel()
 	fixture := newConfigForwarderFixture(t)
@@ -232,8 +232,10 @@ func TestConfigEditFlagErrorNamesConfigEdit(t *testing.T) {
 	if n := strings.Count(printed, "flag provided but not defined: -bogus"); n != 1 {
 		t.Errorf("config edit --bogus prints the reason %d times, want 1: stderr=%q", n, printed)
 	}
-	if n := strings.Count(printed, "Usage of config edit:"); n != 1 {
-		t.Errorf("config edit --bogus prints %q %d times, want 1: stderr=%q", "Usage of config edit:", n, printed)
+	var usage bytes.Buffer
+	printRouteUsage(&usage, "config edit")
+	if want := "flag provided but not defined: -bogus\n" + usage.String(); usage.Len() == 0 || printed != want {
+		t.Errorf("config edit --bogus stderr = %q, want the reason and then the config edit catalog Usage %q", printed, want)
 	}
 }
 

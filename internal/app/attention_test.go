@@ -540,18 +540,21 @@ func TestAttentionListJSONAllIncludesPanesWithoutAttention(t *testing.T) {
 	}
 }
 
-func TestAttentionListHelpDescribesLiveStateBoundary(t *testing.T) {
+// TestAttentionListHelpPrintsCatalogUsage pins the leaf's own --help, which only a direct handler call
+// reaches (the shared help boundary answers every CLI help spelling first): the
+// flag package prints the catalog Usage of `attention list`, never its default
+// `Usage of attention list:` listing.
+func TestAttentionListHelpPrintsCatalogUsage(t *testing.T) {
 	t.Parallel()
 
 	var stderr bytes.Buffer
 	if err := (&attentionCommand{}).Run([]string{"list", "--help"}, &bytes.Buffer{}, &stderr); err != nil {
-		t.Fatalf("Run() error = %v", err)
+		t.Fatalf("Run error = %v", err)
 	}
-	if !strings.Contains(stderr.String(), "Live tmux pane attention state") {
-		t.Fatalf("stderr = %q, want live-state boundary", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "does not read or mutate the notify queue") {
-		t.Fatalf("stderr = %q, want notify queue boundary", stderr.String())
+	var want bytes.Buffer
+	printRouteUsage(&want, "attention list")
+	if want.Len() == 0 || stderr.String() != want.String() {
+		t.Fatalf("stderr = %q, want the attention list catalog Usage %q", stderr.String(), want.String())
 	}
 }
 

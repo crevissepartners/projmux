@@ -283,6 +283,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
 	sectionName := fs.String("section", "", "filter diagnostics: deps|runtime|integrations|logs|registry|replacement")
 	verbose := fs.Bool("verbose", false, "include successful checks and full detail in the text report")

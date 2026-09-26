@@ -38,6 +38,7 @@ func (c *createCommand) runResourceProject(args []string, stdout, stderr io.Writ
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	root := fs.String("root", "", "Absolute path of the Project root to register")
 	name := fs.String("name", "", "Explicit registry-unique Project name")
 	labels := repeatedFlag{}

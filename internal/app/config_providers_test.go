@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -148,15 +149,18 @@ func TestConfigProvidersRejectsBadArgvAsUsageErrors(t *testing.T) {
 		name string
 		args []string
 		want string
+		// flagError marks a flag parse failure: the handler prints the
+		// reason and then the catalog Usage on stderr itself.
+		flagError bool
 	}{
 		{name: "unknown provider", args: []string{"--enable", "gemini"}, want: `config providers --enable: unknown provider "gemini"; known providers: claude, codex, antigravity`},
 		{name: "unknown provider on disable", args: []string{"--disable", "shell"}, want: `config providers --disable: unknown provider "shell"`},
 		{name: "both flags", args: []string{"--enable", "claude", "--disable", "codex"}, want: "config providers accepts only one of --enable or --disable"},
-		{name: "missing value", args: []string{"--enable"}, want: "config providers: flag needs an argument: -enable"},
+		{name: "missing value", args: []string{"--enable"}, want: "config providers: flag needs an argument: -enable", flagError: true},
 		{name: "empty value", args: []string{"--disable="}, want: "config providers --disable requires a provider id: claude, codex, antigravity"},
 		{name: "extra positional", args: []string{"--enable", "claude", "codex"}, want: "config providers does not accept positional arguments: codex"},
 		{name: "bare positional", args: []string{"claude"}, want: "config providers does not accept positional arguments: claude"},
-		{name: "unknown flag", args: []string{"--toggle", "claude"}, want: "config providers: flag provided but not defined: -toggle"},
+		{name: "unknown flag", args: []string{"--toggle", "claude"}, want: "config providers: flag provided but not defined: -toggle", flagError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -168,8 +172,14 @@ func TestConfigProvidersRejectsBadArgvAsUsageErrors(t *testing.T) {
 			if !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("config providers %v error = %q, want it to contain %q", test.args, err, test.want)
 			}
-			if stdout != "" || stderr != "" {
-				t.Fatalf("config providers %v printed stdout=%q stderr=%q; the usage error carries the message", test.args, stdout, stderr)
+			wantStderr := ""
+			if test.flagError {
+				var usage bytes.Buffer
+				printRouteUsage(&usage, "config providers")
+				wantStderr = test.want + "\n" + usage.String()
+			}
+			if stdout != "" || stderr != wantStderr {
+				t.Fatalf("config providers %v printed stdout=%q stderr=%q, want stderr %q", test.args, stdout, stderr, wantStderr)
 			}
 			if _, exists := readPolicyFile(t, path); exists {
 				t.Fatalf("config providers %v wrote the policy file", test.args)

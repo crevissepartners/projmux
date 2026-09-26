@@ -49,9 +49,7 @@ func newWindowCommand(recorders ...*diagnostics.LifecycleRecorder) *windowComman
 func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("window", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "window")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRouteUsage(stderr, "window")
@@ -133,9 +131,7 @@ func defaultRecentWindowStore(socket string) (recentWindowStore, error) {
 func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) error {
 	fs := flag.NewFlagSet("window recent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "window recent")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRouteUsage(stderr, "window recent")
@@ -219,9 +215,7 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 func (c *recentWindowCommand) RunRecord(args []string, _ io.Writer, stderr io.Writer) error {
 	fs := flag.NewFlagSet("window record", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "window record")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRouteUsage(stderr, "window record")

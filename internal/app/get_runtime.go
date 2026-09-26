@@ -42,6 +42,7 @@ func (c *getCommand) runRuntime(args []string, stdout, stderr io.Writer) error {
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var request runtimeTransportRequest
 	var output string
 	fs.StringVar(&request.socket, "socket", "", "exact tmux socket name (tmux -L)")

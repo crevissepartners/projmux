@@ -68,6 +68,7 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 	const spelling = "agent capabilities"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var provider, output string
 	var jsonOutput bool
 	fs.StringVar(&provider, "provider", "", "provider id: codex, claude, or antigravity")
