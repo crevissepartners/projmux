@@ -23,6 +23,17 @@ fail() {
   failures=1
 }
 
+# running PID succeeds while PID has not ended. An exited but unreaped process
+# (state Z in /proc/PID/stat) has ended; without /proc, kill -0 decides.
+# Kept in step with running() in the fake docker below.
+running() {
+  local stat
+  kill -0 "$1" 2>/dev/null || return 1
+  stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+  stat="${stat##*) }"
+  [[ "${stat%% *}" != Z ]]
+}
+
 mkdir -p "$workdir/bin"
 cat >"$workdir/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
@@ -41,6 +52,16 @@ shift
 volumes="$FAKE_DAEMON_ROOT/volumes"
 meta="$FAKE_DAEMON_ROOT/meta"
 mkdir -p "$volumes" "$meta"
+# running PID succeeds while PID has not ended. An exited but unreaped process
+# (state Z in /proc/PID/stat) has ended; without /proc, kill -0 decides.
+# Kept in step with running() in the contract script below.
+running() {
+  local stat
+  kill -0 "$1" 2>/dev/null || return 1
+  stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+  stat="${stat##*) }"
+  [[ "${stat%% *}" != Z ]]
+}
 # in_use NAME prints the container holding NAME and succeeds when one does.
 in_use() {
   local f
@@ -50,7 +71,7 @@ in_use() {
   fi
   for f in "$meta/$1".run.*; do
     [[ -e "$f" ]] || continue
-    if kill -0 "${f##*.run.}" 2>/dev/null; then
+    if running "${f##*.run.}"; then
       printf 'fake-run-%s\n' "${f##*.run.}"
       return 0
     fi
@@ -611,7 +632,7 @@ if [[ -n "$suite_pid" ]]; then
   : >"$block/release"
   kill -KILL "$suite_pid" 2>/dev/null || true
   for ((t = 0; t < 100; t++)); do
-    kill -0 "$suite_pid" 2>/dev/null || break
+    running "$suite_pid" || break
     sleep 0.1
   done
 fi
