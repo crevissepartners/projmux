@@ -132,7 +132,7 @@ projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <
 projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
 projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json] [--json]
-projmux agent models [--provider claude] [-o json]
+projmux agent models [--provider <claude|codex>] [-o json]
 projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message status <message-ref> [-o json]
 projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json [--timeout <duration>]
@@ -160,7 +160,7 @@ Subcommands:
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install, remove, or preview provider hooks and tmux-bell integration |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
 | [`projmux agent capabilities`](#projmux-agent-capabilities) | Read static provider support or one exact Agent's Registry-backed runtime eligibility |
-| [`projmux agent models`](#projmux-agent-models) | List the Claude model names projmux suggests for --model; other names are still accepted |
+| [`projmux agent models`](#projmux-agent-models) | List model suggestions for Claude (default) or Codex (app-server); other names are still accepted |
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude Agent's AskUserQuestion prompts from the command line |
@@ -623,7 +623,7 @@ Output modes (`-o`): `json`
 
 ### `projmux agent models`
 
-List the Claude model names projmux suggests for --model; other names are still accepted
+List model suggestions for Claude (default) or Codex (app-server); other names are still accepted
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -639,7 +639,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent models [--provider claude] [-o json]
+projmux agent models [--provider <claude|codex>] [-o json]
 ```
 
 Output modes (`-o`): `json`

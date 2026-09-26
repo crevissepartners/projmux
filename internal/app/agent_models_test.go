@@ -2,7 +2,9 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -74,8 +76,7 @@ func TestAgentModelsRefusesWhatItCannotAnswerAsUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		"codex":            {[]string{"--provider", "codex"}, "does not apply a model to provider codex"},
-		"antigravity":      {[]string{"--provider", "antigravity"}, "does not apply a model to provider antigravity"},
+		"antigravity":      {[]string{"--provider", "antigravity"}, "model listing is unavailable for provider antigravity"},
 		"unknown provider": {[]string{"--provider", "gpt"}, `unsupported provider "gpt"`},
 		"bad flag":         {[]string{"--zz-bogus-flag"}, "flag provided but not defined: -zz-bogus-flag"},
 		"missing -o value": {[]string{"-o"}, "flag needs an argument: -o"},
@@ -95,6 +96,46 @@ func TestAgentModelsRefusesWhatItCannotAnswerAsUsageErrors(t *testing.T) {
 				t.Fatalf("a refused read printed %q; a refusal is not an empty list", stdout)
 			}
 		})
+	}
+}
+
+func TestAgentModelsCodexUsesAppServerForTextAndJSON(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, output string
+		args         []string
+	}{
+		{"text", "gpt-6\ngpt-6-mini\n", []string{"--provider", "codex"}},
+		{"json", "{\n  \"provider\": \"codex\",\n  \"models\": [\n    \"gpt-6\",\n    \"gpt-6-mini\"\n  ],\n  \"acceptsUnlisted\": true\n}\n", []string{"--provider", "codex", "-o", "json"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			called := 0
+			cmd := &agentCommand{listCodexModels: func(context.Context) ([]string, error) {
+				called++
+				return []string{"gpt-6", "gpt-6-mini"}, nil
+			}}
+			var stdout, stderr bytes.Buffer
+			if err := cmd.Run(append([]string{"models"}, test.args...), &stdout, &stderr); err != nil {
+				t.Fatal(err)
+			}
+			if called != 1 || stdout.String() != test.output || stderr.Len() != 0 {
+				t.Fatalf("calls = %d stdout = %q stderr = %q", called, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestAgentModelsCodexUnavailableIsRuntimeFailureWithoutEmptyList(t *testing.T) {
+	t.Parallel()
+	cmd := &agentCommand{listCodexModels: func(context.Context) ([]string, error) {
+		return nil, errors.New("endpoint-not-ready")
+	}}
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run([]string{"models", "--provider", "codex", "-o", "json"}, &stdout, &stderr)
+	if err == nil || IsUsageError(err) || exitCodeOf(err) == 0 ||
+		!strings.Contains(err.Error(), "Codex app-server model/list failed: endpoint-not-ready") || stdout.Len() != 0 {
+		t.Fatalf("err = %v, stdout = %q", err, stdout.String())
 	}
 }
 
