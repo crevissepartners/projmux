@@ -138,10 +138,40 @@ func (c *codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, e
 		return
 	}
 	for _, record := range records {
-		if record.Provider == "codex" && record.State == agentquestion.StateWaiting && record.PaneUID == identity.PaneUID && record.SessionID == identity.ThreadID && record.Generation == identity.Generation && record.RuntimeID == identity.RuntimeID && record.RequestID == event.RequestID {
+		if codexQuestionWaitingFor(record, identity) && record.RequestID == event.RequestID {
 			_, _ = store.CloseAnsweredElsewhere(record.ID, identity.AgentUID, identity.ThreadID, event.RequestID)
 		}
 	}
+}
+
+// HandleTurnCompleted closes every waiting Codex request of this exact
+// binding once its turn ended, however it ended. One thread runs one turn at
+// a time, so the thread identity names that turn's requests. The record is
+// plain closed: an interrupted turn was not answered anywhere, and a
+// resolved notification that trails the end finds nothing waiting.
+func (c *codexQuestionChannel) HandleTurnCompleted(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
+	if event.Kind != codexappserver.LifecycleTurnCompleted || event.ThreadID != identity.ThreadID || c.store == nil {
+		return
+	}
+	store, err := c.store()
+	if err != nil {
+		return
+	}
+	records, err := store.List(identity.AgentUID)
+	if err != nil {
+		return
+	}
+	for _, record := range records {
+		if codexQuestionWaitingFor(record, identity) {
+			_, _ = store.Close(record.ID)
+		}
+	}
+}
+
+// codexQuestionWaitingFor reports whether record is a still-waiting Codex
+// request of this exact Agent, Pane, thread, and activation.
+func codexQuestionWaitingFor(record agentquestion.Record, identity codexLifecycleIdentity) bool {
+	return record.Provider == "codex" && record.State == agentquestion.StateWaiting && record.AgentUID == identity.AgentUID && record.PaneUID == identity.PaneUID && record.SessionID == identity.ThreadID && record.Generation == identity.Generation && record.RuntimeID == identity.RuntimeID
 }
 
 func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder, questionPopup claudeQuestionPopup, paneID string, asker claudeQuestionAsker) {

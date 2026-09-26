@@ -415,3 +415,178 @@ func TestCodexQuestionWaitJoinsTheCanceledWaiterBeforeItsStoreWrite(t *testing.T
 		}
 	})
 }
+
+// codexTurnEndChannel is the plain CLI-answered channel of the turn-end tests.
+func codexTurnEndChannel(t *testing.T, fixture *questionFixture, popup claudeQuestionPopup, answering config.AgentQuestionAnswering) *codexQuestionChannel {
+	t.Helper()
+	agent, _ := fixture.resources.registry.Agent(questionTestAgent)
+	agent.Spec.Provider = aiModeCodex
+	channel := &codexQuestionChannel{
+		loadRegistry: fixture.resources.store().load,
+		store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
+		popup:        popup,
+		answering:    func() config.AgentQuestionAnswering { return answering },
+		window:       func() time.Duration { return time.Minute },
+		newID:        agentquestion.NewID,
+		poll:         time.Millisecond,
+	}
+	t.Cleanup(channel.Wait)
+	return channel
+}
+
+var codexTurnEndIdentity = codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: "%7", Generation: "gen-1", ThreadID: "thread-1"}
+
+func handleCodexTurnEndQuestion(t *testing.T, fixture *questionFixture, channel *codexQuestionChannel, responder recordingCodexQuestionResponder) agentquestion.Record {
+	t.Helper()
+	channel.Handle(t.Context(), codexTurnEndIdentity, codexappserver.Notification{
+		Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`),
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","options":[{"label":"A"}]}]}`),
+	}, responder)
+	records, err := fixture.store.List(questionTestAgent)
+	if err != nil || len(records) != 1 || records[0].State != agentquestion.StateWaiting {
+		t.Fatalf("waiting record = %+v, err = %v", records, err)
+	}
+	return records[0]
+}
+
+func codexTurnCompleted(threadID string, state codexappserver.TurnState) codexappserver.LifecycleEvent {
+	return codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleTurnCompleted, ThreadID: threadID, TurnID: "turn-1", TurnState: state}
+}
+
+func TestCodexQuestionTurnEndClosesOnlyThisBindingsWaitingRequest(t *testing.T) {
+	for _, state := range []codexappserver.TurnState{codexappserver.TurnStateInterrupted, codexappserver.TurnStateCompleted, codexappserver.TurnStateFailed} {
+		t.Run(string(state), func(t *testing.T) {
+			fixture := newQuestionFixture(t, true)
+			channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringClaude)
+			responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+			own := handleCodexTurnEndQuestion(t, fixture, channel, responder)
+			var others []string
+			for _, change := range []func(*agentquestion.Record){
+				func(r *agentquestion.Record) { r.SessionID = "other-thread" },
+				func(r *agentquestion.Record) { r.Generation = "other-generation" },
+				func(r *agentquestion.Record) { r.RuntimeID = "%8" },
+			} {
+				other := own
+				other.ID, _ = agentquestion.NewID()
+				change(&other)
+				created, err := fixture.store.Create(other)
+				if err != nil {
+					t.Fatal(err)
+				}
+				others = append(others, created.ID)
+			}
+			// Another thread's turn end touches nothing of this binding.
+			channel.HandleTurnCompleted(codexTurnEndIdentity, codexTurnCompleted("other-thread", state))
+			if record, _, _ := fixture.store.Get(own.ID); record.State != agentquestion.StateWaiting {
+				t.Fatalf("another thread's turn end moved the record to %s", record.State)
+			}
+			channel.HandleTurnCompleted(codexTurnEndIdentity, codexTurnCompleted("thread-1", state))
+			record, _, err := fixture.store.Get(own.ID)
+			if err != nil || record.State != agentquestion.StateClosed || record.Disposition != "" {
+				t.Fatalf("turn end state/disposition = %s/%q, err = %v", record.State, record.Disposition, err)
+			}
+			for _, id := range others {
+				if other, _, _ := fixture.store.Get(id); other.State != agentquestion.StateWaiting {
+					t.Fatalf("turn end closed a record of another binding: %+v", other)
+				}
+			}
+			// The waiter sees the close and returns by itself, answering nothing.
+			channel.Wait()
+			if len(responder.replies) != 0 {
+				t.Fatal("a closed question answered the Codex request")
+			}
+		})
+	}
+}
+
+func TestCodexQuestionTurnEndStopsPopupAndRefusesLateCLIAnswer(t *testing.T) {
+	fixture := newQuestionFixture(t, false)
+	fixture.command.questionAnswering = func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux }
+	popup := newFakeQuestionPopup("client-1")
+	channel := codexTurnEndChannel(t, fixture, popup, config.AgentQuestionAnsweringProjmux)
+	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+	record := handleCodexTurnEndQuestion(t, fixture, channel, responder)
+	popup.waitOpened(t)
+	channel.HandleTurnCompleted(codexTurnEndIdentity, codexTurnCompleted("thread-1", codexappserver.TurnStateInterrupted))
+	channel.Wait()
+	if _, opens, closes := popup.counts(); opens != 1 || closes != 1 {
+		t.Fatalf("popup opens/closes = %d/%d, want 1/1", opens, closes)
+	}
+	if len(responder.replies) != 0 {
+		t.Fatal("a closed question answered the Codex request")
+	}
+	if _, err := fixture.store.Answer(record.ID, questionTestAgent, map[string]string{"q1": `["A"]`}); !errors.Is(err, agentquestion.ErrClosed) {
+		t.Fatalf("store answer after turn end = %v, want %v", err, agentquestion.ErrClosed)
+	}
+	_, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, record.ID, "--index", "1=1")
+	if err == nil || !strings.Contains(err.Error(), questionReasonClosed) {
+		t.Fatalf("late CLI answer refusal = %v", err)
+	}
+}
+
+func TestCodexQuestionResolvedAfterTurnEndKeepsPlainClose(t *testing.T) {
+	fixture := newQuestionFixture(t, true)
+	channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringClaude)
+	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+	record := handleCodexTurnEndQuestion(t, fixture, channel, responder)
+	channel.HandleTurnCompleted(codexTurnEndIdentity, codexTurnCompleted("thread-1", codexappserver.TurnStateInterrupted))
+	channel.HandleResolved(codexTurnEndIdentity, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleRequestResolved, ThreadID: "thread-1", RequestID: "17"})
+	record, _, err := fixture.store.Get(record.ID)
+	if err != nil || record.State != agentquestion.StateClosed || record.Disposition != "" {
+		t.Fatalf("state/disposition after trailing resolve = %s/%q, err = %v", record.State, record.Disposition, err)
+	}
+}
+
+type respondingCodexLifecycleConnection struct {
+	*fakeCodexLifecycleConnection
+	recordingCodexQuestionResponder
+}
+
+// TestCodexNativeObserverClosesQuestionOfAnInterruptedTurn feeds the order
+// Codex sends on turn/interrupt: the turn ends first, then the request is
+// resolved. The reducer refuses that late resolve, so the turn end closes it.
+func TestCodexNativeObserverClosesQuestionOfAnInterruptedTurn(t *testing.T) {
+	fixture := newQuestionFixture(t, true)
+	channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringClaude)
+	sink := newRecordingCodexLifecycleSink()
+	conn := &respondingCodexLifecycleConnection{
+		fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{
+			snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress},
+			events:   make(chan codexappserver.Notification, 4),
+		},
+		recordingCodexQuestionResponder: recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)},
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	observer := codexNativeObserver{
+		identity: codexTurnEndIdentity, sink: sink, refreshTicks: make(chan time.Time), questions: channel,
+		open: func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
+	}
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+	waitForCodexObserverEvents(t, sink, 2)
+	for _, notification := range []codexappserver.Notification{
+		{Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`), Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","options":[{"label":"A"}]}]}`)},
+		{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}`)},
+		{Method: "serverRequest/resolved", Params: json.RawMessage(`{"threadId":"thread-1","requestId":17}`)},
+		// Written only after the resolve before it was handled.
+		{Method: "thread/status/changed", Params: json.RawMessage(`{"threadId":"thread-1","status":{"type":"idle"}}`)},
+	} {
+		conn.events <- notification
+	}
+	waitForCodexObserverEvents(t, sink, 5)
+	records, err := fixture.store.List(questionTestAgent)
+	if err != nil || len(records) != 1 || records[0].State != agentquestion.StateClosed || records[0].Disposition != "" {
+		for _, record := range records {
+			t.Logf("record %s: %s/%q", record.ID, record.State, record.Disposition)
+		}
+		t.Fatalf("interrupted turn's question count = %d, want one plain closed record, err = %v", len(records), err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(conn.replies) != 0 {
+		t.Fatal("an interrupted turn's question answered the Codex request")
+	}
+}
