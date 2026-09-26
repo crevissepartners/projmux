@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -258,7 +259,63 @@ func TestRecordJSONKeysAreFixed(t *testing.T) {
 		t.Fatalf("record = %s", body)
 	}
 	if SourceEstimated != "estimated" {
-		t.Fatal("the reserved estimated source changed spelling")
+		t.Fatal("the estimated source changed spelling")
+	}
+
+	// Only an estimated row adds lastRecordAt, and exactly that key.
+	last := t0.Add(time.Hour)
+	estimated := observed(t, "agent-1", "A", t0)
+	estimated.Source, estimated.LastRecordAt = SourceEstimated, &last
+	body, err = json.Marshal(estimated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields = map[string]any{}
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	keys = keys[:0]
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	if !sameSet(keys, append(slices.Clone(want), "lastRecordAt")) || fields["lastRecordAt"] != "2026-09-25T10:00:00Z" {
+		t.Fatalf("estimated record = %s", body)
+	}
+}
+
+func TestMergeSourcePrecedenceIsCurrentThenObservedThenEstimated(t *testing.T) {
+	last := t0.Add(time.Hour)
+	estimated := func(sessionID string, at time.Time) Record {
+		record := observed(t, "agent-1", sessionID, at)
+		record.Source, record.LastRecordAt = SourceEstimated, &last
+		return record
+	}
+	history := []Record{
+		// E: estimated only.
+		estimated("E", t0),
+		// O: estimated first, observed later; the observation wins whatever
+		// the order.
+		estimated("O", t0),
+		observed(t, "agent-1", "O", t0.Add(-time.Minute)),
+		observed(t, "agent-1", "O2", t0),
+		estimated("O2", t0.Add(time.Minute)),
+		// C: estimated and current.
+		estimated("C", t0),
+	}
+	current, _ := RecordFor("agent-1", claudeRef("C", "/t/C.jsonl", t0.Add(-time.Hour)), SourceCurrent)
+	rows := Merge(history, &current)
+	sources := map[string]Source{}
+	for _, row := range rows {
+		sources[row.SessionID] = row.Source
+	}
+	want := map[string]Source{"E": SourceEstimated, "O": SourceObserved, "O2": SourceObserved, "C": SourceCurrent}
+	if !reflect.DeepEqual(sources, want) {
+		t.Fatalf("sources = %v, want %v", sources, want)
+	}
+	for _, row := range rows {
+		if row.SessionID == "O" && (row.LastRecordAt == nil || !row.LastRecordAt.Equal(last)) {
+			t.Fatalf("O row = %#v, want the estimated row's lastRecordAt carried through", row)
+		}
 	}
 }
 

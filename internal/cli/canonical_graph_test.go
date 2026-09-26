@@ -15,7 +15,11 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `agent sessions list` joined the Agent domain:
+// The baseline last moved when `agent sessions backfill` joined the sessions
+// group: one row with a json projection that appends past Claude sessions,
+// attributed to exactly one Agent by their delivered coordination frames, as
+// estimated history.
+// Before that, it moved when `agent sessions list` joined the Agent domain:
 // one row with a json projection that lists the Claude conversations an Agent
 // has moved through, from the append-only session history and the Registry's
 // current `status.sessionRef`.
@@ -83,7 +87,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "73b5154ea075196f66e1502645c606731b2fe00e28e5bd28f7ad53a9693ec0f5"
+	const want = "bfd9efc845e164b5921f317ede53ef1c5f114fa6f234696886f0d17aa6e838a2"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

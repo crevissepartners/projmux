@@ -124,6 +124,9 @@ type agentCommand struct {
 	// lookupEnv reads the ambient tmux Pane that `agent persona` refuses to
 	// restart from, and the inherited $TMUX its stop routes through.
 	lookupEnv func(string) string
+	// claudeProjectsDir is the Claude transcript root `agent sessions
+	// backfill` scans; nil resolves ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects.
+	claudeProjectsDir func() (string, error)
 }
 
 func newAgentCommand() *agentCommand {

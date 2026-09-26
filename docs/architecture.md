@@ -719,9 +719,12 @@ Agent provider session ref:
 - Codex's turn id is deliberately **not** stored. A turn addresses one turn
   inside the conversation and changes on every hook event, so it is not a
   pointer to the conversation.
-- Transcript **paths** are recorded as the hook reported them. Nothing reads
-  provider config files or transcript **contents**; that is permanently out of
-  scope.
+- Transcript **paths** are recorded as the hook reported them. The Registry,
+  hook ingest, and resume paths never read provider config files or transcript
+  **contents**; that is permanently out of scope for them. The one exception is
+  the explicit, user-run `agent sessions backfill` (see "Agent session history
+  (Claude)" below), which reads Claude transcript contents read-only and only
+  to attribute past sessions from delivered coordination frames.
 - The field is additive inside `schemaVersion: 1`. It is an optional pointer
   with `omitempty`, so a registry written before it existed decodes with a nil
   ref, validates, and re-encodes byte-identically. Bumping the envelope would
@@ -762,10 +765,11 @@ Agent session history (Claude):
   `agent session history not recorded: append-failed` line on stderr.
 - Each line is `{"agentUID","provider","sessionId","transcriptPath","observedAt","source"}`:
   `provider` is `claude`, `observedAt` is the ref's RFC 3339 UTC observation
-  time, and `transcriptPath` is the path the hook reported (never read).
-  `source` is `observed` for every appended line; the read side adds `current`
-  for the Registry's ref; `estimated` is reserved for a later backfill and
-  nothing produces it yet. Lines are one framed `O_APPEND` write under an
+  time, and `transcriptPath` is the path the hook reported (never read by the
+  writers or by `agent sessions list`). `source` is `observed` for every line
+  a writer appends; the read side adds `current` for the Registry's ref; the
+  only producer of `estimated` is `agent sessions backfill` (below), whose
+  lines add one key, `lastRecordAt`. Lines are one framed `O_APPEND` write under an
   exclusive `flock`, then `fsync`; the file is `0600` in a `0700` directory.
   Readers skip and count an unparsable line.
 - `projmux agent sessions list <agent-ref> [-o json]` and the Go read function
@@ -773,9 +777,64 @@ Agent session history (Claude):
   with the Registry's current ref, one row per `(agentUID, sessionId)` in
   `observedAt` order. A conversation seen more than once keeps its latest
   observation time and transcript path, and is `current` when the Registry
-  names it. The JSON envelope adds `agentName` and `corruptLines`.
-- Non-guarantees: no session end time is recorded; conversations from before
-  this history existed appear only as the `current` row; Codex and Antigravity
+  names it; otherwise it is `observed` if any of its rows is, and `estimated`
+  only when every row is, so a backfilled estimate never hides an observation.
+  The JSON envelope adds `agentName` and `corruptLines`.
+- `projmux agent sessions backfill [--dry-run] [-o json]` recovers a subset of
+  the conversations from before this history existed. It is the one explicit,
+  user-run reader of transcript contents; the Registry, hook ingest, resume,
+  and `agent sessions list` still never read a transcript.
+  - Input: the top-level Claude transcripts
+    `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<project>/<session>.jsonl`
+    (a blank `CLAUDE_CONFIG_DIR` is unset). Only regular files exactly one
+    directory deep are scanned: symlinks, directories, and deeper files such
+    as `<session>/subagents/*.jsonl` are not. Files are opened read-only and
+    never written; a missing projects directory scans nothing.
+  - Attribution: only `type: "user"` records that are not `isSidechain: true`
+    count, and within them only a string `message.content` or its
+    `type: "text"` blocks; tool results, assistant records, attachments, and
+    queue operations can quote a frame and are ignored. At each occurrence of
+    `{"kind":"projmux-coordination"` in that text, one JSON value is decoded;
+    a frame with that `kind` and a non-empty `target.agentUID` names its
+    target, and an occurrence that does not decode is skipped and counted.
+    A transcript naming exactly one distinct target Agent is attributed to
+    it; none is `noFrame`, two or more is `ambiguous`, and neither is ever
+    resolved from the folder name, the working directory, or time proximity.
+  - Meaning of `estimated`: the session received a delivered projmux message
+    addressed to that Agent. It is a subset of past sessions -- a session that
+    never received a message is not recovered -- and an attribution, not an
+    observation. `sessionId` is the file name, `transcriptPath` the absolute
+    file path, `observedAt` the transcript's first record `timestamp`, and
+    `lastRecordAt` its last one (both over every parseable record, RFC 3339
+    UTC). A candidate with no parseable timestamp is `unreadable`.
+  - Precedence and idempotency: a session already `observed` in the history
+    or `current` in the Registry for any Agent is `skippedObserved`; one
+    already `estimated` is `alreadyEstimated`; only the rest are appended, as
+    framed lines like every other writer's. The run holds the history file's
+    exclusive `flock` across the read, the check, and the append (not the
+    transcript scan), so concurrent runs cannot add a session twice and a
+    second run appends nothing.
+  - Report: `scanned`, `attributed`, `alreadyEstimated`, `skippedObserved`,
+    `ambiguous`, `noFrame`, `unreadable` (each transcript lands in exactly one
+    of these six), `malformedLines` (transcript lines that are not JSON
+    objects, skipped), `malformedFrames`, plus `dryRun`, `projectsDir`,
+    `historyPath`, and `rows` (the attributed rows; `[]` when none).
+    `--dry-run` reports exactly what a real run would append and writes
+    nothing, not even the state directory.
+  - Removing the estimated rows: with no projmux command running that could
+    write the history, keep every other line and swap the file in atomically
+    (the blank lines of the framed format are simply dropped):
+
+    ```sh
+    h="${XDG_STATE_HOME:-$HOME/.local/state}/projmux/agent-session-history.jsonl"
+    jq -c 'select(.source != "estimated")' "$h" > "$h.tmp" && chmod 600 "$h.tmp" && mv "$h.tmp" "$h"
+    ```
+
+    A line `jq` cannot parse stops it with an error before the `mv`; readers
+    already skip such lines, so remove or repair it first.
+- Non-guarantees: no session end time is recorded for observed rows;
+  conversations from before this history existed appear only as the `current`
+  row unless `agent sessions backfill` attributes them; Codex and Antigravity
   conversation changes are not recorded; a line edited or deleted by hand is
   not recovered; the history is kept after the Agent is deleted; the Registry
   commit and the append are not atomic, so a crash between them loses that one

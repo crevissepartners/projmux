@@ -370,3 +370,126 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// backfillTranscript writes one synthetic Claude transcript whose one user
+// text block carries a delivered coordination frame for targetUID.
+func backfillTranscript(t *testing.T, projects, session, targetUID string) string {
+	t.Helper()
+	dir := filepath.Join(projects, "-src-app")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	frame := `{"kind":"projmux-coordination","schemaVersion":2,"target":{"agentUID":"` + targetUID + `","provider":"claude"}}`
+	text, _ := json.Marshal("Another Claude session sent a message:\n" + frame)
+	line := `{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":` + string(text) + `}]}}` + "\n" +
+		`{"type":"assistant","timestamp":"2026-08-01T10:30:00Z","message":{"content":"ok"}}` + "\n"
+	path := filepath.Join(dir, session+".jsonl")
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func sessionBackfillCommand(h *sessionRefHarness, stateDir, projects string) *agentCommand {
+	c := sessionHistoryAgentCommand(h, stateDir)
+	c.claudeProjectsDir = func() (string, error) { return projects, nil }
+	return c
+}
+
+func TestAgentSessionsBackfillJSONKeysAndRerun(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	agent, _ := h.registry.Agent(h.agentUID)
+	agent.Status.SessionRef = &coremetadata.AgentSessionRef{
+		Provider: aiModeClaude, ObservedAt: sessionRefObservedAt,
+		Claude: &coremetadata.ClaudeSessionRef{SessionID: "current-one"},
+	}
+	projects, stateDir := t.TempDir(), t.TempDir()
+	path := backfillTranscript(t, projects, "past-one", h.agentUID)
+	backfillTranscript(t, projects, "current-one", h.agentUID)
+	c := sessionBackfillCommand(h, stateDir, projects)
+
+	var stdout, stderr bytes.Buffer
+	if err := c.Run([]string{"sessions", "backfill", "--dry-run", "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("backfill --dry-run: %v (stderr=%s)", err, stderr.String())
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode %s: %v", stdout.String(), err)
+	}
+	wantKeys := []string{"alreadyEstimated", "ambiguous", "attributed", "dryRun", "historyPath", "malformedFrames", "malformedLines",
+		"noFrame", "projectsDir", "rows", "scanned", "skippedObserved", "unreadable"}
+	if got := sortedKeys(envelope); !slices.Equal(got, wantKeys) {
+		t.Fatalf("keys = %v, want %v", got, wantKeys)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(envelope["rows"], &rows); err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %s", envelope["rows"])
+	}
+	if got, want := sortedKeys(rows[0]), []string{"agentUID", "lastRecordAt", "observedAt", "provider", "sessionId", "source", "transcriptPath"}; !slices.Equal(got, want) {
+		t.Fatalf("row keys = %v, want %v", got, want)
+	}
+	if rows[0]["sessionId"] != "past-one" || rows[0]["transcriptPath"] != path || rows[0]["source"] != "estimated" ||
+		rows[0]["observedAt"] != "2026-08-01T10:00:00Z" || rows[0]["lastRecordAt"] != "2026-08-01T10:30:00Z" {
+		t.Fatalf("row = %v", rows[0])
+	}
+	if string(envelope["dryRun"]) != "true" || string(envelope["skippedObserved"]) != "1" || string(envelope["attributed"]) != "1" {
+		t.Fatalf("report = %s", stdout.String())
+	}
+	if _, err := os.Stat(sessionhistory.Path(stateDir)); !os.IsNotExist(err) {
+		t.Fatalf("a dry run created the history file: %v", err)
+	}
+
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "backfill"}, &stdout, &stderr); err != nil {
+		t.Fatalf("backfill: %v (stderr=%s)", err, stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "appended 1 estimated session(s)") || !strings.Contains(out, "past-one") {
+		t.Fatalf("text output =\n%s", out)
+	}
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "list", "uid:" + h.agentUID}, &stdout, &stderr); err != nil {
+		t.Fatalf("sessions list: %v", err)
+	}
+	if out := stdout.String(); !strings.Contains(out, "past-one") || !strings.Contains(out, "estimated") {
+		t.Fatalf("list after backfill =\n%s", out)
+	}
+
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "backfill", "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("second backfill: %v", err)
+	}
+	var again sessionhistory.BackfillReport
+	if err := json.Unmarshal(stdout.Bytes(), &again); err != nil {
+		t.Fatal(err)
+	}
+	if again.Attributed != 0 || again.AlreadyEstimated != 1 || again.SkippedObserved != 1 || len(again.Rows) != 0 {
+		t.Fatalf("second run = %#v, want nothing appended", again)
+	}
+	if read := readSessionHistory(t, stateDir, ""); len(read.Records) != 1 {
+		t.Fatalf("history = %#v, want one estimated line", read.Records)
+	}
+}
+
+func TestAgentSessionsBackfillRefusesBadArgvWithTheUsageExitCode(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	stateDir := t.TempDir()
+	c := sessionBackfillCommand(h, stateDir, t.TempDir())
+	for _, args := range [][]string{
+		{"sessions", "backfill", "extra"},
+		{"sessions", "backfill", "--bogus"},
+		{"sessions", "backfill", "-o", "yaml"},
+		{"sessions", "backfill", "--dry-run=maybe"},
+	} {
+		var stdout, stderr bytes.Buffer
+		err := c.Run(args, &stdout, &stderr)
+		if err == nil || exitCodeOf(err) != 2 {
+			t.Errorf("%v: err = %v (exit %d), want a usage error", args, err, exitCodeOf(err))
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("%v printed %q", args, stdout.String())
+		}
+	}
+	if _, err := os.Stat(sessionhistory.Path(stateDir)); !os.IsNotExist(err) {
+		t.Fatalf("a refused backfill created the history file: %v", err)
+	}
+}

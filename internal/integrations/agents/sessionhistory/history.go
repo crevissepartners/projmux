@@ -9,9 +9,13 @@
 // business inside a file every transaction rewrites.
 //
 // The file is one JSON object per line. Writers only ever append a complete
-// line; readers skip a line they cannot parse and count it. Nothing here reads
-// a provider transcript: the transcript path is the one the provider hook
-// reported, recorded as a path.
+// line; readers skip a line they cannot parse and count it. The observed rows
+// and the Registry's current row never read a provider transcript: their
+// transcript path is the one the provider hook reported, recorded as a path.
+// The one reader of transcript contents is Backfill (backfill.go), run only by
+// the explicit `agent sessions backfill` command: it opens the top-level Claude
+// transcripts read-only and uses them for nothing but attributing a past
+// session to the Agent its delivered coordination frames name.
 package sessionhistory
 
 import (
@@ -52,8 +56,10 @@ const (
 	// Registry currently records for the Agent. It is never written to the
 	// file.
 	SourceCurrent Source = "current"
-	// SourceEstimated is reserved for rows reconstructed after the fact from
-	// transcripts that predate this history. Nothing produces it yet.
+	// SourceEstimated is a row Backfill reconstructed after the fact from a
+	// transcript that predates this history: the session's delivered
+	// projmux coordination frames name exactly one target Agent. It is the
+	// only source that carries lastRecordAt.
 	SourceEstimated Source = "estimated"
 )
 
@@ -66,6 +72,41 @@ type Record struct {
 	TranscriptPath string    `json:"transcriptPath"`
 	ObservedAt     time.Time `json:"observedAt"`
 	Source         Source    `json:"source"`
+	// LastRecordAt is the timestamp of the transcript's last record. Only an
+	// estimated row carries it (its observedAt is the first record's); an
+	// observed or current row omits the key.
+	LastRecordAt *time.Time `json:"lastRecordAt,omitempty"`
+}
+
+// normalized returns record with its instants in UTC.
+func (r Record) normalized() Record {
+	r.ObservedAt = r.ObservedAt.UTC()
+	if r.LastRecordAt != nil {
+		last := r.LastRecordAt.UTC()
+		r.LastRecordAt = &last
+	}
+	return r
+}
+
+// frame is the one on-disk encoding of a row: the JSON object between a
+// leading and a trailing newline.
+func frame(record Record) ([]byte, error) {
+	body, err := json.Marshal(record.normalized())
+	if err != nil {
+		return nil, fmt.Errorf("agent session history: marshal record: %w", err)
+	}
+	framed := make([]byte, 0, len(body)+2)
+	framed = append(framed, '\n')
+	framed = append(framed, body...)
+	return append(framed, '\n'), nil
+}
+
+// validForAppend refuses a row no reader would keep.
+func validForAppend(record Record) error {
+	if record.Provider != ProviderClaude || strings.TrimSpace(record.AgentUID) == "" || strings.TrimSpace(record.SessionID) == "" {
+		return fmt.Errorf("agent session history: refusing an incomplete record for agent %q", record.AgentUID)
+	}
+	return nil
 }
 
 // Path is the history file of one state directory.
@@ -107,31 +148,18 @@ func Append(stateDir string, record Record) error {
 	if strings.TrimSpace(stateDir) == "" {
 		return errors.New("agent session history: no state directory")
 	}
-	if record.Provider != ProviderClaude || strings.TrimSpace(record.AgentUID) == "" || strings.TrimSpace(record.SessionID) == "" {
-		return fmt.Errorf("agent session history: refusing an incomplete record for agent %q", record.AgentUID)
+	if err := validForAppend(record); err != nil {
+		return err
 	}
-	record.ObservedAt = record.ObservedAt.UTC()
-	body, err := json.Marshal(record)
+	framed, err := frame(record)
 	if err != nil {
-		return fmt.Errorf("agent session history: marshal record: %w", err)
+		return err
 	}
-	framed := make([]byte, 0, len(body)+2)
-	framed = append(framed, '\n')
-	framed = append(framed, body...)
-	framed = append(framed, '\n')
-	path := Path(stateDir)
-	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
-		return fmt.Errorf("agent session history: create state dir: %w", err)
-	}
-	// #nosec G304 -- the path is resolved from projmux's own state directory.
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, localstate.PrivateFileMode)
+	file, err := openLocked(stateDir, os.O_WRONLY, lockWait)
 	if err != nil {
-		return fmt.Errorf("agent session history: open: %w", err)
+		return err
 	}
 	defer file.Close()
-	if err := lockAppend(file); err != nil {
-		return fmt.Errorf("agent session history: lock: %w", err)
-	}
 	if _, err := file.Write(framed); err != nil {
 		return fmt.Errorf("agent session history: append: %w", err)
 	}
@@ -142,17 +170,38 @@ func Append(stateDir string, record Record) error {
 }
 
 // lockWait bounds how long an appender queues behind another one. Holders
-// keep the lock for one small write and its fsync.
+// keep the lock for one small write and its fsync, or for Backfill's read of
+// the history file and its one append.
 const (
 	lockWait          = time.Second
 	lockRetryInterval = 2 * time.Millisecond
 )
 
-// lockAppend takes the exclusive advisory lock of the open history file. It is
-// released when the file is closed.
-func lockAppend(file *os.File) error {
+// openLocked creates the private state directory and history file when
+// missing, opens the file for appending with the extra access flag, and takes
+// its exclusive lock. The lock is released when the file is closed.
+func openLocked(stateDir string, access int, wait time.Duration) (*os.File, error) {
+	path := Path(stateDir)
+	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("agent session history: create state dir: %w", err)
+	}
+	// #nosec G304 -- the path is resolved from projmux's own state directory.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|access, localstate.PrivateFileMode)
+	if err != nil {
+		return nil, fmt.Errorf("agent session history: open: %w", err)
+	}
+	if err := lockAppend(file, wait); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("agent session history: lock: %w", err)
+	}
+	return file, nil
+}
+
+// lockAppend takes the exclusive advisory lock of the open history file,
+// waiting at most wait. It is released when the file is closed.
+func lockAppend(file *os.File, wait time.Duration) error {
 	fd := int(file.Fd())
-	deadline := time.Now().Add(lockWait)
+	deadline := time.Now().Add(wait)
 	err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
 	for errors.Is(err, unix.EWOULDBLOCK) && time.Now().Before(deadline) {
 		time.Sleep(lockRetryInterval)
@@ -187,8 +236,14 @@ func Read(stateDir, agentUID string) (ReadResult, error) {
 		return result, fmt.Errorf("agent session history: open: %w", err)
 	}
 	defer file.Close()
+	return readRecords(file, agentUID)
+}
+
+// readRecords parses history lines from r; see Read.
+func readRecords(r io.Reader, agentUID string) (ReadResult, error) {
+	var result ReadResult
 	agentUID = strings.TrimSpace(agentUID)
-	reader := bufio.NewReader(file)
+	reader := bufio.NewReader(r)
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if trimmed := strings.TrimSpace(string(line)); trimmed != "" {
@@ -197,8 +252,7 @@ func Read(stateDir, agentUID string) (ReadResult, error) {
 				strings.TrimSpace(record.AgentUID) == "" || strings.TrimSpace(record.SessionID) == "" {
 				result.Corrupt++
 			} else if agentUID == "" || record.AgentUID == agentUID {
-				record.ObservedAt = record.ObservedAt.UTC()
-				result.Records = append(result.Records, record)
+				result.Records = append(result.Records, record.normalized())
 			}
 		}
 		if readErr != nil {
@@ -219,8 +273,10 @@ func Read(stateDir, agentUID string) (ReadResult, error) {
 //   - observedAt is the latest observation of it, so a conversation the Agent
 //     returned to sorts where it was last entered;
 //   - transcriptPath is the one of that latest observation that has one;
-//   - source is `current` when current names it, and otherwise the source of
-//     the rows it came from.
+//   - lastRecordAt is the latest one any of its rows carries;
+//   - source is `current` when current names it, else `observed` when any
+//     row is observed, else `estimated`: a backfilled estimate never hides an
+//     observation of the same conversation.
 //
 // Rows are ordered by observedAt; equal instants keep their input order, with
 // current last. current may be nil.
@@ -245,8 +301,11 @@ func Merge(history []Record, current *Record) []Record {
 		} else if merged.TranscriptPath == "" {
 			merged.TranscriptPath = record.TranscriptPath
 		}
-		if record.Source == SourceCurrent {
-			merged.Source = SourceCurrent
+		if record.LastRecordAt != nil && (merged.LastRecordAt == nil || record.LastRecordAt.After(*merged.LastRecordAt)) {
+			merged.LastRecordAt = record.LastRecordAt
+		}
+		if sourceRank(record.Source) > sourceRank(merged.Source) {
+			merged.Source = record.Source
 		}
 		rows[at] = merged
 	}
@@ -260,6 +319,21 @@ func Merge(history []Record, current *Record) []Record {
 	}
 	slices.SortStableFunc(rows, func(a, b Record) int { return a.ObservedAt.Compare(b.ObservedAt) })
 	return rows
+}
+
+// sourceRank orders sources for Merge: current, then observed, then
+// estimated.
+func sourceRank(source Source) int {
+	switch source {
+	case SourceCurrent:
+		return 3
+	case SourceObserved:
+		return 2
+	case SourceEstimated:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // Result is the session list of one Agent.

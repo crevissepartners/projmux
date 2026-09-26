@@ -865,8 +865,9 @@ var routes = []Route{
 			"projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]",
 			"projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...",
 			"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]",
+			"projmux agent sessions backfill [--dry-run] [-o json]",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer", "agent sessions list"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer", "agent sessions list", "agent sessions backfill"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -1008,15 +1009,20 @@ var routes = []Route{
 			{
 				// The session history lists the Claude conversations an Agent
 				// has moved through: the append-only history file joined with
-				// the conversation `status.sessionRef` records now.
+				// the conversation `status.sessionRef` records now. `backfill`
+				// adds estimated rows for sessions from before the history.
 				Effects:    unchangedEffects(CardinalityExactOne),
 				Name:       "sessions",
 				Invocation: InvocationExplicit,
-				Summary:    "List the Claude conversations one exact Agent has moved through",
-				Usage:      []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]"},
-				Canonical:  []string{"agent sessions list"},
+				Summary:    "List the Claude conversations an Agent has moved through, or backfill past ones from delivered message frames",
+				Usage:      []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]", "projmux agent sessions backfill [--dry-run] [-o json]"},
+				Canonical:  []string{"agent sessions list", "agent sessions backfill"},
 				Children: []Route{
 					{Effects: unchangedEffects(CardinalityExactOne), Name: "list", Invocation: InvocationExplicit, Summary: "List one exact Claude Agent's recorded and current conversations in time order", Usage: []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]"}, Canonical: []string{"agent sessions list"}, Outputs: []OutputMode{OutputModeJSON}},
+					// The one explicit reader of Claude transcript contents:
+					// read-only, and only to attribute a past session to the
+					// single Agent its delivered coordination frames name.
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "backfill", Invocation: InvocationExplicit, Summary: "Append past Claude sessions attributable to exactly one Agent by their delivered message frames as estimated history", Usage: []string{"projmux agent sessions backfill [--dry-run] [-o json]"}, Canonical: []string{"agent sessions backfill"}, Outputs: []OutputMode{OutputModeJSON}},
 				},
 			},
 		},
