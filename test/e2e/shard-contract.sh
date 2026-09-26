@@ -153,7 +153,7 @@ echo ">> the required E2E Tests context still reports over the split shards"
   selector_root="$(mktemp -d)"
   holder_pid=""
   selected_pid=""
-  # shellcheck disable=SC2317 # Invoked indirectly by the subshell EXIT trap.
+  # shellcheck disable=SC2329 # Invoked indirectly by the subshell EXIT trap.
   cleanup_selector_contract() {
     touch "$selector_root/release" 2>/dev/null || true
     if [[ -n "$selected_pid" ]]; then

@@ -39,7 +39,7 @@ for tool in "${required_tools[@]}"; do
 done
 if ((${#missing[@]} > 0)); then
 	printf 'security: missing required tools: %s\n' "${missing[*]}" >&2
-	printf 'Run "make security-tools" for Go-based tools; install shellcheck, git, and python3 with your OS package manager.\n' >&2
+	printf 'Run "make security-tools" for the pinned scanners (Go-based tools and ShellCheck); install go, git, and python3 with your OS package manager.\n' >&2
 	exit 2
 fi
 
@@ -164,16 +164,65 @@ scan_actionlint() {
 	actionlint
 }
 
+# Entrypoints that dynamically source the shared library, which shellcheck
+# cannot resolve statically, so SC1091 and SC2154 are suppressed for exactly
+# these files. The same list drives the exclusion from the regular invocation.
+shellcheck_sourcing_entrypoints=(
+	test/e2e/codex-lifecycle.sh
+	test/e2e/evidence-contract.sh
+	test/e2e/npm-staging-path.sh
+	test/e2e/reliability-contract.sh
+	test/install/smoke.sh
+	test/integration/codex-appserver-topology.sh
+	test/integration/linux-smoke.sh
+)
+# Sourcing entrypoints checked without ShellCheck's extended (dataflow)
+# analysis. On this ~11.6k-line file it needs more than 10 GiB of memory, which
+# gets the job OOM-killed on smaller CI hosts. ShellCheck 0.9.0, used before
+# the v0.11.0 pin, had no such analysis, so this is not a reduction in checking
+# versus before. Keep this a closed single-file list.
+shellcheck_low_memory_entrypoints=(
+	test/e2e/linux-smoke.sh
+)
+# The shared library whose variables the entrypoints consume after sourcing it.
+shellcheck_library=test/lib/smoke.sh
+
+# Print the ShellCheck version pinned in .security/shellcheck.sha256, without
+# the leading "v". scripts/security-tools.sh validates the full pin.
+shellcheck_pinned_version() {
+	local versions
+	versions="$(sed -n -E 's/^[0-9a-f]+  shellcheck-v([0-9]+\.[0-9]+\.[0-9]+)\.[a-z0-9_]+\.[a-z0-9_]+\.tar\.xz$/\1/p' \
+		"$root/.security/shellcheck.sha256" | sort -u)"
+	if [[ -z "$versions" || "$versions" == *$'\n'* ]]; then
+		return 1
+	fi
+	printf '%s\n' "$versions"
+}
+
 scan_shellcheck() {
 	echo ">> shellcheck"
+	local pinned_version reported_version
+	if ! pinned_version="$(shellcheck_pinned_version)"; then
+		echo "security: cannot read the pinned ShellCheck version from .security/shellcheck.sha256" >&2
+		return 2
+	fi
+	reported_version="$(shellcheck --version 2>/dev/null | awk '$1 == "version:" { print $2 }' || true)"
+	if [[ "$reported_version" != "$pinned_version" ]]; then
+		printf 'security: shellcheck on PATH reports version "%s", expected pinned %s; run "make security-tools"\n' \
+			"$reported_version" "$pinned_version" >&2
+		return 2
+	fi
 	local shell_files=()
 	local regular_shell_files=()
+	local file special
 	readarray -d '' shell_files < <(git ls-files -z -- '*.sh' '*.bash')
 	for file in "${shell_files[@]}"; do
-		case "$file" in
-			test/lib/smoke.sh | test/e2e/codex-lifecycle.sh | test/e2e/evidence-contract.sh | test/e2e/linux-smoke.sh | test/e2e/npm-staging-path.sh | test/e2e/reliability-contract.sh | test/install/smoke.sh | test/integration/codex-appserver-topology.sh | test/integration/linux-smoke.sh) ;;
-			*) regular_shell_files+=("$file") ;;
-		esac
+		for special in "${shellcheck_sourcing_entrypoints[@]}" "${shellcheck_low_memory_entrypoints[@]}" "$shellcheck_library"; do
+			if [[ "$file" == "$special" ]]; then
+				continue 2
+			fi
+		done
+		regular_shell_files+=("$file")
 	done
 	if ((${#regular_shell_files[@]} > 0)); then
 		if ! shellcheck "${regular_shell_files[@]}"; then
@@ -182,21 +231,14 @@ scan_shellcheck() {
 	else
 		echo ">> shellcheck: no tracked shell files"
 	fi
-	# These entrypoints dynamically source the shared library, which shellcheck
-	# cannot resolve statically. Keep the suppressions scoped to those files.
-	if ! shellcheck --exclude=SC1091,SC2154 \
-		test/e2e/codex-lifecycle.sh \
-		test/e2e/evidence-contract.sh \
-		test/e2e/linux-smoke.sh \
-		test/e2e/npm-staging-path.sh \
-		test/e2e/reliability-contract.sh \
-		test/install/smoke.sh \
-		test/integration/codex-appserver-topology.sh \
-		test/integration/linux-smoke.sh; then
+	if ! shellcheck --exclude=SC1091,SC2154 "${shellcheck_sourcing_entrypoints[@]}"; then
+		return 1
+	fi
+	if ! shellcheck --exclude=SC1091,SC2154 --extended-analysis=false "${shellcheck_low_memory_entrypoints[@]}"; then
 		return 1
 	fi
 	# The shared variable is consumed by the entrypoints after they source it.
-	if ! shellcheck --exclude=SC2034 test/lib/smoke.sh; then
+	if ! shellcheck --exclude=SC2034 "$shellcheck_library"; then
 		return 1
 	fi
 }

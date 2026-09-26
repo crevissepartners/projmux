@@ -211,7 +211,8 @@ e2e: test-e2e
 verify: fmt-check test test-integration test-install-smoke test-e2e
 
 # Go-based security tools are pinned to the versions used to produce the
-# checked-in baselines. shellcheck, python3, and git are host dependencies;
+# checked-in baselines, and ShellCheck to the release asset digests in
+# .security/shellcheck.sha256. python3 and git are host dependencies;
 # scripts/security.sh reports actionable installation guidance when missing.
 security-tools:
 	@GO="$(GO)" \

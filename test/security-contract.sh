@@ -19,9 +19,11 @@ failure_evidence="$(mktemp -d)"
 shellcheck_failure_bin="$(mktemp -d)"
 shellcheck_failure_evidence="$(mktemp -d)"
 cache_bin="$(mktemp -d)"
+shellcheck_pin_fixture="$(mktemp -d)"
 cleanup() {
 	rm -rf -- "$synthetic_repo" "$full_scope_repo" "$fake_bin" "$failure_evidence" \
-		"$shellcheck_failure_bin" "$shellcheck_failure_evidence" "$cache_bin"
+		"$shellcheck_failure_bin" "$shellcheck_failure_evidence" "$cache_bin" \
+		"$shellcheck_pin_fixture"
 	if [[ "$ephemeral_evidence" == "1" ]]; then
 		rm -rf -- "$evidence_dir"
 	fi
@@ -159,9 +161,71 @@ if ! grep -Fxq 'security_tools_cache=miss' "$evidence_dir/cache-miss.log" ||
 	exit 1
 fi
 cmp "$root/.security/security-tools.versions" "$cache_bin/.versions"
-for tool in govulncheck gosec staticcheck gitleaks actionlint; do
+cmp "$root/.security/shellcheck.sha256" "$cache_bin/.shellcheck.sha256"
+for tool in govulncheck gosec staticcheck gitleaks actionlint shellcheck; do
 	[[ -x "$cache_bin/$tool" && ! -L "$cache_bin/$tool" ]]
 done
+shellcheck_pinned_version="$(sed -n -E 's/^[0-9a-f]+  shellcheck-v([0-9]+\.[0-9]+\.[0-9]+)\..*$/\1/p' \
+	"$root/.security/shellcheck.sha256" | sort -u)"
+if [[ -z "$shellcheck_pinned_version" ||
+	"$("$cache_bin/shellcheck" --version | awk '$1 == "version:" { print $2 }')" != "$shellcheck_pinned_version" ]]; then
+	echo "security contract: installed shellcheck does not report the pinned version" >&2
+	exit 1
+fi
+
+# The ShellCheck pin fails closed, offline: a garbled pin, an unsupported
+# platform, and an asset whose digest differs from the pin must each stop the
+# installer before anything lands in the bin directory.
+mkdir "$shellcheck_pin_fixture/bin" "$shellcheck_pin_fixture/go"
+printf 'not a pin\n' >"$shellcheck_pin_fixture/garbled.sha256"
+cat >"$shellcheck_pin_fixture/go/go" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+	"env GOOS") echo plan9 ;;
+	"env GOARCH") echo amd64 ;;
+	*) exit 1 ;;
+esac
+EOF
+chmod +x "$shellcheck_pin_fixture/go/go"
+mkdir -p "$shellcheck_pin_fixture/release/v$shellcheck_pinned_version/shellcheck-v$shellcheck_pinned_version"
+printf '#!/bin/sh\necho "version: %s"\n' "$shellcheck_pinned_version" \
+	>"$shellcheck_pin_fixture/release/v$shellcheck_pinned_version/shellcheck-v$shellcheck_pinned_version/shellcheck"
+chmod +x "$shellcheck_pin_fixture/release/v$shellcheck_pinned_version/shellcheck-v$shellcheck_pinned_version/shellcheck"
+wrong_digest="$(printf 'not the release asset\n' | sha256sum | cut -d' ' -f1)"
+for platform in linux.x86_64 linux.aarch64 darwin.x86_64 darwin.aarch64; do
+	asset="shellcheck-v$shellcheck_pinned_version.$platform.tar.xz"
+	tar -cJf "$shellcheck_pin_fixture/release/v$shellcheck_pinned_version/$asset" \
+		-C "$shellcheck_pin_fixture/release/v$shellcheck_pinned_version" "shellcheck-v$shellcheck_pinned_version"
+	printf '%s  %s\n' "$wrong_digest" "$asset" >>"$shellcheck_pin_fixture/wrong-digest.sha256"
+done
+for case_name in garbled unsupported wrong-digest; do
+	case_pin="$root/.security/shellcheck.sha256"
+	case_go="${GO:-go}"
+	case "$case_name" in
+		garbled) case_pin="$shellcheck_pin_fixture/garbled.sha256" ;;
+		unsupported) case_go="$shellcheck_pin_fixture/go/go" ;;
+		wrong-digest) case_pin="$shellcheck_pin_fixture/wrong-digest.sha256" ;;
+	esac
+	set +e
+	GO="$case_go" \
+		SECURITY_BIN_DIR="$shellcheck_pin_fixture/bin" \
+		SECURITY_TOOL_MANIFEST="$root/.security/security-tools.versions" \
+		SECURITY_SHELLCHECK_PIN="$case_pin" \
+		SECURITY_SHELLCHECK_URL_BASE="file://$shellcheck_pin_fixture/release" \
+		scripts/security-tools.sh >"$evidence_dir/shellcheck-pin-$case_name.log" 2>&1
+	pin_status=$?
+	set -e
+	if [[ "$pin_status" == "0" || -e "$shellcheck_pin_fixture/bin/shellcheck" ]]; then
+		printf 'security contract: ShellCheck installer accepted the %s case\n' "$case_name" >&2
+		exit 1
+	fi
+done
+if ! grep -Fq 'invalid ShellCheck pin' "$evidence_dir/shellcheck-pin-garbled.log" ||
+	! grep -Fq 'unsupported platform plan9/amd64' "$evidence_dir/shellcheck-pin-unsupported.log" ||
+	grep -Fq 'security_tools_cache=' "$evidence_dir/shellcheck-pin-unsupported.log"; then
+	echo "security contract: ShellCheck pin rejection did not fail closed with its reason" >&2
+	exit 1
+fi
 
 printf '{"Golang errors":{},"Issues":[]}\n' >"$failure_evidence/empty-gosec.json"
 set +e
@@ -290,6 +354,11 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$shellcheck_failure_bin/gitleaks"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$shellcheck_failure_bin/actionlint"
 cat >"$shellcheck_failure_bin/shellcheck" <<'EOF'
 #!/usr/bin/env bash
+# The version probe is not a check invocation, so it is not counted.
+if [[ "$*" == "--version" ]]; then
+	printf 'ShellCheck - shell script analysis tool\nversion: %s\n' "$SECURITY_CONTRACT_SHELLCHECK_VERSION"
+	exit 0
+fi
 count=0
 if [[ -f "$SECURITY_CONTRACT_SHELLCHECK_STATE" ]]; then
 	read -r count <"$SECURITY_CONTRACT_SHELLCHECK_STATE"
@@ -307,6 +376,7 @@ set +e
 SECURITY_BIN_DIR="$shellcheck_failure_bin" \
 	SECURITY_EVIDENCE_DIR="$shellcheck_failure_evidence" \
 	SECURITY_CONTRACT_SHELLCHECK_STATE="$shellcheck_failure_evidence/calls" \
+	SECURITY_CONTRACT_SHELLCHECK_VERSION="$shellcheck_pinned_version" \
 	scripts/security.sh repository-policy >/dev/null 2>&1
 shellcheck_failure_status=$?
 set -e
@@ -318,6 +388,23 @@ if [[ "$shellcheck_failure_status" != "1" ]] ||
 fi
 if [[ "$(cat "$shellcheck_failure_evidence/calls")" != "1" ]]; then
 	echo "security contract: shellcheck continued after a failed sub-invocation" >&2
+	exit 1
+fi
+
+# A shellcheck on PATH that is not the pinned version must fail the scanner
+# before any check runs.
+rm -f -- "$shellcheck_failure_evidence/calls"
+set +e
+SECURITY_BIN_DIR="$shellcheck_failure_bin" \
+	SECURITY_EVIDENCE_DIR="$shellcheck_failure_evidence" \
+	SECURITY_CONTRACT_SHELLCHECK_STATE="$shellcheck_failure_evidence/calls" \
+	SECURITY_CONTRACT_SHELLCHECK_VERSION="0.0.0-unpinned" \
+	scripts/security.sh repository-policy >"$shellcheck_failure_evidence/unpinned.log" 2>&1
+unpinned_status=$?
+set -e
+if [[ "$unpinned_status" == "0" || -e "$shellcheck_failure_evidence/calls" ]] ||
+	! grep -Fq 'expected pinned' "$shellcheck_failure_evidence/unpinned.log"; then
+	echo "security contract: an unpinned shellcheck version was accepted" >&2
 	exit 1
 fi
 

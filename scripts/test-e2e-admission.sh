@@ -74,7 +74,7 @@ chmod 0700 "$state_dir"
   printf 'capacity=1\n'
 } >"$owner_record"
 
-# shellcheck disable=SC2317 # Invoked indirectly by the EXIT trap.
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
 release_admission() {
   if [[ "$acquired" == "1" && -e "$active_state" && "$active_state" -ef "$owner_record" ]]; then
     rm -f "$active_state"
