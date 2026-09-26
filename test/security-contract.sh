@@ -13,13 +13,14 @@ fi
 mkdir -p "$evidence_dir"
 
 synthetic_repo="$(mktemp -d)"
+full_scope_repo="$(mktemp -d)"
 fake_bin="$(mktemp -d)"
 failure_evidence="$(mktemp -d)"
 shellcheck_failure_bin="$(mktemp -d)"
 shellcheck_failure_evidence="$(mktemp -d)"
 cache_bin="$(mktemp -d)"
 cleanup() {
-	rm -rf -- "$synthetic_repo" "$fake_bin" "$failure_evidence" \
+	rm -rf -- "$synthetic_repo" "$full_scope_repo" "$fake_bin" "$failure_evidence" \
 		"$shellcheck_failure_bin" "$shellcheck_failure_evidence" "$cache_bin"
 	if [[ "$ephemeral_evidence" == "1" ]]; then
 		rm -rf -- "$evidence_dir"
@@ -215,6 +216,52 @@ if grep -Fq "$synthetic_value" "$evidence_dir/synthetic-secret.log"; then
 	echo "security contract: gitleaks log exposed the synthetic secret" >&2
 	exit 1
 fi
+
+# The full scan covers only history reachable from HEAD. A side branch holds
+# the synthetic value for exercising the gitleaks rule; it is not reachable
+# from HEAD, so the full scan must pass. Restoring `--all` (gitleaks without
+# --log-opts) would read the side branch and make this run fail.
+git -C "$full_scope_repo" init -q
+git -C "$full_scope_repo" config user.email security-contract@invalid
+git -C "$full_scope_repo" config user.name security-contract
+printf 'clean\n' >"$full_scope_repo/payload.txt"
+git -C "$full_scope_repo" add payload.txt
+git -C "$full_scope_repo" commit -qm base
+full_scope_branch="$(git -C "$full_scope_repo" symbolic-ref --short HEAD)"
+git -C "$full_scope_repo" switch -q -c side
+printf 'api_key = "%s"\n' "$synthetic_value" >"$full_scope_repo/payload.txt"
+git -C "$full_scope_repo" commit -qam side-secret
+git -C "$full_scope_repo" switch -q "$full_scope_branch"
+printf 'clean again\n' >"$full_scope_repo/payload.txt"
+git -C "$full_scope_repo" commit -qam clean
+set +e
+SECURITY_GITLEAKS_HISTORY_MODE=full \
+	SECURITY_GITLEAKS_CONFIG="$root/.gitleaks.toml" \
+	scripts/security-gitleaks.sh "$full_scope_repo" >"$evidence_dir/full-side-branch.log" 2>&1
+full_side_status=$?
+set -e
+if [[ "$full_side_status" != "0" ]]; then
+	printf 'security contract: full history scan read a branch outside HEAD (status %s)\n' "$full_side_status" >&2
+	exit 1
+fi
+# The synthetic repository's HEAD history adds and removes the secret, so the
+# full scan must still find it there.
+set +e
+SECURITY_GITLEAKS_HISTORY_MODE=full \
+	SECURITY_GITLEAKS_CONFIG="$root/.gitleaks.toml" \
+	scripts/security-gitleaks.sh "$synthetic_repo" >"$evidence_dir/full-head-history.log" 2>&1
+full_head_status=$?
+set -e
+if [[ "$full_head_status" != "1" ]]; then
+	printf 'security contract: full history scan missed a secret in HEAD history (status %s)\n' "$full_head_status" >&2
+	exit 1
+fi
+for full_log in "$evidence_dir/full-side-branch.log" "$evidence_dir/full-head-history.log"; do
+	if grep -Fq "$synthetic_value" "$full_log"; then
+		echo "security contract: gitleaks full log exposed the synthetic secret" >&2
+		exit 1
+	fi
+done
 
 # Scanner failures must preserve terminal typed evidence and must not fall
 # through to a later scanner as if the failed child were green.
