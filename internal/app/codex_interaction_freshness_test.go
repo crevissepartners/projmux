@@ -104,7 +104,7 @@ func TestCodexNativeObserverRefreshesLongTurnAndWaits(t *testing.T) {
 				t.Fatalf("initial interaction = %s, want %s", got, tc.want)
 			}
 			// Quiet recommits keep the same state past the read-model horizon.
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				clock.advance(codexObserverInteractionRefreshInterval)
 				sendTick()
 				writes++
