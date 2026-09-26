@@ -6351,6 +6351,31 @@ startup_client_is_on() {
   [[ "$(startup_tmux display-message -p -c "$startup_client" '#{session_name}' 2>/dev/null)" == "$expected" ]]
 }
 
+# The retained Agent is resumed several times below, and every resume appends a
+# `resume startup-thread` line to the same argv log. A bare presence check would
+# be satisfied at once by an earlier step's line, so each resume step counts the
+# lines just before its trigger and waits for one more. Otherwise the next step
+# can kill the session before this resume's shim has written its argv.
+startup_agent_resume_count() {
+  local count
+  count="$(grep -c 'resume startup-thread' "$startup_agent_argv" || true)"
+  printf '%s\n' "${count:-0}"
+}
+
+startup_wait_for_agent_resume() {
+  local description="$1"
+  local want="$2"
+  if ! startup_wait_for "$description" sh -c \
+    "test \"\$(grep -c 'resume startup-thread' '$startup_agent_argv')\" -ge $want"; then
+    {
+      printf '  wanted resume startup-thread lines: >= %s (have %s)\n' "$want" "$(startup_agent_resume_count)"
+      printf '  argv log %s has %s lines:\n' "$startup_agent_argv" "$(wc -l <"$startup_agent_argv")"
+      cat -n "$startup_agent_argv" || true
+    } >&2
+    return 1
+  fi
+}
+
 startup_wait_for "attached startup tmux client" sh -c \
   "test -n \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' list-clients -F '#{client_name}' 2>/dev/null | sed -n 1p)\""
 startup_client="$(startup_tmux list-clients -F '#{client_name}' | sed -n 1p)"
@@ -6375,6 +6400,7 @@ startup_take_default_startup_row() {
 # topology under the stored uids and only then move the client. This raw external
 # HUP resumes the retained Agent on its exact stored conversation.
 startup_agent_launches_before_external_hup="$(wc -l <"$startup_agent_argv")"
+startup_agent_resumes_before_external_hup="$(startup_agent_resume_count)"
 startup_tmux kill-session -t "$startup_session"
 if startup_tmux has-session -t "$startup_session" 2>/dev/null; then
   echo "startup e2e could not close the Project session" >&2
@@ -6435,7 +6461,8 @@ done <<<"$startup_start_commands"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-topology.json"
 smoke_assert_file_contains "$startup_root/agent-after-topology.json" 'startup-thread'
 smoke_assert_file_contains "$startup_root/agent-after-topology.json" '"phase": "Running"'
-startup_wait_for "Continue exact resume after external HUP" grep -Fq "resume startup-thread" "$startup_agent_argv"
+startup_wait_for_agent_resume "Continue exact resume after external HUP" \
+  "$((startup_agent_resumes_before_external_hup + 1))"
 if [[ "$(wc -l <"$startup_agent_argv")" != "$((startup_agent_launches_before_external_hup + 1))" ]] ||
   [[ "$(startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}' | grep -Fxc "Agent|$startup_agent_uid")" != 1 ]]; then
   echo "external HUP did not resume the retained Agent exactly once" >&2
@@ -6494,10 +6521,12 @@ fi
 
 # Explicit `agent resume` remains its own authority. It consumes the exact
 # retained sessionRef after the separate Pane loss above.
+startup_agent_resumes_before_explicit_resume="$(startup_agent_resume_count)"
 PATH="$startup_root/shim:$PATH" startup_create_pmx agent resume \
   "uid:$startup_agent_uid" --project "uid:$startup_project_uid" --window review \
   >"$startup_root/explicit-agent-resume.out"
-startup_wait_for "explicit Agent resume after external HUP" grep -Fq "resume startup-thread" "$startup_agent_argv"
+startup_wait_for_agent_resume "explicit Agent resume after external HUP" \
+  "$((startup_agent_resumes_before_explicit_resume + 1))"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-explicit-resume.json"
 startup_explicit_resume_pane_uid="$(sed -n '/.*"paneRef": "\([^"]*\)".*/{s//\1/p;q;}' "$startup_root/agent-after-explicit-resume.json")"
 if [[ -z "$startup_explicit_resume_pane_uid" ]] ||
@@ -6541,6 +6570,7 @@ mv "$startup_project-withdrawn" "$startup_project"
 # conversation. Seed a second Agent whose provider exits normally; it will be
 # clean A in the Continue eligibility pair below.
 rm -f "$startup_root/open-reopened.rc"
+startup_agent_resumes_before_reopen="$(startup_agent_resume_count)"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-project.sh' '$startup_project' reopened" Enter
 startup_take_default_startup_row "closed Project reopen after refusal"
 startup_wait_for "closed Project reopen after refusal" test -s "$startup_root/open-reopened.rc"
@@ -6560,8 +6590,8 @@ if ! grep -Fq '"phase": "Running"' "$startup_root/agent-after-reopen.json" ||
   echo "closed Project reopen lost the retained Agent conversation" >&2
   exit 1
 fi
-startup_wait_for "reopen exact Agent resume argv" sh -c \
-  "test \"\$(grep -c 'resume startup-thread' '$startup_agent_argv')\" -ge 3"
+startup_wait_for_agent_resume "reopen exact Agent resume argv" \
+  "$((startup_agent_resumes_before_reopen + 1))"
 
 startup_create_anchor_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_owner_kind}' | awk -F '|' '$2 == "Window" && !found { print $1; found = 1 }')"
 startup_clean_exit="$startup_root/clean-a.exit"
