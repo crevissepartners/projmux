@@ -212,7 +212,11 @@ func TestUnsupportedNativeAgentActionsRefuseBeforeRuntimeOrProviderEffects(t *te
 				}
 				before := store.snapshot()
 				stdout, stderr, err := runRoute(t, cmd, test.args...)
-				if err == nil || !strings.Contains(err.Error(), "does not support native exact control") {
+				want := "does not support native exact control"
+				if provider == "claude" && test.name == "turn interrupt" {
+					want = "requires explicit --via web"
+				}
+				if err == nil || !strings.Contains(err.Error(), want) {
 					t.Fatalf("error = %v", err)
 				}
 				if stdout != "" || stderr != "" || control.calls != 0 || reviewBinding.calls != 0 || reviews.calls != 0 || providerCalls != 0 || store.writes != 0 || store.transactions != 0 || store.snapshot() != before {
