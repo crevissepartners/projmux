@@ -50,7 +50,7 @@ const coordinationFrameMarker = `{"kind":"projmux-coordination"`
 
 // backfillLockWait bounds how long a backfill queues for the history lock.
 // The lock covers only the history read and the one append, never the
-// transcript scan.
+// transcript scan or the fsync.
 const backfillLockWait = 10 * time.Second
 
 // BackfillOptions are the inputs of one run.
@@ -116,7 +116,8 @@ type transcriptScan struct {
 // `<ProjectsDir>/<project>/<session>.jsonl` and appends one estimated row per
 // session attributable to exactly one Agent. It holds the history file's
 // exclusive lock across the read, the check, and the append, so concurrent
-// runs never add the same session twice and a second run adds nothing. A
+// runs never add the same session twice and a second run adds nothing. The
+// lock is released before the fsync, which Backfill still waits for. A
 // missing projects directory scans nothing.
 func Backfill(opts BackfillOptions) (BackfillReport, error) {
 	report := BackfillReport{DryRun: opts.DryRun, ProjectsDir: opts.ProjectsDir, Rows: []Record{}}
@@ -192,8 +193,8 @@ func Backfill(opts BackfillOptions) (BackfillReport, error) {
 	if _, err := file.Write(framed); err != nil {
 		return report, fmt.Errorf("agent session history: append: %w", err)
 	}
-	if err := file.Sync(); err != nil {
-		return report, fmt.Errorf("agent session history: sync: %w", err)
+	if err := unlockAndSync(file); err != nil {
+		return report, err
 	}
 	return report, nil
 }

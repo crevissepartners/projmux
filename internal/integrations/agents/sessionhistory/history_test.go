@@ -2,6 +2,7 @@ package sessionhistory
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -316,6 +317,102 @@ func TestMergeSourcePrecedenceIsCurrentThenObservedThenEstimated(t *testing.T) {
 		if row.SessionID == "O" && (row.LastRecordAt == nil || !row.LastRecordAt.Equal(last)) {
 			t.Fatalf("O row = %#v, want the estimated row's lastRecordAt carried through", row)
 		}
+	}
+}
+
+// failsafe bounds every wait in the stalled-fsync tests. The ordering they
+// check comes from channels; this only turns a hang into a failure.
+const failsafe = 10 * time.Second
+
+// stallFirstSync swaps the fsync seam for the rest of the test: the first
+// call signals entered, waits until release is called, runs the real fsync,
+// and returns stalledErr when it is non-nil; every later call syncs at once.
+// Nothing in this package runs tests in parallel, so no other test sees the
+// swapped seam. Cleanup releases a still-stalled call and restores the seam.
+func stallFirstSync(t *testing.T, stalledErr error) (entered <-chan struct{}, release func()) {
+	t.Helper()
+	enteredCh, releaseCh := make(chan struct{}), make(chan struct{})
+	var once, releaseOnce sync.Once
+	release = func() { releaseOnce.Do(func() { close(releaseCh) }) }
+	original := syncFile
+	t.Cleanup(func() { syncFile = original })
+	t.Cleanup(release)
+	syncFile = func(file *os.File) error {
+		stalled := false
+		once.Do(func() { stalled = true })
+		if !stalled {
+			return original(file)
+		}
+		close(enteredCh)
+		<-releaseCh
+		if err := original(file); err != nil {
+			return err
+		}
+		return stalledErr
+	}
+	return enteredCh, release
+}
+
+func waitFor[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(failsafe):
+		t.Fatalf("timed out after %s waiting for %s", failsafe, what)
+		panic("unreachable")
+	}
+}
+
+func TestAppendReleasesTheLockBeforeItsFsync(t *testing.T) {
+	dir := t.TempDir()
+	stalledRecord, otherRecord := observed(t, "agent-1", "A", t0), observed(t, "agent-2", "B", t0)
+	entered, release := stallFirstSync(t, nil)
+	stalled := make(chan error, 1)
+	go func() { stalled <- Append(dir, stalledRecord) }()
+	waitFor(t, entered, "the first Append to reach its fsync")
+
+	// The first Append is inside its fsync and stays there until release. A
+	// second Append must not queue behind it: holding the lock across the
+	// fsync fails this one with a lock error after lockWait.
+	if err := Append(dir, otherRecord); err != nil {
+		t.Fatalf("Append while another Append's fsync is stalled: %v", err)
+	}
+	release()
+	if err := waitFor(t, stalled, "the stalled Append to return"); err != nil {
+		t.Fatalf("stalled Append: %v", err)
+	}
+	read, err := Read(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sessionSources(read.Records), []string{"A/observed", "B/observed"}; read.Corrupt != 0 || !reflect.DeepEqual(got, want) {
+		t.Fatalf("records = %v with %d corrupt lines, want %v and 0", got, read.Corrupt, want)
+	}
+}
+
+func TestAppendReturnsOnlyAfterItsOwnFsyncAndReportsItsError(t *testing.T) {
+	dir := t.TempDir()
+	record := observed(t, "agent-1", "A", t0)
+	errSync := errors.New("stalled fsync failed")
+	entered, release := stallFirstSync(t, errSync)
+	done := make(chan error, 1)
+	go func() { done <- Append(dir, record) }()
+	waitFor(t, entered, "Append to reach its fsync")
+	select {
+	case err := <-done:
+		t.Fatalf("Append returned %v while its fsync was still stalled", err)
+	default:
+	}
+	release()
+	err := waitFor(t, done, "Append to return after its fsync")
+	if !errors.Is(err, errSync) || !strings.Contains(err.Error(), "agent session history: sync:") {
+		t.Fatalf("Append error = %v, want the wrapped fsync error", err)
+	}
+	// The write itself landed before the fsync failed.
+	read, readErr := Read(dir, "agent-1")
+	if readErr != nil || len(read.Records) != 1 || read.Records[0].SessionID != "A" {
+		t.Fatalf("history = %#v (err %v), want the one written row", read, readErr)
 	}
 }
 

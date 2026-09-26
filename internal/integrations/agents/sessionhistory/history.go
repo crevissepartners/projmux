@@ -143,7 +143,9 @@ func RecordFor(agentUID string, ref *coremetadata.AgentSessionRef, source Source
 // seals a partial tail another process left behind, so a torn write costs at
 // most its own line. The write also holds an exclusive flock on the file, so
 // concurrent appenders cannot interleave even where a single write is not
-// atomic. The directory and file are created private.
+// atomic. The lock is released before the fsync, so the next appender never
+// queues behind it; Append still returns only after its own fsync. The
+// directory and file are created private.
 func Append(stateDir string, record Record) error {
 	if strings.TrimSpace(stateDir) == "" {
 		return errors.New("agent session history: no state directory")
@@ -163,15 +165,27 @@ func Append(stateDir string, record Record) error {
 	if _, err := file.Write(framed); err != nil {
 		return fmt.Errorf("agent session history: append: %w", err)
 	}
-	if err := file.Sync(); err != nil {
+	return unlockAndSync(file)
+}
+
+// syncFile flushes a written history file. It is a variable only so tests can
+// stall the fsync.
+var syncFile = (*os.File).Sync
+
+// unlockAndSync releases the lock openLocked took, then fsyncs the file, so
+// the fsync runs outside the lock hold. An unlock error is ignored: closing
+// the file, which every caller defers, releases the lock anyway.
+func unlockAndSync(file *os.File) error {
+	_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+	if err := syncFile(file); err != nil {
 		return fmt.Errorf("agent session history: sync: %w", err)
 	}
 	return nil
 }
 
 // lockWait bounds how long an appender queues behind another one. Holders
-// keep the lock for one small write and its fsync, or for Backfill's read of
-// the history file and its one append.
+// keep the lock for one small write, or for Backfill's read of the history
+// file and its one append; neither holds it across the fsync.
 const (
 	lockWait          = time.Second
 	lockRetryInterval = 2 * time.Millisecond
@@ -179,7 +193,8 @@ const (
 
 // openLocked creates the private state directory and history file when
 // missing, opens the file for appending with the extra access flag, and takes
-// its exclusive lock. The lock is released when the file is closed.
+// its exclusive lock. A successful write releases it before its fsync
+// (unlockAndSync); on every other path it is released when the file is closed.
 func openLocked(stateDir string, access int, wait time.Duration) (*os.File, error) {
 	path := Path(stateDir)
 	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
@@ -198,7 +213,8 @@ func openLocked(stateDir string, access int, wait time.Duration) (*os.File, erro
 }
 
 // lockAppend takes the exclusive advisory lock of the open history file,
-// waiting at most wait. It is released when the file is closed.
+// waiting at most wait. It is released by unlockAndSync, or when the file is
+// closed.
 func lockAppend(file *os.File, wait time.Duration) error {
 	fd := int(file.Fd())
 	deadline := time.Now().Add(wait)

@@ -424,3 +424,40 @@ func TestClaudeProjectsDirHonorsClaudeConfigDir(t *testing.T) {
 		t.Error("no home and no CLAUDE_CONFIG_DIR resolved a directory")
 	}
 }
+
+func TestBackfillReleasesTheLockBeforeItsFsync(t *testing.T) {
+	projects, state := t.TempDir(), t.TempDir()
+	writeTranscript(t, projects, "-src-app", "sess-1", userLine(ts1, frameText("agent-a")))
+	appended := observed(t, "agent-b", "B", t0)
+	entered, release := stallFirstSync(t, nil)
+	type outcome struct {
+		report BackfillReport
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		report, err := Backfill(BackfillOptions{ProjectsDir: projects, StateDir: state})
+		done <- outcome{report, err}
+	}()
+	waitFor(t, entered, "Backfill to reach its fsync")
+
+	// Backfill is inside its fsync and stays there until release. An Append
+	// must not queue behind it: holding the lock across the fsync fails this
+	// one with a lock error after lockWait.
+	if err := Append(state, appended); err != nil {
+		t.Fatalf("Append while Backfill's fsync is stalled: %v", err)
+	}
+	release()
+	got := waitFor(t, done, "the stalled Backfill to return")
+	if got.err != nil {
+		t.Fatalf("Backfill: %v", got.err)
+	}
+	wantCounts(t, got.report, map[string]int{"scanned": 1, "attributed": 1})
+	read, err := Read(state, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows := sessionSources(read.Records); read.Corrupt != 0 || !reflect.DeepEqual(rows, []string{"sess-1/estimated", "B/observed"}) {
+		t.Fatalf("history = %v with %d corrupt lines, want the estimated row then the appended one", rows, read.Corrupt)
+	}
+}
