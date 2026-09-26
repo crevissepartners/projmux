@@ -2154,7 +2154,7 @@ func (c *aiCommand) getMode() string {
 	// Without a config home there is no saved TUI value to read.
 	if path, err := c.configFile(); err == nil {
 		config.NoteFrontRead(config.TmuxAISplitModeFileName, path)
-		if content, err := os.ReadFile(path); err == nil {
+		if content, err := os.ReadFile(filepath.Clean(path)); err == nil {
 			if mode, ok := config.ValidAINewWindowMode(string(content)); ok {
 				return mode
 			}
