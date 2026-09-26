@@ -11,9 +11,11 @@
 # the checkout is copied into a temporary docker volume, and so are the
 # directories a run reads or writes (the build output, the prebuilt binary, the
 # evidence): each is seeded into its own volume and, for outputs, copied back to
-# the job's directory after the run. Every volume is removed on exit. The Go
-# module and build caches stay bind mounts: they are daemon-side caches shared
-# by the prefetch and the suites, never read back by the job.
+# the job's directory after the run. Every volume is removed on exit; a volume a
+# killed or cancelled run left behind is removed by the next staging run once
+# it is old enough. The Go module and build caches stay bind mounts: they are
+# daemon-side caches shared by the prefetch and the suites, never read back by
+# the job.
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
@@ -46,6 +48,19 @@ docker_network="${PROJMUX_TEST_DOCKER_NETWORK:-none}"
 # build-safe package limit; smoke suites call go build as well as test binaries.
 suite_gomaxprocs="${GOMAXPROCS:-2}"
 suite_goflags="${GOFLAGS:--p=1}"
+# Staged volumes carry the label projmux.test-workspace=<value>; a staging run
+# removes labelled volumes older than the threshold before it creates its own.
+workspace_label="projmux.test-workspace=${PROJMUX_TEST_WORKSPACE_LABEL:-1}"
+# An unmounted volume may still belong to a live run between two containers, so
+# the threshold outlasts the longest job that stages: Integration Tests sets no
+# timeout-minutes, so GitHub's 360-minute job limit bounds it (E2E and
+# update-flow jobs cap at 30). In-use volumes are safe anyway: rm without -f
+# refuses them.
+stale_seconds="${PROJMUX_TEST_WORKSPACE_STALE_SECONDS:-21600}"
+if [[ ! "$stale_seconds" =~ ^[0-9]+$ ]]; then
+  echo "PROJMUX_TEST_WORKSPACE_STALE_SECONDS must be a non-negative integer: $stale_seconds" >&2
+  exit 2
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is required for this test target" >&2
@@ -78,13 +93,41 @@ daemon_digest="$(docker run --rm \
 volumes=()
 trap 'if ((${#volumes[@]})); then docker volume rm -f "${volumes[@]}" >/dev/null 2>&1 || true; fi' EXIT
 
+# remove_stale_volumes removes labelled volumes older than $stale_seconds: the
+# ones a SIGKILLed or cancelled run never reached its trap for. It never fails
+# the run: a failed listing, inspect, or unparseable CreatedAt skips, and a
+# volume docker refuses to remove (still in use) stays.
+remove_stale_volumes() {
+  local listing name created born now
+  listing="$(docker volume ls -q --filter "label=$workspace_label" 2>/dev/null)" || {
+    echo ">> could not list leftover test workspace volumes; skipping cleanup" >&2
+    return 0
+  }
+  now="$(date +%s)"
+  while read -r name; do
+    [[ -n "$name" ]] || continue
+    created="$(docker volume inspect --format '{{.CreatedAt}}' "$name" 2>/dev/null)" || created=""
+    if [[ -z "$created" ]] || ! born="$(date -d "$created" +%s 2>/dev/null)"; then
+      echo ">> skipping test workspace volume $name: no readable CreatedAt" >&2
+      continue
+    fi
+    if ((now - born > stale_seconds)); then
+      if docker volume rm "$name" >/dev/null 2>&1; then
+        echo ">> removed test workspace volume $name left behind by an earlier run"
+      else
+        echo ">> kept test workspace volume $name: docker refused to remove it" >&2
+      fi
+    fi
+  done <<<"$listing"
+}
+
 # stage_in DIR TARGET creates a labelled volume, records it for the trap, and
 # copies DIR, the directory itself included, into it (mounted at TARGET). It
 # sets $volume; it is not called through $(...), so the record survives.
 # Numeric owners keep the files, and the volume root, owned by the uid the
 # runs use, so an output volume stays writable for them.
 stage_in() {
-  volume="$(docker volume create --label projmux.test-workspace=1)"
+  volume="$(docker volume create --label "$workspace_label")"
   volumes+=("$volume")
   tar -C "$1" --numeric-owner -cf - . |
     docker run --rm -i \
@@ -113,6 +156,7 @@ if [[ -n "$daemon_digest" && "$daemon_digest" == "$local_digest" ]]; then
 else
   staging=1
   echo ">> docker daemon cannot see $root; staging the checkout into a docker volume"
+  remove_stale_volumes
   # Copy the whole tree, .git included, for parity with the bind mount.
   stage_in "$root" /workspace
   workspace_mount=(--mount "type=volume,source=$volume,target=/workspace,readonly")
