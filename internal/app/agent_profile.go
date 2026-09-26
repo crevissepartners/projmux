@@ -136,9 +136,10 @@ func requireProfileLane(spelling string, flags resourceCreateFlags) error {
 		spelling, claudeDialogueReplyOnlyFlag, profileReasonLaneUnsupported))
 }
 
-// profileStore is the profile store of the create command's home.
+// profileStore is the profile store of the create command's home. Without
+// HOME or an absolute XDG home it returns the missing-HOME reason.
 func (c *createCommand) profileStore() (profile.Store, error) {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := savedSettingsPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return profile.Store{}, err
 	}
@@ -170,23 +171,33 @@ func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreat
 	if flags.profile == profile.ReservedName {
 		return selectedCreateProfile{}, nil
 	}
-	store, err := c.profileStore()
-	if err != nil {
-		return selectedCreateProfile{}, fmt.Errorf("%s --profile: %w; nothing was created", spelling, err)
-	}
 	name := flags.profile
 	option := "--profile " + flags.profile
+	role := ""
 	if name == "" {
 		labels, err := labelMap(flags.labels)
 		if err != nil {
 			// The create refuses the label itself, with its own message.
 			return selectedCreateProfile{}, nil
 		}
-		role, ok := labels[profileRoleLabel]
-		if !ok {
+		var ok bool
+		if role, ok = labels[profileRoleLabel]; !ok {
 			return selectedCreateProfile{}, nil
 		}
 		option = "--label " + profileRoleLabel + "=" + role
+	}
+	// The store is opened only once a profile has to be read, so a create
+	// that selects none never depends on the config home.
+	store, err := c.profileStore()
+	if err != nil {
+		if flags.profile == "" && isMissingHome(err) {
+			// A role mapping is a read of saved profiles; without a config
+			// home there are none, and no builtin claims a role.
+			return selectedCreateProfile{}, nil
+		}
+		return selectedCreateProfile{}, fmt.Errorf("%s --profile: %w; nothing was created", spelling, err)
+	}
+	if name == "" {
 		if name, err = store.RoleProfile(role); err != nil {
 			switch profile.ReasonOf(err) {
 			case profile.ReasonRoleClaimed:

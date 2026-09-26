@@ -100,6 +100,10 @@ func (c *aiCommand) loadAIHookCatalog(provider string) (aiHookCatalog, error) {
 	}
 
 	overridePath, err := c.aiHookCatalogOverridePath(provider)
+	if isMissingHome(err) {
+		// No config home: there is no override to read.
+		return catalog, nil
+	}
 	if err != nil {
 		return aiHookCatalog{}, err
 	}
@@ -235,7 +239,8 @@ func (c *aiCommand) aiHookCatalogOverridePath(provider string) (string, error) {
 
 // aiConfigPaths resolves the config directory from the command's own
 // environment and home directory, so integration reads the same files a test
-// with a fake HOME or XDG_CONFIG_HOME prepared.
+// with a fake HOME or XDG_CONFIG_HOME prepared. Without either it returns the
+// missing-HOME reason, never a path relative to the working directory.
 func (c *aiCommand) aiConfigPaths() (config.Paths, error) {
 	configHome, err := config.ResolveConfigHome("", c.env("XDG_CONFIG_HOME"))
 	if err != nil {
@@ -243,15 +248,8 @@ func (c *aiCommand) aiConfigPaths() (config.Paths, error) {
 		if homeDir == nil {
 			homeDir = os.UserHomeDir
 		}
-		home, err := homeDir()
-		if err != nil {
-			return config.Paths{}, fmt.Errorf("resolve home directory: %w", err)
-		}
-		configHome, err = config.ResolveConfigHome(home, c.env("XDG_CONFIG_HOME"))
-		if err != nil {
-			// An empty home keeps the config home relative to the working
-			// directory, as it always has.
-			configHome = ".config"
+		if configHome, err = config.ResolveConfigHome(resolvedHome(homeDir), c.env("XDG_CONFIG_HOME")); err != nil {
+			return config.Paths{}, err
 		}
 	}
 	return config.DefaultPaths(configHome, ""), nil

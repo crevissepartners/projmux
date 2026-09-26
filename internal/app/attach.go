@@ -59,7 +59,11 @@ func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachComman
 		now:         time.Now,
 		lookupEnv:   os.Getenv,
 		ensureHomeSession: func(ctx context.Context, sessionName, cwd string) error {
-			return control.prepareControlSession(ctx, defaultAppSocket, control.defaultConfigPath(), shellTarget{SessionName: sessionName, CWD: cwd})
+			configPath, err := control.defaultConfigPath()
+			if err != nil {
+				return fmt.Errorf("shell app config: %w", err)
+			}
+			return control.prepareControlSession(ctx, defaultAppSocket, configPath, shellTarget{SessionName: sessionName, CWD: cwd})
 		},
 	}
 }

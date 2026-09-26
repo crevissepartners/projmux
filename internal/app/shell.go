@@ -141,7 +141,11 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	config := c.expandHome(strings.TrimSpace(*configPath))
 	if config == "" {
-		config = c.defaultConfigPath()
+		// The shell writes this file and starts tmux with it, so without a
+		// config home it refuses rather than use a working-directory path.
+		if config, err = c.defaultConfigPath(); err != nil {
+			return fmt.Errorf("shell app config: %w", err)
+		}
 	}
 	if !*noInstall {
 		if err := c.writeAppConfig(config, binaryPath); err != nil {
@@ -1267,15 +1271,17 @@ func (c *shellCommand) defaultShell() string {
 	return defaultInteractiveShell(c.lookupEnv)
 }
 
-func (c *shellCommand) defaultConfigPath() string {
+// defaultConfigPath is the generated app tmux.conf the shell writes and hands
+// to `tmux -f`. Without XDG_CONFIG_HOME or a home directory it returns the
+// missing-HOME reason, never a path relative to the working directory.
+func (c *shellCommand) defaultConfigPath() (string, error) {
 	configHome, err := config.ResolveConfigHome("", c.env("XDG_CONFIG_HOME"))
 	if err != nil {
-		configHome = ".config"
-		if homeDir, err := c.home(); err == nil && strings.TrimSpace(homeDir) != "" {
-			configHome, _ = config.ResolveConfigHome(homeDir, c.env("XDG_CONFIG_HOME"))
+		if configHome, err = config.ResolveConfigHome(resolvedHome(c.homeDir), c.env("XDG_CONFIG_HOME")); err != nil {
+			return "", err
 		}
 	}
-	return filepath.Join(configHome, "projmux", "tmux.conf")
+	return filepath.Join(configHome, "projmux", "tmux.conf"), nil
 }
 
 func (c *shellCommand) expandHome(path string) string {

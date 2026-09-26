@@ -28,12 +28,25 @@ func newProfileCommand() *profileCommand {
 	return &profileCommand{homeDir: os.UserHomeDir, lookupEnv: os.Getenv, stdin: os.Stdin}
 }
 
+// store is the profile store a write goes through. Without HOME or an
+// absolute XDG home it returns the missing-HOME reason and writes nothing.
 func (c *profileCommand) store() (profile.Store, error) {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := savedSettingsPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return profile.Store{}, err
 	}
 	return profile.NewDefaultStore(paths), nil
+}
+
+// readStore is the profile store a read goes through: without HOME or an
+// absolute XDG home there are no user profiles to read, so it is the
+// builtin-only store and touches no file.
+func (c *profileCommand) readStore() (profile.Store, error) {
+	store, err := c.store()
+	if isMissingHome(err) {
+		return profile.NewBuiltinStore(err), nil
+	}
+	return store, err
 }
 
 // Run dispatches `projmux profile <verb>`.
@@ -87,7 +100,7 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 		printRouteUsage(stderr, "profile list")
 		return usageError("profile list does not accept positional arguments")
 	}
-	store, err := c.store()
+	store, err := c.readStore()
 	if err != nil {
 		return err
 	}
@@ -130,7 +143,7 @@ func (c *profileCommand) runShow(args []string, stdout, stderr io.Writer) error 
 		printRouteUsage(stderr, "profile show")
 		return usageError("profile show requires exactly one <name>")
 	}
-	store, err := c.store()
+	store, err := c.readStore()
 	if err != nil {
 		return err
 	}
@@ -193,7 +206,7 @@ func (c *profileCommand) runSet(args []string, stdout, stderr io.Writer) error {
 	}
 	store, err := c.store()
 	if err != nil {
-		return err
+		return fmt.Errorf("profile set: %w", err)
 	}
 	entry, err := store.Write(name, content)
 	if err != nil {
@@ -225,7 +238,7 @@ func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 	}
 	store, err := c.store()
 	if err != nil {
-		return err
+		return fmt.Errorf("profile delete: %w", err)
 	}
 	if err := store.Delete(name); err != nil {
 		return profileRefusal("profile delete", err)

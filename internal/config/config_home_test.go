@@ -114,3 +114,35 @@ func TestResolveXDGHomes(t *testing.T) {
 		}
 	}
 }
+
+// TestMissingHomeReasonNamesTheVariable pins the one missing-HOME reason:
+// each resolver names its own XDG variable on one line, a blank home counts
+// as none, and errors.Is still matches ErrHomeDirRequired.
+func TestMissingHomeReasonNamesTheVariable(t *testing.T) {
+	t.Parallel()
+
+	for _, resolver := range []struct {
+		name    string
+		resolve func(homeDir, value string) (string, error)
+	}{
+		{name: XDGConfigHomeVar, resolve: ResolveConfigHome},
+		{name: XDGStateHomeVar, resolve: ResolveStateHome},
+		{name: XDGDataHomeVar, resolve: ResolveDataHome},
+		{name: XDGCacheHomeVar, resolve: ResolveCacheHome},
+	} {
+		for _, home := range []string{"", " ", "\t"} {
+			got, err := resolver.resolve(home, "rel")
+			var missing *MissingHomeError
+			if got != "" || !errors.As(err, &missing) || missing.Var != resolver.name || !errors.Is(err, ErrHomeDirRequired) {
+				t.Fatalf("%s(home %q) = %q, %v; want a MissingHomeError for %s", resolver.name, home, got, err, resolver.name)
+			}
+			if want := "HOME or an absolute " + resolver.name + " is required"; err.Error() != want {
+				t.Fatalf("%s error = %q, want %q", resolver.name, err, want)
+			}
+		}
+	}
+
+	if _, err := (Homes{ConfigHome: "/c"}).Paths(); err == nil || err.Error() != "HOME or an absolute XDG_STATE_HOME is required" {
+		t.Fatalf("Paths() with only XDG_CONFIG_HOME error = %v, want the XDG_STATE_HOME reason", err)
+	}
+}
