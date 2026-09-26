@@ -90,7 +90,7 @@ CANDIDATE_PY
   printf '%s\n' 'projmux-dialogue-canary-owned-v3' >"$root/.projmux-dialogue-canary-owned"
   chmod 0600 "$root/.projmux-dialogue-canary-owned"
   prepare_complete=0
-  # shellcheck disable=SC2317 # Invoked by the EXIT trap.
+  # shellcheck disable=SC2329 # Invoked by the EXIT trap.
   prepare_cleanup() {
     if [[ "$prepare_complete" == 0 && -d "$root" ]]; then rm -rf -- "$root"; fi
   }
