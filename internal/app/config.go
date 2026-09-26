@@ -8,7 +8,7 @@ import (
 )
 
 // configSubcommands lists the public config-domain routes, in help order.
-var configSubcommands = []string{"edit", "providers", "locale", "agent-questions", "render", "apply"}
+var configSubcommands = []string{"edit", "providers", "locale", "agent-questions", "agent-approvals", "render", "apply"}
 
 // configRenderArtifacts lists the two generated artifacts `config render` can
 // print, in help order.
@@ -37,10 +37,11 @@ var configRenderArtifacts = []string{"standalone", "app"}
 // `config providers` is the one route here that is not a forwarder: it lists
 // and changes the enabled-providers policy directly, through the same writer
 // the Settings "Enabled providers" toggle uses (see config_providers.go).
-// `config locale` and `config agent-questions` are not forwarders either: they
-// show and store the central `[ui] locale`, agent-question answering way, and
-// agent-question window through the central settings API the Settings rows
-// also call (see config_central_settings.go).
+// `config locale`, `config agent-questions`, and `config agent-approvals` are
+// not forwarders either: they show and store the central `[ui] locale`, the
+// agent-question answering way and window, and the agent-approval answering way
+// and window through the central settings API (see
+// config_central_settings.go).
 //
 // The artifact is a positional token, not a flag. That is what keeps this node
 // the same dumb forwarder every other namespace in the tree is: dispatch reads
@@ -96,6 +97,8 @@ func (c *configCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runLocale(rest, stdout, stderr)
 	case "agent-questions":
 		return c.runAgentQuestions(rest, stdout, stderr)
+	case "agent-approvals":
+		return c.runAgentApprovals(rest, stdout, stderr)
 	case "render":
 		return c.runRender(rest, stdout, stderr)
 	case "apply":

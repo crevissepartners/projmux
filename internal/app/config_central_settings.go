@@ -169,3 +169,86 @@ func agentQuestionWindowWord(seconds int) string {
 	}
 	return strconv.Itoa(seconds)
 }
+
+// runAgentApprovals answers `config agent-approvals [--answering <way>]
+// [--window <seconds>]`.
+//
+// Both values are central settings the Claude permission hook reads, separate
+// from the agent-questions files. They cover Claude permission requests only:
+// Codex approvals are not captured, and `projmux agent approval review`
+// answers those. Every given flag is validated before any file is written, so
+// a bad `--window` next to a good `--answering` changes nothing. The window
+// takes whole seconds in
+// config.MinAgentApprovalWindowSeconds..config.MaxAgentApprovalWindowSeconds
+// and has no unlimited word.
+//
+// Output is en-US and one line, `answering <way> window <seconds>`, both for a
+// read and after a store.
+func (c *configCommand) runAgentApprovals(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("config agent-approvals", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	answering := fs.String("answering", "", "store how Claude permission requests are answered")
+	window := fs.String("window", "", "store how long a captured permission request waits")
+	if err := fs.Parse(args); err != nil {
+		return usageRefusal(stderr, "config agent-approvals", "config agent-approvals: "+err.Error())
+	}
+	if fs.NArg() != 0 {
+		return usageError(fmt.Sprintf("config agent-approvals does not accept positional arguments: %s", strings.Join(fs.Args(), " ")))
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	var way config.AgentApprovalAnswering
+	if set["answering"] {
+		parsed, err := knownAgentApprovalAnswering(*answering)
+		if err != nil {
+			return err
+		}
+		way = parsed
+	}
+	var seconds int
+	if set["window"] {
+		spellings := fmt.Sprintf("%d..%d seconds", config.MinAgentApprovalWindowSeconds, config.MaxAgentApprovalWindowSeconds)
+		parsed, err := strconv.Atoi(strings.TrimSpace(*window))
+		if err != nil || parsed < config.MinAgentApprovalWindowSeconds || parsed > config.MaxAgentApprovalWindowSeconds {
+			return usageError(fmt.Sprintf("config agent-approvals --window: invalid window %q; want %s", *window, spellings))
+		}
+		seconds = parsed
+	}
+
+	if set["answering"] {
+		if err := saveCentralAgentApprovalAnswering(c.homeDir, c.lookupEnv, way); err != nil {
+			return err
+		}
+	}
+	if set["window"] {
+		if err := saveCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv, seconds); err != nil {
+			return err
+		}
+	}
+	// Report what the hook will read, not what was asked for.
+	_, err := fmt.Fprintf(stdout, "answering %s window %d\n",
+		loadCentralAgentApprovalAnswering(c.homeDir, c.lookupEnv),
+		loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv))
+	return err
+}
+
+// knownAgentApprovalAnswering resolves one operator-typed answering way,
+// refusing any word other than the two ways.
+func knownAgentApprovalAnswering(value string) (config.AgentApprovalAnswering, error) {
+	known := []config.AgentApprovalAnswering{config.AgentApprovalAnsweringClaude, config.AgentApprovalAnsweringProjmux}
+	names := make([]string, 0, len(known))
+	for _, way := range known {
+		names = append(names, string(way))
+	}
+	if strings.TrimSpace(value) == "" {
+		return "", usageError("config agent-approvals --answering requires a way: " + strings.Join(names, ", "))
+	}
+	typed := config.AgentApprovalAnswering(strings.ToLower(strings.TrimSpace(value)))
+	for _, way := range known {
+		if typed == way {
+			return way, nil
+		}
+	}
+	return "", usageError(fmt.Sprintf("config agent-approvals --answering: unknown way %q; known ways: %s", value, strings.Join(names, ", ")))
+}

@@ -851,6 +851,8 @@ var routes = []Route{
 			"projmux agent turn start|steer <agent-ref> -- <text>",
 			"projmux agent turn interrupt <agent-ref>",
 			"projmux agent approval review <agent-ref> [--request <normalized-id>]",
+			"projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]",
+			"projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|web>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...",
 			"projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]",
 			"projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]",
 			"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]",
@@ -867,7 +869,7 @@ var routes = []Route{
 			"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]",
 			"projmux agent sessions backfill [--dry-run] [-o json]",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer", "agent sessions list", "agent sessions backfill"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent approval list", "agent approval answer", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer", "agent sessions list", "agent sessions backfill"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -935,13 +937,41 @@ var routes = []Route{
 				},
 			},
 			{
+				// review answers a Codex app-server approval. list and answer
+				// read and settle the Claude permission requests the installed
+				// PermissionRequest hook captures while agent-approval-answering
+				// is projmux; they refuse a Codex Agent and point at review.
 				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "approval",
 				Invocation: InvocationExplicit,
-				Summary:    "Review one exact pending native Codex approval",
-				Usage:      []string{"projmux agent approval review <agent-ref> [--request <normalized-id>]"},
-				Canonical:  []string{"agent approval review"},
-				Children:   []Route{{Effects: unchangedEffects(CardinalityUnchanged), Name: "review", Invocation: InvocationExplicit, Summary: "Review one exact pending native Codex approval", Usage: []string{"projmux agent approval review <agent-ref> [--request <normalized-id>]"}, Canonical: []string{"agent approval review"}}},
+				Summary:    "Review one exact pending native Codex approval, or list and answer captured Claude permission requests",
+				Usage:      []string{"projmux agent approval review <agent-ref> [--request <normalized-id>]", "projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]", "projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|web>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."},
+				Canonical:  []string{"agent approval review", "agent approval list", "agent approval answer"},
+				Children: []Route{
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "review", Invocation: InvocationExplicit, Summary: "Review one exact pending native Codex approval", Usage: []string{"projmux agent approval review <agent-ref> [--request <normalized-id>]"}, Canonical: []string{"agent approval review"}},
+					{
+						Effects: unchangedEffects(CardinalityExactOne), Name: "list", Invocation: InvocationExplicit,
+						Summary: "List one exact Claude Agent's waiting permission requests with their full tool input",
+						Usage:   []string{"projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]"},
+						Notes: []string{
+							"Only Claude permission requests captured while `config agent-approvals --answering projmux` is set are listed; Codex approvals are not captured (use `agent approval review`).",
+							"A listed request may already have been answered in Claude Code's own prompt, which stays usable; the first answer wins.",
+						},
+						Canonical: []string{"agent approval list"},
+						Outputs:   []OutputMode{OutputModeJSON},
+					},
+					{
+						Effects: unchangedEffects(CardinalityExactOne), Name: "answer", Invocation: InvocationExplicit,
+						Summary: "Allow or deny one waiting Claude permission request once; the first answer wins",
+						Usage:   []string{"projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|web>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."},
+						Notes: []string{
+							"--allow runs that one tool call as requested; it never changes a permission rule or the tool input. --deny blocks it. Exactly one of them is required.",
+							"--via (default cli) is recorded in the audit log as the caller reports it; it is not verified.",
+							"A second or late answer, or one on a request already answered in Claude Code's own prompt, is refused as permission-not-pending. A Codex Agent is refused without any write; use `agent approval review`.",
+						},
+						Canonical: []string{"agent approval answer"},
+					},
+				},
 			},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "review", Invocation: InvocationNatural, Summary: "Start a native review on an exact-bound Codex Agent", Usage: []string{"projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]"}, Canonical: []string{"agent review"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "integrate", Invocation: InvocationExplicit, Summary: "Install, remove, or preview provider hooks and tmux-bell integration", Usage: []string{"projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]"}, Canonical: []string{"agent integrate"}},
@@ -1123,10 +1153,11 @@ var routes = []Route{
 			"projmux config providers [--enable <id>|--disable <id>]",
 			"projmux config locale [--set <value>]",
 			"projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]",
+			"projmux config agent-approvals [--answering <claude|projmux>] [--window <seconds>]",
 			"projmux config render standalone|app [--bin <path>]",
 			"projmux config apply [--bin <path>] [--config <path>] [--socket <name>] [--no-reload]",
 		},
-		Canonical: []string{"config edit", "config providers", "config locale", "config agent-questions", "config render", "config apply"},
+		Canonical: []string{"config edit", "config providers", "config locale", "config agent-questions", "config agent-approvals", "config render", "config apply"},
 		Children: []Route{
 			{
 				Effects:    unchangedEffects(CardinalityUnchanged),
@@ -1176,6 +1207,20 @@ var routes = []Route{
 					"projmux config agent-questions --window <seconds|unlimited>",
 				},
 				Canonical: []string{"config agent-questions"},
+			},
+			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
+				Name:             "agent-approvals",
+				Invocation:       InvocationNatural,
+				Summary:          "Show how Claude permission requests are answered and how long a captured one waits; --answering or --window changes them",
+				CanonicalSummary: "Show or change how Claude permission requests are answered and how long they wait",
+				Usage:            []string{"projmux config agent-approvals [--answering <claude|projmux>] [--window <seconds>]"},
+				Notes: []string{
+					"Covers Claude permission requests only; Codex approvals are not captured (use `agent approval review`).",
+					"`claude` (default) leaves every request to Claude Code's own prompt. `projmux` also captures it for `agent approval answer`; the prompt stays usable and the first answer wins.",
+					"--window is 60..3600 seconds (default 900); there is no unlimited value. An unanswered request expires with no decision.",
+				},
+				Canonical: []string{"config agent-approvals"},
 			},
 			{
 				Effects:          unchangedEffects(CardinalityUnchanged),

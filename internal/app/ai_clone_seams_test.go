@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -167,9 +168,10 @@ func fullyWiredAICommandFixture(t *testing.T) *aiCommand {
 			store:  func() (agentMessageHeldLister, error) { return nil, nil },
 			launch: func(string) error { return nil },
 		},
-		pendingAgentSessionRefs: map[string]coremetadata.AgentSessionObservation{"%9": {Provider: "claude", SessionID: "orig"}},
-		pendingCodexBindings:    map[string]coremetadata.CodexActivationObservation{"%9": {ThreadID: "orig"}},
-		paneWriteFailure:        aiPaneWriteReasonMarkerUnavailable,
+		permissionAnsweredInTerminal: func(string, string, json.RawMessage) {},
+		pendingAgentSessionRefs:      map[string]coremetadata.AgentSessionObservation{"%9": {Provider: "claude", SessionID: "orig"}},
+		pendingCodexBindings:         map[string]coremetadata.CodexActivationObservation{"%9": {ThreadID: "orig"}},
+		paneWriteFailure:             aiPaneWriteReasonMarkerUnavailable,
 	}
 	// A held lock is the non-zero state a value copy would carry over.
 	c.agentObservationMu.Lock()

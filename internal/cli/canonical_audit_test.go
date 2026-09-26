@@ -242,8 +242,8 @@ func TestPublicConfigRouteReachesEditBothRenderTargetsAndApply(t *testing.T) {
 	for _, child := range config.Children {
 		children = append(children, child.Name)
 	}
-	if !reflect.DeepEqual(children, []string{"edit", "providers", "locale", "agent-questions", "render", "apply"}) {
-		t.Fatalf("config children = %v, want [edit providers locale agent-questions render apply]", children)
+	if !reflect.DeepEqual(children, []string{"edit", "providers", "locale", "agent-questions", "agent-approvals", "render", "apply"}) {
+		t.Fatalf("config children = %v, want [edit providers locale agent-questions agent-approvals render apply]", children)
 	}
 
 	render, ok := findChild(config, "render")
@@ -266,6 +266,7 @@ func TestPublicConfigRouteReachesEditBothRenderTargetsAndApply(t *testing.T) {
 		{"config", "providers"},
 		{"config", "locale"},
 		{"config", "agent-questions"},
+		{"config", "agent-approvals"},
 		{"config", "render"},
 		{"config", "render", "standalone"},
 		{"config", "render", "app"},

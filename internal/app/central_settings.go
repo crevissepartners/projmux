@@ -97,3 +97,41 @@ func saveCentralAgentQuestionWindowSeconds(homeDir func() (string, error), looku
 	}
 	return config.SaveAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile(), seconds)
 }
+
+// loadCentralAgentApprovalAnswering and loadCentralAgentApprovalWindowSeconds
+// read the same files, through the same loaders, the permission hook reads.
+func loadCentralAgentApprovalAnswering(homeDir func() (string, error), lookupEnv func(string) string) config.AgentApprovalAnswering {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return config.AgentApprovalAnsweringClaude
+	}
+	return claudePermissionAnsweringFromPaths(paths)
+}
+
+func loadCentralAgentApprovalWindowSeconds(homeDir func() (string, error), lookupEnv func(string) string) int {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return config.DefaultAgentApprovalWindowSeconds
+	}
+	seconds, _ := config.LoadAgentApprovalWindowSecondsFile(paths.AgentApprovalWindowSecondsFile())
+	return seconds
+}
+
+// saveCentralAgentApprovalAnswering writes the central approval answering file.
+func saveCentralAgentApprovalAnswering(homeDir func() (string, error), lookupEnv func(string) string, way config.AgentApprovalAnswering) error {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return err
+	}
+	return config.SaveAgentApprovalAnsweringFile(paths.AgentApprovalAnsweringFile(), way)
+}
+
+// saveCentralAgentApprovalWindowSeconds writes the central approval window
+// file. An out-of-range value is refused and nothing is written.
+func saveCentralAgentApprovalWindowSeconds(homeDir func() (string, error), lookupEnv func(string) string, seconds int) error {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return err
+	}
+	return config.SaveAgentApprovalWindowSecondsFile(paths.AgentApprovalWindowSecondsFile(), seconds)
+}

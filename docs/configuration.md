@@ -864,6 +864,53 @@ ceiling; until then Claude Code still ends the hook at the old timeout and a
 longer window gives the question back to the ordinary prompt then.
 See [hooks.md](hooks.md#answering-askuserquestion-in-projmux).
 
+## Agent Approval Answering
+
+How a Claude Agent's permission request ("Do you want to proceed?") is
+answered is one word stored at:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-approval-answering
+```
+
+It is a separate setting from [Agent Question Answering](#agent-question-answering)
+and covers Claude permission requests only. Codex approvals are not captured;
+answer those with `projmux agent approval review`.
+
+| Value | Meaning |
+| --- | --- |
+| `claude` (default) | Claude Code shows its own permission prompt; the permission hook prints nothing and records nothing |
+| `projmux` | projmux also records the request, and `projmux agent approval answer` can allow or deny it once; Claude Code's own prompt stays usable, and the first answer wins |
+
+Set it with `projmux config agent-approvals --answering <claude|projmux>`, or
+write the file. The value is read case-insensitively with surrounding
+whitespace ignored; a missing, empty, or unreadable file, and any other value,
+is `claude`. It applies to every Claude Agent on this machine, but only to
+requests from a projmux Claude Agent's own conversation, including its
+subagents; other Claude sessions, and a session in `bypassPermissions` or
+`dontAsk` mode, never have a request captured. See
+[hooks.md](hooks.md#answering-claude-permission-requests-in-projmux).
+
+## Agent Approval Window
+
+While the setting is `projmux`, the permission hook holds each request open
+for an answer for a seconds window stored at:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-approval-window-seconds
+```
+
+Set it with `projmux config agent-approvals --window <seconds>`, or write the
+file. The value is integer seconds in `60`–`3600`, default `900`. There is no
+`unlimited` value: a value outside the range, `unlimited`, and a file that does
+not hold one integer read as `900`. A request nobody answers in the window
+expires with no decision, and Claude Code's own prompt decides it.
+
+The installed hook `timeout` is the fixed ceiling `3615` seconds (the longest
+window plus a 15 second margin) and does not depend on this file. The hook
+rereads the window for every request, so a changed window applies to the next
+request without re-running `projmux agent integrate claude`.
+
 ## Notifications
 
 When `PROJMUX_NOTIFY_HOOK` is unset, projmux uses:
@@ -1427,7 +1474,7 @@ Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 Central files live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/`, except

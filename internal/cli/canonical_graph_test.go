@@ -15,7 +15,11 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when the question route summaries added Codex's
+// The baseline last moved when `agent approval list|answer` and `config
+// agent-approvals` joined: two rows that list, with a json projection, and
+// allow or deny once the Claude permission requests the PermissionRequest hook
+// captures, and one row for the central setting that turns the capture on.
+// Before that, it moved when the question route summaries added Codex's
 // blocking app-server questions to the existing Claude CLI surface.
 // Before that, `agent models` gained a Codex app-server
 // listing; its summary now names both providers and the default Claude read.
@@ -90,7 +94,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "0d263049b7f53c11ba07ce54a58c10c1291932e975b6c68d4e6f16896ccc4adf"
+	const want = "c1156282cdee86ea189ca2ce8d1abc2555ed9ba68f80422c91692afb5b39950d"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}
