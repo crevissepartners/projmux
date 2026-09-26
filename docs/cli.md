@@ -126,7 +126,7 @@ projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--wi
 projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent turn start|steer <agent-ref> -- <text>
-projmux agent turn interrupt <agent-ref>
+projmux agent turn interrupt <agent-ref> [--via web]
 projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
 projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|web>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
@@ -156,7 +156,7 @@ Subcommands:
 | [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor |
 | [`projmux agent instructions`](#projmux-agent-instructions) | Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent persona`](#projmux-agent-persona) | Attach or detach a persona on one exact Claude Agent and resume it on the same conversation |
-| [`projmux agent turn`](#projmux-agent-turn) | Send, steer, or interrupt one exact native Codex turn |
+| [`projmux agent turn`](#projmux-agent-turn) | Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn |
 | [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval, or list and answer Claude and Codex permission requests |
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install, remove, or preview provider hooks and tmux-bell integration |
@@ -402,7 +402,7 @@ Canonical spelling: `projmux agent instructions detach`
 
 ### `projmux agent turn`
 
-Send, steer, or interrupt one exact native Codex turn
+Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -419,7 +419,7 @@ Allowed effects:
 
 ```
 projmux agent turn start|steer <agent-ref> -- <text>
-projmux agent turn interrupt <agent-ref>
+projmux agent turn interrupt <agent-ref> [--via web]
 ```
 
 Subcommands:
@@ -428,7 +428,7 @@ Subcommands:
 | --- | --- |
 | [`projmux agent turn start`](#projmux-agent-turn-start) | Send a new turn to one exact idle Codex thread |
 | [`projmux agent turn steer`](#projmux-agent-turn-steer) | Request provider acceptance for one exact current Codex turn; delivery remains unconfirmed |
-| [`projmux agent turn interrupt`](#projmux-agent-turn-interrupt) | Interrupt one exact current Codex turn |
+| [`projmux agent turn interrupt`](#projmux-agent-turn-interrupt) | Interrupt one exact current Codex turn or send Esc to one fresh in-progress Claude turn |
 
 Canonical spelling: `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`
 
@@ -476,7 +476,7 @@ projmux agent turn steer <agent-ref> -- <text>
 
 #### `projmux agent turn interrupt`
 
-Interrupt one exact current Codex turn
+Interrupt one exact current Codex turn or send Esc to one fresh in-progress Claude turn
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -492,8 +492,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent turn interrupt <agent-ref>
+projmux agent turn interrupt <agent-ref> [--via web]
 ```
+
+Claude requires explicit --via web. The source is reported by the caller and does not prove a human browser click or user identity. A sent Esc confirms tmux delivery, not Claude cancellation. The private state file agent-turn-interrupt-audit.jsonl records the exact Agent and Pane UIDs, time, source, and delivery outcome.
 
 ### `projmux agent approval`
 
