@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
@@ -314,7 +315,7 @@ func (c *aiCommand) wslToastIconPath(iconPath string) string {
 }
 
 func (c *aiCommand) notificationIconDir() string {
-	if dataHome := strings.TrimSpace(c.env("XDG_DATA_HOME")); dataHome != "" {
+	if dataHome, err := config.ResolveDataHome("", c.env("XDG_DATA_HOME")); err == nil {
 		return filepath.Join(dataHome, "projmux", "icons")
 	}
 	home := ""
@@ -326,10 +327,11 @@ func (c *aiCommand) notificationIconDir() string {
 	if home == "" {
 		home = strings.TrimSpace(c.env("HOME"))
 	}
-	if home == "" {
+	dataHome, err := config.ResolveDataHome(home, c.env("XDG_DATA_HOME"))
+	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".local", "share", "projmux", "icons")
+	return filepath.Join(dataHome, "projmux", "icons")
 }
 
 //go:embed assets/projmux-icon.png

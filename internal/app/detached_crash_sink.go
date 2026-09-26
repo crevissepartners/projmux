@@ -91,8 +91,8 @@ func resolveDetachedCrashStateDir(lookupEnv func(string) string, homeDir func() 
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
 	}
-	stateHome := strings.TrimSpace(lookupEnv("XDG_STATE_HOME"))
-	if stateHome == "" {
+	stateHome, err := config.ResolveStateHome("", lookupEnv("XDG_STATE_HOME"))
+	if err != nil {
 		if homeDir == nil {
 			homeDir = os.UserHomeDir
 		}
@@ -103,7 +103,9 @@ func resolveDetachedCrashStateDir(lookupEnv func(string) string, homeDir func() 
 		if strings.TrimSpace(home) == "" {
 			return "", errors.New("home directory is required when XDG_STATE_HOME is unset")
 		}
-		stateHome = filepath.Join(home, ".local", "state")
+		if stateHome, err = config.ResolveStateHome(home, lookupEnv("XDG_STATE_HOME")); err != nil {
+			return "", err
+		}
 	}
 	stateDir := filepath.Join(stateHome, config.AppName)
 	if err := validateDetachedCrashStateDir(stateDir); err != nil {

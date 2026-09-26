@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -31,11 +32,11 @@ var errReadOnlyLimit = errors.New("diagnostics read-only limit exceeded")
 
 // DefaultPath resolves the private operations journal without creating it.
 func DefaultPath(lookupEnv func(string) string, homeDir func() (string, error)) (string, error) {
-	stateHome := ""
-	if lookupEnv != nil {
-		stateHome = strings.TrimSpace(lookupEnv("XDG_STATE_HOME"))
+	if lookupEnv == nil {
+		lookupEnv = func(string) string { return "" }
 	}
-	if stateHome == "" {
+	stateHome, err := config.ResolveStateHome("", lookupEnv("XDG_STATE_HOME"))
+	if err != nil {
 		if homeDir == nil {
 			homeDir = os.UserHomeDir
 		}
@@ -46,7 +47,9 @@ func DefaultPath(lookupEnv func(string) string, homeDir func() (string, error)) 
 		if strings.TrimSpace(home) == "" {
 			return "", errors.New("home directory is required when XDG_STATE_HOME is unset")
 		}
-		stateHome = filepath.Join(home, ".local", "state")
+		if stateHome, err = config.ResolveStateHome(home, lookupEnv("XDG_STATE_HOME")); err != nil {
+			return "", err
+		}
 	}
 	return filepath.Join(stateHome, "projmux", LogDirName, LogFileName), nil
 }

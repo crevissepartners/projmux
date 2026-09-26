@@ -4,6 +4,23 @@ Most users can configure projmux from `projmux settings`. Environment variables
 are available for repeatable shell setup, managed machines, or advanced
 overrides.
 
+## XDG Base Directories
+
+Paths in this guide written as `${XDG_CONFIG_HOME:-$HOME/.config}` and the like
+follow one rule for `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `XDG_DATA_HOME`, and
+`XDG_CACHE_HOME`. Surrounding whitespace is trimmed, and the value is used only
+when it is an absolute path. An unset, empty, blank, or relative value
+(`rel`, `./rel`, or an unexpanded `~/x`) is ignored as unset, as the
+[XDG Base Directory specification](https://specifications.freedesktop.org/basedir-spec/latest/)
+requires, and the default under `$HOME` applies instead:
+
+| Variable | Default |
+| --- | --- |
+| `XDG_CONFIG_HOME` | `$HOME/.config` |
+| `XDG_STATE_HOME` | `$HOME/.local/state` |
+| `XDG_DATA_HOME` | `$HOME/.local/share` |
+| `XDG_CACHE_HOME` | `$HOME/.cache` |
+
 ## Operational diagnostics state
 
 Projmux keeps a private bounded operational journal at:

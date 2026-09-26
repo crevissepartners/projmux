@@ -89,11 +89,10 @@ func nativeKeysConsentHintPath(lookupEnv func(string) string, homeDir func() (st
 	if err != nil {
 		return "", err
 	}
-	stateHome := ""
-	if lookupEnv != nil {
-		stateHome = strings.TrimRight(lookupEnv("XDG_STATE_HOME"), string(os.PathSeparator))
+	if lookupEnv == nil {
+		lookupEnv = func(string) string { return "" }
 	}
-	paths, err := (config.Homes{HomeDir: home, StateHome: stateHome}).Paths()
+	paths, err := (config.Homes{HomeDir: home, StateHome: lookupEnv("XDG_STATE_HOME")}).Paths()
 	if err != nil {
 		return "", err
 	}

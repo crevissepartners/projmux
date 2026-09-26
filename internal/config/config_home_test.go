@@ -21,7 +21,7 @@ func TestResolveConfigHome(t *testing.T) {
 		{name: "absolute", home: "/h", xdg: "/x", want: "/x"},
 		{name: "trailing slash", home: "/h", xdg: "/x/", want: "/x"},
 		{name: "surrounding space", home: "/h", xdg: " /x ", want: "/x"},
-		{name: "relative is kept", home: "/h", xdg: "rel", want: "rel"},
+		{name: "relative is unset", home: "/h", xdg: "rel", want: "/h/.config"},
 		{name: "blank without home", xdg: " ", wantErr: ErrHomeDirRequired},
 		{name: "set without home", xdg: "/x", want: "/x"},
 	} {
@@ -50,6 +50,8 @@ func TestHomesPathsTreatsBlankHomesAsUnset(t *testing.T) {
 		{name: "blank config home", homes: Homes{HomeDir: "/h", ConfigHome: " ", StateHome: "/s"}, wantCfg: "/h/.config/projmux", wantState: "/s/projmux"},
 		{name: "blank state home", homes: Homes{HomeDir: "/h", ConfigHome: "/c", StateHome: " "}, wantCfg: "/c/projmux", wantState: "/h/.local/state/projmux"},
 		{name: "trailing slash", homes: Homes{HomeDir: "/h", ConfigHome: "/x/"}, wantCfg: "/x/projmux", wantState: "/h/.local/state/projmux"},
+		{name: "relative homes", homes: Homes{HomeDir: "/h", ConfigHome: "rel", StateHome: "./rel"}, wantCfg: "/h/.config/projmux", wantState: "/h/.local/state/projmux"},
+		{name: "relative state home without home", homes: Homes{ConfigHome: "/c", StateHome: "~/s"}, wantErr: ErrHomeDirRequired},
 		{name: "both blank without home", homes: Homes{ConfigHome: " ", StateHome: "\t"}, wantErr: ErrHomeDirRequired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,5 +63,54 @@ func TestHomesPathsTreatsBlankHomesAsUnset(t *testing.T) {
 				t.Fatalf("Paths() = %+v, want ConfigDir %q StateDir %q", paths, tc.wantCfg, tc.wantState)
 			}
 		})
+	}
+}
+
+// TestResolveXDGHomes pins the one XDG base directory rule for all four
+// homes: an absolute value is used, cleaned; an empty, blank, or relative one
+// counts as unset and falls back under the home directory, or fails with
+// ErrHomeDirRequired without one.
+func TestResolveXDGHomes(t *testing.T) {
+	t.Parallel()
+
+	for _, resolver := range []struct {
+		name     string
+		resolve  func(homeDir, value string) (string, error)
+		fallback string
+	}{
+		{name: "XDG_CONFIG_HOME", resolve: ResolveConfigHome, fallback: "/h/.config"},
+		{name: "XDG_STATE_HOME", resolve: ResolveStateHome, fallback: "/h/.local/state"},
+		{name: "XDG_DATA_HOME", resolve: ResolveDataHome, fallback: "/h/.local/share"},
+		{name: "XDG_CACHE_HOME", resolve: ResolveCacheHome, fallback: "/h/.cache"},
+	} {
+		for _, tc := range []struct {
+			name    string
+			home    string
+			value   string
+			want    string
+			wantErr error
+		}{
+			{name: "unset", home: "/h", want: resolver.fallback},
+			{name: "empty", home: "/h", value: "", want: resolver.fallback},
+			{name: "blank", home: "/h", value: " ", want: resolver.fallback},
+			{name: "absolute", home: "/h", value: "/x", want: "/x"},
+			{name: "absolute trailing slash", home: "/h", value: "/x/", want: "/x"},
+			{name: "relative", home: "/h", value: "rel", want: resolver.fallback},
+			{name: "dot relative", home: "/h", value: "./rel", want: resolver.fallback},
+			{name: "unexpanded tilde", home: "/h", value: "~/x", want: resolver.fallback},
+			{name: "unset without home", wantErr: ErrHomeDirRequired},
+			{name: "relative without home", value: "rel", wantErr: ErrHomeDirRequired},
+			{name: "absolute without home", value: "/x", want: "/x"},
+		} {
+			t.Run(resolver.name+"/"+tc.name, func(t *testing.T) {
+				got, err := resolver.resolve(tc.home, tc.value)
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("resolve %s(%q, %q) error = %v, want %v", resolver.name, tc.home, tc.value, err, tc.wantErr)
+				}
+				if got != tc.want {
+					t.Fatalf("resolve %s(%q, %q) = %q, want %q", resolver.name, tc.home, tc.value, got, tc.want)
+				}
+			})
+		}
 	}
 }

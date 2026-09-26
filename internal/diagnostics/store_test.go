@@ -30,6 +30,10 @@ func TestDefaultPath(t *testing.T) {
 	if err != nil || path != filepath.Join("/home/test", ".local", "state", "projmux", "logs", "operations.jsonl") {
 		t.Fatalf("fallback DefaultPath() = %q, %v", path, err)
 	}
+	path, err = DefaultPath(func(string) string { return "rel/state" }, func() (string, error) { return "/home/test", nil })
+	if err != nil || path != filepath.Join("/home/test", ".local", "state", "projmux", "logs", "operations.jsonl") {
+		t.Fatalf("relative XDG_STATE_HOME DefaultPath() = %q, %v; want the unset fallback", path, err)
+	}
 }
 
 func TestStoreRepairsPrivatePermissions(t *testing.T) {
