@@ -175,6 +175,10 @@ func claudeResumeEffort(mode string, annotations map[string]string) (effort, inv
 	return value, "", false
 }
 
+// personaReasonCodexInstructionsImmutable is the public refusal for trying to
+// change the developer instructions of an existing Codex conversation.
+const personaReasonCodexInstructionsImmutable = "codex-instructions-immutable"
+
 // requirePersonaLane refuses --persona on every lane that cannot carry one.
 //
 // Claude takes a persona on every create: it is a file path on the command
@@ -201,12 +205,15 @@ func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) er
 	switch {
 	case provider == aiModeClaude:
 		return nil
+	case provider == aiModeCodex && flags.resumeConversation != "":
+		return usageError(fmt.Sprintf("%s --%s cannot change a Codex conversation's instructions: Codex fixes them when the thread starts and resume replays the original developer message (%s); create a new Codex Agent with -- <prompt>; nothing was created",
+			spelling, option, personaReasonCodexInstructionsImmutable))
 	case provider == aiModeCodex && nativeCodexFreshCreateRequired(provider, flags):
 		// The native fresh lane is the only Codex create that opens a thread of
 		// its own, and thread/start is the only moment a persona can be given.
 		return nil
 	case provider == aiModeCodex:
-		return usageError(fmt.Sprintf("%s --%s applies to --provider %s only on a create with a prompt (%s); nothing was created",
+		return usageError(fmt.Sprintf("%s --%s applies to --provider %s only when creating a new Agent with a prompt through its native thread; add -- <prompt> and omit --interactive-only (%s); nothing was created",
 			spelling, option, aiModeCodex, persona.ReasonProviderUnsupported))
 	default:
 		return usageError(fmt.Sprintf("%s --%s applies only to --provider %s and --provider %s (%s); nothing was created",

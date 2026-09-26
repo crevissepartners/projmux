@@ -884,7 +884,7 @@ var routes = []Route{
 				Summary:          "Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor",
 				CanonicalSummary: "Rebind an Offline or Failed Agent to a new managed Pane",
 				Usage:            []string{"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--dialogue-reply-only]"},
-				Notes:            []string{"A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane."},
+				Notes:            []string{"A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.", "Codex keeps the developer instructions its thread started with; resume cannot replace them."},
 				Canonical:        []string{"agent resume"},
 			},
 			{
@@ -896,6 +896,7 @@ var routes = []Route{
 				Name:       "instructions",
 				Invocation: InvocationExplicit,
 				Summary:    "Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation",
+				Notes:      []string{"Codex refuses instruction changes (codex-instructions-immutable): its thread replays the developer message recorded when it started."},
 				Usage:      []string{"projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]", "projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
 				Canonical:  []string{"agent instructions attach", "agent instructions detach"},
 				Children: []Route{
@@ -912,6 +913,7 @@ var routes = []Route{
 				Name:       "persona",
 				Invocation: InvocationExplicit,
 				Summary:    "Attach or detach a persona on one exact Claude Agent and resume it on the same conversation",
+				Notes:      []string{"Codex refuses persona changes (codex-instructions-immutable): its thread replays the developer message recorded when it started."},
 				Usage:      []string{"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]", "projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
 				Canonical:  []string{"agent instructions attach", "agent instructions detach"},
 				Children: []Route{
@@ -1329,6 +1331,7 @@ var routes = []Route{
 				Notes: []string{
 					"An explicit `--provider` wins, and a profile that names another provider is refused. Without `--provider`, the provider is the one named by the profile that `--profile <name>` or a `role` creation label selects.",
 					"When neither decides it -- no profile, `--profile none`, or a profile without `provider` -- the create is refused as requiring `--provider`.",
+					"Codex applies --instructions or --persona only when a new Agent starts with a prompt through its native thread. A promptless or --interactive-only Codex create with instructions is refused before creation.",
 				},
 				Outputs:   receiptOutputModes,
 				Canonical: []string{"create agent"},
@@ -1349,7 +1352,7 @@ var routes = []Route{
 				Usage: []string{
 					"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 				},
-				Notes:            []string{"Profile sandbox and approval apply on native and plain CLI creates. A plain CLI create with approval=untrusted is refused before creating an Agent."},
+				Notes:            []string{"Profile sandbox and approval apply on native and plain CLI creates. A plain CLI create with approval=untrusted is refused before creating an Agent.", "Instructions from --instructions, --persona, or a Profile apply when the create includes a prompt and opens a native thread. Promptless and --interactive-only creates with instructions are refused."},
 				ProviderShortcut: true,
 				Outputs:          receiptOutputModes,
 				Canonical:        []string{"create codex"},

@@ -471,7 +471,7 @@ func TestAgentPersonaRefusalsCarryTheirReasonTokenAndLeaveNoTrace(t *testing.T) 
 		reason  string
 	}{
 		{name: "missing persona", persona: "absent", reason: persona.ReasonNotFound},
-		{name: "codex agent", persona: "go-reviewer", reason: persona.ReasonProviderUnsupported, arrange: func(f *personaAttachFixture) {
+		{name: "codex agent", persona: "go-reviewer", reason: personaReasonCodexInstructionsImmutable, arrange: func(f *personaAttachFixture) {
 			agent, _ := f.store.registry.Agent(personaAttachAgent)
 			agent.Spec.Provider = aiModeCodex
 			agent.Status.SessionRef = codexConversationRef(resumeFixtureConversation)
@@ -499,6 +499,31 @@ func TestAgentPersonaRefusalsCarryTheirReasonTokenAndLeaveNoTrace(t *testing.T) 
 			}
 			f.assertNothingChanged(t, before, beforeAnnotations)
 		})
+	}
+}
+
+func TestCodexInstructionChangesRefuseWithImmutableThreadReason(t *testing.T) {
+	for _, noun := range []string{"instructions", "persona"} {
+		for _, action := range []string{"attach", "detach"} {
+			t.Run(noun+" "+action, func(t *testing.T) {
+				f := newPersonaAttachFixture(t)
+				f.writePersona(t, "go-reviewer", personaResumeContent)
+				agent, _ := f.store.registry.Agent(personaAttachAgent)
+				agent.Spec.Provider = aiModeCodex
+				agent.Status.SessionRef = codexConversationRef(resumeFixtureConversation)
+				before, beforeAnnotations := f.store.snapshot(), f.agent(t).Metadata.Annotations
+				args := []string{noun, action, "uid:" + personaAttachAgent}
+				if action == "attach" {
+					args = append(args, "go-reviewer")
+				}
+				stdout, _, err := runRoute(t, f.command, args...)
+				if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), personaReasonCodexInstructionsImmutable) ||
+					!strings.Contains(err.Error(), "resume keeps the original message") || stdout != "" {
+					t.Fatalf("%s %s = stdout %q, err %v; want an immutable-thread refusal", noun, action, stdout, err)
+				}
+				f.assertNothingChanged(t, before, beforeAnnotations)
+			})
+		}
 	}
 }
 

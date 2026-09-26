@@ -15,6 +15,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -137,6 +138,35 @@ func TestCodexNativeCreateSendsTheProfileSandboxAndApprovalOnThreadStart(t *test
 				t.Fatalf("UI plan policy = %+v, %v; want %+v", plan.flags.profileLaunch.codexPolicy, err, test.want)
 			}
 		})
+	}
+}
+
+func TestCodexNativeCreateAppliesProfileInstructionsOnFirstThread(t *testing.T) {
+	create, store, tmux, native, personas := newCodexPersonaCreate(t)
+	paths, err := configPaths(create.homeDir, create.lookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := profile.NewDefaultStore(paths)
+	if _, err := personas.Write("reviewer", []byte(codexPersonaContent)); err != nil {
+		t.Fatal(err)
+	}
+	profileDigest := writeCodexProfile(t, profiles, "instructed", "provider = \"codex\"\ninstructions = \"reviewer\"\n")
+	stdout, _, err := runRoute(t, create, codexNativeCreateArgs("--profile", "instructed", "-o", "receipt")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(native.creates) != 1 || native.creates[0].instructions != codexPersonaContent || native.creates[0].prompt != "review this" {
+		t.Fatal("Profile instructions did not reach the first native Codex thread")
+	}
+	agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
+	if agent.Metadata.Annotations[coremetadata.AnnotationAgentPersona] != "reviewer" ||
+		agent.Metadata.Annotations[coremetadata.AnnotationAgentPersonaDigest] != persona.Digest([]byte(codexPersonaContent)) ||
+		agent.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != profileDigest {
+		t.Fatalf("Agent annotations = %v", agent.Metadata.Annotations)
+	}
+	if strings.Contains(stdout, codexPersonaContent) || tmuxCallsMention(tmux, codexPersonaContent) {
+		t.Fatal("Profile instruction body appeared in the receipt or tmux argv")
 	}
 }
 

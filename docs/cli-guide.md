@@ -1837,7 +1837,8 @@ or badly named files refuse with the stable `persona-not-found`,
 `persona-too-large`, or `persona-name-invalid` reason and write no Registry,
 tmux, or snapshot state.
 
-A Codex Agent can be given named instructions on a create with a prompt
+A Codex Agent can be given named instructions directly or through a Profile
+when created with a prompt
 (`create agent --provider codex --instructions <name> -- <prompt>`, or
 `create codex --instructions <name> -- <prompt>`). This lane opens a thread of
 its own. Codex accepts the instructions when that thread starts: create sends
@@ -1852,13 +1853,19 @@ A conversation opened from the resume picker inherits the two stored
 instruction keys from Agents that already record it, so the new Agent reports
 the instructions its thread is running; it inherits no other launch value. A
 Codex Agent's instructions cannot be changed afterwards: the instructions are fixed when the
-thread starts, `agent instructions attach|detach` stays Claude-only, and starting
-over means a new Agent.
+thread starts. `agent instructions|persona attach|detach` refuses with
+`codex-instructions-immutable` before writing a snapshot or Registry state or
+stopping a Pane. Codex resume replays the original developer message, even
+when a new instruction is supplied to its CLI or app server. Start a new Agent
+with a prompt to use different instructions.
 
 Every other `--instructions` or `--persona` create refuses with
 `persona-provider-unsupported` and zero Registry, tmux, and snapshot writes:
-a Codex create with no prompt or with `--interactive-only` (its plain lane would have to spell the instructions into
-argv), `--dialogue-reply-only`, and any other provider.
+a Codex create with no prompt or with `--interactive-only` (its plain lane
+cannot carry private developer instructions without exposing their body in
+the process arguments), `--dialogue-reply-only`, and any other provider. The
+refusal tells the operator to create a new Agent with `-- <prompt>` and omit
+`--interactive-only`.
 
 An existing Claude Agent can attach named instructions later, or detach them:
 `projmux agent instructions attach <agent-ref> <name>` and
