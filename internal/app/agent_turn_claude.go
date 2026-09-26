@@ -61,14 +61,14 @@ func writeClaudeTurnInterruptAudit(path string, entry claudeTurnInterruptAudit) 
 
 func exactClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent, now time.Time) (coremetadata.AgentRouteRef, string, error) {
 	if agent.Spec.Provider != aiModeClaude {
-		return coremetadata.AgentRouteRef{}, "", errors.New("Claude turn interrupt unavailable: selected Agent is not Claude")
+		return coremetadata.AgentRouteRef{}, "", errors.New("claude turn interrupt unavailable: selected Agent is not Claude")
 	}
 	route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
 	if reason != "" {
-		return coremetadata.AgentRouteRef{}, "", fmt.Errorf("Claude turn interrupt unavailable: %s", reason)
+		return coremetadata.AgentRouteRef{}, "", fmt.Errorf("claude turn interrupt unavailable: %s", reason)
 	}
 	if agent.EffectiveInteraction(now).Kind != coremetadata.InteractionInProgress {
-		return coremetadata.AgentRouteRef{}, "", errors.New("Claude turn interrupt unavailable: current turn is not fresh in_progress")
+		return coremetadata.AgentRouteRef{}, "", errors.New("claude turn interrupt unavailable: current turn is not fresh in_progress")
 	}
 	pane, _ := registry.Pane(route.PaneUID)
 	return route, pane.Status.Activation.RuntimeID, nil
@@ -131,33 +131,33 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 		return err
 	}
 	if c.controlRoute == nil || c.controlRunner == nil || c.controlPaths == nil {
-		return errors.New("Claude turn interrupt unavailable: exact tmux route or private state path is not configured")
+		return errors.New("claude turn interrupt unavailable: exact tmux route or private state path is not configured")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
 	defer cancel()
 	tmuxRoute, err := c.controlRoute(ctx)
 	if err != nil {
-		return fmt.Errorf("Claude turn interrupt unavailable: resolve exact tmux socket: %w", err)
+		return fmt.Errorf("claude turn interrupt unavailable: resolve exact tmux socket: %w", err)
 	}
 	runner := explicitTmuxRunner{runner: c.controlRunner, target: tmuxRoute.target}
 	if _, err := exactClaudePane(ctx, runner, route.PaneUID, runtime); err != nil {
-		return fmt.Errorf("Claude turn interrupt unavailable: %w", err)
+		return fmt.Errorf("claude turn interrupt unavailable: %w", err)
 	}
 	paths, err := c.controlPaths()
 	if err != nil {
-		return fmt.Errorf("Claude turn interrupt unavailable: resolve audit path: %w", err)
+		return fmt.Errorf("claude turn interrupt unavailable: resolve audit path: %w", err)
 	}
 	auditPath := filepath.Join(paths.StateDir, claudeTurnInterruptAuditName)
 	entry := claudeTurnInterruptAudit{At: now().UTC(), Via: "web", AgentUID: route.AgentUID, PaneUID: route.PaneUID, Runtime: runtime, Result: "requested"}
 	if err := writeClaudeTurnInterruptAudit(auditPath, entry); err != nil {
-		return fmt.Errorf("Claude turn interrupt refused before Esc: via=web agent=uid:%s pane=uid:%s at=%s audit log %s: %w", route.AgentUID, route.PaneUID, entry.At.Format(time.RFC3339Nano), auditPath, err)
+		return fmt.Errorf("claude turn interrupt refused before Esc: via=web agent=uid:%s pane=uid:%s at=%s audit log %s: %w", route.AgentUID, route.PaneUID, entry.At.Format(time.RFC3339Nano), auditPath, err)
 	}
 	fail := func(cause error) error {
 		entry.At, entry.Result, entry.Reason = now().UTC(), "failed", cause.Error()
 		if auditErr := writeClaudeTurnInterruptAudit(auditPath, entry); auditErr != nil {
-			return fmt.Errorf("Claude turn interrupt failed: %w; could not write failure to audit log %s: %v", cause, auditPath, auditErr)
+			return fmt.Errorf("claude turn interrupt failed: %w; could not write failure to audit log %s: %v", cause, auditPath, auditErr)
 		}
-		return fmt.Errorf("Claude turn interrupt failed: %w", cause)
+		return fmt.Errorf("claude turn interrupt failed: %w", cause)
 	}
 	// The Registry can change between initial resolution and the durable audit.
 	// Refuse an old turn or activation before addressing the tmux Pane again.
@@ -185,7 +185,7 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 	}
 	entry.At, entry.Result = now().UTC(), "delivered"
 	if err := writeClaudeTurnInterruptAudit(auditPath, entry); err != nil {
-		return fmt.Errorf("Esc delivered to Claude Agent uid:%s Pane uid:%s, but audit result write failed at %s: %w", route.AgentUID, route.PaneUID, auditPath, err)
+		return fmt.Errorf("esc delivered to Claude Agent uid:%s Pane uid:%s, but audit result write failed at %s: %w", route.AgentUID, route.PaneUID, auditPath, err)
 	}
 	_, err = fmt.Fprintf(stdout, "%s agent=uid:%s pane=uid:%s delivery=sent (cancellation unconfirmed)\n", c.agentActionText(agentActionInterruptTurn), route.AgentUID, route.PaneUID)
 	return err
