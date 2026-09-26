@@ -152,13 +152,13 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 	// after them, for the same reason.
 	effort, effortInvalid, effortSkipped := claudeResumeEffort(mode, annotations)
 	personaFile, personaUnavailable := c.resumePersonaSnapshot(mode, annotations)
-	profileName, profileDigest, settingsFile, err := c.resumeProfileSettings(mode, annotations)
+	profileName, profileDigest, settingsFile, codexPolicy, err := c.resumeProfileSettings(mode, annotations)
 	if err != nil {
 		return agentResumeLaunch{}, err
 	}
 	prefix := append(claudeLaunchOptionArgs("", effort, personaFile), claudeSettingsArgs(settingsFile)...)
 	if mode == aiModeCodex {
-		prefix = codexLaunchOptionArgs("", effort)
+		prefix = append(codexLaunchOptionArgs("", effort), codexCLIProfileArgs(codexPolicy)...)
 	}
 	if prefix = append(prefix, claudeResumeSnapshotArgs(mode, annotations)...); len(prefix) > 0 {
 		workspaceArgs = append(prefix, workspaceArgs...)

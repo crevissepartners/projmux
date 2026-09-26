@@ -232,6 +232,8 @@ Allowed effects:
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--dialogue-reply-only]
 ```
 
+A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.
+
 ### `projmux agent instructions`
 
 Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation
@@ -1568,6 +1570,8 @@ Allowed effects:
 ```
 projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
+
+Profile sandbox and approval apply on native and plain CLI creates. A plain CLI create with approval=untrusted is refused before creating an Agent.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
@@ -3137,6 +3141,8 @@ projmux profile show <name>
 projmux profile set <name> [--file <path> | -]
 projmux profile delete <name> --yes
 ```
+
+Codex applies Profile sandbox and approval on native and CLI lanes. Codex CLI accepts approval=on-request or never; approval=untrusted requires the native lane.
 
 Subcommands:
 

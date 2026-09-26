@@ -18,6 +18,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // exactArgvAgentLauncher is the create-seam fake whose launch planning is the
@@ -46,6 +47,10 @@ func (l *exactArgvAgentLauncher) PlanAgentLaunchWithOptions(provider string, wor
 
 func (l *exactArgvAgentLauncher) PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (string, []string, error) {
 	return l.record(l.planner.PlanAgentLaunchWithSettings(provider, workspace, payload, model, effort, personaFile, settingsFile))
+}
+
+func (l *exactArgvAgentLauncher) PlanCodexAgentLaunchWithPolicy(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy) (string, []string, error) {
+	return l.record(l.planner.PlanCodexAgentLaunchWithPolicy(workspace, payload, model, effort, policy))
 }
 
 // profileFixture is one isolated HOME with its profile and persona stores,

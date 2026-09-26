@@ -33,6 +33,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -2319,6 +2320,21 @@ func (c *aiCommand) PlanAgentLaunchWithSettings(provider string, workspace corem
 	}
 	extra = append(options, extra...)
 	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
+	if err != nil {
+		return "", nil, err
+	}
+	return plan.title, plan.commandArgs, nil
+}
+
+// PlanCodexAgentLaunchWithPolicy plans a plain Codex CLI create with the
+// profile permissions ahead of workspace options and any prompt.
+func (c *aiCommand) PlanCodexAgentLaunchWithPolicy(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy) (string, []string, error) {
+	extra, err := providerLaunchArgs(aiModeCodex, workspace, payload)
+	if err != nil {
+		return "", nil, err
+	}
+	options := append(codexLaunchOptionArgs(model, effort), codexCLIProfileArgs(policy)...)
+	plan, err := c.planAgentLaunch(aiModeCodex, workspace.CWD, append(options, extra...), nil, "")
 	if err != nil {
 		return "", nil, err
 	}

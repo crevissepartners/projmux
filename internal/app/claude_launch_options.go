@@ -9,6 +9,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // claudeEffortLevels is the set `claude --help` lists for --effort.
@@ -52,6 +53,20 @@ func codexLaunchOptionArgs(model, effort string) []string {
 	}
 	if effort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+effort)
+	}
+	return args
+}
+
+// codexCLIProfileArgs carries a validated profile policy on Codex's plain
+// create and CLI resume lanes. The profile's full-access value was already
+// translated to danger-full-access by codexThreadPolicy.
+func codexCLIProfileArgs(policy codexappserver.ThreadPolicy) []string {
+	var args []string
+	if policy.Sandbox != "" {
+		args = append(args, "-s", string(policy.Sandbox))
+	}
+	if policy.ApprovalPolicy != "" {
+		args = append(args, "-a", string(policy.ApprovalPolicy))
 	}
 	return args
 }

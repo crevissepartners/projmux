@@ -840,6 +840,12 @@ func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace
 			personaFile, settingsFile = "", ""
 		}
 		switch {
+		case provider == aiModeCodex && !nativeCodexFreshCreateRequired(provider, flags) && !flags.profileLaunch.codexPolicy.IsZero():
+			launcher, ok := c.agents.(codexPolicyAgentLauncher)
+			if !ok {
+				return "", nil, agentResumeLaunch{}, errors.New("create agent: the Codex profile launcher is not configured")
+			}
+			title, argv, err = launcher.PlanCodexAgentLaunchWithPolicy(workspace, flags.payload, flags.model, flags.effort, flags.profileLaunch.codexPolicy)
 		case settingsFile != "":
 			// Only a profile with allow or deny rules reaches this launcher,
 			// so every other create keeps exactly the launch it had.
