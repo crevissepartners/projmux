@@ -16,6 +16,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 )
 
@@ -214,16 +215,75 @@ func TestClaudeHookReobservingTheSameConversationAppendsNothing(t *testing.T) {
 	}
 }
 
-func TestCodexSessionRefChangesAppendNoHistory(t *testing.T) {
+func TestCodexSessionRefChangesAppendHistoryAndList(t *testing.T) {
 	h := newSessionRefHarness(t, aiModeCodex)
 	stateDir := sessionHistoryStateDir(t, h)
 	h.ingest(t, []string{"codex-hook"}, `{"hook_event_name":"UserPromptSubmit","thread_id":"thread-1","cwd":"/src/app"}`)
 	h.ingest(t, []string{"codex-hook"}, `{"hook_event_name":"UserPromptSubmit","thread_id":"thread-2","cwd":"/src/app"}`)
+	h.ingest(t, []string{"codex-hook"}, `{"hook_event_name":"UserPromptSubmit","thread_id":"thread-2","cwd":"/src/app"}`)
+	h.ingest(t, []string{"codex-hook"}, `{"hook_event_name":"UserPromptSubmit","thread_id":"thread-2","session_id":"optional-alias","cwd":"/src/app"}`)
 	if ref := h.agent(t).Status.SessionRef; ref == nil || ref.Codex == nil || ref.Codex.ThreadID != "thread-2" {
 		t.Fatalf("codex ref = %#v, want thread-2 recorded", ref)
 	}
-	if _, err := os.Stat(sessionhistory.Path(stateDir)); !os.IsNotExist(err) {
-		t.Fatalf("a Codex conversation change touched the history file: %v", err)
+	read := readSessionHistory(t, stateDir, h.agentUID)
+	if len(read.Records) != 2 || read.Records[0].SessionID != "thread-1" || read.Records[1].SessionID != "thread-2" {
+		t.Fatalf("Codex history = %#v", read)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := sessionHistoryAgentCommand(h, stateDir).Run([]string{"sessions", "list", "uid:" + h.agentUID, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Codex list: %v; stderr: %s", err, stderr.String())
+	}
+	var result agentSessionsList
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 2 || result.Sessions[0].Source != sessionhistory.SourceObserved || result.Sessions[1].Source != sessionhistory.SourceCurrent {
+		t.Fatalf("Codex list = %#v", result)
+	}
+}
+
+func TestNativeCodexCreateAppendsFirstThreadAfterCommit(t *testing.T) {
+	create, store, _, native, _ := newCodexPersonaCreate(t)
+	stateDir := t.TempDir()
+	create.store.stateDir = func() (string, error) { return stateDir, nil }
+	_, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "review this")
+	if err != nil || stderr != "" {
+		t.Fatalf("create: %v, stderr=%q", err, stderr)
+	}
+	if len(native.creates) != 1 {
+		t.Fatalf("native creates = %d", len(native.creates))
+	}
+	agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
+	read := readSessionHistory(t, stateDir, agent.Metadata.UID)
+	if len(read.Records) != 1 || read.Records[0].Provider != aiModeCodex || read.Records[0].SessionID != native.createBinding.ThreadID || read.Records[0].TranscriptPath != "" || read.Records[0].Source != sessionhistory.SourceObserved {
+		t.Fatalf("native create history = %#v", read)
+	}
+}
+
+func TestCanonicalIntentCodexResumePickerAppendsThreadAfterCommit(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	stateDir := t.TempDir()
+	fx.create.store.stateDir = func() (string, error) { return stateDir, nil }
+	_, err := fx.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerResumePicker, provider: aiModeCodex,
+		conversationID: "thread-intent", resumeSource: aisessions.SourceCodexRollout,
+		placement: "down", anchorPaneID: fx.originID,
+	}, ioDiscard{}, ioDiscard{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentUID := ""
+	for _, agent := range fx.store.registry.Agents {
+		if agent.Status.SessionRef != nil && agent.Status.SessionRef.Codex != nil && agent.Status.SessionRef.Codex.ThreadID == "thread-intent" {
+			agentUID = agent.Metadata.UID
+		}
+	}
+	if agentUID == "" {
+		t.Fatal("created Codex Agent has no thread")
+	}
+	read := readSessionHistory(t, stateDir, agentUID)
+	if len(read.Records) != 1 || read.Records[0].SessionID != "thread-intent" || read.Records[0].Provider != aiModeCodex || read.Records[0].TranscriptPath != "" {
+		t.Fatalf("canonical intent history = %#v", read)
 	}
 }
 
@@ -341,11 +401,10 @@ func TestAgentSessionsListWithOnlyARegistryRef(t *testing.T) {
 	}
 }
 
-func TestAgentSessionsListRefusesANonClaudeAgentAndBadArgv(t *testing.T) {
+func TestAgentSessionsListRejectsBadArgv(t *testing.T) {
 	h := newSessionRefHarness(t, aiModeCodex)
 	c := sessionHistoryAgentCommand(h, t.TempDir())
 	for _, args := range [][]string{
-		{"sessions", "list", "uid:" + h.agentUID},
 		{"sessions"},
 		{"sessions", "show", "uid:" + h.agentUID},
 		{"sessions", "list"},

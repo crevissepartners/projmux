@@ -42,11 +42,11 @@ func agentWith(uid string, ref *coremetadata.AgentSessionRef) coremetadata.Agent
 	return agent
 }
 
-func TestRecordForAcceptsOnlyClaudeRefsWithASessionID(t *testing.T) {
+func TestRecordForRequiresSupportedConversationID(t *testing.T) {
 	cases := map[string]*coremetadata.AgentSessionRef{
-		"nil":        nil,
-		"codex":      {Provider: "codex", ObservedAt: t0, Codex: &coremetadata.CodexSessionRef{ThreadID: "thread-1"}},
-		"no session": claudeRef(" ", "/t/x.jsonl", t0),
+		"nil":         nil,
+		"codex empty": {Provider: "codex", ObservedAt: t0, Codex: &coremetadata.CodexSessionRef{ThreadID: " "}},
+		"no session":  claudeRef(" ", "/t/x.jsonl", t0),
 	}
 	for name, ref := range cases {
 		if _, ok := RecordFor("agent-1", ref, SourceObserved); ok {
@@ -55,6 +55,43 @@ func TestRecordForAcceptsOnlyClaudeRefsWithASessionID(t *testing.T) {
 	}
 	if _, ok := RecordFor("", claudeRef("s", "", t0), SourceObserved); ok {
 		t.Error("RecordFor accepted a blank agent uid")
+	}
+}
+
+func TestCodexThreadUsesExistingHistoryFormatAndLock(t *testing.T) {
+	dir := t.TempDir()
+	ref := &coremetadata.AgentSessionRef{Provider: ProviderCodex, ObservedAt: t0,
+		Codex: &coremetadata.CodexSessionRef{ThreadID: "thread-1"}}
+	row, ok := RecordFor("agent-1", ref, SourceObserved)
+	if !ok || row.SessionID != "thread-1" || row.TranscriptPath != "" || row.Provider != ProviderCodex {
+		t.Fatalf("Codex row = %#v, ok=%t", row, ok)
+	}
+	if err := Append(dir, row); err != nil {
+		t.Fatal(err)
+	}
+	agent := agentWith("agent-1", ref)
+	agent.Spec.Provider = ProviderCodex
+	result, err := List(dir, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 || result.Sessions[0].Source != SourceCurrent || result.Sessions[0].SessionID != "thread-1" {
+		t.Fatalf("list = %#v", result)
+	}
+	data, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.TrimSpace(line) != "" {
+			if err := json.Unmarshal([]byte(line), &wire); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if len(wire) != 6 || wire["transcriptPath"] != "" || wire["sessionId"] != "thread-1" {
+		t.Fatalf("wire = %#v", wire)
 	}
 }
 
@@ -234,8 +271,8 @@ func TestAppendFailsWhenTheStateDirIsAFile(t *testing.T) {
 	if err := Append(blocker, observed(t, "agent-1", "A", t0)); err == nil {
 		t.Fatal("Append into a file succeeded")
 	}
-	if err := Append(parent, Record{AgentUID: "agent-1", Provider: "codex", SessionID: "x"}); err == nil {
-		t.Fatal("Append accepted a non-Claude record")
+	if err := Append(parent, Record{AgentUID: "agent-1", Provider: "antigravity", SessionID: "x"}); err == nil {
+		t.Fatal("Append accepted an unsupported provider record")
 	}
 }
 

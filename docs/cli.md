@@ -166,7 +166,7 @@ Subcommands:
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude or Codex Agent's questions from the command line |
-| [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude conversations an Agent has moved through, or backfill past ones from delivered message frames |
+| [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent has moved through, or backfill past Claude sessions from delivered message frames |
 
 Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`
 
@@ -958,7 +958,7 @@ projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]..
 
 ### `projmux agent sessions`
 
-List the Claude conversations an Agent has moved through, or backfill past ones from delivered message frames
+List the Claude or Codex conversations an Agent has moved through, or backfill past Claude sessions from delivered message frames
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -982,14 +982,14 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux agent sessions list`](#projmux-agent-sessions-list) | List one exact Claude Agent's recorded and current conversations in time order |
+| [`projmux agent sessions list`](#projmux-agent-sessions-list) | List one exact Claude or Codex Agent's recorded and current conversations in time order |
 | [`projmux agent sessions backfill`](#projmux-agent-sessions-backfill) | Append past Claude sessions attributable to exactly one Agent by their delivered message frames as estimated history |
 
 Canonical spelling: `projmux agent sessions list`, `projmux agent sessions backfill`
 
 #### `projmux agent sessions list`
 
-List one exact Claude Agent's recorded and current conversations in time order
+List one exact Claude or Codex Agent's recorded and current conversations in time order
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 

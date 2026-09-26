@@ -109,6 +109,17 @@ func questionCells(precision CompletionPrecision) []AgentCapabilityCell {
 	return out
 }
 
+func sessionListCells() []AgentCapabilityCell {
+	out := claudeOnly(SupportProviderHook, CompletionRegistryRead)
+	for i := range out {
+		if out[i].Provider == Codex {
+			out[i].Mode = SupportNativeExact
+			out[i].CompletionPrecision = CompletionRegistryRead
+		}
+	}
+	return out
+}
+
 // usageAdapters marks only registry providers with a usage adapter as
 // supported; the rest are explicit unsupported cells.
 func usageAdapters(precision CompletionPrecision) []AgentCapabilityCell {
@@ -168,7 +179,7 @@ var agentActions = []AgentAction{
 	{ID: "question.disable", Group: "question", Route: "agent question disable", Callable: true, Cells: questionCells(CompletionRegistryCommit)},
 	{ID: "question.list", Group: "question", Route: "agent question list", Callable: true, Cells: questionCells(CompletionRegistryRead)},
 	{ID: "question.answer", Group: "question", Route: "agent question answer", Callable: true, Cells: questionCells(CompletionLocalConfigCommit)},
-	{ID: "sessions.list", Group: "sessions", Route: "agent sessions list", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionRegistryRead)},
+	{ID: "sessions.list", Group: "sessions", Route: "agent sessions list", Callable: true, Cells: sessionListCells()},
 }
 
 // IntegrationTarget is a target accepted by `agent integrate`. tmux-bell is a

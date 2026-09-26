@@ -16,8 +16,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 )
 
-// sessionsReasonProviderUnsupported: the Agent is not a Claude Agent, and only
-// Claude conversation changes are recorded.
+// sessionsReasonProviderUnsupported: the Agent's provider has no session
+// history support.
 const sessionsReasonProviderUnsupported = "sessions-provider-unsupported"
 
 // agentSessionsActions are the `agent sessions` subcommands in help order.
@@ -32,7 +32,7 @@ type agentSessionsList struct {
 	CorruptLines int                     `json:"corruptLines"`
 }
 
-// runSessions lists the Claude conversations one Agent has moved through: the
+// runSessions lists the Claude or Codex conversations one Agent has moved through: the
 // append-only session history joined with the conversation its
 // `status.sessionRef` records now (sessionhistory.List). It is read-only.
 func (c *agentCommand) runSessions(args []string, stdout, stderr io.Writer) error {
@@ -79,9 +79,10 @@ func (c *agentCommand) runSessions(args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
 	}
 	agent := found.Clone()
-	if coremetadata.NormalizeProvider(agent.Spec.Provider) != aiModeClaude {
-		return usageError(fmt.Sprintf("%s: agent/%s is a %q Agent; session history is recorded only for --provider %s (%s)",
-			spelling, agent.Metadata.Name, agent.Spec.Provider, aiModeClaude, sessionsReasonProviderUnsupported))
+	provider := coremetadata.NormalizeProvider(agent.Spec.Provider)
+	if provider != aiModeClaude && provider != aiModeCodex {
+		return usageError(fmt.Sprintf("%s: agent/%s is a %q Agent; session history is recorded only for --provider claude or codex (%s)",
+			spelling, agent.Metadata.Name, agent.Spec.Provider, sessionsReasonProviderUnsupported))
 	}
 	if c.store == nil || c.store.stateDir == nil {
 		return fmt.Errorf("%s: the projmux state directory is not configured", spelling)
@@ -159,6 +160,9 @@ func (c *agentCommand) runSessionsBackfill(args []string, stdout, stderr io.Writ
 	}
 	var current []sessionhistory.Record
 	for _, agent := range registry.Agents {
+		if agent.Spec.Provider != aiModeClaude {
+			continue
+		}
 		if row, ok := sessionhistory.RecordFor(agent.Metadata.UID, agent.Status.SessionRef, sessionhistory.SourceCurrent); ok {
 			current = append(current, row)
 		}
