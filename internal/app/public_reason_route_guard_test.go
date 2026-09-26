@@ -78,7 +78,7 @@ var publicReasonExceptions = map[string]publicReasonException{
 	// Dynamic spellings: the canonical `<verb> <kind|provider>` spelling the
 	// dispatch built, handed to a shared helper.
 	`internal/app/agent_profile.go (*createCommand).prepareProfileSettings spelling`:              {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
-	`internal/app/agent_profile.go (*createCommand).resolveCreateProfile spelling`:                {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
+	`internal/app/agent_profile.go (*createCommand).selectCreateProfile spelling`:                 {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/agent_profile.go requireProfileLane spelling`:                                   {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/claude_launch_options.go (*createCommand).preparePersonaLaunch spelling`:        {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/claude_launch_options.go requireClaudeLaunchOptions spelling`:                   {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},

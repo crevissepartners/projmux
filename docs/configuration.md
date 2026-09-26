@@ -1315,7 +1315,10 @@ deny = ["WebFetch(domain:example.com)"]
 or a create from the UI -- refuses with exit 2 (`profile-provider-mismatch`,
 naming both providers) before anything is written. A profile without
 `provider` applies to every provider, and parses, digests, and applies exactly
-as it did before the key existed. `profile set` refuses an unknown value with
+as it did before the key existed. `create agent` may omit `--provider` when
+the profile it selects names one: the profile's `provider` is then the Agent's
+provider. A provider-neutral profile does not choose one, so `create agent`
+still needs `--provider` with it. `profile set` refuses an unknown value with
 exit 2 (`profile-provider-unknown`, listing the accepted providers) and writes
 nothing. `model` is checked only for its shape, whatever the provider, and
 `effort` takes the one vocabulary above.

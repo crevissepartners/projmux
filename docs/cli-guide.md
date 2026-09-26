@@ -1954,6 +1954,20 @@ naming both providers) before anything is written or launched, on every lane:
 and a create from the UI. A profile without `provider` applies to every
 provider.
 
+`create agent` may omit `--provider` when the profile it selects -- by
+`--profile` or by a role label -- names one; the Agent is then created with
+that provider, exactly as if `--provider` had spelled it. With a profile
+`reviewer` that sets `provider = "codex"`:
+
+```sh
+projmux create agent --profile reviewer --project alpha --window main -- "review the diff"
+```
+
+An explicit `--provider` still wins and is still refused when it differs from
+the profile's. A profile that cannot be resolved refuses with its own reason.
+Without a profile, with `--profile none`, or with a profile that names no
+provider, `create agent` still requires `--provider`.
+
 An explicit flag wins over the profile item it overlaps: `--instructions` or
 `--persona` over `instructions`, `--model` over `model`, `--effort` over
 `effort`. The profile's instructions go through the same path as

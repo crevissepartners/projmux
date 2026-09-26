@@ -181,8 +181,10 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 		}
 	}
 	// The profile is resolved after every argv-only refusal, since it reads
-	// the profile files. What it merges into the flags is then held to the
-	// same lane checks an explicit flag is.
+	// the profile files. (Only a canonical create that omits --provider has
+	// read it already, in resolveCreateProvider, because there the profile
+	// names the provider those refusals judge.) What it merges into the flags
+	// is then held to the same lane checks an explicit flag is.
 	if err := c.resolveCreateProfile(spelling, provider, &flags); err != nil {
 		return err
 	}
@@ -782,13 +784,25 @@ var agentLaunchOutcomeTable = []agentLaunchOutcomeRow{
 
 // resolveCreateProvider fixes the provider of one canonical Agent create.
 //
-// The canonical spelling requires an explicit `--provider`; the saved split mode
-// is deliberately not consulted, because a canonical route whose result depends
+// The canonical spelling takes an explicit `--provider`, which always wins and
+// is checked against the argv alone. Without it, the profile the create selects
+// (selectCreateProfile: --profile, or a `role` creation label) decides the
+// provider when it names one; a profile that cannot be selected or resolved is
+// refused here with the refusal resolveCreateProfile would give. With neither,
+// the create is refused as requiring --provider. The saved split mode is
+// deliberately not consulted, because a canonical route whose result depends
 // on hidden state is not canonical. A shortcut already names its provider, so
 // respelling it is a usage error rather than a silent winner.
 func (c *createCommand) resolveCreateProvider(spelling, shortcutProvider string, flags resourceCreateFlags) (string, error) {
 	if shortcutProvider == "" {
-		return requireCanonicalProvider(spelling, flags.provider)
+		if flags.providerSet {
+			return requireCanonicalProvider(spelling, flags.provider)
+		}
+		selected, err := c.selectCreateProfile(spelling, flags)
+		if err != nil {
+			return "", err
+		}
+		return requireCanonicalProvider(spelling, selected.spec.Provider)
 	}
 	if flags.providerSet {
 		return "", usageError(fmt.Sprintf(
