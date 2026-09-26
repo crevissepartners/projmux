@@ -591,7 +591,7 @@ done
 suite_pid="$(cat "$block/pid" 2>/dev/null || true)"
 kill -KILL "$script_pid" 2>/dev/null || true
 wait "$script_pid" 2>/dev/null || true
-leaked="$(ls "$workdir/cases/killed/daemon/volumes" 2>/dev/null | tr '\n' ' ')"
+leaked="$(find "$workdir/cases/killed/daemon/volumes" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort | tr '\n' ' ')"
 if [[ -n "$suite_pid" && "$leaked" == "fake-vol-1 fake-vol-2 " && "$(count killed 'volume rm')" == 0 ]]; then
   pass "$kill_case: leak reproduced ($leaked)"
 else
