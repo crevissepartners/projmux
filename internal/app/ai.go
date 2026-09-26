@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -126,6 +127,11 @@ type aiCommand struct {
 	// held for a Claude Agent whose interaction stopped awaiting its operator.
 	// The zero value launches nothing, so a fixture never spawns a process.
 	heldRelease heldMessageRelease
+	// permissionAnsweredInTerminal closes the waiting permission request a
+	// PostToolUse shows was answered in Claude Code's own prompt. The zero
+	// value closes nothing, so a fixture never reaches the real state
+	// directory.
+	permissionAnsweredInTerminal func(sessionID, toolName string, toolInput json.RawMessage)
 	// A hook's session ref and semantic interaction are staged until the event
 	// has been classified, then committed in one Registry transaction. Quiet
 	// events flush only the session ref at the top-level ingest return.
@@ -165,6 +171,8 @@ func newAICommand() *aiCommand {
 		updateRegistry: updateResourceRegistry,
 		paneDelete:     deletePaneThroughCanonicalRoute,
 		heldRelease:    defaultHeldMessageRelease(),
+
+		permissionAnsweredInTerminal: defaultClaudePermissionAnsweredInTerminal,
 	}
 }
 
@@ -203,6 +211,7 @@ func (c *aiCommand) cloneSeams() *aiCommand {
 		panes:                         c.panes,
 		paneDelete:                    c.paneDelete,
 		heldRelease:                   c.heldRelease,
+		permissionAnsweredInTerminal:  c.permissionAnsweredInTerminal,
 	}
 }
 

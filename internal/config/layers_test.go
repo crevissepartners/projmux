@@ -285,6 +285,8 @@ func TestConfigFrontLoadersReportEveryRead(t *testing.T) {
 	_, _ = LoadAINotifyDedupeSecondsFileDefault(paths.AINotifyDedupeSecondsFile(), 0)
 	_, _ = LoadAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile())
 	_, _ = LoadAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile())
+	_, _ = LoadAgentApprovalWindowSecondsFile(paths.AgentApprovalWindowSecondsFile())
+	_, _ = LoadAgentApprovalAnsweringFile(paths.AgentApprovalAnsweringFile())
 	_, _ = LoadAIHookActionsFile(paths.AIHookActionsFile())
 	_, _ = LoadAISemanticPoliciesFile(paths.AISemanticPoliciesFile())
 	_, _ = LoadStatusbarDefaults(paths.StatusbarDefaultsFile())

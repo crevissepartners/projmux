@@ -146,6 +146,8 @@ var publicRouteArgvOperandRoutes = []string{
 	"agent turn steer",
 	"agent turn interrupt",
 	"agent approval review",
+	"agent approval list",
+	"agent approval answer",
 	"agent review",
 	"agent integrate",
 	"agent capabilities",
@@ -1162,6 +1164,7 @@ func TestPublicRouteArgvGuardValueSetDetector(t *testing.T) {
 		// Placeholders, open sets, and payload are not closed value sets.
 		{"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]", "agent usage", nil},
 		{"projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]", "config agent-questions", nil},
+		{"projmux config agent-approvals [--answering <claude|projmux>] [--window <seconds>]", "config agent-approvals", nil},
 		{"projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [-o json]", "reconcile registry", nil},
 		{"projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [-o <mode>] [-- <payload>]", "create window", nil},
 		{"projmux config edit [--get|--set <mode>]", "config edit", nil},

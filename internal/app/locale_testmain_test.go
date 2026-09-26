@@ -26,6 +26,7 @@ import (
 func TestMain(m *testing.M) {
 	exitIfSettingsLayerGuardChild()
 	exitIfClaudeQuestionHookChild()
+	exitIfClaudePermissionHookChild()
 	exitIfClaudeQuestionPickerChild()
 	os.Exit(liveguard.RunGuarded(func() int {
 		os.Unsetenv("PROJMUX_LOCALE")

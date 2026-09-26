@@ -318,7 +318,7 @@ not semantic overrides.
 | `PreToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `UserPromptSubmit` | marks the matched pane hook-active and sets AI state to thinking/busy; no notify queue entry is pushed |
 | `PermissionRequest` | pushes a critical approval row with the tool name and a concise tool/action summary |
-| `PostToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
+| `PostToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed; while `agent-approval-answering` is `projmux` it also closes the one waiting permission request the terminal answered (see [below](#answering-claude-permission-requests-in-projmux)) |
 | `PreCompact` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `PostCompact` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `SessionStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; for an exact managed initial-task binding it records `pending` startup readiness and opens the separately bounded acknowledgement window, but never acknowledges the task; no notify queue entry is pushed |
@@ -533,7 +533,7 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | --- | --- |
 | `PreToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `PostToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
-| `PostToolUseFailure` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
+| `PostToolUseFailure` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed; while `agent-approval-answering` is `projmux` it also closes the one waiting permission request the terminal answered (see [below](#answering-claude-permission-requests-in-projmux)) |
 | `PostToolBatch` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `PermissionDenied` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `Notification` | pushes a Claude notify row for response-ready, approval-required, or input-ready based on `notification_type` |
@@ -858,6 +858,88 @@ ones are kept for a day.
 The hook never blocks the tool: every failure, and even a crash inside the
 hook, ends with no output and exit status 0, which Claude Code reads as no
 decision.
+
+### Answering Claude Permission Requests In projmux
+
+`projmux agent integrate claude` also installs one more `PermissionRequest`
+entry, separate from the ingest entry on the same event, that runs
+`projmux internal claude-permission-hook` (marker
+`projmux-managed:claude-permission:v1`, no matcher, `"timeout"` the fixed
+ceiling `3615` seconds, the longest window plus 15 seconds). Unlike the ingest
+command its stdout is not discarded, because that is where a decision is handed
+to Claude Code. The ingest entry, and the `approval_required` row and badge it
+raises, are unchanged. Re-running the integration keeps exactly one such entry,
+`--remove` deletes it, and `config apply` never adds or changes it.
+
+The hook decides nothing unless the central `agent-approval-answering` setting
+is `projmux` (see
+[configuration.md](configuration.md#agent-approval-answering)). It covers
+Claude permission requests only; Codex approvals are not captured, and
+`projmux agent approval review` answers those. In the default `claude` way the
+hook reads the payload and the Registry, and only once the Registry confirms a
+projmux Claude Agent the one setting file; it prints nothing, records nothing,
+and touches no tmux. A session projmux did not start never reads the setting.
+A request in `bypassPermissions` or `dontAsk` mode is never captured. A
+subagent's request is captured, and its `agent_type` is shown by `agent
+approval list` and written to the audit log.
+
+In way `projmux` the hook records the request and waits up to the answer
+window (900 seconds unless `agent-approval-window-seconds` holds another value
+in 60–3600). Claude Code shows its own prompt at the same time, and that prompt
+stays fully usable: whichever answer comes first wins.
+
+```sh
+projmux agent approval list <agent-ref> [-o json]
+projmux agent approval answer <agent-ref> <request-id> --allow|--deny [--via popup|cli|web]
+```
+
+`list` shows each waiting request with its id, tool name, subagent type, full
+tool input, and created and deadline times. A listed request may already have
+been answered in the terminal. `answer` takes exactly one of `--allow` or
+`--deny`:
+
+- `--allow` prints `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}`.
+  It allows that one tool call once, exactly as requested: it never carries
+  `updatedInput` or `updatedPermissions`, so no permission rule changes, and the
+  request's `permission_suggestions` are never applied.
+- `--deny` prints a deny decision with the message `denied by the operator in
+  projmux` and `"interrupt": false`.
+
+The hook is deny-by-default: it prints the allow decision only for a request
+the store settled as allowed under its lock. Everything else prints nothing
+and exits 0, which Claude Code reads as no decision: no answer before the
+window ends (the request expires), a store that cannot be opened, written, or
+read, a cancellation (SIGTERM, SIGINT, SIGHUP), a crash inside the hook, and a
+malformed or oversized payload. It never exits 2.
+
+A second or late answer is refused and changes nothing, with one reason token:
+`permission-not-pending` (already allowed or denied, or already answered in
+Claude Code's own prompt), `permission-expired`, `permission-not-found`,
+`permission-answering-off` (the setting is `claude`), or
+`permission-provider-unsupported` (not a Claude Agent; a Codex Agent is
+pointed at `agent approval review`, and nothing is written).
+
+Answering in the terminal: "No" or Esc sends the waiting hook SIGTERM, which
+closes its record. "Yes" does not tell the hook at all, so the Claude ingest of
+the `PostToolUse` or `PostToolUseFailure` that follows closes the one waiting
+record of the same session, tool, and tool input (compared as canonical JSON)
+with the reason `answered-in-terminal`; the hook then exits with no output.
+When no record or more than one matches, nothing is closed and the window
+expiry ends the wait. In the default way that ingest reads only the setting,
+and with no store file it opens nothing. Known limit: an answer from projmux
+that the store records after the terminal "Yes" but before its `PostToolUse`
+is still accepted and printed. Claude Code has already run the tool by then
+and ignores the late output, but the audit log shows that projmux answer.
+
+`--via` is reported by the caller and recorded as given; projmux does not
+verify it. Every event (`requested`, `allowed`, `denied`, `expired`, `closed`,
+and `refused` for a late or invalid answer) is appended as one JSON line to
+`<state dir>/agent-approvals/audit.jsonl` (mode 0600, rotated to one `.1`
+generation at 1 MiB) with the request id, Agent, Pane, session, subagent type,
+tool name, a bounded one-line input summary (Bash `command`, a file tool's
+path, otherwise only the input's key names), request and decision times in
+UTC, and `via`. The full tool input lives only in the request record under
+`<state dir>/agent-approvals/`, and settled records are kept for a day.
 
 ## Antigravity Hook Ingest
 

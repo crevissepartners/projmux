@@ -78,6 +78,7 @@ var settingsLayerGuardArgv = [][]string{
 	{"agent", "message", "status", "msg-1", "-o", "json"},
 	{"agent", "wait", "alpha-agent", "--timeout", "1s"},
 	{"agent", "question", "list", "alpha-agent", "-o", "json"},
+	{"agent", "approval", "list", "alpha-agent", "-o", "json"},
 	{"agent", "sessions", "list", "alpha-agent", "-o", "json"},
 
 	{"attention", "toggle"},
@@ -94,6 +95,8 @@ var settingsLayerGuardArgv = [][]string{
 	{"config", "locale", "--set", "ko-KR"},
 	{"config", "agent-questions"},
 	{"config", "agent-questions", "--answering", "projmux", "--window", "unlimited"},
+	{"config", "agent-approvals"},
+	{"config", "agent-approvals", "--answering", "projmux", "--window", "120"},
 
 	{"delete", "project", "alpha", "--dry-run"},
 	{"delete", "window", "w1", "-p", "alpha", "--dry-run"},

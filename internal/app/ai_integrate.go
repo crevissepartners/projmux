@@ -62,6 +62,14 @@ const (
 	// holds the question.
 	claudeQuestionStatusMessage = "Question held for a projmux answer (projmux agent question answer); Esc declines"
 
+	// claudePermissionManagedMarker owns the one PermissionRequest entry that
+	// lets `projmux agent approval answer` allow or deny a projmux Claude
+	// Agent's permission request. It is a separate entry from the ingest
+	// command on the same event, which discards its stdout; this one's stdout
+	// reaches Claude Code, because that is where the decision is handed over.
+	claudePermissionManagedMarker = "projmux-managed:claude-permission:v1"
+	claudePermissionHookCommand   = "exec projmux internal " + claudePermissionHookRoute + aiHookPaneArgument + " 2>/dev/null # " + claudePermissionManagedMarker
+
 	tmuxBellManagedMarker = "projmux-managed:tmux-bell:v1"
 	tmuxBellHookName      = "alert-bell"
 	tmuxBellHookCommand   = `run-shell -b 'projmux internal agent-hook ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
@@ -479,6 +487,10 @@ func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordina
 		// coordination callbacks above. It holds nothing open for an Agent that
 		// was not opted in with `projmux agent question enable`.
 		hooks["PreToolUse"] = append(claudeHookEntrySlice(hooks["PreToolUse"]), claudeQuestionManagedEntry())
+		// The permission hook is its own PermissionRequest entry next to the
+		// ingest entry. It decides nothing unless agent-approval-answering is
+		// `projmux`.
+		hooks["PermissionRequest"] = append(claudeHookEntrySlice(hooks["PermissionRequest"]), claudePermissionManagedEntry())
 	}
 	next, err := encodeClaudeSettings(settings)
 	if err != nil {
@@ -1113,13 +1125,13 @@ func claudeHookEntriesWithoutManaged(value any, event, path string) ([]any, bool
 				removed, removedQuestion = true, true
 				continue
 			}
-			if hook["type"] == "command" && (strings.Contains(command, claudeHookManagedMarker) ||
+			if hook["type"] == "command" && (strings.Contains(command, claudeHookManagedMarker) || strings.Contains(command, claudePermissionManagedMarker) ||
 				strings.Contains(command, claudeCoordinationManagedMarker) || strings.Contains(command, priorClaudeCoordinationV2Marker) || strings.Contains(command, priorClaudeCoordinationManagedMarker)) {
 				removed = true
 				continue
 			}
 			if hook["type"] == "command" && (strings.Contains(command, legacyClaudeHookRoute) || strings.Contains(command, canonicalClaudeHookRoute) ||
-				strings.Contains(command, "internal claude-message-wait") || strings.Contains(command, "internal claude-message-reply") || strings.Contains(command, "internal claude-message-boundary") || strings.Contains(command, "internal "+claudeQuestionHookRoute)) && conflict == "" {
+				strings.Contains(command, "internal claude-message-wait") || strings.Contains(command, "internal claude-message-reply") || strings.Contains(command, "internal claude-message-boundary") || strings.Contains(command, "internal "+claudeQuestionHookRoute) || strings.Contains(command, "internal "+claudePermissionHookRoute)) && conflict == "" {
 				conflict = fmt.Sprintf("Claude Code hook %s already contains unmanaged projmux ingest command in %s: %s", event, path, command)
 			}
 			nextHooks = append(nextHooks, hookValue)
@@ -1189,6 +1201,23 @@ func claudeQuestionManagedEntry() map[string]any {
 				"command":       claudeQuestionHookCommand,
 				"timeout":       config.AgentQuestionHookTimeoutSeconds,
 				"statusMessage": claudeQuestionStatusMessage,
+			},
+		},
+	}
+}
+
+// claudePermissionManagedEntry is the PermissionRequest entry of the
+// permission hook. It carries no matcher, so it sees every tool's request. Its
+// timeout is the fixed ceiling config.AgentApprovalHookTimeoutSeconds, the
+// longest window plus a margin, never read from the window file: the hook
+// rereads the window for every request and ends the wait itself.
+func claudePermissionManagedEntry() map[string]any {
+	return map[string]any{
+		"hooks": []any{
+			map[string]any{
+				"type":    "command",
+				"command": claudePermissionHookCommand,
+				"timeout": config.AgentApprovalHookTimeoutSeconds,
 			},
 		},
 	}

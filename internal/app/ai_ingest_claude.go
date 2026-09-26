@@ -77,6 +77,9 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	case "SubagentStop":
 		return c.ingestClaudeSubagentStop(paneID, payload, metadata, action)
 	case "PostToolUse", "PostToolUseFailure", "PermissionDenied", "ElicitationResult":
+		if payload.EventName == "PostToolUse" || payload.EventName == "PostToolUseFailure" {
+			c.closeClaudePermissionAnsweredInTerminal(data, payload)
+		}
 		return c.ingestClaudeOperatorDialogClosed(paneID, payload, metadata, action, binding, owned)
 	case "PreToolUse", "PostToolBatch", "UserPromptExpansion", "SubagentStart", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
 		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))

@@ -114,6 +114,8 @@ var settingItems = []SettingItem{
 	declareFile(AINotifyDedupeSecondsFileName, LayerCentral, ""),
 	declareFile(AgentQuestionWindowSecondsFileName, LayerCentral, ""),
 	declareFile(AgentQuestionAnsweringFileName, LayerCentral, ""),
+	declareFile(AgentApprovalWindowSecondsFileName, LayerCentral, ""),
+	declareFile(AgentApprovalAnsweringFileName, LayerCentral, ""),
 	declareFile(AIHookActionsFileName, LayerCentral, ""),
 	declareFile(AISemanticPoliciesFileName, LayerCentral, ""),
 	declareFile(LiveResourcesFileName, LayerCentral, ""),

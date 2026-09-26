@@ -122,6 +122,11 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		// installs. It prints a decision only for an answered question and
 		// otherwise nothing, and always exits 0.
 		return runClaudeQuestionHook(rest, os.Stdin, stdout, stderr)
+	case claudePermissionHookRoute:
+		// The PermissionRequest hook `agent integrate claude` installs. It
+		// prints an allow or deny decision only for a request the operator
+		// answered in projmux, otherwise nothing, and always exits 0.
+		return runClaudePermissionHook(rest, os.Stdin, stdout, stderr)
 	case claudeQuestionPickerRoute:
 		// The way-2 question popup the hook opens on the client viewing the
 		// Agent's Pane. It answers or closes one recorded question set.

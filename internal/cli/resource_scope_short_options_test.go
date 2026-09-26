@@ -57,8 +57,9 @@ func TestNonResourceWindowHelpDoesNotAcquireTheResourceAlias(t *testing.T) {
 
 // nonResourceWindowUsages are the routes whose --window is not the resource
 // scope flag: `agent usage` filters by Window name, and `config
-// agent-questions` sets the agent question wait window in seconds.
-var nonResourceWindowUsages = []string{"projmux agent usage", "projmux config agent-questions"}
+// agent-questions` and `config agent-approvals` set the agent question and
+// permission request wait windows in seconds.
+var nonResourceWindowUsages = []string{"projmux agent usage", "projmux config agent-questions", "projmux config agent-approvals"}
 
 func isNonResourceWindowUsage(usage string) bool {
 	for _, prefix := range nonResourceWindowUsages {

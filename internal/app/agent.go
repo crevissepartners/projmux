@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -122,6 +123,12 @@ type agentCommand struct {
 	// `agent question answer` consults for an Agent that is not opted in;
 	// nil is way 1.
 	questionAnswering func() config.AgentQuestionAnswering
+	// approvalStore opens the Claude permission request store `agent approval
+	// list|answer` reads and settles; nil refuses.
+	approvalStore func() (*agentapproval.Store, error)
+	// approvalAnswering reads the central agent-approval-answering setting
+	// `agent approval answer` requires to be projmux; nil is way 1.
+	approvalAnswering func() config.AgentApprovalAnswering
 	// lookupEnv reads the ambient tmux Pane that `agent persona` refuses to
 	// restart from, and the inherited $TMUX its stop routes through.
 	lookupEnv func(string) string
@@ -159,6 +166,8 @@ func newAgentCommand() *agentCommand {
 		// Resolved only by `agent question answer` for an Agent that is not
 		// opted in.
 		questionAnswering: claudeQuestionAnswering,
+		approvalStore:     defaultAgentApprovalStore,
+		approvalAnswering: claudePermissionAnswering,
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		command.messagePaths = defaultAgentMessagePaths(paths)
@@ -202,6 +211,14 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "turn":
 		return c.runTurn(rest, stdout, stderr)
 	case "approval":
+		// `list` and `answer` are the Claude permission requests projmux
+		// captured; `review` is the Codex app-server approval, unchanged.
+		if len(rest) > 0 && (rest[0] == "list" || rest[0] == "answer") {
+			return c.runPermissionApproval(rest, stdout, stderr)
+		}
+		if len(rest) == 0 || rest[0] != "review" {
+			return usageError("agent approval requires " + strings.Join(agentApprovalActions, ", "))
+		}
 		return c.runApproval(rest, stdout, stderr)
 	case "review":
 		return c.runReview(rest, stdout, stderr)
