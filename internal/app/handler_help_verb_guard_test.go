@@ -31,18 +31,17 @@ type helpVerbSite struct {
 // inside a help branch; the route's `--help` output is the reference its argv
 // must reproduce. The set is closed against the source both ways: every help
 // branch is reachable and listed with a spelling that reaches it, and a branch
-// no argv reaches is deleted rather than listed.
+// no argv reaches is deleted rather than listed. A public parent has no row:
+// the help boundary answers its `help`, `--help`, and `-h`, and the same
+// spellings after the bare `--` are payload it refuses as a usage error
+// (TestPublicParentDashHelpIsAUsageError).
 var helpVerbSites = map[string]helpVerbSite{
 	"ai_ingest.go: internal agent-hook ingest": {argv: []string{"internal", "agent-hook", "ingest", "help"}},
 	"ai_integrate.go: agent integrate":         {argv: []string{"agent", "integrate", "help"}},
-	"hook.go: hook":                            {argv: []string{"hook", "--", "help"}},
-	"pin.go: pin project":                      {argv: []string{"pin", "project", "--", "help"}},
 	"preview.go: internal preview":             {argv: []string{"internal", "preview", "help"}},
-	"recent_window.go: window":                 {argv: []string{"window", "--", "help"}},
 	"session_popup.go: internal session-popup": {argv: []string{"internal", "session-popup", "help"}},
 	"status.go: internal status":               {argv: []string{"internal", "status", "help"}},
 	"statusbar.go: internal statusbar":         {argv: []string{"internal", "statusbar", "help"}},
-	"tag.go: runtime tag":                      {argv: []string{"runtime", "tag", "--", "help"}},
 	"tmux.go: internal tmux":                   {argv: []string{"internal", "tmux", "help"}},
 }
 
@@ -302,7 +301,8 @@ func TestHandlerHelpVerbMatchesHelpFlag(t *testing.T) {
 // that goes back to a handler copy, prints on stderr, names a route the
 // catalog lacks, or has no row, a row whose argv the help boundary answers
 // before the handler runs, a row with no argv, and a stale row or exception,
-// are each reported; a row driving the branch after `--` is not.
+// are each reported; a row driving a leaf's bare `help` operand, which the
+// help boundary leaves to the handler, is not.
 func TestHandlerHelpVerbGuardDetectsDrift(t *testing.T) {
 	t.Parallel()
 	src := []byte(`package app
@@ -325,18 +325,18 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return printRouteHelp(stdout, "attention")
 	}
 	switch args[0] {
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "hook")
+	case "help":
+		return printRouteHelp(stdout, "agent integrate")
 	}
 	return nil
 }
 `)
 	scan := scanHelpVerbs(map[string][]byte{"recent_window.go": src})
 	problems := strings.Join(helpVerbSetProblems(scan, map[string]helpVerbSite{
-		"recent_window.go: update": {argv: []string{"update", "help"}},
-		"recent_window.go: window": {argv: []string{"window", "--", "help"}},
-		"recent_window.go: hook":   {argv: []string{"hook", "--", "help"}},
-		"recent_window.go: gone":   {},
+		"recent_window.go: update":          {argv: []string{"update", "help"}},
+		"recent_window.go: window":          {argv: []string{"window", "--", "help"}},
+		"recent_window.go: agent integrate": {argv: []string{"agent", "integrate", "help"}},
+		"recent_window.go: gone":            {},
 	}, map[string]string{"recent_window.go: gone": "stale"}), "\n")
 	for _, want := range []string{
 		"help branch in (*windowCommand).Run writes through printRouteUsage",
@@ -352,10 +352,8 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 			t.Errorf("guard problems do not report %q:\n%s", want, problems)
 		}
 	}
-	for _, key := range []string{"recent_window.go: window", "recent_window.go: hook"} {
-		if strings.Contains(problems, key+": helpVerbSites row drives") {
-			t.Errorf("guard reports the `-- help` row %s as answered by the help boundary:\n%s", key, problems)
-		}
+	if key := "recent_window.go: agent integrate"; strings.Contains(problems, key+": helpVerbSites row drives") {
+		t.Errorf("guard reports the leaf help-operand row %s as answered by the help boundary:\n%s", key, problems)
 	}
 }
 

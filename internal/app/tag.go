@@ -71,9 +71,6 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runToggle(fs.Args()[1:], stdout, stderr)
 	case "clear":
 		return c.runClear(fs.Args()[1:], stdout, stderr)
-	// Only `runtime tag -- help` (`-- --help`, `-- -h`) and `runtime tag project help` get here: the help boundary answers `runtime tag help`, `--help`, and `-h` first and does not read past `--`.
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "runtime tag")
 	default:
 		printRouteUsage(stderr, "runtime tag")
 		return usageError(fmt.Sprintf("unknown runtime tag subcommand: %s", fs.Arg(0)))
