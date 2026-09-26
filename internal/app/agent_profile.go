@@ -145,6 +145,73 @@ func (c *createCommand) profileStore() (profile.Store, error) {
 	return profile.NewDefaultStore(paths), nil
 }
 
+// selectedCreateProfile is the profile one Agent create selected: its name,
+// the option that selected it as the refusals quote it, and what it resolved
+// to. The zero value means the create applies no profile.
+type selectedCreateProfile struct {
+	name   string
+	option string
+	loaded profile.Profile
+	spec   profile.Spec
+}
+
+// selectCreateProfile is the one definition of which profile an Agent create
+// uses, and it resolves that profile.
+//
+// An explicit --profile names it; `none` means no profile and no role
+// mapping. Without --profile, a `role` creation label selects the one profile
+// listing that role; a role no profile lists selects none, and so does a label
+// argv the create itself refuses. Every way the selection or the resolution
+// fails is a refusal that says nothing was created.
+//
+// Both resolveCreateProfile and resolveCreateProvider call it, so the profile
+// that decides an omitted --provider is the profile the create then applies.
+func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreateFlags) (selectedCreateProfile, error) {
+	if flags.profile == profile.ReservedName {
+		return selectedCreateProfile{}, nil
+	}
+	store, err := c.profileStore()
+	if err != nil {
+		return selectedCreateProfile{}, fmt.Errorf("%s --profile: %w; nothing was created", spelling, err)
+	}
+	name := flags.profile
+	option := "--profile " + flags.profile
+	if name == "" {
+		labels, err := labelMap(flags.labels)
+		if err != nil {
+			// The create refuses the label itself, with its own message.
+			return selectedCreateProfile{}, nil
+		}
+		role, ok := labels[profileRoleLabel]
+		if !ok {
+			return selectedCreateProfile{}, nil
+		}
+		option = "--label " + profileRoleLabel + "=" + role
+		if name, err = store.RoleProfile(role); err != nil {
+			switch profile.ReasonOf(err) {
+			case profile.ReasonRoleClaimed:
+				return selectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; remove the role from all but one of the listed profiles, or pass --profile none to create without a profile; nothing was created",
+					spelling, option, err))
+			case profile.ReasonRoleProfileInvalid:
+				return selectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; fix the profile with `projmux profile set <name>`, or pass --profile none to create without a profile; nothing was created",
+					spelling, option, err))
+			}
+			return selectedCreateProfile{}, fmt.Errorf("%s %s: %w; nothing was created", spelling, option, err)
+		}
+		if name == "" {
+			return selectedCreateProfile{}, nil
+		}
+	}
+	loaded, spec, err := store.Resolve(name)
+	if err != nil {
+		if profile.ReasonOf(err) != "" {
+			return selectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; nothing was created", spelling, option, err))
+		}
+		return selectedCreateProfile{}, fmt.Errorf("%s %s: %w; nothing was created", spelling, option, err)
+	}
+	return selectedCreateProfile{name: name, option: option, loaded: loaded, spec: spec}, nil
+}
+
 // resolveCreateProfile decides the profile one Agent create applies and merges
 // it into flags.
 //
@@ -160,7 +227,9 @@ func (c *createCommand) profileStore() (profile.Store, error) {
 //
 // A profile that names a provider applies only to that provider: any other
 // refuses with profile-provider-mismatch before anything is written. A
-// profile without `provider` applies to every provider, as before.
+// profile without `provider` applies to every provider, as before. A
+// canonical create that omitted --provider took the profile's provider in
+// resolveCreateProvider, so there the check passes.
 //
 // An explicit flag wins over the profile item it overlaps: --instructions or
 // --persona over `instructions`, --model over `model`, --effort over
@@ -173,51 +242,17 @@ func (c *createCommand) profileStore() (profile.Store, error) {
 // -s and -a. allow and deny are disclosed on both lanes as not applied.
 // Other providers refuse a profile with permissions.
 //
+// selectCreateProfile decides which profile that is, the same way it does
+// for resolveCreateProvider.
+//
 // It reads files and writes none: the settings snapshot is written by
 // prepareProfileSettings, later, next to the persona snapshot.
 func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *resourceCreateFlags) error {
-	if flags.profile == profile.ReservedName {
-		return nil
+	selected, err := c.selectCreateProfile(spelling, *flags)
+	if err != nil || selected.name == "" {
+		return err
 	}
-	store, err := c.profileStore()
-	if err != nil {
-		return fmt.Errorf("%s --profile: %w; nothing was created", spelling, err)
-	}
-	name := flags.profile
-	option := "--profile " + flags.profile
-	if name == "" {
-		labels, err := labelMap(flags.labels)
-		if err != nil {
-			// The create refuses the label itself, with its own message.
-			return nil
-		}
-		role, ok := labels[profileRoleLabel]
-		if !ok {
-			return nil
-		}
-		option = "--label " + profileRoleLabel + "=" + role
-		if name, err = store.RoleProfile(role); err != nil {
-			switch profile.ReasonOf(err) {
-			case profile.ReasonRoleClaimed:
-				return usageError(fmt.Sprintf("%s %s: %v; remove the role from all but one of the listed profiles, or pass --profile none to create without a profile; nothing was created",
-					spelling, option, err))
-			case profile.ReasonRoleProfileInvalid:
-				return usageError(fmt.Sprintf("%s %s: %v; fix the profile with `projmux profile set <name>`, or pass --profile none to create without a profile; nothing was created",
-					spelling, option, err))
-			}
-			return fmt.Errorf("%s %s: %w; nothing was created", spelling, option, err)
-		}
-		if name == "" {
-			return nil
-		}
-	}
-	loaded, spec, err := store.Resolve(name)
-	if err != nil {
-		if profile.ReasonOf(err) != "" {
-			return usageError(fmt.Sprintf("%s %s: %v; nothing was created", spelling, option, err))
-		}
-		return fmt.Errorf("%s %s: %w; nothing was created", spelling, option, err)
-	}
+	name, option, loaded, spec := selected.name, selected.option, selected.loaded, selected.spec
 	if spec.Provider != "" && spec.Provider != provider {
 		return usageError(fmt.Sprintf("%s %s: profile %q is for provider %s, not %s (%s); create the Agent with provider %s, or pass --profile none to create without a profile; nothing was created",
 			spelling, option, name, spec.Provider, provider, profileReasonProviderMismatch, spec.Provider))
