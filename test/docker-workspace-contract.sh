@@ -5,7 +5,9 @@
 # path, so the script must stage the checkout into a docker volume, mount that
 # read-only, and remove it on exit without changing the exit status. There the
 # build output, the prebuilt binary, and the evidence also travel through
-# volumes, and outputs are copied back to the job. A fake `docker` on PATH
+# volumes, and outputs are copied back to the job. A staging run first removes
+# labelled volumes a killed run left behind once they pass the age threshold,
+# never one still in use or carrying another label. A fake `docker` on PATH
 # stands in for the daemon, so no real docker is needed; a failing `go` stub
 # pins that scripts/test-e2e-docker.sh needs no host Go toolchain.
 set -euo pipefail
@@ -33,22 +35,81 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
 sub="$1"
 shift
+# Volume metadata lives under meta/: NAME.label (k=v), NAME.created (the
+# CreatedAt docker prints), NAME.inuse (a container id a test pins the volume
+# with), and NAME.run.PID while a fake `docker run` with PID mounts it.
 volumes="$FAKE_DAEMON_ROOT/volumes"
-mkdir -p "$volumes"
+meta="$FAKE_DAEMON_ROOT/meta"
+mkdir -p "$volumes" "$meta"
+# in_use NAME prints the container holding NAME and succeeds when one does.
+in_use() {
+  local f
+  if [[ -f "$meta/$1.inuse" ]]; then
+    cat "$meta/$1.inuse"
+    return 0
+  fi
+  for f in "$meta/$1".run.*; do
+    [[ -e "$f" ]] || continue
+    if kill -0 "${f##*.run.}" 2>/dev/null; then
+      printf 'fake-run-%s\n' "${f##*.run.}"
+      return 0
+    fi
+  done
+  return 1
+}
 case "$sub" in
   build) exit 0 ;;
   volume)
     case "$1" in
       create)
+        shift
         n=$(($(find "$FAKE_DAEMON_ROOT" -maxdepth 1 -name 'created-*' | wc -l) + 1))
         : >"$FAKE_DAEMON_ROOT/created-$n"
         mkdir "$volumes/fake-vol-$n"
+        [[ "${1:-}" == --label ]] && printf '%s\n' "$2" >"$meta/fake-vol-$n.label"
+        date -u +%Y-%m-%dT%H:%M:%SZ >"$meta/fake-vol-$n.created"
         echo "fake-vol-$n"
+        ;;
+      ls)
+        [[ "$2" == -q && "$3" == --filter && "$4" == label=* ]] || exit 1
+        [[ -z "${FAKE_VOLUME_LS_EXIT:-}" ]] || exit "$FAKE_VOLUME_LS_EXIT"
+        for d in "$volumes"/*; do
+          [[ -d "$d" ]] || continue
+          v="${d##*/}"
+          if [[ -f "$meta/$v.label" && "$(cat "$meta/$v.label")" == "${4#label=}" ]]; then
+            echo "$v"
+          fi
+        done
+        ;;
+      inspect)
+        [[ "$2" == --format && "$3" == '{{.CreatedAt}}' && -d "$volumes/$4" ]] || {
+          echo "Error response from daemon: get $4: no such volume" >&2
+          exit 1
+        }
+        cat "$meta/$4.created"
         ;;
       rm)
         shift
-        [[ "${1:-}" == -f ]] && shift
-        for v in "$@"; do rm -rf "${volumes:?}/$v"; done
+        if [[ "${1:-}" == -f ]]; then
+          shift
+          for v in "$@"; do rm -rf "${volumes:?}/$v" "$meta/$v".*; done
+          exit 0
+        fi
+        # Without -f docker refuses a volume a container holds.
+        rc=0
+        for v in "$@"; do
+          if [[ ! -d "$volumes/$v" ]]; then
+            echo "Error response from daemon: get $v: no such volume" >&2
+            rc=1
+          elif holder="$(in_use "$v")"; then
+            echo "Error response from daemon: remove $v: volume is in use - [$holder]" >&2
+            rc=1
+          else
+            rm -rf "${volumes:?}/$v" "$meta/$v".*
+            echo "$v"
+          fi
+        done
+        exit "$rc"
         ;;
       *) exit 1 ;;
     esac
@@ -74,6 +135,8 @@ add_mount() { # KIND SOURCE TARGET
   if [[ "$1" == volume ]]; then
     dir="$volumes/$2"
     [[ -d "$dir" ]] || { echo "docker: no such volume: $2" >&2; exit 125; }
+    : >"$meta/$2.run.$$"
+    trap 'rm -f "$meta"/*.run.$$' EXIT
   elif visible "$2"; then
     dir="$2"
   elif [[ "$1" == mount-bind ]]; then
@@ -156,6 +219,15 @@ case "${cmd[0]}" in
     fi
     # A suite: record evidence, require the prebuilt binary when passed one.
     printf 'suite ran\n' >"$(map /evidence)/fake-suite.evidence"
+    # FAKE_SUITE_BLOCK=DIR: publish this pid in DIR/pid and block, bounded,
+    # until DIR/release exists, like a suite container still running.
+    if [[ -n "${FAKE_SUITE_BLOCK:-}" ]]; then
+      echo "$$" >"$FAKE_SUITE_BLOCK/pid"
+      for ((t = 0; t < 300; t++)); do
+        [[ -e "$FAKE_SUITE_BLOCK/release" ]] && break
+        sleep 0.1
+      done
+    fi
     for e in "${envs[@]}"; do
       if [[ "$e" == PROJMUX_SMOKE_PREBUILT_BIN=* && ! -x "$(map "${e#*=}")" ]]; then
         echo "fake suite: ${e#*=} missing" >&2
@@ -189,12 +261,13 @@ make_checkout() {
 
 # run_case LABEL CHECKOUT VISIBLE [ARGS...] runs the script from CHECKOUT with
 # fresh caches and a fresh fake daemon; VISIBLE is the daemon-visible path
-# list. SCRIPT (default scripts/test-docker-run.sh) picks the entrypoint. It
-# sets $status and leaves the call log in $workdir/LABEL.log.
+# list. SCRIPT (default scripts/test-docker-run.sh) picks the entrypoint;
+# DAEMON_CASE reuses another case's fake daemon and caches. It sets $status and
+# leaves the call log in $workdir/LABEL.log.
 run_case() {
   local label="$1" checkout="$2" visible="$3"
   shift 3
-  local cases="$workdir/cases/$label"
+  local cases="$workdir/cases/${DAEMON_CASE:-$label}"
   mkdir -p "$cases/daemon"
   : >"$workdir/$label.log"
   : >"$workdir/$label.go.log"
@@ -456,5 +529,158 @@ for mode in host dood; do
     fail "$label: build.json missing or wrong"
   fi
 done
+
+# Leftover volumes. seed_volume CASE NAME LABEL CREATED puts a volume an
+# earlier run left behind on CASE's fake daemon; an empty LABEL means none.
+seed_volume() {
+  local daemon="$workdir/cases/$1/daemon"
+  mkdir -p "$daemon/volumes/$2" "$daemon/meta"
+  [[ -z "$3" ]] || printf '%s\n' "$3" >"$daemon/meta/$2.label"
+  printf '%s\n' "$4" >"$daemon/meta/$2.created"
+}
+# ago SECONDS prints an RFC3339 CreatedAt that many seconds in the past.
+ago() { date -u -d "@$(($(date +%s) - $1))" +%Y-%m-%dT%H:%M:%SZ; }
+removed_line() { printf '>> removed test workspace volume %s left behind by an earlier run' "$1"; }
+# expect_removed / expect_kept LABEL NAME: NAME is gone and its removal
+# printed, or NAME is still on the daemon and no removal printed.
+expect_removed() {
+  if [[ ! -d "$workdir/cases/${DAEMON_CASE:-$1}/daemon/volumes/$2" ]] &&
+    grep -q -x -F "$(removed_line "$2")" "$workdir/$1.out"; then
+    pass "$1: leftover $2 removed and reported"
+  else
+    fail "$1: leftover $2 not removed or not reported"
+    cat "$workdir/$1.out" "$workdir/$1.err" >&2
+  fi
+}
+expect_kept() {
+  if [[ -d "$workdir/cases/${DAEMON_CASE:-$1}/daemon/volumes/$2" ]] &&
+    ! grep -q -F "volume $2 left behind" "$workdir/$1.out"; then
+    pass "$1: $2 kept"
+  else
+    fail "$1: $2 removed"
+  fi
+}
+
+# l. Kill injection. A run SIGKILLed while its suite container runs never
+# reaches its trap, so its volumes leak; the next staging run removes them once
+# they are older than the threshold.
+kill_case="staging: a SIGKILLed run's workspace volume is removed by the next staging run"
+killed="$workdir/killed"
+make_checkout "$killed"
+block="$workdir/cases/killed/block"
+mkdir -p "$block" "$workdir/cases/killed/daemon"
+: >"$workdir/killed.log"
+env PATH="$workdir/bin:$PATH" \
+  FAKE_DOCKER_LOG="$workdir/killed.log" \
+  FAKE_GO_LOG="$workdir/killed.go.log" \
+  FAKE_DAEMON_ROOT="$workdir/cases/killed/daemon" \
+  FAKE_DAEMON_VISIBLE="" \
+  FAKE_SUITE_BLOCK="$block" \
+  PROJMUX_TEST_WORKSPACE_LABEL=contract-killed \
+  PROJMUX_TEST_SKIP_IMAGE_BUILD=1 \
+  PROJMUX_TEST_GOMODCACHE="$workdir/cases/killed/gomodcache" \
+  PROJMUX_TEST_GOCACHE="$workdir/cases/killed/gocache" \
+  PROJMUX_E2E_ARTIFACTS="$workdir/cases/killed/evidence" \
+  bash "$killed/scripts/test-docker-run.sh" test/suite.sh \
+  >"$workdir/killed.out" 2>"$workdir/killed.err" &
+script_pid=$!
+for ((t = 0; t < 300; t++)); do
+  [[ -s "$block/pid" ]] && break
+  sleep 0.1
+done
+suite_pid="$(cat "$block/pid" 2>/dev/null || true)"
+kill -KILL "$script_pid" 2>/dev/null || true
+wait "$script_pid" 2>/dev/null || true
+leaked="$(ls "$workdir/cases/killed/daemon/volumes" 2>/dev/null | tr '\n' ' ')"
+if [[ -n "$suite_pid" && "$leaked" == "fake-vol-1 fake-vol-2 " && "$(count killed 'volume rm')" == 0 ]]; then
+  pass "$kill_case: leak reproduced ($leaked)"
+else
+  fail "$kill_case: leak not reproduced (suite pid '${suite_pid}', volumes '$leaked')"
+fi
+# While the killed run's suite container still holds them, an old volume stays.
+for v in fake-vol-1 fake-vol-2; do
+  ago 3600 >"$workdir/cases/killed/daemon/meta/$v.created"
+done
+DAEMON_CASE=killed PROJMUX_TEST_WORKSPACE_LABEL=contract-killed PROJMUX_TEST_WORKSPACE_STALE_SECONDS=60 \
+  run_case killed-held "$killed" "" test/suite.sh
+expect_status killed-held 0
+DAEMON_CASE=killed expect_kept killed-held fake-vol-1
+check killed-held "refusal noted on stderr" grep -q -F 'kept test workspace volume fake-vol-1' "$workdir/killed-held.err"
+# The container ends; the next staging run removes the leftovers.
+if [[ -n "$suite_pid" ]]; then
+  : >"$block/release"
+  kill -KILL "$suite_pid" 2>/dev/null || true
+  for ((t = 0; t < 100; t++)); do
+    kill -0 "$suite_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+fi
+DAEMON_CASE=killed PROJMUX_TEST_WORKSPACE_LABEL=contract-killed PROJMUX_TEST_WORKSPACE_STALE_SECONDS=60 \
+  run_case killed-next "$killed" "" test/suite.sh
+expect_status killed-next 0
+for v in fake-vol-1 fake-vol-2; do
+  if [[ ! -d "$workdir/cases/killed/daemon/volumes/$v" ]] &&
+    grep -q -x -F "$(removed_line "$v")" "$workdir/killed-next.out"; then
+    pass "$kill_case: $v removed and reported"
+  else
+    fail "$kill_case: $v left behind"
+  fi
+done
+check killed-next "cleanup runs before the first new volume" \
+  test "$(grep -n -m1 -F 'volume ls -q --filter label=projmux.test-workspace=contract-killed' "$workdir/killed-next.log" | cut -d: -f1)" -lt \
+  "$(grep -n -m1 -F 'volume create' "$workdir/killed-next.log" | cut -d: -f1)"
+check killed-next "no volume left after the clean run" \
+  test -z "$(ls -A "$workdir/cases/killed/daemon/volumes")"
+
+# m. An old labelled volume a container holds is kept; the run keeps its status.
+seed_volume in-use leftover-held projmux.test-workspace=contract-in-use "$(ago 3600)"
+echo 0123456789ab >"$workdir/cases/in-use/daemon/meta/leftover-held.inuse"
+seed_volume in-use leftover-free projmux.test-workspace=contract-in-use "2026-01-01T09:00:00+09:00"
+FAKE_SUITE_EXIT=7 PROJMUX_TEST_WORKSPACE_LABEL=contract-in-use PROJMUX_TEST_WORKSPACE_STALE_SECONDS=60 \
+  run_case in-use "$dood" "" test/suite.sh
+expect_status in-use 7
+expect_kept in-use leftover-held
+expect_removed in-use leftover-free
+check_has in-use "rm without -f for a leftover" "volume rm leftover-held" "volume rm leftover-held"
+
+# n. A labelled volume within the threshold is kept (default threshold too).
+seed_volume fresh leftover-fresh projmux.test-workspace=contract-fresh "$(ago 30)"
+seed_volume fresh leftover-hours projmux.test-workspace=contract-fresh "$(ago 3600)"
+PROJMUX_TEST_WORKSPACE_LABEL=contract-fresh run_case fresh "$dood" "" test/suite.sh
+expect_status fresh 0
+expect_kept fresh leftover-fresh
+expect_kept fresh leftover-hours
+check_never fresh "no rm of a fresh volume" "volume rm leftover"
+
+# o. Old volumes with another label value, or no label, are kept.
+seed_volume other-label leftover-default projmux.test-workspace=1 "$(ago 99999)"
+seed_volume other-label leftover-unlabelled "" "$(ago 99999)"
+PROJMUX_TEST_WORKSPACE_LABEL=contract-other PROJMUX_TEST_WORKSPACE_STALE_SECONDS=60 \
+  run_case other-label "$dood" "" test/suite.sh
+expect_status other-label 0
+expect_kept other-label leftover-default
+expect_kept other-label leftover-unlabelled
+check_has other-label "own volumes carry the isolated label" \
+  "volume create" "volume create --label projmux.test-workspace=contract-other"
+
+# p. The bind-mount path never lists volumes, even with old leftovers around.
+seed_volume host-leftover leftover-old projmux.test-workspace=1 "$(ago 99999)"
+PROJMUX_TEST_WORKSPACE_STALE_SECONDS=60 run_case host-leftover "$host" "$host" test/suite.sh
+expect_status host-leftover 0
+check_never host-leftover "no volume ls" "volume ls"
+expect_kept host-leftover leftover-old
+
+# q. A failed listing or an unreadable CreatedAt never fails the run.
+FAKE_VOLUME_LS_EXIT=1 run_case ls-failing "$dood" "" test/suite.sh
+expect_status ls-failing 0
+seed_volume bad-created leftover-garbled projmux.test-workspace=1 "not a date"
+PROJMUX_TEST_WORKSPACE_STALE_SECONDS=0 run_case bad-created "$dood" "" test/suite.sh
+expect_status bad-created 0
+expect_kept bad-created leftover-garbled
+
+# r. A threshold that is not a non-negative integer is a usage error.
+PROJMUX_TEST_WORKSPACE_STALE_SECONDS=6h run_case bad-threshold "$dood" "" test/suite.sh
+expect_status bad-threshold 2
+check_never bad-threshold "no docker call" "run "
 
 exit "$failures"
