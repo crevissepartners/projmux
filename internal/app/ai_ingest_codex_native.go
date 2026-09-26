@@ -1564,7 +1564,12 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 				DurableEndpoint: projection.Endpoint, StoredAuthority: projection.Authority, PresentedAuthority: projection.Authority,
 				TargetRuntimeID: identity.RuntimeID, EventRuntimeID: identity.RuntimeID,
 			}, true)
-			if consumer.Effect != codexgeneration.MutationSemanticEffect || !consumer.Notification {
+			// A failed turn is idle for interaction controls, so the reply
+			// consumer has no attention surface. Its error notice still needs
+			// delivery while this exact generation owns the live turn.
+			errorNotice := notice.Category == "error" &&
+				(projection.GenerationState == codexgeneration.StateCurrent || projection.GenerationState == codexgeneration.StateDraining)
+			if consumer.Effect != codexgeneration.MutationSemanticEffect || (!consumer.Notification && !errorNotice) {
 				continue
 			}
 		}

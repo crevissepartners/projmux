@@ -30,6 +30,14 @@ import (
 
 type phase3StaticTmuxRunner struct{ output string }
 
+type codexNoticeCaptureProducer struct{ pushed []attentionNotifyInput }
+
+func (p *codexNoticeCaptureProducer) PushReplyReady(in attentionNotifyInput) {
+	p.pushed = append(p.pushed, in)
+}
+
+func (*codexNoticeCaptureProducer) AckReplyReady(attentionNotifyInput) {}
+
 func TestCodexNativeNotificationContentIsLastReplyAndSafeFailure(t *testing.T) {
 	completed := codexappserver.Notification{Method: "turn/completed", Params: []byte(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[{"type":"agentMessage","text":"old"},{"type":"commandExecution","text":"secret command"},{"type":"agentMessage","text":"  Final answer  "}]}}`)}
 	if text, unauthorized := codexCompletedTurnContent(completed); text != "Final answer" || unauthorized {
@@ -114,6 +122,63 @@ func phase1GenerationAuthorityFixture(t *testing.T) (*fakeResourceStore, codexLi
 		t.Fatal(err)
 	}
 	return store, identity, endpoint, authority
+}
+
+func TestCodexGenerationAwareFailedTurnDeliversErrorNotice(t *testing.T) {
+	for _, state := range []codexgeneration.GenerationState{codexgeneration.StateCurrent, codexgeneration.StateDraining} {
+		t.Run(string(state), func(t *testing.T) {
+			store, identity, endpoint, authority := phase1GenerationAuthorityFixture(t)
+			var operation *codexgeneration.LifecycleOperationRef
+			if state == codexgeneration.StateCurrent {
+				agent, _ := store.registry.Agent(identity.AgentUID)
+				agent.Status.SessionRef.Codex.Lifecycle.State = coremetadata.CodexGenerationCurrent
+				agent.Status.SessionRef.Codex.Lifecycle.Operation = nil
+			} else {
+				operation = &codexgeneration.LifecycleOperationRef{ID: "drain-operation", Endpoint: *endpoint}
+			}
+			cmd := testAICommand(t.TempDir())
+			cmd.loadRegistry = store.store().load
+			cmd.updateRegistry = store.store().update
+			cmd.acquireCodexAuthority = func(string) (func(), error) { return func() {}, nil }
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if name == "tmux" && reflect.DeepEqual(args, []string{"show-options", "-pqv", "-t", identity.RuntimeID, tmuxopts.PaneUID}) {
+					return []byte(identity.PaneUID + "\n"), nil
+				}
+				return nil, os.ErrNotExist
+			}
+			producer := &codexNoticeCaptureProducer{}
+			cmd.producer = producer
+			projection := codexLifecycleProjection{
+				Accepted: true, Interaction: coremetadata.InteractionIdle,
+				Endpoint: endpoint, GenerationState: state,
+				Operation: operation,
+				Authority: authority,
+				Notices:   []codexLifecycleNotice{{Category: "error", ID: "error-401", Severity: notify.SeverityCritical, ThreadID: identity.ThreadID, TurnID: "failed-turn"}},
+			}
+			if err := testCodexLifecycleSink(cmd).ApplyWithNoticeContent(identity, projection, codexNoticeContent{HTTPUnauthorized: true}); err != nil {
+				t.Fatal(err)
+			}
+			if len(producer.pushed) != 1 || producer.pushed[0].ID != "error-401" ||
+				producer.pushed[0].Metadata[notify.MetaCategory] != "error" ||
+				producer.pushed[0].Metadata[notify.MetaAuthorityFence] == "" ||
+				producer.pushed[0].Severity != notify.SeverityCritical ||
+				producer.pushed[0].Text != "Error · HTTP 401" {
+				t.Fatalf("generation-aware failed turn notice = %#v", producer.pushed)
+			}
+			producer.pushed = nil
+			projection.Notices[0].Category = "response_complete"
+			if err := testCodexLifecycleSink(cmd).Apply(identity, projection); err != nil || len(producer.pushed) != 0 {
+				t.Fatalf("idle non-error notice was delivered: err=%v pushed=%#v", err, producer.pushed)
+			}
+			projection.Notices[0].Category = "error"
+			stale := *authority
+			stale.BindingEpoch++
+			projection.Authority = &stale
+			if err := testCodexLifecycleSink(cmd).Apply(identity, projection); !errors.Is(err, errManagedAgentObservationIgnored) || len(producer.pushed) != 0 {
+				t.Fatalf("stale generation failure wrote notice: err=%v pushed=%#v", err, producer.pushed)
+			}
+		})
+	}
 }
 
 func phase0RSemanticPaneWrites(commands []recordedAICommand) map[string][]string {
