@@ -364,6 +364,40 @@ func (s *Store) Answer(id, agentUID string, allow bool, via string) (Record, err
 	return out, err
 }
 
+// AppendAnswerAudit appends the allowed or denied line of an answer to a
+// request this store does not hold: one the provider itself keeps pending,
+// such as a Codex app-server approval. The caller appends it before it sends
+// the answer, so no answer reaches the provider without its line; when the
+// send then fails the log keeps a line for an answer that did not take effect
+// and over-reports, as Answer does.
+//
+// The line takes the store lock like every other audit write and keeps the
+// same format: RequestID and ToolName are bounded to one line, Input to
+// MaxInputSummaryRunes, and DecidedAt and At are the store clock. Reason may
+// carry the provider decision actually sent; a Codex answer spells it
+// "decision=<value>" (accept, decline, or cancel). Any failure
+// to put the line on disk wraps ErrAudit and names the audit log.
+func (s *Store) AppendAnswerAudit(line AuditLine) error {
+	if line.Event != AuditAllowed && line.Event != AuditDenied {
+		return fmt.Errorf("agent approval audit: event %q is not an answer", line.Event)
+	}
+	if s == nil || s.path == "" {
+		return fmt.Errorf("%w: agent approval store path is empty", ErrAudit)
+	}
+	now := s.clock()
+	line.RequestID = boundedLine(line.RequestID, 128)
+	line.AgentType = boundedLine(line.AgentType, 64)
+	line.ToolName = boundedLine(line.ToolName, 128)
+	line.Input = boundedLine(line.Input, MaxInputSummaryRunes)
+	line.Via = boundedLine(line.Via, 16)
+	line.Reason = boundedLine(line.Reason, 64)
+	line.DecidedAt, line.At = now, now
+	if err := s.withLock(func() error { return s.appendAuditLocked(line) }); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrAudit, s.auditPath, err)
+	}
+	return nil
+}
+
 // refusalFor maps a record that cannot take an answer to its error.
 func refusalFor(state State) error {
 	switch state {

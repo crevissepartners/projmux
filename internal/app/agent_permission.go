@@ -32,8 +32,14 @@ const (
 	permissionReasonExpired = "permission-expired"
 	// permissionReasonAnsweringOff: agent-approval-answering is not projmux.
 	permissionReasonAnsweringOff = "permission-answering-off"
-	// permissionReasonProviderUnsupported: the Agent is not a Claude Agent.
+	// permissionReasonProviderUnsupported: the Agent is neither a Claude nor
+	// a Codex Agent.
 	permissionReasonProviderUnsupported = "permission-provider-unsupported"
+	// permissionReasonDecisionUnavailable: the pending Codex approval offers
+	// no decision the answer may send: accept for --allow, or decline and
+	// then cancel for --deny (a permissions grant offers neither).
+	// `agent approval review` shows the decisions it does offer.
+	permissionReasonDecisionUnavailable = "permission-decision-unavailable"
 )
 
 // agentApprovalActions are the `agent approval` subcommands in help order.
@@ -50,15 +56,24 @@ type agentPermissionRequest struct {
 	via       string
 }
 
-// runPermissionApproval lists and answers the Claude permission requests the
-// PermissionRequest hook `agent integrate claude` installs holds open while the
-// central agent-approval-answering setting is `projmux`.
+// runPermissionApproval lists and answers one Agent's waiting permission
+// requests without a picker.
 //
-// An answer allows or denies that one tool call once. It never changes a
-// permission rule, and the operator may already have answered the same request
-// in Claude Code's own prompt, which stays usable: the first answer wins, and
-// a later one is refused as permission-not-pending. A Codex Agent is refused without any write:
-// its approvals go through `agent approval review`.
+// For a Claude Agent they are the requests the PermissionRequest hook `agent
+// integrate claude` installs holds open while the central
+// agent-approval-answering setting is `projmux`. An answer allows or denies
+// that one tool call once. It never changes a permission rule, and the
+// operator may already have answered the same request in Claude Code's own
+// prompt, which stays usable: the first answer wins, and a later one is
+// refused as permission-not-pending.
+//
+// For a Codex Agent they are the pending app-server approvals its exact native
+// control binding reports, the same list `agent approval review` offers (see
+// codexPermissionApproval). list works in either answering way; answer needs
+// `projmux` and sends exactly one decision: accept for --allow, and for --deny
+// decline when offered, otherwise cancel, which also interrupts the turn.
+// grant-turn and exec-policy amendments are never sent; they stay with review.
+// Any other provider is refused without any write.
 func (c *agentCommand) runPermissionApproval(args []string, stdout, stderr io.Writer) error {
 	request, err := parseAgentPermissionArgs(args, stderr)
 	if err != nil {
@@ -83,9 +98,9 @@ func (c *agentCommand) runPermissionApproval(args []string, stdout, stderr io.Wr
 	switch provider := coremetadata.NormalizeProvider(agent.Spec.Provider); provider {
 	case aiModeClaude:
 	case aiModeCodex:
-		return refuse(permissionReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; Codex approvals are answered with `projmux agent approval review %s`", agent.Spec.Provider, agent.Metadata.Name))
+		return c.codexPermissionApproval(request, registry, agent, refuse, stdout)
 	default:
-		return refuse(permissionReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; captured permission requests apply only to --provider %s", agent.Spec.Provider, aiModeClaude))
+		return refuse(permissionReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; permission requests apply only to --provider %s or %s", agent.Spec.Provider, aiModeClaude, aiModeCodex))
 	}
 	answering := c.permissionAnswering()
 	if request.action == "list" {
@@ -173,6 +188,8 @@ func (c *agentCommand) permissionAnswering() config.AgentApprovalAnswering {
 
 // agentPermissionList is the `agent approval list -o json` projection.
 type agentPermissionList struct {
+	// Provider is claude or codex; it tells which fields a record carries.
+	Provider  string                  `json:"provider"`
 	AgentUID  string                  `json:"agentUID"`
 	AgentName string                  `json:"agentName"`
 	Answering string                  `json:"answering"`
@@ -180,14 +197,32 @@ type agentPermissionList struct {
 }
 
 // agentPermissionRecord is one waiting request with its full tool input.
+//
+// A Claude record always carries createdAt and deadline and never answers or
+// answerable. A Codex record is the reverse: the provider holds the request,
+// so projmux knows no creation time or deadline, and toolName is the approval
+// kind while toolInput holds its kind-specific details.
 type agentPermissionRecord struct {
 	ID        string              `json:"id"`
 	State     agentapproval.State `json:"state"`
 	ToolName  string              `json:"toolName"`
 	AgentType string              `json:"agentType,omitempty"`
 	ToolInput json.RawMessage     `json:"toolInput"`
-	CreatedAt time.Time           `json:"createdAt"`
-	Deadline  time.Time           `json:"deadline"`
+	CreatedAt time.Time           `json:"createdAt,omitzero"`
+	Deadline  time.Time           `json:"deadline,omitzero"`
+	// Answers are the `agent approval answer` flags that can settle a Codex
+	// request: allow, deny, both, or none.
+	Answers []string `json:"answers,omitempty"`
+	// DenyDecision is the Codex decision --deny would send: decline (deny,
+	// the turn continues) or cancel (deny and interrupt the turn). It is
+	// empty when --deny cannot answer the request.
+	DenyDecision string `json:"denyDecision,omitempty"`
+	// Answerable is set on every Codex record: false when its id is
+	// ambiguous across raw request ids or no answer flag applies, and
+	// `agent approval review` must answer it instead.
+	Answerable *bool `json:"answerable,omitempty"`
+	// ambiguous marks an id that names more than one pending Codex request.
+	ambiguous bool
 }
 
 // agentPermissionListNote is the caveat every text list ends with.
@@ -202,7 +237,7 @@ func (c *agentCommand) listPermissionRequests(request agentPermissionRequest, ag
 	if err != nil {
 		return fmt.Errorf("%s: %w", request.spelling, err)
 	}
-	result := agentPermissionList{AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Answering: string(answering), Requests: []agentPermissionRecord{}}
+	result := agentPermissionList{Provider: aiModeClaude, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Answering: string(answering), Requests: []agentPermissionRecord{}}
 	for _, record := range records {
 		if record.State != agentapproval.StateWaiting {
 			continue
@@ -231,11 +266,20 @@ func writeAgentPermissionList(out io.Writer, result agentPermissionList, now tim
 		if view.AgentType != "" {
 			fmt.Fprintf(&b, "\tsubagent %s", view.AgentType)
 		}
-		fmt.Fprintf(&b, "\tcreated %s\tdeadline %s (%s left)\n", view.CreatedAt.UTC().Format(time.RFC3339),
-			view.Deadline.UTC().Format(time.RFC3339), view.Deadline.Sub(now).Round(time.Second))
-		fmt.Fprintf(&b, "  input: %s\n", view.ToolInput)
+		if view.Answerable != nil {
+			b.WriteString(codexPermissionAnswersText(view))
+		}
+		if !view.CreatedAt.IsZero() {
+			fmt.Fprintf(&b, "\tcreated %s\tdeadline %s (%s left)", view.CreatedAt.UTC().Format(time.RFC3339),
+				view.Deadline.UTC().Format(time.RFC3339), view.Deadline.Sub(now).Round(time.Second))
+		}
+		fmt.Fprintf(&b, "\n  input: %s\n", view.ToolInput)
 	}
-	b.WriteString(agentPermissionListNote)
+	if result.Provider == aiModeCodex {
+		b.WriteString(codexPermissionListNote)
+	} else {
+		b.WriteString(agentPermissionListNote)
+	}
 	_, err := io.WriteString(out, b.String())
 	return err
 }

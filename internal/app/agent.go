@@ -211,8 +211,10 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "turn":
 		return c.runTurn(rest, stdout, stderr)
 	case "approval":
-		// `list` and `answer` are the Claude permission requests projmux
-		// captured; `review` is the Codex app-server approval, unchanged.
+		// `list` and `answer` read and settle permission requests without a
+		// picker: the Claude requests projmux captured, and a Codex Agent's
+		// pending app-server approvals. `review` is the interactive Codex
+		// approval picker, unchanged.
 		if len(rest) > 0 && (rest[0] == "list" || rest[0] == "answer") {
 			return c.runPermissionApproval(rest, stdout, stderr)
 		}

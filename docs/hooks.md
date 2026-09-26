@@ -873,9 +873,10 @@ raises, are unchanged. Re-running the integration keeps exactly one such entry,
 
 The hook decides nothing unless the central `agent-approval-answering` setting
 is `projmux` (see
-[configuration.md](configuration.md#agent-approval-answering)). It covers
-Claude permission requests only; Codex approvals are not captured, and
-`projmux agent approval review` answers those. In the default `claude` way the
+[configuration.md](configuration.md#agent-approval-answering)). The hook
+captures Claude permission requests only; Codex approvals are held by the
+Codex app-server and never captured (see [Codex answers](#codex-answers)
+below). In the default `claude` way the
 hook reads the payload and the Registry, and only once the Registry confirms a
 projmux Claude Agent the one setting file; it prints nothing, records nothing,
 and touches no tmux. A session projmux did not start never reads the setting.
@@ -916,8 +917,8 @@ A second or late answer is refused and changes nothing, with one reason token:
 `permission-not-pending` (already allowed or denied, or already answered in
 Claude Code's own prompt), `permission-expired`, `permission-not-found`,
 `permission-answering-off` (the setting is `claude`), or
-`permission-provider-unsupported` (not a Claude Agent; a Codex Agent is
-pointed at `agent approval review`, and nothing is written).
+`permission-provider-unsupported` (neither a Claude nor a Codex Agent; nothing
+is written).
 
 Answering in the terminal: "No" or Esc sends the waiting hook SIGTERM, which
 closes its record. "Yes" does not tell the hook at all, so the Claude ingest of
@@ -950,6 +951,24 @@ record then cannot be written, the answer fails and the log keeps an `allowed`
 or `denied` line for an answer that did not take effect; a later `expired` or
 `closed` line for the same request shows how it ended. The log may over-report
 an answer, never under-report one.
+
+#### Codex Answers
+
+The same `list` and `answer` also work for a Codex Agent with an exact native
+control binding (see [cli-guide.md](cli-guide.md)). projmux stores no Codex
+request: the provider holds it, so the audit log gets only the `allowed` or
+`denied` line of an answer sent from projmux, never `requested`, `expired`,
+`closed`, or `refused`. That line carries the normalized request id, Agent,
+Pane, the approval kind as the tool name, a bounded input summary (a command
+approval's command, otherwise only the detail key names), `via`, the decision
+time, and the provider decision actually sent in `reason` as
+`decision=accept`, `decision=decline`, or `decision=cancel`. `--deny` sends
+`decline` when the request offers it and otherwise `cancel`, which also
+interrupts the turn; nothing runs either way. The line is written and synced
+before that one decision is sent; if it cannot be written nothing is sent and the request stays
+pending. If the send then fails the line stays, so the log may over-report a
+Codex answer too. An answer given in the Codex TUI or with `agent approval
+review` is not logged.
 
 ## Antigravity Hook Ingest
 

@@ -157,7 +157,7 @@ Subcommands:
 | [`projmux agent instructions`](#projmux-agent-instructions) | Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent persona`](#projmux-agent-persona) | Attach or detach a persona on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent turn`](#projmux-agent-turn) | Send, steer, or interrupt one exact native Codex turn |
-| [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval, or list and answer captured Claude permission requests |
+| [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval, or list and answer Claude and Codex permission requests |
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install, remove, or preview provider hooks and tmux-bell integration |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
@@ -497,7 +497,7 @@ projmux agent turn interrupt <agent-ref>
 
 ### `projmux agent approval`
 
-Review one exact pending native Codex approval, or list and answer captured Claude permission requests
+Review one exact pending native Codex approval, or list and answer Claude and Codex permission requests
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -523,8 +523,8 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux agent approval review`](#projmux-agent-approval-review) | Review one exact pending native Codex approval |
-| [`projmux agent approval list`](#projmux-agent-approval-list) | List one exact Claude Agent's waiting permission requests with their full tool input |
-| [`projmux agent approval answer`](#projmux-agent-approval-answer) | Allow or deny one waiting Claude permission request once; the first answer wins |
+| [`projmux agent approval list`](#projmux-agent-approval-list) | List one exact Claude or Codex Agent's waiting permission requests with their full tool input |
+| [`projmux agent approval answer`](#projmux-agent-approval-answer) | Allow or deny one waiting Claude or Codex permission request once; the first answer wins |
 
 Canonical spelling: `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`
 
@@ -551,7 +551,7 @@ projmux agent approval review <agent-ref> [--request <normalized-id>]
 
 #### `projmux agent approval list`
 
-List one exact Claude Agent's waiting permission requests with their full tool input
+List one exact Claude or Codex Agent's waiting permission requests with their full tool input
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -570,15 +570,17 @@ Allowed effects:
 projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
 ```
 
-Only Claude permission requests captured while `config agent-approvals --answering projmux` is set are listed; Codex approvals are not captured (use `agent approval review`).
+A Claude Agent lists the permission requests captured while `config agent-approvals --answering projmux` is set.
 
-A listed request may already have been answered in Claude Code's own prompt, which stays usable; the first answer wins.
+A Codex Agent lists the pending approvals of its exact native control binding in either answering way: toolName is the approval kind, toolInput its details, answers the flags `agent approval answer` can send, and denyDecision what --deny sends (decline: the turn continues; cancel: the turn stops). An ambiguous request id, or one offering neither allow nor deny, is marked for `agent approval review`.
+
+A listed request may already have been answered in Claude Code's own prompt, the Codex TUI, or `agent approval review`, which stay usable; the first answer wins.
 
 Output modes (`-o`): `json`
 
 #### `projmux agent approval answer`
 
-Allow or deny one waiting Claude permission request once; the first answer wins
+Allow or deny one waiting Claude or Codex permission request once; the first answer wins
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -601,7 +603,9 @@ projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via
 
 --via (default cli) is recorded in the audit log as the caller reports it; it is not verified.
 
-A second or late answer, or one on a request already answered in Claude Code's own prompt, is refused as permission-not-pending. A Codex Agent is refused without any write; use `agent approval review`.
+A second or late answer, or one on a request already answered in Claude Code's own prompt, is refused as permission-not-pending.
+
+For a Codex Agent, --allow sends accept, never a widened grant; --deny sends decline when offered, otherwise cancel, which also interrupts the turn; nothing runs either way. A request offering no fitting decision is refused as permission-decision-unavailable, and the result line names the decision sent. It needs `config agent-approvals --answering projmux`, an unknown or ambiguous id is permission-not-pending, and the allowed or denied audit line is written before the answer is sent. `agent approval review` keeps every decision and the picker.
 
 ### `projmux agent review`
 
@@ -1260,7 +1264,7 @@ Subcommands:
 | [`projmux config providers`](#projmux-config-providers) | List AI providers as enabled or disabled; --enable or --disable changes one |
 | [`projmux config locale`](#projmux-config-locale) | Show the [ui] locale setting and its config.toml; --set stores a new one |
 | [`projmux config agent-questions`](#projmux-config-agent-questions) | Show how Claude and Codex agent questions are answered and how long they wait; --answering or --window changes them |
-| [`projmux config agent-approvals`](#projmux-config-agent-approvals) | Show how Claude permission requests are answered and how long a captured one waits; --answering or --window changes them |
+| [`projmux config agent-approvals`](#projmux-config-agent-approvals) | Show how agent permission requests are answered and how long a captured one waits; --answering or --window changes them |
 | [`projmux config render`](#projmux-config-render) | Print a generated tmux config to stdout; writes nothing |
 | [`projmux config apply`](#projmux-config-apply) | Write the generated app tmux config and reload the live projmux server |
 
@@ -1359,7 +1363,7 @@ projmux config agent-questions --window <seconds|unlimited>
 
 ### `projmux config agent-approvals`
 
-Show how Claude permission requests are answered and how long a captured one waits; --answering or --window changes them
+Show how agent permission requests are answered and how long a captured one waits; --answering or --window changes them
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1378,9 +1382,9 @@ Allowed effects:
 projmux config agent-approvals [--answering <claude|projmux>] [--window <seconds>]
 ```
 
-Covers Claude permission requests only; Codex approvals are not captured (use `agent approval review`).
+`claude` (default) leaves every Claude request to Claude Code's own prompt and refuses `agent approval answer`. `projmux` also captures Claude permission requests and lets `agent approval answer` allow or deny Claude and Codex requests remotely; the provider's own prompt stays usable and the first answer wins.
 
-`claude` (default) leaves every request to Claude Code's own prompt. `projmux` also captures it for `agent approval answer`; the prompt stays usable and the first answer wins.
+Codex approvals are never captured: the provider holds them, `agent approval list` shows them in either way, and `agent approval review` answers them in either way.
 
 --window is 60..3600 seconds (default 900); there is no unlimited value. An unanswered request expires with no decision.
 

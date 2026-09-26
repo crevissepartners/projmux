@@ -870,21 +870,24 @@ See [hooks.md](hooks.md#answering-askuserquestion-in-projmux).
 
 ## Agent Approval Answering
 
-How a Claude Agent's permission request ("Do you want to proceed?") is
-answered is one word stored at:
+How an Agent's permission request ("Do you want to proceed?") is answered is
+one word stored at:
 
 ```text
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-approval-answering
 ```
 
-It is a separate setting from [Agent Question Answering](#agent-question-answering)
-and covers Claude permission requests only. Codex approvals are not captured;
-answer those with `projmux agent approval review`.
+It is a separate setting from [Agent Question Answering](#agent-question-answering).
+Its effect is to capture Claude permission requests and to allow remote
+(non-interactive) answers with `projmux agent approval answer` for both Claude
+and Codex Agents. Codex approvals are never captured, since the Codex
+app-server holds them: `projmux agent approval list` shows them and
+`projmux agent approval review` answers them in either way.
 
 | Value | Meaning |
 | --- | --- |
-| `claude` (default) | Claude Code shows its own permission prompt; the permission hook prints nothing and records nothing |
-| `projmux` | projmux also records the request, and `projmux agent approval answer` can allow or deny it once; Claude Code's own prompt stays usable, and the first answer wins |
+| `claude` (default) | Claude Code shows its own permission prompt; the permission hook prints nothing and records nothing; `projmux agent approval answer` is refused for Claude and Codex Agents |
+| `projmux` | projmux also records a Claude request, and `projmux agent approval answer` can allow or deny it once; it can also allow once (`accept`) or deny a pending Codex approval (`decline` when offered, otherwise `cancel`, which also interrupts the turn). The provider's own prompt stays usable, and the first answer wins |
 
 Set it with `projmux config agent-approvals --answering <claude|projmux>`, or
 write the file. The value is read case-insensitively with surrounding

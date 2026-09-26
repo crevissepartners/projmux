@@ -914,11 +914,12 @@ func TestAgentApprovalListAndAnswerRefusals(t *testing.T) {
 		t.Fatalf("a usage error touched the store: %v", err)
 	}
 
+	// A Codex Agent with no exact native control binding is refused by the
+	// binding lookup, before any broker call or store write.
 	for _, verb := range [][]string{{"list", "uid:agt-beta-codex"}, {"answer", "uid:agt-beta-codex", "permission-0000000000000001", "--allow"}} {
 		_, _, err := runRoute(t, fixture.command, append([]string{"approval"}, verb...)...)
-		if err == nil || !strings.Contains(err.Error(), "(permission-provider-unsupported)") || !strings.Contains(err.Error(), "projmux agent approval review") ||
-			!strings.Contains(err.Error(), "nothing was changed") {
-			t.Fatalf("Codex %s err = %v, want a refusal pointing at review", verb[0], err)
+		if err == nil || !strings.Contains(err.Error(), "agent approval "+verb[0]+": ") || !strings.Contains(err.Error(), "native control unavailable") {
+			t.Fatalf("Codex %s err = %v, want the native binding refusal", verb[0], err)
 		}
 	}
 	if _, err := os.Stat(filepath.Dir(fixture.approvals.Path())); !os.IsNotExist(err) {

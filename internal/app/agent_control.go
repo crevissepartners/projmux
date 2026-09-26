@@ -313,6 +313,15 @@ func (c *agentCommand) resolveControlBinding(spelling, ref string) (exactAgentCo
 	if err != nil {
 		return exactAgentControlBinding{}, err
 	}
+	return c.bindAgentControl(spelling, registry, agent)
+}
+
+// bindAgentControl is resolveControlBinding after the Agent is resolved: the
+// static capability gate for spelling, the settled live binding read, and the
+// exact binding judgment against registry. `agent approval list|answer`
+// resolve their Agent themselves and enter here with the review spelling,
+// since they are the non-interactive face of the same approval.review cell.
+func (c *agentCommand) bindAgentControl(spelling string, registry coremetadata.Registry, agent coremetadata.Agent) (exactAgentControlBinding, error) {
 	// Static provider support is decided before live tmux lookup, private-path
 	// resolution, or provider transport. Unsupported providers therefore cannot
 	// acquire runtime authority as a side effect of probing for it.
