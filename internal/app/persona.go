@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 )
 
 // personaCommand implements `projmux persona list|show|edit|set|delete`.
@@ -281,11 +282,47 @@ func (c *personaCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	users, err := c.instructionsUsers(store, name)
+	if err != nil {
+		return fmt.Errorf(c.spelling()+" delete %s: %w; nothing was deleted", name, err)
+	}
+	if users != "" {
+		return usageError(fmt.Sprintf(c.spelling()+" delete %s: %s: %s %s %q; point each at other instructions with `projmux profile set <name>`, or remove it with `projmux profile delete <name> --yes`; nothing was deleted",
+			name, profile.ReasonInstructionsInUse, users, c.spelling(), name))
+	}
 	if err := store.Delete(name); err != nil {
 		return personaRefusal(c.spelling()+" delete", err)
 	}
 	_, err = fmt.Fprintf(stdout, "deleted %s %s\n", c.spelling(), name)
 	return err
+}
+
+// instructionsUsers returns the user profiles, valid or not, that name the
+// stored instructions called name, as the subject and verb of a refusal
+// (`profile "a" names`, `profiles "a", "b" name`), or "" when none does: deleting them
+// would leave every such profile invalid, and with it every create and resume
+// that applies it. Instructions that do not exist name no users; the delete
+// reports them missing.
+func (c *personaCommand) instructionsUsers(store persona.Store, name string) (string, error) {
+	if _, err := store.Load(name); err != nil {
+		return "", nil
+	}
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return "", err
+	}
+	users, err := profile.NewDefaultStore(paths).ProfilesUsingInstructions(name)
+	if err != nil || len(users) == 0 {
+		return "", err
+	}
+	quoted := make([]string, 0, len(users))
+	for _, user := range users {
+		quoted = append(quoted, fmt.Sprintf("%q", user))
+	}
+	if len(users) == 1 {
+		return "profile " + quoted[0] + " names", nil
+	}
+	return "profiles " + strings.Join(quoted, ", ") + " name", nil
 }
 
 // runEdit opens the persona in $EDITOR (then $VISUAL), creating it when it

@@ -43,7 +43,7 @@ func runProfile(cmd *profileCommand, args ...string) (string, string, error) {
 func profileListRows(t *testing.T, stdout string) map[string][]string {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
-	if len(lines) == 0 || strings.Join(strings.Fields(lines[0]), " ") != "NAME SOURCE ROLES DIGEST VALID" {
+	if len(lines) == 0 || strings.Join(strings.Fields(lines[0]), " ") != "NAME SOURCE PROVIDER INSTRUCTIONS MODEL EFFORT ROLES DIGEST VALID" {
 		t.Fatalf("list header = %q", stdout)
 	}
 	rows := map[string][]string{}
@@ -98,7 +98,7 @@ func TestProfileSetValidFileShowsIdenticalBytesAndListsUserSourceWithDigest(t *t
 		t.Fatal(err)
 	}
 	row := profileListRows(t, stdout)["reviewer"]
-	if !slices.Equal(row, []string{"reviewer", "user", "review", digest, "yes"}) {
+	if !slices.Equal(row, []string{"reviewer", "user", "-", "reviewer", "opus", "high", "review", digest, "yes"}) {
 		t.Fatalf("list row = %q in %q", row, stdout)
 	}
 
@@ -186,16 +186,16 @@ func TestProfileEmptyConfigListsBuiltinReadonlyRefusesItsDeleteAndAUserReadonlyW
 	}
 	rows := profileListRows(t, stdout)
 	readonly := rows["readonly"]
-	if len(rows) != 1 || len(readonly) != 5 || readonly[1] != "builtin" || readonly[2] != "-" ||
-		!strings.HasPrefix(readonly[3], "sha256:") || readonly[4] != "yes" {
+	if len(rows) != 1 || len(readonly) != 9 || !slices.Equal(readonly[:7], []string{"readonly", "builtin", "-", "-", "-", "-", "-"}) ||
+		!strings.HasPrefix(readonly[7], "sha256:") || readonly[8] != "yes" {
 		t.Fatalf("empty-config list = %q", stdout)
 	}
 	builtin, _, err := runProfile(cmd, "show", "readonly")
 	if err != nil || !strings.Contains(builtin, "sandbox = \"read-only\"") {
 		t.Fatalf("show builtin readonly = %q, %v", builtin, err)
 	}
-	if profile.Digest([]byte(builtin)) != readonly[3] {
-		t.Fatalf("builtin digest %s does not hash the shown bytes", readonly[3])
+	if profile.Digest([]byte(builtin)) != readonly[7] {
+		t.Fatalf("builtin digest %s does not hash the shown bytes", readonly[7])
 	}
 
 	_, _, err = runProfile(cmd, "delete", "readonly", "--yes")
@@ -248,10 +248,10 @@ func TestProfileListShowsAHandPlacedInvalidFileWithoutBlockingOthers(t *testing.
 	if len(rows) != 3 {
 		t.Fatalf("list = %q; want bad, good, and readonly", stdout)
 	}
-	if bad := strings.Join(rows["bad"], " "); !strings.HasPrefix(bad, "bad user - sha256:") || !strings.HasSuffix(bad, "no ("+profile.ReasonValueInvalid+")") {
+	if bad := strings.Join(rows["bad"], " "); !strings.HasPrefix(bad, "bad user - - - - - sha256:") || !strings.HasSuffix(bad, "no ("+profile.ReasonValueInvalid+")") {
 		t.Fatalf("bad row = %q", bad)
 	}
-	if good := rows["good"]; good[1] != "user" || good[2] != "review" || good[4] != "yes" {
+	if good := rows["good"]; good[1] != "user" || good[6] != "review" || good[8] != "yes" {
 		t.Fatalf("good row = %q", good)
 	}
 	// The invalid file is still shown byte for byte.

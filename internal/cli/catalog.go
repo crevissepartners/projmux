@@ -1830,7 +1830,7 @@ var routes = []Route{
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "show", Invocation: InvocationExplicit, Summary: "Print one instruction's content exactly as stored", Usage: []string{"projmux instructions show <name>"}, Canonical: []string{"instructions show"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationExplicit, Summary: "Edit one instruction in $EDITOR or $VISUAL, creating it when missing", CanonicalSummary: "Edit one instruction in $EDITOR", Usage: []string{"projmux instructions edit <name>"}, Canonical: []string{"instructions edit"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "set", Invocation: InvocationExplicit, Summary: "Write one instruction from a file or stdin without an editor", CanonicalSummary: "Write one instruction from a file or stdin", Usage: []string{"projmux instructions set <name> [--file <path> | -]"}, Canonical: []string{"instructions set"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one instruction file; Agents already started with it keep their snapshot", CanonicalSummary: "Delete one instruction file", Usage: []string{"projmux instructions delete <name> --yes"}, Canonical: []string{"instructions delete"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one instruction file no profile names; Agents already started with it keep their snapshot", CanonicalSummary: "Delete one instruction file", Usage: []string{"projmux instructions delete <name> --yes"}, Canonical: []string{"instructions delete"}},
 		},
 	},
 	{
@@ -1857,15 +1857,15 @@ var routes = []Route{
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "show", Invocation: InvocationExplicit, Summary: "Print one persona's content exactly as stored", Usage: []string{"projmux persona show <name>"}, Canonical: []string{"instructions show"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationExplicit, Summary: "Edit one persona in $EDITOR or $VISUAL, creating it when missing", Usage: []string{"projmux persona edit <name>"}, Canonical: []string{"instructions edit"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "set", Invocation: InvocationExplicit, Summary: "Write one persona from a file or stdin without an editor", Usage: []string{"projmux persona set <name> [--file <path> | -]"}, Canonical: []string{"instructions set"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one persona file; Agents already started with it keep their snapshot", Usage: []string{"projmux persona delete <name> --yes"}, Canonical: []string{"instructions delete"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one persona file no profile names; Agents already started with it keep their snapshot", Usage: []string{"projmux persona delete <name> --yes"}, Canonical: []string{"instructions delete"}},
 		},
 	},
 	{
 		// Profiles are files, not Registry resources: named sets of Agent
-		// start settings (instructions, model, effort, roles, permissions)
-		// kept under <ConfigDir>/profiles. Like `instructions` they are a
-		// noun-first group. Storing a profile applies it to nothing, so every
-		// effect axis is unchanged.
+		// start settings (provider, instructions, model, effort, roles,
+		// permissions) kept under <ConfigDir>/profiles. Like `instructions`
+		// they are a noun-first group. Storing a profile applies it to
+		// nothing, so every effect axis is unchanged.
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "profile",
 		Invocation:     InvocationRefusal,
@@ -1881,7 +1881,7 @@ var routes = []Route{
 		},
 		Canonical: []string{"profile list", "profile show", "profile set", "profile delete"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "List every built-in and stored profile with its source, roles, digest, and validity", CanonicalSummary: "List built-in and stored profiles", Usage: []string{"projmux profile list"}, Canonical: []string{"profile list"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "List every built-in and stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity", CanonicalSummary: "List built-in and stored profiles", Usage: []string{"projmux profile list"}, Canonical: []string{"profile list"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "show", Invocation: InvocationExplicit, Summary: "Print one profile's content exactly as stored or built in", Usage: []string{"projmux profile show <name>"}, Canonical: []string{"profile show"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "set", Invocation: InvocationExplicit, Summary: "Validate one profile from a file or stdin and write it only when valid", CanonicalSummary: "Validate and write one profile", Usage: []string{"projmux profile set <name> [--file <path> | -]"}, Canonical: []string{"profile set"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one stored profile file; built-in profiles cannot be deleted", CanonicalSummary: "Delete one stored profile file", Usage: []string{"projmux profile delete <name> --yes"}, Canonical: []string{"profile delete"}},

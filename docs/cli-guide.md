@@ -1812,7 +1812,11 @@ list|show|edit|set|delete` (`edit` opens `$EDITOR`, then `$VISUAL`; `set
 persona` commands and `--persona <name>` remain aliases for the same files.
 Both names read and write `<config dir>/personas/<name>.md` (by default
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/personas/`), with a 64 KiB limit.
-They do not create an `instructions/` directory.
+They do not create an `instructions/` directory. `delete` refuses, with exit 2
+and `profile-instructions-in-use`, instructions that a stored
+[profile](configuration.md#agent-profiles) names -- valid or not -- lists
+each such profile, and deletes nothing; change or delete those profiles
+first. Instructions no profile names delete as before.
 
 The content is fixed when an Agent starts: create copies it to the existing
 content-addressed snapshot `<state dir>/personas/sha256-<hex>.md`, passes only
@@ -1927,14 +1931,24 @@ already carries the instructions. Antigravity picker selections inherit nothing.
 
 `create agent --profile <name>` (and the provider shortcuts) starts the Agent
 from a [profile](configuration.md#agent-profiles). Without `--profile`, a
-`--label role=<role>` selects the one valid profile whose `roles` lists that
-role; a role no profile lists selects none. A role that several profiles list
+`--label role=<role>` selects the one profile whose `roles` lists that role; a
+role no profile lists selects none. A role that several profiles list
 (`profile-role-claimed`) refuses the create: remove the role from all but one
-of the listed profiles, or pass `--profile none`. `--profile none` applies no
-profile and does no role mapping. The label is read only at creation. A profile
-that is missing, or that `profile list` marks invalid -- including
-`profile-role-claimed` -- refuses the create with exit 2 and its reason token,
-whether it is named with `--profile` or selected by a role.
+of the listed profiles, or pass `--profile none`. A role whose one listing
+profile is invalid (`profile-role-profile-invalid`, naming the profile and its
+own reason) refuses too, rather than create the Agent without that profile's
+permissions: fix the profile, or pass `--profile none`. `--profile none`
+applies no profile and does no role mapping. The label is read only at
+creation. A profile that is missing, or that `profile list` marks invalid --
+including `profile-role-claimed` -- refuses the create with exit 2 and its
+reason token, whether it is named with `--profile` or selected by a role.
+
+A profile that names a `provider` applies only to Agents of that provider. Any
+other provider refuses the create with exit 2 (`profile-provider-mismatch`,
+naming both providers) before anything is written or launched, on every lane:
+`create agent --provider <p>`, the `create <provider>` shortcuts, a role label,
+and a create from the UI. A profile without `provider` applies to every
+provider.
 
 An explicit flag wins over the profile item it overlaps: `--instructions` or
 `--persona` over `instructions`, `--model` over `model`, `--effort` over
@@ -2413,22 +2427,25 @@ projmux profile set <name> [--file <path> | -]
 projmux profile delete <name> --yes
 ```
 
-A profile is a named set of Agent start settings -- instructions, model,
-effort, roles, and permissions -- kept in `<config dir>/profiles/<name>.toml`.
+A profile is a named set of Agent start settings -- provider, instructions,
+model, effort, roles, and permissions -- kept in `<config dir>/profiles/<name>.toml`.
 The file format and vocabulary are in
 [Configuration](configuration.md#agent-profiles). These commands store and
 validate profiles; `create agent --profile <name>` applies one (see
 [Agent profiles at create](#agent-profiles-at-create)).
 
-- `list` prints `NAME SOURCE ROLES DIGEST VALID` for every profile. `SOURCE` is
-  `builtin` or `user`, and `DIGEST` is `sha256:<hex>` over the file bytes. A
-  file that fails validation stays listed as `no (<reason>)` and does not hide
-  the others.
+- `list` prints `NAME SOURCE PROVIDER INSTRUCTIONS MODEL EFFORT ROLES DIGEST
+  VALID` for every profile. `SOURCE` is `builtin` or `user`, and `DIGEST` is
+  `sha256:<hex>` over the file bytes. An item the profile does not name is
+  `-`; so is `PROVIDER` for a provider-neutral profile. A file that fails
+  validation stays listed as `no (<reason>)` and does not hide the others;
+  when it still parses, it shows what it names, roles included, and a file
+  that does not parse shows `-` for each item.
 - `show` prints the stored bytes exactly, or the built-in text.
 - `set` validates the whole file first and writes it atomically (0600) only
   when it is valid; `-` or no `--file` reads stdin. A refusal exits 2, prints
   one stable reason (`profile-syntax-invalid`, `profile-key-unknown`,
-  `profile-table-unknown`, `profile-value-invalid`,
+  `profile-table-unknown`, `profile-value-invalid`, `profile-provider-unknown`,
   `profile-instructions-not-found`, `profile-role-duplicate`,
   `profile-role-claimed`, `profile-name-invalid`, `profile-name-reserved`, or
   `profile-too-large`), and leaves any existing file unchanged.

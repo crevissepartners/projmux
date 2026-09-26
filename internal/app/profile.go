@@ -95,21 +95,24 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSOURCE\tROLES\tDIGEST\tVALID")
+	fmt.Fprintln(tw, "NAME\tSOURCE\tPROVIDER\tINSTRUCTIONS\tMODEL\tEFFORT\tROLES\tDIGEST\tVALID")
+	// An item the profile does not name -- a provider-neutral profile's
+	// provider included -- and every item of a file that does not parse is
+	// "-". An invalid profile that parses still shows what it names.
+	cell := func(value string) string {
+		if value == "" {
+			return "-"
+		}
+		return value
+	}
 	for _, entry := range entries {
-		roles := strings.Join(entry.Roles, ",")
-		if roles == "" {
-			roles = "-"
-		}
-		digest := entry.Digest
-		if digest == "" {
-			digest = "-"
-		}
 		valid := "yes"
 		if !entry.Valid {
 			valid = "no (" + entry.Reason + ")"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", entry.Name, entry.Source, roles, digest, valid)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", entry.Name, entry.Source,
+			cell(entry.Provider), cell(entry.Instructions), cell(entry.Model), cell(entry.Effort),
+			cell(strings.Join(entry.Roles, ",")), cell(entry.Digest), valid)
 	}
 	return tw.Flush()
 }

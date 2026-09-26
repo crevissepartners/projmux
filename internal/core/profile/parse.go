@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
@@ -35,6 +36,7 @@ const (
 	keyModel        = "model"
 	keyEffort       = "effort"
 	keyRoles        = "roles"
+	keyProvider     = "provider"
 )
 
 // permissionsTable is the one table a profile may declare.
@@ -75,6 +77,9 @@ var permissionRule = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*(\(.+\))?$`)
 
 // Spec is one parsed, vocabulary-checked profile. Empty fields were absent.
 type Spec struct {
+	// Provider is the one Agent provider the profile is for, or "" for a
+	// provider-neutral profile.
+	Provider     string
 	Instructions string
 	Model        string
 	Effort       string
@@ -376,7 +381,7 @@ func (p *parser) arraySpace() error {
 func knownKey(table, key string) bool {
 	switch table {
 	case "":
-		return slices.Contains([]string{keyInstructions, keyModel, keyEffort, keyRoles}, key)
+		return slices.Contains([]string{keyProvider, keyInstructions, keyModel, keyEffort, keyRoles}, key)
 	case permissionsTable:
 		return slices.Contains([]string{keySandbox, keyApproval, keyAllow, keyDeny}, key)
 	}
@@ -404,6 +409,11 @@ func (p *parser) assign(spec *Spec, table, key string, val value) error {
 		return p.fail(ReasonValueInvalid, "%q is %q; want one of %s", qualified, val.str, strings.Join(set, ", "))
 	}
 	switch qualified {
+	case keyProvider:
+		if !IsProvider(val.str) {
+			return p.fail(ReasonProviderUnknown, "%q is %q; want one of %s", qualified, val.str, strings.Join(Providers(), ", "))
+		}
+		spec.Provider = val.str
 	case keyInstructions:
 		if err := persona.ValidateName(val.str); err != nil {
 			return p.fail(ReasonValueInvalid, "%q is not a valid instructions name: %v", qualified, err)
@@ -454,6 +464,27 @@ func (p *parser) assign(spec *Spec, table, key string, val value) error {
 		}
 	}
 	return nil
+}
+
+// IsProvider reports whether name is the canonical id of an Agent provider:
+// one the provider registry knows, spelled exactly as it spells it. The
+// registry is the same authority `create agent --provider` is checked against,
+// so a profile can name exactly the providers an Agent accepts.
+func IsProvider(name string) bool {
+	meta, ok := aiprovider.Lookup(name)
+	return ok && string(meta.ID) == name
+}
+
+// Providers returns the provider ids a profile `provider` accepts, in the
+// registry's picker order.
+func Providers() []string {
+	all := aiprovider.All()
+	slices.SortStableFunc(all, func(a, b aiprovider.Metadata) int { return a.PickerOrder - b.PickerOrder })
+	out := make([]string, 0, len(all))
+	for _, provider := range all {
+		out = append(out, string(provider.ID))
+	}
+	return out
 }
 
 // validateRole applies the label-value rule a role must meet to be selectable

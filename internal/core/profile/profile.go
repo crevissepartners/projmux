@@ -1,8 +1,8 @@
 // Package profile owns the named Agent profiles a user can keep.
 //
-// A profile is a small TOML file naming how an Agent should be started: which
-// stored instructions it gets, its model and effort, the roles it serves, and
-// its permissions. This package is the only owner of where profile files live
+// A profile is a small TOML file naming how an Agent should be started: the
+// provider it is for, which stored instructions it gets, its model and
+// effort, the roles it serves, and its permissions. This package is the only owner of where profile files live
 // (<ConfigDir>/profiles/<name>.toml), what a profile may be named and contain,
 // how its content is identified (the digest), and which built-in profiles are
 // compiled into the binary. It stores and validates profiles only; nothing
@@ -60,8 +60,17 @@ const (
 	ReasonInstructionsNotFound = "profile-instructions-not-found"
 	// ReasonRoleDuplicate is a role listed twice in one file.
 	ReasonRoleDuplicate = "profile-role-duplicate"
-	// ReasonRoleClaimed is a role another valid profile already lists.
+	// ReasonRoleClaimed is a role another profile already lists.
 	ReasonRoleClaimed = "profile-role-claimed"
+	// ReasonRoleProfileInvalid is a role whose one listing profile is
+	// invalid. The role selects nothing rather than fall back to no profile.
+	ReasonRoleProfileInvalid = "profile-role-profile-invalid"
+	// ReasonProviderUnknown is a `provider` value that names no Agent
+	// provider.
+	ReasonProviderUnknown = "profile-provider-unknown"
+	// ReasonInstructionsInUse is a delete of stored instructions that a user
+	// profile names.
+	ReasonInstructionsInUse = "profile-instructions-in-use"
 	// ReasonBuiltin is a delete of a profile that exists only as a builtin.
 	ReasonBuiltin = "profile-builtin"
 )
@@ -140,16 +149,29 @@ type Profile struct {
 }
 
 // Entry describes one listed profile. An invalid profile is still listed:
-// Valid is false and Reason/Detail say why.
+// Valid is false and Reason/Detail say why. A profile that parses keeps its
+// provider, instructions, model, effort, and roles even when it is invalid, so
+// its roles still count and a listing still shows what it names; a file that
+// does not parse has none of them.
 type Entry struct {
-	Name   string
-	Source string
-	Path   string
-	Roles  []string
-	Digest string
-	Valid  bool
-	Reason string
-	Detail string
+	Name         string
+	Source       string
+	Path         string
+	Provider     string
+	Instructions string
+	Model        string
+	Effort       string
+	Roles        []string
+	Digest       string
+	Valid        bool
+	Reason       string
+	Detail       string
+}
+
+// withSpec fills the items of spec the entry shows.
+func (e Entry) withSpec(spec Spec) Entry {
+	e.Provider, e.Instructions, e.Model, e.Effort, e.Roles = spec.Provider, spec.Instructions, spec.Model, spec.Effort, spec.Roles
+	return e
 }
 
 // Store reads and writes profile files below <ConfigDir>/profiles and checks
@@ -218,27 +240,38 @@ func (s Store) validate(content []byte) (Spec, error) {
 	if err != nil {
 		return Spec{}, err
 	}
+	if err := s.checkInstructions(spec); err != nil {
+		return Spec{}, err
+	}
+	return spec, nil
+}
+
+// checkInstructions refuses a parsed profile whose `instructions` name no
+// usable stored instructions.
+func (s Store) checkInstructions(spec Spec) error {
 	if spec.Instructions == "" {
-		return spec, nil
+		return nil
 	}
 	if _, err := s.personas.Load(spec.Instructions); err != nil {
 		switch persona.ReasonOf(err) {
 		case "":
-			return Spec{}, err
+			return err
 		case persona.ReasonNotFound:
-			return Spec{}, &Error{Reason: ReasonInstructionsNotFound, Detail: fmt.Sprintf("names instructions %q, which do not exist", spec.Instructions)}
+			return &Error{Reason: ReasonInstructionsNotFound, Detail: fmt.Sprintf("names instructions %q, which do not exist", spec.Instructions)}
 		default:
-			return Spec{}, &Error{Reason: ReasonValueInvalid, Detail: fmt.Sprintf("names unusable instructions %q: %v", spec.Instructions, err)}
+			return &Error{Reason: ReasonValueInvalid, Detail: fmt.Sprintf("names unusable instructions %q: %v", spec.Instructions, err)}
 		}
 	}
-	return spec, nil
+	return nil
 }
 
 // Write validates content as the profile named name and, only when it is
 // valid, replaces the user file atomically (file 0600, directory 0700). A
 // refusal writes nothing and leaves an existing file as it was. A role that
-// another valid profile already lists is refused; the profile being replaced,
-// and the builtin a user file of this name would shadow, do not count.
+// another profile already lists is refused, whether that profile is valid or
+// not: an invalid profile that parses still holds its roles, the way List and
+// RoleProfile count them. The profile being replaced, and the builtin a user
+// file of this name would shadow, do not count.
 func (s Store) Write(name string, content []byte) (Entry, error) {
 	path, err := s.Path(name)
 	if err != nil {
@@ -256,20 +289,24 @@ func (s Store) Write(name string, content []byte) (Entry, error) {
 		return Entry{}, err
 	}
 	for _, other := range others {
-		if other.Name == name || !other.Valid {
+		if other.Name == name {
 			continue
 		}
 		for _, role := range spec.Roles {
-			if slices.Contains(other.Roles, role) {
-				return Entry{}, &Error{Reason: ReasonRoleClaimed, Name: name,
-					Detail: fmt.Sprintf("lists role %q, which %s profile %q already lists", role, other.Source, other.Name)}
+			if !slices.Contains(other.Roles, role) {
+				continue
 			}
+			detail := fmt.Sprintf("lists role %q, which %s profile %q already lists", role, other.Source, other.Name)
+			if !other.Valid {
+				detail += fmt.Sprintf(" (that profile is invalid: %s)", other.Reason)
+			}
+			return Entry{}, &Error{Reason: ReasonRoleClaimed, Name: name, Detail: detail}
 		}
 	}
 	if err := writeAtomic(path, content); err != nil {
 		return Entry{}, fmt.Errorf("write profile %q: %w", name, err)
 	}
-	return Entry{Name: name, Source: SourceUser, Path: path, Roles: spec.Roles, Digest: Digest(content), Valid: true}, nil
+	return Entry{Name: name, Source: SourceUser, Path: path, Digest: Digest(content), Valid: true}.withSpec(spec), nil
 }
 
 // Delete removes the user profile named name. A name that is only a builtin
@@ -314,8 +351,9 @@ func (s Store) Delete(name string) error {
 // List returns every profile sorted by name: the builtins and the user files,
 // a user file winning over a builtin of the same name. Each entry is checked
 // on its own (Parse and the instructions lookup), and then a role listed by
-// more than one otherwise-valid profile marks each of them invalid with
-// profile-role-claimed. An invalid file is listed as invalid and never stops
+// more than one profile that parses -- valid or not -- marks each of them
+// that is otherwise valid invalid with profile-role-claimed; one already
+// invalid keeps its own reason. An invalid file is listed as invalid and never stops
 // the others from listing. Files whose name is not a valid profile name,
 // including the hidden temporary files of an in-flight Write, are skipped.
 func (s Store) List() ([]Entry, error) {
@@ -325,9 +363,6 @@ func (s Store) List() ([]Entry, error) {
 	}
 	claimants := map[string][]int{}
 	for i, entry := range entries {
-		if !entry.Valid {
-			continue
-		}
 		for _, role := range entry.Roles {
 			claimants[role] = append(claimants[role], i)
 		}
@@ -387,10 +422,16 @@ func (s Store) collect() ([]Entry, error) {
 	return entries, nil
 }
 
-// describe fills the digest, roles, and validity of one profile.
+// describe fills the digest, the named items, and validity of one profile.
+// A profile that parses keeps its items even when its instructions are
+// missing; one that does not parse has none.
 func (s Store) describe(entry Entry, content []byte) Entry {
 	entry.Digest = Digest(content)
-	spec, err := s.validate(content)
+	spec, err := Parse(content)
+	if err == nil {
+		entry = entry.withSpec(spec)
+		err = s.checkInstructions(spec)
+	}
 	if err != nil {
 		entry.Reason = ReasonOf(err)
 		if entry.Reason == "" {
@@ -400,8 +441,60 @@ func (s Store) describe(entry Entry, content []byte) Entry {
 		return entry
 	}
 	entry.Valid = true
-	entry.Roles = spec.Roles
 	return entry
+}
+
+// RoleProfile returns the name of the profile a `role` creation label
+// selects: the one profile listing role, when it is valid. A role no profile
+// lists selects none and returns "". Every profile that parses counts,
+// invalid ones included, so a role never silently selects nothing because
+// the profile that lists it broke: a role several profiles list is
+// profile-role-claimed, and a role whose one listing profile is invalid is
+// profile-role-profile-invalid, carrying that profile's own reason.
+func (s Store) RoleProfile(role string) (string, error) {
+	entries, err := s.List()
+	if err != nil {
+		return "", err
+	}
+	var listing []Entry
+	for _, entry := range entries {
+		if slices.Contains(entry.Roles, role) {
+			listing = append(listing, entry)
+		}
+	}
+	switch {
+	case len(listing) == 0:
+		return "", nil
+	case len(listing) > 1:
+		names := make([]string, 0, len(listing))
+		for _, entry := range listing {
+			names = append(names, entry.Name)
+		}
+		return "", &Error{Reason: ReasonRoleClaimed,
+			Detail: fmt.Sprintf("role %q is listed by more than one profile (%s)", role, strings.Join(names, ", "))}
+	case !listing[0].Valid:
+		return "", &Error{Reason: ReasonRoleProfileInvalid, Name: listing[0].Name,
+			Detail: fmt.Sprintf("lists role %q but is invalid: %s", role, listing[0].Detail)}
+	}
+	return listing[0].Name, nil
+}
+
+// ProfilesUsingInstructions returns, sorted, the names of the user profiles
+// whose `instructions` name the stored instructions called name. Every user
+// file that parses counts, valid or not; a file that does not parse names
+// nothing. Builtins name no instructions.
+func (s Store) ProfilesUsingInstructions(name string) ([]string, error) {
+	entries, err := s.collect()
+	if err != nil {
+		return nil, err
+	}
+	var users []string
+	for _, entry := range entries {
+		if entry.Source == SourceUser && entry.Instructions == name {
+			users = append(users, entry.Name)
+		}
+	}
+	return users, nil
 }
 
 // readUserFile reads <dir>/<name>.toml through an os.Root, so the open cannot
