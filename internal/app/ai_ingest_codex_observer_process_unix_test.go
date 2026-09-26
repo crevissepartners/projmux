@@ -104,6 +104,24 @@ sleep 30
 		}
 	})
 
+	t.Run("retrying open survives startup", func(t *testing.T) {
+		pidPath := filepath.Join(t.TempDir(), "pid")
+		t.Setenv("PROJMUX_OBSERVER_TEST_PID", pidPath)
+		executable := writeCodexObserverProcessFixture(t, fmt.Sprintf("printf '%%s' \"$$\" > \"$PROJMUX_OBSERVER_TEST_PID\"\nprintf '%s retrying unavailable\\n'\nsleep 30", codexObserverStartupPrefix))
+		got := startCodexLifecycleObserverProcess(executable, target, time.Second)
+		if got.Status != "retrying" || got.Reason != "unavailable" || !got.committed {
+			t.Fatalf("retrying result = %+v", got)
+		}
+		pid := readCodexObserverFixturePID(t, pidPath)
+		t.Cleanup(func() {
+			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			waitForCodexObserverProcessGone(t, pid)
+		})
+		if err := syscall.Kill(pid, 0); err != nil {
+			t.Fatalf("retrying observer was terminated: %v", err)
+		}
+	})
+
 	t.Run("start failure", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing")
 		got := startCodexLifecycleObserverProcess(missing, target, time.Second)

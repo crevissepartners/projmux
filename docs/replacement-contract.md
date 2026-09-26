@@ -400,6 +400,12 @@ platform with no executable link to read declines to drain rather than draining
 on a guess: `defaultProjmuxImageReplaced` answers false on darwin, and the
 absence is stated by this table's `unsupported-platform` row.
 
+A native observer whose first bind receives a drain refusal leaves the Pane on
+hook fallback and keeps retrying that exact Agent and thread. It writes no
+composite authority until a current broker binding opens. When the old broker
+finishes its accepted work and exits, the observer can bind to the replacement
+and publish authority; messages remain refused while the binding is absent.
+
 ### The install pass
 
 `projmux internal install-replace` runs as a step of `make install`, immediately
