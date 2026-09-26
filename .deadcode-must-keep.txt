@@ -75,6 +75,7 @@ ListLinesWithScrollbar	Default-rows entry point of ListLinesWithScrollbarRows re
 Localizer.Styled	Styled-fragment lookup retained as the test seam that pins the kind-mismatch error of the live catalog lookup.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
 Matrix	Whole cardinality table copy retained as the test seam that pins the declared verb-kind cells and their canonical route adoption.
+MeasureSameTickReplacement	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
 MigrateRegistry	Ambient-environment entry point of MigrateRegistryWithEnvironment retained as the registry schema migration seam.
@@ -122,6 +123,7 @@ SaveAINewWindowModeFile	Central new-AI-window-mode writer retained for front end
 SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
 SettingItems	Read-only projection of the settings layer declaration retained as the test seam the settings layer guard seeds every front file from.
 SharedOutputModes	Closed shared -o catalog retained as the test seam that pins catalog closure and contract ordering.
+SkipIfReplacementCollapses	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
 StartDefaultThread	The default-endpoint start wrapper is retained for installed turn-free protocol qualification; generation-pinned product routing uses explicit routes.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.

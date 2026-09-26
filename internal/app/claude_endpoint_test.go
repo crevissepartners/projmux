@@ -21,6 +21,7 @@ import (
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/testutil/socketreuse"
 )
 
 type claudeEndpointTestFixture struct {
@@ -490,6 +491,8 @@ func TestClaudeEndpointSocketGuardsAndPrivatePeer(t *testing.T) {
 
 func TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives(t *testing.T) {
 	t.Parallel()
+	// The coordination sockets live under /tmp, where the probe measures.
+	socketreuse.SkipIfReplacementCollapses(t, "/tmp", localipc.InspectOwnedSocket)
 	f := newClaudeEndpointTestFixture(t)
 	helper := exec.Command("sleep", "60")
 	if err := helper.Start(); err != nil {
@@ -588,6 +591,8 @@ func TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives(t *testing.
 
 func TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement(t *testing.T) {
 	t.Parallel()
+	// The coordination sockets live under /tmp, where the probe measures.
+	socketreuse.SkipIfReplacementCollapses(t, "/tmp", localipc.InspectOwnedSocket)
 	f := newClaudeEndpointTestFixture(t)
 	dir := claudeActivationLeaseDir(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation)
 	if err := os.Mkdir(dir, 0o700); err != nil {
