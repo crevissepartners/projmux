@@ -582,3 +582,74 @@ func TestAgentQuestionChannelSwitchAndProviderRefusals(t *testing.T) {
 		t.Fatalf("enable on a Codex Agent stdout=%q err=%v", stdout, err)
 	}
 }
+
+// TestAgentQuestionListJSONAlwaysEmitsIsOther pins the isOther key on every
+// listed prompt: Codex keeps its stored value, including false, and Claude
+// always reports true because its popup and BuildAnswers take free text.
+func TestAgentQuestionListJSONAlwaysEmitsIsOther(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, true)
+	claude := fixture.createQuestionRecord(t)
+	codexID, err := agentquestion.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	codex, err := fixture.store.Create(agentquestion.Record{
+		ID: codexID, Provider: "codex", AgentUID: questionTestAgent, PaneUID: questionTestPane, Deadline: time.Now().Add(time.Minute),
+		Questions: json.RawMessage(`[{"id":"free","question":"Free?","options":[{"label":"A"}],"isOther":true},{"id":"fixed","question":"Fixed?","options":[{"label":"B"}],"isOther":false},{"id":"secret","question":"Secret?","options":null,"isSecret":true}]`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sampleAnswer = "isOther secret sample"
+	if _, err := fixture.store.Answer(codex.ID, questionTestAgent, map[string]string{"free": `["A"]`, "fixed": `["B"]`, "secret": `["` + sampleAnswer + `"]`}); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent, "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout, sampleAnswer) {
+		t.Fatalf("secret answer leaked from list json: %s", stdout)
+	}
+	var listed struct {
+		Questions []struct {
+			ID      string                       `json:"id"`
+			Answers map[string]string            `json:"answers"`
+			Prompts []map[string]json.RawMessage `json:"prompts"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &listed); err != nil {
+		t.Fatalf("list json = %s (%v)", stdout, err)
+	}
+	want := map[string][]string{claude.ID: {"true", "true"}, codex.ID: {"true", "false", "false"}}
+	if len(listed.Questions) != len(want) {
+		t.Fatalf("list json = %s", stdout)
+	}
+	for _, question := range listed.Questions {
+		values, ok := want[question.ID]
+		if !ok || len(question.Prompts) != len(values) {
+			t.Fatalf("question %s prompts = %d, want %d: %s", question.ID, len(question.Prompts), len(values), stdout)
+		}
+		for i, prompt := range question.Prompts {
+			isOther, ok := prompt["isOther"]
+			if !ok || string(isOther) != values[i] {
+				t.Fatalf("question %s prompt %d isOther = %q (present=%v), want %s", question.ID, i+1, isOther, ok, values[i])
+			}
+			for _, key := range []string{"number", "question", "multiSelect", "options"} {
+				if _, ok := prompt[key]; !ok {
+					t.Fatalf("question %s prompt %d lost %q: %s", question.ID, i+1, key, stdout)
+				}
+			}
+		}
+		if question.ID == codex.ID {
+			if string(question.Prompts[2]["isSecret"]) != "true" || question.Answers["free"] != `["A"]` || question.Answers["fixed"] != `["B"]` {
+				t.Fatalf("codex prompt/answers = %s", stdout)
+			}
+			if _, ok := question.Answers["secret"]; ok {
+				t.Fatalf("secret answer key listed: %s", stdout)
+			}
+		}
+	}
+}
