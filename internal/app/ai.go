@@ -2291,10 +2291,9 @@ func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.Agen
 	return plan.title, plan.commandArgs, nil
 }
 
-// PlanAgentLaunchWithOptions is PlanAgentLaunch for a Claude Agent created
-// with --model, --effort, or --persona (personaFile is the persona snapshot
-// path). The options go before the workspace arguments, so Claude's variadic
-// --add-dir cannot take them.
+// PlanAgentLaunchWithOptions applies model and effort to Claude or Codex.
+// Claude alone accepts the persona snapshot path. Options precede workspace
+// arguments so Claude's variadic --add-dir cannot consume them.
 func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error) {
 	return c.PlanAgentLaunchWithSettings(provider, workspace, payload, model, effort, personaFile, "")
 }
@@ -2303,14 +2302,21 @@ func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coreme
 // a profile's Claude settings snapshot as --settings. An empty settingsFile
 // adds nothing, which is exactly PlanAgentLaunchWithOptions.
 func (c *aiCommand) PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error) {
-	if normalizeAIMode(provider) != aiModeClaude {
+	mode := normalizeAIMode(provider)
+	if mode != aiModeClaude && mode != aiModeCodex {
 		return "", nil, fmt.Errorf("provider %q does not accept --model, --effort, or --persona", provider)
+	}
+	if mode == aiModeCodex && (personaFile != "" || settingsFile != "") {
+		return "", nil, fmt.Errorf("provider %q does not accept Claude persona or settings options", provider)
 	}
 	extra, err := providerLaunchArgs(provider, workspace, payload)
 	if err != nil {
 		return "", nil, err
 	}
 	options := append(claudeLaunchOptionArgs(model, effort, personaFile), claudeSettingsArgs(settingsFile)...)
+	if mode == aiModeCodex {
+		options = codexLaunchOptionArgs(model, effort)
+	}
 	extra = append(options, extra...)
 	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
 	if err != nil {
@@ -2425,6 +2431,10 @@ func (c *aiCommand) BindManagedAgentPaneOnRoute(
 // or resumed through the local app-server. It carries no prompt: turn/start is
 // the sole initial-prompt writer on the native lane.
 func (c *aiCommand) PlanNativeCodexResume(route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (string, []string, error) {
+	return c.PlanNativeCodexResumeWithOptions(route, workspace, threadID, "", "")
+}
+
+func (c *aiCommand) PlanNativeCodexResumeWithOptions(route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID, model, effort string) (string, []string, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" || !route.valid() {
 		return "", nil, errors.New("native Codex thread or generation route is incomplete")
@@ -2434,7 +2444,8 @@ func (c *aiCommand) PlanNativeCodexResume(route codexNativeEndpointRoute, worksp
 	if err != nil {
 		return "", nil, err
 	}
-	execArgv := append([]string{agentBin}, workspaceArgs...)
+	execArgv := append([]string{agentBin}, codexLaunchOptionArgs(model, effort)...)
+	execArgv = append(execArgv, workspaceArgs...)
 	remote := "unix://"
 	if !route.Default {
 		remote += filepath.Clean(route.SocketPath)

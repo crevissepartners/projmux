@@ -169,7 +169,15 @@ func TestResumeSeamRepassesOnlyAValidClaudeEffort(t *testing.T) {
 					if notice != "" {
 						t.Fatalf("a valid effort disclosed %q", notice)
 					}
-				case provider == aiModeClaude && test.name == "invalid":
+				case provider == aiModeCodex && test.name == "valid":
+					want := []string{"-c", "model_reasoning_effort=low", "-C", "/work/owner", "--add-dir", "/work/extra", "resume", resumeFixtureConversation}
+					if got := execArgvTail(t, launch.argv, provider); !slices.Equal(got, want) {
+						t.Fatalf("exec argv tail = %q, want %q", got, want)
+					}
+					if notice != "" {
+						t.Fatalf("a valid effort disclosed %q", notice)
+					}
+				case (provider == aiModeClaude || provider == aiModeCodex) && test.name == "invalid":
 					if !slices.Equal(launch.argv, plain.argv) {
 						t.Fatalf("argv = %q, want the effort-free %q", launch.argv, plain.argv)
 					}

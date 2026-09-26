@@ -93,6 +93,7 @@ type wireTurn struct {
 type threadStartParams struct {
 	CWD                   string   `json:"cwd,omitempty"`
 	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`
+	Model                 string   `json:"model,omitempty"`
 	// DeveloperInstructions is the persona the thread is started with. Upstream
 	// records it once as the thread's `developer` message, so it is a
 	// start-only field: thread/resume neither records nor applies one, which is
@@ -203,6 +204,8 @@ type turnStartParams struct {
 	ThreadID            string          `json:"threadId"`
 	Input               []wireUserInput `json:"input"`
 	ClientUserMessageID string          `json:"clientUserMessageId,omitempty"`
+	Model               string          `json:"model,omitempty"`
+	Effort              string          `json:"effort,omitempty"`
 }
 
 type wireUserInput struct {

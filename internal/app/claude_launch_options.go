@@ -19,15 +19,15 @@ var claudeEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
 // another option.
 var claudeModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}$`)
 
-// requireClaudeLaunchOptions refuses --model and --effort where they would be
-// ignored or misread: another provider, the reply-only activation, or a value
-// Claude does not take. Like --interactive-only it is an argv-only refusal.
+// requireClaudeLaunchOptions validates the shared model and effort create
+// surface before any resource is allocated. The name is retained for callers
+// that originally used the Claude-only validator.
 func requireClaudeLaunchOptions(spelling, provider string, flags resourceCreateFlags) error {
 	if flags.model == "" && flags.effort == "" {
 		return nil
 	}
-	if provider != aiModeClaude {
-		return usageError(fmt.Sprintf("%s --model and --effort apply only to --provider %s; nothing was created", spelling, aiModeClaude))
+	if provider != aiModeClaude && provider != aiModeCodex {
+		return usageError(fmt.Sprintf("%s --model and --effort apply only to --provider %s or %s; nothing was created", spelling, aiModeClaude, aiModeCodex))
 	}
 	if flags.dialogueReplyOnly {
 		return usageError(fmt.Sprintf("%s --model and --effort cannot be combined with --%s; nothing was created",
@@ -41,6 +41,19 @@ func requireClaudeLaunchOptions(spelling, provider string, flags resourceCreateF
 			spelling, strings.Join(claudeEffortLevels, ", ")))
 	}
 	return nil
+}
+
+// codexLaunchOptionArgs keeps provider options ahead of the resume subcommand
+// and workspace arguments. Codex accepts model and effort on both CLI lanes.
+func codexLaunchOptionArgs(model, effort string) []string {
+	var args []string
+	if model != "" {
+		args = append(args, "-m", model)
+	}
+	if effort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+effort)
+	}
+	return args
 }
 
 // claudeLaunchOptionArgs spells the Claude launch options. personaFile is the
@@ -109,12 +122,12 @@ func (p personaLaunch) withAnnotations(base map[string]string) map[string]string
 	return out
 }
 
-// withEffortAnnotation adds the effort a new Claude Agent is created with to
+// withEffortAnnotation adds the effort a new Agent is created with to
 // base, the Agent annotations the create already records. Without an effort
 // it returns base itself, so a create without --effort stores exactly what it
 // stored before the effort was recorded -- nil included. Otherwise it returns
-// a new map and never writes into base. requireClaudeLaunchOptions has already
-// refused an effort on any other provider and any value Claude does not take.
+// a new map and never writes into base. The create preflight has already
+// refused unsupported providers and invalid values.
 func withEffortAnnotation(effort string, base map[string]string) map[string]string {
 	if effort == "" {
 		return base
@@ -131,14 +144,10 @@ func withEffortAnnotation(effort string, base map[string]string) map[string]stri
 // does not re-pass because it is not one of claudeEffortLevels.
 const claudeEffortReasonInvalid = "effort-invalid"
 
-// claudeResumeEffort returns the effort a resumed Agent re-passes. When the
-// recorded value is not one Claude takes, it returns no effort, that value as
-// invalid, and skipped. Only a Claude Agent is read: any other provider
-// carrying the annotation, and an Agent without it, get nothing at all, so
-// their resume argv stays byte-identical to the one they had before the
-// effort was recorded.
+// claudeResumeEffort returns the recorded effort a Claude or Codex Agent
+// re-passes. Unsupported values are skipped and disclosed by the caller.
 func claudeResumeEffort(mode string, annotations map[string]string) (effort, invalid string, skipped bool) {
-	if mode != aiModeClaude {
+	if mode != aiModeClaude && mode != aiModeCodex {
 		return "", "", false
 	}
 	value, ok := annotations[coremetadata.AnnotationAgentEffort]

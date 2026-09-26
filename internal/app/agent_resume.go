@@ -111,11 +111,9 @@ func (l agentResumeLaunch) effortNotice(label string) string {
 // the attach. An Agent without that annotation gets exactly the argv it got
 // before the annotation existed.
 //
-// A Claude Agent created with --effort records it, and every resume re-passes
-// it where create put it, because Claude does not restore a conversation's
-// effort on resume. A recorded value Claude would not take is skipped and
-// disclosed, never a failed resume. The model is not re-passed: Claude
-// restores it itself.
+// An Agent created with --effort records it, and Claude and Codex resumes
+// re-pass valid values. An invalid recorded value is skipped and disclosed.
+// The model is not re-passed on ordinary resume: the conversation owns it.
 //
 // A Claude Agent created with a profile is resumed with that profile's
 // current permissions: the profile is re-read by name, its settings snapshot
@@ -159,6 +157,9 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 		return agentResumeLaunch{}, err
 	}
 	prefix := append(claudeLaunchOptionArgs("", effort, personaFile), claudeSettingsArgs(settingsFile)...)
+	if mode == aiModeCodex {
+		prefix = codexLaunchOptionArgs("", effort)
+	}
 	if prefix = append(prefix, claudeResumeSnapshotArgs(mode, annotations)...); len(prefix) > 0 {
 		workspaceArgs = append(prefix, workspaceArgs...)
 	}
@@ -510,7 +511,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			if !nativeLaunchCapable {
 				return nativeResumePreparationRefusal(spelling, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
 			}
-			title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, plan.conversationID)
+			effort, invalid, skipped := claudeResumeEffort(aiModeCodex, plan.annotations)
+			resumed.effortInvalid, resumed.effortSkipped = invalid, skipped
+			title, launchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, plan.conversationID, "", effort)
+			effortNotice = resumed.effortNotice(plan.agentName)
 		}
 	} else {
 		if plan.dialogueReplyOnly && plan.annotations[coremetadata.AnnotationAgentProfile] != "" {
@@ -655,7 +659,8 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			cancel()
 			switch {
 			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) == strings.TrimSpace(plan.conversationID):
-				workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
+				effort, _, _ := claudeResumeEffort(aiModeCodex, plan.annotations)
+				workTitle, workLaunchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, prepared.ThreadID, "", effort)
 				if err != nil {
 					return nativeLaunchError(spelling, err)
 				}
