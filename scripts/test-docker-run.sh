@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# Runs a test suite (or builds the binary with --build-binary) inside the
+# pinned test image, with the checkout mounted read-only at /workspace.
+#
+# Bind-mount sources are resolved on the docker daemon's host. On a
+# Docker-outside-of-Docker runner (the job container talks to the VM's
+# docker.sock) the job's checkout path does not exist there, and docker would
+# mount an empty directory. A probe container therefore checks once whether
+# the daemon sees this checkout with the same content. If it does, the
+# checkout is bind-mounted as before; if not, it is copied into a temporary
+# docker volume that is removed on exit.
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
@@ -45,6 +55,38 @@ if [[ "${PROJMUX_TEST_SKIP_IMAGE_BUILD:-}" != "1" ]]; then
     "$docker_context"
 fi
 
+# Decide once where /workspace comes from. The probe uses --mount, not -v:
+# --mount refuses a missing source instead of creating an empty root-owned
+# directory on the daemon host. Hashing a few tracked files, not just testing
+# existence, also catches a daemon-side path that exists with other content.
+probe_files=(go.mod go.sum scripts/test-docker-run.sh)
+local_digest="$(cd "$root" && sha256sum "${probe_files[@]}")"
+daemon_digest="$(docker run --rm \
+  --network none \
+  --user "$(id -u):$(id -g)" \
+  --mount "type=bind,source=$root,target=/projmux-probe,readonly" \
+  -w /projmux-probe \
+  "$image" \
+  sha256sum "${probe_files[@]}" 2>/dev/null)" || daemon_digest=""
+if [[ -n "$daemon_digest" && "$daemon_digest" == "$local_digest" ]]; then
+  workspace_mount=(-v "$root:/workspace:ro")
+else
+  echo ">> docker daemon cannot see $root; staging the checkout into a docker volume"
+  workspace_volume="$(docker volume create --label projmux.test-workspace=1)"
+  # The trap only cleans up; bash keeps the script's own exit status.
+  trap 'docker volume rm -f "$workspace_volume" >/dev/null 2>&1 || true' EXIT
+  # Copy the whole tree, .git included, for parity with the bind mount.
+  # Numeric owners keep the files owned by the uid the suite runs as.
+  tar -C "$root" --numeric-owner -cf - . |
+    docker run --rm -i \
+      --network none \
+      --user 0:0 \
+      -v "$workspace_volume:/workspace" \
+      "$image" \
+      tar -C /workspace --numeric-owner -xf -
+  workspace_mount=(--mount "type=volume,source=$workspace_volume,target=/workspace,readonly")
+fi
+
 # Suite containers stay network-isolated, so the Go module cache they build
 # against must be populated beforehand. The prefetch runs in the same pinned
 # image with the network enabled and writes into a host-side cache directory
@@ -73,7 +115,7 @@ else
       -e GOCACHE=/gocache \
       -e GOMODCACHE=/gomodcache \
       -e GOTOOLCHAIN=local \
-      -v "$root:/workspace:ro" \
+      "${workspace_mount[@]}" \
       -v "$modcache:/gomodcache:rw" \
       -v "$buildcache:/gocache:rw" \
       -w /workspace \
@@ -95,7 +137,7 @@ if [[ "$mode" == "build" ]]; then
     -e GOTOOLCHAIN=local \
     -e GOMAXPROCS="$suite_gomaxprocs" \
     -e GOFLAGS="$suite_goflags" \
-    -v "$root:/workspace:ro" \
+    "${workspace_mount[@]}" \
     -v "$modcache:/gomodcache:ro" \
     -v "$buildcache:/gocache:rw" \
     -v "$build_output:/artifact:rw" \
@@ -156,7 +198,7 @@ docker run --rm \
   -e PROJMUX_E2E_REGISTRY_STRESS="${PROJMUX_E2E_REGISTRY_STRESS:-}" \
   -e E2E_SCENARIO="${E2E_SCENARIO:-}" \
   -e E2E_WAIT_SCALE="${E2E_WAIT_SCALE:-}" \
-  -v "$root:/workspace:ro" \
+  "${workspace_mount[@]}" \
   -v "$modcache:/gomodcache:ro" \
   -v "$buildcache:/gocache:rw" \
   -v "$evidence:/evidence:rw" \

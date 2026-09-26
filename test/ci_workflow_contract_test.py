@@ -871,6 +871,7 @@ def docker_run_options(argv: list[str]) -> dict[str, object]:
         "--network": "network",
         "--user": "user",
         "-e": "env",
+        "--mount": "mount",
         "-v": "volume",
         "-w": "workdir",
     }
@@ -897,6 +898,7 @@ def docker_run_options(argv: list[str]) -> dict[str, object]:
         "network": parsed["network"],
         "env": env,
         "volumes": volumes,
+        "mounts": parsed["mount"],
         "command": argv[index:],
     }
 
@@ -962,10 +964,25 @@ class SuiteContainerBuildCacheContractTest(unittest.TestCase):
         fake_bin.mkdir()
         calls = temporary / "docker-calls"
         docker = fake_bin / "docker"
+        # A host daemon sees the checkout: answer the workspace probe (a run
+        # with a --mount bind) by hashing the requested files in that source.
         docker.write_text(
             '#!/bin/sh\nprintf "%s\\n" "$@" >> "$FAKE_DOCKER_CALLS"\n'
             f'printf "%s\\n" "{DOCKER_INVOCATION_END}" >> "$FAKE_DOCKER_CALLS"\n'
-            "exit 0\n",
+            "prev= source= target= workdir=\n"
+            'for arg do\n'
+            '  case "$prev" in\n'
+            '    --mount) case "$arg" in type=bind,*)\n'
+            '      source="${arg#*source=}"; source="${source%%,*}"\n'
+            '      target="${arg#*target=}"; target="${target%%,*}";; esac;;\n'
+            '    -w) workdir="$arg";;\n'
+            "  esac\n"
+            '  prev="$arg"\n'
+            "done\n"
+            '[ -n "$source" ] || exit 0\n'
+            'while [ "$1" != sha256sum ]; do shift; done\n'
+            "shift\n"
+            'cd "$source${workdir#"$target"}" && exec sha256sum "$@"\n',
             encoding="utf-8",
         )
         docker.chmod(0o700)
@@ -1002,7 +1019,20 @@ class SuiteContainerBuildCacheContractTest(unittest.TestCase):
             else:
                 invocations[-1].append(line)
         self.assertEqual(invocations.pop(), [])
-        return invocations
+        # Exactly one workspace probe, which finds the checkout, so nothing is
+        # staged. The remaining invocations are the ones each test models.
+        probes = [
+            argv
+            for argv in invocations
+            if argv[0] == "run" and docker_run_options(argv)["mounts"]
+        ]
+        self.assertEqual(len(probes), 1, invocations)
+        self.assertEqual(
+            docker_run_options(probes[0])["mounts"],
+            [f"type=bind,source={ROOT},target=/projmux-probe,readonly"],
+        )
+        self.assertEqual([argv for argv in invocations if argv[0] == "volume"], [])
+        return [argv for argv in invocations if argv is not probes[0]]
 
     def suite_invocation(self, invocations: list[list[str]]) -> dict[str, object]:
         suites = [argv for argv in invocations if argv and argv[-1] == self.suite]
