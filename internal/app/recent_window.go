@@ -67,6 +67,7 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.recent.RunRecord(fs.Args()[1:], stdout, stderr)
 	case "recent":
 		return c.recent.Run(fs.Args()[1:], stdout, stderr)
+	// Only a spelling after `--` gets here (`window -- help`, `-- --help`, `-- -h`): the help boundary answers `window help`, `--help`, and `-h` first and does not read past `--`.
 	case "help", "--help", "-h":
 		return printRouteHelp(stdout, "window")
 	default:

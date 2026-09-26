@@ -109,8 +109,6 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return errors.New("prune agent: the resource registry handler is not configured")
 		}
 		return c.agent.Run(fs.Args()[1:], stdout, stderr)
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "prune")
 	default:
 		printRouteUsage(stderr, "prune")
 		return fmt.Errorf("unknown prune subcommand: %s", fs.Arg(0))

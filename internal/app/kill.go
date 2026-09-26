@@ -112,8 +112,6 @@ func (c *killCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch fs.Arg(0) {
 	case "tagged":
 		return c.runTagged(fs.Args()[1:], stdout, stderr)
-	case "help", "--help", "-h":
-		return printRouteHelp(stdout, "runtime stop")
 	default:
 		printRouteUsage(stderr, "runtime stop")
 		return fmt.Errorf("unknown runtime stop subcommand: %s", fs.Arg(0))

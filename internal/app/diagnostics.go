@@ -35,9 +35,6 @@ func (c *diagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error 
 		return c.runLog(args[1:], stdout, stderr)
 	case "report":
 		return c.runReport(args[1:], stdout, stderr)
-	// Only `diagnostics help <more tokens>` gets here: the help boundary answers `diagnostics help`, `--help`, and `-h` first.
-	case "help":
-		return printRouteHelp(stdout, "diagnostics")
 	default:
 		printRouteUsage(stderr, "diagnostics")
 		return usageError(fmt.Sprintf("unknown diagnostics subcommand: %s", args[0]))
