@@ -474,6 +474,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn(
             "hashFiles('.security/security-tools.versions')", contract
         )
+        self.assertIn("hashFiles('.security/shellcheck.sha256')", contract)
         self.assertEqual(
             step_script(workflow_step(contract, "Verify pinned security tools")).strip(),
             "make security-tools",
@@ -496,6 +497,28 @@ class CIWorkflowContractTest(unittest.TestCase):
         }.items():
             self.assertIn(f"    name: {name}\n", workflow_job(workflow, job))
             self.assertNotEqual(job, "security-contract")
+
+    def test_security_jobs_take_shellcheck_only_from_the_pinned_download(self) -> None:
+        # `make security-tools` installs ShellCheck from a digest-verified
+        # release asset and scripts/security.sh refuses any other version, so
+        # the cache key must follow the pin and no job may add a second source.
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        keys = []
+        for job in ("security-go", "security-static", "security-policy", "security-contract"):
+            restore = workflow_step(
+                workflow_job(workflow, job), "Restore pinned security tools"
+            )
+            key = re.search(r"(?m)^          key: (.+)$", restore)
+            self.assertIsNotNone(key, job)
+            self.assertIn("hashFiles('.security/shellcheck.sha256')", key.group(1), job)
+            keys.append(key.group(1))
+        self.assertEqual(len(set(keys)), 1, keys)
+
+        for job_id, job in workflow_jobs(workflow).items():
+            self.assertNotIn("      - name: Install shellcheck\n", job + "\n", job_id)
+            self.assertNotRegex(
+                job, r"(?im)^.*\bapt(?:-get)?\b[^\n]*\binstall\b[^\n]*\bshellcheck\b", job_id
+            )
 
     def test_security_contract_failure_makes_the_stable_aggregate_red(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
