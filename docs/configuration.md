@@ -21,6 +21,14 @@ requires, and the default under `$HOME` applies instead:
 | `XDG_DATA_HOME` | `$HOME/.local/share` |
 | `XDG_CACHE_HOME` | `$HOME/.cache` |
 
+When `HOME` is unset or empty and the variable a path needs is not an
+absolute path, that path has no location, and projmux never falls back to a
+path relative to the working directory. A read of saved settings or state
+keeps the built-in default and touches no file. A write writes nothing and
+exits non-zero with a one-line reason naming the variables, such as
+`HOME or an absolute XDG_CONFIG_HOME is required`. A path display such as
+`projmux hook list` shows that reason in place of the path.
+
 ## Operational diagnostics state
 
 Projmux keeps a private bounded operational journal at:

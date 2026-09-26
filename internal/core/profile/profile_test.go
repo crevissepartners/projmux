@@ -375,3 +375,33 @@ func TestUserReadonlyShadowsTheBuiltinAndDeletingItRevealsTheBuiltin(t *testing.
 		t.Fatalf("Load after deleting the user readonly = %+v, %v", loaded, err)
 	}
 }
+
+// TestBuiltinStoreReadsOnlyBuiltinsAndRefusesWrites pins the store a read
+// uses without a config directory: it lists and loads the builtins, reports
+// any other name missing with its reason, and refuses writes with it.
+func TestBuiltinStoreReadsOnlyBuiltinsAndRefusesWrites(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	reason := errors.New("HOME or an absolute XDG_CONFIG_HOME is required")
+	store := NewBuiltinStore(reason)
+
+	entries, err := store.List()
+	if err != nil || len(entries) != len(builtins) {
+		t.Fatalf("List() = %+v, %v; want only the builtins", entries, err)
+	}
+	if loaded, err := store.Load("readonly"); err != nil || loaded.Source != SourceBuiltin {
+		t.Fatalf("Load(readonly) = %+v, %v; want the builtin", loaded, err)
+	}
+	if _, err := store.Load("mine"); ReasonOf(err) != ReasonNotFound || !strings.Contains(err.Error(), reason.Error()) {
+		t.Fatalf("Load(mine) error = %v, want profile-not-found with the reason", err)
+	}
+	if _, err := store.Write("mine", []byte("model = \"m\"\n")); !errors.Is(err, reason) {
+		t.Fatalf("Write() error = %v, want the reason", err)
+	}
+	if err := store.Delete("mine"); !errors.Is(err, reason) {
+		t.Fatalf("Delete() error = %v, want the reason", err)
+	}
+	if left, _ := os.ReadDir(cwd); len(left) != 0 {
+		t.Fatalf("working directory gained %v", left)
+	}
+}

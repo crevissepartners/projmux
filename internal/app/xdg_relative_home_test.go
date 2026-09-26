@@ -38,7 +38,10 @@ func TestRelativeXDGHomesCountAsUnsetAtEverySite(t *testing.T) {
 			t.Errorf("XDG_STATE_HOME=%q: welcome state path = %q, want %q", value, welcome, want)
 		}
 
-		icons := (&aiCommand{homeDir: homeDir, lookupEnv: lookup}).notificationIconDir()
+		icons, err := (&aiCommand{homeDir: homeDir, lookupEnv: lookup}).notificationIconDir()
+		if err != nil {
+			t.Fatal(err)
+		}
 		if want := filepath.Join(home, ".local", "share", "projmux", "icons"); icons != want {
 			t.Errorf("XDG_DATA_HOME=%q: notification icon dir = %q, want %q", value, icons, want)
 		}

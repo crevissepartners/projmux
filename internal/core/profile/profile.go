@@ -176,9 +176,14 @@ func (e Entry) withSpec(spec Spec) Entry {
 
 // Store reads and writes profile files below <ConfigDir>/profiles and checks
 // `instructions` against the persona store.
+//
+// A builtin-only store (NewBuiltinStore) has no directory: it lists and loads
+// only the builtins, touches no file, and refuses every write with its reason.
 type Store struct {
 	dir      string
 	personas persona.Store
+	// unavailable is why a builtin-only store has no directory.
+	unavailable error
 }
 
 // NewStore builds a store over configDir/profiles, resolving `instructions`
@@ -192,10 +197,24 @@ func NewDefaultStore(paths config.Paths) Store {
 	return NewStore(paths.ConfigDir, paths.StateDir)
 }
 
-// Path returns the file path of the user profile named name.
+// NewBuiltinStore builds the builtin-only store a read uses when the config
+// directory cannot be resolved; reason, such as a config.MissingHomeError,
+// says why and is what its writes return.
+func NewBuiltinStore(reason error) Store {
+	if reason == nil {
+		reason = config.ErrHomeDirRequired
+	}
+	return Store{unavailable: reason}
+}
+
+// Path returns the file path of the user profile named name. A builtin-only
+// store has none and returns its reason.
 func (s Store) Path(name string) (string, error) {
 	if err := ValidateName(name); err != nil {
 		return "", err
+	}
+	if s.dir == "" {
+		return "", s.unavailable
 	}
 	return filepath.Join(s.dir, name+FileExt), nil
 }
@@ -203,21 +222,25 @@ func (s Store) Path(name string) (string, error) {
 // Load returns one profile exactly as stored: the user file when there is
 // one, else the builtin of that name. Neither is profile-not-found.
 func (s Store) Load(name string) (Profile, error) {
-	path, err := s.Path(name)
-	if err != nil {
+	if err := ValidateName(name); err != nil {
 		return Profile{}, err
 	}
-	content, found, err := readUserFile(s.dir, name)
-	if err != nil {
-		return Profile{}, named(err, name)
-	}
-	if found {
-		return Profile{Name: name, Source: SourceUser, Content: content, Digest: Digest(content)}, nil
+	if s.dir != "" {
+		content, found, err := readUserFile(s.dir, name)
+		if err != nil {
+			return Profile{}, named(err, name)
+		}
+		if found {
+			return Profile{Name: name, Source: SourceUser, Content: content, Digest: Digest(content)}, nil
+		}
 	}
 	if raw, ok := builtins[name]; ok {
 		return Profile{Name: name, Source: SourceBuiltin, Content: []byte(raw), Digest: Digest([]byte(raw))}, nil
 	}
-	return Profile{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + path + " and is not a builtin"}
+	if s.dir == "" {
+		return Profile{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "is not a builtin, and no user profile can be read: " + s.unavailable.Error()}
+	}
+	return Profile{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + filepath.Join(s.dir, name+FileExt) + " and is not a builtin"}
 }
 
 // ReadLimited reads r to the end, refusing content larger than MaxSize with
@@ -390,9 +413,12 @@ func (s Store) collect() ([]Entry, error) {
 	for name, raw := range builtins {
 		byName[name] = s.describe(Entry{Name: name, Source: SourceBuiltin}, []byte(raw))
 	}
-	dirEntries, err := os.ReadDir(s.dir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("list profiles: %w", err)
+	var dirEntries []os.DirEntry
+	if s.dir != "" {
+		var err error
+		if dirEntries, err = os.ReadDir(s.dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("list profiles: %w", err)
+		}
 	}
 	for _, dirEntry := range dirEntries {
 		name, ok := strings.CutSuffix(dirEntry.Name(), FileExt)

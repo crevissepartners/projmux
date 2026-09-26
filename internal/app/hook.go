@@ -152,6 +152,11 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 
 func (c *hookCommand) printList(scope hookListScope, stdout, stderr io.Writer) error {
 	globalPath, globalCfg, globalErr := c.loadGlobal()
+	if isMissingHome(globalErr) {
+		// No config home: there is no global file to read, so the list shows
+		// the reason where the path goes instead of an empty path.
+		globalPath, globalErr = pathOrReason("", globalErr), nil
+	}
 	if globalErr != nil {
 		fmt.Fprintf(stderr, "projmux hook: global config %q parse error: %v\n", globalPath, globalErr)
 	}
@@ -363,6 +368,10 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 
 func (c *hookCommand) effectiveHookSource(event string) (hooks.EffectiveSource, string, error) {
 	globalPath, globalCfg, globalErr := c.loadGlobal()
+	if isMissingHome(globalErr) {
+		// No config home: no global entry can be the source.
+		globalErr = nil
+	}
 	if globalErr != nil {
 		return "", "", globalErr
 	}
@@ -566,7 +575,10 @@ func (c *hookCommand) runValidate(args []string, stdout, stderr io.Writer) error
 	projectPath, projectCfg, projectErr, projectCtx := c.loadProject()
 
 	ok := true
-	if globalErr != nil {
+	if isMissingHome(globalErr) {
+		// No config home: there is no global file to validate.
+		fmt.Fprintf(stdout, "global   %s   skipped\n", pathOrReason("", globalErr))
+	} else if globalErr != nil {
 		fmt.Fprintf(stdout, "global   %s   PARSE ERROR: %v\n", globalPath, globalErr)
 		ok = false
 	} else {

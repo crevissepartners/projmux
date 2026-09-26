@@ -2151,10 +2151,13 @@ func aiProviderEnableCommand(provider string) string {
 // else selective. A missing, empty, or invalid TUI value falls through to
 // the central file.
 func (c *aiCommand) getMode() string {
-	config.NoteFrontRead(config.TmuxAISplitModeFileName, c.configFile())
-	if content, err := os.ReadFile(c.configFile()); err == nil {
-		if mode, ok := config.ValidAINewWindowMode(string(content)); ok {
-			return mode
+	// Without a config home there is no saved TUI value to read.
+	if path, err := c.configFile(); err == nil {
+		config.NoteFrontRead(config.TmuxAISplitModeFileName, path)
+		if content, err := os.ReadFile(filepath.Clean(path)); err == nil {
+			if mode, ok := config.ValidAINewWindowMode(string(content)); ok {
+				return mode
+			}
 		}
 	}
 	if mode, saved, _ := loadCentralAINewWindowMode(c.homeDir, c.lookupEnv); saved {
@@ -2165,7 +2168,10 @@ func (c *aiCommand) getMode() string {
 
 func (c *aiCommand) setMode(mode string) error {
 	mode = normalizeAIMode(mode)
-	path := c.configFile()
+	path, err := c.configFile()
+	if err != nil {
+		return fmt.Errorf("save AI split default: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -2178,10 +2184,13 @@ func (c *aiCommand) setMode(mode string) error {
 
 // configFile is the saved AI split launch default, under the same config
 // home as the central new AI window mode (aiConfigHome). With neither
-// XDG_CONFIG_HOME nor a home directory it stays relative to the working
-// directory, as it always has.
-func (c *aiCommand) configFile() string {
-	return config.DefaultPaths(aiConfigHome(c.homeDir, c.lookupEnv), "").TmuxAISplitModeFile()
+// XDG_CONFIG_HOME nor a home directory it returns the missing-HOME reason.
+func (c *aiCommand) configFile() (string, error) {
+	configHome, err := aiConfigHome(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return "", err
+	}
+	return config.DefaultPaths(configHome, "").TmuxAISplitModeFile(), nil
 }
 
 func (c *aiCommand) openPicker(direction string) error {

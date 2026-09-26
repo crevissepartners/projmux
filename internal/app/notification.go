@@ -244,7 +244,11 @@ func (c *aiCommand) notificationIcon(string) string {
 }
 
 func (c *aiCommand) ensureNotificationPNG(name string, content []byte) string {
-	dir := c.notificationIconDir()
+	dir, err := c.notificationIconDir()
+	if err != nil {
+		// No data home: fall back to the stock icon and write nothing.
+		return "dialog-information"
+	}
 	return writeNotificationPNG(dir, name, content)
 }
 
@@ -314,24 +318,22 @@ func (c *aiCommand) wslToastIconPath(iconPath string) string {
 	return `\\wsl.localhost\` + distro + strings.ReplaceAll(iconPath, "/", `\`)
 }
 
-func (c *aiCommand) notificationIconDir() string {
+// notificationIconDir is where the notification icon is written: the data
+// home's projmux/icons. Without XDG_DATA_HOME or a home directory it returns
+// the missing-HOME reason, and the notification goes out with no icon file.
+func (c *aiCommand) notificationIconDir() (string, error) {
 	if dataHome, err := config.ResolveDataHome("", c.env("XDG_DATA_HOME")); err == nil {
-		return filepath.Join(dataHome, "projmux", "icons")
+		return filepath.Join(dataHome, "projmux", "icons"), nil
 	}
-	home := ""
-	if c.homeDir != nil {
-		if dir, err := c.homeDir(); err == nil {
-			home = strings.TrimSpace(dir)
-		}
-	}
+	home := strings.TrimSpace(resolvedHome(c.homeDir))
 	if home == "" {
 		home = strings.TrimSpace(c.env("HOME"))
 	}
 	dataHome, err := config.ResolveDataHome(home, c.env("XDG_DATA_HOME"))
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return filepath.Join(dataHome, "projmux", "icons")
+	return filepath.Join(dataHome, "projmux", "icons"), nil
 }
 
 //go:embed assets/projmux-icon.png

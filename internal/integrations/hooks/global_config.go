@@ -17,7 +17,9 @@ const GlobalConfigRelativePath = "projmux/config.toml"
 
 // resolveGlobalConfigDir returns the directory that contains the global
 // config.toml file. It prefers XDG_CONFIG_HOME (consistent with the rest of
-// projmux) and falls back to $HOME/.config.
+// projmux) and falls back to $HOME/.config. A failing or blank home directory
+// counts as no HOME, so without either it returns the shared
+// *config.MissingHomeError reason.
 func resolveGlobalConfigDir(getenv func(string) string, homeDir func() (string, error)) (string, error) {
 	if getenv == nil {
 		getenv = os.Getenv
@@ -30,10 +32,7 @@ func resolveGlobalConfigDir(getenv func(string) string, homeDir func() (string, 
 	}
 	home, err := homeDir()
 	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(home) == "" {
-		return "", errors.New("home directory is required to resolve global config path")
+		home = ""
 	}
 	return config.ResolveConfigHome(home, getenv("XDG_CONFIG_HOME"))
 }

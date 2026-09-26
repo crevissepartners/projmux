@@ -316,7 +316,7 @@ func TestConfigEditSetRejectsUnknownAIMode(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				fixture := newConfigForwarderFixture(t)
-				path := fixture.ai.configFile()
+				path := mustAIConfigFile(t, fixture.ai)
 				const saved = "codex\n"
 				if seeded {
 					if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -376,7 +376,7 @@ func TestConfigEditSetWritesEachAllowedAIMode(t *testing.T) {
 			if err := fixture.app.Run([]string{"config", "edit", "--set", value}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("config edit --set %q error = %v", value, err)
 			}
-			got, err := os.ReadFile(fixture.ai.configFile())
+			got, err := os.ReadFile(mustAIConfigFile(t, fixture.ai))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -225,21 +225,31 @@ func TestAIConfigHomeMatchesTheTUIModeFile(t *testing.T) {
 		lookupEnv func(string) string
 		want      string
 	}{
-		{name: "no resolvers", want: ".config"},
-		{name: "home error", homeDir: failing, want: ".config"},
+		{name: "no resolvers"},
+		{name: "home error", homeDir: failing},
 		{name: "home", homeDir: func() (string, error) { return "/h", nil }, want: "/h/.config"},
 		{name: "XDG wins", homeDir: func() (string, error) { return "/h", nil }, lookupEnv: func(string) string { return " /x " }, want: "/x"},
 		{name: "blank XDG is unset", homeDir: func() (string, error) { return "/h", nil }, lookupEnv: func(string) string { return " " }, want: "/h/.config"},
-		{name: "blank XDG and empty home", homeDir: func() (string, error) { return "", nil }, lookupEnv: func(string) string { return " " }, want: ".config"},
+		{name: "blank XDG and empty home", homeDir: func() (string, error) { return "", nil }, lookupEnv: func(string) string { return " " }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := aiConfigHome(tc.homeDir, tc.lookupEnv); got != tc.want {
-				t.Fatalf("aiConfigHome() = %q, want %q", got, tc.want)
-			}
+			got, err := aiConfigHome(tc.homeDir, tc.lookupEnv)
 			c := &aiCommand{homeDir: tc.homeDir, lookupEnv: tc.lookupEnv}
+			file, fileErr := c.configFile()
+			if tc.want == "" {
+				// Without a config home both refuse with the missing-HOME
+				// reason instead of a path relative to the working directory.
+				if got != "" || !isMissingHome(err) || file != "" || !isMissingHome(fileErr) {
+					t.Fatalf("aiConfigHome() = %q, %v; configFile() = %q, %v; want the missing-HOME reason", got, err, file, fileErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("aiConfigHome() = %q, %v; want %q", got, err, tc.want)
+			}
 			central := config.DefaultPaths(tc.want, "").AINewWindowModeFile()
-			if filepath.Dir(c.configFile()) != filepath.Dir(central) {
-				t.Fatalf("configFile() %q and central %q differ in directory", c.configFile(), central)
+			if fileErr != nil || filepath.Dir(file) != filepath.Dir(central) {
+				t.Fatalf("configFile() %q, %v and central %q differ in directory", file, fileErr, central)
 			}
 		})
 	}

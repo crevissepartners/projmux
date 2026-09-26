@@ -44,13 +44,21 @@ func TestBlankXDGConfigHomeSharesOneDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hooks.GlobalConfigPath() error = %v", err)
 	}
+	aiSplitMode, err := (&aiCommand{homeDir: homeDir, lookupEnv: lookupEnv}).configFile()
+	if err != nil {
+		t.Fatalf("configFile() error = %v", err)
+	}
+	shellConfig, err := (&shellCommand{homeDir: homeDir, lookupEnv: lookupEnv}).defaultConfigPath()
+	if err != nil {
+		t.Fatalf("defaultConfigPath() error = %v", err)
+	}
 	for name, got := range map[string]string{
 		"pins":               filepath.Dir(paths.PinFile()),
-		"AI split mode":      filepath.Dir((&aiCommand{homeDir: homeDir, lookupEnv: lookupEnv}).configFile()),
+		"AI split mode":      filepath.Dir(aiSplitMode),
 		"AI config":          aiPaths.ConfigDir,
 		"doctor tmux.conf":   filepath.Dir(doctorPath),
 		"applied tmux.conf":  filepath.Dir(appConfigPath),
-		"shell tmux.conf":    filepath.Dir((&shellCommand{homeDir: homeDir, lookupEnv: lookupEnv}).defaultConfigPath()),
+		"shell tmux.conf":    filepath.Dir(shellConfig),
 		"global hook config": filepath.Dir(hooksPath),
 	} {
 		if got != want {
@@ -59,9 +67,11 @@ func TestBlankXDGConfigHomeSharesOneDirectory(t *testing.T) {
 	}
 }
 
-// TestConfigHomeSitesKeepTheirNoHomeFallback pins what each site does when
-// neither XDG_CONFIG_HOME nor a home directory is available.
-func TestConfigHomeSitesKeepTheirNoHomeFallback(t *testing.T) {
+// TestConfigHomeSitesRefuseWithoutAHome pins what each site does when
+// neither XDG_CONFIG_HOME nor a home directory is available: the sites that
+// once fell back to a working-directory .config return the missing-HOME
+// reason instead, and doctor keeps its own error.
+func TestConfigHomeSitesRefuseWithoutAHome(t *testing.T) {
 	t.Parallel()
 
 	blank := func(string) string { return " " }
@@ -73,21 +83,14 @@ func TestConfigHomeSitesKeepTheirNoHomeFallback(t *testing.T) {
 		{name: "empty home", homeDir: func() (string, error) { return "", nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, want := (&shellCommand{homeDir: tc.homeDir, lookupEnv: blank}).defaultConfigPath(), filepath.Join(".config", "projmux", "tmux.conf"); got != want {
-				t.Errorf("shell defaultConfigPath() = %q, want %q", got, want)
+			if got, err := (&shellCommand{homeDir: tc.homeDir, lookupEnv: blank}).defaultConfigPath(); got != "" || err == nil || err.Error() != "HOME or an absolute XDG_CONFIG_HOME is required" {
+				t.Errorf("shell defaultConfigPath() = %q, %v; want the missing-HOME reason", got, err)
 			}
 			if got, err := doctorGeneratedConfigPath(blank, tc.homeDir); err == nil || err.Error() != "resolve generated config home" {
 				t.Errorf("doctorGeneratedConfigPath() = %q, %v; want resolve generated config home", got, err)
 			}
-			paths, err := (&aiCommand{homeDir: tc.homeDir, lookupEnv: blank}).aiConfigPaths()
-			if tc.name == "home error" {
-				if err == nil || err.Error() != "resolve home directory: no home" {
-					t.Errorf("aiConfigPaths() = %+v, %v; want resolve home directory error", paths, err)
-				}
-				return
-			}
-			if err != nil || paths.ConfigDir != filepath.Join(".config", "projmux") {
-				t.Errorf("aiConfigPaths() = %+v, %v; want relative .config/projmux", paths, err)
+			if paths, err := (&aiCommand{homeDir: tc.homeDir, lookupEnv: blank}).aiConfigPaths(); paths.ConfigDir != "" || err == nil || err.Error() != "HOME or an absolute XDG_CONFIG_HOME is required" {
+				t.Errorf("aiConfigPaths() = %+v, %v; want the missing-HOME reason", paths, err)
 			}
 		})
 	}

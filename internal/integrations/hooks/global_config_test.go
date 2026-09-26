@@ -56,8 +56,8 @@ func TestGlobalConfigPathBlankXDGAndMissingHome(t *testing.T) {
 		wantErr string
 	}{
 		{name: "blank XDG falls back to home", xdg: " ", home: "/h", want: "/h/.config/projmux/config.toml"},
-		{name: "blank XDG and home error", xdg: "\t", homeErr: homeErr, wantErr: "no home"},
-		{name: "blank XDG and blank home", xdg: " ", home: " ", wantErr: "home directory is required to resolve global config path"},
+		{name: "blank XDG and home error", xdg: "\t", homeErr: homeErr, wantErr: "HOME or an absolute XDG_CONFIG_HOME is required"},
+		{name: "blank XDG and blank home", xdg: " ", home: " ", wantErr: "HOME or an absolute XDG_CONFIG_HOME is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			getenv := func(string) string { return tc.xdg }
