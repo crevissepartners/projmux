@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -114,6 +115,116 @@ func TestSendNotiHookDispatcherDepthGuardSkipsDispatch(t *testing.T) {
 	dispatcher.Dispatch(notify.Notification{ID: "n"}, notifyHookMeta{})
 	if runner.calls != 0 {
 		t.Fatalf("RunAsync call count = %d, want 0", runner.calls)
+	}
+}
+
+func TestSendNotiHookDispatcherResolvesHookCWD(t *testing.T) {
+	t.Parallel()
+
+	mkdir := func(t *testing.T, path string) {
+		t.Helper()
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		// setup returns the PROJMUX_CWD value, the getwd result, and the
+		// Context.CWD the dispatcher must hand to the runner.
+		setup func(t *testing.T) (envCWD string, getwd func() (string, error), want string)
+	}{
+		{
+			name: "inherited PROJMUX_CWD wins over marker root",
+			setup: func(t *testing.T) (string, func() (string, error), string) {
+				repo := t.TempDir()
+				mkdir(t, filepath.Join(repo, ".git"))
+				inherited := t.TempDir()
+				wd := filepath.Join(repo, "subdir")
+				return "  " + inherited + "  ", func() (string, error) { return wd, nil }, inherited
+			},
+		},
+		{
+			name: "blank PROJMUX_CWD falls through to marker root",
+			setup: func(t *testing.T) (string, func() (string, error), string) {
+				repo := t.TempDir()
+				mkdir(t, filepath.Join(repo, ".git"))
+				wd := filepath.Join(repo, "subdir")
+				return " \t ", func() (string, error) { return wd, nil }, repo
+			},
+		},
+		{
+			name: "projmux marker directory is a root",
+			setup: func(t *testing.T) (string, func() (string, error), string) {
+				repo := t.TempDir()
+				mkdir(t, filepath.Join(repo, ".projmux"))
+				wd := filepath.Join(repo, "a", "b")
+				mkdir(t, wd)
+				return "", func() (string, error) { return wd, nil }, repo
+			},
+		},
+		{
+			name: "nearest marker wins over outer marker",
+			setup: func(t *testing.T) (string, func() (string, error), string) {
+				outer := t.TempDir()
+				mkdir(t, filepath.Join(outer, ".git"))
+				inner := filepath.Join(outer, "nested")
+				mkdir(t, filepath.Join(inner, ".projmux"))
+				wd := filepath.Join(inner, "subdir")
+				return "", func() (string, error) { return wd, nil }, inner
+			},
+		},
+		{
+			name: "no marker uses working directory",
+			setup: func(t *testing.T) (string, func() (string, error), string) {
+				wd := filepath.Join(t.TempDir(), "plain")
+				mkdir(t, wd)
+				if root := nearestProjectMarker(wd); root != "" {
+					t.Skipf("temp dir %s has a .projmux or .git ancestor at %s; the walk reaches /", wd, root)
+				}
+				return "", func() (string, error) { return wd, nil }, wd
+			},
+		},
+		{
+			name: "getwd error yields empty",
+			setup: func(t *testing.T) (string, func() (string, error), string) {
+				return "", func() (string, error) { return "", errors.New("getwd failed") }, ""
+			},
+		},
+		{
+			name: "whitespace working directory yields empty",
+			setup: func(t *testing.T) (string, func() (string, error), string) {
+				return "", func() (string, error) { return "   ", nil }, ""
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			envCWD, getwd, want := tt.setup(t)
+			runner := &recordingNotifyHookRunner{}
+			dispatcher := &sendNotiHookDispatcher{
+				runner: runner,
+				lookupEnv: func(name string) string {
+					if name == "PROJMUX_CWD" {
+						return envCWD
+					}
+					return ""
+				},
+				getwd: getwd,
+			}
+
+			dispatcher.Dispatch(notify.Notification{ID: "n"}, notifyHookMeta{})
+
+			if runner.calls != 1 {
+				t.Fatalf("RunAsync call count = %d, want 1", runner.calls)
+			}
+			if runner.context.CWD != want {
+				t.Fatalf("Context.CWD = %q, want %q", runner.context.CWD, want)
+			}
+		})
 	}
 }
 
