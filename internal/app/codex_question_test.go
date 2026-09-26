@@ -41,6 +41,9 @@ func TestCodexQuestionChannelAnswersBlockingRequestThroughCLI(t *testing.T) {
 		newID:        agentquestion.NewID,
 		poll:         time.Millisecond,
 	}
+	// Cleanups run before t.TempDir removes the store, and after
+	// t.Context is canceled, so the waiter is joined first.
+	t.Cleanup(channel.Wait)
 	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 	params := json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"choice","header":"Pick","question":"Pick one","options":[{"label":"A","description":"first"},{"label":"B","description":"second"}]},{"id":"text","header":"Reason","question":"Reason","options":null}]}`)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -92,6 +95,7 @@ func TestCodexQuestionPopupAnswersThroughExistingResponder(t *testing.T) {
 		newID:        agentquestion.NewID,
 		poll:         time.Millisecond,
 	}
+	t.Cleanup(channel.Wait)
 	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -147,6 +151,7 @@ func TestCodexSecretQuestionKeepsNativePromptAndNeverEchoesCLIAnswer(t *testing.
 		newID:        agentquestion.NewID,
 		poll:         time.Millisecond,
 	}
+	t.Cleanup(channel.Wait)
 	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -202,6 +207,7 @@ func TestCodexQuestionChannelOffAndNonblockingLeaveProviderRequestAlone(t *testi
 		window:       func() time.Duration { return time.Minute },
 		newID:        agentquestion.NewID,
 	}
+	t.Cleanup(channel.Wait)
 	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 	notification := codexappserver.Notification{Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`), Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","header":"Pick","options":[{"label":"A"}]}]}`)}
 	channel.Handle(t.Context(), identity, notification, responder)
@@ -252,6 +258,7 @@ func TestCodexQuestionChannelCloseAndExpiryLeaveNativePromptAnswerable(t *testin
 				newID:        agentquestion.NewID,
 				poll:         time.Millisecond,
 			}
+			t.Cleanup(channel.Wait)
 			identity := codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: "%7", Generation: "gen-1", ThreadID: "thread-1"}
 			responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -306,6 +313,7 @@ func TestCodexQuestionNativeAnswerFirstRefusesLateCLIAnswer(t *testing.T) {
 		newID:        agentquestion.NewID,
 		poll:         time.Millisecond,
 	}
+	t.Cleanup(channel.Wait)
 	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

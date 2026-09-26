@@ -644,7 +644,13 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		bindingTicker := time.NewTicker(codexObserverBindingDelay)
 		progressTicker := time.NewTicker(25 * time.Millisecond)
 		notifications := client.Notifications()
-		questionCtx, endQuestions := context.WithCancel(ctx)
+		questionCtx, cancelQuestions := context.WithCancel(ctx)
+		// Every exit of this epoch, a return included, cancels its question
+		// waiters and joins them, so none writes the store afterwards.
+		endQuestions := func() {
+			cancelQuestions()
+			o.questions.Wait()
+		}
 		defer endQuestions()
 		o.lastAgentTurnID, o.lastAgentText = "", ""
 	eventLoop:

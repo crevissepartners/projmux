@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -29,6 +30,9 @@ type codexQuestionChannel struct {
 	// beforeCanceledClose, when set, runs on a waiter whose context ended,
 	// just before its store write. Tests use it to hold that write.
 	beforeCanceledClose func()
+	// waiters joins every waiter Handle started, so its owner can tell when
+	// none of them will touch the store again.
+	waiters sync.WaitGroup
 }
 
 type codexUserInputParams struct {
@@ -50,7 +54,7 @@ type codexUserInputResponse struct {
 // Handle records only a blocking request from the exact running Codex Agent.
 // An off channel leaves the request entirely to Codex's own input surface.
 // Bad or unavailable local state has the same safe fallback.
-func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycleIdentity, notification codexappserver.Notification, responder codexQuestionResponder) {
+func (c *codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycleIdentity, notification codexappserver.Notification, responder codexQuestionResponder) {
 	if notification.Method != "item/tool/requestUserInput" || len(notification.RawRequestID) == 0 || notification.RequestID == "" || responder == nil || c.loadRegistry == nil || c.store == nil || c.newID == nil {
 		return
 	}
@@ -105,16 +109,23 @@ func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycl
 	if err != nil {
 		return
 	}
-	go c.waitAndAnswer(ctx, store, record, notification.RawRequestID, responder, popup, identity.RuntimeID, claudeQuestionAskerOf(registry, *agent))
+	asker := claudeQuestionAskerOf(registry, *agent)
+	c.waiters.Go(func() {
+		c.waitAndAnswer(ctx, store, record, notification.RawRequestID, responder, popup, identity.RuntimeID, asker)
+	})
 }
 
-// Wait is meant to return once every waiter Handle started has returned.
-// Not joined yet.
-func (c *codexQuestionChannel) Wait() {}
+// Wait returns once every waiter Handle started has returned. Its owner
+// cancels their context first; after Wait no waiter writes the store.
+func (c *codexQuestionChannel) Wait() {
+	if c != nil {
+		c.waiters.Wait()
+	}
+}
 
 // HandleResolved marks only the matching waiting Codex request as answered in
 // Codex's own input surface. An earlier CLI answer remains answered here.
-func (c codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
+func (c *codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
 	if event.Kind != codexappserver.LifecycleRequestResolved || event.ThreadID != identity.ThreadID || event.RequestID == "" || c.store == nil {
 		return
 	}
@@ -133,7 +144,7 @@ func (c codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, ev
 	}
 }
 
-func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder, questionPopup claudeQuestionPopup, paneID string, asker claudeQuestionAsker) {
+func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder, questionPopup claudeQuestionPopup, paneID string, asker claudeQuestionAsker) {
 	poll := c.poll
 	if poll <= 0 {
 		poll = claudeQuestionPoll
