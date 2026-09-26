@@ -218,9 +218,13 @@ func TestPersonaLaneGateTable(t *testing.T) {
 			flags.persona = "reviewer"
 			err := requirePersonaLane(canonicalCreateAgent, test.provider, flags)
 			if test.refused {
+				wantReason := persona.ReasonProviderUnsupported
+				if test.name == "codex resume" {
+					wantReason = personaReasonCodexInstructionsImmutable
+				}
 				if err == nil || !IsUsageError(err) ||
-					!strings.Contains(err.Error(), persona.ReasonProviderUnsupported) {
-					t.Fatalf("err = %v, want a usage error carrying %s", err, persona.ReasonProviderUnsupported)
+					!strings.Contains(err.Error(), wantReason) {
+					t.Fatalf("err = %v, want a usage error carrying %s", err, wantReason)
 				}
 				return
 			}

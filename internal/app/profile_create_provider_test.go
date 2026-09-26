@@ -161,7 +161,7 @@ func TestCreateAgentWithoutProviderHoldsTheProfileProviderToEveryArgvCheck(t *te
 			[]string{"--profile", "claudeonly", "--interactive-only"}},
 		{"reply-only on codex", aiModeCodex, "--dialogue-reply-only requires a Claude Agent/provider",
 			[]string{"--label", "role=reviewer", "--dialogue-reply-only"}},
-		{"instructions on the codex plain lane", aiModeCodex, "applies to --provider codex only on a create with a prompt",
+		{"instructions on the codex plain lane", aiModeCodex, "only when creating a new Agent with a prompt through its native thread",
 			[]string{"--profile", "codexer", "--interactive-only", "--instructions", "go-reviewer"}},
 		{"model on antigravity", aiModeAntigravity, "--model and --effort apply only to --provider claude or codex",
 			[]string{"--profile", "antigravityonly", "--model", "opus"}},

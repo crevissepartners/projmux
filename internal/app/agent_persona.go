@@ -130,6 +130,9 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		provider = coremetadata.NormalizeProvider(target.Status.SessionRef.Provider)
 	}
 	if provider != aiModeClaude {
+		if provider == aiModeCodex {
+			return refuse(personaReasonCodexInstructionsImmutable, "cannot change its instructions: Codex fixes developer instructions when the thread starts, and resume keeps the original message; create a new Codex Agent with a prompt to use different instructions")
+		}
 		if noun == "instructions" {
 			return refuse(persona.ReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; named instructions apply only to --provider %s", target.Spec.Provider, aiModeClaude))
 		}

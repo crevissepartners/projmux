@@ -234,6 +234,8 @@ projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <re
 
 A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.
 
+Codex keeps the developer instructions its thread started with; resume cannot replace them.
+
 ### `projmux agent instructions`
 
 Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation
@@ -255,6 +257,8 @@ Allowed effects:
 projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
+
+Codex refuses instruction changes (codex-instructions-immutable): its thread replays the developer message recorded when it started.
 
 Subcommands:
 
@@ -332,6 +336,8 @@ Allowed effects:
 projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
+
+Codex refuses persona changes (codex-instructions-immutable): its thread replays the developer message recorded when it started.
 
 Subcommands:
 
@@ -1531,6 +1537,8 @@ An explicit `--provider` wins, and a profile that names another provider is refu
 
 When neither decides it -- no profile, `--profile none`, or a profile without `provider` -- the create is refused as requiring `--provider`.
 
+Codex applies --instructions or --persona only when a new Agent starts with a prompt through its native thread. A promptless or --interactive-only Codex create with instructions is refused before creation.
+
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
 ### `projmux create notification`
@@ -1576,6 +1584,8 @@ projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <pat
 ```
 
 Profile sandbox and approval apply on native and plain CLI creates. A plain CLI create with approval=untrusted is refused before creating an Agent.
+
+Instructions from --instructions, --persona, or a Profile apply when the create includes a prompt and opens a native thread. Promptless and --interactive-only creates with instructions are refused.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 

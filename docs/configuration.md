@@ -1328,9 +1328,12 @@ older alias `projmux persona`: one store, `<config dir>/personas/<name>.md`,
 and one profile key. What the instructions do depends on the lane, exactly as
 for `create --instructions`: Claude appends them to the system prompt, and
 Codex takes them only on a prompted create that opens its own thread (see
-[CLI guide](cli-guide.md#agent-profiles-at-create)); this key does not add any
-other Codex lane. A profile keeps the instructions it names: `instructions
-delete <name>` and `persona delete <name>` refuse with exit 2
+[CLI guide](cli-guide.md#agent-profiles-at-create)); a promptless Codex create
+with Profile instructions is refused before creating anything. Codex keeps
+the developer instructions recorded when the thread started; attach, detach,
+and resume cannot replace them (`codex-instructions-immutable`). A profile
+keeps the instructions it names: `instructions delete <name>` and
+`persona delete <name>` refuse with exit 2
 (`profile-instructions-in-use`) while any stored profile that parses names
 them, valid or not, and name each such profile. Change the profile with
 `projmux profile set <name>` or remove it with `projmux profile delete <name>
