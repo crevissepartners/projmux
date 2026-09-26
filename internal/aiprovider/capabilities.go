@@ -98,6 +98,17 @@ func claudeOnly(mode AgentSupportMode, precision CompletionPrecision) []AgentCap
 	return out
 }
 
+func questionCells(precision CompletionPrecision) []AgentCapabilityCell {
+	out := claudeOnly(SupportProviderHook, precision)
+	for i := range out {
+		if out[i].Provider == Codex {
+			out[i].Mode = SupportNativeExact
+			out[i].CompletionPrecision = precision
+		}
+	}
+	return out
+}
+
 // usageAdapters marks only registry providers with a usage adapter as
 // supported; the rest are explicit unsupported cells.
 func usageAdapters(precision CompletionPrecision) []AgentCapabilityCell {
@@ -153,10 +164,10 @@ var agentActions = []AgentAction{
 	{ID: "message.send", Group: "message", Route: "agent message send", Callable: true, Cells: coordination(CompletionBrokerAccepted, Codex, Claude)},
 	{ID: "message.status", Group: "message", Route: "agent message status", Callable: true, Cells: coordination(CompletionDeliveryReceipt, Codex, Claude)},
 	{ID: "wait.idle", Group: "wait", Route: "agent wait", Callable: true, Cells: cells(SupportGenericRegistry, CompletionInteractionIdle)},
-	{ID: "question.enable", Group: "question", Route: "agent question enable", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionRegistryCommit)},
-	{ID: "question.disable", Group: "question", Route: "agent question disable", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionRegistryCommit)},
-	{ID: "question.list", Group: "question", Route: "agent question list", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionRegistryRead)},
-	{ID: "question.answer", Group: "question", Route: "agent question answer", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionLocalConfigCommit)},
+	{ID: "question.enable", Group: "question", Route: "agent question enable", Callable: true, Cells: questionCells(CompletionRegistryCommit)},
+	{ID: "question.disable", Group: "question", Route: "agent question disable", Callable: true, Cells: questionCells(CompletionRegistryCommit)},
+	{ID: "question.list", Group: "question", Route: "agent question list", Callable: true, Cells: questionCells(CompletionRegistryRead)},
+	{ID: "question.answer", Group: "question", Route: "agent question answer", Callable: true, Cells: questionCells(CompletionLocalConfigCommit)},
 	{ID: "sessions.list", Group: "sessions", Route: "agent sessions list", Callable: true, Cells: claudeOnly(SupportProviderHook, CompletionRegistryRead)},
 }
 

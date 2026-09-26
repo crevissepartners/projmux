@@ -23,8 +23,7 @@ const (
 	questionReasonNotFound = "question-not-found"
 	// questionReasonNotPending: the question was already answered.
 	questionReasonNotPending = "question-not-pending"
-	// questionReasonExpired: the answer window ended; Claude Code asked the
-	// question in its own prompt.
+	// questionReasonExpired: the answer window ended.
 	questionReasonExpired = "question-expired"
 	// questionReasonClosed: the prompt was canceled, or the channel was turned
 	// off, before an answer arrived.
@@ -33,7 +32,7 @@ const (
 	questionReasonInvalidAnswer = "question-invalid-answer"
 	// questionReasonChannelOff: the Agent is not opted in.
 	questionReasonChannelOff = "question-channel-off"
-	// questionReasonProviderUnsupported: the Agent is not a Claude Agent.
+	// questionReasonProviderUnsupported: the Agent is not a supported Agent.
 	questionReasonProviderUnsupported = "question-provider-unsupported"
 )
 
@@ -52,16 +51,10 @@ type agentQuestionRequest struct {
 	texts      repeatedFlag
 }
 
-// runQuestion lets the operator answer an opted-in Claude Agent's
-// AskUserQuestion prompts from the command line.
-//
-// `enable` and `disable` set and clear the Agent's question channel
-// annotation. While it is set, the PreToolUse hook `agent integrate claude`
-// installs holds each question open for a bounded window and records it, as it
-// also does for every Agent while the central agent-question-answering setting
-// is `projmux`; `list` shows those records and `answer` settles one. `disable` also closes
-// every question the Agent still holds open, which hands each back to Claude
-// Code's own prompt at once.
+// runQuestion lets the operator answer an opted-in Claude or Codex Agent's
+// questions from the command line. enable and disable set the Agent's question
+// channel annotation; list shows waiting records and answer settles one.
+// Disabling closes every question that Agent still holds open.
 func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) error {
 	request, err := parseAgentQuestionArgs(args, stderr)
 	if err != nil {
@@ -83,8 +76,9 @@ func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) erro
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", request.spelling, agent.Metadata.Name, detail, reason))
 	}
-	if coremetadata.NormalizeProvider(agent.Spec.Provider) != aiModeClaude {
-		return refuse(questionReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; the question channel applies only to --provider %s", agent.Spec.Provider, aiModeClaude))
+	provider := coremetadata.NormalizeProvider(agent.Spec.Provider)
+	if provider != aiModeClaude && provider != aiModeCodex {
+		return refuse(questionReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; the question channel applies only to Claude and Codex", agent.Spec.Provider))
 	}
 	switch request.action {
 	case "enable":
@@ -224,9 +218,11 @@ type agentQuestionView struct {
 // addresses it.
 type agentQuestionPrompt struct {
 	Number      int                   `json:"number"`
+	ID          string                `json:"id,omitempty"`
 	Header      string                `json:"header,omitempty"`
 	Question    string                `json:"question"`
 	MultiSelect bool                  `json:"multiSelect"`
+	IsSecret    bool                  `json:"isSecret,omitempty"`
 	Options     []agentQuestionOption `json:"options"`
 }
 
@@ -257,9 +253,12 @@ func (c *agentCommand) listQuestions(request agentQuestionRequest, agent coremet
 		}
 		view := agentQuestionView{ID: record.ID, State: record.State, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers}
 		for i, question := range questions {
-			prompt := agentQuestionPrompt{Number: i + 1, Header: question.Header, Question: question.Question, MultiSelect: question.MultiSelect}
+			prompt := agentQuestionPrompt{Number: i + 1, ID: question.ID, Header: question.Header, Question: question.Question, MultiSelect: question.MultiSelect, IsSecret: question.IsSecret}
 			for j, option := range question.Options {
 				prompt.Options = append(prompt.Options, agentQuestionOption{Number: j + 1, Label: option.Label, Description: option.Description})
+			}
+			if question.IsSecret {
+				delete(view.Answers, question.ID)
 			}
 			view.Prompts = append(view.Prompts, prompt)
 		}
@@ -302,7 +301,17 @@ func writeAgentQuestionList(out io.Writer, result agentQuestionList, now time.Ti
 				}
 				b.WriteString("\n")
 			}
-			if answer, ok := view.Answers[prompt.Question]; ok {
+			answerKey := prompt.Question
+			if prompt.ID != "" {
+				answerKey = prompt.ID
+			}
+			if answer, ok := view.Answers[answerKey]; ok {
+				if prompt.ID != "" {
+					var values []string
+					if json.Unmarshal([]byte(answer), &values) == nil {
+						answer = strings.Join(values, ", ")
+					}
+				}
 				fmt.Fprintf(&b, "     answer: %s\n", answer)
 			}
 		}
@@ -339,7 +348,12 @@ func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coreme
 	if err != nil {
 		return refuse(questionReasonInvalidAnswer, err.Error())
 	}
-	answers, err := agentquestion.BuildAnswers(questions, selections)
+	var answers map[string]string
+	if record.Provider == "codex" {
+		answers, err = agentquestion.BuildCodexAnswers(questions, selections)
+	} else {
+		answers, err = agentquestion.BuildAnswers(questions, selections)
+	}
 	if err != nil {
 		return refuse(questionReasonInvalidAnswer, err.Error())
 	}

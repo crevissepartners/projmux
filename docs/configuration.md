@@ -472,9 +472,9 @@ and exact unresolved approval requests project the Agent interaction and badge.
 The native observer refreshes a continuing turn or wait before the 30-minute
 interaction freshness window expires. A `requestUserInput` request projects
 `input_required` even before a separate thread-status update arrives; its
-resolution or the turn's completion releases that state. This is status
-visibility only: answering a Codex question through `agent question answer`
-is not yet supported.
+resolution or the turn's completion releases that state. When the question
+channel is on, blocking Codex questions can be listed and answered through
+`agent question list` and `agent question answer`.
 An exact successful `turn/completed` projects response-complete and queues a
 completion notification with the last agent message (or `Ready` if none is
 available). A failed turn or `systemError` queues a critical `error` notification
@@ -789,7 +789,8 @@ The saved projdir file is `$HOME/.config/projmux/projdir`. It does not follow
 
 ## Agent Question Answering
 
-How a Claude Agent's `AskUserQuestion` is answered is one word stored at:
+How a Claude Agent's `AskUserQuestion` or a Codex Agent's blocking
+`requestUserInput` is answered is one word stored at:
 
 ```text
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering
@@ -797,22 +798,25 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering
 
 | Value | Way | Meaning |
 | --- | --- | --- |
-| `claude` (default) | 1 | Claude Code shows its own question prompt; projmux stays out of it |
-| `projmux` | 2 | projmux records the question, opens its picker in a popup on the client of the Agent's tmux server that you used most recently, and `projmux agent question answer` answers the same question |
+| `claude` (default) | 1 | The provider shows its own question prompt; projmux stays out of it |
+| `projmux` | 2 | projmux records the question for `projmux agent question list` and `answer`; Claude also opens its picker in a popup |
 
 Set it with `projmux config agent-questions --answering <claude|projmux>`,
-or write the file. The setting applies to every Claude Agent on this machine. The value
+or write the file. The setting applies to every Claude and native Codex Agent on this machine. The value
 is read case-insensitively with surrounding whitespace ignored. A
 missing, empty, or unreadable file, and any other value, is way 1. An Agent
 opted in with `projmux agent question enable` is way 2 whatever the file
-says. The setting applies only to questions from a projmux Claude Agent's own
-conversation; other Claude sessions and subagents always get way 1. See
+says. Codex handles only blocking app-server requests; a Codex Agent on the
+plain CLI lane has no app-server question channel. Codex questions remain CLI
+only in way 2; popup answering is a separate feature. For Claude, the setting
+applies only to a projmux Agent's own conversation; other Claude sessions and
+subagents always get way 1. See
 [hooks.md](hooks.md#answering-askuserquestion-in-projmux).
 
 ## Agent Question Window
 
-In way 2 the Claude question hook holds the `AskUserQuestion` open for an
-answer for a seconds window stored at:
+In way 2 the Claude question hook or Codex native observer holds the question
+for a command-line answer for a seconds window stored at:
 
 ```text
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds
@@ -828,6 +832,9 @@ end the wait. A value outside the range, or a file that holds neither one
 integer nor `unlimited`, reads as `900`; a projmux older than the word also
 reads `unlimited` as `900`. It applies only in way 2 (see
 [Agent Question Answering](#agent-question-answering)); way 1 never waits.
+For Codex, an expired or disabled held request remains unanswered by projmux.
+The Agent may still be waiting in Codex's own input surface; projmux does not
+send a substitute answer.
 
 The installed Claude Code hook `timeout` is the fixed ceiling `604800` seconds
 (7 days) and does not depend on this file. The ceiling is the safety net for a

@@ -84,6 +84,7 @@ func ValidID(id string) bool { return idPattern.MatchString(id) }
 // Record is one question set and its outcome.
 type Record struct {
 	ID        string            `json:"id"`
+	Provider  string            `json:"provider,omitempty"`
 	AgentUID  string            `json:"agentUID"`
 	PaneUID   string            `json:"paneUID,omitempty"`
 	SessionID string            `json:"sessionID,omitempty"`
@@ -107,7 +108,33 @@ func (r Record) Effective(now time.Time) Record {
 }
 
 // ParsedQuestions decodes the stored question set.
-func (r Record) ParsedQuestions() ([]Question, error) { return ParseQuestions(r.Questions) }
+func (r Record) ParsedQuestions() ([]Question, error) {
+	if r.Provider == "codex" {
+		return ParseCodexQuestions(r.Questions)
+	}
+	return ParseQuestions(r.Questions)
+}
+
+func (r Record) validateAnswers(questions []Question, answers map[string]string) error {
+	if r.Provider != "codex" {
+		return ValidateAnswers(questions, answers)
+	}
+	if len(answers) != len(questions) {
+		return ErrInvalidAnswer
+	}
+	for _, question := range questions {
+		var values []string
+		if json.Unmarshal([]byte(answers[question.ID]), &values) != nil || len(values) == 0 {
+			return ErrInvalidAnswer
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				return ErrInvalidAnswer
+			}
+		}
+	}
+	return nil
+}
 
 type diskState struct {
 	Version int      `json:"version"`
@@ -256,7 +283,7 @@ func (s *Store) Answer(id, agentUID string, answers map[string]string) (Record, 
 		if err != nil {
 			return ErrMalformedStore
 		}
-		if err := ValidateAnswers(questions, answers); err != nil {
+		if err := record.validateAnswers(questions, answers); err != nil {
 			return err
 		}
 		record.State = StateAnswered
@@ -439,7 +466,10 @@ func validRecord(record Record) bool {
 		record.Deadline.IsZero() || record.UpdatedAt.IsZero() {
 		return false
 	}
-	if _, err := ParseQuestions(record.Questions); err != nil {
+	if record.Provider != "" && record.Provider != "codex" {
+		return false
+	}
+	if _, err := record.ParsedQuestions(); err != nil {
 		return false
 	}
 	switch record.State {
