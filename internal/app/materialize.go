@@ -1318,10 +1318,26 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 			"owned created "+string(entry.Kind)+" is absent",
 			"-t", entry.ID)
 		action.Order = len(steps) + 1
+		// killed is set only by this step's own successful kill, never by the
+		// Apply fallback below that explains a failed kill away.
+		killed := false
 		steps = append(steps, runtimeMutationStep{
 			Action:           action,
 			TargetRouteGuard: m.targetRouteGuard(action),
-			Reobserve:        func(ctx context.Context) (bool, error) { return m.observeMutationEffect(ctx, action) },
+			Reobserve: func(ctx context.Context) (bool, error) {
+				absent, err := m.observeMutationEffect(ctx, action)
+				// Killing the server's last session ends the server, so the
+				// post-write route read of the plan's own socket answers with
+				// a teardown response instead of a listing. After this step's
+				// own kill succeeded, that ended server is the absence it
+				// wanted. The pre-write observation (killed is false) and any
+				// other failure keep their verdict.
+				if err != nil && killed && tmuxServerTeardownFailure(err) &&
+					filepath.Clean(action.Target.PhysicalSocket) == filepath.Clean(m.expectedSocketPath) {
+					return true, nil
+				}
+				return absent, err
+			},
 			Guard: func(ctx context.Context) error {
 				if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
 					return err
@@ -1339,6 +1355,7 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 			Apply: func(ctx context.Context) error {
 				_, err := runRuntimeMutationCommand(ctx, m.runner, action)
 				if err == nil {
+					killed = true
 					return nil
 				}
 				// Every guard ran before the first kill, so an earlier kill of
@@ -1359,6 +1376,23 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 	if err := executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps)); err != nil && m.warn != nil {
 		fmt.Fprintf(m.warn, "projmux: rollback stopped before an unguarded runtime write: %v\n", err)
 	}
+}
+
+// tmuxServerTeardownFailure is the closed set of tmux responses for a server
+// that is ending or has ended: a recognized no-server refusal (teardown
+// finished) or a typed exit whose stderr is exactly "server exited
+// unexpectedly" (teardown in progress). Any other failure, typed or not, is not
+// a teardown.
+func tmuxServerTeardownFailure(err error) bool {
+	if inttmux.IsNoServerFailure(err) {
+		return true
+	}
+	var carrier interface{ CommandFailure() inttmux.CommandFailure }
+	if !errors.As(err, &carrier) {
+		return false
+	}
+	failure := carrier.CommandFailure()
+	return failure.Kind == inttmux.CommandFailureExit && strings.TrimSpace(failure.Stderr) == "server exited unexpectedly"
 }
 
 // ensureSession makes the Project's persistent tmux session live.
