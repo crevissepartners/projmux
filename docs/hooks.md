@@ -38,6 +38,10 @@ Project-local hooks are discovered from the lifecycle context's `PROJMUX_CWD`:
 projmux reads `.projmux/config.toml` directly in that directory. It does not
 look in parent directories.
 
+For `send-noti`, that directory is resolved as described in
+[Send Noti](#send-noti-working-directory): when `PROJMUX_CWD` is not inherited, it is the nearest
+`.projmux` or `.git` root above the notifying process's working directory.
+
 File-form hooks from the historical global
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/hooks/<event>` layout and the project
 `.projmux/<event>` and `.projmux/hooks/<event>` layouts are no longer executed.
@@ -210,6 +214,33 @@ The hook environment also includes:
 If a `send-noti` hook itself calls `projmux create notification`, projmux sees
 `PROJMUX_NOTIFY_HOOK_DEPTH=1` in the child environment and skips another
 `send-noti` hook fire. The queue write itself still succeeds.
+
+### Send Noti Working Directory
+
+The `PROJMUX_CWD` a `send-noti` hook receives is resolved by the projmux
+process that queues the notification, whether that is
+`projmux create notification` or projmux queuing an AI agent notification, in
+this order:
+
+1. If that process's environment has a `PROJMUX_CWD` that is non-empty after
+   trimming whitespace, projmux uses the trimmed value as is. It does not walk
+   up for markers or check that the directory exists.
+2. Otherwise projmux reads its working directory and uses the nearest
+   directory, starting at the working directory itself and walking up to the
+   filesystem root, that contains a `.projmux` or `.git` entry (file or
+   directory).
+3. If no such directory exists, projmux uses the working directory itself.
+4. If the working directory cannot be read or is empty, the value is empty.
+
+The same value is the hook command's working directory and the only directory
+whose `.projmux/config.toml` is read for a project `send-noti` hook; projmux
+does not look in its parents. From a subdirectory of a repository, the project
+hook therefore comes from the repository root's `.projmux/config.toml`. When
+the value is empty, no project config is read and the hook runs in the
+dispatching process's working directory.
+
+A `projmux create notification` run from inside another hook inherits that
+hook's `PROJMUX_CWD`, so it takes rule 1.
 
 `Settings > Notifications > Delivery sources` surfaces the active Codex,
 Claude, Antigravity, and tmux AI notify diagnostics: status, conflicts, config
@@ -956,7 +987,7 @@ empty.
 | Variable | `pre-create` | `post-create` | `post-attach` | `send-noti` |
 | --- | --- | --- | --- | --- |
 | `PROJMUX_SESSION` | new session name | new session name | target session name | target session when known; otherwise empty |
-| `PROJMUX_CWD` | requested session directory | created session directory | resolved target directory; may be empty if lookup fails | dispatcher working directory |
+| `PROJMUX_CWD` | requested session directory | created session directory | resolved target directory; may be empty if lookup fails | `PROJMUX_CWD` inherited by the dispatching process; otherwise the nearest `.projmux` or `.git` root above its working directory, else that directory; empty if it cannot be read — see [Send Noti](#send-noti-working-directory) |
 | `PROJMUX_SESSION_KIND` | `persistent` or `ephemeral` | `persistent` or `ephemeral` | empty | empty |
 | `PROJMUX_VERSION` | projmux version | projmux version | projmux version | projmux version |
 | `PROJMUX_SOCKET` | app socket metadata (`projmux`) | app socket metadata (`projmux`) | app socket metadata (`projmux`) | queue-entry socket when known; otherwise omitted |
@@ -1047,7 +1078,10 @@ run = "$HOME/.local/bin/projmux-post-create; $HOME/.local/bin/projmux-gh-token"
      the global and project entries. A project hook must be in
      `.projmux/config.toml` directly in the hook's `PROJMUX_CWD` directory,
      which is the session directory for `pre-create`, `post-create`, and
-     `post-attach`. The runner does not look in parent directories. Without
+     `post-attach`. For `send-noti` it is the inherited `PROJMUX_CWD`,
+     otherwise the nearest `.projmux` or `.git` root above the notifying
+     process's working directory; see [Send Noti](#send-noti-working-directory).
+     The runner does not look in parent directories. Without
      `PROJMUX_CWD`, `projmux hook list` uses `.projmux/config.toml` in the
      current directory, or walks up to the nearest `.projmux` or `.git`. When
      it shows a parent file, it says that sessions created in the current
