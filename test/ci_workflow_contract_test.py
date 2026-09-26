@@ -203,6 +203,91 @@ def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
         raise AssertionError(f"unit job steps must run in order: {order}")
 
 
+GITHUB_COM_ONLY = "github.server_url == 'https://github.com'"
+UPLOAD_STEP_STATUS = {
+    "Upload scanner evidence": "always()",
+    "Upload contract evidence": "always()",
+    "Preserve failing attempt evidence": "failure()",
+    "Preserve passing attempt evidence": "success()",
+}
+
+
+def workflow_jobs(workflow: str) -> dict[str, str]:
+    lines = workflow.splitlines()
+    try:
+        start = lines.index("jobs:") + 1
+    except ValueError as exc:
+        raise AssertionError("workflow has no jobs: section") from exc
+    job_ids = []
+    for line in lines[start:]:
+        if line and not line.startswith(" "):
+            break
+        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
+        if match:
+            job_ids.append(match.group(1))
+    return {job_id: workflow_job(workflow, job_id) for job_id in job_ids}
+
+
+def job_steps(job: str) -> list[str]:
+    lines = job.splitlines()
+    try:
+        start = lines.index("    steps:") + 1
+    except ValueError:
+        return []
+    steps: list[list[str]] = []
+    for line in lines[start:]:
+        if line.startswith("    ") and not line.startswith("     "):
+            break
+        if line.startswith("      - "):
+            steps.append([])
+        if steps:
+            steps[-1].append(line)
+    return ["\n".join(step) for step in steps]
+
+
+def step_field(step: str, key: str) -> str | None:
+    values = [
+        line.split(":", 1)[1].strip()
+        for line in step.splitlines()
+        if line.startswith((f"      - {key}: ", f"        {key}: "))
+    ]
+    if len(values) > 1:
+        raise AssertionError(f"workflow step repeats {key}: {values}")
+    return values[0] if values else None
+
+
+def artifact_upload_steps(workflow: str) -> list[tuple[str, str, str]]:
+    return [
+        (job_id, step_field(step, "name") or "", step)
+        for job_id, job in workflow_jobs(workflow).items()
+        for step in job_steps(job)
+        if (step_field(step, "uses") or "").startswith("actions/upload-artifact@")
+    ]
+
+
+def assert_artifact_uploads_run_only_on_github_com(workflow: str) -> int:
+    uploads = artifact_upload_steps(workflow)
+    if not uploads:
+        raise AssertionError("workflow has no actions/upload-artifact steps")
+    for job_id, name, step in uploads:
+        where = f"job {job_id!r} step {name!r}"
+        if name not in UPLOAD_STEP_STATUS:
+            raise AssertionError(
+                f"{where}: unknown upload step; pin its status function in "
+                "UPLOAD_STEP_STATUS"
+            )
+        condition = step_field(step, "if")
+        if condition is None:
+            raise AssertionError(f"{where}: upload step has no if:")
+        parts = [part.strip() for part in condition.split("&&")]
+        expected = [UPLOAD_STEP_STATUS[name], GITHUB_COM_ONLY]
+        if parts != expected:
+            raise AssertionError(
+                f"{where}: if must be {' && '.join(expected)!r}, got {condition!r}"
+            )
+    return len(uploads)
+
+
 class CIWorkflowContractTest(unittest.TestCase):
     def test_required_unit_job_runs_pinned_deadcode_without_bypass(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -843,6 +928,34 @@ class CIWorkflowContractTest(unittest.TestCase):
                     f"required gate: unsuccessful children: {failed}=failure",
                     completed.stderr,
                 )
+
+    def test_artifact_uploads_run_only_on_github_com(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        # The four Security evidence uploads plus the four e2e attempt uploads.
+        self.assertEqual(assert_artifact_uploads_run_only_on_github_com(workflow), 8)
+
+    def test_artifact_upload_contract_rejects_a_missing_condition(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        for job_id, name, step in artifact_upload_steps(workflow):
+            # Identical if: lines repeat across steps, so mutate this block only;
+            # its artifact name makes the whole block unique in the workflow.
+            self.assertEqual(workflow.count(step), 1, f"{job_id} {name}")
+            condition = step_field(step, "if")
+            status = UPLOAD_STEP_STATUS[name]
+            for dropped, remaining in (
+                ("server", status),
+                ("status", GITHUB_COM_ONLY),
+            ):
+                with self.subTest(job=job_id, step=name, dropped=dropped):
+                    old_line = f"        if: {condition}"
+                    self.assertEqual(step.count(old_line), 1)
+                    mutated_step = step.replace(old_line, f"        if: {remaining}")
+                    mutated = workflow.replace(step, mutated_step)
+                    self.assertEqual(
+                        len(mutated.splitlines()), len(workflow.splitlines())
+                    )
+                    with self.assertRaises(AssertionError):
+                        assert_artifact_uploads_run_only_on_github_com(mutated)
 
 
 DOCKER_INVOCATION_END = "--projmux-fake-docker-invocation-end--"

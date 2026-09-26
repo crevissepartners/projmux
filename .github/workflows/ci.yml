@@ -43,8 +43,12 @@ jobs:
           SECURITY_EVIDENCE_DIR: artifacts/security/go-security
         run: make security-go
 
+      # upload-artifact v4 is unsupported on GHES-compatible servers such as a
+      # private Forgejo mirror, so every upload step runs only on github.com and
+      # elsewhere the evidence stays in the job log.
+      # test/ci_workflow_contract_test.py enforces this.
       - name: Upload scanner evidence
-        if: always()
+        if: always() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: security-go-evidence
@@ -92,7 +96,7 @@ jobs:
         run: make security-static
 
       - name: Upload scanner evidence
-        if: always()
+        if: always() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: security-static-evidence
@@ -142,7 +146,7 @@ jobs:
         run: make security-policy
 
       - name: Upload scanner evidence
-        if: always()
+        if: always() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: security-policy-evidence
@@ -187,7 +191,7 @@ jobs:
         run: make security-contract
 
       - name: Upload contract evidence
-        if: always()
+        if: always() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: security-contract-evidence
@@ -492,7 +496,7 @@ jobs:
       # skip binary/: it is 99.8% of the attempt size and is reproducible from the
       # commit plus the binary_sha256 already recorded in build.json.
       - name: Preserve failing attempt evidence
-        if: failure()
+        if: failure() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: e2e-evidence-failure-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}
@@ -503,7 +507,7 @@ jobs:
           retention-days: 14
 
       - name: Preserve passing attempt evidence
-        if: success()
+        if: success() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: e2e-evidence-success-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}
@@ -544,7 +548,7 @@ jobs:
       # skip binary/: it is 99.8% of the attempt size and is reproducible from the
       # commit plus the binary_sha256 already recorded in build.json.
       - name: Preserve failing attempt evidence
-        if: failure()
+        if: failure() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: e2e-evidence-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}
@@ -555,7 +559,7 @@ jobs:
           retention-days: 14
 
       - name: Preserve passing attempt evidence
-        if: success()
+        if: success() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: e2e-evidence-success-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}
