@@ -14,8 +14,11 @@ import (
 // like AgentQuestionAnsweringFileName, and is a separate setting: the question
 // way never decides a permission request, nor this one a question.
 //
-// It covers Claude permission requests only. Codex approvals are not captured;
-// `projmux agent approval review` answers those through the Codex app-server.
+// Its effect covers two things: capturing Claude permission requests, and
+// allowing remote (non-interactive) answers with `projmux agent approval
+// answer` for both Claude and Codex Agents. Codex approvals are never
+// captured: the provider holds them, and `projmux agent approval review`
+// answers them interactively in either way.
 const AgentApprovalAnsweringFileName = "agent-approval-answering"
 
 // AgentApprovalWindowSecondsFileName holds how long the Claude permission hook
@@ -28,11 +31,14 @@ type AgentApprovalAnswering string
 
 const (
 	// AgentApprovalAnsweringClaude is way 1 and the default: Claude Code shows
-	// its own permission prompt, and the permission hook stays out of it.
+	// its own permission prompt, the permission hook stays out of it, and
+	// `projmux agent approval answer` is refused for Claude and Codex alike.
 	AgentApprovalAnsweringClaude AgentApprovalAnswering = "claude"
 	// AgentApprovalAnsweringProjmux captures the request: projmux records it,
-	// and `projmux agent approval answer` can allow or deny it once. Claude
-	// Code's own prompt stays usable, and the first answer wins.
+	// and `projmux agent approval answer` can allow or deny it once. The same
+	// command may also allow once (accept) or deny a pending Codex approval
+	// (decline when offered, otherwise cancel, which interrupts the turn). The provider's own prompt stays usable, and the first answer
+	// wins.
 	AgentApprovalAnsweringProjmux AgentApprovalAnswering = "projmux"
 )
 

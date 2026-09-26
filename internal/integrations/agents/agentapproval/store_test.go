@@ -654,3 +654,48 @@ func TestStoreAnswerRecordWriteFailureKeepsTheWrittenLine(t *testing.T) {
 		t.Fatalf("allowed lines = %d, want the uncommitted one and the committed one", got)
 	}
 }
+
+// A provider-held answer (a Codex approval) gets one allowed or denied line
+// in the same format under the store lock, with bounded fields and the store
+// clock, and holds no record. A line that cannot be written wraps ErrAudit
+// and names the audit log; a non-answer event is refused without a write.
+func TestStoreAppendAnswerAuditWritesOneBoundedLine(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newTestStore(t)
+	long := strings.Repeat("x", 3*MaxInputSummaryRunes)
+	for _, event := range []string{AuditAllowed, AuditDenied} {
+		if err := store.AppendAnswerAudit(AuditLine{
+			Event: event, RequestID: "7", AgentUID: "agt-a", PaneUID: "pan-a", ToolName: "command", Input: "make\ntest " + long, Via: ViaWeb,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := readAudit(t, store.AuditPath())
+	if got := auditEvents(lines); len(got) != 2 || got[0] != AuditAllowed || got[1] != AuditDenied {
+		t.Fatalf("events = %v", got)
+	}
+	for _, line := range lines {
+		if line.RequestID != "7" || line.AgentUID != "agt-a" || line.PaneUID != "pan-a" || line.ToolName != "command" || line.Via != ViaWeb ||
+			!line.DecidedAt.Equal(storeTestEpoch) || !line.At.Equal(storeTestEpoch) || !line.RequestedAt.IsZero() ||
+			utf8.RuneCountInString(line.Input) != MaxInputSummaryRunes || strings.Contains(line.Input, "\n") || !strings.HasPrefix(line.Input, "make test ") {
+			t.Fatalf("line = %+v", line)
+		}
+	}
+	if records, err := store.List("agt-a"); err != nil || len(records) != 0 {
+		t.Fatalf("records = %v, %v; want none", records, err)
+	}
+
+	if err := store.AppendAnswerAudit(AuditLine{Event: AuditRequested, RequestID: "8"}); err == nil || errors.Is(err, ErrAudit) {
+		t.Fatalf("requested event err = %v, want a non-audit refusal", err)
+	}
+
+	blocked, _ := newTestStore(t)
+	if err := os.MkdirAll(blocked.AuditPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := blocked.AppendAnswerAudit(AuditLine{Event: AuditAllowed, RequestID: "9", ToolName: "command"})
+	if err == nil || !errors.Is(err, ErrAudit) || !strings.Contains(err.Error(), blocked.AuditPath()) {
+		t.Fatalf("blocked err = %v, want ErrAudit naming %s", err, blocked.AuditPath())
+	}
+}

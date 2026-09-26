@@ -96,7 +96,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "d5b83f52677ff8d12aa82d91eccf87093fdc6e085251150129d300faa816b4c7"
+	const want = "4155dd8f505a51631a6a4dd77dfe7198e29714b7c55811cfb493607e4932567f"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

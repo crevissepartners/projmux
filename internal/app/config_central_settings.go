@@ -174,9 +174,12 @@ func agentQuestionWindowWord(seconds int) string {
 // [--window <seconds>]`.
 //
 // Both values are central settings the Claude permission hook reads, separate
-// from the agent-questions files. They cover Claude permission requests only:
-// Codex approvals are not captured, and `projmux agent approval review`
-// answers those. Every given flag is validated before any file is written, so
+// from the agent-questions files. The answering way captures Claude permission
+// requests and allows remote (non-interactive) `projmux agent approval answer`
+// for both Claude and Codex Agents; the window applies to captured Claude
+// requests only, since Codex approvals are held by the provider and never
+// captured. `projmux agent approval review` answers a Codex approval in either
+// way. Every given flag is validated before any file is written, so
 // a bad `--window` next to a good `--answering` changes nothing. The window
 // takes whole seconds in
 // config.MinAgentApprovalWindowSeconds..config.MaxAgentApprovalWindowSeconds
@@ -187,7 +190,7 @@ func agentQuestionWindowWord(seconds int) string {
 func (c *configCommand) runAgentApprovals(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("config agent-approvals", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	answering := fs.String("answering", "", "store how Claude permission requests are answered")
+	answering := fs.String("answering", "", "store how agent permission requests are answered")
 	window := fs.String("window", "", "store how long a captured permission request waits")
 	if err := fs.Parse(args); err != nil {
 		return usageRefusal(stderr, "config agent-approvals", "config agent-approvals: "+err.Error())

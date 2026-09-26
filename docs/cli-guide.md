@@ -649,6 +649,39 @@ identity mismatch produces no provider write. Approval queue rows advertise
 advertise the exact-Agent `Open Codex` focus fallback; resolution removes the
 row. Neither route stores prompt, command, path, permission, or request content.
 
+`agent approval list` and `agent approval answer` read and settle the same
+pending Codex approvals without a picker, over the same exact binding:
+
+```sh
+projmux agent approval list <agent-ref> [-o json]
+projmux agent approval answer <agent-ref> <request-id> --allow|--deny [--via popup|cli|web]
+```
+
+`list` works whatever `agent-approval-answering` says and prints it. Each
+request shows its normalized id, `waiting`, the approval kind as `toolName`
+(`command`, `file-change`, `permissions`), its full details as `toolInput`,
+which of `allow` and `deny` `answer` can send (`answers`), and what `--deny`
+would send (`denyDecision`; in text `deny(decline: the turn continues)` or
+`deny(cancel: the turn stops)`). A request whose id is ambiguous across raw
+JSON-RPC ids, or that offers neither, is marked for `agent approval review`.
+`answer` needs `projmux config agent-approvals --answering projmux` (otherwise
+`permission-answering-off`, with no broker call). It sends exactly one
+decision: `accept` for `--allow`, never a widened grant or exec-policy
+amendment; for `--deny`, `decline` when the request offers it, so the turn
+continues, and otherwise `cancel`, which also interrupts the turn. Real Codex
+command approvals may offer `accept` and `cancel` without `decline`, so a deny
+there stops the turn. Nothing runs either way. A request offering no fitting
+decision (a permission grant for both flags, or `--allow` on a file change with
+a root grant) is refused as `permission-decision-unavailable`, and an unknown
+or ambiguous id as `permission-not-pending`. The result line names the
+decision sent, for example `7 denied for agent/codex (decision cancel; the turn
+stops)`. `review` keeps the picker, the grant decision, and `Open Codex`. The Codex TUI, `review`, and `answer`
+all stay usable, and the first answer wins: a later one is refused by the
+provider or finds the request gone. Before sending, `answer` appends an
+`allowed` or `denied` line to the agent approval audit log (see
+[hooks.md](hooks.md#answering-claude-permission-requests-in-projmux)); if that
+line cannot be written nothing is sent.
+
 `agent topic get|set|clear` and `agent status get|set` resolve exactly one
 Agent, either from an explicit Agent reference or from the Agent-owned active
 managed Pane. Topic is a non-identifying Registry annotation. Interaction is a
