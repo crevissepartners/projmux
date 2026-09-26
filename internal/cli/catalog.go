@@ -855,7 +855,7 @@ var routes = []Route{
 			"projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]",
 			"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]",
 			"projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json] [--json]",
-			"projmux agent models [--provider claude] [-o json]",
+			"projmux agent models [--provider <claude|codex>] [-o json]",
 			"projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>",
 			"projmux agent message status <message-ref> [-o json]",
 			"projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json [--timeout <duration>]",
@@ -960,14 +960,13 @@ var routes = []Route{
 				Outputs:    []OutputMode{OutputModeJSON},
 			},
 			{
-				// A static read of the core Claude model list. The list is a
-				// suggestion: `create --model` and a Profile `model` still take
-				// any other well-formed name.
+				// Claude defaults to the static core list; Codex reads the
+				// running app-server. Both lists are suggestions, not allowlists.
 				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "models",
 				Invocation: InvocationNatural,
-				Summary:    "List the Claude model names projmux suggests for --model; other names are still accepted",
-				Usage:      []string{"projmux agent models [--provider claude] [-o json]"},
+				Summary:    "List model suggestions for Claude (default) or Codex (app-server); other names are still accepted",
+				Usage:      []string{"projmux agent models [--provider <claude|codex>] [-o json]"},
 				Canonical:  []string{"agent models"},
 				Outputs:    []OutputMode{OutputModeJSON},
 			},

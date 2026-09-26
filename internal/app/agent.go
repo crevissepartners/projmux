@@ -50,6 +50,7 @@ var resumableAgentPhases = []coremetadata.AgentPhase{
 type agentCommand struct {
 	ai               rawArgvCommand
 	usage            rawArgvCommand
+	listCodexModels  func(context.Context) ([]string, error)
 	loadRegistry     func() (coremetadata.Registry, error)
 	store            *resourceStore
 	activeTarget     activeTargetLookup
