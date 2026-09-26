@@ -37,7 +37,7 @@ func TestRollbackRemovesAnOwnedSessionThroughRealTmux(t *testing.T) {
 	// started the server, so rolling its session back empties the server.
 	// "bystander session" keeps the server alive past the kill, so the
 	// post-write observation is a real list-sessions read against a live
-	// server rather than the IsNoServerFailure path.
+	// server rather than a teardown response.
 	for _, row := range []struct {
 		name      string
 		bystander bool
@@ -146,12 +146,12 @@ func TestRollbackRemovesAnOwnedSessionThroughRealTmux(t *testing.T) {
 					t.Fatalf("list sessions after rollback: %v: %s", listErr, live)
 				}
 				// Ending the server is what this kill does, so the plan's own
-				// route reobserve can no longer reach it and says so. That
-				// residual belongs to the route authority, not to C-2, and it
-				// is only tolerated once the session is provably gone above.
-				if stopped := warnings.String(); strings.Contains(stopped, "rollback stopped") &&
-					!strings.Contains(stopped, "no server running on "+socket) {
-					t.Fatalf("rollback stopped for a reason other than the ended server: %q", stopped)
+				// route reobserve gets a teardown response instead of a
+				// listing. After the step's own kill succeeded that ended
+				// server is the absence it wanted, so the plan must not stop,
+				// whichever teardown response the read raced into.
+				if stopped := warnings.String(); strings.Contains(stopped, "rollback stopped") {
+					t.Fatalf("rollback stopped on the server its own kill ended: %q", stopped)
 				}
 			}
 		})
