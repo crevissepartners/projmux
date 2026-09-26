@@ -386,6 +386,9 @@ func TestCodexQuestionPopupRealTmuxAnswersThroughBinding(t *testing.T) {
 		newID:        agentquestion.NewID,
 		poll:         10 * time.Millisecond,
 	}
+	// Cleanups run before t.TempDir removes the store, and after
+	// t.Context is canceled, so the waiter is joined first.
+	t.Cleanup(channel.Wait)
 	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

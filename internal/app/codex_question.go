@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -26,6 +27,12 @@ type codexQuestionChannel struct {
 	window       func() time.Duration
 	newID        func() (string, error)
 	poll         time.Duration
+	// beforeCanceledClose, when set, runs on a waiter whose context ended,
+	// just before its store write. Tests use it to hold that write.
+	beforeCanceledClose func()
+	// waiters joins every waiter Handle started, so its owner can tell when
+	// none of them will touch the store again.
+	waiters sync.WaitGroup
 }
 
 type codexUserInputParams struct {
@@ -47,7 +54,7 @@ type codexUserInputResponse struct {
 // Handle records only a blocking request from the exact running Codex Agent.
 // An off channel leaves the request entirely to Codex's own input surface.
 // Bad or unavailable local state has the same safe fallback.
-func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycleIdentity, notification codexappserver.Notification, responder codexQuestionResponder) {
+func (c *codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycleIdentity, notification codexappserver.Notification, responder codexQuestionResponder) {
 	if notification.Method != "item/tool/requestUserInput" || len(notification.RawRequestID) == 0 || notification.RequestID == "" || responder == nil || c.loadRegistry == nil || c.store == nil || c.newID == nil {
 		return
 	}
@@ -102,12 +109,23 @@ func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycl
 	if err != nil {
 		return
 	}
-	go c.waitAndAnswer(ctx, store, record, notification.RawRequestID, responder, popup, identity.RuntimeID, claudeQuestionAskerOf(registry, *agent))
+	asker := claudeQuestionAskerOf(registry, *agent)
+	c.waiters.Go(func() {
+		c.waitAndAnswer(ctx, store, record, notification.RawRequestID, responder, popup, identity.RuntimeID, asker)
+	})
+}
+
+// Wait returns once every waiter Handle started has returned. Its owner
+// cancels their context first; after Wait no waiter writes the store.
+func (c *codexQuestionChannel) Wait() {
+	if c != nil {
+		c.waiters.Wait()
+	}
 }
 
 // HandleResolved marks only the matching waiting Codex request as answered in
 // Codex's own input surface. An earlier CLI answer remains answered here.
-func (c codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
+func (c *codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
 	if event.Kind != codexappserver.LifecycleRequestResolved || event.ThreadID != identity.ThreadID || event.RequestID == "" || c.store == nil {
 		return
 	}
@@ -120,13 +138,43 @@ func (c codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, ev
 		return
 	}
 	for _, record := range records {
-		if record.Provider == "codex" && record.State == agentquestion.StateWaiting && record.PaneUID == identity.PaneUID && record.SessionID == identity.ThreadID && record.Generation == identity.Generation && record.RuntimeID == identity.RuntimeID && record.RequestID == event.RequestID {
+		if codexQuestionWaitingFor(record, identity) && record.RequestID == event.RequestID {
 			_, _ = store.CloseAnsweredElsewhere(record.ID, identity.AgentUID, identity.ThreadID, event.RequestID)
 		}
 	}
 }
 
-func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder, questionPopup claudeQuestionPopup, paneID string, asker claudeQuestionAsker) {
+// HandleTurnCompleted closes every waiting Codex request of this exact
+// binding once its turn ended, however it ended. One thread runs one turn at
+// a time, so the thread identity names that turn's requests. The record is
+// plain closed: an interrupted turn was not answered anywhere, and a
+// resolved notification that trails the end finds nothing waiting.
+func (c *codexQuestionChannel) HandleTurnCompleted(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
+	if event.Kind != codexappserver.LifecycleTurnCompleted || event.ThreadID != identity.ThreadID || c.store == nil {
+		return
+	}
+	store, err := c.store()
+	if err != nil {
+		return
+	}
+	records, err := store.List(identity.AgentUID)
+	if err != nil {
+		return
+	}
+	for _, record := range records {
+		if codexQuestionWaitingFor(record, identity) {
+			_, _ = store.Close(record.ID)
+		}
+	}
+}
+
+// codexQuestionWaitingFor reports whether record is a still-waiting Codex
+// request of this exact Agent, Pane, thread, and activation.
+func codexQuestionWaitingFor(record agentquestion.Record, identity codexLifecycleIdentity) bool {
+	return record.Provider == "codex" && record.State == agentquestion.StateWaiting && record.AgentUID == identity.AgentUID && record.PaneUID == identity.PaneUID && record.SessionID == identity.ThreadID && record.Generation == identity.Generation && record.RuntimeID == identity.RuntimeID
+}
+
+func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder, questionPopup claudeQuestionPopup, paneID string, asker claudeQuestionAsker) {
 	poll := c.poll
 	if poll <= 0 {
 		poll = claudeQuestionPoll
@@ -142,6 +190,9 @@ func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentque
 	for {
 		select {
 		case <-ctx.Done():
+			if c.beforeCanceledClose != nil {
+				c.beforeCanceledClose()
+			}
 			_, _ = store.Close(record.ID)
 			return
 		case <-deadline.C:

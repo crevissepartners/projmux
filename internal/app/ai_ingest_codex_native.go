@@ -644,7 +644,13 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		bindingTicker := time.NewTicker(codexObserverBindingDelay)
 		progressTicker := time.NewTicker(25 * time.Millisecond)
 		notifications := client.Notifications()
-		questionCtx, endQuestions := context.WithCancel(ctx)
+		questionCtx, cancelQuestions := context.WithCancel(ctx)
+		// Every exit of this epoch, a return included, cancels its question
+		// waiters and joins them, so none writes the store afterwards.
+		endQuestions := func() {
+			cancelQuestions()
+			o.questions.Wait()
+		}
 		defer endQuestions()
 		o.lastAgentTurnID, o.lastAgentText = "", ""
 	eventLoop:
@@ -775,7 +781,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				if requestRecognized {
 					projection = o.decorateGenerationProjection(requestProjection)
 				} else {
-					projection = o.decorateGenerationProjection(o.reducer.apply(epoch, event))
+					reduced := o.reducer.apply(epoch, event)
+					// The reducer accepts only the end of this binding's current
+					// turn, once. Its questions close before anything else runs:
+					// the generation gate below may drop the projection, and the
+					// reducer refuses a resolved notification that trails the end.
+					if reduced.Accepted && event.Kind == codexappserver.LifecycleTurnCompleted && o.questions != nil {
+						o.questions.HandleTurnCompleted(o.identity, event)
+					}
+					projection = o.decorateGenerationProjection(reduced)
 				}
 				if !projection.Accepted {
 					continue
