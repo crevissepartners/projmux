@@ -56,6 +56,7 @@ func (c *rebindCommand) runProject(args []string, stdout, stderr io.Writer) erro
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: coremetadata.KindProject, active: c.activeTarget}
 	flags.register(fs)
 	root := fs.String("root", "", "the new absolute project root; it must already exist")

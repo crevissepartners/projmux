@@ -169,6 +169,7 @@ func (c *pruneAgentCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	olderThan := fs.String("older-than", "", "minimum age of status.lastTransitionAt, for example 720h")
 	noSessionRef := fs.Bool("no-session-ref", false, "select Agents with no recorded status.sessionRef")
 	noPane := fs.Bool("no-pane", false, "select Agents with no remaining managed Pane in the Registry")

@@ -271,6 +271,10 @@ func scanAIRouteUsageCalls(t *testing.T) ([]aiRouteUsageCall, []string) {
 			t.Fatal(err)
 		}
 		ast.Inspect(file, func(node ast.Node) bool {
+			if fn, ok := node.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "usageRefusal" {
+				// usageRefusal forwards its own route parameter.
+				return false
+			}
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true

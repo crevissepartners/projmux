@@ -96,6 +96,7 @@ func (c *projectLifecycleCommand) runProject(args []string, stdout, stderr io.Wr
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	output := fs.String("o", "", "Output projection")
 	fs.StringVar(output, "output", "", "Output projection")
 	refs, err := parseWithPositionals(fs, args)

@@ -101,6 +101,7 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	fs := flag.NewFlagSet("resources", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err

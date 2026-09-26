@@ -47,6 +47,7 @@ func (c *diagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error 
 func (c *diagnosticsCommand) runLog(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("diagnostics log", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	tail := fs.Int("tail", 50, "number of recent records to print")
 	jsonOut := fs.Bool("json", false, "print records as JSONL")
 	level := fs.String("level", "", "filter by level")

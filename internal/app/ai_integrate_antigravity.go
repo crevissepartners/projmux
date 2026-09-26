@@ -74,6 +74,7 @@ type jsonObjectMember struct {
 func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("agent integrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "print planned Antigravity hook changes without writing")
 	remove := fs.Bool("remove", false, "remove the projmux-managed Antigravity hook entry")
 	if err := fs.Parse(args); err != nil {

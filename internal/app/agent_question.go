@@ -113,6 +113,7 @@ func parseAgentQuestionArgs(args []string, stderr io.Writer) (agentQuestionReque
 	request := agentQuestionRequest{action: args[0], spelling: "agent question " + args[0]}
 	fs := flag.NewFlagSet(request.spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	request.flags = resourceQueryFlags{kind: coremetadata.KindAgent}
 	request.flags.register(fs)
 	var output string

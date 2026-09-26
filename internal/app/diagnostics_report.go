@@ -60,6 +60,7 @@ type supportPlan struct {
 func (c *diagnosticsCommand) runReport(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("diagnostics report", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	output := fs.String("output", "", "local support archive destination")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

@@ -269,14 +269,15 @@ func TestDoctorCanonicalHelpContract(t *testing.T) {
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("Run(--help) error = %v, want flag.ErrHelp", err)
 	}
-	for _, want := range []string{
-		"-json",
-		"-section string",
-		"deps|runtime|integrations|logs|registry|replacement",
-		"-verbose",
-	} {
+	// A direct handler --help prints the catalog Usage, as a flag error does.
+	var usage bytes.Buffer
+	printRouteUsage(&usage, "doctor")
+	if stderr.String() != usage.String() {
+		t.Fatalf("doctor handler help = %q, want the catalog Usage %q", stderr.String(), usage.String())
+	}
+	for _, want := range []string{"--json", "--section <name>", "--verbose"} {
 		if !strings.Contains(stderr.String(), want) {
-			t.Fatalf("doctor flag help missing %q:\n%s", want, stderr.String())
+			t.Fatalf("doctor usage missing %q:\n%s", want, stderr.String())
 		}
 	}
 }

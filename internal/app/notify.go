@@ -133,12 +133,6 @@ func (c *notifyCommand) locale() i18n.Locale {
 const notifyQueueSummary = "Pending AI notify queue. Attention is live pane state; notify rows remain until explicit ack.\n" +
 	"Use `get notifications --live` to explain queue/live drift and `notification reconcile` to repair AI reply entries.\n\n"
 
-// notifyListSummary heads the `get notifications` usage its FlagSet prints.
-const notifyListSummary = "Pending AI notify queue entries only; rows remain until explicit ack.\n" +
-	"Use `--live` to explain queue entries against live pane attention state without mutating either surface.\n" +
-	"Use `--ui=sidebar` for the interactive right-side notify list.\n" +
-	"Use `projmux attention list` for live pane attention state only.\n\n"
-
 // printNotifyQueueHelp prints the queue summary and the catalog usage of the
 // `notification` route the notify handler's dispatch serves.
 func printNotifyQueueHelp(w io.Writer) {
@@ -151,6 +145,7 @@ func printNotifyQueueHelp(w io.Writer) {
 func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("create notification", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 
 	var (
 		text     = fs.String("text", "", "notification text (required)")
@@ -254,11 +249,7 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("get notifications", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		fmt.Fprint(stderr, notifyListSummary)
-		fmt.Fprint(stderr, notifyQueueSummary)
-		printRouteUsage(stderr, "get notifications")
-	}
+	setRouteUsage(fs)
 
 	var (
 		asJSON     = fs.Bool("json", false, "emit json instead of tabular output")
@@ -1552,6 +1543,7 @@ func (c *notifyCommand) statusbarDecoration() config.StatusbarDecoration {
 func (c *notifyCommand) runAck(route string, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	all := fs.Bool("all", false, "remove every queued entry")
 	printAckUsage := func() { fmt.Fprint(stderr, notifyQueueSummary); printRouteUsage(stderr, "notification ack") }
 	if route == "delete notification" {

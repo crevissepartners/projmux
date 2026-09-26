@@ -31,6 +31,7 @@ func (c *agentCommand) runModels(args []string, stdout, stderr io.Writer) error 
 	const spelling = "agent models"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var provider, output string
 	fs.StringVar(&provider, "provider", string(aiprovider.Claude), "provider id: claude (default) or codex")
 	fs.StringVar(&output, "o", "", "output mode: json")

@@ -252,6 +252,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: coremetadata.KindAgent}
 	flags.register(fs)
 	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "claude only: resume this UID into one isolated reply-only activation; qualification required")

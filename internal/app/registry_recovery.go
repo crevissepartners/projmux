@@ -403,6 +403,7 @@ func parseRegistryRecoveryOptions(args []string, stderr io.Writer) (registryReco
 	var opts registryRecoveryOptions
 	fs := flag.NewFlagSet("reconcile registry", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "preview the recovery plan without writing")
 	fs.StringVar(&opts.output, "output", "", "output mode: json")
 	fs.StringVar(&opts.output, "o", "", "output mode (alias of --output)")

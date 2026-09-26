@@ -157,6 +157,7 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 func (c *aiCommand) runIntegrateTmuxBell(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("agent integrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "print planned tmux bell integration commands without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed tmux bell hook wiring")
 	if err := fs.Parse(args); err != nil {
@@ -233,6 +234,7 @@ func (c *aiCommand) runTmuxBellCommand(args []string) error {
 func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("agent integrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "print planned Claude Code hook settings changes without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed Claude Code hook wiring")
 	if err := fs.Parse(args); err != nil {
@@ -270,6 +272,7 @@ func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) 
 func (c *aiCommand) runIntegrateCodex(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("agent integrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "print planned Codex config changes without writing")
 	remove := fs.Bool("remove", false, "remove projmux-managed Codex wiring")
 	if err := fs.Parse(args); err != nil {

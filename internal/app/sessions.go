@@ -85,9 +85,7 @@ func newSessionsCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionsCo
 func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("runtime sessions", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "runtime sessions")
-	}
+	setRouteUsage(fs)
 
 	ui := fs.String(switchUIFlag, switchUIPopup, "recent-session surface to prepare")
 	if err := fs.Parse(args); err != nil {

@@ -108,6 +108,7 @@ func newShellCommand(update *updateCommand, recorders ...*diagnostics.LifecycleR
 func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("shell", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	socket := fs.String("socket", defaultAppSocket, "tmux socket name for the projmux app")
 	session := fs.String("session", defaultAppSession, "tmux session name for the projmux app")
 	configPath := fs.String("config", "", "tmux config path for the projmux app")

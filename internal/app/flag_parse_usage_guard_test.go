@@ -114,6 +114,14 @@ type flagParseGuardSite struct {
 	// reprints lists the usage printers the non-help error path calls, here or
 	// in the error branch of a caller that hands its FlagSet to this site.
 	reprints []string
+	// usage says what the FlagSet prints after the reason: "catalog" (a
+	// catalog Usage setter), "custom" (its own Usage assignment), "default"
+	// (the flag package's `Usage of <name>:` listing), or a mix across the
+	// callers that hand it a FlagSet.
+	usage string
+	// selfReported counts the non-help returns that call a constructor
+	// printing the reason and the catalog Usage itself (usageRefusal).
+	selfReported int
 }
 
 func (s flagParseGuardSite) key() string { return s.file + " " + s.fn + " " + s.flagSet }
@@ -425,6 +433,35 @@ type flagParseGuardFlagSet struct {
 	outputs []ast.Expr
 	// usageFuncs are the same-package functions its Usage literal calls.
 	usageFuncs map[string]bool
+	// catalogUsage is set when the FlagSet is handed to a catalog Usage
+	// setter (flagParseGuardCatalogUsageSetters); customUsage when it assigns
+	// its own Usage.
+	catalogUsage, customUsage bool
+}
+
+// flagParseGuardCatalogUsageSetters are the functions that make a FlagSet
+// print its catalog Usage after the reason of a parse failure, as the suffix
+// of their importPath.Name (the synthetic controls load under another module).
+var flagParseGuardCatalogUsageSetters = []string{"/internal/cli.SetRouteUsage", "/internal/app.setRouteUsage"}
+
+// flagParseGuardSelfReporting are the usage constructors that print the reason
+// and the catalog Usage themselves, for a FlagSet whose output is discarded,
+// as the suffix of their importPath.Name.
+var flagParseGuardSelfReporting = []string{"/internal/app.usageRefusal"}
+
+// flagParseGuardHiddenName reports whether a FlagSet name is a literal route
+// in the hidden `internal ...` namespace. Such a route has no catalog Usage,
+// so its FlagSet keeps the flag package default output; a shared leaf whose
+// name comes from its caller calls setRouteUsage, which leaves a hidden name
+// alone (cli.SetRouteUsage).
+func flagParseGuardHiddenName(name string) bool {
+	return strings.HasPrefix(name, "internal ")
+}
+
+// flagParseGuardQualifiedIn reports whether the qualified name q ends in one
+// of suffixes.
+func flagParseGuardQualifiedIn(q string, suffixes []string) bool {
+	return q != "" && slices.ContainsFunc(suffixes, func(suffix string) bool { return strings.HasSuffix(q, suffix) })
 }
 
 // flagParseGuardCall is a candidate site before classification.
@@ -895,6 +932,10 @@ func (a *flagParseGuardAnalyzer) classifyUse(pf *flagParseGuardParsedFile, fnNam
 		if idx < 0 {
 			break
 		}
+		if flagParseGuardQualifiedIn(a.qualify(pf, p.Fun), flagParseGuardCatalogUsageSetters) {
+			info.catalogUsage = true
+			return
+		}
 		callee := ""
 		switch fun := p.Fun.(type) {
 		case *ast.Ident:
@@ -1045,6 +1086,9 @@ func (a *flagParseGuardAnalyzer) classify(c flagParseGuardCall) flagParseGuardSi
 					if a.isReported(pf, last) {
 						site.reported++
 					}
+					if call, ok := last.(*ast.CallExpr); ok && flagParseGuardQualifiedIn(a.qualify(pf, call.Fun), flagParseGuardSelfReporting) {
+						site.selfReported++
+					}
 				case last != nil && a.isReported(pf, last):
 					reportedOnly++
 					site.reported++
@@ -1152,6 +1196,7 @@ func (a *flagParseGuardAnalyzer) recordSetting(pf *flagParseGuardParsedFile, inf
 		if !ok || len(assign.Lhs) != 1 || assign.Lhs[0] != sel || len(assign.Rhs) != 1 {
 			return
 		}
+		info.customUsage = true
 		if info.usageFuncs == nil {
 			info.usageFuncs = map[string]bool{}
 		}
@@ -1247,14 +1292,29 @@ func flagParseGuardOutputOf(fs *flagParseGuardFlagSet) string {
 	return kind
 }
 
+// flagParseGuardUsageOf says what fs prints after the reason of a parse
+// failure: "catalog", "custom", or "default".
+func flagParseGuardUsageOf(fs *flagParseGuardFlagSet) string {
+	switch {
+	case fs.customUsage:
+		return "custom"
+	case fs.catalogUsage:
+		return "catalog"
+	default:
+		return "default"
+	}
+}
+
 // resolveOutput decides a site's output. A FlagSet parameter without its own
 // SetOutput takes the output of every caller that hands a FlagSet to it, and
 // the usage printers in each caller's error branch join the site's.
 func (a *flagParseGuardAnalyzer) resolveOutput(c flagParseGuardCall, site *flagParseGuardSite) {
 	site.output = flagParseGuardOutputOf(c.fs)
+	site.usage = flagParseGuardUsageOf(c.fs)
 	if site.output != "" {
 		return
 	}
+	site.usage = ""
 	if c.fs.wrapperFunc == "" {
 		site.output = "unresolved: a FlagSet parameter of a function literal without SetOutput"
 		return
@@ -1272,6 +1332,12 @@ func (a *flagParseGuardAnalyzer) resolveOutput(c flagParseGuardCall, site *flagP
 			return
 		}
 		site.output = out
+		switch usage := flagParseGuardUsageOf(caller.fs); {
+		case site.usage == "":
+			site.usage = usage
+		case site.usage != usage:
+			site.usage = "mixed: callers disagree on the FlagSet usage"
+		}
 		if errName, body, why := flagParseGuardErrorBranch(caller.stack); why == "" {
 			for _, reprint := range a.reprintsIn(caller.pf, body, errName, caller.fs) {
 				site.reprints = append(site.reprints, reprint+" in caller "+caller.fn)
@@ -1481,13 +1547,17 @@ func TestFlagParseUsageGuardEveryParserMarksUsage(t *testing.T) {
 		len(report.sites), marked, helpless, len(used), report.wrappers, report.markers, time.Since(start).Round(time.Millisecond))
 }
 
-// flagParseOutputFindings applies the output rule to a report: a flag parse
-// failure puts its reason on stderr exactly once and its usage at most once.
-// A FlagSet writing to stderr has already printed both through the flag
-// package, so the site returns an error that says so (the entrypoint stays
-// silent) and prints no usage of its own; a FlagSet with a discarded output
-// returns an error the entrypoint prints. A usage-marked site returns
-// flagParseError or a plain usage error. An exception row keeps exit 1, so it
+// flagParseOutputFindings applies the output rule to a report. On a public
+// route a flag parse failure puts its reason on stderr exactly once, first,
+// and then the route's catalog Usage exactly once, never the flag package's
+// `Usage of <name>:` default listing. A public FlagSet writing to stderr gets
+// both from the flag package: it hands the FlagSet to setRouteUsage (and
+// assigns no Usage of its own), returns an error that says the reason is
+// printed (flagParseError, so the entrypoint stays silent), and prints no
+// usage of its own. A public FlagSet with a discarded output prints nothing,
+// so every non-help return calls usageRefusal, which prints the reason and
+// the catalog Usage itself. An exception row keeps exit 1 and the flag
+// package default output, so it
 // returns flagParseReported or, with a discarded output, a non-reported error;
 // its exit-code verdict stays the exit-code guard's. A site that is neither is
 // left to that guard. examined counts the exception sites checked here.
@@ -1508,6 +1578,9 @@ func flagParseOutputFindings(report flagParseGuardReport, exceptions map[string]
 			case !exception && site.reported != site.marked:
 				failures = append(failures, site.describe()+": the FlagSet writes to stderr, so the flag package has already printed the reason and the usage; return flagParseError(err) so the entrypoint does not print the reason a second time")
 			}
+			if !exception && !flagParseGuardHiddenName(site.flagSet) && site.usage != "catalog" {
+				failures = append(failures, site.describe()+": the public FlagSet does not print its catalog Usage after the reason (usage: "+site.usage+"); call setRouteUsage(fs) and assign no fs.Usage of its own")
+			}
 			if len(site.reprints) > 0 {
 				failures = append(failures, site.describe()+": the parse error path prints the usage again ("+strings.Join(site.reprints, ", ")+") after the flag package printed it; print it only in the flag.ErrHelp branch, if at all")
 			}
@@ -1515,8 +1588,10 @@ func flagParseOutputFindings(report flagParseGuardReport, exceptions map[string]
 			switch {
 			case exception && site.reported > 0:
 				failures = append(failures, site.describe()+": the FlagSet discards its output, so nothing printed the reason; return the parse error itself so the entrypoint prints it once")
-			case !exception && site.reported > 0:
-				failures = append(failures, site.describe()+": the FlagSet discards its output, so nothing printed the reason; return usageError(...) so the entrypoint prints it once")
+			case !exception && site.reported != site.selfReported:
+				failures = append(failures, site.describe()+": the FlagSet discards its output, so nothing printed the reason; return usageRefusal(stderr, route, reason) so the reason and the catalog Usage are printed once")
+			case !exception && site.selfReported != site.marked:
+				failures = append(failures, site.describe()+": the public FlagSet discards its output, so no catalog Usage follows the reason; return usageRefusal(stderr, route, reason), or write to stderr with setRouteUsage(fs)")
 			}
 		default:
 			failures = append(failures, site.describe()+": cannot tell where the FlagSet writes its reason ("+site.output+")")
@@ -1525,12 +1600,15 @@ func flagParseOutputFindings(report flagParseGuardReport, exceptions map[string]
 	return failures, examined
 }
 
-// TestFlagParseOutputGuardPrintsReasonOnceUsageAtMostOnce holds every
+// TestFlagParseOutputGuardPrintsReasonThenCatalogUsage holds every
 // usage-marked flag parse site and every exception row in internal/app/** to
-// the stderr shape of a flag error: the reason exactly once and the usage at
-// most once. It walks the same closed site set as
-// TestFlagParseUsageGuardEveryParserMarksUsage.
-func TestFlagParseOutputGuardPrintsReasonOnceUsageAtMostOnce(t *testing.T) {
+// the stderr shape of a flag error: the reason exactly once, then, on a
+// public route, the catalog Usage exactly once and never the flag package
+// `Usage of <name>:` listing (a hidden exception row keeps the flag package
+// default). It walks the same closed site set as
+// TestFlagParseUsageGuardEveryParserMarksUsage; the runtime shape of every
+// public route is cmd/projmux TestPublicFlagParseErrorsPrintReasonThenCatalogUsage.
+func TestFlagParseOutputGuardPrintsReasonThenCatalogUsage(t *testing.T) {
 	t.Parallel()
 	report := flagParseGuardAnalyze(flagParseGuardLoadRepo(t, filepath.Join("..", "..")))
 	findings, examined := flagParseOutputFindings(report, flagParseGuardExceptions)
@@ -1582,10 +1660,13 @@ func TestFlagParseOutputGuardPrintsReasonOnceUsageAtMostOnce(t *testing.T) {
 
 // TestFlagParseOutputGuardPositiveControl runs the output rule on synthetic
 // source: a plain usage error or a usage reprint on a stderr FlagSet, a
-// reported error on a discarded FlagSet, and helpers whose callers disagree
-// must fail; so must an exception row that returns the bare parse error or a
-// usage marker on a stderr FlagSet, reprints the usage, or reports on a
-// discarded FlagSet. The idioms must pass.
+// public stderr FlagSet without the catalog Usage setter (the flag package
+// default listing) or with its own Usage, a reported error or a plain usage
+// error on a discarded public FlagSet, and helpers whose callers disagree on
+// the output or the usage must fail; so must an exception row that returns the
+// bare parse error or a usage marker on a stderr FlagSet, reprints the usage,
+// or reports on a discarded FlagSet. The idioms, and a FlagSet named after a
+// hidden `internal ...` route that keeps the flag package default, must pass.
 func TestFlagParseOutputGuardPositiveControl(t *testing.T) {
 	t.Parallel()
 	const pkgPath = "example.test/guard/internal/app"
@@ -1623,9 +1704,17 @@ func printFooUsage(w io.Writer) {}
 
 func showHelp(w io.Writer) {}
 
+func setRouteUsage(fs *flag.FlagSet) {}
+
+func usageRefusal(stderr io.Writer, route, reason string) error {
+	printFooUsage(stderr)
+	return flagParseError(errors.New(reason))
+}
+
 func stderrPlain(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("stderr-plain", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -1637,6 +1726,7 @@ func stderrPlain(args []string, stderr io.Writer) error {
 
 func defaultPlain(args []string) error {
 	fs := flag.NewFlagSet("default-plain", flag.ContinueOnError)
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		return usageError(err.Error())
 	}
@@ -1646,6 +1736,7 @@ func defaultPlain(args []string) error {
 func stderrReprint(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("stderr-reprint", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		printFooUsage(stderr)
 		if errors.Is(err, flag.ErrHelp) {
@@ -1692,6 +1783,7 @@ func parseHelper(fs *flag.FlagSet, args []string) ([]string, error) {
 func helperCallerReprint(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("helper-caller", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	_, err := parseHelper(fs, args)
 	if err != nil {
 		printFooUsage(stderr)
@@ -1722,7 +1814,7 @@ func mixedDiscard(args []string) error {
 func idiomStderr(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("idiom-stderr", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { printFooUsage(stderr) }
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printFooUsage(stderr)
@@ -1737,8 +1829,7 @@ func idiomDiscard(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("idiom-discard", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	if err := fs.Parse(args); err != nil {
-		printFooUsage(stderr)
-		return usageError("idiom-discard: " + err.Error())
+		return usageRefusal(stderr, "idiom-discard", "idiom-discard: "+err.Error())
 	}
 	return nil
 }
@@ -1746,10 +1837,69 @@ func idiomDiscard(args []string, stderr io.Writer) error {
 func idiomHelperCaller(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("idiom-helper", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	if _, err := parseHelper(fs, args); err != nil {
 		return err
 	}
 	return nil
+}
+
+func stderrDefaultUsage(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("stderr-default-usage", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func stderrCustomUsage(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("stderr-custom-usage", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	setRouteUsage(fs)
+	fs.Usage = func() { printFooUsage(stderr) }
+	if err := fs.Parse(args); err != nil {
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func discardPlainUsage(args []string) error {
+	fs := flag.NewFlagSet("discard-plain-usage", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return usageError("discard-plain-usage: " + err.Error())
+	}
+	return nil
+}
+
+func internalDefaultUsage(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("internal default-usage", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func usageHelper(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		return flagParseError(err)
+	}
+	return nil
+}
+
+func usageHelperCatalog(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("usage-helper-catalog", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	setRouteUsage(fs)
+	return usageHelper(fs, args)
+}
+
+func usageHelperDefault(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("usage-helper-default", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	return usageHelper(fs, args)
 }
 
 func hiddenBare(args []string, stderr io.Writer) error {
@@ -1847,18 +1997,23 @@ func hiddenIdiomDiscard(args []string) error {
 		`func discardReported, FlagSet "discard-reported" (FlagSet.Parse): the FlagSet discards its output`,
 		`FlagSet "param fs of parseHelper" (FlagSet.Parse): the parse error path prints the usage again (printFooUsage in caller helperCallerReprint)`,
 		`FlagSet "param fs of mixedHelper" (FlagSet.Parse): cannot tell where the FlagSet writes its reason (mixed: callers disagree on the FlagSet output)`,
+		`func stderrUsageLiteral, FlagSet "stderr-usage-literal" (FlagSet.Parse): the public FlagSet does not print its catalog Usage after the reason (usage: custom)`,
+		`func stderrDefaultUsage, FlagSet "stderr-default-usage" (FlagSet.Parse): the public FlagSet does not print its catalog Usage after the reason (usage: default)`,
+		`func stderrCustomUsage, FlagSet "stderr-custom-usage" (FlagSet.Parse): the public FlagSet does not print its catalog Usage after the reason (usage: custom)`,
+		`func discardPlainUsage, FlagSet "discard-plain-usage" (FlagSet.Parse): the public FlagSet discards its output, so no catalog Usage follows the reason`,
+		`FlagSet "param fs of usageHelper" (FlagSet.Parse): the public FlagSet does not print its catalog Usage after the reason (usage: mixed: callers disagree on the FlagSet usage)`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("positive control: missing failure containing %q", want)
 		}
 	}
-	for _, clean := range []string{`"idiom-stderr"`, `"idiom-discard"`, `"idiom-helper"`, `"hidden-idiom-stderr"`, `"hidden-idiom-discard"`} {
+	for _, clean := range []string{`"idiom-stderr"`, `"idiom-discard"`, `"idiom-helper"`, `"hidden-idiom-stderr"`, `"hidden-idiom-discard"`, `"internal default-usage"`} {
 		if strings.Contains(joined, clean) {
 			t.Errorf("positive control: %s must pass the output guard", clean)
 		}
 	}
-	if len(failures) != 11 {
-		t.Errorf("positive control: got %d failures, want 11", len(failures))
+	if len(failures) != 16 {
+		t.Errorf("positive control: got %d failures, want 16", len(failures))
 	}
 }
 

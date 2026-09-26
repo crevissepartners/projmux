@@ -40,6 +40,7 @@ func newQuitCommand() *quitCommand {
 func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("quit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	yes := fs.Bool("yes", false, "quit without opening the action picker")
 	force := fs.Bool("force", false, "quit without opening the action picker")
 	if err := fs.Parse(args); err != nil {

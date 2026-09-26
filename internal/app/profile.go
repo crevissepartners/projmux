@@ -78,6 +78,7 @@ func profileRefusal(spelling string, err error) error {
 func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("profile list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	operands, err := parsePersonaArgs(fs, args)
 	if err != nil {
 		return err
@@ -120,6 +121,7 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 func (c *profileCommand) runShow(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("profile show", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	operands, err := parsePersonaArgs(fs, args)
 	if err != nil {
 		return err
@@ -144,6 +146,7 @@ func (c *profileCommand) runShow(args []string, stdout, stderr io.Writer) error 
 func (c *profileCommand) runSet(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("profile set", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	file := fs.String("file", "", "read the profile from this file; - reads stdin")
 	operands, err := parsePersonaArgs(fs, args)
 	if err != nil {
@@ -203,6 +206,7 @@ func (c *profileCommand) runSet(args []string, stdout, stderr io.Writer) error {
 func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("profile delete", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	yes := fs.Bool("yes", false, "confirm the deletion")
 	operands, err := parsePersonaArgs(fs, args)
 	if err != nil {

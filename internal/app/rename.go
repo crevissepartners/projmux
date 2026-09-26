@@ -75,6 +75,7 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: kind, active: c.activeTarget, runtime: c.runtime}
 	// Generic descendant renames resolve an explicit name inside the exact root
 	// that owns the active Window. That root may be a Project or a

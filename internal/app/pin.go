@@ -50,6 +50,7 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -107,10 +108,7 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("pin project list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "pin project list")
-		printPinNotes(stderr)
-	}
+	setRouteUsage(fs)
 	kind := fs.String("kind", "", "Limit the listing to one pin kind (project or candidate)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -281,10 +279,7 @@ func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("pin project clear", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "pin project clear")
-		printPinNotes(stderr)
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -319,10 +314,7 @@ func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("pin project migrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "pin project migrate")
-		printPinNotes(stderr)
-	}
+	setRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "Report the migration without writing the pin file")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

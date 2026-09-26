@@ -354,6 +354,7 @@ func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focu
 	spelling := "focus " + kind
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 
 	opts := focusOptions{ExactOnly: true}
 	var project, window string

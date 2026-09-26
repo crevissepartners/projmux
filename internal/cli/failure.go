@@ -45,7 +45,8 @@ type exitCoder interface {
 
 // reportedFailure lets an error say that its reason is already on the user's
 // stderr, so the entrypoint must not print it a second time. A FlagSet parse
-// failure is the case: the flag package prints the reason before the usage.
+// failure is the case: the flag package prints the reason before the catalog
+// Usage.
 type reportedFailure interface {
 	error
 	FailureReported() bool
@@ -53,9 +54,10 @@ type reportedFailure interface {
 
 // FlagParseError is the usage error of a failed FlagSet.Parse when the FlagSet
 // writes to the user's stderr. The flag package has already printed the reason
-// there, followed by the usage, so the error reports its reason as printed and
-// the entrypoint does not print it again. A FlagSet with a discarded output
-// returns a plain usage error instead, so the entrypoint prints the reason.
+// there, followed by the route's catalog Usage (SetRouteUsage), so the error
+// reports its reason as printed and the entrypoint does not print it again. A
+// public route that refuses a flag without such a FlagSet prints the same
+// reason and catalog Usage itself and returns this error too.
 func FlagParseError(err error) error {
 	return &flagParseError{cause: err}
 }

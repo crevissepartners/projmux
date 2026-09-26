@@ -75,6 +75,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	const spelling = "agent message qualify"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var evidencePath, output string
 	var timeout time.Duration
 	var confirmed bool

@@ -107,6 +107,7 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	timeout := fs.Duration("timeout", defaultProbeTimeout, "per-key wait timeout (e.g. 5s)")
 	nonInteractive := fs.Bool("non-interactive", false, "skip TTY raw probe; just print the expected key map")
 	if err := fs.Parse(args); err != nil {

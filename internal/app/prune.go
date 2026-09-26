@@ -81,6 +81,7 @@ func newPruneCommand(recorders ...*diagnostics.LifecycleRecorder) *pruneCommand 
 func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -119,6 +120,7 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 func (c *pruneCommand) runEphemeral(args []string, _ io.Writer, stderr io.Writer) error {
 	fs := flag.NewFlagSet("runtime prune", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	keepCount := fs.Int("keep", 3, "number of unattached ephemeral sessions to retain")
 
 	if err := fs.Parse(args); err != nil {

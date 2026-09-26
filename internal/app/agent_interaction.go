@@ -433,6 +433,7 @@ func (c *agentCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 	action := args[0]
 	fs := flag.NewFlagSet("agent topic", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var agentRef string
 	fs.StringVar(&agentRef, "agent", "", "exact Agent reference: <name> or uid:<uid>")
 	positionals, err := parseWithPositionals(fs, args[1:])
@@ -500,6 +501,7 @@ func (c *agentCommand) runStatus(args []string, stdout, stderr io.Writer) error 
 	}
 	fs := flag.NewFlagSet("agent status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var agentRef string
 	fs.StringVar(&agentRef, "agent", "", "exact Agent reference: <name> or uid:<uid>")
 	positionals, err := parseWithPositionals(fs, args)

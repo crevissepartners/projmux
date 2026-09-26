@@ -72,6 +72,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	const command = "projmux setup terminal"
 	fs := flag.NewFlagSet("setup terminal", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	cli.SetRouteUsage(fs)
 	apply := fs.Bool("apply", false, "write the merged config (default: preview only)")
 	configOverride := fs.String("config", "", "explicit config file path (overrides auto-detected candidates)")
 	allowSymlink := fs.Bool("allow-symlink", false, "merge into a symlinked config target (default: refuse to mutate symlink targets such as dotfiles repos)")

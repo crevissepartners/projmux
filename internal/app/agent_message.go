@@ -378,6 +378,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	}
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var messageRef, replyTo string
 	var ttl time.Duration
 	fs.StringVar(&messageRef, "message-ref", "", "idempotency reference")
@@ -862,6 +863,7 @@ func (c *agentCommand) runMessageStatus(args []string, stdout, stderr io.Writer)
 	const spelling = "agent message status"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var output string
 	fs.StringVar(&output, "o", "", "output mode: json")
 	refs, err := parseWithPositionals(fs, args)
@@ -921,6 +923,7 @@ func (c *agentCommand) runWait(args []string, stdout, stderr io.Writer) error {
 	const spelling = "agent wait"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 	var timeout time.Duration
 	var until, output string
 	fs.DurationVar(&timeout, "timeout", defaultAgentMessageTimeout, "maximum wait duration")

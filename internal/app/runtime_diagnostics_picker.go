@@ -83,7 +83,7 @@ func (c *runtimeDiagnosticsCommand) RunNested(args []string, stdout, stderr io.W
 func (c *runtimeDiagnosticsCommand) run(args []string, stdout, stderr io.Writer, themeOwnership nativeUIThemeOwnership) error {
 	fs := flag.NewFlagSet("runtime diagnostics", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { printRouteUsage(stderr, "runtime diagnostics") }
+	setRouteUsage(fs)
 	ui := fs.String(switchUIFlag, switchUIPopup, "runtime diagnostics surface to prepare")
 	var request runtimeTransportRequest
 	fs.StringVar(&request.socket, "socket", "", "exact tmux socket name (tmux -L)")

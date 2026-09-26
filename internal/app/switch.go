@@ -318,10 +318,7 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch")
-		printSwitchNotes(stderr)
-	}
+	setRouteUsage(fs)
 
 	ui := fs.String(switchUIFlag, switchUIPopup, "future sessionizer surface to prepare")
 	anchor := fs.String("anchor", "", "exact tmux Pane that anchors Project sidebar continuation")
@@ -382,9 +379,7 @@ func (c *switchCommand) plan(ui, anchorPane string) (switchPlan, error) {
 func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch toggle-tag", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch toggle-tag")
-	}
+	setRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -412,9 +407,7 @@ func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) er
 func (c *switchCommand) runTogglePin(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch toggle-pin", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch toggle-pin")
-	}
+	setRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -442,9 +435,7 @@ func (c *switchCommand) runTogglePin(args []string, stdout, stderr io.Writer) er
 func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch kill", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch kill")
-	}
+	setRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -485,9 +476,7 @@ func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
 func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch open", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch open")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRouteUsage(stderr, "switch open")
@@ -505,9 +494,7 @@ func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
 func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch preview", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch preview")
-	}
+	setRouteUsage(fs)
 	ui := fs.String(switchUIFlag, switchUIPopup, "preview surface to render")
 
 	if err := fs.Parse(args); err != nil {
@@ -563,9 +550,7 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 func (c *switchCommand) runSettingsRoute(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch settings", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch settings")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRouteUsage(stderr, "switch settings")
@@ -669,9 +654,7 @@ func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
 func (c *switchCommand) runCyclePane(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch cycle-pane", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch cycle-pane")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRouteUsage(stderr, "switch cycle-pane")
@@ -694,9 +677,7 @@ func (c *switchCommand) runCyclePane(args []string, stderr io.Writer) error {
 func (c *switchCommand) runCycleWindow(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch cycle-window", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch cycle-window")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRouteUsage(stderr, "switch cycle-window")
@@ -1912,9 +1893,7 @@ func (c *switchCommand) lookupEnvValue(name string) string {
 func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch sidebar-open", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch sidebar-open")
-	}
+	setRouteUsage(fs)
 	target := fs.String("path", "", "project path to open")
 	sessionName := fs.String("session", "", "target session name")
 	mode := fs.String("mode", projectStartupKindTopology, "startup mode")
@@ -2128,9 +2107,7 @@ func buildShellCommand(binaryPath string, args []string, env map[string]string) 
 func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Writer) error {
 	fs := flag.NewFlagSet("switch sidebar-focus", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "switch sidebar-focus")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRouteUsage(stderr, "switch sidebar-focus")

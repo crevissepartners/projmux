@@ -62,27 +62,33 @@ var forwardedRouteUsageRows = []forwardedRouteUsageRow{
 }
 
 // forwardedRouteUsageHeader matches the `Usage of <name>:` header a FlagSet
-// without a Usage override prints.
+// without a catalog Usage prints.
 var forwardedRouteUsageHeader = regexp.MustCompile(`(?m)^Usage of (.+):$`)
 
 // forwardedRouteUsageProblems checks what a rejected call on route printed:
-// its own FlagSet header or its own catalog usage block, and no header or
-// `projmux …` line of another route. Every problem names the route.
+// its own catalog usage block, no flag package `Usage of <name>:` header, and
+// no `projmux …` line of another route outside that block (a parent route's
+// block lists its children). Every problem names the route.
 func forwardedRouteUsageProblems(route, stderr string) []string {
 	var problems []string
 	var block bytes.Buffer
 	cli.WriteRouteUsage(&block, route)
-	own := strings.Contains(stderr, "Usage of "+route+":\n") || (block.Len() > 0 && strings.Contains(stderr, block.String()))
-	if !own {
-		problems = append(problems, route+": printed neither `Usage of "+route+":` nor its catalog usage block: "+strconv.Quote(stderr))
+	if block.Len() == 0 || !strings.Contains(stderr, block.String()) {
+		problems = append(problems, route+": did not print its catalog usage block: "+strconv.Quote(stderr))
 	}
 	for _, match := range forwardedRouteUsageHeader.FindAllStringSubmatch(stderr, -1) {
 		if match[1] != route {
 			problems = append(problems, route+": printed the FlagSet header of "+strconv.Quote(match[1]))
+		} else {
+			problems = append(problems, route+": printed the flag package default `Usage of "+route+":` instead of its catalog usage")
 		}
 	}
 	want := strings.Fields(route)
-	for line := range strings.SplitSeq(stderr, "\n") {
+	rest := stderr
+	if block.Len() > 0 {
+		rest = strings.Replace(rest, block.String(), "", 1)
+	}
+	for line := range strings.SplitSeq(rest, "\n") {
 		fields := strings.Fields(line)
 		// Flag help such as "projmux binary path ..." names no route.
 		if len(fields) < 2 || fields[0] != "projmux" {
@@ -218,8 +224,8 @@ func TestForwardedRoutesPrintTheirOwnUsage(t *testing.T) {
 }
 
 // TestParentLevelFlagSetsNameTheChildRoute drives the child routes whose flag
-// error a parent-level FlagSet parses, and pins the `Usage of <child>:`
-// header: the FlagSet guard alone accepts the parent name because it
+// error a parent-level FlagSet parses, and pins the catalog usage block of
+// the child: the FlagSet guard alone accepts the parent name because it
 // resolves to some catalog route.
 func TestParentLevelFlagSetsNameTheChildRoute(t *testing.T) {
 	isolateRuntimeWindowFlagParseEnv(t)
@@ -228,9 +234,6 @@ func TestParentLevelFlagSetsNameTheChildRoute(t *testing.T) {
 		err := New().Run(row.argv, &stdout, &stderr)
 		if err == nil || !IsUsageError(err) {
 			t.Fatalf("%v: err = %v, want a usage error", row.argv, err)
-		}
-		if !strings.Contains(stderr.String(), "Usage of "+row.route+":\n") {
-			t.Errorf("%v: stderr = %q, want `Usage of %s:`", row.argv, stderr.String(), row.route)
 		}
 		for _, problem := range forwardedRouteUsageProblems(row.route, stderr.String()) {
 			t.Error(problem)
@@ -252,10 +255,7 @@ func TestDeleteNotificationPrintsItsOwnUsage(t *testing.T) {
 			t.Fatalf("%v: err = %v, want a usage error", argv, err)
 		}
 		printed := stderr.String()
-		if len(argv) == 3 && !strings.Contains(printed, "Usage of delete notification:\n") {
-			t.Errorf("%v: stderr = %q, want `Usage of delete notification:`", argv, printed)
-		}
-		if len(argv) == 2 && !strings.Contains(printed, block.String()) {
+		if !strings.Contains(printed, block.String()) || strings.Contains(printed, "Usage of ") {
 			t.Errorf("%v: stderr = %q, want the delete notification block %q", argv, printed, block.String())
 		}
 		if n := strings.Count(printed, "notification ack"); n != 0 {

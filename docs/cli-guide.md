@@ -24,9 +24,14 @@ Exit codes:
   positional argument the route does not accept, or an unknown or missing
   subcommand) or a deterministic semantic exit (e.g. `focus` cannot resolve
   the target).
+- A flag parse failure on a public route (an unknown flag, a missing flag
+  value, or a malformed boolean) prints the reason line first and then the
+  route's `Usage:` block, byte-identical to the one `projmux <route> --help`
+  prints, on stderr; stdout stays empty and the exit code is `2`. The Go flag
+  package's own `Usage of <route>:` flag listing is never printed.
 - The hidden `projmux internal …` plumbing is outside this table: it follows
   its caller's contract (generated tmux config, provider hooks, supervisors),
-  so a flag error there keeps its existing exit code.
+  so a flag error there keeps its existing exit code and output.
 
 ## Help boundary
 

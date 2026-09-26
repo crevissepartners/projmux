@@ -75,14 +75,17 @@ func TestSetupTerminalHelpAndFlagsOmitDryRun(t *testing.T) {
 		t.Fatalf("route help exposes removed --dry-run:\n%s", routeHelp.String())
 	}
 
-	// The leaf parser still owns its own flag documentation for direct
-	// invocation, and it still omits the removed --dry-run flag.
+	// A direct leaf invocation prints the catalog Usage, not the flag
+	// package listing, and it still omits the removed --dry-run flag.
 	var help bytes.Buffer
 	err := newSetupCommand(cmd).Run([]string{"terminal", "--help"}, &bytes.Buffer{}, &help)
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("setupCommand.Run(terminal --help) error = %v, want flag.ErrHelp", err)
 	}
-	for _, want := range []string{"Usage of setup terminal:", "-apply", "-config", "-allow-symlink"} {
+	if strings.Contains(help.String(), "Usage of ") {
+		t.Fatalf("canonical help prints the flag package default usage:\n%s", help.String())
+	}
+	for _, want := range []string{"Usage:\n  projmux setup terminal", "--apply", "--config", "--allow-symlink"} {
 		if !strings.Contains(help.String(), want) {
 			t.Fatalf("canonical help missing %q:\n%s", want, help.String())
 		}

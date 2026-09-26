@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -33,7 +34,7 @@ func TestSplitOperands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := splitOperands("cmd", tt.args)
+			got, err := splitOperands("cmd", tt.args, io.Discard)
 			if tt.wantErr != "" {
 				if err == nil || err.Error() != tt.wantErr || !IsUsageError(err) {
 					t.Fatalf("err = %v (usage=%v), want usage error %q", err, IsUsageError(err), tt.wantErr)
@@ -227,7 +228,7 @@ func TestHookTrustDoubleDashAllowsDashPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, verb := range []string{"hook trust", "hook untrust"} {
-		got, _, err := cmd.resolveTrustTarget(verb, []string{"--", "-x"}, func() {})
+		got, _, err := cmd.resolveTrustTarget(verb, []string{"--", "-x"}, io.Discard, func() {})
 		if err != nil {
 			t.Fatalf("%s -- -x: err = %v", verb, err)
 		}

@@ -39,6 +39,7 @@ func newTagCommand() *tagCommand {
 func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("runtime tag", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	setRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -81,9 +82,7 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 func (c *tagCommand) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("runtime tag list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "runtime tag list")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -145,9 +144,7 @@ func (c *tagCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 func (c *tagCommand) runClear(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("runtime tag clear", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		printRouteUsage(stderr, "runtime tag clear")
-	}
+	setRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err

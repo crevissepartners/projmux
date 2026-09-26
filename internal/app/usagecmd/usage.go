@@ -124,6 +124,7 @@ const veryStaleAfter = 1 * time.Hour
 func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("agent usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	cli.SetRouteUsage(fs)
 	model := fs.String("model", "all", "filter by model: "+strings.Join(aiprovider.UsageTargets(), " | "))
 	window := fs.String("window", "all", "filter by window: 5h | weekly | context | quota | all")
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the tab-aligned table")

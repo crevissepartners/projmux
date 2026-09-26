@@ -68,11 +68,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr io.Writer, ownsTopLevel bool) error {
 	fs := flag.NewFlagSet("notification reconcile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Repair the pending AI notify queue from live tmux pane attention state.")
-		fmt.Fprintln(stderr)
-		printRouteUsage(stderr, "notification reconcile")
-	}
+	setRouteUsage(fs)
 	asJSON := fs.Bool("json", false, "emit json instead of human output")
 
 	if err := fs.Parse(args); err != nil {
