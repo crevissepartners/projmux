@@ -26,6 +26,9 @@ type codexQuestionChannel struct {
 	window       func() time.Duration
 	newID        func() (string, error)
 	poll         time.Duration
+	// beforeCanceledClose, when set, runs on a waiter whose context ended,
+	// just before its store write. Tests use it to hold that write.
+	beforeCanceledClose func()
 }
 
 type codexUserInputParams struct {
@@ -105,6 +108,10 @@ func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycl
 	go c.waitAndAnswer(ctx, store, record, notification.RawRequestID, responder, popup, identity.RuntimeID, claudeQuestionAskerOf(registry, *agent))
 }
 
+// Wait is meant to return once every waiter Handle started has returned.
+// Not joined yet.
+func (c *codexQuestionChannel) Wait() {}
+
 // HandleResolved marks only the matching waiting Codex request as answered in
 // Codex's own input surface. An earlier CLI answer remains answered here.
 func (c codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
@@ -142,6 +149,9 @@ func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentque
 	for {
 		select {
 		case <-ctx.Done():
+			if c.beforeCanceledClose != nil {
+				c.beforeCanceledClose()
+			}
 			_, _ = store.Close(record.ID)
 			return
 		case <-deadline.C:

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -343,4 +344,66 @@ func TestCodexQuestionNativeAnswerFirstRefusesLateCLIAnswer(t *testing.T) {
 		t.Fatal("late CLI answer responded to an already resolved Codex request")
 	case <-time.After(20 * time.Millisecond):
 	}
+}
+
+// TestCodexQuestionWaitJoinsTheCanceledWaiterBeforeItsStoreWrite holds the
+// waiter of a canceled request just before its store write. The owner's Wait
+// must not return while that write is still pending: after Wait, the store is
+// no longer the waiter's to touch.
+func TestCodexQuestionWaitJoinsTheCanceledWaiterBeforeItsStoreWrite(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newQuestionFixture(t, true)
+		agent, _ := fixture.resources.registry.Agent(questionTestAgent)
+		agent.Spec.Provider = aiModeCodex
+		reached, release := make(chan struct{}), make(chan struct{})
+		channel := codexQuestionChannel{
+			loadRegistry:        fixture.resources.store().load,
+			store:               func() (*agentquestion.Store, error) { return fixture.store, nil },
+			answering:           func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringClaude },
+			window:              func() time.Duration { return time.Minute },
+			newID:               agentquestion.NewID,
+			poll:                time.Millisecond,
+			beforeCanceledClose: func() { close(reached); <-release },
+		}
+		responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+		ctx, cancel := context.WithCancel(t.Context())
+		channel.Handle(ctx, codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: "%7", Generation: "gen-1", ThreadID: "thread-1"}, codexappserver.Notification{
+			Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`),
+			Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","options":[{"label":"A"}]}]}`),
+		}, responder)
+		records, err := fixture.store.List(questionTestAgent)
+		if err != nil || len(records) != 1 {
+			t.Fatalf("waiting record count = %d, err = %v", len(records), err)
+		}
+		state := func() agentquestion.State {
+			record, _, err := fixture.store.Get(records[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return record.State
+		}
+		cancel()
+		<-reached
+		joined := make(chan struct{})
+		go func() {
+			channel.Wait()
+			close(joined)
+		}()
+		// Every goroutine is now blocked: the waiter on its held write, and
+		// the owner either in Wait or already past it.
+		synctest.Wait()
+		select {
+		case <-joined:
+			before := state()
+			close(release)
+			synctest.Wait()
+			t.Fatalf("Wait returned while the canceled waiter still held its store write: record %s when Wait returned, %s after", before, state())
+		default:
+		}
+		close(release)
+		<-joined
+		if got := state(); got != agentquestion.StateClosed {
+			t.Fatalf("record state after Wait = %s, want %s", got, agentquestion.StateClosed)
+		}
+	})
 }
