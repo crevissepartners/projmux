@@ -2376,6 +2376,40 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 	if toasts != 1 {
 		t.Fatalf("401 error toast count = %d, commands = %#v", toasts, cmdRecorder(cmd).commands)
 	}
+	cmdRecorder(cmd).commands = nil
+	notifyStore.pushed = nil
+	if err := testCodexLifecycleSink(cmd).ApplyWithNoticeContent(identity, codexLifecycleProjection{
+		Accepted: true, Interaction: coremetadata.InteractionIdle,
+		Notices: []codexLifecycleNotice{{Category: "error", ID: "failed-401", Severity: notify.SeverityCritical,
+			ThreadID: "thread-1", TurnID: "turn-1", QueueOnly: true}},
+	}, codexNoticeContent{HTTPUnauthorized: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].Text != "Error · HTTP 401" {
+		t.Fatalf("queue-only 401 refresh = %#v", notifyStore.pushed)
+	}
+	for _, command := range cmdRecorder(cmd).commands {
+		if command.name == "notify-send" {
+			t.Fatalf("queue-only 401 refresh emitted a second toast: %#v", cmdRecorder(cmd).commands)
+		}
+	}
+	cmdRecorder(cmd).commands = nil
+	notifyStore.pushed = nil
+	if err := testCodexLifecycleSink(cmd).Apply(identity, codexLifecycleProjection{
+		Accepted: true, Interaction: coremetadata.InteractionIdle,
+		Notices: []codexLifecycleNotice{{Category: "error", ID: "failed-503", Severity: notify.SeverityCritical,
+			ThreadID: "thread-1", TurnID: "turn-2", QueueOnly: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].Text != "Error" {
+		t.Fatalf("queue-only 503 refresh = %#v", notifyStore.pushed)
+	}
+	for _, command := range cmdRecorder(cmd).commands {
+		if command.name == "notify-send" {
+			t.Fatalf("queue-only 503 refresh emitted a second toast: %#v", cmdRecorder(cmd).commands)
+		}
+	}
 
 	cmdRecorder(cmd).commands = nil
 	notifyStore.pushed = nil

@@ -22,14 +22,14 @@ func TestCodexFailureNoticeSurvivesSystemErrorAndRefreshesFailedTurn(t *testing.
 		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
 	})
 	status := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleThreadStatus, ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError})
-	if len(status.Notices) != 1 || status.Notices[0].Category != "error" || status.Notices[0].Severity != notify.SeverityCritical {
+	if len(status.Notices) != 1 || status.Notices[0].Category != "error" || status.Notices[0].Severity != notify.SeverityCritical || status.Notices[0].QueueOnly {
 		t.Fatalf("systemError notice = %#v", status)
 	}
 	if repeat := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleThreadStatus, ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError}); len(repeat.Notices) != 0 {
 		t.Fatalf("duplicate systemError notice = %#v", repeat)
 	}
 	failed := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleTurnCompleted, ThreadID: "thread-1", TurnID: "turn-1", TurnState: codexappserver.TurnStateFailed})
-	if failed.Interaction != coremetadata.InteractionIdle || len(failed.Notices) != 1 || failed.Notices[0].ID != status.Notices[0].ID {
+	if failed.Interaction != coremetadata.InteractionIdle || len(failed.Notices) != 1 || failed.Notices[0].ID != status.Notices[0].ID || !failed.Notices[0].QueueOnly {
 		t.Fatalf("failed turn did not refresh exact error notice = %#v", failed)
 	}
 }
@@ -42,7 +42,7 @@ func TestCodexFailedTurnThenSystemErrorEmitsOneErrorNotice(t *testing.T) {
 	})
 	failed := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleTurnCompleted, ThreadID: "thread-1", TurnID: "turn-1", TurnState: codexappserver.TurnStateFailed})
 	status := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleThreadStatus, ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError})
-	if len(failed.Notices) != 1 || failed.Notices[0].Category != "error" || len(status.Notices) != 0 {
+	if len(failed.Notices) != 1 || failed.Notices[0].Category != "error" || failed.Notices[0].QueueOnly || len(status.Notices) != 0 {
 		t.Fatalf("failed=%#v systemError=%#v", failed, status)
 	}
 }

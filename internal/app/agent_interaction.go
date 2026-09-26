@@ -53,6 +53,7 @@ type codexLifecycleNotice struct {
 	RequestID          string
 	Kind               codexappserver.ApprovalKind
 	ResponderAvailable bool
+	QueueOnly          bool
 }
 
 type codexLifecycleProjection struct {
@@ -222,7 +223,9 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 			// A systemError may arrive before the failed turn carries its HTTP
 			// status. Refresh the same notice ID with the more specific result.
 			if event.TurnState == codexappserver.TurnStateFailed {
-				projection.Notices = []codexLifecycleNotice{r.failureNotice()}
+				notice := r.failureNotice()
+				notice.QueueOnly = r.errorNotified
+				projection.Notices = []codexLifecycleNotice{notice}
 				r.errorNotified = true
 			}
 		}

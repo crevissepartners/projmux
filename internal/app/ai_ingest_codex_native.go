@@ -1620,7 +1620,9 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 			// The native observer is long-lived; it must not stall on the hook.
 			AsyncHooks: true,
 		}
-		_ = s.notifyAIWithInput(identity.RuntimeID, input)
+		if !notice.QueueOnly {
+			_ = s.notifyAIWithInput(identity.RuntimeID, input)
+		}
 		c.notifyProducer().PushReplyReady(input)
 	}
 	return nil
