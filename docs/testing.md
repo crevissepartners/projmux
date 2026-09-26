@@ -193,6 +193,15 @@ value for an explicitly observed cancellation; the shell harness does not
 invent cancellation evidence from a signal whose semantic cause it cannot
 attribute.
 
+`smoke_contract_pass` records `pass` only when the contract shell's own stdout
+and stderr between `smoke_contract_begin` and that call carry no Python
+traceback, even one whose child status was consumed. A traceback ends the
+scenario through the ordinary fail path at the pass line and logs
+`E2E_CONTRACT id=<ID> guard=python-traceback stream=<stream> exception=<last
+exception line>`; there is no exemption list. Output redirected to a file never
+reaches the guard. `make e2e-traceback-guard-contract` pins this, including a
+traceback written while the job log lags behind the pass call.
+
 ## Host-Only Checks
 
 The Docker suites do not replace checks that depend on a real host terminal,

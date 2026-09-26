@@ -13,6 +13,16 @@ SMOKE_CONTRACT_TERMINAL_JSON=""
 SMOKE_CONTRACT_DIAGNOSTIC_JSON=""
 SMOKE_CONTRACT_SUBSHELL=0
 SMOKE_CONTRACT_LINE=0
+SMOKE_CONTRACT_OUTPUT_ACTIVE=0
+SMOKE_CONTRACT_OUTPUT_STDOUT=""
+SMOKE_CONTRACT_OUTPUT_STDERR=""
+SMOKE_CONTRACT_OUTPUT_TOKEN=""
+SMOKE_CONTRACT_SAVED_STDOUT_FD=""
+SMOKE_CONTRACT_SAVED_STDERR_FD=""
+SMOKE_CONTRACT_STDOUT_PIPE_FD=""
+SMOKE_CONTRACT_STDERR_PIPE_FD=""
+SMOKE_CONTRACT_GUARD_STREAM=""
+SMOKE_CONTRACT_GUARD_EXCEPTION=""
 
 SMOKE_L06_HOLDER_PID=0
 SMOKE_L06_HOLDER_HELD_MS=0
@@ -332,6 +342,10 @@ smoke_contract_capture() {
 smoke_contract_fail() {
   local status="$1"
   local line="$2"
+  # Settle the scenario's teed output first, so the terminal records below
+  # follow everything the scenario already wrote in the job log. A settle
+  # timeout is reported by the settle itself and cannot turn a failure green.
+  smoke_contract_output_settle || true
   SMOKE_CONTRACT_TERMINAL_JSON="$(smoke_contract_capture E2E_TERMINAL smoke_contract_terminal "$status" "$line")"
   SMOKE_CONTRACT_DIAGNOSTIC_JSON="$(smoke_contract_capture E2E_DIAGNOSTIC smoke_contract_failure_diagnostic)"
   smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-}" >&2
@@ -375,6 +389,133 @@ exit() {
   builtin exit "$status"
 }
 
+# A scenario only fails on errexit or an explicit exit, so a Python child that
+# prints a traceback while its status is consumed (a wait predicate, `if !`,
+# `|| true`) used to leave the scenario green. smoke_contract_begin therefore
+# tees the contract shell's stdout and stderr, each through its own `tee`, into
+# per-scenario capture files, and smoke_contract_pass refuses to record pass
+# when that output holds a Python traceback. The job log still receives both
+# streams on their original descriptors.
+#
+# The tee processes must never look owned by the smoke root:
+# smoke_owned_process_inventory matches a cwd below PROJMUX_SMOKE_WORKDIR or an
+# argv naming it. So tee runs from `/` and writes the capture through an
+# inherited descriptor (`tee -a /dev/fd/3`), keeping the path out of its argv.
+# It ignores INT, TERM, and HUP so a signal aimed at the job cannot cut the
+# shell's own output (and turn every later write into SIGPIPE); it exits on EOF
+# once the last writer closes the pipe. Nothing waits for it, because a
+# background child may still hold the pipe. The same reason rules out a bare
+# `wait` right after smoke_contract_begin: Bash counts the last process
+# substitution among what a bare `wait` waits for when it is still `$!`.
+smoke_contract_output_tee() {
+  trap '' INT TERM HUP
+  cd / || return 1
+  exec tee -a /dev/fd/3 3>>"$1"
+}
+
+smoke_contract_output_start() {
+  local directory
+  if [[ -z "${PROJMUX_SMOKE_WORKDIR:-}" || ! -d "$PROJMUX_SMOKE_WORKDIR" ]]; then
+    echo "contract $SMOKE_CONTRACT_ID cannot capture its output without smoke_setup_env" >&2
+    return 1
+  fi
+  directory="$PROJMUX_SMOKE_WORKDIR/contract-output"
+  mkdir -p "$directory"
+  SMOKE_CONTRACT_OUTPUT_STDOUT="$directory/$SMOKE_CONTRACT_ID.stdout"
+  SMOKE_CONTRACT_OUTPUT_STDERR="$directory/$SMOKE_CONTRACT_ID.stderr"
+  : >"$SMOKE_CONTRACT_OUTPUT_STDOUT"
+  : >"$SMOKE_CONTRACT_OUTPUT_STDERR"
+  exec {SMOKE_CONTRACT_SAVED_STDOUT_FD}>&1 {SMOKE_CONTRACT_SAVED_STDERR_FD}>&2
+  exec {SMOKE_CONTRACT_STDOUT_PIPE_FD}> >(smoke_contract_output_tee "$SMOKE_CONTRACT_OUTPUT_STDOUT")
+  # The stderr tee writes to the original stderr and must not keep the stdout
+  # pipe open behind the contract shell's back.
+  exec {SMOKE_CONTRACT_STDERR_PIPE_FD}> >(smoke_contract_output_tee "$SMOKE_CONTRACT_OUTPUT_STDERR" \
+    {SMOKE_CONTRACT_STDOUT_PIPE_FD}>&- >&2)
+  exec 1>&"$SMOKE_CONTRACT_STDOUT_PIPE_FD" 2>&"$SMOKE_CONTRACT_STDERR_PIPE_FD"
+  SMOKE_CONTRACT_OUTPUT_ACTIVE=1
+}
+
+# smoke_contract_output_settle ends the capture and proves it is complete. It
+# writes one unique token through each teed pipe, restores the original stdout
+# and stderr, and waits until each token has reached its capture file. A pipe is
+# read in order by one tee that writes the job log before the file, so once the
+# token is in the file every byte written to that stream before it is in the
+# file and in the job log too. A token that does not arrive within the scaled
+# budget fails the settle; it never passes silently.
+smoke_contract_output_settle() {
+  local budget_ms started_ms now_ms pending
+  [[ "$SMOKE_CONTRACT_OUTPUT_ACTIVE" == "1" ]] || return 0
+  SMOKE_CONTRACT_OUTPUT_ACTIVE=0
+  SMOKE_CONTRACT_OUTPUT_TOKEN="contract-output-sync-$SMOKE_CONTRACT_ID-$$-$RANDOM$RANDOM-$(smoke_now_ms)"
+  # A dead tee would turn this write into a SIGPIPE for the whole shell.
+  (
+    trap '' PIPE
+    printf '>> %s stream=stdout\n' "$SMOKE_CONTRACT_OUTPUT_TOKEN" >&"$SMOKE_CONTRACT_STDOUT_PIPE_FD"
+  ) || true
+  (
+    trap '' PIPE
+    printf '>> %s stream=stderr\n' "$SMOKE_CONTRACT_OUTPUT_TOKEN" >&"$SMOKE_CONTRACT_STDERR_PIPE_FD"
+  ) || true
+  exec 1>&"$SMOKE_CONTRACT_SAVED_STDOUT_FD" 2>&"$SMOKE_CONTRACT_SAVED_STDERR_FD"
+  exec {SMOKE_CONTRACT_STDOUT_PIPE_FD}>&- {SMOKE_CONTRACT_STDERR_PIPE_FD}>&-
+  exec {SMOKE_CONTRACT_SAVED_STDOUT_FD}>&- {SMOKE_CONTRACT_SAVED_STDERR_FD}>&-
+  budget_ms="$(smoke_wait_budget_ms 10)"
+  started_ms="$(smoke_now_ms)"
+  while :; do
+    pending=""
+    grep -aqF -- "$SMOKE_CONTRACT_OUTPUT_TOKEN" "$SMOKE_CONTRACT_OUTPUT_STDOUT" || pending="stdout"
+    grep -aqF -- "$SMOKE_CONTRACT_OUTPUT_TOKEN" "$SMOKE_CONTRACT_OUTPUT_STDERR" || pending="${pending:+$pending+}stderr"
+    [[ -n "$pending" ]] || return 0
+    now_ms="$(smoke_now_ms)"
+    if ((now_ms - started_ms >= budget_ms)); then
+      echo "E2E_CONTRACT id=$SMOKE_CONTRACT_ID guard=output-sync-timeout stream=$pending budget_ms=$budget_ms" >&2
+      return 1
+    fi
+    sleep 0.02
+  done
+}
+
+# smoke_contract_output_traceback scans one settled capture up to its sync
+# token. It succeeds when the capture holds a Python traceback and leaves the
+# last traceback's exception line (`ExcType: message`) in
+# SMOKE_CONTRACT_GUARD_EXCEPTION.
+smoke_contract_output_traceback() {
+  local path="$1" exception
+  exception="$(awk -v token="$SMOKE_CONTRACT_OUTPUT_TOKEN" '
+    function consider(text) {
+      if (index(text, "Traceback (most recent call last)")) {
+        found = 1
+        exception = ""
+        seeking = 1
+        return
+      }
+      if (seeking && text ~ /^[^[:space:]]/) {
+        exception = text
+        seeking = 0
+      }
+    }
+    {
+      at = index($0, token)
+      if (at) {
+        consider(substr($0, 1, at - 1))
+        exit
+      }
+      consider($0)
+    }
+    END {
+      if (!found) {
+        exit 1
+      }
+      gsub(/[[:cntrl:]]/, "", exception)
+      if (exception == "") {
+        exception = "unknown"
+      }
+      print substr(exception, 1, 300)
+    }
+  ' "$path")" || return 1
+  SMOKE_CONTRACT_GUARD_EXCEPTION="$exception"
+}
+
 smoke_contract_begin() {
   local scenario_id="$1"
   local phase="$2"
@@ -394,9 +535,37 @@ smoke_contract_begin() {
   SMOKE_CONTRACT_TERMINAL_JSON=""
   SMOKE_CONTRACT_DIAGNOSTIC_JSON=""
   smoke_contract_record begin environment
+  smoke_contract_output_start
 }
 
+# Pass is recorded only for a scenario whose own output, from its begin to this
+# call, holds no Python traceback. There is no exemption list. A traceback, or
+# output that cannot be proven complete, ends the scenario through the ordinary
+# fail path at this call's line.
 smoke_contract_pass() {
+  local guard=""
+  SMOKE_CONTRACT_GUARD_STREAM=""
+  SMOKE_CONTRACT_GUARD_EXCEPTION=""
+  if [[ "$SMOKE_CONTRACT_OUTPUT_ACTIVE" == "1" ]]; then
+    if ! smoke_contract_output_settle; then
+      guard="output-sync-timeout"
+    elif smoke_contract_output_traceback "$SMOKE_CONTRACT_OUTPUT_STDERR"; then
+      SMOKE_CONTRACT_GUARD_STREAM=stderr
+    elif smoke_contract_output_traceback "$SMOKE_CONTRACT_OUTPUT_STDOUT"; then
+      SMOKE_CONTRACT_GUARD_STREAM=stdout
+    fi
+    if [[ -n "$SMOKE_CONTRACT_GUARD_STREAM" ]]; then
+      guard="python-traceback"
+      echo "E2E_CONTRACT id=$SMOKE_CONTRACT_ID guard=$guard stream=$SMOKE_CONTRACT_GUARD_STREAM exception=$SMOKE_CONTRACT_GUARD_EXCEPTION" >&2
+    fi
+    if [[ -n "$guard" ]]; then
+      set +e
+      smoke_contract_line "${BASH_LINENO[0]:-0}"
+      smoke_contract_fail 1 "$SMOKE_CONTRACT_LINE"
+      builtin exit 1
+    fi
+    rm -f "$SMOKE_CONTRACT_OUTPUT_STDOUT" "$SMOKE_CONTRACT_OUTPUT_STDERR"
+  fi
   smoke_contract_record pass environment
   SMOKE_CONTRACT_TERMINAL=1
 }
@@ -635,6 +804,9 @@ smoke_validate_owned_root() {
 
 smoke_cleanup_env() {
   local cleanup_status=0
+  # A scenario that never reached pass or fail still holds the teed output.
+  # Settle and restore it before anything else is written.
+  smoke_contract_output_settle || true
   if [[ -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
     set +e
     smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-}" >&2
