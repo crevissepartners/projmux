@@ -7,8 +7,13 @@
 # docker.sock) the job's checkout path does not exist there, and docker would
 # mount an empty directory. A probe container therefore checks once whether
 # the daemon sees this checkout with the same content. If it does, the
-# checkout is bind-mounted as before; if not, it is copied into a temporary
-# docker volume that is removed on exit.
+# checkout and every input/output directory are bind-mounted as before. If not,
+# the checkout is copied into a temporary docker volume, and so are the
+# directories a run reads or writes (the build output, the prebuilt binary, the
+# evidence): each is seeded into its own volume and, for outputs, copied back to
+# the job's directory after the run. Every volume is removed on exit. The Go
+# module and build caches stay bind mounts: they are daemon-side caches shared
+# by the prefetch and the suites, never read back by the job.
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
@@ -68,23 +73,49 @@ daemon_digest="$(docker run --rm \
   -w /projmux-probe \
   "$image" \
   sha256sum "${probe_files[@]}" 2>/dev/null)" || daemon_digest=""
-if [[ -n "$daemon_digest" && "$daemon_digest" == "$local_digest" ]]; then
-  workspace_mount=(-v "$root:/workspace:ro")
-else
-  echo ">> docker daemon cannot see $root; staging the checkout into a docker volume"
-  workspace_volume="$(docker volume create --label projmux.test-workspace=1)"
-  # The trap only cleans up; bash keeps the script's own exit status.
-  trap 'docker volume rm -f "$workspace_volume" >/dev/null 2>&1 || true' EXIT
-  # Copy the whole tree, .git included, for parity with the bind mount.
-  # Numeric owners keep the files owned by the uid the suite runs as.
-  tar -C "$root" --numeric-owner -cf - . |
+# Volumes this run created. The trap only cleans up; bash keeps the script's
+# own exit status.
+volumes=()
+trap 'if ((${#volumes[@]})); then docker volume rm -f "${volumes[@]}" >/dev/null 2>&1 || true; fi' EXIT
+
+# stage_in DIR TARGET creates a labelled volume, records it for the trap, and
+# copies DIR, the directory itself included, into it (mounted at TARGET). It
+# sets $volume; it is not called through $(...), so the record survives.
+# Numeric owners keep the files, and the volume root, owned by the uid the
+# runs use, so an output volume stays writable for them.
+stage_in() {
+  volume="$(docker volume create --label projmux.test-workspace=1)"
+  volumes+=("$volume")
+  tar -C "$1" --numeric-owner -cf - . |
     docker run --rm -i \
       --network none \
       --user 0:0 \
-      -v "$workspace_volume:/workspace" \
+      -v "$volume:$2" \
       "$image" \
-      tar -C /workspace --numeric-owner -xf -
-  workspace_mount=(--mount "type=volume,source=$workspace_volume,target=/workspace,readonly")
+      tar -C "$2" --numeric-owner -xf -
+}
+
+# copy_back VOLUME DIR TARGET copies what a run left in VOLUME into the job's
+# DIR. Its status is the pipeline's, so a failed copy never passes silently.
+copy_back() {
+  docker run --rm \
+    --network none \
+    --user 0:0 \
+    --mount "type=volume,source=$1,target=$3,readonly" \
+    "$image" \
+    tar -C "$3" --numeric-owner -cf - . |
+    tar -C "$2" --numeric-owner -xf -
+}
+
+if [[ -n "$daemon_digest" && "$daemon_digest" == "$local_digest" ]]; then
+  staging=0
+  workspace_mount=(-v "$root:/workspace:ro")
+else
+  staging=1
+  echo ">> docker daemon cannot see $root; staging the checkout into a docker volume"
+  # Copy the whole tree, .git included, for parity with the bind mount.
+  stage_in "$root" /workspace
+  workspace_mount=(--mount "type=volume,source=$volume,target=/workspace,readonly")
 fi
 
 # Suite containers stay network-isolated, so the Go module cache they build
@@ -128,6 +159,12 @@ fi
 
 if [[ "$mode" == "build" ]]; then
   mkdir -p "$build_output"
+  artifact_mount=(-v "$build_output:/artifact:rw")
+  if [[ "$staging" == 1 ]]; then
+    stage_in "$build_output" /artifact
+    artifact_volume="$volume"
+    artifact_mount=(--mount "type=volume,source=$artifact_volume,target=/artifact")
+  fi
   docker run --rm \
     --network "$docker_network" \
     --user "$(id -u):$(id -g)" \
@@ -140,10 +177,13 @@ if [[ "$mode" == "build" ]]; then
     "${workspace_mount[@]}" \
     -v "$modcache:/gomodcache:ro" \
     -v "$buildcache:/gocache:rw" \
-    -v "$build_output:/artifact:rw" \
+    "${artifact_mount[@]}" \
     -w /workspace \
     "$image" \
     bash -ceu 'go build -trimpath -o /artifact/projmux ./cmd/projmux; printf "1\n" > /artifact/build-count'
+  if [[ "$staging" == 1 ]]; then
+    copy_back "$artifact_volume" "$build_output" /artifact
+  fi
   chmod 0555 "$build_output/projmux"
   exit
 fi
@@ -163,11 +203,22 @@ if [[ -n "$prebuilt" || -n "$expected_sha" ]]; then
   prebuilt_docker_args+=(
     -e PROJMUX_SMOKE_PREBUILT_BIN=/projmux-artifact/projmux
     -e PROJMUX_SMOKE_EXPECTED_BIN_SHA256="$expected_sha"
-    -v "$(dirname "$prebuilt"):/projmux-artifact:ro"
   )
+  if [[ "$staging" == 1 ]]; then
+    stage_in "$(dirname "$prebuilt")" /projmux-artifact
+    prebuilt_docker_args+=(--mount "type=volume,source=$volume,target=/projmux-artifact,readonly")
+  else
+    prebuilt_docker_args+=(-v "$(dirname "$prebuilt"):/projmux-artifact:ro")
+  fi
 fi
 evidence="${PROJMUX_E2E_ARTIFACTS:-$root/.bin/e2e-evidence}"
 mkdir -p "$evidence"
+evidence_mount=(-v "$evidence:/evidence:rw")
+if [[ "$staging" == 1 ]]; then
+  stage_in "$evidence" /evidence
+  evidence_volume="$volume"
+  evidence_mount=(--mount "type=volume,source=$evidence_volume,target=/evidence")
+fi
 suite_shell=(bash)
 if [[ "${PROJMUX_TEST_BASH_TRACE:-}" == "1" ]]; then
   suite_shell+=(-x)
@@ -179,6 +230,7 @@ fi
 # concurrent go invocations. The mount is the one dedicated cache directory,
 # outside HOME/XDG and /workspace, so network isolation, the read-only
 # workspace, and HOME/XDG isolation are unchanged.
+suite_status=0
 docker run --rm \
   --network "$docker_network" \
   --user "$(id -u):$(id -g)" \
@@ -201,8 +253,19 @@ docker run --rm \
   "${workspace_mount[@]}" \
   -v "$modcache:/gomodcache:ro" \
   -v "$buildcache:/gocache:rw" \
-  -v "$evidence:/evidence:rw" \
+  "${evidence_mount[@]}" \
   "${prebuilt_docker_args[@]}" \
   -w /workspace \
   "$image" \
-  "${suite_shell[@]}" "$suite" "$@"
+  "${suite_shell[@]}" "$suite" "$@" || suite_status=$?
+
+# A failed suite's evidence matters most, so it is copied back either way. The
+# suite's failure wins; otherwise a failed copy-back fails the run.
+if [[ "$staging" == 1 ]]; then
+  copy_status=0
+  copy_back "$evidence_volume" "$evidence" /evidence || copy_status=$?
+  if [[ "$suite_status" == 0 ]]; then
+    suite_status="$copy_status"
+  fi
+fi
+exit "$suite_status"

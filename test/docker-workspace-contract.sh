@@ -3,8 +3,11 @@
 # docker daemon the checkout is bind-mounted read-only as before. On a
 # Docker-outside-of-Docker runner the daemon cannot see the job's checkout
 # path, so the script must stage the checkout into a docker volume, mount that
-# read-only, and remove it on exit without changing the exit status. A fake
-# `docker` on PATH stands in for the daemon, so no real docker is needed.
+# read-only, and remove it on exit without changing the exit status. There the
+# build output, the prebuilt binary, and the evidence also travel through
+# volumes, and outputs are copied back to the job. A fake `docker` on PATH
+# stands in for the daemon, so no real docker is needed; a failing `go` stub
+# pins that scripts/test-e2e-docker.sh needs no host Go toolchain.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,16 +25,31 @@ mkdir -p "$workdir/bin"
 cat >"$workdir/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
 # Fake docker: logs argv (one line per call) and emulates the daemon's view.
+# The daemon's disk is $FAKE_DAEMON_ROOT: volumes live under volumes/, and a
+# bind source the daemon cannot see becomes an empty directory under phantom/,
+# as real docker creates one on its own host. A bind source the daemon sees
+# (equal to or under a FAKE_DAEMON_VISIBLE path) is the job's own directory.
 set -euo pipefail
 printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
 sub="$1"
 shift
+volumes="$FAKE_DAEMON_ROOT/volumes"
+mkdir -p "$volumes"
 case "$sub" in
   build) exit 0 ;;
   volume)
     case "$1" in
-      create) echo fake-workspace-vol ;;
-      rm) ;;
+      create)
+        n=$(($(find "$FAKE_DAEMON_ROOT" -maxdepth 1 -name 'created-*' | wc -l) + 1))
+        : >"$FAKE_DAEMON_ROOT/created-$n"
+        mkdir "$volumes/fake-vol-$n"
+        echo "fake-vol-$n"
+        ;;
+      rm)
+        shift
+        [[ "${1:-}" == -f ]] && shift
+        for v in "$@"; do rm -rf "${volumes:?}/$v"; done
+        ;;
       *) exit 1 ;;
     esac
     exit 0
@@ -40,90 +58,158 @@ case "$sub" in
   *) exit 1 ;;
 esac
 
-args=("$@")
-bind_source="" bind_target="" workdir="" artifact="" interactive=0 suite=0 cmd_at=-1
-for ((i = 0; i < ${#args[@]}; i++)); do
-  a="${args[i]}"
-  case "$a" in
-    --mount)
-      m="${args[i + 1]}"
-      if [[ "$m" == type=bind,* ]]; then
-        bind_source="${m#*source=}"
-        bind_source="${bind_source%%,*}"
-        bind_target="${m#*target=}"
-        bind_target="${bind_target%%,*}"
-      fi
-      ;;
-    -w) workdir="${args[i + 1]}" ;;
-    -i) interactive=1 ;;
-    -v)
-      case "${args[i + 1]}" in
-        *:/artifact:rw) artifact="${args[i + 1]%:/artifact:rw}" ;;
-        *:/evidence:rw) suite=1 ;;
-      esac
-      ;;
-    sha256sum) cmd_at=$i ;;
-  esac
-done
-
-if [[ -n "$bind_source" ]]; then
-  visible=0
+visible() {
+  local p
   IFS=: read -r -a paths <<<"${FAKE_DAEMON_VISIBLE:-}"
   for p in "${paths[@]}"; do
-    [[ -n "$p" && "$p" == "$bind_source" ]] && visible=1
+    [[ -n "$p" && ("$1" == "$p" || "$1" == "$p"/*) ]] && return 0
   done
-  if [[ "$visible" != 1 ]]; then
-    echo "docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: $bind_source" >&2
+  return 1
+}
+
+# Mount targets and the fake daemon directories behind them, in order.
+targets=() dirs=() envs=() workdir="" bind_probe=0
+add_mount() { # KIND SOURCE TARGET
+  local dir
+  if [[ "$1" == volume ]]; then
+    dir="$volumes/$2"
+    [[ -d "$dir" ]] || { echo "docker: no such volume: $2" >&2; exit 125; }
+  elif visible "$2"; then
+    dir="$2"
+  elif [[ "$1" == mount-bind ]]; then
+    echo "docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: $2" >&2
     exit 125
+  else
+    dir="$FAKE_DAEMON_ROOT/phantom$2"
+    mkdir -p "$dir"
   fi
-  dir="$bind_source${workdir#"$bind_target"}"
-  out="$(cd "$dir" && sha256sum "${args[@]:cmd_at+1}")"
-  if [[ "${FAKE_DAEMON_STALE:-}" == 1 ]]; then
-    out="$(sed 's/^[0-9a-f]*/0000/' <<<"$out")"
-  fi
-  printf '%s\n' "$out"
-  exit 0
-fi
-if [[ "$interactive" == 1 ]]; then
-  cat >/dev/null
-  exit 0
-fi
-if [[ -n "$artifact" ]]; then
-  : >"$artifact/projmux"
-  exit 0
-fi
-if [[ "$suite" == 1 ]]; then
-  exit "${FAKE_SUITE_EXIT:-0}"
-fi
-exit 0
+  targets+=("$3")
+  dirs+=("$dir")
+}
+args=("$@")
+i=0
+while ((i < ${#args[@]})); do
+  a="${args[i]}"
+  case "$a" in
+    --rm | -i) i=$((i + 1)) ;;
+    --network | --user) i=$((i + 2)) ;;
+    -e) envs+=("${args[i + 1]}"); i=$((i + 2)) ;;
+    -w) workdir="${args[i + 1]}"; i=$((i + 2)) ;;
+    -v)
+      IFS=: read -r src tgt _ <<<"${args[i + 1]}"
+      if [[ "$src" == /* ]]; then add_mount bind "$src" "$tgt"; else add_mount volume "$src" "$tgt"; fi
+      i=$((i + 2))
+      ;;
+    --mount)
+      m="${args[i + 1]}"
+      src="${m#*source=}" && src="${src%%,*}"
+      tgt="${m#*target=}" && tgt="${tgt%%,*}"
+      case "$m" in
+        type=bind,*) add_mount mount-bind "$src" "$tgt"; bind_probe=1 ;;
+        type=volume,*) add_mount volume "$src" "$tgt" ;;
+      esac
+      i=$((i + 2))
+      ;;
+    -*) echo "fake docker: unknown option $a" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
+cmd=("${args[@]:i+1}")
+
+# map PATH prints the fake daemon directory behind a container path.
+map() {
+  local k
+  for k in "${!targets[@]}"; do
+    if [[ "$1" == "${targets[k]}" || "$1" == "${targets[k]}"/* ]]; then
+      printf '%s\n' "${dirs[k]}${1#"${targets[k]}"}"
+      return 0
+    fi
+  done
+  echo "fake docker: $1 is not mounted" >&2
+  exit 1
+}
+
+case "${cmd[0]}" in
+  sha256sum)
+    out="$(cd "$(map "$workdir")" && sha256sum "${cmd[@]:1}")"
+    if [[ "$bind_probe" == 1 && "${FAKE_DAEMON_STALE:-}" == 1 ]]; then
+      out="$(sed 's/^[0-9a-f]*/0000/' <<<"$out")"
+    fi
+    printf '%s\n' "$out"
+    ;;
+  tar)
+    # tar -C PATH ...: run the real tar against the mapped directory.
+    [[ "${cmd[1]}" == -C ]] || exit 1
+    if [[ " ${cmd[*]} " == *" -cf "* && -n "${FAKE_COPY_BACK_EXIT:-}" ]]; then
+      exit "$FAKE_COPY_BACK_EXIT"
+    fi
+    tar -C "$(map "${cmd[2]}")" "${cmd[@]:3}"
+    ;;
+  go) ;;
+  bash)
+    if [[ "${cmd[*]}" == *"/artifact/projmux"* ]]; then
+      artifact="$(map /artifact)"
+      printf '#!/bin/sh\n' >"$artifact/projmux"
+      chmod +x "$artifact/projmux"
+      printf '1\n' >"$artifact/build-count"
+      exit 0
+    fi
+    # A suite: record evidence, require the prebuilt binary when passed one.
+    printf 'suite ran\n' >"$(map /evidence)/fake-suite.evidence"
+    for e in "${envs[@]}"; do
+      if [[ "$e" == PROJMUX_SMOKE_PREBUILT_BIN=* && ! -x "$(map "${e#*=}")" ]]; then
+        echo "fake suite: ${e#*=} missing" >&2
+        exit 3
+      fi
+    done
+    exit "${FAKE_SUITE_EXIT:-0}"
+    ;;
+  *) exit 1 ;;
+esac
 FAKE
 chmod +x "$workdir/bin/docker"
+# A host Go toolchain must never be needed: the stub logs any call and fails.
+cat >"$workdir/bin/go" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_GO_LOG"
+exit 127
+FAKE
+chmod +x "$workdir/bin/go"
 
-# make_checkout DIR creates the files the script and its probe read.
+# make_checkout DIR creates the files the script and its probe read, plus what
+# scripts/test-e2e-docker.sh hashes, as a git checkout.
 make_checkout() {
-  mkdir -p "$1/scripts"
-  cp "$root/scripts/test-docker-run.sh" "$1/scripts/"
+  mkdir -p "$1/scripts" "$1/test/docker"
+  cp "$root/scripts/test-docker-run.sh" "$root/scripts/test-e2e-docker.sh" "$1/scripts/"
+  cp "$root/test/docker/Dockerfile" "$1/test/docker/"
   cp "$root/go.mod" "$root/go.sum" "$1/"
+  git -C "$1" init -q
+  git -C "$1" add -A
 }
 
 # run_case LABEL CHECKOUT VISIBLE [ARGS...] runs the script from CHECKOUT with
-# fresh caches; VISIBLE is the daemon-visible path list. It sets $status and
-# leaves the call log in $workdir/LABEL.log.
+# fresh caches and a fresh fake daemon; VISIBLE is the daemon-visible path
+# list. SCRIPT (default scripts/test-docker-run.sh) picks the entrypoint. It
+# sets $status and leaves the call log in $workdir/LABEL.log.
 run_case() {
   local label="$1" checkout="$2" visible="$3"
   shift 3
   local cases="$workdir/cases/$label"
-  mkdir -p "$cases"
+  mkdir -p "$cases/daemon"
   : >"$workdir/$label.log"
+  : >"$workdir/$label.go.log"
   status=0
   env PATH="$workdir/bin:$PATH" \
     FAKE_DOCKER_LOG="$workdir/$label.log" \
+    FAKE_GO_LOG="$workdir/$label.go.log" \
+    FAKE_DAEMON_ROOT="$cases/daemon" \
     FAKE_DAEMON_VISIBLE="$visible" \
     PROJMUX_TEST_SKIP_IMAGE_BUILD=1 \
     PROJMUX_TEST_GOMODCACHE="$cases/gomodcache" \
     PROJMUX_TEST_GOCACHE="$cases/gocache" \
     PROJMUX_E2E_ARTIFACTS="$cases/evidence" \
-    bash "$checkout/scripts/test-docker-run.sh" "$@" \
+    PROJMUX_E2E_BUILD_CACHE="$cases/e2e-build-cache" \
+    bash "$checkout/${SCRIPT:-scripts/test-docker-run.sh}" "$@" \
     >"$workdir/$label.out" 2>"$workdir/$label.err" || status=$?
 }
 
@@ -131,7 +217,48 @@ run_case() {
 line() { grep -F -- "$2" "$workdir/$1.log" || true; }
 count() { grep -c -F -- "$2" "$workdir/$1.log" || true; }
 
-vol_mount='--mount type=volume,source=fake-workspace-vol,target=/workspace,readonly'
+# check LABEL MESSAGE COMMAND... passes when COMMAND succeeds.
+check() {
+  local label="$1" message="$2"
+  shift 2
+  if "$@"; then
+    pass "$label: $message"
+  else
+    fail "$label: $message"
+  fi
+}
+
+# check_has LABEL MESSAGE PATTERN NEEDLE: a logged call containing PATTERN
+# contains NEEDLE.
+check_has() {
+  if [[ "$(line "$1" "$3")" == *"$4"* ]]; then
+    pass "$1: $2"
+  else
+    fail "$1: $2: $(line "$1" "$3")"
+  fi
+}
+
+# check_never LABEL MESSAGE NEEDLE: no logged call contains NEEDLE.
+check_never() {
+  if [[ "$(count "$1" "$3")" == 0 ]]; then
+    pass "$1: $2"
+  else
+    fail "$1: $2"
+  fi
+}
+
+# expect_status LABEL WANT
+expect_status() {
+  if [[ "$status" == "$2" ]]; then
+    pass "$1: exit $2"
+  else
+    fail "$1: exit $status, expected $2"
+    cat "$workdir/$1.err" >&2
+  fi
+}
+
+# The workspace is always the first volume a staged run creates.
+vol_mount='--mount type=volume,source=fake-vol-1,target=/workspace,readonly'
 
 # expect_bind LABEL CHECKOUT: no staging; prefetch and suite bind the checkout.
 expect_bind() {
@@ -141,7 +268,7 @@ expect_bind() {
     cat "$workdir/$label.err" >&2
     return
   fi
-  [[ "$(count "$label" 'volume create')" == 0 ]] || ok=0
+  [[ "$(count "$label" 'volume ')" == 0 ]] || ok=0
   [[ "$(count "$label" 'tar -C /workspace')" == 0 ]] || ok=0
   if [[ "$ok" == 1 ]]; then
     pass "$label: no volume created, no copy"
@@ -157,16 +284,17 @@ expect_bind() {
   done
 }
 
-# expect_staged LABEL CHECKOUT RUNKIND...: one volume, one copy, every RUNKIND
-# run mounts the volume read-only, the checkout is never bound at /workspace,
-# the volume is removed last, and the reason line is printed.
+# expect_staged LABEL CHECKOUT VOLUMES RUNKIND...: VOLUMES labelled volumes,
+# one workspace copy, every RUNKIND run mounts the workspace volume read-only,
+# the checkout is never bound at /workspace, every volume is removed last and
+# none is left behind, and the reason line is printed.
 expect_staged() {
-  local label="$1" checkout="$2" kind
-  shift 2
-  if [[ "$(count "$label" 'volume create')" == 1 && "$(count "$label" 'tar -C /workspace --numeric-owner -xf -')" == 1 ]]; then
-    pass "$label: one volume created, one tar copy"
+  local label="$1" checkout="$2" volumes="$3" kind n names=""
+  shift 3
+  if [[ "$(count "$label" 'volume create --label projmux.test-workspace=1')" == "$volumes" && "$(count "$label" 'tar -C /workspace --numeric-owner -xf -')" == 1 ]]; then
+    pass "$label: $volumes labelled volumes created, one workspace tar copy"
   else
-    fail "$label: expected one volume create and one copy"
+    fail "$label: expected $volumes volume creates and one workspace copy"
     cat "$workdir/$label.log" >&2
   fi
   for kind in "$@"; do
@@ -181,10 +309,11 @@ expect_staged() {
   else
     fail "$label: checkout bind-mounted at /workspace"
   fi
-  if [[ "$(tail -n 1 "$workdir/$label.log")" == 'volume rm -f fake-workspace-vol' ]]; then
-    pass "$label: volume removed at exit"
+  for ((n = 1; n <= volumes; n++)); do names+=" fake-vol-$n"; done
+  if [[ "$(tail -n 1 "$workdir/$label.log")" == "volume rm -f$names" && -z "$(ls -A "$workdir/cases/$label/daemon/volumes")" ]]; then
+    pass "$label: every volume removed at exit"
   else
-    fail "$label: volume not removed last"
+    fail "$label: volumes not removed last"
     cat "$workdir/$label.log" >&2
   fi
   if grep -q -F ">> docker daemon cannot see $checkout; staging the checkout into a docker volume" "$workdir/$label.out"; then
@@ -192,6 +321,22 @@ expect_staged() {
   else
     fail "$label: reason line missing"
   fi
+}
+
+# expect_evidence LABEL: the suite's evidence reached the job's directory.
+expect_evidence() {
+  check "$1" "suite evidence visible job-side" \
+    test -f "$workdir/cases/$1/evidence/fake-suite.evidence"
+}
+
+# A prebuilt binary for suite runs, passed as scripts/test-e2e-docker.sh does.
+prebuilt_dir="$workdir/prebuilt"
+mkdir -p "$prebuilt_dir"
+printf '#!/bin/sh\n' >"$prebuilt_dir/projmux"
+chmod 0555 "$prebuilt_dir/projmux"
+prebuilt_sha="$(sha256sum "$prebuilt_dir/projmux" | awk '{print $1}')"
+with_prebuilt() {
+  PROJMUX_TEST_PREBUILT_BIN="$prebuilt_dir/projmux" PROJMUX_TEST_PREBUILT_SHA256="$prebuilt_sha" "$@"
 }
 
 # a. Host docker: the daemon sees the checkout path with the same content.
@@ -204,13 +349,9 @@ expect_bind host "$host"
 dood="$workdir/dood"
 make_checkout "$dood"
 run_case dood "$dood" "" test/suite.sh
-if [[ "$status" == 0 ]]; then
-  pass "dood: exit 0"
-else
-  fail "dood: exit $status"
-  cat "$workdir/dood.err" >&2
-fi
-expect_staged dood "$dood" 'go mod download' '/evidence:rw'
+expect_status dood 0
+expect_staged dood "$dood" 2 'go mod download' 'test/suite.sh'
+expect_evidence dood
 
 # c. A wrapper already copied the checkout to a path the daemon sees with the
 # same content, and runs the script from there: no second staging.
@@ -224,29 +365,96 @@ expect_bind already-staged "$staged"
 stale="$workdir/stale"
 make_checkout "$stale"
 FAKE_DAEMON_STALE=1 run_case stale "$stale" "$stale" test/suite.sh
-expect_staged stale "$stale" 'go mod download' '/evidence:rw'
+expect_staged stale "$stale" 2 'go mod download' 'test/suite.sh'
 
-# e. --build-binary in DooD builds from the volume.
+# e. --build-binary in DooD builds from the workspace volume into an artifact
+# volume and copies the result back into the job's directory.
 build="$workdir/build"
 make_checkout "$build"
-run_case build "$build" "" --build-binary "$workdir/cases/build/artifact"
-if [[ "$status" == 0 && -x "$workdir/cases/build/artifact/projmux" ]]; then
-  pass "build: exit 0, artifact made executable"
-else
-  fail "build: exit $status"
-  cat "$workdir/build.err" >&2
-fi
-expect_staged build "$build" 'go mod download' '/artifact/projmux'
+artifact="$workdir/cases/build/artifact"
+run_case build "$build" "" --build-binary "$artifact"
+expect_status build 0
+expect_staged build "$build" 2 'go mod download' '/artifact/projmux'
+check_has build "artifact volume mounted at /artifact" \
+  /artifact/projmux "--mount type=volume,source=fake-vol-2,target=/artifact "
+check_never build "output never bind-mounted" "$artifact:"
+check build "job-side build-count is 1" grep -qx 1 "$artifact/build-count"
+check build "job-side binary is executable" test -x "$artifact/projmux"
 
 # f. A failing suite keeps its exit status through the cleanup trap.
 failing="$workdir/failing"
 make_checkout "$failing"
 FAKE_SUITE_EXIT=7 run_case failing "$failing" "" test/suite.sh
-if [[ "$status" == 7 ]]; then
-  pass "failing: suite exit status 7 preserved"
-else
-  fail "failing: exit $status, expected 7"
-fi
-expect_staged failing "$failing" '/evidence:rw'
+expect_status failing 7
+expect_staged failing "$failing" 2 'test/suite.sh'
+
+# g. Host docker keeps binding every input and output: no volumes at all.
+host_out="$workdir/host-outputs"
+make_checkout "$host_out"
+run_case host-build "$host_out" "$workdir" --build-binary "$workdir/cases/host-build/artifact"
+expect_status host-build 0
+check_has host-build "output bound at /artifact" \
+  /artifact/projmux "-v $workdir/cases/host-build/artifact:/artifact:rw "
+check_never host-build "no volume calls" "volume "
+check host-build "job-side binary is executable" test -x "$workdir/cases/host-build/artifact/projmux"
+with_prebuilt run_case host-suite "$host_out" "$workdir" test/suite.sh
+expect_status host-suite 0
+check_has host-suite "evidence bound at /evidence" \
+  test/suite.sh "-v $workdir/cases/host-suite/evidence:/evidence:rw "
+check_has host-suite "prebuilt bound at /projmux-artifact" \
+  test/suite.sh "-v $prebuilt_dir:/projmux-artifact:ro "
+check_never host-suite "no volume calls" "volume "
+expect_evidence host-suite
+
+# h. DooD suite with a prebuilt binary: the binary travels in a volume, and
+# the evidence comes back to the job.
+dood_pre="$workdir/dood-prebuilt"
+make_checkout "$dood_pre"
+with_prebuilt run_case dood-prebuilt "$dood_pre" "" test/suite.sh
+expect_status dood-prebuilt 0
+expect_staged dood-prebuilt "$dood_pre" 3 'test/suite.sh'
+check_has dood-prebuilt "prebuilt mounted read-only from a volume" \
+  test/suite.sh "--mount type=volume,source=fake-vol-2,target=/projmux-artifact,readonly "
+check_never dood-prebuilt "prebuilt never bind-mounted" "$prebuilt_dir:"
+check_has dood-prebuilt "evidence mounted from a volume" \
+  test/suite.sh "--mount type=volume,source=fake-vol-3,target=/evidence "
+expect_evidence dood-prebuilt
+
+# i. A failing DooD suite keeps status 7 and still returns its evidence.
+FAKE_SUITE_EXIT=7 with_prebuilt run_case dood-prebuilt-failing "$dood_pre" "" test/suite.sh
+expect_status dood-prebuilt-failing 7
+expect_staged dood-prebuilt-failing "$dood_pre" 3 'test/suite.sh'
+expect_evidence dood-prebuilt-failing
+
+# j. A failed evidence copy-back fails an otherwise green suite run.
+FAKE_COPY_BACK_EXIT=5 run_case copy-back-failing "$dood" "" test/suite.sh
+check copy-back-failing "exit status is non-zero" test "$status" != 0
+
+# k. scripts/test-e2e-docker.sh prepares one attempt without a host Go
+# toolchain, on a host daemon and on DooD.
+check_build_json() {
+  python3 -c '
+import json, re, sys
+build = json.load(open(sys.argv[1]))
+assert build["build_count"] == 1, build
+assert re.fullmatch(r"[0-9a-f]{64}", build["source_digest"]), build
+assert build["binary_sha256"] == sys.argv[2], build
+' "$1/build.json" "$(sha256sum "$1/binary/projmux" | awk '{print $1}')"
+}
+for mode in host dood; do
+  label="e2e-prepare-$mode"
+  checkout="$workdir/$label"
+  make_checkout "$checkout"
+  visible="$workdir"
+  [[ "$mode" == dood ]] && visible=""
+  SCRIPT=scripts/test-e2e-docker.sh PROJMUX_E2E_PREPARE_ONLY=1 run_case "$label" "$checkout" "$visible"
+  expect_status "$label" 0
+  check "$label" "host go never called" test ! -s "$workdir/$label.go.log"
+  if check_build_json "$workdir/cases/$label/evidence"; then
+    pass "$label: build.json has build_count 1, a 64-hex source_digest, the job-side binary sha"
+  else
+    fail "$label: build.json missing or wrong"
+  fi
+done
 
 exit "$failures"
