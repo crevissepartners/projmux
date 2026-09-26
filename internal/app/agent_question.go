@@ -36,6 +36,8 @@ const (
 	questionReasonChannelOff = "question-channel-off"
 	// questionReasonProviderUnsupported: the Agent is not a supported Agent.
 	questionReasonProviderUnsupported = "question-provider-unsupported"
+	// questionReasonSecretNativeOnly: a secret answer cannot travel in argv.
+	questionReasonSecretNativeOnly = "question-secret-native-only"
 )
 
 // agentQuestionActions are the `agent question` subcommands in help order.
@@ -296,6 +298,9 @@ func writeAgentQuestionList(out io.Writer, result agentQuestionList, now time.Ti
 				fmt.Fprintf(&b, " [%s]", prompt.Header)
 			}
 			fmt.Fprintf(&b, " %s", prompt.Question)
+			if prompt.IsSecret {
+				b.WriteString(" (secret; answer in the Codex window)")
+			}
 			if prompt.MultiSelect {
 				b.WriteString(" (multi-select)")
 			}
@@ -311,7 +316,7 @@ func writeAgentQuestionList(out io.Writer, result agentQuestionList, now time.Ti
 			if prompt.ID != "" {
 				answerKey = prompt.ID
 			}
-			if answer, ok := view.Answers[answerKey]; ok {
+			if answer, ok := view.Answers[answerKey]; ok && !prompt.IsSecret {
 				if prompt.ID != "" {
 					var values []string
 					if json.Unmarshal([]byte(answer), &values) == nil {
@@ -349,6 +354,13 @@ func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coreme
 	questions, err := record.ParsedQuestions()
 	if err != nil {
 		return fmt.Errorf("%s: %w", request.spelling, err)
+	}
+	if record.Provider == "codex" {
+		for _, question := range questions {
+			if question.IsSecret {
+				return refuse(questionReasonSecretNativeOnly, "has a secret answer; answer it in the Codex window instead of passing it on the command line")
+			}
+		}
 	}
 	selections, err := agentQuestionSelections(request, questions)
 	if err != nil {
@@ -424,9 +436,15 @@ func agentQuestionSelections(request agentQuestionRequest, questions []agentques
 		number, value, ok := strings.Cut(raw, "=")
 		index, err := strconv.Atoi(strings.TrimSpace(number))
 		if !ok || err != nil || index < 1 {
+			if flagName == "text" {
+				return 0, "", fmt.Errorf("--text is not <question-number>=<value>")
+			}
 			return 0, "", fmt.Errorf("--%s %q is not <question-number>=<value>", flagName, raw)
 		}
 		if index > len(questions) {
+			if flagName == "text" {
+				return 0, "", fmt.Errorf("--text names question %d; this question set has %d", index, len(questions))
+			}
 			return 0, "", fmt.Errorf("--%s %q names question %d; this question set has %d", flagName, raw, index, len(questions))
 		}
 		return index - 1, value, nil

@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"golang.org/x/sys/unix"
 )
 
@@ -352,6 +354,59 @@ func TestClaudeQuestionPopupRealTmuxAnswersFromThePicker(t *testing.T) {
 	}
 	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
 		t.Fatalf("state = %s, want answered", record.State)
+	}
+}
+
+// TestCodexQuestionPopupRealTmuxAnswersThroughBinding uses the same isolated
+// socket and terminal picker as Claude, then checks Codex's existing server
+// request responder receives the ID-keyed answer array.
+func TestCodexQuestionPopupRealTmuxAnswersThroughBinding(t *testing.T) {
+	server := startRealTmuxQuestionServer(t)
+	client := server.attach(t)
+	fixture := newQuestionFixture(t, false)
+	agent, _ := fixture.resources.registry.Agent(questionTestAgent)
+	agent.Spec.Provider = aiModeCodex
+	pane, _ := fixture.resources.registry.Pane(questionTestPane)
+	pane.Status.Activation.RuntimeID = server.paneID
+	if err := fixture.resources.registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := server.pickerWrapper(t)
+	popup := tmuxClaudeQuestionPopup{
+		runner:     server,
+		executable: func() (string, error) { return wrapper, nil },
+		routed:     true,
+	}
+	channel := codexQuestionChannel{
+		loadRegistry: fixture.resources.store().load,
+		store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
+		popup:        popup,
+		answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux },
+		window:       func() time.Duration { return time.Minute },
+		newID:        agentquestion.NewID,
+		poll:         10 * time.Millisecond,
+	}
+	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	mark := client.mark()
+	channel.Handle(ctx, codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: server.paneID, Generation: "gen-1", ThreadID: "thread-1"}, codexappserver.Notification{
+		Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`),
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"choice","question":"Choose a build tool","options":[{"label":"make"},{"label":"task"}]}]}`),
+	}, responder)
+	client.waitFor(t, mark, "Choose a build tool")
+	client.keys(t, "\r")
+	select {
+	case reply := <-responder.replies:
+		if reply.id != "17" || len(reply.result.Answers) != 1 || len(reply.result.Answers["choice"].Answers) != 1 || reply.result.Answers["choice"].Answers[0] != "make" {
+			t.Fatalf("Codex popup answer = %+v", reply)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("real tmux popup answer did not reach the Codex binding")
+	}
+	records, err := fixture.store.List(questionTestAgent)
+	if err != nil || len(records) != 1 || records[0].State != agentquestion.StateAnswered {
+		t.Fatalf("Codex popup record = %+v, err=%v", records, err)
 	}
 }
 
