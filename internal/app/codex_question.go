@@ -21,6 +21,7 @@ type codexQuestionResponder interface {
 type codexQuestionChannel struct {
 	loadRegistry func() (coremetadata.Registry, error)
 	store        func() (*agentquestion.Store, error)
+	popup        claudeQuestionPopup
 	answering    func() config.AgentQuestionAnswering
 	window       func() time.Duration
 	newID        func() (string, error)
@@ -54,8 +55,18 @@ func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycl
 	if json.Unmarshal(notification.Params, &params) != nil || !params.IsBlocking || params.ThreadID != identity.ThreadID || strings.TrimSpace(params.TurnID) == "" || strings.TrimSpace(params.ItemID) == "" {
 		return
 	}
-	if _, err := agentquestion.ParseCodexQuestions(params.Questions); err != nil {
+	questions, err := agentquestion.ParseCodexQuestions(params.Questions)
+	if err != nil {
 		return
+	}
+	// The shared picker currently echoes free text. Keep secret sets on
+	// Codex's own input surface, which can collect them without echoing.
+	popup := c.popup
+	for _, question := range questions {
+		if question.IsSecret {
+			popup = nil
+			break
+		}
 	}
 	registry, err := c.loadRegistry()
 	if err != nil {
@@ -91,7 +102,7 @@ func (c codexQuestionChannel) Handle(ctx context.Context, identity codexLifecycl
 	if err != nil {
 		return
 	}
-	go c.waitAndAnswer(ctx, store, record, notification.RawRequestID, responder)
+	go c.waitAndAnswer(ctx, store, record, notification.RawRequestID, responder, popup, identity.RuntimeID, claudeQuestionAskerOf(registry, *agent))
 }
 
 // HandleResolved marks only the matching waiting Codex request as answered in
@@ -115,7 +126,7 @@ func (c codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, ev
 	}
 }
 
-func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder) {
+func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder, questionPopup claudeQuestionPopup, paneID string, asker claudeQuestionAsker) {
 	poll := c.poll
 	if poll <= 0 {
 		poll = claudeQuestionPoll
@@ -124,6 +135,10 @@ func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentque
 	defer ticker.Stop()
 	deadline := time.NewTimer(time.Until(record.Deadline))
 	defer deadline.Stop()
+	popup := newClaudeQuestionPopupDriver(questionPopup, claudeQuestionClientPoll, paneID, asker, store, record)
+	answered := false
+	defer func() { popup.stop(answered) }()
+	popup.maybeOpen(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -133,7 +148,16 @@ func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentque
 			// Codex also presents this request in its native TUI. Leave the
 			// provider request open so the operator can answer there.
 			_, _ = store.Settle(record.ID)
-			return
+			// An answer can win the store lock just before the timer. Let the
+			// next read deliver it through the existing responder path.
+			continue
+		case err := <-popup.ended:
+			if err == errClaudeQuestionPopupNotShown {
+				popup.markNotShown()
+				continue
+			}
+			popup.markEnded()
+			_, _ = store.Close(record.ID)
 		case <-ticker.C:
 			current, found, err := store.Get(record.ID)
 			if err != nil || !found {
@@ -141,8 +165,14 @@ func (c codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentque
 			}
 			switch current.State {
 			case agentquestion.StateWaiting:
+				if popup.finished {
+					_, _ = store.Close(record.ID)
+					continue
+				}
+				popup.maybeOpen(ctx)
 				continue
 			case agentquestion.StateAnswered:
+				answered = true
 				response := codexUserInputResponse{Answers: make(map[string]codexUserInputAnswer, len(current.Answers))}
 				for id, encoded := range current.Answers {
 					var values []string

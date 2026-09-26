@@ -26,6 +26,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -2163,6 +2164,7 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		open:            session.Open,
 		questions: &codexQuestionChannel{
 			loadRegistry: c.loadRegistry, store: defaultAgentQuestionStore,
+			popup:     tmuxClaudeQuestionPopup{runner: explicitTmuxRunner{runner: inttmux.ExecRunner{}, target: target.Route}, executable: rawExecutablePath, routed: true},
 			answering: claudeQuestionAnswering, window: claudeQuestionWindow,
 			newID: agentquestion.NewID,
 		},

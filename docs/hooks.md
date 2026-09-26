@@ -797,7 +797,7 @@ The hook opens a tmux popup right away on the terminal you are looking at: the
 client of the Agent's tmux server that you used most recently, whatever
 Session, Window, or Pane it shows. Clients of other tmux servers are not
 considered. The popup's title names the asking Agent and its Project/Window,
-for example `Claude question from reviewer (alpha/main)`, and it runs the projmux
+for example `Agent question from reviewer (alpha/main)`, and it runs the projmux
 picker, one question at a time. Enter picks an option of a single-select
 question; on a multi-select question Enter toggles an option and `Done`
 finishes, with at least one option chosen; `Other / type an answer` takes free

@@ -807,7 +807,7 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering
 | Value | Way | Meaning |
 | --- | --- | --- |
 | `claude` (default) | 1 | The provider shows its own question prompt; projmux stays out of it |
-| `projmux` | 2 | projmux records the question for `projmux agent question list` and `answer`; Claude also opens its picker in a popup |
+| `projmux` | 2 | projmux records the question for `projmux agent question list` and `answer`; Claude and native Codex also open the question picker in a tmux popup |
 
 Set it with `projmux config agent-questions --answering <claude|projmux>`,
 or write the file. The setting applies to every Claude and native Codex Agent on this machine. The value
@@ -815,8 +815,12 @@ is read case-insensitively with surrounding whitespace ignored. A
 missing, empty, or unreadable file, and any other value, is way 1. An Agent
 opted in with `projmux agent question enable` is way 2 whatever the file
 says. Codex handles only blocking app-server requests; a Codex Agent on the
-plain CLI lane has no app-server question channel. Codex questions remain CLI
-only in way 2; popup answering is a separate feature. For Claude, the setting
+plain CLI lane has no app-server question channel. A Codex question set with an
+`isSecret` question stays in Codex's own input surface: projmux does not open
+an unmasked popup. `agent question list` points the operator to that window,
+and `agent question answer` refuses that set so secret text is not passed in
+command arguments. Other blocking Codex questions use the same popup and CLI
+answer paths as Claude. For Claude, the setting
 applies only to a projmux Agent's own conversation; other Claude sessions and
 subagents always get way 1. See
 [hooks.md](hooks.md#answering-askuserquestion-in-projmux).

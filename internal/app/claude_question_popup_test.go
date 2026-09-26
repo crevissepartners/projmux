@@ -889,6 +889,25 @@ func TestClaudeQuestionViewingClientPicksTheMostRecentTerminalClient(t *testing.
 	if got, err := popup.ViewingClient(context.Background(), "%7"); got != "" || err != nil || len(runner.calls) != 0 {
 		t.Fatalf("without $TMUX = %q, %v, calls %q; want no client and no tmux call", got, err, runner.calls)
 	}
+	routed := &routedPopupClientRunner{}
+	target, err := tmuxSocketPathTarget("/tmp/projmux-question-test/socket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	popup = tmuxClaudeQuestionPopup{runner: explicitTmuxRunner{runner: routed, target: target}, routed: true}
+	if got, err := popup.ViewingClient(context.Background(), "%7"); err != nil || got != "/dev/pts/9" {
+		t.Fatalf("routed Codex client = %q, %v", got, err)
+	}
+	if len(routed.calls) != 1 || !reflect.DeepEqual(routed.calls[0][:3], []string{"-S", target.Value, "list-clients"}) {
+		t.Fatalf("Codex popup used a non-exact tmux route: %q", routed.calls)
+	}
+}
+
+type routedPopupClientRunner struct{ calls [][]string }
+
+func (r *routedPopupClientRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, slices.Clone(args))
+	return []byte("/dev/pts/9\t%7\t0\t900\n"), nil
 }
 
 func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
@@ -901,7 +920,7 @@ func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"display-popup", "-c", "/dev/pts/3", "-t", "%7", "-E", "-w", "80%", "-h", "70%", "-T", "Claude question",
+	want := []string{"display-popup", "-c", "/dev/pts/3", "-t", "%7", "-E", "-w", "80%", "-h", "70%", "-T", "Agent question",
 		"'/opt/pm x/projmux' internal claude-question-picker --question 'question-0123456789abcdef' --agent 'agt-1' --store '/state/agent-questions/questions.json'"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args =\n%q\nwant\n%q", args, want)
@@ -915,7 +934,7 @@ func TestBuildClaudeQuestionPopupArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if index := slices.Index(args, "-T"); index < 0 || args[index+1] != `Claude question from fix##1 (alpha/ma\x1bin)` {
+	if index := slices.Index(args, "-T"); index < 0 || args[index+1] != `Agent question from fix##1 (alpha/ma\x1bin)` {
 		t.Fatalf("args = %q, want the escaped asker title", args)
 	}
 	if command := args[len(args)-1]; !strings.HasSuffix(command, " --shown '/tmp/projmux-question-shown-1'") {
@@ -1259,12 +1278,12 @@ func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
 	t.Parallel()
 
 	fallbacks := map[i18n.Key]string{
-		keyClaudeQuestionTitle:           "Claude question",
-		keyClaudeQuestionTitleFrom:       "Claude question from {agent}",
-		keyClaudeQuestionTitleFromAt:     "Claude question from {agent} ({location})",
-		keyClaudeQuestionTitleProgress:   "Claude question {index}/{count}",
-		keyClaudeQuestionFooterSingle:    "Enter: choose  Esc: give the question back to Claude",
-		keyClaudeQuestionFooterMulti:     "Enter: toggle, then Done  Esc: give the question back to Claude",
+		keyClaudeQuestionTitle:           "Agent question",
+		keyClaudeQuestionTitleFrom:       "Agent question from {agent}",
+		keyClaudeQuestionTitleFromAt:     "Agent question from {agent} ({location})",
+		keyClaudeQuestionTitleProgress:   "Agent question {index}/{count}",
+		keyClaudeQuestionFooterSingle:    "Enter: choose  Esc: return the question to the agent",
+		keyClaudeQuestionFooterMulti:     "Enter: toggle, then Done  Esc: return the question to the agent",
 		keyClaudeQuestionDone:            "Done",
 		keyClaudeQuestionOther:           "Other / type an answer",
 		keyClaudeQuestionDoneNeedsOption: "Choose at least one option before Done.",
@@ -1282,6 +1301,9 @@ func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
 		if err != nil || korean.Locale() != ko || korean.String() == fallback {
 			t.Errorf("%s ko = %q from %s (%v), want a Korean entry", key, korean.String(), korean.Locale(), err)
 		}
+		if strings.Contains(strings.ToLower(en.String()), "claude") || strings.Contains(strings.ToLower(korean.String()), "claude") {
+			t.Errorf("%s has a provider-specific popup label", key)
+		}
 		for _, placeholder := range []string{"{index}", "{count}", "{id}", "{reason}", "{agent}", "{location}"} {
 			if strings.Contains(fallback, placeholder) != strings.Contains(korean.String(), placeholder) {
 				t.Errorf("%s ko %q does not carry %s like the English text", key, korean.String(), placeholder)
@@ -1296,7 +1318,7 @@ func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
 		t.Fatalf("selections = %#v, %v, %v", selections, ok, err)
 	}
 	first := runner.runs[0]
-	if first.Title != "Claude 질문 1/1 - Build" || first.Footer != "Enter: 선택 전환 후 완료  Esc: 질문을 Claude에게 돌려주기" || first.Header != "Which tools?" {
+	if first.Title != "에이전트 질문 1/1 - Build" || first.Footer != "Enter: 선택 전환 후 완료  Esc: 질문을 에이전트에게 돌려주기" || first.Header != "Which tools?" {
 		t.Fatalf("ko chrome title=%q footer=%q header=%q", first.Title, first.Footer, first.Header)
 	}
 	if got := []string{first.Items[0].Label, first.Items[1].Label, first.Items[2].Label}; !reflect.DeepEqual(got, []string{"[ ] make", "완료", "기타 / 직접 입력"}) {
@@ -1312,7 +1334,7 @@ func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
 	if notice != "질문 question-0123456789abcdef: 이 답변은 사용되지 않았습니다 (question-not-pending)." {
 		t.Fatalf("ko notice = %q", notice)
 	}
-	if got := (claudeQuestionText{locale: ko}).title(); got != "Claude 질문" {
+	if got := (claudeQuestionText{locale: ko}).title(); got != "에이전트 질문" {
 		t.Fatalf("ko popup title = %q", got)
 	}
 	for _, test := range []struct {
@@ -1320,11 +1342,11 @@ func TestClaudeQuestionPickerChromeResolvesInBothLocales(t *testing.T) {
 		locale i18n.Locale
 		want   string
 	}{
-		{asker: claudeQuestionAsker{Agent: "codex", Location: "alpha/main"}, locale: i18n.FallbackLocale, want: "Claude question from codex (alpha/main)"},
-		{asker: claudeQuestionAsker{Agent: "codex"}, locale: i18n.FallbackLocale, want: "Claude question from codex"},
-		{asker: claudeQuestionAsker{}, locale: i18n.FallbackLocale, want: "Claude question"},
-		{asker: claudeQuestionAsker{Agent: "codex", Location: "alpha/main"}, locale: ko, want: "codex의 Claude 질문 (alpha/main)"},
-		{asker: claudeQuestionAsker{Agent: "codex"}, locale: ko, want: "codex의 Claude 질문"},
+		{asker: claudeQuestionAsker{Agent: "codex", Location: "alpha/main"}, locale: i18n.FallbackLocale, want: "Agent question from codex (alpha/main)"},
+		{asker: claudeQuestionAsker{Agent: "codex"}, locale: i18n.FallbackLocale, want: "Agent question from codex"},
+		{asker: claudeQuestionAsker{}, locale: i18n.FallbackLocale, want: "Agent question"},
+		{asker: claudeQuestionAsker{Agent: "codex", Location: "alpha/main"}, locale: ko, want: "codex의 질문 (alpha/main)"},
+		{asker: claudeQuestionAsker{Agent: "codex"}, locale: ko, want: "codex의 질문"},
 	} {
 		if got := (claudeQuestionText{locale: test.locale}).popupTitle(test.asker); got != test.want {
 			t.Errorf("%s popup title for %+v = %q, want %q", test.locale, test.asker, got, test.want)

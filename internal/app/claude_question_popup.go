@@ -83,7 +83,7 @@ func (t claudeQuestionText) format(key i18n.Key, fallback string, replacements .
 }
 
 func (t claudeQuestionText) title() string {
-	return t.value(keyClaudeQuestionTitle, "Claude question")
+	return t.value(keyClaudeQuestionTitle, "Agent question")
 }
 
 // popupTitle names the Agent that asks, and where it runs, in the popup's
@@ -95,9 +95,9 @@ func (t claudeQuestionText) popupTitle(asker claudeQuestionAsker) string {
 	case agent == "":
 		return t.title()
 	case location == "":
-		return t.format(keyClaudeQuestionTitleFrom, "Claude question from {agent}", "{agent}", agent)
+		return t.format(keyClaudeQuestionTitleFrom, "Agent question from {agent}", "{agent}", agent)
 	default:
-		return t.format(keyClaudeQuestionTitleFromAt, "Claude question from {agent} ({location})", "{agent}", agent, "{location}", location)
+		return t.format(keyClaudeQuestionTitleFromAt, "Agent question from {agent} ({location})", "{agent}", agent, "{location}", location)
 	}
 }
 
@@ -166,6 +166,9 @@ type tmuxClaudeQuestionPopup struct {
 	executable func() (string, error)
 	lookupEnv  func(string) string
 	newMarker  func() (string, error)
+	// routed means runner already carries an exact tmux socket. Detached
+	// Codex observers have no inherited TMUX even when their Pane is live.
+	routed bool
 }
 
 func defaultClaudeQuestionPopup() claudeQuestionPopup {
@@ -184,7 +187,7 @@ func defaultClaudeQuestionPopup() claudeQuestionPopup {
 // seen.
 func (p tmuxClaudeQuestionPopup) ViewingClient(ctx context.Context, paneID string) (string, error) {
 	paneID = strings.TrimSpace(paneID)
-	if paneID == "" || p.runner == nil || p.lookupEnv == nil || strings.TrimSpace(p.lookupEnv("TMUX")) == "" {
+	if paneID == "" || p.runner == nil || (!p.routed && (p.lookupEnv == nil || strings.TrimSpace(p.lookupEnv("TMUX")) == "")) {
 		return "", nil
 	}
 	out, err := p.runner.Run(ctx, "tmux", "list-clients", "-F", "#{client_name}\t#{pane_id}\t#{client_control_mode}\t#{client_activity}")
@@ -524,12 +527,26 @@ func (p claudeQuestionPicker) run(questionID, agentUID string) error {
 		_, _ = p.store.Close(record.ID)
 		return err
 	}
-	selections, ok, err := collectClaudeQuestionSelections(p.runner, p.text, questions)
+	if record.Provider == "codex" {
+		for _, question := range questions {
+			if question.IsSecret {
+				// A manually invoked old picker route must not echo a secret
+				// even though the observer no longer opens that popup.
+				return nil
+			}
+		}
+	}
+	selections, ok, err := collectClaudeQuestionSelections(p.runner, p.text, questions, record.Provider == "codex")
 	if err != nil || !ok {
 		_, _ = p.store.Close(record.ID)
 		return err
 	}
-	answers, err := agentquestion.BuildAnswers(questions, selections)
+	var answers map[string]string
+	if record.Provider == "codex" {
+		answers, err = agentquestion.BuildCodexAnswers(questions, selections)
+	} else {
+		answers, err = agentquestion.BuildAnswers(questions, selections)
+	}
 	if err != nil {
 		_, _ = p.store.Close(record.ID)
 		return err
@@ -562,10 +579,10 @@ const (
 
 // collectClaudeQuestionSelections asks every question in order and returns one
 // Selection per question index. ok is false when the operator canceled.
-func collectClaudeQuestionSelections(runner intpicker.Runner, text claudeQuestionText, questions []agentquestion.Question) (map[int]agentquestion.Selection, bool, error) {
+func collectClaudeQuestionSelections(runner intpicker.Runner, text claudeQuestionText, questions []agentquestion.Question, codex ...bool) (map[int]agentquestion.Selection, bool, error) {
 	selections := make(map[int]agentquestion.Selection, len(questions))
 	for index, question := range questions {
-		selection, ok, err := askClaudeQuestion(runner, text, index, len(questions), question)
+		selection, ok, err := askClaudeQuestion(runner, text, index, len(questions), question, codex...)
 		if err != nil || !ok {
 			return nil, false, err
 		}
@@ -579,16 +596,16 @@ func collectClaudeQuestionSelections(runner intpicker.Runner, text claudeQuestio
 // and ends on the Done row, which needs at least one option. The "Other" row
 // asks for free text; Esc there, or empty text, goes back to the options.
 // Esc on the options cancels the whole question set.
-func askClaudeQuestion(runner intpicker.Runner, text claudeQuestionText, index, count int, question agentquestion.Question) (agentquestion.Selection, bool, error) {
+func askClaudeQuestion(runner intpicker.Runner, text claudeQuestionText, index, count int, question agentquestion.Question, codex ...bool) (agentquestion.Selection, bool, error) {
 	chosen := make([]bool, len(question.Options))
 	cursor, notice := 0, ""
-	title := text.format(keyClaudeQuestionTitleProgress, "Claude question {index}/{count}", "{index}", strconv.Itoa(index+1), "{count}", strconv.Itoa(count))
+	title := text.format(keyClaudeQuestionTitleProgress, "Agent question {index}/{count}", "{index}", strconv.Itoa(index+1), "{count}", strconv.Itoa(count))
 	if header := strings.TrimSpace(question.Header); header != "" {
 		title += " - " + terminaltext.EscapeControls(header)
 	}
-	footer := text.value(keyClaudeQuestionFooterSingle, "Enter: choose  Esc: give the question back to Claude")
+	footer := text.value(keyClaudeQuestionFooterSingle, "Enter: choose  Esc: return the question to the agent")
 	if question.MultiSelect {
-		footer = text.value(keyClaudeQuestionFooterMulti, "Enter: toggle, then Done  Esc: give the question back to Claude")
+		footer = text.value(keyClaudeQuestionFooterMulti, "Enter: toggle, then Done  Esc: return the question to the agent")
 	}
 	for {
 		items := make([]intpicker.Item, 0, len(question.Options)+2)
@@ -609,7 +626,10 @@ func askClaudeQuestion(runner intpicker.Runner, text claudeQuestionText, index, 
 		if question.MultiSelect {
 			items = append(items, intpicker.Item{Label: text.value(keyClaudeQuestionDone, "Done"), Value: claudeQuestionDoneValue})
 		}
-		items = append(items, intpicker.Item{Label: text.value(keyClaudeQuestionOther, "Other / type an answer"), Value: claudeQuestionOtherValue})
+		showOther := len(codex) == 0 || !codex[0] || question.IsOther || question.IsSecret || len(question.Options) == 0
+		if showOther {
+			items = append(items, intpicker.Item{Label: text.value(keyClaudeQuestionOther, "Other / type an answer"), Value: claudeQuestionOtherValue})
+		}
 		header := claudeQuestionHeaderText(question.Question)
 		if notice != "" {
 			header += "\n" + notice
