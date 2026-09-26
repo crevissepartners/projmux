@@ -78,17 +78,16 @@ if pin.returncode != 0:
     raise SystemExit(pin.stderr.strip() or "security contract: reviewed baseline pin unresolved")
 baseline_digests = json.loads(pin.stdout)
 
-packages = subprocess.check_output(
-    ["go", "list", "-f", "{{.ImportPath}}", "./..."], text=True
-).splitlines()
-packages = sorted(packages)
-package_bytes = ("\n".join(packages) + "\n").encode()
-current = json.loads(
-    (root / ".security/security-current-findings.json").read_text(encoding="utf-8")
+# The ./... package set is computed in one place, the shared module, which also
+# names `make security-pin-refresh` when the set no longer matches the pin.
+package_pin = subprocess.run(
+    [sys.executable, "scripts/security-package-pin.py", "--root", str(root)],
+    capture_output=True,
+    text=True,
 )
-package_digest = hashlib.sha256(package_bytes).hexdigest()
-if len(packages) != current["package_count"] or package_digest != current["package_set_sha256"]:
-    raise SystemExit("security contract: canonical ./... package set differs from controlled pre-split parity")
+if package_pin.returncode != 0:
+    raise SystemExit(package_pin.stderr.strip() or "security contract: package set pin unresolved")
+package_set = json.loads(package_pin.stdout)
 artifact = {
     "schema": "projmux.security.parity-contract.v1",
     "scanner_inventory": [
@@ -97,8 +96,8 @@ artifact = {
     ],
     "gosec_rule_sha256": hashlib.sha256(expected_rules.encode()).hexdigest(),
     "baseline_sha256": baseline_digests,
-    "package_count": len(packages),
-    "package_set_sha256": package_digest,
+    "package_count": package_set["package_count"],
+    "package_set_sha256": package_set["package_set_sha256"],
 }
 pathlib.Path(sys.argv[1]).write_text(
     json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n",

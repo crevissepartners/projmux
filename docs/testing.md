@@ -108,6 +108,8 @@ and humans run the same entrypoints.
   checks scanner/rule/baseline identity, PR-range/full-history secret scans,
   cache miss-to-hit convergence, privacy-safe artifacts, and the fail-closed
   aggregate. CI exposes their stable aggregate as `Test`.
+  After adding or removing a Go package, refresh the package-set pin with
+  `make security-pin-refresh` (rule: `AGENTS.md` `## Security`).
 - `make deadcode` runs the focused baseline-contract fixture, then runs
   `go tool deadcode` (pinned via the go.mod tool directive) over the module.
   `.deadcode-allowlist.txt` is exact to current findings: duplicate and stale
