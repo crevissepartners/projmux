@@ -142,28 +142,67 @@ fi
   "$dialogue_codex_pane_uid" "$dialogue_codex_generation" >"$dialogue_root/binding.out" 2>"$dialogue_root/binding.err" &
 dialogue_binding_pid=$!
 dialogue_codex_capabilities="$dialogue_root/capabilities-codex.json"
+dialogue_codex_route_wait="$dialogue_codex_capabilities.wait"
+# Each poll is pending, wrong, or ready. The route fields are omitempty in
+# agentCapabilityRuntime, so an absent key, registryReady=false, or an
+# unavailable message row only means "not yet" and stays silent. A present but
+# mismatched value, a wrong type, or unreadable JSON is wrong: it prints one
+# line when the reason changes. Both keep the wait retrying, and the latest
+# unmet condition lands in $dialogue_codex_route_wait for the timeout tail.
 dialogue_codex_route_ready() {
   local candidate="$dialogue_codex_capabilities.tmp"
   if ! dialogue_pmx agent capabilities "uid:$dialogue_codex_uid" -o json >"$candidate"; then
+    echo "pending: agent capabilities exited non-zero" >"$dialogue_codex_route_wait"
     return 1
   fi
-  if ! python3 - "$candidate" <<'PY'
+  if ! python3 - "$candidate" "$dialogue_codex_route_wait" <<'PY'
 import json,re,sys
-value=json.load(open(sys.argv[1])); runtime=value["runtimeEligibility"]
-actions={row["action"]:row for row in value["capabilities"]}
-assert runtime["registryReady"] is True and runtime["routeIncarnation"].startswith("route-")
-assert runtime["stateDomainID"]=="dialogue-state-domain"
-assert runtime["endpointGenerationID"]=="dialogue-endpoint-generation"
-assert re.fullmatch(r"[0-9a-f]{32}",runtime["brokerRuntimeID"])
-assert runtime["connectionEpoch"]==1 and runtime["bindingEpoch"]==1
-assert actions["message.send"]["available"] is True and actions["message.status"]["available"] is True
+def check(path):
+    try: value=json.load(open(path))
+    except ValueError as error: return "wrong", [f"capabilities JSON is unreadable: {error}"]
+    runtime=value.get("runtimeEligibility") if isinstance(value,dict) else None
+    rows=value.get("capabilities") if isinstance(value,dict) else None
+    if not isinstance(runtime,dict) or not isinstance(rows,list) or not all(isinstance(row,dict) for row in rows):
+        return "wrong", ["capabilities JSON lacks a runtimeEligibility object or a capabilities list of objects"]
+    wrong,pending=[],[]
+    def field(name,observed,expected,absent_is_pending=True):
+        if observed is None and absent_is_pending: pending.append(f"{name} absent")
+        else: wrong.append(f"{name}={json.dumps(observed)}, expected {expected}")
+    ready=runtime.get("registryReady")
+    if ready is False: pending.append("runtimeEligibility.registryReady=false")
+    elif ready is not True: field("runtimeEligibility.registryReady",ready,"a bool",False)
+    for key,ok,expected in (
+        ("routeIncarnation",lambda v:isinstance(v,str) and v.startswith("route-"),'a string starting with "route-"'),
+        ("stateDomainID",lambda v:v=="dialogue-state-domain",'"dialogue-state-domain"'),
+        ("endpointGenerationID",lambda v:v=="dialogue-endpoint-generation",'"dialogue-endpoint-generation"'),
+        ("brokerRuntimeID",lambda v:isinstance(v,str) and re.fullmatch(r"[0-9a-f]{32}",v),"32 lowercase hex"),
+        ("connectionEpoch",lambda v:v==1,"1"),("bindingEpoch",lambda v:v==1,"1")):
+        if runtime.get(key) is None or not ok(runtime[key]): field(f"runtimeEligibility.{key}",runtime.get(key),expected)
+    actions={row.get("action"):row for row in rows}
+    for action in ("message.send","message.status"):
+        if action not in actions: wrong.append(f"capabilities[{action}] row missing, expected the static catalog row"); continue
+        available=actions[action].get("available")
+        if available is False: pending.append(f"capabilities[{action}].available=false")
+        elif available is not True: field(f"capabilities[{action}].available",available,"a bool",False)
+    return ("wrong",wrong) if wrong else ("pending",pending) if pending else ("ready",[])
+try: outcome,reasons=check(sys.argv[1])
+except Exception as error: outcome,reasons="wrong",[f"unexpected capabilities shape {type(error).__name__}: {error}"]
+if outcome=="ready": sys.exit(0)
+line=f"{outcome}: {'; '.join(reasons)}"
+try: previous=open(sys.argv[2]).read().strip()
+except (OSError,ValueError): previous=""
+try:
+    with open(sys.argv[2],"w") as record: print(line,file=record)
+except OSError as error: line,previous=f"{line} (wait record unwritable: {error})",""
+if outcome=="wrong" and line!=previous: print(f"dialogue exact Codex composite route {line}",file=sys.stderr)
+sys.exit(1)
 PY
   then
     return 1
   fi
   mv "$candidate" "$dialogue_codex_capabilities"
 }
-smoke_wait_for "dialogue exact Codex composite route" dialogue_codex_route_ready
+SMOKE_WAIT_DIAGNOSTIC_LOG="$dialogue_codex_route_wait" smoke_wait_for "dialogue exact Codex composite route" dialogue_codex_route_ready
 dialogue_registration_ready() { [[ -f "$dialogue_claude_state/registration-ready" ]]; }
 smoke_wait_for "dialogue exact Claude registration" dialogue_registration_ready
 dialogue_capabilities_before="$dialogue_root/capabilities-before.json"
