@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
@@ -47,6 +46,9 @@ const (
 	// profileReasonLaneUnsupported refuses a profile on the reply-only
 	// activation, whose launch is fixed.
 	profileReasonLaneUnsupported = "profile-lane-unsupported"
+	// profileReasonProviderMismatch refuses a create whose provider is not
+	// the one the profile names. A provider-neutral profile never mismatches.
+	profileReasonProviderMismatch = "profile-provider-mismatch"
 	// profileReasonResumeUnavailable refuses a resume of an Agent whose
 	// recorded profile cannot be applied again. There is no fallback that
 	// resumes it without the profile's permissions.
@@ -148,12 +150,17 @@ func (c *createCommand) profileStore() (profile.Store, error) {
 //
 // An explicit --profile names it; `none` means no profile and no role
 // mapping. A profile `profile list` marks invalid -- a role it shares with
-// another profile included -- is refused with that reason. Without --profile, a `role` creation label selects the one valid
-// profile listing that role; a role no profile lists selects none, and a role
-// several profiles list -- which the store marks invalid with
-// profile-role-claimed -- refuses rather than create the Agent without the
-// permissions one of them would have given it. The labels are read here, at
-// creation, and never again.
+// another profile included -- is refused with that reason. Without --profile,
+// a `role` creation label selects the one profile listing that role when it is
+// valid; a role no profile lists selects none. A role several profiles list
+// (profile-role-claimed), and a role whose one listing profile is invalid
+// (profile-role-profile-invalid), refuse rather than create the Agent without
+// the permissions that profile would have given it. The labels are read here,
+// at creation, and never again.
+//
+// A profile that names a provider applies only to that provider: any other
+// refuses with profile-provider-mismatch before anything is written. A
+// profile without `provider` applies to every provider, as before.
 //
 // An explicit flag wins over the profile item it overlaps: --instructions or
 // --persona over `instructions`, --model over `model`, --effort over
@@ -189,9 +196,16 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 			return nil
 		}
 		option = "--label " + profileRoleLabel + "=" + role
-		if name, err = roleProfile(store, role); err != nil {
-			return usageError(fmt.Sprintf("%s %s: %v; remove the role from all but one of the listed profiles, or pass --profile none to create without a profile; nothing was created",
-				spelling, option, err))
+		if name, err = store.RoleProfile(role); err != nil {
+			switch profile.ReasonOf(err) {
+			case profile.ReasonRoleClaimed:
+				return usageError(fmt.Sprintf("%s %s: %v; remove the role from all but one of the listed profiles, or pass --profile none to create without a profile; nothing was created",
+					spelling, option, err))
+			case profile.ReasonRoleProfileInvalid:
+				return usageError(fmt.Sprintf("%s %s: %v; fix the profile with `projmux profile set <name>`, or pass --profile none to create without a profile; nothing was created",
+					spelling, option, err))
+			}
+			return fmt.Errorf("%s %s: %w; nothing was created", spelling, option, err)
 		}
 		if name == "" {
 			return nil
@@ -203,6 +217,10 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 			return usageError(fmt.Sprintf("%s %s: %v; nothing was created", spelling, option, err))
 		}
 		return fmt.Errorf("%s %s: %w; nothing was created", spelling, option, err)
+	}
+	if spec.Provider != "" && spec.Provider != provider {
+		return usageError(fmt.Sprintf("%s %s: profile %q is for provider %s, not %s (%s); create the Agent with provider %s, or pass --profile none to create without a profile; nothing was created",
+			spelling, option, name, spec.Provider, provider, profileReasonProviderMismatch, spec.Provider))
 	}
 	if flags.dialogueReplyOnly {
 		return usageError(fmt.Sprintf("%s %s: profile %q cannot apply to --%s (%s); nothing was created",
@@ -299,36 +317,6 @@ func codexThreadPolicy(perms profile.Permissions) (codexappserver.ThreadPolicy, 
 		return codexappserver.ThreadPolicy{}, fmt.Errorf("approval %q has no Codex approval policy", perms.Approval)
 	}
 	return policy, nil
-}
-
-// roleProfile returns the name of the one valid profile that lists role, ""
-// when none does, or a profile-role-claimed refusal when several profiles
-// list it.
-func roleProfile(store profile.Store, role string) (string, error) {
-	entries, err := store.List()
-	if err != nil {
-		return "", err
-	}
-	var valid, claimed []string
-	for _, entry := range entries {
-		if !slices.Contains(entry.Roles, role) {
-			continue
-		}
-		switch {
-		case entry.Valid:
-			valid = append(valid, entry.Name)
-		case entry.Reason == profile.ReasonRoleClaimed:
-			claimed = append(claimed, entry.Name)
-		}
-	}
-	if len(claimed) > 0 {
-		return "", &profile.Error{Reason: profile.ReasonRoleClaimed,
-			Detail: fmt.Sprintf("role %q is listed by more than one profile (%s)", role, strings.Join(claimed, ", "))}
-	}
-	if len(valid) == 1 {
-		return valid[0], nil
-	}
-	return "", nil
 }
 
 // prepareProfileSettings writes the Claude settings snapshot of the applied

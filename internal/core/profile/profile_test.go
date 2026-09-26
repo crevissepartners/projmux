@@ -129,6 +129,14 @@ func TestParseRefusesEverythingOutsideTheSubsetWithItsReason(t *testing.T) {
 		{"empty role", "roles = [\"\"]\n", ReasonValueInvalid},
 		{"padded role", "roles = [\" qa\"]\n", ReasonValueInvalid},
 		{"duplicate role in one file", "roles = [\"qa\", \"qa\"]\n", ReasonRoleDuplicate},
+		{"unknown provider", "provider = \"nope\"\n", ReasonProviderUnknown},
+		{"provider not spelled canonically", "provider = \"Claude\"\n", ReasonProviderUnknown},
+		{"padded provider", "provider = \" codex\"\n", ReasonProviderUnknown},
+		{"empty provider", "provider = \"\"\n", ReasonProviderUnknown},
+		{"shell is not a provider", "provider = \"shell\"\n", ReasonProviderUnknown},
+		{"provider array", "provider = [\"claude\"]\n", ReasonValueInvalid},
+		{"provider inside permissions", "[permissions]\nprovider = \"claude\"\n", ReasonKeyUnknown},
+		{"provider twice", "provider = \"claude\"\nprovider = \"codex\"\n", ReasonSyntax},
 	} {
 		_, err := Parse([]byte(test.content))
 		if ReasonOf(err) != test.reason {
@@ -251,12 +259,12 @@ func TestStoreWriteRefusesARoleAnotherValidProfileClaims(t *testing.T) {
 	if _, err := store.Write("first", []byte("roles = [\"review\", \"qa\"]\n")); err != nil {
 		t.Fatalf("rewrite of the claimant = %v", err)
 	}
-	// An invalid hand-placed file claims nothing.
+	// A hand-placed file that does not parse claims nothing.
 	if err := os.WriteFile(filepath.Join(dir, "broken.toml"), []byte("roles = [\"ops\"]\nbogus = \"x\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Write("third", []byte("roles = [\"ops\"]\n")); err != nil {
-		t.Fatalf("role listed only by an invalid file = %v", err)
+		t.Fatalf("role listed only by an unparseable file = %v", err)
 	}
 }
 

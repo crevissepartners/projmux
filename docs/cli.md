@@ -2857,7 +2857,7 @@ Subcommands:
 | [`projmux instructions show`](#projmux-instructions-show) | Print one instruction's content exactly as stored |
 | [`projmux instructions edit`](#projmux-instructions-edit) | Edit one instruction in $EDITOR or $VISUAL, creating it when missing |
 | [`projmux instructions set`](#projmux-instructions-set) | Write one instruction from a file or stdin without an editor |
-| [`projmux instructions delete`](#projmux-instructions-delete) | Delete one instruction file; Agents already started with it keep their snapshot |
+| [`projmux instructions delete`](#projmux-instructions-delete) | Delete one instruction file no profile names; Agents already started with it keep their snapshot |
 
 Canonical spelling: `projmux instructions list`, `projmux instructions show`, `projmux instructions edit`, `projmux instructions set`, `projmux instructions delete`
 
@@ -2947,7 +2947,7 @@ projmux instructions set <name> [--file <path> | -]
 
 ### `projmux instructions delete`
 
-Delete one instruction file; Agents already started with it keep their snapshot
+Delete one instruction file no profile names; Agents already started with it keep their snapshot
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -2999,7 +2999,7 @@ Subcommands:
 | [`projmux persona show`](#projmux-persona-show) | Print one persona's content exactly as stored |
 | [`projmux persona edit`](#projmux-persona-edit) | Edit one persona in $EDITOR or $VISUAL, creating it when missing |
 | [`projmux persona set`](#projmux-persona-set) | Write one persona from a file or stdin without an editor |
-| [`projmux persona delete`](#projmux-persona-delete) | Delete one persona file; Agents already started with it keep their snapshot |
+| [`projmux persona delete`](#projmux-persona-delete) | Delete one persona file no profile names; Agents already started with it keep their snapshot |
 
 Canonical spelling: `projmux instructions list`, `projmux instructions show`, `projmux instructions edit`, `projmux instructions set`, `projmux instructions delete`
 
@@ -3097,7 +3097,7 @@ Canonical spelling: `projmux instructions set`
 
 ### `projmux persona delete`
 
-Delete one persona file; Agents already started with it keep their snapshot
+Delete one persona file no profile names; Agents already started with it keep their snapshot
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -3148,7 +3148,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux profile list`](#projmux-profile-list) | List every built-in and stored profile with its source, roles, digest, and validity |
+| [`projmux profile list`](#projmux-profile-list) | List every built-in and stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity |
 | [`projmux profile show`](#projmux-profile-show) | Print one profile's content exactly as stored or built in |
 | [`projmux profile set`](#projmux-profile-set) | Validate one profile from a file or stdin and write it only when valid |
 | [`projmux profile delete`](#projmux-profile-delete) | Delete one stored profile file; built-in profiles cannot be deleted |
@@ -3157,7 +3157,7 @@ Canonical spelling: `projmux profile list`, `projmux profile show`, `projmux pro
 
 ### `projmux profile list`
 
-List every built-in and stored profile with its source, roles, digest, and validity
+List every built-in and stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 

@@ -1254,6 +1254,12 @@ Manage profiles with `projmux profile list|show|set|delete`, and start an
 Agent from one with `projmux create agent --profile <name>` or a `role` label
 (see [CLI guide](cli-guide.md#agent-profiles-at-create)).
 
+A profile is one combination: the provider it is for, the stored instructions
+it starts with, its model and effort, the roles that select it, and its
+permissions. Every key is optional. Which items each provider applies, and
+which it discloses as not applied or refuses, is in the
+[CLI guide](cli-guide.md#agent-profiles-at-create).
+
 A profile file is a strict subset of TOML:
 
 - blank lines and `#` comments, on their own line or after a value;
@@ -1270,15 +1276,17 @@ booleans, and inline tables. The file limit is 64 KiB.
 
 | Key | Value |
 | --- | --- |
+| `provider` | the Agent provider the profile is for: one of the ids `create agent --provider` accepts (`claude`, `codex`, `antigravity`), spelled exactly. Omitted, the profile is provider-neutral |
 | `instructions` | the name of stored instructions (`projmux instructions list`); the file must exist |
 | `model` | a Claude model alias or name, the same shape `create --model` accepts; `projmux agent models` lists suggestions, and names outside that list are accepted too |
 | `effort` | `low`, `medium`, `high`, `xhigh`, or `max` |
-| `roles` | array of role names; each non-empty, without surrounding whitespace, listed once, and not listed by another valid profile |
+| `roles` | array of role names; each non-empty, without surrounding whitespace, listed once, and not listed by another profile |
 | `[permissions]` `sandbox` | `read-only`, `workspace-write`, or `full-access` |
 | `[permissions]` `approval` | `never`, `on-request`, or `untrusted` |
 | `[permissions]` `allow`, `deny` | arrays of Claude permission rules: a tool name (`[A-Za-z][A-Za-z0-9_-]*`) optionally followed by one non-empty `(...)` specifier, such as `Edit`, `Bash(git status *)`, `Read(./docs/**)`, `WebFetch(domain:example.com)`, or `mcp__srv__tool` |
 
 ```toml
+provider = "claude"
 instructions = "reviewer"
 model = "opus"
 effort = "high"
@@ -1290,6 +1298,41 @@ approval = "on-request"
 allow = ["Bash(git status *)", "Read(./docs/**)"]
 deny = ["WebFetch(domain:example.com)"]
 ```
+
+`provider` binds the profile to one provider. A create of any other provider
+-- `create agent --provider`, a `create <provider>` shortcut, a `role` label,
+or a create from the UI -- refuses with exit 2 (`profile-provider-mismatch`,
+naming both providers) before anything is written. A profile without
+`provider` applies to every provider, and parses, digests, and applies exactly
+as it did before the key existed. `profile set` refuses an unknown value with
+exit 2 (`profile-provider-unknown`, listing the accepted providers) and writes
+nothing. `model` is checked only for its shape, whatever the provider, and
+`effort` takes the one vocabulary above.
+
+`instructions` names the same stored files as `projmux instructions` and its
+older alias `projmux persona`: one store, `<config dir>/personas/<name>.md`,
+and one profile key. What the instructions do depends on the lane, exactly as
+for `create --instructions`: Claude appends them to the system prompt, and
+Codex takes them only on a prompted create that opens its own thread (see
+[CLI guide](cli-guide.md#agent-profiles-at-create)); this key does not add any
+other Codex lane. A profile keeps the instructions it names: `instructions
+delete <name>` and `persona delete <name>` refuse with exit 2
+(`profile-instructions-in-use`) while any stored profile that parses names
+them, valid or not, and name each such profile. Change the profile with
+`projmux profile set <name>` or remove it with `projmux profile delete <name>
+--yes` first. Instructions removed by hand still make the profile invalid
+(`profile-instructions-not-found`), and Agents that record it then refuse to
+resume (`profile-resume-unavailable`) rather than resume without its
+permissions.
+
+Roles fail closed. Every profile that parses holds the roles it lists, valid
+or not: `profile set` refuses a role another profile lists
+(`profile-role-claimed`), `profile list` shows an invalid profile's roles, and
+a `role` label whose one listing profile is invalid refuses the create
+(`profile-role-profile-invalid`, naming the profile and its reason) instead of
+creating the Agent without a profile. A valid profile that shares a role with
+an invalid one is marked `profile-role-claimed`; the invalid one keeps its own
+reason. Pass `--profile none` to create without a profile.
 
 Profile names follow the instructions name rule, and `none` is reserved. One
 profile is built in: `readonly` sets `sandbox = "read-only"`, `approval =
