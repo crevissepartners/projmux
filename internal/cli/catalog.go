@@ -1039,18 +1039,18 @@ var routes = []Route{
 				},
 			},
 			{
-				// The session history lists the Claude conversations an Agent
+				// The session history lists the Claude or Codex conversations an Agent
 				// has moved through: the append-only history file joined with
 				// the conversation `status.sessionRef` records now. `backfill`
 				// adds estimated rows for sessions from before the history.
 				Effects:    unchangedEffects(CardinalityExactOne),
 				Name:       "sessions",
 				Invocation: InvocationExplicit,
-				Summary:    "List the Claude conversations an Agent has moved through, or backfill past ones from delivered message frames",
+				Summary:    "List the Claude or Codex conversations an Agent has moved through, or backfill past Claude sessions from delivered message frames",
 				Usage:      []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]", "projmux agent sessions backfill [--dry-run] [-o json]"},
 				Canonical:  []string{"agent sessions list", "agent sessions backfill"},
 				Children: []Route{
-					{Effects: unchangedEffects(CardinalityExactOne), Name: "list", Invocation: InvocationExplicit, Summary: "List one exact Claude Agent's recorded and current conversations in time order", Usage: []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]"}, Canonical: []string{"agent sessions list"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "list", Invocation: InvocationExplicit, Summary: "List one exact Claude or Codex Agent's recorded and current conversations in time order", Usage: []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]"}, Canonical: []string{"agent sessions list"}, Outputs: []OutputMode{OutputModeJSON}},
 					// The one explicit reader of Claude transcript contents:
 					// read-only, and only to attribute a past session to the
 					// single Agent its delivered coordination frames name.

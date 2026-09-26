@@ -1221,6 +1221,13 @@ func (c *createCommand) openIntentAgent(
 	if target.equalize {
 		c.runtime.equalizeSplitLayout(ctx, target.anchorPaneID, target.placement)
 	}
+	// Native create binds its first thread after the resume-picker branch above.
+	// Stage it here; the caller appends only after this transaction commits.
+	if usedNative && !sessionHistoryOK {
+		if bound, ok := working.Agent(agent.Metadata.UID); ok {
+			sessionHistory, sessionHistoryOK = sessionhistory.RecordFor(agent.Metadata.UID, bound.Status.SessionRef, sessionhistory.SourceObserved)
+		}
+	}
 	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID, notices: notices,
 		sessionHistory: sessionHistory, sessionHistoryOK: sessionHistoryOK}
 	if usedNative {

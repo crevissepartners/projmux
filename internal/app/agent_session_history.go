@@ -39,13 +39,26 @@ const sessionHistoryNotRecordedFmt = "agent session history not recorded: %s\n"
 
 // claudeSessionHistoryRecord is step 1. changed is RecordAgentSessionRef's
 // verdict, so "a different conversation" means exactly what the Registry
-// write means by it; committed is the ref the mutator stored. Only a Claude
-// ref yields a line.
+// write means by it; committed is the ref the mutator stored. The name is
+// retained for the established Claude writer guard; Codex uses the same row.
 func claudeSessionHistoryRecord(agentUID string, changed bool, committed *coremetadata.AgentSessionRef) (sessionhistory.Record, bool) {
 	if !changed {
 		return sessionhistory.Record{}, false
 	}
 	return sessionhistory.RecordFor(agentUID, committed, sessionhistory.SourceObserved)
+}
+
+// historyConversationChanged narrows Codex writes to thread identity changes.
+// RecordAgentSessionRef can also change optional session metadata or endpoint
+// without changing the thread; those updates must not append a duplicate row.
+func historyConversationChanged(changed bool, previous, committed *coremetadata.AgentSessionRef) bool {
+	if !changed || committed == nil || committed.Provider != sessionhistory.ProviderCodex || committed.Codex == nil {
+		return changed
+	}
+	if previous == nil || previous.Provider != sessionhistory.ProviderCodex || previous.Codex == nil {
+		return true
+	}
+	return strings.TrimSpace(previous.Codex.ThreadID) != strings.TrimSpace(committed.Codex.ThreadID)
 }
 
 // recordClaudeSessionHistory is step 2 on the hook ingest path. A failure is
@@ -71,14 +84,19 @@ func (c *aiCommand) recordClaudeSessionHistory(record sessionhistory.Record, ok 
 // after the create transaction committed. A failure is one stderr line; the
 // create still succeeds.
 func (c *createCommand) recordIntentAgentSessionHistory(opened intentAgentOpened, stderr io.Writer) {
+	c.recordCreateAgentSessionHistory(opened.sessionHistory, opened.sessionHistoryOK, stderr)
+}
+
+// recordCreateAgentSessionHistory runs after a successful Registry commit.
+func (c *createCommand) recordCreateAgentSessionHistory(record sessionhistory.Record, ok bool, stderr io.Writer) {
 	// A store with no state root (an in-memory Registry) has nowhere the line
 	// belongs, exactly as for a deletion record, so nil records nothing.
-	if !opened.sessionHistoryOK || c == nil || c.store == nil || c.store.stateDir == nil {
+	if !ok || c == nil || c.store == nil || c.store.stateDir == nil {
 		return
 	}
 	stateDir, err := c.store.stateDir()
 	if err == nil {
-		err = sessionhistory.Append(stateDir, opened.sessionHistory)
+		err = sessionhistory.Append(stateDir, record)
 	}
 	if err != nil && stderr != nil {
 		_, _ = fmt.Fprintf(stderr, sessionHistoryNotRecordedFmt, "append-failed")

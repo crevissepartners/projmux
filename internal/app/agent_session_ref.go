@@ -234,9 +234,11 @@ func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.Agent
 	var recordHistory bool
 	_, err = c.updateRegistry(func(working *coremetadata.Registry) error {
 		recordHistory = false
-		if _, ok := working.Agent(agentUID); !ok {
+		current, ok := working.Agent(agentUID)
+		if !ok {
 			return errAgentSessionRefNoop
 		}
+		previousRef := current.Status.SessionRef.Clone()
 		updated, changed, err := mutator.RecordAgentSessionRef(working, agentUID, obs)
 		if err != nil {
 			return err
@@ -244,7 +246,7 @@ func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.Agent
 		if !changed {
 			return errAgentSessionRefNoop
 		}
-		history, recordHistory = claudeSessionHistoryRecord(agentUID, changed, updated.Status.SessionRef)
+		history, recordHistory = claudeSessionHistoryRecord(agentUID, historyConversationChanged(changed, previousRef, updated.Status.SessionRef), updated.Status.SessionRef)
 		return nil
 	})
 	if err == nil {
@@ -490,11 +492,12 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 		}
 		recordHistory = false
 		if hasObservation {
+			previousRef := current.Status.SessionRef.Clone()
 			recorded, changed, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, obs)
 			if err != nil {
 				return err
 			}
-			history, recordHistory = claudeSessionHistoryRecord(agent.Metadata.UID, changed, recorded.Status.SessionRef)
+			history, recordHistory = claudeSessionHistoryRecord(agent.Metadata.UID, historyConversationChanged(changed, previousRef, recorded.Status.SessionRef), recorded.Status.SessionRef)
 		}
 		if hasNativeObservation && binding.codex != nil {
 			nativeObservation.AgentUID = binding.agent.Metadata.UID

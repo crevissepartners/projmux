@@ -746,26 +746,26 @@ Agent provider session ref:
   hook whose provider contradicts the Agent's `spec.provider` is refused with
   zero mutations.
 
-Agent session history (Claude):
+Agent session history (Claude and Codex):
 
 - `status.sessionRef` holds one conversation and is overwritten when an Agent
-  moves to another one. The conversations a **Claude** Agent left are kept in
+  moves to another one. The conversations a Claude or Codex Agent left are kept in
   an append-only file outside the Registry,
   `<state>/agent-session-history.jsonl` (next to `deletion-records.jsonl`;
   `${XDG_STATE_HOME:-$HOME/.local/state}/projmux` by default). The Registry
   schema and its version are unchanged.
-- One line is appended each time a committed Registry write replaces a Claude
-  Agent's `status.sessionRef` with a different conversation (the mutator's own
-  `SameConversation` verdict, so a re-observation appends nothing). The writers
-  are the closed set of `RecordAgentSessionRef` callers -- the hook ingest path,
-  the managed-Agent interaction commit, and the resume-picker create -- pinned
-  by `TestClaudeSessionRefWritersRecordHistory`. The append runs after the
+- One line is appended each time a committed Registry write binds or replaces
+  a Claude session id or Codex thread id. Re-observing the same conversation,
+  including a same-thread Codex resume or endpoint handover, appends nothing.
+  Writers include the hook ingest path, managed-Agent interaction commit,
+  resume-picker create, and native Codex create. The append runs after the
   commit and never fails its caller: a hook logs one `session-history` line to
   `ai-ingest.log`, a create prints one
   `agent session history not recorded: append-failed` line on stderr.
 - Each line is `{"agentUID","provider","sessionId","transcriptPath","observedAt","source"}`:
-  `provider` is `claude`, `observedAt` is the ref's RFC 3339 UTC observation
-  time, and `transcriptPath` is the path the hook reported (never read by the
+  `provider` is `claude` or `codex`, `observedAt` is the ref's RFC 3339 UTC observation
+  time, and `transcriptPath` is the path the Claude hook reported (empty for
+  Codex; never read by the
   writers or by `agent sessions list`). `source` is `observed` for every line
   a writer appends; the read side adds `current` for the Registry's ref; the
   only producer of `estimated` is `agent sessions backfill` (below), whose
@@ -774,7 +774,7 @@ Agent session history (Claude):
   Readers skip and count an unparsable line.
 - `projmux agent sessions list <agent-ref> [-o json]` and the Go read function
   `sessionhistory.List(stateDir, agent)` return the same rows: history joined
-  with the Registry's current ref, one row per `(agentUID, sessionId)` in
+  with the Registry's current ref, one row per `(agentUID, provider, sessionId)` in
   `observedAt` order. A conversation seen more than once keeps its latest
   observation time and transcript path, and is `current` when the Registry
   names it; otherwise it is `observed` if any of its rows is, and `estimated`

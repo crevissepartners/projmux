@@ -100,6 +100,23 @@ func TestQuestionCapabilitiesIncludeCodexAndKeepClaudeHook(t *testing.T) {
 	}
 }
 
+func TestSessionListCapabilitiesIncludeCodexAndKeepClaudeHook(t *testing.T) {
+	for _, tc := range []struct {
+		provider  ID
+		mode      AgentSupportMode
+		precision CompletionPrecision
+	}{
+		{Codex, SupportNativeExact, CompletionRegistryRead},
+		{Claude, SupportProviderHook, CompletionRegistryRead},
+		{Antigravity, SupportUnsupported, CompletionNone},
+	} {
+		_, cell, ok := LookupAgentCapability("sessions.list", tc.provider)
+		if !ok || cell.Mode != tc.mode || cell.CompletionPrecision != tc.precision {
+			t.Errorf("sessions.list/%s = %#v, found=%t", tc.provider, cell, ok)
+		}
+	}
+}
+
 func TestAgentCapabilityCatalogPinsCodexNativeAndSharedFamilies(t *testing.T) {
 	t.Parallel()
 

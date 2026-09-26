@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 )
 
 // canonicalCreateAgent is the spelling the provider shortcuts normalize onto.
@@ -263,6 +264,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	var notices []string
 	var activationTargets []agentActivationTarget
 	var nativeLifecycleTargets []codexLifecycleObserverTarget
+	var nativeSessionHistory []sessionhistory.Record
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
 	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
 	prompt, nativePromptExact := nativePrompt(flags.payload)
@@ -287,6 +289,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		}
 	}
 	if err := c.transact(diagnostics.CreateKindAgent, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+		nativeSessionHistory = nil
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
@@ -484,6 +487,11 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					}); err != nil {
 						return MapMetadataError(err)
 					}
+					if bound, ok := working.Agent(work.agent.Metadata.UID); ok {
+						if row, valid := sessionhistory.RecordFor(bound.Metadata.UID, bound.Status.SessionRef, sessionhistory.SourceObserved); valid {
+							nativeSessionHistory = append(nativeSessionHistory, row)
+						}
+					}
 					nativeBinding = coremetadata.CodexActivationBinding{ThreadID: prepared.ThreadID, TurnID: prepared.TurnID}
 					usedNative = true
 				case nativeErr == nil:
@@ -558,6 +566,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		return nil
 	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
+	}
+	for _, row := range nativeSessionHistory {
+		c.recordCreateAgentSessionHistory(row, true, stderr)
 	}
 	if err := writeSplitCWDNotices(stderr, notices); err != nil {
 		return err

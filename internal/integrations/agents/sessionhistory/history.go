@@ -1,5 +1,5 @@
 // Package sessionhistory keeps the append-only record of which provider
-// conversations a Claude Agent has moved through.
+// conversations a Claude or Codex Agent has moved through.
 //
 // The Registry holds one conversation per Agent: `status.sessionRef` is
 // overwritten when the Agent moves to another conversation (a `/clear`, a
@@ -41,9 +41,10 @@ import (
 // `deletion-records.jsonl`.
 const FileName = "agent-session-history.jsonl"
 
-// ProviderClaude is the only provider this history records. Codex and
-// Antigravity conversation changes are not recorded.
-const ProviderClaude = "claude"
+const (
+	ProviderClaude = "claude"
+	ProviderCodex  = "codex"
+)
 
 // Source says where one row came from.
 type Source string
@@ -103,7 +104,7 @@ func frame(record Record) ([]byte, error) {
 
 // validForAppend refuses a row no reader would keep.
 func validForAppend(record Record) error {
-	if record.Provider != ProviderClaude || strings.TrimSpace(record.AgentUID) == "" || strings.TrimSpace(record.SessionID) == "" {
+	if (record.Provider != ProviderClaude && record.Provider != ProviderCodex) || strings.TrimSpace(record.AgentUID) == "" || strings.TrimSpace(record.SessionID) == "" {
 		return fmt.Errorf("agent session history: refusing an incomplete record for agent %q", record.AgentUID)
 	}
 	return nil
@@ -114,23 +115,36 @@ func Path(stateDir string) string {
 	return filepath.Join(stateDir, FileName)
 }
 
-// RecordFor projects a Claude session ref onto a row of the given source. It
-// reports false for a nil ref, another provider, or a ref with no session id,
-// which is how the Claude-only scope is enforced at both ends.
+// RecordFor projects a Claude session or Codex thread ref onto the existing
+// row format. Codex has no transcript path in this contract.
 func RecordFor(agentUID string, ref *coremetadata.AgentSessionRef, source Source) (Record, bool) {
 	agentUID = strings.TrimSpace(agentUID)
-	if agentUID == "" || ref == nil || ref.Provider != ProviderClaude || ref.Claude == nil {
+	if agentUID == "" || ref == nil {
 		return Record{}, false
 	}
-	sessionID := strings.TrimSpace(ref.Claude.SessionID)
+	var sessionID, transcriptPath string
+	switch ref.Provider {
+	case ProviderClaude:
+		if ref.Claude == nil {
+			return Record{}, false
+		}
+		sessionID, transcriptPath = strings.TrimSpace(ref.Claude.SessionID), ref.Claude.TranscriptPath
+	case ProviderCodex:
+		if ref.Codex == nil {
+			return Record{}, false
+		}
+		sessionID = strings.TrimSpace(ref.Codex.ThreadID)
+	default:
+		return Record{}, false
+	}
 	if sessionID == "" {
 		return Record{}, false
 	}
 	return Record{
 		AgentUID:       agentUID,
-		Provider:       ProviderClaude,
+		Provider:       ref.Provider,
 		SessionID:      sessionID,
-		TranscriptPath: ref.Claude.TranscriptPath,
+		TranscriptPath: transcriptPath,
 		ObservedAt:     ref.ObservedAt.UTC(),
 		Source:         source,
 	}, true
@@ -282,7 +296,7 @@ func readRecords(r io.Reader, agentUID string) (ReadResult, error) {
 }
 
 // Merge joins history rows with the Registry's current ref into one row per
-// (agentUID, sessionId), in time order.
+// (agentUID, provider, sessionId), in time order.
 //
 // The rule for a conversation seen more than once:
 //
@@ -297,11 +311,11 @@ func readRecords(r io.Reader, agentUID string) (ReadResult, error) {
 // Rows are ordered by observedAt; equal instants keep their input order, with
 // current last. current may be nil.
 func Merge(history []Record, current *Record) []Record {
-	type key struct{ agentUID, sessionID string }
+	type key struct{ agentUID, provider, sessionID string }
 	rows := make([]Record, 0, len(history)+1)
 	index := map[key]int{}
 	add := func(record Record) {
-		k := key{record.AgentUID, record.SessionID}
+		k := key{record.AgentUID, record.Provider, record.SessionID}
 		at, seen := index[k]
 		if !seen {
 			index[k] = len(rows)
@@ -363,7 +377,7 @@ type Result struct {
 // List is the one read of an Agent's sessions: the history file of stateDir
 // joined with the conversation agent's `status.sessionRef` currently records,
 // through Merge. `projmux agent sessions list` prints exactly these rows. A
-// non-Claude Agent has no history and no current row.
+// unsupported Agent has no history and no current row.
 func List(stateDir string, agent coremetadata.Agent) (Result, error) {
 	result := Result{AgentUID: agent.Metadata.UID, Sessions: []Record{}}
 	read, err := Read(stateDir, agent.Metadata.UID)
@@ -377,7 +391,7 @@ func List(stateDir string, agent coremetadata.Agent) (Result, error) {
 	}
 	var history []Record
 	for _, record := range read.Records {
-		if record.Provider == ProviderClaude {
+		if record.Provider == agent.Spec.Provider && (record.Provider == ProviderClaude || record.Provider == ProviderCodex) {
 			history = append(history, record)
 		}
 	}
