@@ -3,6 +3,8 @@ package agentapproval
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -72,37 +74,59 @@ func auditLine(event string, record Record, now time.Time) AuditLine {
 }
 
 // auditLocked appends one line while the caller holds the store lock. It is
-// best effort: the transition it describes has already been written, so a log
-// that cannot be appended never undoes or fails it.
+// best effort: the requested, expired, closed, and refused lines describe a
+// transition that already happened or none at all, so a log that cannot be
+// appended never undoes or fails it. Allowed and denied lines go through
+// appendAuditLocked before the answer is written instead.
 func (s *Store) auditLocked(line AuditLine) {
+	_ = s.appendAuditLocked(line)
+}
+
+// appendAuditLocked appends one line while the caller holds the store lock and
+// reports every failure: a line that is not on disk, synced, returns an error.
+func (s *Store) appendAuditLocked(line AuditLine) error {
 	if s == nil || s.auditPath == "" {
-		return
+		return errors.New("agent approval audit log path is empty")
 	}
 	data, err := json.Marshal(line)
 	if err != nil {
-		return
+		return err
 	}
 	data = append(data, '\n')
 	limit := s.auditLimit
 	if limit <= 0 {
 		limit = auditMaxBytes
 	}
-	if info, err := os.Stat(s.auditPath); err == nil && info.Size()+int64(len(data)) > limit {
-		if os.Rename(s.auditPath, s.auditPath+auditRotatedSuffix) != nil {
-			return
+	info, err := os.Stat(s.auditPath)
+	switch {
+	case err == nil && !info.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file", s.auditPath)
+	case err == nil && info.Size()+int64(len(data)) > limit:
+		if err := os.Rename(s.auditPath, s.auditPath+auditRotatedSuffix); err != nil {
+			return err
 		}
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		return err
 	}
 	file, err := os.OpenFile(s.auditPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, localstate.PrivateFileMode) // #nosec G304 -- private store sibling.
 	if err != nil {
-		return
+		return err
 	}
-	_, _ = file.Write(data)
-	_ = file.Sync()
-	_ = file.Close()
+	written, err := file.Write(data)
+	if err == nil && written != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
 	localstate.RepairPrivateFile(s.auditPath)
-	_ = syncDir(filepath.Dir(s.auditPath))
+	return syncDir(filepath.Dir(s.auditPath))
 }
 
 // InputSummary is the one line an audit entry shows of a tool input: Bash's
