@@ -53,8 +53,12 @@ with it keeps one notion of help; the boundary never interprets a flag value:
   unchanged.
 - An unknown command keeps its `unknown command: <token>` error and exit `1`
   even with `--help`, and `projmux help` / bare `projmux` keep printing the
-  top-level list. A bare `help` word nested under a command
-  (`projmux pin help`) still reaches that command's own handler.
+  top-level list.
+- On a command that has sub-commands, a bare `help` word right after it (before
+  any `--`) prints that command's help, whatever follows it: `projmux agent help`
+  and `projmux agent help instructions` both print `projmux agent --help`. A
+  command without sub-commands receives `help` as an ordinary argument, and a
+  `help` after `--` is payload.
 - Because a help invocation runs no handler, it is never recorded as a state
   change in the operations journal, at any depth — `projmux agent topic set --help`
   logs neither an error nor a state-changing success.

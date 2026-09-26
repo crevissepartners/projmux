@@ -13,10 +13,6 @@ import (
 
 // minPublicParentRoutes is a lower bound on the canonical public parents the
 // catalog walk collects, so a walk that silently finds fewer fails.
-//
-// `pin project` is not among them: the catalog declares it a leaf whose
-// handler dispatches its own verbs, so the boundary leaves its `help` alone
-// and TestHandlerHelpVerbMatchesHelpFlag holds that handler branch instead.
 const minPublicParentRoutes = 37
 
 // publicParentLowerBound is a cross-check on the catalog walk, not its source:
@@ -87,31 +83,46 @@ func publicLeafPaths(routes []cli.Route) [][]string {
 // helpVerbRun runs one argv through an entrypoint and returns what it wrote.
 type helpVerbRun func(argv []string) (stdout, stderr string, err error)
 
-// parentHelpVerbProblems drives every spelling through run and the help
-// boundary predicate: `<parent> help` must be a help request and write the
-// bytes `<parent> --help` writes, on stdout, with no error and no stderr.
+// parentHelpVerbTails are the verb spellings appended to every public parent:
+// the bare `help` and `help` followed by tokens, a flag, or a bare `--`. The
+// boundary ignores whatever follows the `help`.
+var parentHelpVerbTails = [][]string{
+	{"help"},
+	{"help", "x"},
+	{"help", "--json"},
+	{"help", "x", "y"},
+	{"help", "--", "x"},
+}
+
+// parentHelpVerbProblems drives every spelling and verb tail through run and
+// the help boundary predicate: `<parent> help ...` must be a help request and
+// write the bytes `<parent> --help` writes, on stdout, with no error and no
+// stderr. Each problem names the route and the verb spelling.
 func parentHelpVerbProblems(spellings []parentHelpSpelling, run helpVerbRun, helpRequested func([]string) bool) []string {
 	var problems []string
 	for _, spelling := range spellings {
 		route := strings.Join(spelling.argv, " ")
-		verbArgv := append(slices.Clone(spelling.argv), "help")
-		if !helpRequested(verbArgv) {
-			problems = append(problems, route+" help: the help boundary does not answer it, so migrations and tmux may run")
-		}
 		flagOut, _, flagErr := run(append(slices.Clone(spelling.argv), "--help"))
 		if flagErr != nil {
 			problems = append(problems, route+" --help: err = "+flagErr.Error())
 			continue
 		}
-		verbOut, verbStderr, verbErr := run(verbArgv)
-		if verbErr != nil {
-			problems = append(problems, route+" help: err = "+verbErr.Error()+", want nil")
-		}
-		if verbStderr != "" {
-			problems = append(problems, route+" help: stderr = "+verbStderr+", want empty")
-		}
-		if verbOut != flagOut {
-			problems = append(problems, route+" help: stdout differs from "+route+" --help")
+		for _, tail := range parentHelpVerbTails {
+			verbArgv := append(slices.Clone(spelling.argv), tail...)
+			verb := strings.Join(verbArgv, " ")
+			if !helpRequested(verbArgv) {
+				problems = append(problems, verb+": the help boundary does not answer it, so migrations and tmux may run")
+			}
+			verbOut, verbStderr, verbErr := run(verbArgv)
+			if verbErr != nil {
+				problems = append(problems, verb+": err = "+verbErr.Error()+", want nil")
+			}
+			if verbStderr != "" {
+				problems = append(problems, verb+": stderr = "+verbStderr+", want empty")
+			}
+			if verbOut != flagOut {
+				problems = append(problems, verb+": stdout differs from "+route+" --help")
+			}
 		}
 	}
 	return problems
@@ -158,6 +169,35 @@ func routeAtPath(routes []cli.Route, path []string) (cli.Route, bool) {
 	return current, true
 }
 
+// lastTokenHelpRequested is the help verb rule before trailing tokens were
+// ignored: `help` must be the last token before the first bare `--`, and every
+// token before it must resolve to a public parent. It is kept only as the
+// negative control of TestPublicParentHelpVerbGuardDetectsDrift.
+func lastTokenHelpRequested(args []string) bool {
+	lead := args
+	if i := slices.Index(args, "--"); i >= 0 {
+		lead = args[:i]
+	}
+	if len(lead) < 2 || lead[len(lead)-1] != "help" {
+		return false
+	}
+	current, ok := cli.LookupRoute(lead[0])
+	if !ok || current.Hidden {
+		return false
+	}
+	for _, token := range lead[1 : len(lead)-1] {
+		i := slices.IndexFunc(current.Children, func(child cli.Route) bool { return child.Name == token })
+		if i < 0 {
+			i = slices.IndexFunc(current.Children, func(child cli.Route) bool { return slices.Contains(child.Aliases, token) })
+		}
+		if i < 0 || current.Children[i].Hidden {
+			return false
+		}
+		current = current.Children[i]
+	}
+	return len(current.Children) > 0
+}
+
 // appHelpVerbRun runs argv through the real app entrypoint.
 func appHelpVerbRun(argv []string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
@@ -167,8 +207,9 @@ func appHelpVerbRun(argv []string) (string, string, error) {
 
 // TestPublicParentHelpVerbMatchesHelpFlag is the closed catalog-wide guard:
 // every public parent route, under every alias spelling of its path, answers
-// `<parent> help` with the bytes `<parent> --help` writes, on stdout, exit 0,
-// nothing on stderr, and through the shared help boundary.
+// `<parent> help` and `<parent> help <anything>` with the bytes `<parent>
+// --help` writes, on stdout, exit 0, nothing on stderr, and through the shared
+// help boundary.
 func TestPublicParentHelpVerbMatchesHelpFlag(t *testing.T) {
 	isolateRuntimeWindowFlagParseEnv(t)
 	spellings := publicParentSpellings(cli.Routes())
@@ -205,9 +246,10 @@ func TestPublicParentsHaveNoChildSpelledHelp(t *testing.T) {
 	}
 }
 
-// TestHelpVerbIsOnlyAParentVerb keeps the boundary narrow: a leaf's `help`
-// can be an operand, a `help` followed by more tokens is not a verb, and a
-// `help` after the bare `--` is payload.
+// TestHelpVerbIsOnlyAParentVerb keeps the boundary narrow: a leaf's `help`,
+// alone or followed by more tokens, can be an operand, and a `help` after the
+// bare `--` is payload. Only a public parent's `help` is a verb, whatever
+// follows it (TestPublicParentHelpVerbMatchesHelpFlag).
 func TestHelpVerbIsOnlyAParentVerb(t *testing.T) {
 	t.Parallel()
 	leaves := publicLeafPaths(cli.Routes())
@@ -215,14 +257,19 @@ func TestHelpVerbIsOnlyAParentVerb(t *testing.T) {
 		t.Fatal("the catalog walk found no public leaf routes")
 	}
 	for _, leaf := range leaves {
-		if argv := append(slices.Clone(leaf), "help"); cli.HelpRequested(argv) {
-			t.Errorf("cli.HelpRequested(%q) = true; a leaf's help word can be an operand", argv)
+		for _, argv := range [][]string{
+			append(slices.Clone(leaf), "help"),
+			append(slices.Clone(leaf), "help", "extra"),
+		} {
+			if cli.HelpRequested(argv) {
+				t.Errorf("cli.HelpRequested(%q) = true; a leaf's help word can be an operand", argv)
+			}
 		}
 	}
 	for _, spelling := range publicParentSpellings(cli.Routes()) {
 		for _, argv := range [][]string{
-			append(slices.Clone(spelling.argv), "help", "extra"),
 			append(slices.Clone(spelling.argv), "--", "help"),
+			append(slices.Clone(spelling.argv), "--", "help", "x"),
 		} {
 			if cli.HelpRequested(argv) {
 				t.Errorf("cli.HelpRequested(%q) = true, want false", argv)
@@ -242,7 +289,7 @@ func TestPublicParentHelpVerbGuardDetectsDrift(t *testing.T) {
 	}
 	// The pre-boundary behavior: flags render help, the bare word is refused.
 	rejectingRun := func(argv []string) (string, string, error) {
-		if argv[len(argv)-1] == "help" {
+		if slices.Contains(argv, "help") {
 			return "", "unknown subcommand: help\n", errors.New("usage")
 		}
 		return "projmux " + strings.Join(argv[:len(argv)-1], " ") + "\n", "", nil
@@ -259,6 +306,45 @@ func TestPublicParentHelpVerbGuardDetectsDrift(t *testing.T) {
 	} {
 		if !strings.Contains(problems, want) {
 			t.Errorf("guard problems do not report %q:\n%s", want, problems)
+		}
+	}
+
+	// The last-token rule this guard replaced: the bare `help` word renders
+	// help, and a `help` with tokens after it reaches the handler, which
+	// refuses them. The guard must report every trailing-token spelling.
+	lastTokenRun := func(argv []string) (string, string, error) {
+		lead := argv
+		if i := slices.Index(argv, "--"); i >= 0 {
+			lead = argv[:i]
+		}
+		if i := slices.Index(lead, "help"); i >= 0 && i != len(lead)-1 {
+			return "", "unexpected arguments after help\n", errors.New("usage")
+		}
+		if i := slices.Index(argv, "help"); i >= 0 {
+			argv = append(slices.Clone(argv[:i]), "--help")
+		}
+		return "projmux " + strings.Join(argv[:len(argv)-1], " ") + "\n", "", nil
+	}
+	oldProblems := parentHelpVerbProblems(spellings, lastTokenRun, lastTokenHelpRequested)
+	joined := strings.Join(oldProblems, "\n")
+	for _, want := range []string{
+		"agent approval help x: the help boundary does not answer it",
+		"agent approval help x: err = usage, want nil",
+		"agent approval help x: stderr = unexpected arguments after help",
+		"agent approval help x: stdout differs from agent approval --help",
+		"get help --json: the help boundary does not answer it",
+		"get help x y: the help boundary does not answer it",
+		"get help x y: stdout differs from get --help",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("guard problems under the last-token rule do not report %q:\n%s", want, joined)
+		}
+	}
+	for _, problem := range oldProblems {
+		for _, answered := range []string{"agent approval help:", "get help:", "agent approval help -- x:", "get help -- x:"} {
+			if strings.HasPrefix(problem, answered) {
+				t.Errorf("the last-token rule answers %q, but the guard reports %q", strings.TrimSuffix(answered, ":"), problem)
+			}
 		}
 	}
 

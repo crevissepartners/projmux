@@ -268,14 +268,19 @@ func TestRequestedHelpDetection(t *testing.T) {
 		{name: "help after terminator is payload", args: []string{"notify", "push", "--", "--help"}, ok: false},
 		{name: "short help after terminator is payload", args: []string{"ai", "split", "--", "-h"}, ok: false},
 		{name: "bare terminator only", args: []string{"tmux", "print-config", "--"}, ok: false},
-		// A bare `help` word is help only as the last token after a public
-		// parent path; on a leaf it can be an operand.
+		// A bare `help` word right after a public parent path is help, whatever
+		// follows it; on a leaf it can be an operand.
 		{name: "help verb on a public parent", args: []string{"pin", "help"}, ok: true, path: []string{"pin"}},
 		{name: "help verb on a nested public parent", args: []string{"agent", "approval", "help"}, ok: true, path: []string{"agent", "approval"}},
 		{name: "help verb before the terminator", args: []string{"get", "help", "--", "x"}, ok: true, path: []string{"get"}},
+		{name: "help verb followed by a child name renders the parent", args: []string{"get", "help", "agents"}, ok: true, path: []string{"get"}},
+		{name: "help verb on a nested parent followed by a token", args: []string{"agent", "approval", "help", "x"}, ok: true, path: []string{"agent", "approval"}},
+		{name: "help verb followed by a flag", args: []string{"get", "help", "--json"}, ok: true, path: []string{"get"}},
+		{name: "help verb followed by two tokens", args: []string{"get", "help", "x", "y"}, ok: true, path: []string{"get"}},
 		{name: "help verb on a leaf is an operand", args: []string{"get", "projects", "help"}, ok: false},
-		{name: "help verb followed by more tokens", args: []string{"get", "help", "agents"}, ok: false},
+		{name: "help verb on a leaf with a trailing token", args: []string{"get", "projects", "help", "x"}, ok: false},
 		{name: "help verb after the terminator is payload", args: []string{"get", "--", "help"}, ok: false},
+		{name: "help verb and token after the terminator are payload", args: []string{"get", "--", "help", "x"}, ok: false},
 		{name: "help verb after an unknown child", args: []string{"get", "bogus", "help"}, ok: false},
 		{name: "help verb on a hidden parent", args: []string{"internal", "help"}, ok: false},
 		{name: "help verb on a retired route", args: []string{"ai", "help"}, ok: false},

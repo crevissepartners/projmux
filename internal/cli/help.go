@@ -30,8 +30,8 @@ var helpFlagNames = []string{"help", "h"}
 //
 // Bare words are never help flags. The top-level `help` route owns that
 // spelling, and a nested `help` word is a help request only in the verb
-// position requestedHelpVerb matches (`projmux pin help`); anywhere else it
-// can be a leaf operand.
+// position requestedHelpVerb matches, right after a public parent path
+// (`projmux pin help`); anywhere else it can be a leaf operand.
 func isHelpFlag(arg string) bool {
 	if !strings.HasPrefix(arg, "-") {
 		return false
@@ -71,11 +71,12 @@ type HelpTarget struct {
 //   - Otherwise the first token must resolve to a known route. An unknown
 //     leading token is not treated as help so `projmux nosuchcmd --help` keeps
 //     its unknown-command error instead of silently succeeding.
-//   - Without a help flag, a bare `help` word is help only as the last token
-//     after a path that resolves entirely to a public parent route
-//     (`projmux pin help`, `projmux agent approval help`). A leaf's `help` can
-//     be an operand, a `help` followed by more tokens is not a verb, and the
-//     root `projmux help` stays with the top-level help route.
+//   - Without a help flag, a bare `help` word is help when it comes right
+//     after a path that resolves entirely to a public parent route, whatever
+//     follows it (`projmux pin help`, `projmux agent approval help`,
+//     `projmux agent help instructions` renders `agent`'s help). A leaf's
+//     `help` can be an operand, and the root `projmux help` stays with the
+//     top-level help route.
 func RequestedHelp(args []string) (HelpTarget, bool) {
 	if len(args) == 0 {
 		return HelpTarget{Root: true}, true
@@ -105,47 +106,41 @@ func HelpRequested(args []string) bool {
 // helpVerb is the bare word a public parent route answers with its help.
 const helpVerb = "help"
 
-// requestedHelpVerb matches `<parent path> help`: the tokens before the first
-// bare `--` end in `help`, and every token before it resolves, by name or
-// alias, to a public route that has children. A parent only dispatches to its
-// children, so `help` there can never be an operand; a public parent with a
-// child spelled `help` would break that, and a guard in internal/app keeps the
-// catalog free of one.
+// requestedHelpVerb matches `<parent path> help ...`: among the tokens before
+// the first bare `--`, a `help` comes right after a path that resolves, by name
+// or alias, to a public route that has children. Whatever follows that `help`
+// is ignored. A parent only dispatches to its children, so `help` there can
+// never be an operand; a public parent with a child spelled `help` would break
+// that, and a guard in internal/app keeps the catalog free of one. A leaf's
+// `help`, and every token after it, stays with the leaf.
 func requestedHelpVerb(args []string) (HelpTarget, bool) {
 	lead := args
 	if i := slices.Index(args, argumentTerminator); i >= 0 {
 		lead = args[:i]
 	}
-	if len(lead) < 2 || lead[len(lead)-1] != helpVerb {
+	if len(lead) < 2 {
 		return HelpTarget{}, false
 	}
-	path, route, ok := resolvePublicParent(lead[:len(lead)-1])
-	if !ok {
-		return HelpTarget{}, false
-	}
-	return HelpTarget{Path: path, Route: route}, true
-}
-
-// resolvePublicParent resolves tokens like Resolve, but only when every token
-// is consumed, no node on the path is hidden, and the final node has children.
-func resolvePublicParent(tokens []string) ([]string, Route, bool) {
-	current, ok := LookupRoute(tokens[0])
+	current, ok := LookupRoute(lead[0])
 	if !ok || current.Hidden {
-		return nil, Route{}, false
+		return HelpTarget{}, false
 	}
 	path := []string{current.Name}
-	for _, token := range tokens[1:] {
+	for _, token := range lead[1:] {
+		if len(current.Children) == 0 {
+			return HelpTarget{}, false
+		}
+		if token == helpVerb {
+			return HelpTarget{Path: path, Route: current}, true
+		}
 		child, found := findChild(current, token)
 		if !found || child.Hidden {
-			return nil, Route{}, false
+			return HelpTarget{}, false
 		}
 		current = child
 		path = append(path, child.Name)
 	}
-	if len(current.Children) == 0 {
-		return nil, Route{}, false
-	}
-	return path, current, true
+	return HelpTarget{}, false
 }
 
 // helpFlagIndex returns the index of the first help flag that appears before
