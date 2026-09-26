@@ -31,9 +31,13 @@ func formatCodexHookPermissionNotifyBody(p codexHookPayload) aiNotifyBody {
 	}
 }
 
-func formatCodexHookStopNotifyBody(codexHookPayload) aiNotifyBody {
+func formatCodexHookStopNotifyBody(p codexHookPayload) aiNotifyBody {
+	return formatCodexStopNotifyBody(p.LastAssistantMessage)
+}
+
+func formatCodexStopNotifyBody(message string) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     "Ready",
+		Text:     formatClaudeStopNotifyBody(message).Text,
 		Severity: notify.SeverityInfo,
 		Agent:    "codex",
 		Category: "response_complete",

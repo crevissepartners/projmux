@@ -30,6 +30,21 @@ import (
 
 type phase3StaticTmuxRunner struct{ output string }
 
+func TestCodexNativeNotificationContentIsLastReplyAndSafeFailure(t *testing.T) {
+	completed := codexappserver.Notification{Method: "turn/completed", Params: []byte(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[{"type":"agentMessage","text":"old"},{"type":"commandExecution","text":"secret command"},{"type":"agentMessage","text":"  Final answer  "}]}}`)}
+	if text, unauthorized := codexCompletedTurnContent(completed); text != "Final answer" || unauthorized {
+		t.Fatalf("completed content = %q, unauthorized=%v", text, unauthorized)
+	}
+	item := codexappserver.Notification{Method: "item/completed", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","item":{"type":"agentMessage","text":"fallback reply"}}`)}
+	if thread, turn, text := codexCompletedAgentMessage(item); thread != "thread-1" || turn != "turn-1" || text != "fallback reply" {
+		t.Fatalf("item content = %q %q %q", thread, turn, text)
+	}
+	failed := codexappserver.Notification{Method: "turn/completed", Params: []byte(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","error":{"message":"HTTP 401 Unauthorized; token=PRIVATE"}}}`)}
+	if text, unauthorized := codexCompletedTurnContent(failed); text != "" || !unauthorized {
+		t.Fatalf("401 content = %q, unauthorized=%v", text, unauthorized)
+	}
+}
+
 func (r phase3StaticTmuxRunner) Run(context.Context, string, ...string) ([]byte, error) {
 	return []byte(r.output), nil
 }
@@ -933,6 +948,8 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 type recordingCodexLifecycleSink struct {
 	mu              sync.Mutex
 	events          []string
+	projections     []codexLifecycleProjection
+	contents        []codexNoticeContent
 	authorities     []string
 	authorityEpochs []string
 	wake            chan struct{}
@@ -1026,8 +1043,13 @@ func (s *recordingCodexLifecycleSink) SetAuthority(_ codexLifecycleIdentity, sou
 	return nil
 }
 func (s *recordingCodexLifecycleSink) Apply(_ codexLifecycleIdentity, projection codexLifecycleProjection) error {
+	return s.recordApply(projection, codexNoticeContent{})
+}
+func (s *recordingCodexLifecycleSink) recordApply(projection codexLifecycleProjection, content codexNoticeContent) error {
 	s.mu.Lock()
 	s.applyCalls++
+	s.projections = append(s.projections, projection)
+	s.contents = append(s.contents, content)
 	call := s.applyCalls
 	fail := (s.failApplyAt > 0 && call == s.failApplyAt) || (s.failApplyFrom > 0 && call >= s.failApplyFrom)
 	s.mu.Unlock()
@@ -1036,6 +1058,10 @@ func (s *recordingCodexLifecycleSink) Apply(_ codexLifecycleIdentity, projection
 		return errors.New("injected lifecycle sink failure")
 	}
 	return nil
+}
+
+func (s *recordingCodexLifecycleSink) ApplyWithNoticeContent(_ codexLifecycleIdentity, projection codexLifecycleProjection, content codexNoticeContent) error {
+	return s.recordApply(projection, content)
 }
 func (s *recordingCodexLifecycleSink) record(event string) {
 	s.mu.Lock()
@@ -1143,6 +1169,47 @@ func TestCodexNativeObserverDropsContentBeforeProgressSinkAndClearsTerminal(t *t
 		if strings.Contains(fmt.Sprintf("%#v", diagnostic), "PRIVATE-") {
 			t.Fatalf("content reached progress diagnostics: %#v", diagnostic)
 		}
+	}
+}
+
+func TestCodexNativeObserverUsesCurrentTurnReplyOnly(t *testing.T) {
+	identity := testCodexLifecycleIdentity()
+	conn := &fakeCodexLifecycleConnection{
+		snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress},
+		events:   make(chan codexappserver.Notification, 5),
+	}
+	conn.events <- codexappserver.Notification{Method: "item/completed", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1700000000100,"item":{"id":"item-1","type":"agentMessage","text":"first reply"}}`)}
+	conn.events <- codexappserver.Notification{Method: "item/completed", Params: []byte(`{"threadId":"foreign-thread","turnId":"turn-1","completedAtMs":1700000000100,"item":{"id":"foreign-item","type":"agentMessage","text":"foreign reply"}}`)}
+	conn.events <- codexappserver.Notification{Method: "turn/completed", Params: []byte(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}`)}
+	conn.events <- codexappserver.Notification{Method: "turn/started", Params: []byte(`{"threadId":"thread-1","turn":{"id":"turn-2","status":"inProgress"}}`)}
+	conn.events <- codexappserver.Notification{Method: "turn/completed", Params: []byte(`{"threadId":"thread-1","turn":{"id":"turn-2","status":"completed"}}`)}
+	sink := newRecordingCodexLifecycleSink()
+	opened := false
+	observer := codexNativeObserver{identity: identity, sink: sink, delay: time.Millisecond, open: func(ctx context.Context) (codexLifecycleConnection, error) {
+		if !opened {
+			opened = true
+			return conn, nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	if err := observer.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	var replies []string
+	for index, projection := range sink.projections {
+		for _, notice := range projection.Notices {
+			if notice.Category == "response_complete" {
+				replies = append(replies, sink.contents[index].Text)
+			}
+		}
+	}
+	if !reflect.DeepEqual(replies, []string{"first reply", ""}) {
+		t.Fatalf("reply notices = %#v", replies)
 	}
 }
 
@@ -2208,6 +2275,41 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 	}
 	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].Metadata["action_label"] != agentActionOpenCodex || notifyStore.pushed[0].Metadata["focus_available"] != "true" {
 		t.Fatalf("focus-only approval availability = %#v", notifyStore.pushed)
+	}
+	notifyStore.pushed = nil
+	cmdRecorder(cmd).commands = nil
+	if err := testCodexLifecycleSink(cmd).ApplyWithNoticeContent(identity, codexLifecycleProjection{
+		Accepted: true, Interaction: coremetadata.InteractionResponseComplete,
+		Notices: []codexLifecycleNotice{{Category: "response_complete", ID: "reply-1", Severity: notify.SeverityInfo, ThreadID: "thread-1", TurnID: "turn-1"}},
+	}, codexNoticeContent{Text: "Final answer"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].Text != "Final answer" || notifyStore.pushed[0].Metadata[notify.MetaCategory] != "response_complete" {
+		t.Fatalf("reply notice = %#v", notifyStore.pushed)
+	}
+	notifyStore.pushed = nil
+	cmdRecorder(cmd).commands = nil
+	if err := testCodexLifecycleSink(cmd).ApplyWithNoticeContent(identity, codexLifecycleProjection{
+		Accepted: true, Interaction: coremetadata.InteractionIdle,
+		Notices: []codexLifecycleNotice{{Category: "error", ID: "failed-401", Severity: notify.SeverityCritical, ThreadID: "thread-1", TurnID: "turn-1"}},
+	}, codexNoticeContent{HTTPUnauthorized: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].Metadata[notify.MetaCategory] != "error" || notifyStore.pushed[0].Severity != notify.SeverityCritical || !strings.Contains(notifyStore.pushed[0].Text, "HTTP 401") {
+		t.Fatalf("401 error notice = %#v", notifyStore.pushed)
+	}
+	agent, _ = store.registry.Agent(identity.AgentUID)
+	if agent.Status.Interaction.Kind != coremetadata.InteractionIdle {
+		t.Fatalf("failed interaction = %#v", agent.Status.Interaction)
+	}
+	toasts := 0
+	for _, command := range cmdRecorder(cmd).commands {
+		if command.name == "notify-send" {
+			toasts++
+		}
+	}
+	if toasts != 1 {
+		t.Fatalf("401 error toast count = %d, commands = %#v", toasts, cmdRecorder(cmd).commands)
 	}
 
 	cmdRecorder(cmd).commands = nil

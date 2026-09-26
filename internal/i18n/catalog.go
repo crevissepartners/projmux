@@ -42,6 +42,7 @@ const (
 	KeySettingsRootFooter            Key = "settings.root.footer"
 	KeySettingsNotificationsDesktop  Key = "settings.notifications.desktop"
 	KeySettingsNotificationsDelivery Key = "settings.notifications.delivery_sources"
+	KeySettingsCodexNotifyScope      Key = "settings.notifications.codex_notify_scope"
 	KeySettingsAboutWelcome          Key = "settings.about.welcome"
 	KeyPickerLinePrompt              Key = "picker.line.prompt"
 	KeyPickerPromptSearch            Key = "picker.prompt.search"
@@ -141,6 +142,7 @@ var foundationKeys = []Key{
 	KeySettingsRootFooter,
 	KeySettingsNotificationsDesktop,
 	KeySettingsNotificationsDelivery,
+	KeySettingsCodexNotifyScope,
 	KeySettingsAboutWelcome,
 	KeyPickerLinePrompt,
 	KeyPickerPromptSearch,

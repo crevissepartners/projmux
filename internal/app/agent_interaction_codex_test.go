@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
@@ -11,6 +12,38 @@ func testCodexLifecycleIdentity() codexLifecycleIdentity {
 	return codexLifecycleIdentity{
 		AgentUID: "agent-1", PaneUID: "pane-1", RuntimeID: "%9",
 		Generation: "generation-1", ThreadID: "thread-1",
+	}
+}
+
+func TestCodexFailureNoticeSurvivesSystemErrorAndRefreshesFailedTurn(t *testing.T) {
+	r := &codexLifecycleReducer{}
+	r.begin(1, testCodexLifecycleIdentity(), codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+	})
+	status := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleThreadStatus, ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError})
+	if len(status.Notices) != 1 || status.Notices[0].Category != "error" || status.Notices[0].Severity != notify.SeverityCritical {
+		t.Fatalf("systemError notice = %#v", status)
+	}
+	if repeat := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleThreadStatus, ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError}); len(repeat.Notices) != 0 {
+		t.Fatalf("duplicate systemError notice = %#v", repeat)
+	}
+	failed := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleTurnCompleted, ThreadID: "thread-1", TurnID: "turn-1", TurnState: codexappserver.TurnStateFailed})
+	if failed.Interaction != coremetadata.InteractionIdle || len(failed.Notices) != 1 || failed.Notices[0].ID != status.Notices[0].ID {
+		t.Fatalf("failed turn did not refresh exact error notice = %#v", failed)
+	}
+}
+
+func TestCodexFailedTurnThenSystemErrorEmitsOneErrorNotice(t *testing.T) {
+	r := &codexLifecycleReducer{}
+	r.begin(1, testCodexLifecycleIdentity(), codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+	})
+	failed := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleTurnCompleted, ThreadID: "thread-1", TurnID: "turn-1", TurnState: codexappserver.TurnStateFailed})
+	status := r.apply(1, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleThreadStatus, ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError})
+	if len(failed.Notices) != 1 || failed.Notices[0].Category != "error" || len(status.Notices) != 0 {
+		t.Fatalf("failed=%#v systemError=%#v", failed, status)
 	}
 }
 
@@ -160,7 +193,7 @@ func TestCodexLifecycleCompletionIsExactSuccessfulAndOnce(t *testing.T) {
 		notices     int
 	}{
 		{name: "completed", state: codexappserver.TurnStateCompleted, interaction: coremetadata.InteractionResponseComplete, notices: 1},
-		{name: "failed", state: codexappserver.TurnStateFailed, interaction: coremetadata.InteractionIdle},
+		{name: "failed", state: codexappserver.TurnStateFailed, interaction: coremetadata.InteractionIdle, notices: 1},
 		{name: "interrupted", state: codexappserver.TurnStateInterrupted, interaction: coremetadata.InteractionIdle},
 	} {
 		t.Run(test.name, func(t *testing.T) {
