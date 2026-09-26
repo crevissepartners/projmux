@@ -85,7 +85,9 @@ func (f *permissionFixture) hook(window time.Duration) claudePermissionHook {
 }
 
 // startPermissionHook runs hook in the background on payload and waits until
-// it has recorded a new request, whose id it returns.
+// it has recorded a new request and that request's requested audit line, then
+// returns the request's id. Create writes the record before it appends the
+// audit line, so a visible record alone does not yet mean an audited one.
 func (f *permissionFixture) startPermissionHook(t *testing.T, ctx context.Context, hook claudePermissionHook, payload string) (string, <-chan string) {
 	t.Helper()
 	before := map[string]bool{}
@@ -104,15 +106,39 @@ func (f *permissionFixture) startPermissionHook(t *testing.T, ctx context.Contex
 	for time.Now().Before(deadline) {
 		if records, err := f.approvals.List(questionTestAgent); err == nil {
 			for _, record := range records {
-				if !before[record.ID] {
+				if !before[record.ID] && permissionAuditRequested(f.approvals, record.ID) {
 					return record.ID, done
 				}
 			}
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("the hook never recorded its permission request")
+	t.Fatal("the hook never recorded its permission request and its requested audit line")
 	return "", nil
+}
+
+// permissionAuditRequested reports whether the audit log holds a complete
+// requested line for id. It is a tolerant poll check: a missing log, a line
+// still being appended, or one that does not parse reads as not yet.
+func permissionAuditRequested(store *agentapproval.Store, id string) bool {
+	raw, err := os.ReadFile(store.AuditPath())
+	if err != nil {
+		return false
+	}
+	complete := raw[:bytes.LastIndexByte(raw, '\n')+1]
+	for text := range bytes.SplitSeq(complete, []byte("\n")) {
+		if len(text) == 0 {
+			continue
+		}
+		var line agentapproval.AuditLine
+		if json.Unmarshal(text, &line) != nil {
+			return false
+		}
+		if line.Event == agentapproval.AuditRequested && line.RequestID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *permissionFixture) startDefault(t *testing.T, ctx context.Context) (string, <-chan string) {
