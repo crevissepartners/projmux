@@ -35,7 +35,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security-pin-refresh security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -150,9 +150,15 @@ ci-contract:
 	python3 -m unittest discover -s test -p 'agent_dialogue*_test.py'
 
 # The reviewed security baselines have one pin. This keeps a second copy from
-# coming back, and proves a changed baseline still fails the gate.
+# coming back, proves a changed baseline still fails the gate, and checks the
+# ./... package set against its pin.
 security-pin-contract:
-	python3 -m unittest discover -s test -p 'security_pin_contract_test.py'
+	GO="$(GO)" python3 -m unittest discover -s test -p 'security_pin_contract_test.py'
+
+# After adding or removing a Go package: rewrite only package_count and
+# package_set_sha256 in the pin. A no-op when the package set already matches.
+security-pin-refresh:
+	@GO="$(GO)" python3 scripts/security-package-pin.py --refresh
 
 test-integration:
 	scripts/test-integration-docker.sh

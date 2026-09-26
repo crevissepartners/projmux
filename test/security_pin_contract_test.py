@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -14,6 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 CANONICAL_PIN = Path(".security/security-current-findings.json")
 PIN_MODULE = Path("scripts/security-baseline-pin.py")
+PACKAGE_PIN_MODULE = Path("scripts/security-package-pin.py")
+REFRESH_TARGET = "make security-pin-refresh"
+PACKAGE_KEYS = ("package_count", "package_set_sha256")
+# Masks the two package values so the bytes around them can be compared.
+PACKAGE_VALUES = re.compile(
+    r'("package_count"\s*:\s*)-?[0-9]+|("package_set_sha256"\s*:\s*")[^"]*'
+)
 CONTRACT_GATE = Path("test/security-contract.sh")
 
 BASELINE_FILES = (
@@ -101,11 +110,18 @@ class SecurityBaselinePinContractTest(unittest.TestCase):
 
         self.assertNotIn(str(CONTRACT_GATE), SHA256_ALLOWLIST)
         self.assertNotIn(str(PIN_MODULE), SHA256_ALLOWLIST)
+        self.assertNotIn(str(PACKAGE_PIN_MODULE), SHA256_ALLOWLIST)
 
     def test_contract_gate_resolves_the_pin_through_the_shared_module(self) -> None:
         gate = (ROOT / CONTRACT_GATE).read_text(encoding="utf-8")
         self.assertIn(str(PIN_MODULE), gate)
         self.assertRegex(gate, r"security contract: reviewed baseline pin unresolved")
+
+    def test_contract_gate_computes_the_package_set_only_through_the_shared_module(self) -> None:
+        gate = (ROOT / CONTRACT_GATE).read_text(encoding="utf-8")
+        self.assertIn(str(PACKAGE_PIN_MODULE), gate)
+        self.assertNotIn('"go", "list"', gate)
+        self.assertNotIn("go list", gate)
 
     def test_a_one_byte_baseline_change_fails_the_pin(self) -> None:
         for baseline in BASELINE_FILES:
@@ -125,6 +141,69 @@ class SecurityBaselinePinContractTest(unittest.TestCase):
                     self.assertEqual(drifted.returncode, 1, drifted.stdout)
                     self.assertIn("reviewed baseline changed", drifted.stderr)
                     self.assertIn(str(baseline), drifted.stderr)
+
+    def test_package_set_matches_the_pin(self) -> None:
+        checked = self.package_pin("--root", str(ROOT))
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        pin = json.loads((ROOT / CANONICAL_PIN).read_text(encoding="utf-8"))
+        self.assertEqual(
+            json.loads(checked.stdout), {key: pin[key] for key in PACKAGE_KEYS}
+        )
+
+    def test_refresh_restores_a_drifted_package_pin_byte_for_byte(self) -> None:
+        original = (ROOT / CANONICAL_PIN).read_bytes()
+        pinned = json.loads(original)
+        # A wrong digest derived from the real one, never spelled out.
+        wrong_digest = hashlib.sha256(pinned["package_set_sha256"].encode()).hexdigest()
+        self.assertNotEqual(wrong_digest, pinned["package_set_sha256"])
+        drifted_text = original.decode("utf-8")
+        drifted_text = drifted_text.replace(
+            f'"package_count": {pinned["package_count"]}',
+            f'"package_count": {pinned["package_count"] + 1}',
+            1,
+        ).replace(pinned["package_set_sha256"], wrong_digest, 1)
+        drifted = drifted_text.encode("utf-8")
+        self.assertNotEqual(drifted, original)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            pin = Path(temporary) / "security-current-findings.json"
+            pin.write_bytes(drifted)
+            pin.chmod(0o640)
+
+            checked = self.package_pin("--root", str(ROOT), "--pin", str(pin))
+            self.assertEqual(checked.returncode, 1, checked.stdout)
+            self.assertIn(REFRESH_TARGET, checked.stderr)
+            self.assertEqual(pin.read_bytes(), drifted, "check mode wrote the pin")
+
+            refreshed = self.package_pin("--root", str(ROOT), "--pin", str(pin), "--refresh")
+            self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
+            self.assertIn("->", refreshed.stdout)
+            body = pin.read_bytes()
+            self.assertEqual(body, original, "refresh did not restore the pin byte for byte")
+            self.assertEqual(pin.stat().st_mode & 0o7777, 0o640, "refresh changed the mode")
+            self.assertEqual(
+                PACKAGE_VALUES.sub(r"\1\2", body.decode("utf-8")),
+                PACKAGE_VALUES.sub(r"\1\2", drifted_text),
+                "refresh changed bytes outside the two package values",
+            )
+            self.assertEqual(json.loads(body)["scanners"], pinned["scanners"])
+            self.assertEqual(list(json.loads(body)), list(pinned))
+            self.assertEqual(os.listdir(temporary), [pin.name], "refresh left a temp file")
+
+            before = pin.stat().st_mtime_ns
+            again = self.package_pin("--root", str(ROOT), "--pin", str(pin), "--refresh")
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("unchanged", again.stdout)
+            self.assertEqual(pin.stat().st_mtime_ns, before, "a no-op refresh wrote the pin")
+            self.assertEqual(pin.read_bytes(), original)
+
+    def package_pin(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(ROOT / PACKAGE_PIN_MODULE), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
     def resolve(self, root: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
