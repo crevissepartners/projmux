@@ -406,10 +406,23 @@ func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
 		return err
 	case "interrupt":
-		if len(args) != 2 {
-			return usageError("agent turn interrupt requires exactly one <agent-ref>")
+		if len(args) != 2 && len(args) != 4 {
+			return usageError("agent turn interrupt requires <agent-ref> [--via web]")
 		}
-		binding, err := c.resolveControlBinding("agent turn interrupt", args[1])
+		registry, agent, err := c.resolveOneAgent("agent turn interrupt", args[1], selector.VerbReview)
+		if err != nil {
+			return err
+		}
+		if agent.Spec.Provider == aiModeClaude {
+			if len(args) != 4 || args[2] != "--via" || args[3] != "web" {
+				return usageError("Claude turn interrupt requires explicit --via web (caller-reported source)")
+			}
+			return c.interruptClaudeTurn(registry, agent, stdout)
+		}
+		if len(args) != 2 {
+			return usageError("--via web is available only for Claude turn interrupt")
+		}
+		binding, err := c.bindAgentControl("agent turn interrupt", registry, agent)
 		if err != nil {
 			return err
 		}
