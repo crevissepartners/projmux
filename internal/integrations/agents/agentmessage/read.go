@@ -13,7 +13,8 @@ import (
 )
 
 // Archive is one lock-free read of every message the state directory still
-// retains: the live store with payloads, then the reclaim log without them.
+// retains: the live store with payloads, then the reclaim log without payloads
+// but with each payload's length and digest.
 // A message can appear in both, because the writer appends the log before its
 // store commit; a reader that wants each message once keys on MessageRef and
 // prefers the Records copy.
@@ -27,6 +28,11 @@ type Archive struct {
 
 // HistoryEntry is the part of a reclaim log line a reader needs. A line with a
 // higher schemaVersion is still read for these fields.
+//
+// Origin is set on operator lines and zero on Agent lines, which carry Source
+// instead. PayloadSHA256 is coremessage.PayloadSHA256 of the payload; it is
+// empty on a line written before the digest existed or by an older writer,
+// which means "not recorded", not a mismatch.
 type HistoryEntry struct {
 	SchemaVersion   int
 	MessageRef      string
@@ -35,6 +41,8 @@ type HistoryEntry struct {
 	State           coremessage.State
 	AcceptedAt      time.Time
 	PayloadBytes    int
+	PayloadSHA256   string
+	Origin          coremessage.Origin
 	Source          coremessage.Route
 	Target          coremessage.Route
 }
@@ -124,6 +132,8 @@ func decodeHistory(data []byte) ([]HistoryEntry, int) {
 			State:           record.State,
 			AcceptedAt:      record.AcceptedAt,
 			PayloadBytes:    record.PayloadBytes,
+			PayloadSHA256:   record.PayloadSHA256,
+			Origin:          record.Origin,
 			Source:          record.Source,
 			Target:          record.Target,
 		})

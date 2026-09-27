@@ -408,3 +408,94 @@ func TestReadArchiveReadsBothHistoryLineShapes(t *testing.T) {
 		t.Fatalf("new line lost its edge: %+v", second)
 	}
 }
+
+// TestReadArchiveExposesOriginAndPayloadDigestOfReclaimedRecords reclaims an
+// Agent record and an operator record through the store and reads them back:
+// the operator entry has its origin and no source, the Agent entry its source
+// and no origin, and both carry the digest of their own payload.
+func TestReadArchiveExposesOriginAndPayloadDigestOfReclaimedRecords(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	store := NewStoreAt(filepath.Join(stateDir, storeDirName, storeFileName))
+	store.now = func() time.Time { return storeTestNow }
+	stale := storeTestNow.Add(-terminalRetention - 2*time.Hour)
+	agent := historyTerminalRecord(9101, stale)
+	operatorEnvelope := operatorStoreEnvelope("message-operator-digest", stale.Add(time.Second))
+	operator := Record{Envelope: operatorEnvelope, Adapter: "claude-coordination",
+		Delivery: terminalDelivery(operatorEnvelope, coremessage.Event{Kind: coremessage.EventDeliver,
+			ObservedAt: operatorEnvelope.AcceptedAt.Add(time.Second)})}
+	seedStore(t, store, []Record{agent, operator})
+	if _, created, err := store.PutAccepted(storeEnvelope(14), "codex-inbox"); err != nil || !created {
+		t.Fatalf("PutAccepted = (%t, %v)", created, err)
+	}
+
+	archive, err := ReadArchive(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archive.Skipped != 0 || !slices.Equal(archiveHistoryRefs(archive),
+		[]string{agent.Envelope.MessageRef, operator.Envelope.MessageRef}) {
+		t.Fatalf("archive history = %+v, want the Agent then the operator entry", archive.History)
+	}
+	agentEntry, operatorEntry := archive.History[0], archive.History[1]
+	if agentEntry.Origin != (coremessage.Origin{}) || agentEntry.Source.AgentUID != agent.Envelope.Source.AgentUID {
+		t.Fatalf("Agent entry origin %+v source %+v, want no origin and source %s", agentEntry.Origin, agentEntry.Source,
+			agent.Envelope.Source.AgentUID)
+	}
+	if !operatorEntry.Origin.Operator() || operatorEntry.Source != (coremessage.Route{}) {
+		t.Fatalf("operator entry origin %+v source %+v, want operator origin and no source", operatorEntry.Origin,
+			operatorEntry.Source)
+	}
+	for _, check := range []struct {
+		entry   HistoryEntry
+		payload string
+	}{{agentEntry, agent.Envelope.Payload}, {operatorEntry, operator.Envelope.Payload}} {
+		if want := coremessage.PayloadSHA256(check.payload); check.entry.PayloadSHA256 != want {
+			t.Fatalf("%s PayloadSHA256 = %q, want %q", check.entry.MessageRef, check.entry.PayloadSHA256, want)
+		}
+	}
+	if agentEntry.PayloadSHA256 == operatorEntry.PayloadSHA256 {
+		t.Fatal("two different payloads read with the same digest")
+	}
+}
+
+// TestReadArchiveReadsALineWithoutAPayloadDigest reads lines exactly as the
+// writer wrote them before payloadSHA256 existed: they are not skipped, every
+// other field is intact, and the digest reads as empty, meaning not recorded.
+func TestReadArchiveReadsALineWithoutAPayloadDigest(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	const oldLines = `{"schemaVersion":1,"evictedAt":"2026-09-18T02:54:58.263232329Z","reason":"capacity","adapter":"codex-inbox","messageRef":"message-old-agent","conversationRef":"conversation-old-agent","replyTo":"message-old-parent","state":"delivered","deliveryReason":"unspecified","handoffObserved":false,"acceptedAt":"2026-09-18T00:54:57.275578008Z","terminalAt":"2026-09-18T00:54:58.510145899Z","payloadBytes":2027,"source":{"agentUID":"agent-source","provider":"claude"},"target":{"agentUID":"agent-target","provider":"codex"}}
+{"schemaVersion":1,"evictedAt":"2026-09-18T02:54:58.263232329Z","reason":"retention","adapter":"claude-coordination","messageRef":"message-old-operator","conversationRef":"conversation-old-operator","state":"delivered","deliveryReason":"unspecified","handoffObserved":true,"acceptedAt":"2026-09-18T00:55:57.275578008Z","terminalAt":"2026-09-18T00:55:58.510145899Z","payloadBytes":42,"origin":{"kind":"operator","client":"web"},"target":{"agentUID":"agent-claude-b","provider":"claude"}}
+`
+	if strings.Contains(oldLines, "payloadSHA256") {
+		t.Fatal("the fixture must be the shape written before the digest existed")
+	}
+	writeHistoryFile(t, stateDir, historyFileName, oldLines)
+
+	archive, err := ReadArchive(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archive.Skipped != 0 || len(archive.History) != 2 {
+		t.Fatalf("archive = %+v, want two entries and nothing skipped", archive)
+	}
+	acceptedAt := time.Date(2026, 9, 18, 0, 54, 57, 275578008, time.UTC)
+	agent, operator := archive.History[0], archive.History[1]
+	if agent.PayloadSHA256 != "" || operator.PayloadSHA256 != "" {
+		t.Fatalf("digests = %q, %q, want empty (not recorded)", agent.PayloadSHA256, operator.PayloadSHA256)
+	}
+	if agent.SchemaVersion != 1 || agent.MessageRef != "message-old-agent" ||
+		agent.ConversationRef != "conversation-old-agent" || agent.ReplyTo != "message-old-parent" ||
+		agent.State != coremessage.StateDelivered || !agent.AcceptedAt.Equal(acceptedAt) || agent.PayloadBytes != 2027 ||
+		agent.Origin != (coremessage.Origin{}) ||
+		agent.Source != (coremessage.Route{AgentUID: "agent-source", Provider: "claude"}) ||
+		agent.Target != (coremessage.Route{AgentUID: "agent-target", Provider: "codex"}) {
+		t.Fatalf("old Agent entry = %+v", agent)
+	}
+	if operator.MessageRef != "message-old-operator" || operator.PayloadBytes != 42 || !operator.Origin.Operator() ||
+		operator.Source != (coremessage.Route{}) ||
+		operator.Target != (coremessage.Route{AgentUID: "agent-claude-b", Provider: "claude"}) {
+		t.Fatalf("old operator entry = %+v", operator)
+	}
+}

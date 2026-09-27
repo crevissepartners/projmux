@@ -15,12 +15,12 @@ import (
 )
 
 // historySchemaKeys is the fixed line schema. payload is absent by design: the
-// log keeps the length only, so the assertion below is a key-set comparison and
-// not an empty-string check. deadline is never written, and outcomeUnknown and
-// replyTo only when set.
+// log keeps the length and the digest (payloadSHA256) only, so the assertion
+// below is a key-set comparison and not an empty-string check. deadline is
+// never written, and outcomeUnknown and replyTo only when set.
 var historySchemaKeys = []string{
 	"acceptedAt", "adapter", "conversationRef", "deliveryReason", "evictedAt",
-	"handoffObserved", "messageRef", "payloadBytes", "reason",
+	"handoffObserved", "messageRef", "payloadBytes", "payloadSHA256", "reason",
 	"schemaVersion", "source", "state", "target", "terminalAt",
 }
 
@@ -149,8 +149,8 @@ func assertHistoryRoute(t *testing.T, line map[string]json.RawMessage, key strin
 
 // TestRetentionReclaimAppendsFixedSchemaLines covers acceptance 1 and 3: every
 // record the retention rule reclaims becomes exactly one line carrying the
-// fixed key set, reason retention, and the original payload length without the
-// payload itself.
+// fixed key set, reason retention, and the original payload length and digest
+// without the payload itself.
 func TestRetentionReclaimAppendsFixedSchemaLines(t *testing.T) {
 	t.Parallel()
 	store := NewStoreAt(filepath.Join(t.TempDir(), "agent-messages", "messages.json"))
@@ -215,6 +215,9 @@ func TestRetentionReclaimAppendsFixedSchemaLines(t *testing.T) {
 		if got := historyInt(t, line, "payloadBytes"); got != len(seeded[i].Envelope.Payload) {
 			t.Fatalf("history line %d payloadBytes = %d, want %d", i, got, len(seeded[i].Envelope.Payload))
 		}
+		if got, want := historyString(t, line, "payloadSHA256"), coremessage.PayloadSHA256(seeded[i].Envelope.Payload); got != want {
+			t.Fatalf("history line %d payloadSHA256 = %q, want %q", i, got, want)
+		}
 		assertHistoryRoute(t, line, "source", seeded[i].Envelope.Source)
 		assertHistoryRoute(t, line, "target", seeded[i].Envelope.Target)
 	}
@@ -263,6 +266,9 @@ func TestCapacityReclaimAppendsCapacityReason(t *testing.T) {
 	}
 	if got := historyKeys(lines[0]); strings.Join(got, ",") != strings.Join(historySchemaKeys, ",") {
 		t.Fatalf("capacity line keys = %v, want %v", got, historySchemaKeys)
+	}
+	if got, want := historyString(t, lines[0], "payloadSHA256"), coremessage.PayloadSHA256(full[0].Envelope.Payload); got != want {
+		t.Fatalf("capacity line payloadSHA256 = %q, want %q", got, want)
 	}
 	assertHistoryRoute(t, lines[0], "source", full[0].Envelope.Source)
 	assertHistoryRoute(t, lines[0], "target", full[0].Envelope.Target)
@@ -376,6 +382,9 @@ func TestHistoryRotatesIntoOneRetainedGeneration(t *testing.T) {
 	}
 }
 
+// TestHistoryLineOmitsPayloadForEveryReclaimReason pins, for both reclaim
+// reasons, that a line has no payload text and carries the digest of its own
+// record's payload.
 func TestHistoryLineOmitsPayloadForEveryReclaimReason(t *testing.T) {
 	t.Parallel()
 	for _, reason := range []string{"retention", "capacity"} {
@@ -400,9 +409,17 @@ func TestHistoryLineOmitsPayloadForEveryReclaimReason(t *testing.T) {
 			if len(lines) == 0 {
 				t.Fatal("no history line")
 			}
+			payloads := make(map[string]string, len(seeded))
+			for _, record := range seeded {
+				payloads[record.Envelope.MessageRef] = record.Envelope.Payload
+			}
 			for i, line := range lines {
 				if _, present := line["payload"]; present {
 					t.Fatalf("line %d carries a payload key", i)
+				}
+				payload, ok := payloads[historyString(t, line, "messageRef")]
+				if want := coremessage.PayloadSHA256(payload); !ok || historyString(t, line, "payloadSHA256") != want {
+					t.Fatalf("line %d payloadSHA256 = %s, want %q (seeded %t)", i, line["payloadSHA256"], want, ok)
 				}
 				if got := historyString(t, line, "reason"); got != reason {
 					t.Fatalf("line %d reason = %q, want %q", i, got, reason)
@@ -492,10 +509,11 @@ func TestHistoryLinesFromEarlierBuildsReadLikeNewOnes(t *testing.T) {
 	}
 }
 
-// TestHistoryLineForALiveCapacityRecordFitsIn620Bytes measures one capacity
+// TestHistoryLineForALiveCapacityRecordFitsIn700Bytes measures one capacity
 // line with live-length identifiers, a 2 KiB payload and nanosecond clocks. A
-// real line of this shape was 971 bytes before routes were narrowed.
-func TestHistoryLineForALiveCapacityRecordFitsIn620Bytes(t *testing.T) {
+// real line of this shape was 971 bytes before routes were narrowed and 586
+// after; the payload digest adds 83 bytes to that.
+func TestHistoryLineForALiveCapacityRecordFitsIn700Bytes(t *testing.T) {
 	t.Parallel()
 	acceptedAt := time.Date(2026, 9, 18, 0, 54, 57, 275578008, time.UTC)
 	envelope := coremessage.Envelope{Version: coremessage.Version,
@@ -527,7 +545,7 @@ func TestHistoryLineForALiveCapacityRecordFitsIn620Bytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("history line bytes: full routes %d, written %d", len(old), len(line))
-	if len(line) > 620 {
-		t.Fatalf("history line = %d bytes, want at most 620:\n%s", len(line), line)
+	if len(line) > 700 {
+		t.Fatalf("history line = %d bytes, want at most 700:\n%s", len(line), line)
 	}
 }
