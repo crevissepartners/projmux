@@ -66,6 +66,13 @@ const (
 
 // Record is one row. The JSON keys are a stable contract: the file stores
 // them and `agent sessions list -o json` prints them.
+//
+// ProjectUID, WindowUID, and AgentName are the Agent's affiliation, a
+// snapshot of the working Registry at write time (ResolveAffiliation). An
+// observed row carries each key only as far as the Agent -> Window -> Project
+// chain resolved then; a key is empty (and omitted) when its link was
+// missing, and nothing is guessed. Rows written before the keys existed, and
+// the current and estimated rows, carry none of them.
 type Record struct {
 	AgentUID       string    `json:"agentUID"`
 	Provider       string    `json:"provider"`
@@ -77,6 +84,9 @@ type Record struct {
 	// estimated row carries it (its observedAt is the first record's); an
 	// observed or current row omits the key.
 	LastRecordAt *time.Time `json:"lastRecordAt,omitempty"`
+	ProjectUID   string     `json:"projectUID,omitempty"`
+	WindowUID    string     `json:"windowUID,omitempty"`
+	AgentName    string     `json:"agentName,omitempty"`
 }
 
 // normalized returns record with its instants in UTC.
@@ -148,6 +158,70 @@ func RecordFor(agentUID string, ref *coremetadata.AgentSessionRef, source Source
 		ObservedAt:     ref.ObservedAt.UTC(),
 		Source:         source,
 	}, true
+}
+
+// Affiliation is where an Agent sat in the Registry: its own name, its
+// Window, and that Window's Project.
+type Affiliation struct {
+	ProjectUID string
+	WindowUID  string
+	AgentName  string
+}
+
+// ResolveAffiliation reads agentUID's affiliation from reg, link by link: the
+// Agent's name when the Agent exists, its Window when the Agent's ownerRef is
+// a Window that exists, and that Window's Project when the Window's ownerRef
+// is a Project that exists. Each key is set only as far as the chain holds;
+// a nil Registry or a missing Agent is the empty Affiliation.
+func ResolveAffiliation(reg *coremetadata.Registry, agentUID string) Affiliation {
+	var affiliation Affiliation
+	agentUID = strings.TrimSpace(agentUID)
+	if reg == nil || agentUID == "" {
+		return affiliation
+	}
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return affiliation
+	}
+	affiliation.AgentName = agent.Metadata.Name
+	owner := agent.Metadata.OwnerRef
+	if owner == nil || owner.Kind != coremetadata.KindWindow {
+		return affiliation
+	}
+	window, ok := reg.Window(owner.UID)
+	if !ok {
+		return affiliation
+	}
+	affiliation.WindowUID = window.Metadata.UID
+	owner = window.Metadata.OwnerRef
+	if owner == nil || owner.Kind != coremetadata.KindProject {
+		return affiliation
+	}
+	if project, ok := reg.Project(owner.UID); ok {
+		affiliation.ProjectUID = project.Metadata.UID
+	}
+	return affiliation
+}
+
+// complete reports whether the whole Agent -> Window -> Project chain
+// resolved.
+func (a Affiliation) complete() bool {
+	return a.ProjectUID != "" && a.WindowUID != "" && a.AgentName != ""
+}
+
+// ObservedRecordFor is the one constructor of an observed row: RecordFor with
+// SourceObserved, plus the Agent's affiliation resolved from reg, which a
+// writer passes as the working Registry of the transaction that committed the
+// ref. A chain that does not resolve leaves the affiliation keys empty; it
+// never refuses the row.
+func ObservedRecordFor(reg *coremetadata.Registry, agentUID string, ref *coremetadata.AgentSessionRef) (Record, bool) {
+	record, ok := RecordFor(agentUID, ref, SourceObserved)
+	if !ok {
+		return Record{}, false
+	}
+	affiliation := ResolveAffiliation(reg, record.AgentUID)
+	record.ProjectUID, record.WindowUID, record.AgentName = affiliation.ProjectUID, affiliation.WindowUID, affiliation.AgentName
+	return record, true
 }
 
 // Append adds one complete line to the history file of stateDir.
@@ -306,7 +380,11 @@ func readRecords(r io.Reader, agentUID string) (ReadResult, error) {
 //   - lastRecordAt is the latest one any of its rows carries;
 //   - source is `current` when current names it, else `observed` when any
 //     row is observed, else `estimated`: a backfilled estimate never hides an
-//     observation of the same conversation.
+//     observation of the same conversation;
+//   - projectUID, windowUID, and agentName are each, independently, the
+//     non-empty value of the latest row that carries one, so a row without
+//     affiliation (a current or estimated row, or an old line) never erases
+//     the affiliation an observed row recorded.
 //
 // Rows are ordered by observedAt; equal instants keep their input order, with
 // current last. current may be nil.
@@ -314,15 +392,20 @@ func Merge(history []Record, current *Record) []Record {
 	type key struct{ agentUID, provider, sessionID string }
 	rows := make([]Record, 0, len(history)+1)
 	index := map[key]int{}
+	affiliations := []affiliationAt{}
 	add := func(record Record) {
 		k := key{record.AgentUID, record.Provider, record.SessionID}
 		at, seen := index[k]
 		if !seen {
 			index[k] = len(rows)
 			rows = append(rows, record)
+			var tracked affiliationAt
+			tracked.observe(record)
+			affiliations = append(affiliations, tracked)
 			return
 		}
 		merged := rows[at]
+		affiliations[at].observe(record)
 		if !record.ObservedAt.Before(merged.ObservedAt) {
 			merged.ObservedAt = record.ObservedAt
 			if record.TranscriptPath != "" {
@@ -347,8 +430,35 @@ func Merge(history []Record, current *Record) []Record {
 		row.Source = SourceCurrent
 		add(row)
 	}
+	for at := range rows {
+		affiliations[at].apply(&rows[at])
+	}
 	slices.SortStableFunc(rows, func(a, b Record) int { return a.ObservedAt.Compare(b.ObservedAt) })
 	return rows
+}
+
+// affiliationAt tracks, for one merged row, each affiliation key's value and
+// the observedAt of the row that supplied it.
+type affiliationAt struct {
+	project, window, name       string
+	projectAt, windowAt, nameAt time.Time
+}
+
+// observe takes each non-empty affiliation key of record that is at least as
+// late as the one held; equal instants keep the later row in input order.
+func (a *affiliationAt) observe(record Record) {
+	take := func(value *string, at *time.Time, candidate string) {
+		if candidate != "" && (*value == "" || !record.ObservedAt.Before(*at)) {
+			*value, *at = candidate, record.ObservedAt
+		}
+	}
+	take(&a.project, &a.projectAt, record.ProjectUID)
+	take(&a.window, &a.windowAt, record.WindowUID)
+	take(&a.name, &a.nameAt, record.AgentName)
+}
+
+func (a affiliationAt) apply(record *Record) {
+	record.ProjectUID, record.WindowUID, record.AgentName = a.project, a.window, a.name
 }
 
 // sourceRank orders sources for Merge: current, then observed, then

@@ -757,8 +757,19 @@ Agent session history (Claude and Codex):
 - One line is appended each time a committed Registry write binds or replaces
   a Claude session id or Codex thread id. Re-observing the same conversation,
   including a same-thread Codex resume or endpoint handover, appends nothing.
-  Writers include the hook ingest path, managed-Agent interaction commit,
-  resume-picker create, and native Codex create. The append runs after the
+  The writers are a closed set of four functions: `persistAgentSessionRef`
+  (hook ingest) and `persistManagedAgentInteractionWithActivationPolicy`
+  (managed-Agent interaction commit) in `internal/app/agent_session_ref.go`,
+  `openIntentAgent` (resume-picker create and intent native Codex create) in
+  `internal/app/create_intent.go`, and `createAgent` (native Codex fresh
+  create) in `internal/app/create_agent.go`.
+  `TestClaudeSessionRefWritersRecordHistory` pins the callers of
+  `RecordAgentSessionRef`, and
+  `TestSessionHistoryObservedRowWritersCarryAffiliation` pins the set of four,
+  that each builds its row with `sessionhistory.ObservedRecordFor` (directly or
+  through `claudeSessionHistoryRecord`) from its transaction's `working`
+  Registry, that each reaches a post-commit append helper, and that no other
+  code builds an `observed` row with `RecordFor`. The append runs after the
   commit and never fails its caller: a hook logs one `session-history` line to
   `ai-ingest.log`, a create prints one
   `agent session history not recorded: append-failed` line on stderr.
@@ -772,6 +783,18 @@ Agent session history (Claude and Codex):
   lines add one key, `lastRecordAt`. Lines are one framed `O_APPEND` write under an
   exclusive `flock`, then `fsync`; the file is `0600` in a `0700` directory.
   Readers skip and count an unparsable line.
+- An `observed` line also carries the Agent's affiliation in three trailing
+  keys, `projectUID`, `windowUID`, and `agentName`, so a session stays
+  attributable after its Agent is deleted from the Registry. The writer
+  resolves them inside the same transaction, from that transaction's working
+  Registry (`sessionhistory.ResolveAffiliation`), link by link: `agentName`
+  when the Agent exists, `windowUID` when its ownerRef is an existing Window,
+  `projectUID` when that Window's ownerRef is an existing Project. A key whose
+  link does not resolve is omitted; nothing is guessed, and a chain that does
+  not resolve never withholds the line or fails the writer. `current` and
+  `estimated` rows carry none of the three. When `agent sessions list` merges
+  a conversation seen more than once, each of the three is the non-empty value
+  of the latest row that carries one.
 - `projmux agent sessions list <agent-ref> [-o json]` and the Go read function
   `sessionhistory.List(stateDir, agent)` return the same rows: history joined
   with the Registry's current ref, one row per `(agentUID, provider, sessionId)` in
@@ -780,6 +803,37 @@ Agent session history (Claude and Codex):
   names it; otherwise it is `observed` if any of its rows is, and `estimated`
   only when every row is, so a backfilled estimate never hides an observation.
   The JSON envelope adds `agentName` and `corruptLines`.
+- `projmux agent sessions project <project-ref> [-o json]` and the Go read
+  function `sessionhistory.ListProject(stateDir, registry, projectUID)` list
+  the sessions attributed to one exact Project (resolved like any Project
+  ref). It is read-only.
+  - Input: every `claude` or `codex` line of the history file, plus one
+    `current` row for each Registry Agent with a supported provider.
+  - Attribution, per row: a row with a `projectUID` is attributed with basis
+    `recorded`, using its own `projectUID`, `windowUID`, and `agentName`;
+    otherwise, a row whose Agent is in the current Registry with a complete
+    Agent -> Window -> Project chain is attributed with basis `registry`,
+    using the current values; any other row is unattributed. Rows are never
+    attributed from deletion records, Registry backups, a transcript's folder
+    or cwd, or time proximity.
+  - A session is `(provider, sessionId)`. A session none of whose rows is
+    attributed counts in `unattributed`; one whose attributed rows name two or
+    more Projects counts in `ambiguous` and is listed under none; one naming
+    exactly the requested Project is listed. Both counts, and `corruptLines`,
+    are over the whole history, not per Project.
+  - Each listed session has `provider`, `sessionId`, `transcriptPath`,
+    `observedAt`, `lastRecordAt` (when any row has one), and `source`, merged
+    over its attributed rows with the `agent sessions list` rules, and
+    `agents`: one entry per distinct Agent of those rows, in first-appearance
+    order (history file order, then the current rows), with `agentUID`,
+    `agentName`, `windowUID`, `inRegistry` (the Agent exists in the current
+    Registry), and `basis` (`recorded` wins when an Agent has both). Sessions
+    are ordered by `observedAt`.
+  - JSON: `{"projectUID","projectName","sessions","unattributed","ambiguous","corruptLines"}`;
+    `sessions` is `[]` when empty. The table prints
+    `project/<name> has no recorded sessions` when empty, marks an Agent no
+    longer in the Registry `(deleted)`, and prints one stderr line for each
+    non-zero `corruptLines`, `unattributed`, and `ambiguous` count.
 - `projmux agent sessions backfill [--dry-run] [-o json]` recovers a subset of
   the conversations from before this history existed. It is the one explicit,
   user-run reader of transcript contents; the Registry, hook ingest, resume,
@@ -838,7 +892,12 @@ Agent session history (Claude and Codex):
   conversation changes are not recorded; a line edited or deleted by hand is
   not recovered; the history is kept after the Agent is deleted; the Registry
   commit and the append are not atomic, so a crash between them loses that one
-  line. There is no retention policy.
+  line. There is no retention policy. Lines written before the affiliation
+  keys existed carry none, so once their Agent is deleted they count only in
+  `unattributed`; `agentName` is a write-time snapshot and does not follow a
+  later rename; a deleted Project can no longer be named by ref, so its
+  sessions cannot be queried; `agent sessions project` computes no token
+  totals.
 
 Agent launch argv (workspace / task boundary):
 
