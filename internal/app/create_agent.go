@@ -488,7 +488,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 						return MapMetadataError(err)
 					}
 					if bound, ok := working.Agent(work.agent.Metadata.UID); ok {
-						if row, valid := sessionhistory.RecordFor(bound.Metadata.UID, bound.Status.SessionRef, sessionhistory.SourceObserved); valid {
+						if row, valid := sessionhistory.ObservedRecordFor(working, bound.Metadata.UID, bound.Status.SessionRef); valid {
 							nativeSessionHistory = append(nativeSessionHistory, row)
 						}
 					}

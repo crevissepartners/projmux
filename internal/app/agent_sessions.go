@@ -21,7 +21,7 @@ import (
 const sessionsReasonProviderUnsupported = "sessions-provider-unsupported"
 
 // agentSessionsActions are the `agent sessions` subcommands in help order.
-var agentSessionsActions = []string{"list", "backfill"}
+var agentSessionsActions = []string{"list", "backfill", "project"}
 
 // agentSessionsList is the `agent sessions list -o json` projection. Each
 // session row carries the sessionhistory.Record keys verbatim.
@@ -35,9 +35,13 @@ type agentSessionsList struct {
 // runSessions lists the Claude or Codex conversations one Agent has moved through: the
 // append-only session history joined with the conversation its
 // `status.sessionRef` records now (sessionhistory.List). It is read-only.
+// `backfill` and `project` dispatch to their own routes.
 func (c *agentCommand) runSessions(args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "backfill" {
 		return c.runSessionsBackfill(args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "project" {
+		return c.runSessionsProject(args[1:], stdout, stderr)
 	}
 	if len(args) == 0 || args[0] != "list" {
 		return usageError("agent sessions requires " + strings.Join(agentSessionsActions, ", "))
@@ -120,6 +124,124 @@ func writeAgentSessionsList(out io.Writer, result agentSessionsList) error {
 			transcript = "-"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", row.SessionID, row.Source, row.ObservedAt.UTC().Format(time.RFC3339), transcript)
+	}
+	return tw.Flush()
+}
+
+// agentSessionsProject is the `agent sessions project -o json` projection:
+// the sessionhistory.ProjectResult keys verbatim plus the Project's current
+// name.
+type agentSessionsProject struct {
+	ProjectUID   string                          `json:"projectUID"`
+	ProjectName  string                          `json:"projectName"`
+	Sessions     []sessionhistory.ProjectSession `json:"sessions"`
+	Unattributed int                             `json:"unattributed"`
+	Ambiguous    int                             `json:"ambiguous"`
+	CorruptLines int                             `json:"corruptLines"`
+}
+
+// runSessionsProject is `agent sessions project`: the Claude and Codex
+// conversations attributed to one exact Project, from the history rows'
+// recorded affiliation or, for rows without one, the current Registry
+// (sessionhistory.ListProject). It is read-only.
+func (c *agentCommand) runSessionsProject(args []string, stdout, stderr io.Writer) error {
+	const spelling = "agent sessions project"
+	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	setRouteUsage(fs)
+	var output string
+	fs.StringVar(&output, "output", "", "result projection: json")
+	fs.StringVar(&output, "o", "", "result projection: json (alias of --output)")
+	positionals, err := parseWithPositionals(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return flagParseError(err)
+	}
+	if len(positionals) != 1 {
+		return usageError(spelling + " requires exactly one <project-ref>")
+	}
+	if output != "" && output != "json" {
+		return usageError(fmt.Sprintf("%s: unsupported output %q; want json", spelling, output))
+	}
+	flags := resourceQueryFlags{kind: coremetadata.KindProject}
+	flags.addPositionalRef(positionals[0])
+
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	resolution, err := flags.resolve(selector.VerbGet, false, registry)
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	project, ok := registry.Project(resolution.Matches[0].UID)
+	if !ok {
+		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
+	}
+	if c.store == nil || c.store.stateDir == nil {
+		return fmt.Errorf("%s: the projmux state directory is not configured", spelling)
+	}
+	stateDir, err := c.store.stateDir()
+	if err != nil {
+		return fmt.Errorf("%s: %w", spelling, err)
+	}
+	listed, err := sessionhistory.ListProject(stateDir, &registry, project.Metadata.UID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", spelling, err)
+	}
+	result := agentSessionsProject{
+		ProjectUID: listed.ProjectUID, ProjectName: project.Metadata.Name, Sessions: listed.Sessions,
+		Unattributed: listed.Unattributed, Ambiguous: listed.Ambiguous, CorruptLines: listed.CorruptLines,
+	}
+	if output == "json" {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetEscapeHTML(false)
+		return encoder.Encode(result)
+	}
+	if stderr != nil {
+		if result.CorruptLines > 0 {
+			_, _ = fmt.Fprintf(stderr, "%s: skipped %d unreadable line(s) in %s\n", spelling, result.CorruptLines, sessionhistory.FileName)
+		}
+		if result.Unattributed > 0 {
+			_, _ = fmt.Fprintf(stderr, "%s: %d session(s) in %s are attributed to no Project\n", spelling, result.Unattributed, sessionhistory.FileName)
+		}
+		if result.Ambiguous > 0 {
+			_, _ = fmt.Fprintf(stderr, "%s: %d session(s) in %s are attributed to more than one Project and listed under none\n", spelling, result.Ambiguous, sessionhistory.FileName)
+		}
+	}
+	return writeAgentSessionsProject(stdout, result)
+}
+
+// writeAgentSessionsProject prints one row per session. AGENTS names each
+// Agent by its recorded or current name (its uid when it has none), marking
+// an Agent no longer in the Registry with a trailing `(deleted)`.
+func writeAgentSessionsProject(out io.Writer, result agentSessionsProject) error {
+	if len(result.Sessions) == 0 {
+		_, err := fmt.Fprintf(out, "project/%s has no recorded sessions\n", result.ProjectName)
+		return err
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SESSION\tPROVIDER\tSOURCE\tOBSERVED\tAGENTS\tTRANSCRIPT")
+	for _, row := range result.Sessions {
+		transcript := row.TranscriptPath
+		if transcript == "" {
+			transcript = "-"
+		}
+		agents := make([]string, 0, len(row.Agents))
+		for _, agent := range row.Agents {
+			name := agent.AgentName
+			if name == "" {
+				name = "uid:" + agent.AgentUID
+			}
+			if !agent.InRegistry {
+				name += " (deleted)"
+			}
+			agents = append(agents, name)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", row.SessionID, row.Provider, row.Source,
+			row.ObservedAt.UTC().Format(time.RFC3339), strings.Join(agents, ", "), transcript)
 	}
 	return tw.Flush()
 }

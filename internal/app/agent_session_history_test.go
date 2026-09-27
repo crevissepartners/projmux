@@ -39,7 +39,177 @@ var claudeSessionRefWriters = []string{
 }
 
 // sessionHistoryAppendHelpers write a staged line after a commit.
-var sessionHistoryAppendHelpers = []string{"recordClaudeSessionHistory", "recordIntentAgentSessionHistory"}
+var sessionHistoryAppendHelpers = []string{"recordClaudeSessionHistory", "recordIntentAgentSessionHistory", "recordCreateAgentSessionHistory"}
+
+// sessionHistoryObservedRowWriters is the closed set of non-test functions
+// that build an observed history row, with sessionhistory.ObservedRecordFor
+// directly or through claudeSessionHistoryRecord. It is
+// claudeSessionRefWriters plus createAgent, whose native Codex fresh create
+// binds its first thread with BindCodexActivation rather than
+// RecordAgentSessionRef.
+//
+// Deliberately absent: agent_resume.go rebinds a stored thread with
+// BindCodexActivation but moves the Agent to no new conversation, and
+// agent_sessions.go builds `current` rows for reads only.
+var sessionHistoryObservedRowWriters = []string{
+	"internal/app/agent_session_ref.go:persistAgentSessionRef",
+	"internal/app/agent_session_ref.go:persistManagedAgentInteractionWithActivationPolicy",
+	"internal/app/create_agent.go:createAgent",
+	"internal/app/create_intent.go:openIntentAgent",
+}
+
+// sessionHistoryObservedRowBuilders are the calls that build an observed row
+// with its affiliation.
+var sessionHistoryObservedRowBuilders = []string{"ObservedRecordFor", "claudeSessionHistoryRecord"}
+
+// TestSessionHistoryObservedRowWritersCarryAffiliation is the closed-set guard
+// of the observed rows' affiliation. Over every non-test file under internal/
+// and cmd/ it requires that:
+//
+//   - nothing outside the sessionhistory package builds a row with RecordFor
+//     and SourceObserved, which would skip the affiliation;
+//   - the functions that build one with ObservedRecordFor or
+//     claudeSessionHistoryRecord (the wrapper itself aside) are exactly
+//     sessionHistoryObservedRowWriters, each passing its transaction's
+//     `working` Registry as the first argument;
+//   - each of them reaches an append helper, itself or through every one of
+//     its callers.
+func TestSessionHistoryObservedRowWritersCarryAffiliation(t *testing.T) {
+	root := filepath.Join("..", "..")
+	const sessionHistoryDir = "internal/integrations/agents/sessionhistory/"
+	funcs := map[string]*ast.FuncDecl{}
+	var builders, bypasses []string
+	for _, dir := range []string{"internal", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(root, path)
+			rel = filepath.ToSlash(rel)
+			if strings.HasPrefix(rel, sessionHistoryDir) {
+				return nil
+			}
+			ast.Inspect(file, func(node ast.Node) bool {
+				if call, ok := node.(*ast.CallExpr); ok && calleeName(call) == "RecordFor" && slices.ContainsFunc(call.Args, isSourceObserved) {
+					bypasses = append(bypasses, fset.Position(call.Pos()).String())
+				}
+				return true
+			})
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				key := rel + ":" + fn.Name.Name
+				funcs[key] = fn
+				if fn.Name.Name == "claudeSessionHistoryRecord" {
+					continue
+				}
+				if callsAny(fn, sessionHistoryObservedRowBuilders...) {
+					builders = append(builders, key)
+				}
+				ast.Inspect(fn.Body, func(node ast.Node) bool {
+					call, ok := node.(*ast.CallExpr)
+					if !ok || !slices.Contains(sessionHistoryObservedRowBuilders, calleeName(call)) {
+						return true
+					}
+					if len(call.Args) == 0 {
+						t.Errorf("%s: %s has no Registry argument", fset.Position(call.Pos()), calleeName(call))
+					} else if ident, ok := call.Args[0].(*ast.Ident); !ok || ident.Name != "working" {
+						t.Errorf("%s: %s must resolve the affiliation from the transaction's own `working` Registry", fset.Position(call.Pos()), calleeName(call))
+					}
+					return true
+				})
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan %s: %v", dir, err)
+		}
+	}
+	if len(bypasses) > 0 {
+		t.Errorf("observed history rows built with RecordFor(..., SourceObserved) outside sessionhistory: %v\n"+
+			"Build an observed row with sessionhistory.ObservedRecordFor(working, agentUID, ref) (or claudeSessionHistoryRecord) "+
+			"so it carries the Agent's projectUID, windowUID, and agentName.", bypasses)
+	}
+	sort.Strings(builders)
+	want := slices.Clone(sessionHistoryObservedRowWriters)
+	sort.Strings(want)
+	if !slices.Equal(builders, want) {
+		t.Fatalf("the writers of observed session history rows changed:\n got  %v\n want %v\n"+
+			"A new writer must build its row inside the Registry transaction with sessionhistory.ObservedRecordFor "+
+			"(or claudeSessionHistoryRecord), passing that transaction's working Registry, append it after the commit "+
+			"with one of %v, and then update sessionHistoryObservedRowWriters in this test and the writer list in "+
+			"agent_session_history.go and docs/architecture.md.", builders, want, sessionHistoryAppendHelpers)
+	}
+	for _, key := range want {
+		fn := funcs[key]
+		if callsAny(fn, sessionHistoryAppendHelpers...) {
+			continue
+		}
+		var reachedBy []string
+		for callerKey, caller := range funcs {
+			if callsAny(caller, fn.Name.Name) {
+				reachedBy = append(reachedBy, callerKey)
+				if !callsAny(caller, sessionHistoryAppendHelpers...) {
+					t.Errorf("%s calls %s but never appends its staged session history row (%v)", callerKey, key, sessionHistoryAppendHelpers)
+				}
+			}
+		}
+		if len(reachedBy) == 0 {
+			t.Errorf("%s stages an observed session history row that nothing appends", key)
+		}
+	}
+}
+
+// calleeName is the called function's name, as a plain identifier or a
+// selector.
+func calleeName(call *ast.CallExpr) string {
+	switch callee := call.Fun.(type) {
+	case *ast.Ident:
+		return callee.Name
+	case *ast.SelectorExpr:
+		return callee.Sel.Name
+	}
+	return ""
+}
+
+// isSourceObserved reports whether expr names SourceObserved.
+func isSourceObserved(expr ast.Expr) bool {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return value.Name == "SourceObserved"
+	case *ast.SelectorExpr:
+		return value.Sel.Name == "SourceObserved"
+	}
+	return false
+}
+
+// requireRowAffiliation walks the Agent -> Window -> Project chain of the
+// row's Agent in reg by hand and requires the row to carry all three keys.
+func requireRowAffiliation(t *testing.T, reg *coremetadata.Registry, row sessionhistory.Record) {
+	t.Helper()
+	agent, ok := reg.Agent(row.AgentUID)
+	if !ok || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow {
+		t.Fatalf("agent %s has no Window owner in the Registry", row.AgentUID)
+	}
+	window, ok := reg.Window(agent.Metadata.OwnerRef.UID)
+	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject {
+		t.Fatalf("window %s has no Project owner in the Registry", agent.Metadata.OwnerRef.UID)
+	}
+	want := [3]string{window.Metadata.OwnerRef.UID, window.Metadata.UID, agent.Metadata.Name}
+	if got := [3]string{row.ProjectUID, row.WindowUID, row.AgentName}; got != want || want[0] == "" || want[2] == "" {
+		t.Fatalf("row affiliation (projectUID, windowUID, agentName) = %q, want %q", got, want)
+	}
+}
 
 // TestClaudeSessionRefWritersRecordHistory is the closed-set guard of the
 // Claude session history. It finds every non-test call of
@@ -191,6 +361,11 @@ func TestClaudeHookMovingToAnotherConversationAppendsHistory(t *testing.T) {
 	if !read.Records[1].ObservedAt.Equal(later) {
 		t.Fatalf("observedAt = %s, want the ref's ObservedAt %s", read.Records[1].ObservedAt, later)
 	}
+	// UserPromptSubmit commits through the managed-Agent interaction write
+	// (persistManagedAgentInteractionWithActivationPolicy).
+	for _, record := range read.Records {
+		requireRowAffiliation(t, h.registry, record)
+	}
 
 	var stdout, stderr bytes.Buffer
 	if err := sessionHistoryAgentCommand(h, stateDir).Run([]string{"sessions", "list", "uid:" + h.agentUID}, &stdout, &stderr); err != nil {
@@ -201,6 +376,139 @@ func TestClaudeHookMovingToAnotherConversationAppendsHistory(t *testing.T) {
 		!strings.Contains(lines[1], "session-A") || !strings.Contains(lines[1], "observed") ||
 		!strings.Contains(lines[2], "session-B") || !strings.Contains(lines[2], "current") {
 		t.Fatalf("table =\n%s", stdout.String())
+	}
+}
+
+func TestClaudeQuietHookRecordsHistoryWithAffiliation(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	stateDir := sessionHistoryStateDir(t, h)
+	// PreCompact changes no interaction state, so its ref is committed by the
+	// deferred flush (persistAgentSessionRef), not the managed-interaction
+	// write.
+	payload := strings.Replace(sessionHistoryHookPayload("session-quiet"), "UserPromptSubmit", "PreCompact", 1)
+	h.ingest(t, []string{"claude-hook"}, payload)
+	read := readSessionHistory(t, stateDir, h.agentUID)
+	if len(read.Records) != 1 || read.Records[0].SessionID != "session-quiet" || read.Records[0].Source != sessionhistory.SourceObserved {
+		t.Fatalf("history = %#v, want one observed line", read)
+	}
+	requireRowAffiliation(t, h.registry, read.Records[0])
+}
+
+func TestAgentSessionsProjectListsAttributedSessions(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	stateDir := sessionHistoryStateDir(t, h)
+	h.ingest(t, []string{"claude-hook"}, sessionHistoryHookPayload("session-A"))
+	h.cmd.now = func() time.Time { return sessionRefObservedAt.Add(time.Minute) }
+	h.ingest(t, []string{"claude-hook"}, sessionHistoryHookPayload("session-B"))
+	project := h.registry.Projects[0]
+	for _, row := range []sessionhistory.Record{
+		// A deleted Agent's row keeps its recorded affiliation.
+		{AgentUID: "agent-deleted", Provider: aiModeClaude, SessionID: "session-gone", ObservedAt: sessionRefObservedAt.Add(-time.Minute),
+			Source: sessionhistory.SourceObserved, ProjectUID: project.Metadata.UID, WindowUID: "window-gone", AgentName: "reviewer"},
+		// An old-format row of a deleted Agent is attributed to nothing.
+		{AgentUID: "agent-deleted", Provider: aiModeClaude, SessionID: "session-lost", ObservedAt: sessionRefObservedAt, Source: sessionhistory.SourceObserved},
+	} {
+		if err := sessionhistory.Append(stateDir, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := sessionHistoryAgentCommand(h, stateDir)
+
+	var stdout, stderr bytes.Buffer
+	if err := c.Run([]string{"sessions", "project", project.Metadata.Name, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("agent sessions project -o json: %v (stderr=%s)", err, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("json stderr = %q", stderr.String())
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode %s: %v", stdout.String(), err)
+	}
+	if got, want := sortedKeys(envelope), []string{"ambiguous", "corruptLines", "projectName", "projectUID", "sessions", "unattributed"}; !slices.Equal(got, want) {
+		t.Fatalf("envelope keys = %v, want %v", got, want)
+	}
+	var result agentSessionsProject
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	agent, _ := h.registry.Agent(h.agentUID)
+	if result.ProjectUID != project.Metadata.UID || result.ProjectName != project.Metadata.Name || result.Unattributed != 1 || result.Ambiguous != 0 || result.CorruptLines != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	var sessions []string
+	for _, session := range result.Sessions {
+		sessions = append(sessions, session.SessionID+":"+string(session.Source))
+	}
+	if want := []string{"session-gone:observed", "session-A:observed", "session-B:current"}; !slices.Equal(sessions, want) {
+		t.Fatalf("sessions = %v, want %v", sessions, want)
+	}
+	if got := result.Sessions[0].Agents; len(got) != 1 || got[0] != (sessionhistory.ProjectSessionAgent{
+		AgentUID: "agent-deleted", AgentName: "reviewer", WindowUID: "window-gone", Basis: sessionhistory.BasisRecorded,
+	}) {
+		t.Fatalf("deleted agent = %+v", got)
+	}
+	if got := result.Sessions[1].Agents; len(got) != 1 || got[0] != (sessionhistory.ProjectSessionAgent{
+		AgentUID: h.agentUID, AgentName: agent.Metadata.Name, WindowUID: agent.Metadata.OwnerRef.UID, InRegistry: true, Basis: sessionhistory.BasisRecorded,
+	}) {
+		t.Fatalf("live agent = %+v", got)
+	}
+
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "project", "uid:" + project.Metadata.UID}, &stdout, &stderr); err != nil {
+		t.Fatalf("agent sessions project: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) != 4 || !strings.HasPrefix(lines[0], "SESSION") || !strings.Contains(lines[0], "AGENTS") ||
+		!strings.Contains(lines[1], "session-gone") || !strings.Contains(lines[1], "reviewer (deleted)") ||
+		!strings.Contains(lines[2], "session-A") || !strings.Contains(lines[2], agent.Metadata.Name) || strings.Contains(lines[2], "(deleted)") ||
+		!strings.Contains(lines[3], "session-B") || !strings.Contains(lines[3], "current") {
+		t.Fatalf("table =\n%s", stdout.String())
+	}
+	if got, want := stderr.String(), "agent sessions project: 1 session(s) in agent-session-history.jsonl are attributed to no Project\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestAgentSessionsProjectWithNoSessionsAndBadArgv(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	stateDir := t.TempDir()
+	c := sessionHistoryAgentCommand(h, stateDir)
+	project := h.registry.Projects[0]
+
+	var stdout, stderr bytes.Buffer
+	if err := c.Run([]string{"sessions", "project", project.Metadata.Name}, &stdout, &stderr); err != nil {
+		t.Fatalf("agent sessions project: %v", err)
+	}
+	if got, want := stdout.String(), "project/"+project.Metadata.Name+" has no recorded sessions\n"; got != want || stderr.Len() != 0 {
+		t.Fatalf("stdout = %q (want %q), stderr = %q", got, want, stderr.String())
+	}
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "project", project.Metadata.Name, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"sessions":[]`) {
+		t.Fatalf("empty json = %s", stdout.String())
+	}
+	if _, err := os.Stat(sessionhistory.Path(stateDir)); !os.IsNotExist(err) {
+		t.Fatalf("a project listing created the history file: %v", err)
+	}
+
+	for _, args := range [][]string{
+		{"sessions", "project"},
+		{"sessions", "project", project.Metadata.Name, "extra"},
+		{"sessions", "project", project.Metadata.Name, "-o", "yaml"},
+		{"sessions", "project", project.Metadata.Name, "--bogus"},
+		{"sessions", "project", "no-such-project"},
+	} {
+		stdout.Reset()
+		err := c.Run(args, &stdout, &stderr)
+		if err == nil || exitCodeOf(err) != 2 {
+			t.Errorf("%v: err = %v (exit %d), want a usage error", args, err, exitCodeOf(err))
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("%v printed %q", args, stdout.String())
+		}
 	}
 }
 
@@ -228,6 +536,9 @@ func TestCodexSessionRefChangesAppendHistoryAndList(t *testing.T) {
 	read := readSessionHistory(t, stateDir, h.agentUID)
 	if len(read.Records) != 2 || read.Records[0].SessionID != "thread-1" || read.Records[1].SessionID != "thread-2" {
 		t.Fatalf("Codex history = %#v", read)
+	}
+	for _, record := range read.Records {
+		requireRowAffiliation(t, h.registry, record)
 	}
 	var stdout, stderr bytes.Buffer
 	if err := sessionHistoryAgentCommand(h, stateDir).Run([]string{"sessions", "list", "uid:" + h.agentUID, "-o", "json"}, &stdout, &stderr); err != nil {
@@ -258,6 +569,8 @@ func TestNativeCodexCreateAppendsFirstThreadAfterCommit(t *testing.T) {
 	if len(read.Records) != 1 || read.Records[0].Provider != aiModeCodex || read.Records[0].SessionID != native.createBinding.ThreadID || read.Records[0].TranscriptPath != "" || read.Records[0].Source != sessionhistory.SourceObserved {
 		t.Fatalf("native create history = %#v", read)
 	}
+	// createAgent's native fresh create.
+	requireRowAffiliation(t, &store.registry, read.Records[0])
 }
 
 func TestCanonicalIntentCodexResumePickerAppendsThreadAfterCommit(t *testing.T) {
@@ -285,6 +598,8 @@ func TestCanonicalIntentCodexResumePickerAppendsThreadAfterCommit(t *testing.T) 
 	if len(read.Records) != 1 || read.Records[0].SessionID != "thread-intent" || read.Records[0].Provider != aiModeCodex || read.Records[0].TranscriptPath != "" {
 		t.Fatalf("canonical intent history = %#v", read)
 	}
+	// openIntentAgent's resume-picker branch.
+	requireRowAffiliation(t, &fx.store.registry, read.Records[0])
 }
 
 func TestSessionHistoryAppendFailureNeverFailsTheHook(t *testing.T) {
@@ -326,13 +641,22 @@ func TestResumePickerCreateAppendsHistoryAfterCommitOrReportsOneLine(t *testing.
 		Provider: aiModeClaude, ObservedAt: sessionRefObservedAt,
 		Claude: &coremetadata.ClaudeSessionRef{SessionID: "picked", TranscriptPath: "/t/picked.jsonl"},
 	}
-	record, ok := claudeSessionHistoryRecord("agent-01", true, agentRef)
+	h := newSessionRefHarness(t, aiModeClaude)
+	record, ok := claudeSessionHistoryRecord(h.registry, h.agentUID, true, agentRef)
 	if !ok {
 		t.Fatal("a changed Claude ref staged no line")
 	}
-	if _, ok := claudeSessionHistoryRecord("agent-01", false, agentRef); ok {
+	requireRowAffiliation(t, h.registry, record)
+	if _, ok := claudeSessionHistoryRecord(h.registry, h.agentUID, false, agentRef); ok {
 		t.Fatal("an unchanged ref staged a line")
 	}
+	// An Agent the working Registry does not hold still stages its line,
+	// with no affiliation.
+	orphan, ok := claudeSessionHistoryRecord(h.registry, "agent-not-in-registry", true, agentRef)
+	if !ok || orphan.ProjectUID != "" || orphan.WindowUID != "" || orphan.AgentName != "" {
+		t.Fatalf("orphan line = %#v (ok=%v)", orphan, ok)
+	}
+	record = orphan
 	opened := intentAgentOpened{sessionHistory: record, sessionHistoryOK: true}
 
 	stateDir := t.TempDir()
@@ -342,7 +666,7 @@ func TestResumePickerCreateAppendsHistoryAfterCommitOrReportsOneLine(t *testing.
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want nothing", stderr.String())
 	}
-	if read := readSessionHistory(t, stateDir, "agent-01"); len(read.Records) != 1 || read.Records[0].SessionID != "picked" {
+	if read := readSessionHistory(t, stateDir, "agent-not-in-registry"); len(read.Records) != 1 || read.Records[0].SessionID != "picked" || read.Records[0].ProjectUID != "" {
 		t.Fatalf("history = %#v, want the picked conversation", read)
 	}
 

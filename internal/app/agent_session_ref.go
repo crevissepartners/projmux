@@ -246,7 +246,7 @@ func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.Agent
 		if !changed {
 			return errAgentSessionRefNoop
 		}
-		history, recordHistory = claudeSessionHistoryRecord(agentUID, historyConversationChanged(changed, previousRef, updated.Status.SessionRef), updated.Status.SessionRef)
+		history, recordHistory = claudeSessionHistoryRecord(working, agentUID, historyConversationChanged(changed, previousRef, updated.Status.SessionRef), updated.Status.SessionRef)
 		return nil
 	})
 	if err == nil {
@@ -497,7 +497,7 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 			if err != nil {
 				return err
 			}
-			history, recordHistory = claudeSessionHistoryRecord(agent.Metadata.UID, historyConversationChanged(changed, previousRef, recorded.Status.SessionRef), recorded.Status.SessionRef)
+			history, recordHistory = claudeSessionHistoryRecord(working, agent.Metadata.UID, historyConversationChanged(changed, previousRef, recorded.Status.SessionRef), recorded.Status.SessionRef)
 		}
 		if hasNativeObservation && binding.codex != nil {
 			nativeObservation.AgentUID = binding.agent.Metadata.UID

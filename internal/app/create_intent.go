@@ -1117,7 +1117,7 @@ func (c *createCommand) openIntentAgent(
 		}
 		// The line itself is appended only after the caller's transaction
 		// commits (recordIntentAgentSessionHistory).
-		sessionHistory, sessionHistoryOK = claudeSessionHistoryRecord(agent.Metadata.UID, changed, recorded.Status.SessionRef)
+		sessionHistory, sessionHistoryOK = claudeSessionHistoryRecord(working, agent.Metadata.UID, changed, recorded.Status.SessionRef)
 		if plan.nativeCatalogResume {
 			storedAgent, _ := working.Agent(agent.Metadata.UID)
 			storedAgent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent}
@@ -1225,7 +1225,7 @@ func (c *createCommand) openIntentAgent(
 	// Stage it here; the caller appends only after this transaction commits.
 	if usedNative && !sessionHistoryOK {
 		if bound, ok := working.Agent(agent.Metadata.UID); ok {
-			sessionHistory, sessionHistoryOK = sessionhistory.RecordFor(agent.Metadata.UID, bound.Status.SessionRef, sessionhistory.SourceObserved)
+			sessionHistory, sessionHistoryOK = sessionhistory.ObservedRecordFor(working, agent.Metadata.UID, bound.Status.SessionRef)
 		}
 	}
 	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID, notices: notices,

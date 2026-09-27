@@ -11,27 +11,44 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 )
 
-// The Claude session history write.
+// The Claude and Codex session history write.
 //
 // The Registry keeps one conversation per Agent in `status.sessionRef` and
 // overwrites it when the Agent moves on. Every committed write that moves a
-// Claude Agent to a different conversation also appends one line to
+// Claude or Codex Agent to a different conversation also appends one line to
 // <state>/agent-session-history.jsonl, so the conversations it left stay
-// listable (`agent sessions list`).
+// listable (`agent sessions list`, `agent sessions project`).
 //
-// The writers of that ref are a closed set -- the callers of
-// RecordAgentSessionRef -- and each follows the same two steps:
+// The writers of observed rows are a closed set of four functions:
 //
-//  1. inside the Registry transaction, claudeSessionHistoryRecord turns the
-//     mutator's own changed verdict into the line to append, or none;
+//   - agent_session_ref.go persistAgentSessionRef (hook ingest);
+//   - agent_session_ref.go persistManagedAgentInteractionWithActivationPolicy
+//     (managed-Agent interaction commit);
+//   - create_intent.go openIntentAgent (resume-picker create, and native
+//     Codex create through the intent path);
+//   - create_agent.go createAgent (native Codex fresh create).
+//
+// Each follows the same two steps:
+//
+//  1. inside the Registry transaction, it builds the line with
+//     sessionhistory.ObservedRecordFor -- directly, or through
+//     claudeSessionHistoryRecord, which first turns RecordAgentSessionRef's
+//     changed verdict into the line or none -- passing the transaction's own
+//     working Registry, so the row carries the Agent's projectUID, windowUID,
+//     and agentName as that transaction committed them (each empty when its
+//     link of the chain did not resolve; never guessed);
 //  2. after the transaction commits, an append helper writes it.
 //
-// TestClaudeSessionRefWritersRecordHistory pins that set, so a new caller of
-// RecordAgentSessionRef cannot land without the history.
+// TestClaudeSessionRefWritersRecordHistory pins the callers of
+// RecordAgentSessionRef, and
+// TestSessionHistoryObservedRowWritersCarryAffiliation pins the set of four
+// and that no other code builds an observed row with RecordFor, so a new
+// writer cannot land without the history or without its affiliation.
 //
-// The append never fails its caller. The Registry commit and the append are
-// not atomic: a crash between them loses that one line, which is the
-// documented cost of keeping the history out of the Registry.
+// The append never fails its caller, and neither does a chain that does not
+// resolve. The Registry commit and the append are not atomic: a crash
+// between them loses that one line, which is the documented cost of keeping
+// the history out of the Registry.
 
 // sessionHistoryNotRecordedFmt is the one stderr line a create prints when
 // its history line could not be written.
@@ -39,13 +56,15 @@ const sessionHistoryNotRecordedFmt = "agent session history not recorded: %s\n"
 
 // claudeSessionHistoryRecord is step 1. changed is RecordAgentSessionRef's
 // verdict, so "a different conversation" means exactly what the Registry
-// write means by it; committed is the ref the mutator stored. The name is
-// retained for the established Claude writer guard; Codex uses the same row.
-func claudeSessionHistoryRecord(agentUID string, changed bool, committed *coremetadata.AgentSessionRef) (sessionhistory.Record, bool) {
+// write means by it; committed is the ref the mutator stored, and working is
+// the Registry of the same transaction, which the row's affiliation is
+// resolved from. The name is retained for the established Claude writer
+// guard; Codex uses the same row.
+func claudeSessionHistoryRecord(working *coremetadata.Registry, agentUID string, changed bool, committed *coremetadata.AgentSessionRef) (sessionhistory.Record, bool) {
 	if !changed {
 		return sessionhistory.Record{}, false
 	}
-	return sessionhistory.RecordFor(agentUID, committed, sessionhistory.SourceObserved)
+	return sessionhistory.ObservedRecordFor(working, agentUID, committed)
 }
 
 // historyConversationChanged narrows Codex writes to thread identity changes.
