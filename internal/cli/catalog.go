@@ -869,8 +869,9 @@ var routes = []Route{
 			"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]",
 			"projmux agent sessions backfill [--dry-run] [-o json]",
 			"projmux agent sessions project <project-ref> [-o json]",
+			"projmux agent sessions attribute [--dry-run] [-o json]",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent approval list", "agent approval answer", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer", "agent sessions list", "agent sessions backfill", "agent sessions project"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent approval list", "agent approval answer", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer", "agent sessions list", "agent sessions backfill", "agent sessions project", "agent sessions attribute"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -1049,13 +1050,15 @@ var routes = []Route{
 				// has moved through: the append-only history file joined with
 				// the conversation `status.sessionRef` records now. `backfill`
 				// adds estimated rows for sessions from before the history;
-				// `project` lists the sessions attributed to one Project.
+				// `project` lists the sessions attributed to one Project;
+				// `attribute` persists the current Registry affiliation of
+				// rows that carry none.
 				Effects:    unchangedEffects(CardinalityExactOne),
 				Name:       "sessions",
 				Invocation: InvocationExplicit,
-				Summary:    "List the Claude or Codex conversations an Agent or a Project has moved through, or backfill past Claude sessions from delivered message frames",
-				Usage:      []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]", "projmux agent sessions backfill [--dry-run] [-o json]", "projmux agent sessions project <project-ref> [-o json]"},
-				Canonical:  []string{"agent sessions list", "agent sessions backfill", "agent sessions project"},
+				Summary:    "List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation",
+				Usage:      []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]", "projmux agent sessions backfill [--dry-run] [-o json]", "projmux agent sessions project <project-ref> [-o json]", "projmux agent sessions attribute [--dry-run] [-o json]"},
+				Canonical:  []string{"agent sessions list", "agent sessions backfill", "agent sessions project", "agent sessions attribute"},
 				Children: []Route{
 					{Effects: unchangedEffects(CardinalityExactOne), Name: "list", Invocation: InvocationExplicit, Summary: "List one exact Claude or Codex Agent's recorded and current conversations in time order", Usage: []string{"projmux agent sessions list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]"}, Canonical: []string{"agent sessions list"}, Outputs: []OutputMode{OutputModeJSON}},
 					// The one explicit reader of Claude transcript contents:
@@ -1065,6 +1068,9 @@ var routes = []Route{
 					// Read-only: history rows are attributed by the affiliation
 					// they recorded, else by the current Registry's chain.
 					{Effects: unchangedEffects(CardinalityExactOne), Name: "project", Invocation: InvocationExplicit, Summary: "List the Claude and Codex conversations attributed to one exact Project, by recorded affiliation or the current Registry", Usage: []string{"projmux agent sessions project <project-ref> [-o json]"}, Canonical: []string{"agent sessions project"}, Outputs: []OutputMode{OutputModeJSON}},
+					// Reads only the history file and the current Registry, and
+					// appends one row per conversation the Registry attributes.
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "attribute", Invocation: InvocationExplicit, Summary: "Append the current Registry affiliation of Claude and Codex sessions whose history rows carry no Project, so they stay attributed after their Agent is deleted", Usage: []string{"projmux agent sessions attribute [--dry-run] [-o json]"}, Canonical: []string{"agent sessions attribute"}, Outputs: []OutputMode{OutputModeJSON}},
 				},
 			},
 		},

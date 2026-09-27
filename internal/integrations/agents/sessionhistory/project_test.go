@@ -127,6 +127,37 @@ func TestRecordAffiliationKeysFollowTheExistingKeys(t *testing.T) {
 	if string(body) != want {
 		t.Fatalf("row =\n %s\nwant\n %s", body, want)
 	}
+
+	// affiliationBasis, written only by Attribute, follows agentName.
+	row.AffiliationBasis = BasisRegistry
+	body, err = json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = strings.TrimSuffix(want, "}") + `,"affiliationBasis":"registry"}`
+	if string(body) != want {
+		t.Fatalf("attributed row =\n %s\nwant\n %s", body, want)
+	}
+}
+
+func TestMergeCarriesAffiliationBasisWithTheKeptProjectUID(t *testing.T) {
+	recorded := recordedIn(observed(t, "agent-1", "A", t0), "p-old", "w-old", "old")
+	attributed := recordedIn(observed(t, "agent-1", "A", t0.Add(time.Minute)), "p-new", "w-new", "new")
+	attributed.AffiliationBasis = BasisRegistry
+	// A later row naming only an agentName keeps the kept projectUID's basis.
+	renamed := observed(t, "agent-1", "A", t0.Add(2*time.Minute))
+	renamed.AgentName = "renamed"
+
+	rows := Merge([]Record{recorded, attributed, renamed}, nil)
+	if len(rows) != 1 || rows[0].ProjectUID != "p-new" || rows[0].AffiliationBasis != BasisRegistry || rows[0].AgentName != "renamed" {
+		t.Fatalf("merged = %+v", rows)
+	}
+	// A later recorded projectUID replaces the basis with its own (empty).
+	later := recordedIn(observed(t, "agent-1", "A", t0.Add(3*time.Minute)), "p-later", "w-later", "later")
+	rows = Merge([]Record{attributed, later}, nil)
+	if rows[0].ProjectUID != "p-later" || rows[0].AffiliationBasis != "" {
+		t.Fatalf("merged = %+v", rows[0])
+	}
 }
 
 func TestMergeKeepsTheLatestNonEmptyAffiliationOfEachKey(t *testing.T) {
@@ -382,5 +413,31 @@ func TestProjectResultJSONKeysAreFixed(t *testing.T) {
 	}
 	if BasisRecorded != "recorded" || BasisRegistry != "registry" {
 		t.Fatal("a basis changed spelling")
+	}
+}
+
+func TestListProjectKeepsAnAttributedRowsStoredAffiliationWithRegistryBasis(t *testing.T) {
+	// The Agent has since moved to p1; the attributed row still names p-old.
+	r := (&affiliationRegistry{}).project("p1").window("w1", "p1").agent("a-live", "w1", ProviderClaude, nil)
+	state := t.TempDir()
+	attributed := recordedIn(observed(t, "a-live", "S-attributed", t0), "p-old", "w-old", "old-name")
+	attributed.AffiliationBasis = BasisRegistry
+	recorded := recordedIn(observed(t, "a-live", "S-recorded", t0.Add(time.Minute)), "p-old", "w-old", "old-name")
+	appendAll(t, state, attributed, recorded)
+
+	result, err := ListProject(state, &r.reg, "p-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 2 || result.Ambiguous != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	for i, want := range []ProjectSessionAgent{
+		{AgentUID: "a-live", AgentName: "old-name", WindowUID: "w-old", InRegistry: true, Basis: BasisRegistry},
+		{AgentUID: "a-live", AgentName: "old-name", WindowUID: "w-old", InRegistry: true, Basis: BasisRecorded},
+	} {
+		if got := result.Sessions[i].Agents; len(got) != 1 || got[0] != want {
+			t.Fatalf("session %d agents = %+v, want %+v", i, got, want)
+		}
 	}
 }

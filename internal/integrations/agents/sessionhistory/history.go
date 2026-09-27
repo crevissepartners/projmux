@@ -15,7 +15,9 @@
 // The one reader of transcript contents is Backfill (backfill.go), run only by
 // the explicit `agent sessions backfill` command: it opens the top-level Claude
 // transcripts read-only and uses them for nothing but attributing a past
-// session to the Agent its delivered coordination frames name.
+// session to the Agent its delivered coordination frames name. Attribute
+// (attribute.go), run only by the explicit `agent sessions attribute`, reads
+// nothing but this file and the current Registry.
 package sessionhistory
 
 import (
@@ -73,6 +75,13 @@ const (
 // chain resolved then; a key is empty (and omitted) when its link was
 // missing, and nothing is guessed. Rows written before the keys existed, and
 // the current and estimated rows, carry none of them.
+//
+// AffiliationBasis says where a row's affiliation came from when it is not
+// its writer's own transaction. Observed rows leave it empty: their
+// affiliation is the one recorded at write time. Only Attribute
+// (attribute.go), run by the explicit `agent sessions attribute`, writes it,
+// as `registry`: the affiliation the current Registry gave an older row's
+// Agent when the user ran it.
 type Record struct {
 	AgentUID       string    `json:"agentUID"`
 	Provider       string    `json:"provider"`
@@ -87,6 +96,9 @@ type Record struct {
 	ProjectUID   string     `json:"projectUID,omitempty"`
 	WindowUID    string     `json:"windowUID,omitempty"`
 	AgentName    string     `json:"agentName,omitempty"`
+	// AffiliationBasis is BasisRegistry on a row Attribute wrote, and empty
+	// on every other row.
+	AffiliationBasis Basis `json:"affiliationBasis,omitempty"`
 }
 
 // normalized returns record with its instants in UTC.
@@ -272,8 +284,8 @@ func unlockAndSync(file *os.File) error {
 }
 
 // lockWait bounds how long an appender queues behind another one. Holders
-// keep the lock for one small write, or for Backfill's read of the history
-// file and its one append; neither holds it across the fsync.
+// keep the lock for one small write, or for Backfill's or Attribute's read of
+// the history file and its one append; none holds it across the fsync.
 const (
 	lockWait          = time.Second
 	lockRetryInterval = 2 * time.Millisecond
@@ -384,7 +396,9 @@ func readRecords(r io.Reader, agentUID string) (ReadResult, error) {
 //   - projectUID, windowUID, and agentName are each, independently, the
 //     non-empty value of the latest row that carries one, so a row without
 //     affiliation (a current or estimated row, or an old line) never erases
-//     the affiliation an observed row recorded.
+//     the affiliation an observed row recorded;
+//   - affiliationBasis travels with projectUID: it is the basis of the row
+//     that supplied the kept projectUID.
 //
 // Rows are ordered by observedAt; equal instants keep their input order, with
 // current last. current may be nil.
@@ -442,23 +456,30 @@ func Merge(history []Record, current *Record) []Record {
 type affiliationAt struct {
 	project, window, name       string
 	projectAt, windowAt, nameAt time.Time
+	// basis is the affiliationBasis of the row that supplied project.
+	basis Basis
 }
 
 // observe takes each non-empty affiliation key of record that is at least as
 // late as the one held; equal instants keep the later row in input order.
 func (a *affiliationAt) observe(record Record) {
-	take := func(value *string, at *time.Time, candidate string) {
+	take := func(value *string, at *time.Time, candidate string) bool {
 		if candidate != "" && (*value == "" || !record.ObservedAt.Before(*at)) {
 			*value, *at = candidate, record.ObservedAt
+			return true
 		}
+		return false
 	}
-	take(&a.project, &a.projectAt, record.ProjectUID)
+	if take(&a.project, &a.projectAt, record.ProjectUID) {
+		a.basis = record.AffiliationBasis
+	}
 	take(&a.window, &a.windowAt, record.WindowUID)
 	take(&a.name, &a.nameAt, record.AgentName)
 }
 
 func (a affiliationAt) apply(record *Record) {
 	record.ProjectUID, record.WindowUID, record.AgentName = a.project, a.window, a.name
+	record.AffiliationBasis = a.basis
 }
 
 // sourceRank orders sources for Merge: current, then observed, then

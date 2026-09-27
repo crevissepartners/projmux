@@ -795,6 +795,12 @@ Agent session history (Claude and Codex):
   `estimated` rows carry none of the three. When `agent sessions list` merges
   a conversation seen more than once, each of the three is the non-empty value
   of the latest row that carries one.
+- A line `agent sessions attribute` (below) writes adds a fourth key after
+  them, `affiliationBasis: "registry"`: its affiliation is the one the current
+  Registry gave the Agent when the user ran it, not its writer's transaction.
+  No other writer sets the key; an `observed` line without it is recorded at
+  write time. Merging carries `affiliationBasis` with `projectUID`: it is the
+  basis of the row that supplied the kept `projectUID`.
 - `projmux agent sessions list <agent-ref> [-o json]` and the Go read function
   `sessionhistory.List(stateDir, agent)` return the same rows: history joined
   with the Registry's current ref, one row per `(agentUID, provider, sessionId)` in
@@ -806,11 +812,18 @@ Agent session history (Claude and Codex):
 - `projmux agent sessions project <project-ref> [-o json]` and the Go read
   function `sessionhistory.ListProject(stateDir, registry, projectUID)` list
   the sessions attributed to one exact Project (resolved like any Project
-  ref). It is read-only.
+  ref). It is read-only. A Project no longer in the Registry is queried by its
+  exact `uid:<uid>` ref, where `<uid>` has exactly the shape projmux mints for
+  a Project: the listing then comes from the history rows alone,
+  `projectName` is `""`, and the table names the Project `project/uid:<uid>`.
+  A name ref, or a `uid:` ref of another kind or shape, resolves against the
+  Registry only and fails as before when it matches nothing.
   - Input: every `claude` or `codex` line of the history file, plus one
     `current` row for each Registry Agent with a supported provider.
-  - Attribution, per row: a row with a `projectUID` is attributed with basis
-    `recorded`, using its own `projectUID`, `windowUID`, and `agentName`;
+  - Attribution, per row: a row with a `projectUID` is attributed with its
+    own `projectUID`, `windowUID`, and `agentName`, never re-resolved, with
+    basis `registry` when its `affiliationBasis` is `registry` (it holds after
+    the Agent is deleted, with `inRegistry: false`) and `recorded` otherwise;
     otherwise, a row whose Agent is in the current Registry with a complete
     Agent -> Window -> Project chain is attributed with basis `registry`,
     using the current values; any other row is unattributed. Rows are never
@@ -886,18 +899,57 @@ Agent session history (Claude and Codex):
 
     A line `jq` cannot parse stops it with an error before the `mv`; readers
     already skip such lines, so remove or repair it first.
+- `projmux agent sessions attribute [--dry-run] [-o json]` persists what the
+  current Registry proves about the conversations whose history carries no
+  Project, so `agent sessions project` keeps listing them after their Agent
+  is deleted. It reads only the history file and the current Registry: never
+  deletion records, Registry backups, or transcripts. It persists only what
+  the current Registry proves, and never restores an Agent that is no longer
+  in it.
+  - Input: every `(agentUID, provider, sessionId)` of the file's `claude` and
+    `codex` lines, in file order, then each Registry Agent's current ref
+    (supported providers only) whose key the file does not name.
+  - Precedence: a key with a line that has a `projectUID` is
+    `alreadyAttributed`; a key whose Agent is not in the Registry, or whose
+    Agent -> Window -> Project chain does not resolve, is `unresolved`; both
+    are left untouched. Every other key is `attributed`: one line is appended
+    for it, with `observedAt`, `transcriptPath`, and `lastRecordAt` merged
+    over its lines and its current ref with the `agent sessions list` rules;
+    `source` the highest-ranked source of its lines, or `observed` for a key
+    only the Registry names (`current` is never written); `projectUID`,
+    `windowUID`, and `agentName` from the current Registry; and
+    `affiliationBasis: "registry"`.
+  - Report: `scanned` (`attributed` + `alreadyAttributed` + `unresolved`),
+    `attributed`, `alreadyAttributed`, `unresolved`, `corruptLines`, plus
+    `dryRun`, `historyPath`, and `rows` (the attributed lines; `[]` when
+    none).
+  - Idempotency and locking: like backfill, a run holds the history file's
+    exclusive `flock` across the read, the classification, and one write of
+    every framed line, and releases it before the `fsync`. A second run
+    appends nothing, because every key it attributed now has a `projectUID`.
+    Existing lines are never rewritten. A run with nothing to append creates
+    nothing, and `--dry-run` reads without the lock, writes nothing, and
+    reports exactly what a real run would append.
+  - Undoing it, the same way as removing estimated rows:
+
+    ```sh
+    h="${XDG_STATE_HOME:-$HOME/.local/state}/projmux/agent-session-history.jsonl"
+    jq -c 'select(.affiliationBasis != "registry")' "$h" > "$h.tmp" && chmod 600 "$h.tmp" && mv "$h.tmp" "$h"
+    ```
 - Non-guarantees: no session end time is recorded for observed rows;
   conversations from before this history existed appear only as the `current`
-  row unless `agent sessions backfill` attributes them; Codex and Antigravity
-  conversation changes are not recorded; a line edited or deleted by hand is
-  not recovered; the history is kept after the Agent is deleted; the Registry
+  row unless `agent sessions backfill` attributes them; Claude and Codex
+  conversation changes are recorded, Antigravity's are not; a line edited or
+  deleted by hand is not recovered; the history is kept after the Agent is deleted; the Registry
   commit and the append are not atomic, so a crash between them loses that one
   line. There is no retention policy. Lines written before the affiliation
   keys existed carry none, so once their Agent is deleted they count only in
-  `unattributed`; `agentName` is a write-time snapshot and does not follow a
-  later rename; a deleted Project can no longer be named by ref, so its
-  sessions cannot be queried; `agent sessions project` computes no token
-  totals.
+  `unattributed` unless `agent sessions attribute` persisted their
+  affiliation while the Agent was still in the Registry; `agentName` is a
+  write-time snapshot and does not follow a later rename; a deleted Project
+  can no longer be named by name, only by its exact `uid:` ref, and then only
+  the history rows that carry its `projectUID` are listed; `agent sessions
+  project` computes no token totals.
 
 Agent launch argv (workspace / task boundary):
 
