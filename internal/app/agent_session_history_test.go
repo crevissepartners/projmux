@@ -876,3 +876,174 @@ func TestAgentSessionsBackfillRefusesBadArgvWithTheUsageExitCode(t *testing.T) {
 		t.Fatalf("a refused backfill created the history file: %v", err)
 	}
 }
+
+func TestAgentSessionsAttributeThenProjectListsTheSessionAfterItsAgentIsDeleted(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	stateDir := t.TempDir()
+	project := h.registry.Projects[0]
+	agent, _ := h.registry.Agent(h.agentUID)
+	agentName, windowUID := agent.Metadata.Name, agent.Metadata.OwnerRef.UID
+	// A row written before the affiliation keys existed.
+	if err := sessionhistory.Append(stateDir, sessionhistory.Record{
+		AgentUID: h.agentUID, Provider: aiModeClaude, SessionID: "session-old", ObservedAt: sessionRefObservedAt, Source: sessionhistory.SourceObserved,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := sessionHistoryAgentCommand(h, stateDir)
+
+	var stdout, stderr bytes.Buffer
+	if err := c.Run([]string{"sessions", "attribute", "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("agent sessions attribute -o json: %v (stderr=%s)", err, stderr.String())
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode %s: %v", stdout.String(), err)
+	}
+	if got, want := sortedKeys(envelope), []string{"alreadyAttributed", "attributed", "corruptLines", "dryRun", "historyPath", "rows", "scanned", "unresolved"}; !slices.Equal(got, want) {
+		t.Fatalf("keys = %v, want %v", got, want)
+	}
+	var report sessionhistory.AttributeReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Scanned != 1 || report.Attributed != 1 || report.DryRun || report.HistoryPath != sessionhistory.Path(stateDir) ||
+		len(report.Rows) != 1 || report.Rows[0].AffiliationBasis != sessionhistory.BasisRegistry || report.Rows[0].ProjectUID != project.Metadata.UID {
+		t.Fatalf("report = %+v", report)
+	}
+
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "attribute"}, &stdout, &stderr); err != nil {
+		t.Fatalf("second attribute: %v", err)
+	}
+	if out := stdout.String(); !strings.Contains(out, "alreadyAttributed  1") || !strings.Contains(out, "appended 0 session affiliations") {
+		t.Fatalf("second run table =\n%s", out)
+	}
+
+	// Delete the Agent from the Registry.
+	h.registry.Agents = slices.DeleteFunc(h.registry.Agents, func(a coremetadata.Agent) bool { return a.Metadata.UID == h.agentUID })
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "project", project.Metadata.Name, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("agent sessions project: %v (stderr=%s)", err, stderr.String())
+	}
+	var result agentSessionsProject
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 || result.Sessions[0].SessionID != "session-old" || result.Unattributed != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	if got := result.Sessions[0].Agents; len(got) != 1 || got[0] != (sessionhistory.ProjectSessionAgent{
+		AgentUID: h.agentUID, AgentName: agentName, WindowUID: windowUID, InRegistry: false, Basis: sessionhistory.BasisRegistry,
+	}) {
+		t.Fatalf("agents = %+v", got)
+	}
+}
+
+func TestAgentSessionsAttributeDryRunTableAndBadArgv(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	agent, _ := h.registry.Agent(h.agentUID)
+	agent.Status.SessionRef = &coremetadata.AgentSessionRef{
+		Provider: aiModeClaude, ObservedAt: sessionRefObservedAt,
+		Claude: &coremetadata.ClaudeSessionRef{SessionID: "current-one"},
+	}
+	stateDir := filepath.Join(t.TempDir(), "state")
+	c := sessionHistoryAgentCommand(h, stateDir)
+
+	var stdout, stderr bytes.Buffer
+	if err := c.Run([]string{"sessions", "attribute", "--dry-run"}, &stdout, &stderr); err != nil {
+		t.Fatalf("attribute --dry-run: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "would append (dry run) 1 session affiliation(s):") || !strings.Contains(out, "AGENT") ||
+		!strings.Contains(out, "current-one") || !strings.Contains(out, h.registry.Projects[0].Metadata.Name) {
+		t.Fatalf("dry-run table =\n%s", out)
+	}
+	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
+		t.Fatalf("a dry run created the state directory: %v", err)
+	}
+	for _, args := range [][]string{
+		{"sessions", "attribute", "extra"},
+		{"sessions", "attribute", "--bogus"},
+		{"sessions", "attribute", "-o", "yaml"},
+		{"sessions", "attribute", "--dry-run=maybe"},
+	} {
+		stdout.Reset()
+		err := c.Run(args, &stdout, &stderr)
+		if err == nil || exitCodeOf(err) != 2 {
+			t.Errorf("%v: err = %v (exit %d), want a usage error", args, err, exitCodeOf(err))
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("%v printed %q", args, stdout.String())
+		}
+	}
+	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
+		t.Fatalf("a refused attribute created the state directory: %v", err)
+	}
+}
+
+func TestAgentSessionsProjectListsAnUnregisteredProjectByExactUID(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	stateDir := t.TempDir()
+	gone, err := coremetadata.NewUID(coremetadata.KindProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := coremetadata.NewUID(coremetadata.KindProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessionhistory.Append(stateDir, sessionhistory.Record{
+		AgentUID: "agent-deleted", Provider: aiModeClaude, SessionID: "session-gone", ObservedAt: sessionRefObservedAt,
+		Source: sessionhistory.SourceObserved, ProjectUID: gone, WindowUID: "window-gone", AgentName: "reviewer",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := sessionHistoryAgentCommand(h, stateDir)
+
+	var stdout, stderr bytes.Buffer
+	if err := c.Run([]string{"sessions", "project", "uid:" + gone, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("agent sessions project uid: %v (stderr=%s)", err, stderr.String())
+	}
+	var result agentSessionsProject
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ProjectUID != gone || result.ProjectName != "" || len(result.Sessions) != 1 || result.Sessions[0].SessionID != "session-gone" ||
+		result.Sessions[0].Agents[0].Basis != sessionhistory.BasisRecorded {
+		t.Fatalf("result = %+v", result)
+	}
+	if !strings.Contains(stdout.String(), `"projectName":""`) {
+		t.Fatalf("json = %s", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "project", "uid:" + gone}, &stdout, &stderr); err != nil {
+		t.Fatalf("table: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) != 3 || !strings.Contains(lines[0], "project/uid:"+gone) || !strings.HasPrefix(lines[1], "SESSION") ||
+		!strings.Contains(lines[2], "reviewer (deleted)") {
+		t.Fatalf("table =\n%s", stdout.String())
+	}
+	stdout.Reset()
+	if err := c.Run([]string{"sessions", "project", "uid:" + empty}, &stdout, &stderr); err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	if got, want := stdout.String(), "project/uid:"+empty+" has no recorded sessions\n"; got != want {
+		t.Fatalf("empty = %q, want %q", got, want)
+	}
+
+	// Only an exact, Project-shaped uid ref reaches the history: a name ref,
+	// another kind's uid, and a malformed uid still resolve against the
+	// Registry and fail.
+	for _, ref := range []string{gone, "uid:" + h.agentUID, "uid:proj-front", "uid:" + strings.ToUpper(gone)} {
+		stdout.Reset()
+		err := c.Run([]string{"sessions", "project", ref}, &stdout, &stderr)
+		if err == nil || exitCodeOf(err) != 2 {
+			t.Errorf("%s: err = %v (exit %d), want a usage error", ref, err, exitCodeOf(err))
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("%s printed %q", ref, stdout.String())
+		}
+	}
+}

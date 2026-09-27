@@ -15,10 +15,13 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when `agent sessions project` joined the sessions
-// group: one row with a json projection that lists the Claude and Codex
-// conversations attributed to one exact Project, and the group summary names
-// Projects. Before that, it moved when `agent turn interrupt` gained the exact
+// The baseline last moved when `agent sessions attribute` joined the sessions
+// group: one row with a json projection that appends the current Registry
+// affiliation of history rows that carry no Project, and the group summary
+// names persisting it. Before that, `agent sessions project` joined the
+// sessions group: one row with a json projection that lists the Claude and
+// Codex conversations attributed to one exact Project, and the group summary
+// names Projects. Before that, it moved when `agent turn interrupt` gained the exact
 // Claude Esc path and the turn group summary named both supported providers.
 // Before that, `agent sessions list` expanded its summary to
 // Codex conversations while `backfill` remained Claude-only. Before that, it
@@ -101,7 +104,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "f6283452eb10fc4e35116d82c4cebdd555e531c1c22f8b0c1cbcfa546df4ee35"
+	const want = "aa6573534740979359193a9c4da8b68f8f5b9cabda75a3170cc96cfde94ec457"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

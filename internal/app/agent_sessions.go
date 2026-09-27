@@ -21,7 +21,7 @@ import (
 const sessionsReasonProviderUnsupported = "sessions-provider-unsupported"
 
 // agentSessionsActions are the `agent sessions` subcommands in help order.
-var agentSessionsActions = []string{"list", "backfill", "project"}
+var agentSessionsActions = []string{"list", "backfill", "project", "attribute"}
 
 // agentSessionsList is the `agent sessions list -o json` projection. Each
 // session row carries the sessionhistory.Record keys verbatim.
@@ -35,10 +35,13 @@ type agentSessionsList struct {
 // runSessions lists the Claude or Codex conversations one Agent has moved through: the
 // append-only session history joined with the conversation its
 // `status.sessionRef` records now (sessionhistory.List). It is read-only.
-// `backfill` and `project` dispatch to their own routes.
+// `backfill`, `project`, and `attribute` dispatch to their own routes.
 func (c *agentCommand) runSessions(args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "backfill" {
 		return c.runSessionsBackfill(args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "attribute" {
+		return c.runSessionsAttribute(args[1:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "project" {
 		return c.runSessionsProject(args[1:], stdout, stderr)
@@ -130,7 +133,7 @@ func writeAgentSessionsList(out io.Writer, result agentSessionsList) error {
 
 // agentSessionsProject is the `agent sessions project -o json` projection:
 // the sessionhistory.ProjectResult keys verbatim plus the Project's current
-// name.
+// name, empty for a Project no longer in the Registry.
 type agentSessionsProject struct {
 	ProjectUID   string                          `json:"projectUID"`
 	ProjectName  string                          `json:"projectName"`
@@ -144,6 +147,12 @@ type agentSessionsProject struct {
 // conversations attributed to one exact Project, from the history rows'
 // recorded affiliation or, for rows without one, the current Registry
 // (sessionhistory.ListProject). It is read-only.
+//
+// An exact `uid:` ref of a Project-shaped uid the Registry no longer holds
+// lists that Project from the history rows alone: its sessions are the rows
+// that recorded it, or that `agent sessions attribute` persisted it for. A
+// name ref, or a uid ref of any other shape, resolves against the Registry
+// only.
 func (c *agentCommand) runSessionsProject(args []string, stdout, stderr io.Writer) error {
 	const spelling = "agent sessions project"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
@@ -172,13 +181,22 @@ func (c *agentCommand) runSessionsProject(args []string, stdout, stderr io.Write
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	resolution, err := flags.resolve(selector.VerbGet, false, registry)
-	if err != nil {
-		return MapMetadataError(err)
+	var projectUID, projectName string
+	if ref, err := selector.ParseRef(coremetadata.KindProject, positionals[0]); err == nil && ref.IsUID() && coremetadata.IsProjectUIDShaped(ref.UID) {
+		if _, registered := registry.Project(ref.UID); !registered {
+			projectUID = ref.UID
+		}
 	}
-	project, ok := registry.Project(resolution.Matches[0].UID)
-	if !ok {
-		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
+	if projectUID == "" {
+		resolution, err := flags.resolve(selector.VerbGet, false, registry)
+		if err != nil {
+			return MapMetadataError(err)
+		}
+		project, ok := registry.Project(resolution.Matches[0].UID)
+		if !ok {
+			return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
+		}
+		projectUID, projectName = project.Metadata.UID, project.Metadata.Name
 	}
 	if c.store == nil || c.store.stateDir == nil {
 		return fmt.Errorf("%s: the projmux state directory is not configured", spelling)
@@ -187,12 +205,12 @@ func (c *agentCommand) runSessionsProject(args []string, stdout, stderr io.Write
 	if err != nil {
 		return fmt.Errorf("%s: %w", spelling, err)
 	}
-	listed, err := sessionhistory.ListProject(stateDir, &registry, project.Metadata.UID)
+	listed, err := sessionhistory.ListProject(stateDir, &registry, projectUID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", spelling, err)
 	}
 	result := agentSessionsProject{
-		ProjectUID: listed.ProjectUID, ProjectName: project.Metadata.Name, Sessions: listed.Sessions,
+		ProjectUID: listed.ProjectUID, ProjectName: projectName, Sessions: listed.Sessions,
 		Unattributed: listed.Unattributed, Ambiguous: listed.Ambiguous, CorruptLines: listed.CorruptLines,
 	}
 	if output == "json" {
@@ -216,11 +234,22 @@ func (c *agentCommand) runSessionsProject(args []string, stdout, stderr io.Write
 
 // writeAgentSessionsProject prints one row per session. AGENTS names each
 // Agent by its recorded or current name (its uid when it has none), marking
-// an Agent no longer in the Registry with a trailing `(deleted)`.
+// an Agent no longer in the Registry with a trailing `(deleted)`. A Project
+// no longer in the Registry is named `uid:<uid>`, in a header line above the
+// table.
 func writeAgentSessionsProject(out io.Writer, result agentSessionsProject) error {
+	name := result.ProjectName
+	if name == "" {
+		name = "uid:" + result.ProjectUID
+	}
 	if len(result.Sessions) == 0 {
-		_, err := fmt.Fprintf(out, "project/%s has no recorded sessions\n", result.ProjectName)
+		_, err := fmt.Fprintf(out, "project/%s has no recorded sessions\n", name)
 		return err
+	}
+	if result.ProjectName == "" {
+		if _, err := fmt.Fprintf(out, "project/%s is not in the registry; sessions from recorded history:\n", name); err != nil {
+			return err
+		}
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "SESSION\tPROVIDER\tSOURCE\tOBSERVED\tAGENTS\tTRANSCRIPT")
@@ -373,6 +402,105 @@ func writeAgentSessionsBackfill(out io.Writer, report sessionhistory.BackfillRep
 			last = row.LastRecordAt.UTC().Format(time.RFC3339)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", row.AgentUID, row.SessionID, row.ObservedAt.UTC().Format(time.RFC3339), last, row.TranscriptPath)
+	}
+	return tw.Flush()
+}
+
+// runSessionsAttribute is `agent sessions attribute`: it appends, for every
+// Claude or Codex conversation whose history rows carry no Project, one row
+// with the affiliation the current Registry gives its Agent, marked
+// `affiliationBasis: "registry"` (sessionhistory.Attribute), so `agent
+// sessions project` keeps listing it after the Agent is deleted. The
+// Registry is only read.
+func (c *agentCommand) runSessionsAttribute(args []string, stdout, stderr io.Writer) error {
+	const spelling = "agent sessions attribute"
+	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	setRouteUsage(fs)
+	var dryRun bool
+	var output string
+	fs.BoolVar(&dryRun, "dry-run", false, "report what would be appended and write nothing")
+	fs.StringVar(&output, "output", "", "result projection: json")
+	fs.StringVar(&output, "o", "", "result projection: json (alias of --output)")
+	positionals, err := parseWithPositionals(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return flagParseError(err)
+	}
+	if len(positionals) != 0 {
+		return usageError(fmt.Sprintf("%s takes no arguments; got %q", spelling, positionals[0]))
+	}
+	if output != "" && output != "json" {
+		return usageError(fmt.Sprintf("%s: unsupported output %q; want json", spelling, output))
+	}
+
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	if c.store == nil || c.store.stateDir == nil {
+		return fmt.Errorf("%s: the projmux state directory is not configured", spelling)
+	}
+	stateDir, err := c.store.stateDir()
+	if err != nil {
+		return fmt.Errorf("%s: %w", spelling, err)
+	}
+	report, err := sessionhistory.Attribute(sessionhistory.AttributeOptions{StateDir: stateDir, Registry: &registry, DryRun: dryRun})
+	if err != nil {
+		return fmt.Errorf("%s: %w", spelling, err)
+	}
+	if output == "json" {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetEscapeHTML(false)
+		return encoder.Encode(report)
+	}
+	if report.CorruptLines > 0 && stderr != nil {
+		_, _ = fmt.Fprintf(stderr, "%s: skipped %d unreadable line(s) in %s\n", spelling, report.CorruptLines, sessionhistory.FileName)
+	}
+	return writeAgentSessionsAttribute(stdout, report, registry)
+}
+
+// writeAgentSessionsAttribute prints the counts, then one row per attributed
+// conversation. PROJECT is the Project's current name.
+func writeAgentSessionsAttribute(out io.Writer, report sessionhistory.AttributeReport, registry coremetadata.Registry) error {
+	verb := "appended"
+	if report.DryRun {
+		verb = "would append (dry run)"
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "history\t%s\n", report.HistoryPath)
+	for _, row := range []struct {
+		label string
+		count int
+	}{
+		{"scanned", report.Scanned},
+		{"attributed", report.Attributed},
+		{"alreadyAttributed", report.AlreadyAttributed},
+		{"unresolved", report.Unresolved},
+		{"corruptLines", report.CorruptLines},
+	} {
+		fmt.Fprintf(tw, "%s\t%d\n", row.label, row.count)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(report.Rows) == 0 {
+		_, err := fmt.Fprintf(out, "%s 0 session affiliations\n", verb)
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "%s %d session affiliation(s):\n", verb, len(report.Rows)); err != nil {
+		return err
+	}
+	tw = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "AGENT\tSESSION\tPROVIDER\tPROJECT\tOBSERVED")
+	for _, row := range report.Rows {
+		project := "uid:" + row.ProjectUID
+		if found, ok := registry.Project(row.ProjectUID); ok && found.Metadata.Name != "" {
+			project = found.Metadata.Name
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", row.AgentName, row.SessionID, row.Provider, project, row.ObservedAt.UTC().Format(time.RFC3339))
 	}
 	return tw.Flush()
 }

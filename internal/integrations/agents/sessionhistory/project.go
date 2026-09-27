@@ -14,8 +14,11 @@ const (
 	// BasisRecorded: a history row of the Agent carries the Project in its own
 	// projectUID, the affiliation its writer resolved at write time.
 	BasisRecorded Basis = "recorded"
-	// BasisRegistry: the Agent's rows carry no projectUID, and the Agent is in
-	// the current Registry with its whole Agent -> Window -> Project chain.
+	// BasisRegistry: the Agent's row carries no projectUID, and the Agent is
+	// in the current Registry with its whole Agent -> Window -> Project chain;
+	// or the row carries the affiliation `agent sessions attribute` persisted
+	// from the Registry of its run (affiliationBasis `registry`), which holds
+	// after the Agent is deleted.
 	BasisRegistry Basis = "registry"
 )
 
@@ -61,11 +64,13 @@ type ProjectSessionAgent struct {
 //
 // Input: every claude or codex row of the history file of stateDir, plus one
 // `current` row for each Agent of reg with a supported provider. Each row is
-// attributed on its own: a row with a projectUID is `recorded` with its own
-// projectUID, windowUID, and agentName; otherwise a row whose Agent is in reg
-// with a complete chain is `registry` with reg's values; any other row is
-// unattributed. Nothing else -- not deletion records, not a transcript's
-// folder or cwd, not time proximity -- attributes a row.
+// attributed on its own: a row with a projectUID is attributed with its own
+// projectUID, windowUID, and agentName, never re-resolved, as `registry` when
+// its affiliationBasis is `registry` (Attribute wrote it) and `recorded`
+// otherwise; a row without one whose Agent is in reg with a complete chain is
+// `registry` with reg's values; any other row is unattributed. Nothing else
+// -- not deletion records, not a transcript's folder or cwd, not time
+// proximity -- attributes a row.
 //
 // Rows are grouped into sessions by (provider, sessionId). A session with no
 // attributed row counts in Unattributed; one whose attributed rows name two
@@ -129,6 +134,9 @@ func ListProject(stateDir string, reg *coremetadata.Registry, projectUID string)
 		entry := attributed{record: row}
 		if row.ProjectUID != "" {
 			entry.basis = BasisRecorded
+			if row.AffiliationBasis == BasisRegistry {
+				entry.basis = BasisRegistry
+			}
 			entry.affiliation = Affiliation{ProjectUID: row.ProjectUID, WindowUID: row.WindowUID, AgentName: row.AgentName}
 		} else {
 			affiliation, cached := current[row.AgentUID]

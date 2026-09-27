@@ -75,3 +75,10 @@ func isProjectUIDShaped(name string) bool {
 	}
 	return strings.ToLower(uidEncoding.EncodeToString(raw)) == payload
 }
+
+// IsProjectUIDShaped reports whether uid has exactly the shape NewUID mints
+// for a Project (isProjectUIDShaped). It matches a deleted Project's uid as
+// well as a live one's; only the Registry says whether the Project exists.
+func IsProjectUIDShaped(uid string) bool {
+	return isProjectUIDShaped(uid)
+}
