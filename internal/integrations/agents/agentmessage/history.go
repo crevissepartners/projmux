@@ -41,10 +41,14 @@ type reclaimedRecord struct {
 }
 
 // historyRecord is one line of history.jsonl. Keys reuse the envelope's own
-// names, and payload is deliberately absent: the declared consumer needs the
-// edges (source, target, conversationRef, replyTo), not the free text, which is
-// the one part of an unbounded log a user wrote by hand. It is written through
-// encodeHistoryLine, which drops the fields no reader uses.
+// names, and payload text is deliberately absent: the declared consumer needs
+// the edges (source, target, conversationRef, replyTo), not the free text,
+// which is the one part of a log unbounded in time that a user wrote by hand.
+// The payload's length and digest are recorded instead, so a consumer that
+// holds the text elsewhere (a transcript, say) can prove it is the same
+// message. It is written through encodeHistoryLine, which drops the fields no
+// reader uses. payloadSHA256 is omitted when empty so a line decoded from an
+// earlier build re-encodes to its own bytes.
 type historyRecord struct {
 	SchemaVersion   int               `json:"schemaVersion"`
 	EvictedAt       time.Time         `json:"evictedAt"`
@@ -61,6 +65,7 @@ type historyRecord struct {
 	Deadline        time.Time         `json:"deadline"`
 	TerminalAt      time.Time         `json:"terminalAt"`
 	PayloadBytes    int               `json:"payloadBytes"`
+	PayloadSHA256   string            `json:"payloadSHA256,omitempty"`
 	// Origin and Source follow the envelope: an Agent line has a source and
 	// no origin, byte for byte as before; an operator line has an origin and
 	// no source.
@@ -96,6 +101,7 @@ type historyLine struct {
 	AcceptedAt      time.Time          `json:"acceptedAt"`
 	TerminalAt      time.Time          `json:"terminalAt"`
 	PayloadBytes    int                `json:"payloadBytes"`
+	PayloadSHA256   string             `json:"payloadSHA256"`
 	Origin          coremessage.Origin `json:"origin,omitzero"`
 	Source          historyRoute       `json:"source,omitzero"`
 	Target          historyRoute       `json:"target"`
@@ -117,6 +123,7 @@ func encodeHistoryLine(record historyRecord) ([]byte, error) {
 		AcceptedAt:      record.AcceptedAt,
 		TerminalAt:      record.TerminalAt,
 		PayloadBytes:    record.PayloadBytes,
+		PayloadSHA256:   record.PayloadSHA256,
 		Origin:          record.Origin,
 		Source:          historyRoute{AgentUID: record.Source.AgentUID, Provider: record.Source.Provider},
 		Target:          historyRoute{AgentUID: record.Target.AgentUID, Provider: record.Target.Provider},
@@ -145,6 +152,7 @@ func newHistoryRecords(reclaimed []reclaimedRecord, evictedAt time.Time) []histo
 			Deadline:        item.Record.Envelope.Deadline,
 			TerminalAt:      item.Record.Delivery.TerminalAt,
 			PayloadBytes:    len(item.Record.Envelope.Payload),
+			PayloadSHA256:   coremessage.PayloadSHA256(item.Record.Envelope.Payload),
 			Origin:          item.Record.Envelope.Origin,
 			Source:          item.Record.Envelope.Source,
 			Target:          item.Record.Envelope.Target,

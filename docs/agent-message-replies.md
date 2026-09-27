@@ -92,7 +92,7 @@ Each line carries the envelope's own key names:
 {"schemaVersion":1,"evictedAt":"…","reason":"retention","adapter":"claude-coordination",
  "messageRef":"…","conversationRef":"…","replyTo":"…",
  "state":"delivered","deliveryReason":"unspecified","handoffObserved":false,
- "acceptedAt":"…","terminalAt":"…","payloadBytes":466,
+ "acceptedAt":"…","terminalAt":"…","payloadBytes":466,"payloadSHA256":"…",
  "source":{"agentUID":"…","provider":"…"},
  "target":{"agentUID":"…","provider":"…"}}
 ```
@@ -112,7 +112,10 @@ Lines written by earlier builds may still be in the same file. They carry full
 routes (`paneUID`, `activationGeneration`, `incarnation`), a `deadline`, and
 `outcomeUnknown` even when it is `false`, and they read the same way: a reader
 ignores keys it does not expect and reads an absent key as its zero value, so
-both shapes give the same edges, states and times. Both are `schemaVersion` 1.
+both shapes give the same edges, states and times. Lines written before the
+payload digest existed have no `payloadSHA256` key and read with an empty
+digest, which means "not recorded", not a mismatch; earlier lines are not
+backfilled. All of these are `schemaVersion` 1: every added key is additive.
 
 `schemaVersion` starts at 1 and follows the same rule as the
 coordination frame's field of that name: an absent or zero value reads as 1, and
@@ -121,8 +124,12 @@ discarding the line or failing. It is independent of the durable envelope
 version and of the store file version.
 
 The log does not keep the message body. It records `payloadBytes`, the original
-payload length, and has no `payload` key at all: the log is unbounded in time,
-and its intended consumers need the message graph, not its text.
+payload length, and `payloadSHA256`, the SHA-256 of the payload's exact bytes
+as 64 lowercase hex characters, and has no `payload` key at all: the log is
+unbounded in time, and its intended consumers need the message graph, not its
+text. The digest lets a consumer that holds the text elsewhere, such as a
+transcript, prove it is the same message; the reader and its consumers compute
+it with the same function (`PayloadSHA256` in `internal/core/agentmessage`).
 
 The active log rotates to `history.jsonl.1` once it would pass 8 MiB, replacing
 any earlier `history.jsonl.1`. At most two generations exist, so the log's disk
