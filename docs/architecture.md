@@ -1304,6 +1304,10 @@ Resolved resource graph (`internal/core/resourcegraph`):
   first and the inherited `$TMUX` socket path second. There is no implicit
   default-server probe: with no transport the graph is a Registry-only snapshot
   whose runtime answers are all `unknown`, and a sibling socket is never read.
+  The Registry views `get` and `describe` add one rung after `$TMUX`: they
+  have no socket flag, so outside tmux they observe the app socket
+  `-L projmux` (see *Runtime observation and resource status*). That is still
+  one exact server, never the default one.
 - **Bounded and pure.** One observation costs one option probe plus three list
   queries whatever the size of the server, is memoized for the invocation rather
   than cached with a TTL — closing a pane must make the *next* command report it
@@ -1430,6 +1434,15 @@ Runtime observation and resource status:
   exactly that. It is also not a per-route reconcile, because the read verbs
   load the registry read-only and must never materialize
   `<state>/projmux/metadata/`.
+- **The server a view observes** is the one its caller is attached to: the
+  inherited absolute `$TMUX` socket, even when that is not the app server.
+  With no `$TMUX` -- another terminal, an IDE, a script -- `get` and `describe`
+  observe the app socket `-L projmux`, the server `create` and
+  `start project` run resources on, so a view outside tmux renders the same
+  rows as the same view inside the app server. An app socket with no server
+  behind it is observed as an absent server: everything reads `offline`, which
+  is what is running there. `get runtime` and `reconcile resources` keep their
+  own rule (flag or `$TMUX`, otherwise no transport).
 - A failed inventory query yields an **empty** observation, never a fallback to
   a stored value. Empty can only downgrade a resource to offline; it can never
   invent a live one, and "nothing is live" is the truthful answer for a machine

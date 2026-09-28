@@ -111,6 +111,11 @@ invocation context. Mixed Registry/Runtime pickers keep KIND in both profiles.
 Wide stdout preserves full values at every terminal width. See [Column profiles](column-profiles.md)
 for the exact per-kind matrix and migration from the previous default output.
 
+STATUS in `get` and `describe` is observed on the tmux server the caller is
+attached to (`$TMUX`). Outside tmux -- another terminal, an IDE, a script --
+they observe the app server `-L projmux`, so a live Window reads `live` there
+too; with no app server running, rows read `offline`.
+
 The resource routes (`get`, `describe`, `create`, `rename`, `label`, `rebind`,
 `delete`, `agent resume`) address stored resources through one shared selector
 grammar.

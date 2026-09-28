@@ -75,7 +75,7 @@ func runtimeResourceReadLookup(reader *runtimeDiagnosticsReader) resourceReadLoo
 		if reader == nil || reader.observe == nil {
 			return fallback()
 		}
-		transport, err := reader.transport(runtimeTransportRequest{})
+		transport, err := reader.viewTransport()
 		if err != nil {
 			return fallback()
 		}

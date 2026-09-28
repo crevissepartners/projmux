@@ -37,7 +37,12 @@ import (
 //   - No transport is an answer. Outside tmux with no socket flag the read
 //     succeeds and reports every scope unavailable with a stated reason, rather
 //     than failing or guessing. `reconcile resources` refuses that case because
-//     it is about to write; a read has nothing to protect.
+//     it is about to write; a read has nothing to protect. The Registry views
+//     (`get` and `describe`) are the one exception, and it is not a guess: they
+//     have no socket flag, and every route that makes their resources live
+//     (`create`, `start project`, `doctor`) runs them on the app socket, so
+//     outside tmux they observe `-L projmux` (see viewTransport). That is
+//     still one exact server and never the default one.
 //   - Zero writes. The Registry is opened read-only, the observation is the
 //     bounded four-query adapter that owns no write verb, and the projection is
 //     pure. A refresh of this surface is indistinguishable, from the machine's
@@ -92,6 +97,32 @@ func (r *runtimeDiagnosticsReader) transport(req runtimeTransportRequest) (resou
 		SocketPath:    req.socketPath,
 		InheritedTMUX: inherited,
 	})
+}
+
+// viewTransport resolves the server a Registry view (`get`, `describe`)
+// observes: transport with one more rung.
+//
+// A view has no socket flag, so without $TMUX transport has nothing to route
+// to, and every scope would read unavailable -- which the status columns then
+// fold into `offline` for resources that are live on the app server. The app
+// socket is the server `create`, `start project` and `doctor` use when no
+// server is inherited, so it is the one a view outside tmux answers about. An
+// inherited $TMUX still wins unchanged, even when it names another server. An
+// app socket with no server behind it is observed like any absent server:
+// everything reads offline, which is what is running there.
+//
+// It is kept off transport on purpose: `get runtime` and `reconcile resources`
+// carry socket flags of their own and keep "no transport" as their answer.
+func (r *runtimeDiagnosticsReader) viewTransport() (resourcegraph.Transport, error) {
+	transport, err := r.transport(runtimeTransportRequest{})
+	if err != nil || transport.Kind != resourcegraph.TransportNone {
+		return transport, err
+	}
+	return resourcegraph.Transport{
+		Kind:   resourcegraph.TransportSocketName,
+		Value:  defaultAppSocket,
+		Source: resourcegraph.TransportSourceAppSocket,
+	}, nil
 }
 
 // resolve takes one observation of the exact host and joins it to the Registry.
