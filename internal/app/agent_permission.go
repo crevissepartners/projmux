@@ -12,6 +12,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 )
@@ -134,7 +135,7 @@ func parseAgentPermissionArgs(args []string, stderr io.Writer) (agentPermissionR
 	if request.action == "answer" {
 		fs.BoolVar(&allow, "allow", false, "allow this one tool call once")
 		fs.BoolVar(&deny, "deny", false, "deny this one tool call")
-		fs.StringVar(&request.via, "via", agentapproval.ViaCLI, "self-reported answer channel: popup, cli, or web (unverified)")
+		fs.StringVar(&request.via, "via", agentapproval.ViaCLI, "self-reported answer channel: popup, cli, or an operator client name (unverified)")
 	}
 	positionals, err := parseWithPositionals(fs, args[1:])
 	if err != nil {
@@ -162,7 +163,7 @@ func parseAgentPermissionArgs(args []string, stderr io.Writer) (agentPermissionR
 		}
 		request.allow = allow
 		if !agentapproval.ValidVia(request.via) {
-			return agentPermissionRequest{}, usageError(fmt.Sprintf("%s: unknown --via %q; want %s, %s, or %s", request.spelling, request.via, agentapproval.ViaPopup, agentapproval.ViaCLI, agentapproval.ViaWeb))
+			return agentPermissionRequest{}, usageError(fmt.Sprintf("%s --via: %v; want %s, %s, or an operator client name", request.spelling, operatorclient.Validate(request.via), agentapproval.ViaPopup, agentapproval.ViaCLI))
 		}
 	}
 	return request, nil

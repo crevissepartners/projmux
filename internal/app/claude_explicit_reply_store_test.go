@@ -225,7 +225,7 @@ func TestStoredOriginalRefusesWithThePushedOriginalTokens(t *testing.T) {
 			original := base
 			original.MessageRef, original.ConversationRef = "original-judged", "conversation-judged"
 			if test.operator {
-				original.Origin, original.Source, original.Authority = coremessage.OperatorWebOrigin(), coremessage.Route{}, coremessage.OperatorAuthority()
+				original.Origin, original.Source, original.Authority = operatorDialogueEnvelope(original.MessageRef, original.Deadline).BrokerEnvelope.Origin, coremessage.Route{}, coremessage.OperatorAuthority()
 			}
 			if _, _, err := store.PutAccepted(original, "claude-coordination"); err != nil {
 				t.Fatal(err)

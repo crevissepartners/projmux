@@ -32,6 +32,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -80,16 +81,18 @@ const (
 	CloseReasonAnsweredInTerminal = "answered-in-terminal"
 )
 
-// Via values an answer reports about itself. They are self-reported by the
-// caller and never verified.
+// Via values projmux's own answer channels report about themselves. An
+// operator client reports its own name instead. Every value is self-reported
+// by the caller and never verified.
 const (
 	ViaCLI   = "cli"
 	ViaPopup = "popup"
-	ViaWeb   = "web"
 )
 
-// ValidVia reports whether via is one of the self-reported answer channels.
-func ValidVia(via string) bool { return via == ViaCLI || via == ViaPopup || via == ViaWeb }
+// ValidVia reports whether via can name the channel an answer came through:
+// ViaCLI, ViaPopup, or an operator client name. The channels are names under
+// the same operatorclient rule, so the rule alone decides.
+func ValidVia(via string) bool { return operatorclient.Valid(via) }
 
 var (
 	ErrNotFound       = errors.New("permission request not found")
@@ -466,7 +469,7 @@ func boundAnswerLine(line AuditLine) AuditLine {
 	line.AgentType = boundedLine(line.AgentType, 64)
 	line.ToolName = boundedLine(line.ToolName, 128)
 	line.Input = boundedLine(line.Input, MaxInputSummaryRunes)
-	line.Via = boundedLine(line.Via, 16)
+	line.Via = boundedLine(line.Via, operatorclient.MaxBytes)
 	line.Reason = boundedLine(line.Reason, 64)
 	return line
 }

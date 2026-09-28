@@ -16,12 +16,12 @@ const agentMessageImportPath = "github.com/crevissepartners/projmux/internal/cor
 
 // operatorOriginProducers lists the non-test files outside this package that
 // may build an operator origin, keyed by repository-relative path. It is empty
-// on purpose: no product path writes operator input yet. The web sender adds
-// itself here when it lands.
+// on purpose: no product path in this build writes operator input. An
+// in-process operator client's sender adds itself here when it lands.
 var operatorOriginProducers = map[string]bool{}
 
 // TestNoProductPathBuildsAnOperatorOrigin is the negative audit for operator
-// input. Outside this package, a non-test Go file that calls OperatorWebOrigin
+// input. Outside this package, a non-test Go file that calls OperatorOrigin
 // or writes a non-empty Origin literal is a producer, and every producer must
 // be listed in operatorOriginProducers.
 func TestNoProductPathBuildsAnOperatorOrigin(t *testing.T) {
@@ -65,7 +65,7 @@ func TestNoProductPathBuildsAnOperatorOrigin(t *testing.T) {
 		scanned++
 		if filepath.Dir(relative) == self {
 			for _, declaration := range file.Decls {
-				if fn, ok := declaration.(*ast.FuncDecl); ok && fn.Name.Name == "OperatorWebOrigin" {
+				if fn, ok := declaration.(*ast.FuncDecl); ok && fn.Name.Name == "OperatorOrigin" {
 					definitionSeen = true
 				}
 			}
@@ -87,7 +87,7 @@ func TestNoProductPathBuildsAnOperatorOrigin(t *testing.T) {
 			var selector *ast.SelectorExpr
 			switch node := node.(type) {
 			case *ast.CallExpr:
-				if candidate, ok := node.Fun.(*ast.SelectorExpr); ok && candidate.Sel.Name == "OperatorWebOrigin" {
+				if candidate, ok := node.Fun.(*ast.SelectorExpr); ok && candidate.Sel.Name == "OperatorOrigin" {
 					selector = candidate
 				}
 			case *ast.CompositeLit:

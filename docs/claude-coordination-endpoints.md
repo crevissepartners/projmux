@@ -284,10 +284,19 @@ other terminal result once the release has run.
 ### Operator input
 
 A durable envelope can also carry operator input: text a person wrote through
-the projmux web client, which is not an Agent. It is represented, and every
-reader accepts and labels it, but no command or web route creates it yet.
+an in-process projmux operator client, which is not an Agent. It is
+represented, and every reader accepts and labels it, but no command creates
+it: only an operator client's own in-process sender can, and an audit test pins
+those senders.
 
-- **Envelope.** Operator input carries `"origin":{"kind":"operator","client":"web"}`
+The client is a name value, never a list projmux keeps: 1-32 bytes of lowercase
+ASCII letters, digits, and `-`, starting with a letter (`internal/core/operatorclient`).
+Operator input is `"kind":"operator"` with a client name under that rule; a
+name outside it is not operator input and is refused as
+`operator-client-invalid` where one is built. Records earlier builds wrote
+with the client `web` stay operator input under the same rule.
+
+- **Envelope.** Operator input carries `"origin":{"kind":"operator","client":"<client>"}`
   and no `source` key; its authority is
   `{"kind":"operator","trust":"untrusted","permission":"coordination-only"}`,
   which grants none of the turn, steer, or config permissions a person at the
@@ -310,16 +319,17 @@ reader accepts and labels it, but no command or web route creates it yet.
   helper across an install, so this rule keeps a store of Agent messages
   readable by those helpers, and keeps a rollback to such a build safe until
   operator input is written.
-- **Frame.** The operator frame's `source` is `{"kind":"operator","client":"web"}`
+- **Frame.** The operator frame's `source` is `{"kind":"operator","client":"<client>"}`
   in place of an Agent route, `sourceNotice` is "Operator input that arrived
-  through the projmux web client; projmux did not verify the person.", and
+  through the projmux <client> client; projmux did not verify the person."
+  with the origin's client name, and
   `replyAction` is empty. The other keys are those of an Agent frame. The
   helper proves only the target current, since there is no source route.
 - **Readers.** The web transcript reader shows operator input as a `user`
   turn with `via` `projmux-web` and no `from`, judged by the `source` fields
   alone. A frame without an origin keeps its existing reading: one whose
   source and target are the same Agent is the operator's own `user` turn.
-  `agent message status` labels operator input `source=operator (web)` in a trailing text column and prints
+  `agent message status` labels operator input `source=operator (<client>)` in a trailing text column and prints
   an `origin` object and no `source` in JSON; an Agent message's output is
   unchanged. A reclaimed operator record's history line carries `origin` and
   no `source`.

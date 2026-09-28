@@ -920,7 +920,7 @@ stays fully usable: whichever answer comes first wins.
 
 ```sh
 projmux agent approval list <agent-ref> [-o json]
-projmux agent approval answer <agent-ref> <request-id> --allow|--deny [--via popup|cli|web]
+projmux agent approval answer <agent-ref> <request-id> --allow|--deny [--via popup|cli|<client>]
 ```
 
 `list` shows each waiting request with its id, tool name, subagent type, full

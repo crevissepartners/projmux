@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 )
 
 var storeTestEpoch = time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
@@ -91,6 +93,41 @@ func auditEvents(lines []AuditLine) []string {
 	return out
 }
 
+// viaTestClient is the operator client these answers name. It is not a client
+// any build ships, so a store that still knew one client by name would fail.
+// It is longer than the 16-rune bound answer lines once had for via, so a line
+// that cuts a client name fails here.
+const viaTestClient = "console-client-with-a-long-name"
+
+// TestValidViaAdmitsTheChannelsAndAnyClientName pins --via to projmux's own
+// channels plus any operator client name under the operatorclient rule,
+// including the one name earlier builds knew, so their records keep loading.
+func TestValidViaAdmitsTheChannelsAndAnyClientName(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		via  string
+		want bool
+	}{
+		{ViaCLI, true},
+		{ViaPopup, true},
+		{viaTestClient, true},
+		{"ui", true},
+		{"web", true}, // the client name earlier builds recorded
+		{"", false},
+		{"Console", false},
+		{"2console", false},
+		{"con sole", false},
+		{strings.Repeat("c", operatorclient.MaxBytes+1), false},
+	} {
+		if got := ValidVia(test.via); got != test.want {
+			t.Errorf("ValidVia(%q) = %t, want %t", test.via, got, test.want)
+		}
+	}
+	if len(viaTestClient) > operatorclient.MaxBytes || boundAnswerLine(AuditLine{Via: viaTestClient}).Via != viaTestClient {
+		t.Fatalf("an answer line cuts the client name %q", viaTestClient)
+	}
+}
+
 func TestStoreTransitionsAndRefusals(t *testing.T) {
 	t.Parallel()
 
@@ -104,7 +141,7 @@ func TestStoreTransitionsAndRefusals(t *testing.T) {
 			return s.Answer(r.ID, r.AgentUID, true, ViaCLI)
 		}, wantState: StateAllowed, wantErr: ErrNotPending},
 		{name: "deny", settle: func(s *Store, _ *testClock, r Record) (Record, error) {
-			return s.Answer(r.ID, r.AgentUID, false, ViaWeb)
+			return s.Answer(r.ID, r.AgentUID, false, viaTestClient)
 		}, wantState: StateDenied, wantErr: ErrNotPending},
 		{name: "close", settle: func(s *Store, _ *testClock, r Record) (Record, error) { return s.Close(r.ID, CloseReasonCanceled) }, wantState: StateClosed, wantErr: ErrClosed},
 		{name: "settle at the deadline", settle: func(s *Store, c *testClock, r Record) (Record, error) {
@@ -912,7 +949,7 @@ func TestStoreAppendAnswerAuditWritesOneBoundedLine(t *testing.T) {
 	long := strings.Repeat("x", 3*MaxInputSummaryRunes)
 	for _, event := range []string{AuditAllowed, AuditDenied} {
 		if err := store.AppendAnswerAudit(AuditLine{
-			Event: event, RequestID: "7", AgentUID: "agt-a", PaneUID: "pan-a", ToolName: "command", Input: "make\ntest " + long, Via: ViaWeb,
+			Event: event, RequestID: "7", AgentUID: "agt-a", PaneUID: "pan-a", ToolName: "command", Input: "make\ntest " + long, Via: viaTestClient,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -922,7 +959,7 @@ func TestStoreAppendAnswerAuditWritesOneBoundedLine(t *testing.T) {
 		t.Fatalf("events = %v", got)
 	}
 	for _, line := range lines {
-		if line.RequestID != "7" || line.AgentUID != "agt-a" || line.PaneUID != "pan-a" || line.ToolName != "command" || line.Via != ViaWeb ||
+		if line.RequestID != "7" || line.AgentUID != "agt-a" || line.PaneUID != "pan-a" || line.ToolName != "command" || line.Via != viaTestClient ||
 			!line.DecidedAt.Equal(storeTestEpoch) || !line.At.Equal(storeTestEpoch) || !line.RequestedAt.IsZero() ||
 			utf8.RuneCountInString(line.Input) != MaxInputSummaryRunes || strings.Contains(line.Input, "\n") || !strings.HasPrefix(line.Input, "make test ") {
 			t.Fatalf("line = %+v", line)
@@ -958,7 +995,7 @@ func TestStoreAppendUncommittedAuditFollowsTheAnswerLine(t *testing.T) {
 	longID := strings.Repeat("7", 300)
 	answer := AuditLine{
 		Event: AuditAllowed, RequestID: longID, AgentUID: "agt-a", PaneUID: "pan-a", ToolName: "command",
-		Input: "make\ntest " + strings.Repeat("x", 3*MaxInputSummaryRunes), Via: ViaWeb, Reason: "decision=accept",
+		Input: "make\ntest " + strings.Repeat("x", 3*MaxInputSummaryRunes), Via: viaTestClient, Reason: "decision=accept",
 	}
 	if err := store.AppendAnswerAudit(answer); err != nil {
 		t.Fatal(err)
@@ -973,7 +1010,7 @@ func TestStoreAppendUncommittedAuditFollowsTheAnswerLine(t *testing.T) {
 	}
 	first, second := lines[0], lines[1]
 	if second.RequestID != first.RequestID || utf8.RuneCountInString(second.RequestID) != 128 || second.AgentUID != "agt-a" || second.PaneUID != "pan-a" ||
-		second.ToolName != "command" || second.Input != first.Input || second.Via != ViaWeb || second.Reason != UncommittedSendFailed ||
+		second.ToolName != "command" || second.Input != first.Input || second.Via != viaTestClient || second.Reason != UncommittedSendFailed ||
 		!second.DecidedAt.IsZero() || !second.At.Equal(storeTestEpoch.Add(time.Second)) || !second.RequestedAt.IsZero() {
 		t.Fatalf("uncommitted line = %+v after %+v", second, first)
 	}

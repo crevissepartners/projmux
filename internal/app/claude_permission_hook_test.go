@@ -328,13 +328,13 @@ func TestClaudePermissionHookAllowFromTheCommandLine(t *testing.T) {
 
 	fixture := newPermissionFixture(t, config.AgentApprovalAnsweringProjmux)
 	id, done := fixture.startDefault(t, context.Background())
-	stdout, _, err := runRoute(t, fixture.command, "approval", "answer", "uid:"+questionTestAgent, id, "--allow", "--via", "web")
+	stdout, _, err := runRoute(t, fixture.command, "approval", "answer", "uid:"+questionTestAgent, id, "--allow", "--via", operatorTestClient)
 	if err != nil || stdout != id+" allowed for agent/codex\n" {
 		t.Fatalf("answer stdout=%q err=%v", stdout, err)
 	}
 	assertBareAllow(t, waitHookOutput(t, done))
 	record, _, _ := fixture.approvals.Get(id)
-	if record.State != agentapproval.StateAllowed || record.Via != agentapproval.ViaWeb || record.ToolName != "Bash" ||
+	if record.State != agentapproval.StateAllowed || record.Via != operatorTestClient || record.ToolName != "Bash" ||
 		record.PaneUID != questionTestPane || record.SessionID != "sess-1" || record.AgentType != "" {
 		t.Fatalf("record = %+v", record)
 	}
@@ -342,7 +342,7 @@ func TestClaudePermissionHookAllowFromTheCommandLine(t *testing.T) {
 	if got := permissionAuditEvents(lines); got != "requested,allowed" {
 		t.Fatalf("audit = %s", got)
 	}
-	if allowed := lines[1]; allowed.Via != "web" || allowed.Input != "rm -rf build" || allowed.AgentUID != questionTestAgent ||
+	if allowed := lines[1]; allowed.Via != operatorTestClient || allowed.Input != "rm -rf build" || allowed.AgentUID != questionTestAgent ||
 		allowed.PaneUID != questionTestPane || allowed.SessionID != "sess-1" || allowed.DecidedAt.IsZero() || allowed.RequestedAt.IsZero() {
 		t.Fatalf("allowed audit line = %+v", allowed)
 	}
@@ -1000,7 +1000,8 @@ func TestAgentApprovalListAndAnswerRefusals(t *testing.T) {
 		{args: []string{"approval", "bogus"}, want: "agent approval requires review, list, answer"},
 		{args: []string{"approval", "answer", "uid:" + questionTestAgent, "permission-0000000000000001"}, want: "requires exactly one of --allow or --deny"},
 		{args: []string{"approval", "answer", "uid:" + questionTestAgent, "permission-0000000000000001", "--allow", "--deny"}, want: "requires exactly one of --allow or --deny"},
-		{args: []string{"approval", "answer", "uid:" + questionTestAgent, "permission-0000000000000001", "--allow", "--via", "email"}, want: `unknown --via "email"`},
+		{args: []string{"approval", "answer", "uid:" + questionTestAgent, "permission-0000000000000001", "--allow", "--via", "E-mail"}, want: `--via: operator-client-invalid: "E-mail"`},
+		{args: []string{"approval", "answer", "uid:" + questionTestAgent, "permission-0000000000000001", "--allow", "--via", ""}, want: `--via: operator-client-invalid: ""`},
 		{args: []string{"approval", "answer", "uid:" + questionTestAgent, "--allow"}, want: "requires <agent-ref> <request-id>"},
 		{args: []string{"approval", "list"}, want: "requires <agent-ref>"},
 		{args: []string{"approval", "list", "uid:" + questionTestAgent, "-o", "yaml"}, want: `unsupported output "yaml"`},

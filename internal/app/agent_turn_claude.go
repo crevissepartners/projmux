@@ -121,7 +121,10 @@ func parseClaudePaneFrame(out []byte) ([]string, error) {
 	return fields, nil
 }
 
-func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent, stdout io.Writer) error {
+// interruptClaudeTurn sends one Esc to a fresh in-progress Claude turn. via is
+// the caller-reported client, already checked against the operatorclient rule,
+// and the audit records it as received.
+func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent, via string, stdout io.Writer) error {
 	now := time.Now
 	if c.now != nil {
 		now = c.now
@@ -148,9 +151,9 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 		return fmt.Errorf("claude turn interrupt unavailable: resolve audit path: %w", err)
 	}
 	auditPath := filepath.Join(paths.StateDir, claudeTurnInterruptAuditName)
-	entry := claudeTurnInterruptAudit{At: now().UTC(), Via: "web", AgentUID: route.AgentUID, PaneUID: route.PaneUID, Runtime: runtime, Result: "requested"}
+	entry := claudeTurnInterruptAudit{At: now().UTC(), Via: via, AgentUID: route.AgentUID, PaneUID: route.PaneUID, Runtime: runtime, Result: "requested"}
 	if err := writeClaudeTurnInterruptAudit(auditPath, entry); err != nil {
-		return fmt.Errorf("claude turn interrupt refused before Esc: via=web agent=uid:%s pane=uid:%s at=%s audit log %s: %w", route.AgentUID, route.PaneUID, entry.At.Format(time.RFC3339Nano), auditPath, err)
+		return fmt.Errorf("claude turn interrupt refused before Esc: via=%s agent=uid:%s pane=uid:%s at=%s audit log %s: %w", via, route.AgentUID, route.PaneUID, entry.At.Format(time.RFC3339Nano), auditPath, err)
 	}
 	fail := func(cause error) error {
 		entry.At, entry.Result, entry.Reason = now().UTC(), "failed", cause.Error()

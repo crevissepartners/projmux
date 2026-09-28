@@ -118,9 +118,23 @@ func storeFileVersion(t *testing.T, data []byte) int {
 	return head.Version
 }
 
+// operatorTestClient is the operator client these fixtures name. It is
+// deliberately not a client any build ships, so a store that still knew one
+// client by name would fail here.
+const operatorTestClient = "console"
+
+// previousBuildOperatorClient is the only client name builds before the
+// operatorclient rule wrote into an operator origin. Records carrying it must
+// keep reading as operator input.
+const previousBuildOperatorClient = "web"
+
 func operatorStoreEnvelope(ref string, acceptedAt time.Time) coremessage.Envelope {
+	origin, err := coremessage.OperatorOrigin(operatorTestClient)
+	if err != nil {
+		panic(err)
+	}
 	return coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: "conversation-" + ref,
-		Origin: coremessage.OperatorWebOrigin(),
+		Origin: origin,
 		Target: coremessage.Route{AgentUID: "agent-claude-b", PaneUID: "pane-claude-b", ActivationGeneration: "generation-claude-b",
 			Provider: "claude", Incarnation: "claude-b-incarnation"},
 		Authority: coremessage.OperatorAuthority(), Payload: "operator text for " + ref,
@@ -187,6 +201,44 @@ func TestStoreKeepsAnAgentOnlyStoreAtVersion2(t *testing.T) {
 	}
 	if strings.Contains(string(data), `"origin"`) {
 		t.Fatalf("agent-only store carries an origin key: %s", data)
+	}
+}
+
+// TestStoreReadsAnOperatorRecordAnEarlierBuildWroteForItsOneClient rewrites a
+// stored operator record to the only client name earlier builds wrote. The
+// store still reads it as operator input, holds its operator-only rules, and
+// leaves the name as it was written.
+func TestStoreReadsAnOperatorRecordAnEarlierBuildWroteForItsOneClient(t *testing.T) {
+	t.Parallel()
+	store := copyV2Fixture(t)
+	envelope := operatorStoreEnvelope("message-operator-earlier", v2FixtureNow)
+	if _, _, err := store.PutAccepted(envelope, "claude-coordination"); err != nil {
+		t.Fatal(err)
+	}
+	written := `"client":"` + operatorTestClient + `"`
+	data := readStoreFile(t, store)
+	if bytes.Count(data, []byte(written)) != 1 {
+		t.Fatalf("store does not carry %s once:\n%s", written, data)
+	}
+	earlier := bytes.Replace(data, []byte(written), []byte(`"client":"`+previousBuildOperatorClient+`"`), 1)
+	if err := os.WriteFile(store.Path(), earlier, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewStoreAt(store.Path())
+	record, found, err := reloaded.Get(envelope.MessageRef)
+	if err != nil || !found || !record.Envelope.Operator() || record.Envelope.Origin.Client != previousBuildOperatorClient {
+		t.Fatalf("Get = (%+v, %t, %v), want operator input from the %s client", record, found, err, previousBuildOperatorClient)
+	}
+	if err := record.Envelope.Validate(); err != nil {
+		t.Fatalf("earlier operator record no longer validates: %v", err)
+	}
+	codex := coremessage.Route{AgentUID: "agent-codex-c", PaneUID: "pane-codex-c", ActivationGeneration: "generation-codex-c",
+		Provider: "codex", Incarnation: "codex-c-incarnation"}
+	_, created, err := reloaded.PutReply(envelope.MessageRef, "message-earlier-answer", "answer", envelope.Target, codex,
+		v2FixtureNow, v2FixtureNow.Add(time.Minute))
+	var conflict *ReplyConflictError
+	if created || !errors.As(err, &conflict) || conflict.Reason != coremessage.ReasonExplicitReplyOperatorOrigin {
+		t.Fatalf("PutReply = (%t, %v), want reason %q", created, err, coremessage.ReasonExplicitReplyOperatorOrigin)
 	}
 }
 
@@ -313,7 +365,7 @@ func TestStoreRefusesAnOriginInsideAVersion1Or2File(t *testing.T) {
 		if version == legacyStoreVersion {
 			envelope["version"] = 1
 		}
-		envelope["origin"] = map[string]any{"kind": coremessage.OriginKindOperator, "client": coremessage.OriginClientWeb}
+		envelope["origin"] = map[string]any{"kind": coremessage.OriginKindOperator, "client": previousBuildOperatorClient}
 		data, err := json.Marshal(disk)
 		if err != nil {
 			t.Fatal(err)

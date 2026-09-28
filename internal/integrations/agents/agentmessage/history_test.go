@@ -60,6 +60,8 @@ func fullRouteHistoryRecords() []historyRecord {
 	unknown := storeEnvelope(8002)
 	unknown.AcceptedAt, unknown.Deadline = acceptedAt.Add(time.Second), acceptedAt.Add(time.Hour)
 	operator := operatorStoreEnvelope("message-operator-history", acceptedAt.Add(2*time.Second))
+	// The fixture line was written by a build that named only one client.
+	operator.Origin.Client = previousBuildOperatorClient
 	return newHistoryRecords([]reclaimedRecord{
 		{Reason: reclaimRetention, Record: Record{Envelope: reply, Adapter: "codex-inbox",
 			Delivery: terminalDelivery(reply, coremessage.Event{Kind: coremessage.EventDeliver,

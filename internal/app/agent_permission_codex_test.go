@@ -354,7 +354,7 @@ func TestAgentApprovalCodexAnswerAuditsBeforeTheReview(t *testing.T) {
 		f := newCodexPermissionFixture(t, config.AgentApprovalAnsweringProjmux, codexCommandApproval("7"))
 		var seen []agentapproval.AuditLine
 		f.onReview = func(agentControlRequest) { seen = readPermissionAudit(t, f.approvals) }
-		if _, _, err := runRoute(t, f.command, "approval", "answer", codexPermissionAgentRef, "7", "--deny", "--via", "web"); err != nil {
+		if _, _, err := runRoute(t, f.command, "approval", "answer", codexPermissionAgentRef, "7", "--deny", "--via", operatorTestClient); err != nil {
 			t.Fatal(err)
 		}
 		if len(seen) != 1 {
@@ -362,7 +362,7 @@ func TestAgentApprovalCodexAnswerAuditsBeforeTheReview(t *testing.T) {
 		}
 		line := seen[0]
 		if line.Event != agentapproval.AuditDenied || line.RequestID != "7" || line.AgentUID != "agt-alpha-codex" || line.PaneUID != "pan-alpha-codex" ||
-			line.ToolName != "command" || line.Input != "make test" || line.Via != agentapproval.ViaWeb || line.Reason != "decision=decline" || line.DecidedAt.IsZero() || line.At.IsZero() {
+			line.ToolName != "command" || line.Input != "make test" || line.Via != operatorTestClient || line.Reason != "decision=decline" || line.DecidedAt.IsZero() || line.At.IsZero() {
 			t.Fatalf("audit line = %+v", line)
 		}
 		if lines := readPermissionAudit(t, f.approvals); len(lines) != 1 {

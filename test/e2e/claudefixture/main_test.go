@@ -237,13 +237,13 @@ func TestCoordinationContentDecodesEveryFrameShape(t *testing.T) {
 			`"source":{"agentUID":"codex-agent","provider":"codex"},"target":{"agentUID":"claude-agent","provider":"claude"},` + tail,
 		"operator": `{"kind":"projmux-coordination","schemaVersion":2,"authority":"untrusted-coordination-only",` +
 			`"messageRef":"message-operator","conversationRef":"conversation-operator",` +
-			`"source":{"kind":"operator","client":"web"},"target":{"agentUID":"claude-agent","provider":"claude"},` + tail,
+			`"source":{"kind":"operator","client":"console"},"target":{"agentUID":"claude-agent","provider":"claude"},` + tail,
 	} {
 		var content coordinationContent
 		if err := decodeExact([]byte(frame), &content); err != nil || content.SchemaVersion != 2 || content.MessageRef == "" {
 			t.Fatalf("%s frame did not decode: %+v %v", name, content, err)
 		}
-		if name == "operator" && (content.Source["kind"] != "operator" || content.Source["client"] != "web" || content.Source["agentUID"] != "") {
+		if name == "operator" && (content.Source["kind"] != "operator" || content.Source["client"] != "console" || content.Source["agentUID"] != "") {
 			t.Fatalf("operator source = %v", content.Source)
 		}
 	}
