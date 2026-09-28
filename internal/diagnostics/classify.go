@@ -78,6 +78,12 @@ var commandRules = map[string]commandRule{
 	"agent-pane":      {internalOnly: true, subcommands: stringSet("launch-default", "picker", "launch-selection")},
 	"supervise":       {internalOnly: true},
 	"activation-exec": {internalOnly: true},
+	// The Claude SessionStart registration hook and its detached helper. They
+	// are named only so the helper's slow registry.lock.acquisition records
+	// carry a command; neither is state-changing, and both routes return nil,
+	// so they never write a command.outcome.
+	"claude-endpoint-register": {internalOnly: true},
+	"claude-endpoint-helper":   {internalOnly: true},
 }
 
 // recordedOnlyCommandRules keeps the classes that retired routes wrote into

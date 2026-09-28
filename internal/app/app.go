@@ -389,6 +389,9 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	internalCmd.supervise = superviseCmd
 	internalCmd.activationExec = activationExecCmd
 	internalCmd.codexBroker = newCodexBrokerCommand()
+	// The Claude registration hook and its helper each record their refusal,
+	// the helper's Ready, and its end as agent.claude.registration.
+	internalCmd.claudeRegistration = recorder.ClaudeRegistration()
 	diagnosticsCmd := newDiagnosticsCommand()
 	diagnosticsCmd.ai = ai
 	return &App{

@@ -232,8 +232,126 @@ Claude process is not an ancestor of the sender writes one `component=agent`,
 `event=agent.message.foreign-source` `info`/`success` record. It adds only the
 opaque source `agent_uid` (`agent-…`) and its `pane_uid` (`pane-…`); the
 provider session id, process ids, and environment shown in the stderr warning
-are never recorded, and every other event family rejects `agent_uid` and the
-`agent` component. A journal failure never changes the send.
+are never recorded, and every family other than the two `agent` events below
+rejects `agent_uid` and the `agent` component. A journal failure never changes
+the send.
+
+The Claude messaging endpoint registration writes `component=agent`,
+`event=agent.claude.registration` records. The chain is the SessionStart hook
+`internal claude-endpoint-register`, which builds a bootstrap and starts the
+detached helper `internal claude-endpoint-helper`; the helper claims and
+records the registration in one Registry transaction and becomes Ready. Every
+refusal along it, the helper's Ready, and the end of a Ready helper's serving
+loop each write one record. A record carries only:
+
+- `source`: the process that wrote it, `hook` or `helper`.
+- `code`: `claude.registration.<reason>`, one reason of the closed table
+  below. A reason the table does not list, or does not allow for that source,
+  drops the record.
+- `result`, `level`, and `kind`: a refusal before Ready is
+  `error`/`error`, `kind=runtime`. `ready` and the `ended-*` reasons are
+  `info`/`success` with no kind: the registration ran, and the `ended-*`
+  reason says how its lifetime ended.
+- `duration_ms`: from that process's route entry to the append.
+- `agent_uid` (`agent-…`) and `pane_uid` (`pane-…`): only once the Agent and
+  Pane matched the Registry, and omitted when not strictly shaped. The hook
+  sets them from the provider process check onward, once its bootstrap matched
+  the Pane and its Agent against the Registry, and for every helper start
+  refusal. The helper sets them only after its producer check passed: the
+  bootstrap then provably came from the live hook that made that Registry
+  match, so its UIDs are the Registry-matched ones.
+
+The provider session id, the registration nonce (`registrationGeneration`),
+the messaging token and socket path, lease and coordination socket paths,
+process ids and start identities, argv, error text, and the working directory
+are never recorded.
+
+| code (`claude.registration.…`) | source | where |
+| --- | --- | --- |
+| `hook-arguments-present` | hook | the hook route got arguments |
+| `registry-path-invalid` | hook | the activation Registry path is set but not the exact shape |
+| `registry-unreadable` | hook, helper | the hook's Registry read failed, or the helper's read after its claim |
+| `hook-input-unreadable` | hook | stdin failed to read or exceeded 64 KiB |
+| `payload-not-session-start` | hook | the payload is not a parsable `SessionStart` |
+| `pane-binding-mismatch` | hook | the Pane, activation generation, or Claude process binding does not match |
+| `agent-mismatch` | hook | the Pane's Agent is not the running Claude Agent that owns it |
+| `provider-process-mismatch` | hook | the hook's parent is not the bound Claude process |
+| `messaging-credential-invalid` | hook | the messaging socket or token is missing or malformed |
+| `session-id-embeds-credential` | hook | the session id contains the token or socket |
+| `messaging-socket-unavailable` | hook, helper | the messaging socket failed inspection |
+| `nonce-unavailable` | hook | no registration nonce could be generated |
+| `authority-invalid` | hook, helper | the registration authority is not valid |
+| `hook-identity-unavailable` | hook | the hook's own process identity is unavailable |
+| `reply-tool-policy-unavailable` | hook | the reply tool policy could not be captured |
+| `helper-executable-unavailable` | hook | the running binary could not be located |
+| `helper-bootstrap-unavailable` | hook | the bootstrap could not be encoded |
+| `helper-ack-pipe-unavailable` | hook | the acknowledgement pipe could not be created |
+| `helper-start-failed` | hook | the helper process did not start |
+| `helper-admission-unconfirmed` | hook | no acknowledgement arrived before the 3s deadline or EOF |
+| `helper-arguments-invalid` | helper | the helper got arguments or inherited a messaging credential variable |
+| `helper-ack-missing` | helper | fd 3 is absent |
+| `helper-ack-not-pipe` | helper | fd 3 is not a pipe |
+| `helper-input-unreadable` | helper | stdin failed to read, exceeded 64 KiB, or is not a bootstrap |
+| `producer-mismatch` | helper | the parent is not the hook that built the bootstrap |
+| `bootstrap-invalid` | helper | the bootstrap Registry path or token is invalid |
+| `helper-identity-unavailable` | helper | the helper's own process identity is unavailable |
+| `lease-unavailable` | helper | the private lease directory, socket, or its mode could not be set up |
+| `coordination-unavailable` | helper | the coordination listener could not be opened |
+| `lease-owner-unavailable` | helper | the lease owner receipt could not be written |
+| `provider-process-gone` | helper | in the transaction, the Claude process is gone |
+| `claim-refused-activation` | helper | in the transaction, the activation is no longer this helper's claim target |
+| `claim-refused-competing` | helper | in the transaction, the same registration generation carries another session or lease |
+| `claim-refused-newer` | helper | in the transaction, a newer SessionStart claimed another generation |
+| `lock-timeout` | helper | the transaction gave up on the Registry lock deadline |
+| `lock-acquire-failed` | helper | the transaction never ran for any other Store reason (the one fallback, below) |
+| `registry-degraded` | helper | the Store refused the transaction on a degraded Registry |
+| `registry-write-failed` | helper | the transaction's validation or durable write failed |
+| `route-mismatch` | helper | the recorded route does not resolve to this registration |
+| `dialogue-broker-unavailable` | helper | the dialogue broker could not start |
+| `reply-tool-gate-unavailable` | helper | the reply tool gate could not be built |
+| `stale-before-ack` | helper | the registration stopped being current before the acknowledgement |
+| `ready` | helper | the acknowledgement byte was written |
+| `ended-context-done` | helper | the serving loop's context ended |
+| `ended-not-current` | helper | the serving loop found the registration no longer current |
+| `ended-accept-failed` | helper | the lease listener failed |
+
+A Claude session projmux did not launch writes nothing. The user-wide
+SessionStart hook still runs for it, but with no activation Registry path set
+at all (`PMX_INTERNAL_CLAUDE_REGISTRY_PATH` empty or unset) it is outside any
+managed activation: the hook stops with the closed reason `unmanaged-session`,
+which the recorder drops and every reader rejects, so it is never journaled
+at any level. A set but malformed path is still `registry-path-invalid`. A
+nested unmanaged Claude that inherited a managed Pane's activation environment
+is refused as `provider-process-mismatch`, because its parent is not the bound
+Claude process; that record names the managed Pane's `agent_uid` and
+`pane_uid`, whose activation environment it inherited.
+
+`lock-acquire-failed` is the one fallback of the transaction's
+classification: the claim callback never ran, and the Store error is neither
+a lock timeout nor a degraded Registry. That is a failed lock acquisition, or
+a locked Registry read or recovery inspection failure the Store did not
+classify as degraded. A failure after the callback ran is always
+`registry-write-failed`.
+
+The hook writes at most one record, and only once its attempt is over: at a
+refusal before it started the helper, or after its acknowledgement wait
+returned, which is `helper-admission-unconfirmed` or a start refusal. It never
+appends between starting the helper and the helper's producer check, and a
+confirmed admission writes nothing from the hook because the helper writes
+`ready`. The helper writes `ready` exactly once, right after the
+acknowledgement byte, and one more record when it returns: the refusal that
+stopped it before Ready, or the `ended-*` reason after it. That last record is
+appended only after the helper closed fd 3, so the hook's EOF never waits on
+the journal. Appends are best effort: a failing or slow journal never changes
+the hook's empty output, its nil result, or the helper's argv, environment,
+and stdin. Every other event family rejects the `hook` and `helper` sources
+and every `claude.registration.*` code.
+
+Both routes are classified as the internal-only commands
+`claude-endpoint-register` and `claude-endpoint-helper`, so the helper's slow
+`registry.lock.acquisition` records carry `command=claude-endpoint-helper`.
+Neither is state-changing and both always return nil, so neither writes a
+`command.outcome`.
 
 projmux no longer emits `session-state.outcome` records. Project snapshots
 were removed, and the retained `internal tmux autosave-session-state` route is

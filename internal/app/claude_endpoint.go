@@ -18,6 +18,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -111,32 +112,89 @@ func prepareClaudeActivationProcess(spec superviseSpec) (bool, error) {
 	return claudeRegistration, err
 }
 
+// claudeRegistrationProceed is the zero reason: the step that returns it
+// refused nothing, and the registration goes on.
+const claudeRegistrationProceed diagnostics.ClaudeRegistrationReason = ""
+
+// claudeRegistrationRefusal is an error carrying one refusal's closed reason.
+// Its text is the reason alone, never an underlying error.
+type claudeRegistrationRefusal struct {
+	reason diagnostics.ClaudeRegistrationReason
+}
+
+func (e *claudeRegistrationRefusal) Error() string {
+	return "claude registration refused: " + string(e.reason)
+}
+
+func refuseClaudeRegistration(reason diagnostics.ClaudeRegistrationReason) error {
+	return &claudeRegistrationRefusal{reason: reason}
+}
+
+// claudeRegistrationSubject is the Agent and Pane one registration record
+// names. It is empty until they matched the Registry.
+type claudeRegistrationSubject struct {
+	AgentUID string
+	PaneUID  string
+}
+
 // Only the separate SessionStart registration hook calls this route. Existing
 // status hooks and their parser/projection remain unchanged. Every failure is
 // quiet and fail-closed; no raw upstream input or credential reaches errors.
-func runClaudeEndpointRegistration(args []string) error {
-	if len(args) != 0 {
-		return nil
+//
+// The hook writes at most one agent.claude.registration record, and only here
+// (an unmanaged session, with no activation Registry path, writes none):
+// after the whole attempt returned, so never between starting the helper and
+// the helper's producer check. A confirmed admission records nothing, because
+// the helper records ready itself. The append is best-effort and changes
+// neither the output nor the nil result.
+func runClaudeEndpointRegistration(args []string, recorder *diagnostics.ClaudeRegistrationRecorder) error {
+	return recordClaudeEndpointRegistration(recorder, args, os.Getenv, os.Stdin, os.Getppid(), startClaudeEndpointHelper)
+}
+
+// recordClaudeEndpointRegistration is runClaudeEndpointRegistration with the
+// hook process's inputs passed in.
+func recordClaudeEndpointRegistration(recorder *diagnostics.ClaudeRegistrationRecorder, args []string, env func(string) string, stdin io.Reader, parentPID int, start func(claudeEndpointBootstrap) error) error {
+	started := time.Now()
+	subject, reason := claudeEndpointRegistrationHook(args, env, stdin, parentPID, start)
+	if reason != claudeRegistrationProceed && reason.Recorded() {
+		recorder.Record(diagnostics.ClaudeRegistrationRecord{Source: diagnostics.ClaudeRegistrationSourceHook, Reason: reason,
+			Duration: time.Since(started), AgentUID: subject.AgentUID, PaneUID: subject.PaneUID})
 	}
-	registryPath := os.Getenv(internalClaudeRegistryPathEnv)
+	return nil
+}
+
+// claudeEndpointRegistrationHook is the hook's whole attempt. It returns
+// claudeRegistrationProceed once the helper confirmed its admission, and the
+// refusal otherwise; the subject is set only from the provider process check
+// onward, once the bootstrap matched the pane and its agent against Registry.
+func claudeEndpointRegistrationHook(args []string, env func(string) string, stdin io.Reader, parentPID int, start func(claudeEndpointBootstrap) error) (claudeRegistrationSubject, diagnostics.ClaudeRegistrationReason) {
+	if len(args) != 0 {
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHookArguments
+	}
+	registryPath := env(internalClaudeRegistryPathEnv)
+	// A Claude session projmux did not launch carries no activation at all;
+	// the user-wide hook still runs for it, and it records nothing.
+	if registryPath == "" {
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationUnmanagedSession
+	}
 	if exactActivationRegistryPath(registryPath) != nil {
-		return nil
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationRegistryPathInvalid
 	}
 	store := intmetadata.NewStore(registryPath)
 	reg, err := store.LoadDegradedReadOnly()
 	if err != nil {
-		return nil
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationRegistryUnreadable
 	}
-	data, err := io.ReadAll(io.LimitReader(os.Stdin, 64*1024+1))
+	data, err := io.ReadAll(io.LimitReader(stdin, 64*1024+1))
 	if err != nil || len(data) > 64*1024 {
-		return nil
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHookInputUnreadable
 	}
-	bootstrap, ok := claudeRegistrationBootstrap(reg, registryPath, data, os.Getenv, os.Getppid())
-	if !ok {
-		return nil
+	bootstrap, reason := claudeRegistrationBootstrap(reg, registryPath, data, env, parentPID)
+	subject := claudeRegistrationSubject{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID}
+	if reason != claudeRegistrationProceed {
+		return subject, reason
 	}
-	registerClaudeEndpoint(bootstrap, startClaudeEndpointHelper)
-	return nil
+	return subject, registerClaudeEndpoint(bootstrap, start)
 }
 
 // registerClaudeEndpoint is the hook's part of one registration once its
@@ -148,69 +206,86 @@ func runClaudeEndpointRegistration(args []string) error {
 // lifetime, bounded by the Registry lock acquisition timeout. A hook cancelled
 // before its helper admits the registration therefore leaves the pane as it
 // found it, never with a claimed registration that nothing will make Ready.
-func registerClaudeEndpoint(bootstrap claudeEndpointBootstrap, start func(claudeEndpointBootstrap) error) {
-	_ = start(bootstrap)
+//
+// It returns claudeRegistrationProceed once the helper confirmed its admission
+// and the start refusal otherwise. A start error without a reason is counted
+// as a failed start.
+func registerClaudeEndpoint(bootstrap claudeEndpointBootstrap, start func(claudeEndpointBootstrap) error) diagnostics.ClaudeRegistrationReason {
+	err := start(bootstrap)
+	if err == nil {
+		return claudeRegistrationProceed
+	}
+	var refusal *claudeRegistrationRefusal
+	if errors.As(err, &refusal) && refusal.reason.Refusal() {
+		return refusal.reason
+	}
+	return diagnostics.ClaudeRegistrationHelperStartFailed
 }
 
-func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string, data []byte, env func(string) string, parentPID int) (claudeEndpointBootstrap, bool) {
+// claudeRegistrationBootstrap returns claudeRegistrationProceed with a usable
+// bootstrap, or the refusal. A refusal returns the zero bootstrap until the
+// pane and its agent matched the Registry, and after that one carrying only
+// their UIDs, which the hook's record names.
+func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string, data []byte, env func(string) string, parentPID int) (claudeEndpointBootstrap, diagnostics.ClaudeRegistrationReason) {
 	var payload struct {
 		Event     string `json:"hook_event_name"`
 		SessionID string `json:"session_id"`
 	}
 	if json.Unmarshal(data, &payload) != nil || payload.Event != "SessionStart" {
-		return claudeEndpointBootstrap{}, false
+		return claudeEndpointBootstrap{}, diagnostics.ClaudeRegistrationPayloadNotSessionStart
 	}
 	paneUID, generation := env(internalActivationPaneUIDEnv), env(internalActivationGenerationEnv)
 	pane, ok := reg.Pane(paneUID)
 	if !ok || pane.Status.Activation.Generation != generation || generation == "" || pane.Status.Activation.Claude == nil {
-		return claudeEndpointBootstrap{}, false
+		return claudeEndpointBootstrap{}, diagnostics.ClaudeRegistrationPaneBindingMismatch
 	}
 	agent, ok := reg.Agent(pane.Status.Activation.AgentUID)
 	if !ok || agent.Spec.Provider != aiModeClaude || agent.Status.Phase != coremetadata.PhaseRunning ||
 		agent.Status.PaneRef != paneUID || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerUID() != agent.Metadata.UID || pane.Spec.Role != coremetadata.PaneRoleAgent {
-		return claudeEndpointBootstrap{}, false
+		return claudeEndpointBootstrap{}, diagnostics.ClaudeRegistrationAgentMismatch
 	}
+	matched := claudeEndpointBootstrap{AgentUID: agent.Metadata.UID, PaneUID: paneUID}
 	process := pane.Status.Activation.Claude.Process
 	actual, _, err := claudeadapter.Process(parentPID)
 	if err != nil || actual != process || int64(actual.OwnerUID) != int64(os.Getuid()) {
-		return claudeEndpointBootstrap{}, false
+		return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
 	}
 	socket, token := env("CLAUDE_CODE_MESSAGING_SOCKET"), env("CLAUDE_CODE_MESSAGING_TOKEN")
 	if socket == "" || token == "" || len(token) > 4096 || strings.ContainsAny(token, "\r\n\x00") {
-		return claudeEndpointBootstrap{}, false
+		return matched, diagnostics.ClaudeRegistrationMessagingCredential
 	}
 	// Hook identities are untrusted data too. Refuse a credential or locator
 	// embedded in any field destined for Registry, even when syntactically valid.
 	for _, value := range []string{payload.SessionID} {
 		if strings.Contains(value, token) || strings.Contains(value, socket) {
-			return claudeEndpointBootstrap{}, false
+			return matched, diagnostics.ClaudeRegistrationSessionIDCredential
 		}
 	}
 	if _, err := inspectClaudeSocket(socket); err != nil {
-		return claudeEndpointBootstrap{}, false
+		return matched, diagnostics.ClaudeRegistrationMessagingSocket
 	}
 	nonce := make([]byte, 24)
 	if _, err := rand.Read(nonce); err != nil {
-		return claudeEndpointBootstrap{}, false
+		return matched, diagnostics.ClaudeRegistrationNonceUnavailable
 	}
 	authority := coremetadata.ClaudeAuthorityRef{SessionID: payload.SessionID, Process: process,
 		RegistrationGeneration: hex.EncodeToString(nonce), LeaseProcess: process}
 	if !authority.Valid() {
-		return claudeEndpointBootstrap{}, false
+		return matched, diagnostics.ClaudeRegistrationAuthorityInvalid
 	}
 	hookProcess, _, err := claudeadapter.Process(os.Getpid())
 	if err != nil {
-		return claudeEndpointBootstrap{}, false
+		return matched, diagnostics.ClaudeRegistrationHookIdentity
 	}
 	replyTool, err := captureClaudeReplyToolPolicy(env)
 	if err != nil {
-		return claudeEndpointBootstrap{}, false
+		return matched, diagnostics.ClaudeRegistrationReplyToolPolicy
 	}
 	return claudeEndpointBootstrap{RegistryPath: registryPath, AgentUID: agent.Metadata.UID, PaneUID: paneUID, Generation: generation,
 		Registration:                coremetadata.ClaudeRegistration{Authority: authority},
 		PriorRegistrationGeneration: pane.Status.Activation.Claude.RegistrationGeneration,
 		HookProcess:                 hookProcess,
-		Socket:                      socket, Token: token, ReplyTool: replyTool}, true
+		Socket:                      socket, Token: token, ReplyTool: replyTool}, claudeRegistrationProceed
 }
 
 // claudeEndpointHelperRoute is the internal route word of the per-agent
@@ -226,15 +301,15 @@ const claudeEndpointHelperRoute = "claude-endpoint-helper"
 func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	binary, err := os.Executable()
 	if err != nil {
-		return errors.New("claude helper unavailable")
+		return refuseClaudeRegistration(diagnostics.ClaudeRegistrationHelperExecutable)
 	}
 	input, err := json.Marshal(bootstrap)
 	if err != nil {
-		return errors.New("claude helper bootstrap unavailable")
+		return refuseClaudeRegistration(diagnostics.ClaudeRegistrationHelperBootstrap)
 	}
 	readAck, writeAck, err := os.Pipe()
 	if err != nil {
-		return errors.New("claude helper acknowledgement unavailable")
+		return refuseClaudeRegistration(diagnostics.ClaudeRegistrationHelperAckPipe)
 	}
 	defer readAck.Close()
 	// #nosec G204 -- os.Executable above identifies this running Projmux binary;
@@ -249,11 +324,21 @@ func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	cmd.Env = claudeHelperEnvironment(os.Environ())
 	if err := cmd.Start(); err != nil {
 		_ = writeAck.Close()
-		return errors.New("claude helper start failed")
+		return refuseClaudeRegistration(diagnostics.ClaudeRegistrationHelperStartFailed)
 	}
 	_ = writeAck.Close()
-	return awaitClaudeHelperAdmission(readAck, time.Now().Add(3*time.Second), cmd.Process)
+	// Only an unconfirmed acknowledgement is a refusal. A failed Release after
+	// the helper acknowledged still leaves an admitted helper that records
+	// ready itself.
+	if errors.Is(awaitClaudeHelperAdmission(readAck, time.Now().Add(3*time.Second), cmd.Process), errClaudeHelperAdmissionUnconfirmed) {
+		return refuseClaudeRegistration(diagnostics.ClaudeRegistrationHelperUnconfirmed)
+	}
+	return nil
 }
+
+// errClaudeHelperAdmissionUnconfirmed is awaitClaudeHelperAdmission's refusal:
+// no acknowledgement byte arrived before the deadline or EOF.
+var errClaudeHelperAdmissionUnconfirmed = errors.New("claude helper admission unconfirmed")
 
 // claudeHelperAck is the hook's read side of the helper's one-byte admission
 // acknowledgement.
@@ -286,7 +371,7 @@ func awaitClaudeHelperAdmission(readAck claudeHelperAck, deadline time.Time, hel
 	if releaseErr := helper.Release(); err == nil && ack[0] == 1 {
 		return releaseErr
 	}
-	return errors.New("claude helper admission unconfirmed")
+	return errClaudeHelperAdmissionUnconfirmed
 }
 
 func claudeHelperEnvironment(environment []string) []string {
@@ -309,28 +394,88 @@ func claudeHelperCredentialEnvironmentPresent(lookup func(string) (string, bool)
 	return false
 }
 
-func runClaudeEndpointHelper(args []string) error {
-	if len(args) != 0 || claudeHelperCredentialEnvironmentPresent(os.LookupEnv) {
-		return nil
+// runClaudeEndpointHelper is the detached helper. It writes one ready record
+// right after its acknowledgement byte, and one more record when it returns:
+// the refusal that stopped it before Ready, or the end of its serving loop
+// after Ready. That last record is appended only after the acknowledgement is
+// closed, so the hook's EOF never waits on the journal.
+func runClaudeEndpointHelper(args []string, recorder *diagnostics.ClaudeRegistrationRecorder) error {
+	parentPID := os.Getppid()
+	return recordClaudeEndpointHelper(recorder, claudeEndpointHelperInput{
+		args: args, lookupEnv: os.LookupEnv, stdin: os.Stdin,
+		openAck:  func() *os.File { return os.NewFile(3, "claude-endpoint-ack") },
+		producer: func(bootstrap claudeEndpointBootstrap) bool { return claudeHelperProducerMatches(bootstrap, parentPID) },
+		serve: func(bootstrap claudeEndpointBootstrap, ack io.Writer, admitted func()) diagnostics.ClaudeRegistrationReason {
+			return serveClaudeRegistration(context.Background(), bootstrap, ack, claudeEndpointIdleOptions{
+				stat: (*intmetadata.Store).RegistryFileIdentity, now: time.Now, floor: claudeEndpointIdleRegistryFloor, admitted: admitted})
+		},
+	})
+}
+
+// recordClaudeEndpointHelper is runClaudeEndpointHelper with the helper
+// process's inputs passed in.
+func recordClaudeEndpointHelper(recorder *diagnostics.ClaudeRegistrationRecorder, in claudeEndpointHelperInput) error {
+	started := time.Now()
+	record := func(subject claudeRegistrationSubject, reason diagnostics.ClaudeRegistrationReason) {
+		recorder.Record(diagnostics.ClaudeRegistrationRecord{Source: diagnostics.ClaudeRegistrationSourceHelper, Reason: reason,
+			Duration: time.Since(started), AgentUID: subject.AgentUID, PaneUID: subject.PaneUID})
 	}
-	ack := os.NewFile(3, "claude-endpoint-ack")
+	subject, reason := claudeEndpointHelper(in, func(subject claudeRegistrationSubject) { record(subject, diagnostics.ClaudeRegistrationReady) })
+	record(subject, reason)
+	return nil
+}
+
+// claudeEndpointHelperInput is what one helper invocation reads. Outside tests
+// it is the process's own argv, environment, fd 3, stdin, and parent.
+type claudeEndpointHelperInput struct {
+	args      []string
+	lookupEnv func(string) (string, bool)
+	stdin     io.Reader
+	openAck   func() *os.File
+	producer  func(claudeEndpointBootstrap) bool
+	serve     func(bootstrap claudeEndpointBootstrap, ack io.Writer, admitted func()) diagnostics.ClaudeRegistrationReason
+}
+
+// claudeEndpointHelper returns the reason the helper stopped. It closes the
+// acknowledgement before it returns on every path, so a caller that records
+// the result appends only after the hook read its byte or EOF.
+//
+// The subject is set only once the producer check passed: the bootstrap then
+// provably came from the live hook that matched this pane and its agent
+// against the Registry, so its UIDs are those Registry-matched values.
+func claudeEndpointHelper(in claudeEndpointHelperInput, admitted func(claudeRegistrationSubject)) (claudeRegistrationSubject, diagnostics.ClaudeRegistrationReason) {
+	ack := in.openAck()
+	if len(in.args) != 0 || claudeHelperCredentialEnvironmentPresent(in.lookupEnv) {
+		// Never inspected or written, fd 3 is still let go of before the
+		// caller records, like on every other path.
+		if ack != nil {
+			_ = ack.Close()
+		}
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHelperArguments
+	}
 	if ack == nil {
-		return nil
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHelperAckMissing
 	}
 	defer ack.Close()
-	if info, err := ack.Stat(); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
-		return nil
+	info, err := ack.Stat()
+	if err != nil {
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHelperAckMissing
+	}
+	if info.Mode()&os.ModeNamedPipe == 0 {
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHelperAckNotPipe
 	}
 	var bootstrap claudeEndpointBootstrap
-	data, err := io.ReadAll(io.LimitReader(os.Stdin, 64*1024+1))
+	data, err := io.ReadAll(io.LimitReader(in.stdin, 64*1024+1))
 	if err != nil || len(data) > 64*1024 || json.Unmarshal(data, &bootstrap) != nil {
-		return nil
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHelperInput
 	}
-	if !claudeHelperProducerMatches(bootstrap, os.Getppid()) {
-		return nil
+	if !in.producer(bootstrap) {
+		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationProducerMismatch
 	}
-	_ = serveClaudeEndpoint(context.Background(), bootstrap, ack)
-	return nil
+	subject := claudeRegistrationSubject{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID}
+	reason := in.serve(bootstrap, ack, func() { admitted(subject) })
+	_ = ack.Close()
+	return subject, reason
 }
 
 func claudeHelperProducerMatches(bootstrap claudeEndpointBootstrap, parentPID int) bool {
@@ -473,6 +618,9 @@ type claudeEndpointIdleOptions struct {
 	floor time.Duration
 	// poster, when set, receives the helper's provider poster. Tests only.
 	poster func(*liveClaudeProviderPoster)
+	// admitted, when set, runs once right after the acknowledgement byte is
+	// written. The helper records ready there.
+	admitted func()
 }
 
 // claudeEndpointIdleRegistryGate decides whether one idle accept-loop tick
@@ -504,38 +652,36 @@ func (g *claudeEndpointIdleRegistryGate) current(identity, registry func() bool)
 	return registry()
 }
 
-func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer) error {
-	return serveClaudeEndpointWithIdleGate(ctx, bootstrap, ack, claudeEndpointIdleOptions{
-		stat: (*intmetadata.Store).RegistryFileIdentity, now: time.Now, floor: claudeEndpointIdleRegistryFloor})
-}
-
-func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer, idle claudeEndpointIdleOptions) error {
+// serveClaudeRegistration claims, records, and serves one registration, and
+// returns the reason it stopped: a refusal before Ready, or an ended-* reason
+// after it.
+func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer, idle claudeEndpointIdleOptions) diagnostics.ClaudeRegistrationReason {
 	if exactActivationRegistryPath(bootstrap.RegistryPath) != nil || bootstrap.Token == "" {
-		return errors.New("claude helper admission failed")
+		return diagnostics.ClaudeRegistrationBootstrapInvalid
 	}
 	process, _, err := claudeadapter.Process(os.Getpid())
 	if err != nil {
-		return errors.New("claude helper identity unavailable")
+		return diagnostics.ClaudeRegistrationHelperIdentity
 	}
 	bootstrap.Registration.Authority.LeaseProcess = process
 	if !bootstrap.Registration.Authority.Valid() {
-		return errors.New("claude registration identity unavailable")
+		return diagnostics.ClaudeRegistrationAuthorityInvalid
 	}
 	socketIdentity, err := inspectClaudeSocket(bootstrap.Socket)
 	if err != nil {
-		return err
+		return diagnostics.ClaudeRegistrationMessagingSocket
 	}
 	leasePath := claudeLeaseSocket(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation, bootstrap.Registration.Authority.RegistrationGeneration)
 	if err := os.Mkdir(filepath.Dir(leasePath), 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return errors.New("claude helper lease unavailable")
+		return diagnostics.ClaudeRegistrationLeaseUnavailable
 	}
 	if !privateClaudeLeaseDir(filepath.Dir(leasePath)) {
-		return errors.New("claude helper lease unavailable")
+		return diagnostics.ClaudeRegistrationLeaseUnavailable
 	}
 	defer os.Remove(filepath.Dir(leasePath))
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: leasePath, Net: "unix"})
 	if err != nil {
-		return errors.New("claude helper lease unavailable")
+		return diagnostics.ClaudeRegistrationLeaseUnavailable
 	}
 	defer listener.Close()
 	listener.SetUnlinkOnClose(false)
@@ -546,17 +692,17 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 		}
 	}()
 	if os.Chmod(leasePath, 0o600) != nil {
-		return errors.New("claude helper lease unavailable")
+		return diagnostics.ClaudeRegistrationLeaseUnavailable
 	}
 	leaseIdentity, err := inspectClaudeSocket(leasePath)
 	if err != nil {
-		return errors.New("claude helper lease unavailable")
+		return diagnostics.ClaudeRegistrationLeaseUnavailable
 	}
 	coordinationTarget := claudeCoordinationTarget{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID,
 		Generation: bootstrap.Generation, Provider: aiModeClaude, Authority: bootstrap.Registration.Authority}
 	coordinationListener, err := localipc.Listen(claudeCoordinationSocket(bootstrap.RegistryPath, coordinationTarget))
 	if err != nil {
-		return errors.New("claude coordination listener is unavailable")
+		return diagnostics.ClaudeRegistrationCoordinationListener
 	}
 	coordinationListenerOwned := true
 	defer func() {
@@ -566,25 +712,18 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 	}()
 	coordinationIdentity := coordinationListener.Identity()
 	if writeClaudeLeaseOwner(leasePath+".json", bootstrap, coordinationIdentity) != nil {
-		return errors.New("claude helper ownership unavailable")
+		return diagnostics.ClaudeRegistrationLeaseOwnerUnavailable
 	}
 	defer os.Remove(leasePath + ".json")
 	store := intmetadata.NewStore(bootstrap.RegistryPath)
 	mutator := intmetadata.DefaultMutator()
+	entered := false
 	_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
-		if actual, _, err := claudeadapter.Process(bootstrap.Registration.Authority.Process.PID); err != nil || actual != bootstrap.Registration.Authority.Process {
-			return errors.New("claude provider process is unavailable")
-		}
-		// Begin and Record commit together, so no helper ever publishes a
-		// claimed registration without Ready.
-		if err := mutator.BeginClaudeRegistrationAfter(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation,
-			bootstrap.PriorRegistrationGeneration, bootstrap.Registration.Authority); err != nil {
-			return err
-		}
-		return mutator.RecordClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration)
+		entered = true
+		return admitClaudeRegistration(reg, bootstrap, mutator)
 	})
 	if err != nil {
-		return errors.New("claude registration admission failed")
+		return claudeRegistrationTransactionReason(err, entered)
 	}
 	defer func() {
 		_, _, _ = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
@@ -594,11 +733,11 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 	}()
 	initial, err := store.LoadDegradedReadOnly()
 	if err != nil {
-		return errors.New("claude registration is unavailable")
+		return diagnostics.ClaudeRegistrationRegistryUnreadable
 	}
-	expectedRoute, reason := coremetadata.ResolveAgentRoute(initial, bootstrap.AgentUID)
-	if reason != "" || !coordinationTarget.matches(expectedRoute) {
-		return errors.New("claude registration is unavailable")
+	expectedRoute, routeReason := coremetadata.ResolveAgentRoute(initial, bootstrap.AgentUID)
+	if routeReason != "" || !coordinationTarget.matches(expectedRoute) {
+		return diagnostics.ClaudeRegistrationRouteMismatch
 	}
 	identityCurrent := func() bool {
 		if observed, err := inspectClaudeSocket(leasePath); err != nil || observed != leaseIdentity {
@@ -633,7 +772,7 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 		now: idle.now, floor: idle.floor}
 	dialogueBroker, err := newLiveClaudeDialogueBroker(bootstrap.RegistryPath)
 	if err != nil {
-		return err
+		return diagnostics.ClaudeRegistrationDialogueBroker
 	}
 	providerPoster := &liveClaudeProviderPoster{socket: bootstrap.Socket, token: bootstrap.Token,
 		socketIdentity: socketIdentity, process: bootstrap.Registration.Authority.Process, current: current}
@@ -644,23 +783,29 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 	if bootstrap.ReplyTool != nil {
 		replyTool, err = newClaudeReplyToolGate(*bootstrap.ReplyTool)
 		if err != nil {
-			return errClaudeReplyTool
+			return diagnostics.ClaudeRegistrationReplyToolGate
 		}
 	}
 	coordination := startClaudeCoordinationServerWithPoster(coordinationListener, expectedRoute, current, dialogueBroker, providerPoster, replyTool)
 	coordinationListenerOwned = false
 	defer coordination.Close()
 	if !current() {
-		return errors.New("claude registration is stale")
+		return diagnostics.ClaudeRegistrationStaleBeforeAck
 	}
 	// Record already succeeded, so a failed write means only that the hook
 	// stopped waiting (Claude Code ends it at its hook timeout). Exiting here
 	// would clear the Ready registration this helper just recorded and leave a
 	// live Claude registered and then lost, so the helper keeps serving.
 	_, _ = ack.Write([]byte{1})
+	if idle.admitted != nil {
+		idle.admitted()
+	}
 	for {
-		if ctx.Err() != nil || !idleRegistry.current(identityCurrent, registryCurrent) {
-			return nil
+		if ctx.Err() != nil {
+			return diagnostics.ClaudeRegistrationEndedContextDone
+		}
+		if !idleRegistry.current(identityCurrent, registryCurrent) {
+			return diagnostics.ClaudeRegistrationEndedNotCurrent
 		}
 		_ = listener.SetDeadline(time.Now().Add(claudeEndpointPollInterval))
 		connection, err := listener.AcceptUnix()
@@ -668,9 +813,76 @@ func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpoi
 			if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
 				continue
 			}
-			return nil
+			return diagnostics.ClaudeRegistrationEndedAcceptFailed
 		}
 		answerClaudeLeaseReadiness(connection, current, time.Now)
+	}
+}
+
+// admitClaudeRegistration is the helper's one claim-and-record transaction.
+// Begin and Record commit together, so no helper ever publishes a claimed
+// registration without Ready. Every refusal is a *claudeRegistrationRefusal,
+// which the Store hands back unchanged.
+func admitClaudeRegistration(reg *coremetadata.Registry, bootstrap claudeEndpointBootstrap, mutator coremetadata.Mutator) error {
+	authority := bootstrap.Registration.Authority
+	if actual, _, err := claudeadapter.Process(authority.Process.PID); err != nil || actual != authority.Process {
+		return refuseClaudeRegistration(diagnostics.ClaudeRegistrationProviderProcessGone)
+	}
+	if err := mutator.BeginClaudeRegistrationAfter(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation,
+		bootstrap.PriorRegistrationGeneration, authority); err != nil {
+		return refuseClaudeRegistration(claudeRegistrationClaimRefusal(reg, bootstrap, mutator))
+	}
+	if err := mutator.RecordClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration); err != nil {
+		// Begin just claimed, or found already claimed, this exact generation
+		// and session, so Record can refuse only a different lease recorded
+		// under them.
+		return refuseClaudeRegistration(diagnostics.ClaudeRegistrationClaimRefusedCompeting)
+	}
+	return nil
+}
+
+// claudeRegistrationClaimRefusal names why BeginClaudeRegistrationAfter
+// refused, from the Registry exactly as that refused claim saw it. The
+// unconditional claim shares its target check and nothing else, so it failing
+// on a copy means the activation itself is no longer this helper's; otherwise
+// the registrationGeneration moved: to this helper's own generation under a
+// different session (competing), or to another one (newer).
+func claudeRegistrationClaimRefusal(reg *coremetadata.Registry, bootstrap claudeEndpointBootstrap, mutator coremetadata.Mutator) diagnostics.ClaudeRegistrationReason {
+	authority := bootstrap.Registration.Authority
+	probe := reg.Clone()
+	if mutator.BeginClaudeRegistration(&probe, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, authority) != nil {
+		return diagnostics.ClaudeRegistrationClaimRefusedActivation
+	}
+	if pane, _ := reg.Pane(bootstrap.PaneUID); pane.Status.Activation.Claude.RegistrationGeneration == authority.RegistrationGeneration {
+		return diagnostics.ClaudeRegistrationClaimRefusedCompeting
+	}
+	return diagnostics.ClaudeRegistrationClaimRefusedNewer
+}
+
+// claudeRegistrationTransactionReason classifies a failed claim-and-record
+// transaction. The callback's own refusal comes back unchanged. entered says
+// whether the Store ran the callback: once it did, only the Store's
+// validation and durable write remain to fail; before it, the lock or the
+// degraded-Registry gate refused.
+//
+// lock-acquire-failed is the one fallback: the callback never ran and the
+// Store error is neither a lock timeout nor a degraded Registry. That is a
+// failed lock acquisition, or a locked Registry read or recovery inspection
+// failure the Store did not classify as degraded.
+func claudeRegistrationTransactionReason(err error, entered bool) diagnostics.ClaudeRegistrationReason {
+	var refusal *claudeRegistrationRefusal
+	switch {
+	case errors.As(err, &refusal):
+		return refusal.reason
+	case entered:
+		return diagnostics.ClaudeRegistrationRegistryWriteFailed
+	case errors.Is(err, intmetadata.ErrLockTimeout):
+		return diagnostics.ClaudeRegistrationLockTimeout
+	case errors.Is(err, intmetadata.ErrRegistryDegraded), errors.Is(err, intmetadata.ErrMalformedRegistry),
+		errors.Is(err, intmetadata.ErrRegistryStateLost), errors.Is(err, intmetadata.ErrRegistryPermission):
+		return diagnostics.ClaudeRegistrationRegistryDegraded
+	default:
+		return diagnostics.ClaudeRegistrationLockAcquireFailed
 	}
 }
 
@@ -741,7 +953,7 @@ func classifyClaudeRegistrationLease(registryPath string, route coremetadata.Age
 		return claudeProbeStale
 	}
 	// Dial only Projmux's readiness helper. Never connect to the provider inbox;
-	// its secret path exists only in serveClaudeEndpoint's private memory.
+	// its secret path exists only in serveClaudeRegistration's private memory.
 	connection, err := net.DialTimeout("unix", path, claudeLeaseDialTimeout)
 	if err != nil {
 		return claudeProbeWaitOutcome(err)
