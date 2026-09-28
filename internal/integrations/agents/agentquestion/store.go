@@ -70,6 +70,11 @@ var (
 
 var idPattern = regexp.MustCompile(`^question-[0-9a-f]{16}$`)
 
+// dispositionPattern is the form of the reason a closed record carries. A
+// reader takes any token of this form, including one only a later release
+// writes, so adding a reason never makes an older reader refuse the store.
+var dispositionPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
+
 // NewID mints a question id.
 func NewID() (string, error) {
 	var raw [8]byte
@@ -492,7 +497,7 @@ func validRecord(record Record) bool {
 	if record.Provider != "" && record.Provider != "codex" {
 		return false
 	}
-	if record.Disposition != "" && (record.Provider != "codex" || record.State != StateClosed || record.Disposition != "answered-elsewhere") {
+	if !validDisposition(record) {
 		return false
 	}
 	if _, err := record.ParsedQuestions(); err != nil {
@@ -506,6 +511,19 @@ func validRecord(record Record) bool {
 	default:
 		return false
 	}
+}
+
+// validDisposition admits a reason only on a closed record, of any provider.
+// answered-elsewhere keeps its Codex-only meaning, which ErrAnsweredElsewhere
+// reports.
+func validDisposition(record Record) bool {
+	if record.Disposition == "" {
+		return true
+	}
+	if record.State != StateClosed || !dispositionPattern.MatchString(record.Disposition) {
+		return false
+	}
+	return record.Disposition != "answered-elsewhere" || record.Provider == "codex"
 }
 
 // read decodes the current file without the lock.
