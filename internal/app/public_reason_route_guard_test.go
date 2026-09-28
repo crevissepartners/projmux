@@ -81,7 +81,7 @@ var publicReasonExceptions = map[string]publicReasonException{
 	`internal/app/agent_profile.go (*createCommand).selectCreateProfile spelling`:                 {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/agent_profile.go requireProfileLane spelling`:                                   {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/claude_launch_options.go (*createCommand).preparePersonaLaunch spelling`:        {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
-	`internal/app/claude_launch_options.go requireLaunchOptions spelling`:                         {routes: append(slices.Clone(publicReasonCreateAgentRoutes), "agent resume"), reason: publicReasonDynamicReason},
+	`internal/app/claude_launch_options.go requireLaunchOptions spelling`:                         {routes: append(slices.Clone(publicReasonCreateAgentRoutes), "agent resume", "agent relaunch"), reason: publicReasonDynamicReason},
 	`internal/app/claude_launch_options.go requirePersonaLane spelling`:                           {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/codex_native_thread.go requireInteractiveOnlyProvider spelling`:                 {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create.go requireCanonicalProvider spelling`:                                    {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},

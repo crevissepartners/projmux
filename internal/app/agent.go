@@ -204,6 +204,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.usage, "agent usage", "usage", nil, rest, stdout, stderr)
 	case "resume":
 		return c.runResume(rest, stdout, stderr)
+	case "relaunch":
+		return c.runRelaunch(rest, stdout, stderr)
 	case "persona":
 		return c.runPersona(rest, "persona", stdout, stderr)
 	case "instructions":

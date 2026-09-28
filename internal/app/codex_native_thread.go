@@ -497,13 +497,10 @@ func planNativeCodexResumeOptions(launcher codexNativeAgentLauncher, route codex
 }
 
 func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeThreadController, ref *coremetadata.AgentSessionRef, agentRef string) (codexNativeEndpointRoute, error) {
-	if ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
-	}
-	endpoint := *ref.Codex.Endpoint
-	if err := validateCodexNativeResumeRoute(ref, codexNativeEndpointRoute{Endpoint: endpoint, State: coremetadata.CodexGenerationCurrent}); err != nil {
+	if err := validateStoredCodexNativeResumeRoute(ref); err != nil {
 		return codexNativeEndpointRoute{}, err
 	}
+	endpoint := *ref.Codex.Endpoint
 	if controller == nil {
 		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
@@ -518,6 +515,17 @@ func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeTh
 		return codexNativeEndpointRoute{}, bindCodexResumeAgentRef(err, agentRef)
 	}
 	return route, nil
+}
+
+// validateStoredCodexNativeResumeRoute is the part of
+// resolveCodexNativeResumeRoute that reads only the stored ref: a thread with
+// no durable endpoint, or one whose recorded lifecycle does not admit it, is
+// refused without asking any daemon.
+func validateStoredCodexNativeResumeRoute(ref *coremetadata.AgentSessionRef) error {
+	if ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
+		return &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
+	}
+	return validateCodexNativeResumeRoute(ref, codexNativeEndpointRoute{Endpoint: *ref.Codex.Endpoint, State: coremetadata.CodexGenerationCurrent})
 }
 
 // validateCodexNativeResumeRoute admits a stored Codex thread onto route when

@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 238 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 239 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -121,6 +121,7 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]
+projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
@@ -156,6 +157,7 @@ Subcommands:
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor |
+| [`projmux agent relaunch`](#projmux-agent-relaunch) | Restart one exact Claude or Codex Agent on the same conversation with another model or effort |
 | [`projmux agent instructions`](#projmux-agent-instructions) | Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent persona`](#projmux-agent-persona) | Attach or detach a persona on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent turn`](#projmux-agent-turn) | Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn |
@@ -170,7 +172,7 @@ Subcommands:
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude or Codex Agent's questions from the command line |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
 
 ### `projmux agent status`
 
@@ -239,6 +241,31 @@ projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <re
 A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.
 
 Codex keeps the developer instructions its thread started with; resume cannot replace them.
+
+### `projmux agent relaunch`
+
+Restart one exact Claude or Codex Agent on the same conversation with another model or effort
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged|reused`
+- `address=unchanged`
+- `topology=unchanged|replaced`
+- `desired-state=unchanged|replaced`
+- `runtime=unchanged|materialized`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+```
+
+The model is passed to this one launch and not recorded; the effort is recorded on the Agent, so later resumes re-pass it.
+
+Output modes (`-o`): `json`
 
 ### `projmux agent instructions`
 

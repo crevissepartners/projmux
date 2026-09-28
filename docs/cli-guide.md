@@ -1969,6 +1969,56 @@ back and records nothing. Both flags take create's values and refusals: any
 other provider, an invalid model or effort, and `--dialogue-reply-only` are
 refused before anything changes (`nothing was changed`).
 
+`projmux agent relaunch <agent-ref> [--model <model>] [--effort <level>]
+[--project <ref>] [--window <ref>] [--yes] [--dry-run] [--socket <name> |
+--socket-path <absolute>] [-o json]` restarts one existing Claude or Codex
+Agent on the same UID and the same provider conversation with another model or
+effort; at least one of the two flags is required. It is the restart of
+`agent instructions attach` without the instructions: a Running Agent's managed
+Pane is closed through `delete pane`, and the Agent is brought back through the
+`agent resume` rebind with the overrides (outcome `restarted`, with the new
+Pane in `newPaneUID`); an Offline or Failed Agent is only resumed (outcome
+`resumed`). `--model` is passed once, on that launch, and recorded nowhere;
+`--effort` is recorded as `projmux.io/effort` by the rebind transaction, so a
+failed launch records nothing and later plain resumes pass it again. Nothing
+is written before the stop. On a Codex Agent the model and effort ride the
+native resume as `-m <model>` and `-c model_reasoning_effort=<level>`.
+
+The refusals are those of `agent instructions attach`, with their own reason
+tokens, and all happen before any Registry, tmux, or Pane change, ending with
+`nothing was changed`: a provider other than Claude or Codex
+(`relaunch-provider-unsupported`); an invalid model or effort (create's
+refusal); an Agent with no stored conversation, one that is not Running,
+Offline, or Failed, or one whose final resume would be refused (a Codex thread
+with no durable endpoint included) (`relaunch-no-conversation`); the Agent
+owning the Pane the command runs in (`relaunch-self-target`); and a Running
+Agent whose interaction is not `idle` or `response_complete` -- `unknown`
+included -- without `--yes` (`relaunch-agent-busy`). Outside tmux the stop
+needs `--socket <name>` or `--socket-path <absolute>`, exactly as `delete pane`
+does. Only `--effort` equal to the recorded effort on a Running Agent reports
+`unchanged` and restarts nothing; `--model` always restarts, because projmux
+does not know which model a provider runs. `--dry-run` changes nothing and
+reports `would-restart` or `would-resume`.
+
+`-o json` prints exactly one object with `action` (`relaunch`), `dryRun`,
+`outcome` (`unchanged`, `restarted`, `resumed`, `would-restart`, or
+`would-resume`), `agentUID`, `agentName`, `provider`, `phase`, `interaction`,
+`paneUID`, `newPaneUID`, `currentEffort` (the recorded effort), `newEffort`
+(the requested effort; empty when only `--model` is given, and the recorded
+effort carries on), `newModel`, `restart`, `confirmationRequired`, and
+`unchanged`; the empty string fields are omitted. Without `-o json` the output
+of the stop and the resume is followed by one result line.
+
+If closing the managed Pane reports an error, the command checks whether that
+Pane is still alive: if it is, the old session keeps running and the command
+fails with the Registry unchanged; if it is already closed, the resume proceeds
+with a warning on stderr; if it cannot tell, stderr prints the same
+`projmux agent relaunch` command to re-run. If the resume fails after the stop,
+the Agent stays Offline with its previous effort and stderr prints the
+`projmux agent resume uid:<agent> --project uid:<project> --window
+uid:<window> --model <model> --effort <level>` command, with the flags that
+were given, that finishes the job.
+
 A Claude conversation opened from the resume picker creates a new Agent, and
 when Agents in the Registry already record that conversation (in any Project or
 Window, live or not) the new Agent inherits their launch values: the named
