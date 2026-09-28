@@ -1610,13 +1610,13 @@ var routes = []Route{
 		Summary:        "Read operational events or create an explicit local support report",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
-			"projmux diagnostics log [--json] [--tail <n>] [--level info|error] [--component <name>] [--path]",
+			"projmux diagnostics log [--json] [--tail <n>] [--level info|warn|error] [--component <name>] [--path]",
 			"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]",
 			"projmux diagnostics report [--output <path>]",
 		},
 		Canonical: []string{"diagnostics log", "diagnostics agent-hook", "diagnostics report"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "log", Invocation: InvocationFanOut, Summary: "Read the bounded local operations journal", Usage: []string{"projmux diagnostics log [--json] [--tail <n>] [--level info|error] [--component <name>] [--path]"}, Canonical: []string{"diagnostics log"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "log", Invocation: InvocationFanOut, Summary: "Read the bounded local operations journal", Usage: []string{"projmux diagnostics log [--json] [--tail <n>] [--level info|warn|error] [--component <name>] [--path]"}, Canonical: []string{"diagnostics log"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "agent-hook", Invocation: InvocationFanOut, Summary: "Read the bounded Agent hook ingest journal", Usage: []string{"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]"}, Canonical: []string{"diagnostics agent-hook"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "report", Invocation: InvocationFanOut, Summary: "Create an explicit redacted local support report", Usage: []string{"projmux diagnostics report [--output <path>]"}, Canonical: []string{"diagnostics report"}},
 		},

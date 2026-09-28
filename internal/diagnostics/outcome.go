@@ -12,19 +12,10 @@ func RecordOutcome(store *Store, args []string, runID, version, muxBackend strin
 	if lifecycleRecorded {
 		return nil
 	}
-	// Rejected mixed-root compatibility argv and fully removed roots are a
-	// strict zero-side-effect boundary. In particular, reporting their expected
-	// exit-2/exit-1 result must not create the diagnostics journal they were
-	// forbidden to touch during dispatch.
-	if retiredCLINoWrite(args) {
+	if JournalForbidden(args) {
 		return nil
 	}
 	class := Classify(args)
-	// Doctor owns a strict no-write contract, including invalid flag
-	// invocations. Do not turn its read-only result into a journal write.
-	if class.Command == "doctor" || (class.Command == "diagnostics" && class.Subcommand == "report") {
-		return nil
-	}
 	if commandErr == nil && !class.StateChanging {
 		return nil
 	}
@@ -59,6 +50,26 @@ func RecordOutcome(store *Store, args []string, runID, version, muxBackend strin
 		}
 	}
 	return store.Append(event)
+}
+
+// JournalForbidden reports an invocation that must never append to the
+// operational journal, whatever it does or however it ends. It owns every such
+// boundary, so the top-level outcome and every in-process recorder installed
+// for the whole invocation (the Registry lock observer) honor the same set:
+//
+//   - Rejected mixed-root compatibility argv and fully removed roots are a
+//     strict zero-side-effect boundary. In particular, reporting their expected
+//     exit-2/exit-1 result must not create the diagnostics journal they were
+//     forbidden to touch during dispatch.
+//   - Doctor and the support report own a strict no-write contract, including
+//     invalid flag invocations. Their read-only work never becomes a journal
+//     write.
+func JournalForbidden(args []string) bool {
+	if retiredCLINoWrite(args) {
+		return true
+	}
+	class := Classify(args)
+	return class.Command == "doctor" || (class.Command == "diagnostics" && class.Subcommand == "report")
 }
 
 func retiredCLINoWrite(args []string) bool {

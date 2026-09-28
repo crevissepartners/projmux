@@ -76,7 +76,8 @@ pick, which creates a new Agent), or `resume` (`agent resume`, including the
 resume `agent persona` runs). A successful transaction is `info`/`success`;
 a failed one, including one that was rolled back, is `error`/`error` with
 `kind=runtime`, so the support report's existing error-only projection
-carries it. The record adds only two timings:
+carries it. The record adds two timings and, inside the lock hold, their
+breakdown:
 
 - `duration_ms` runs from entering the create transaction to its return. It
   includes the runtime route bind, the wait for the Registry lock, the time
@@ -92,14 +93,86 @@ carries it. The record adds only two timings:
   excludes the wait for the lock and the Registry read before the mutation
   starts. It is absent when the transaction failed before it entered the
   mutation, and `0 <= lock_held_ms <= duration_ms` always holds.
+- Six phase fields split `lock_held_ms` into the stages of the mutation, in
+  order, each starting where the previous one ended:
+  `phase_guard_ms` (the ownership guards' preflight against tmux),
+  `phase_first_reconcile_ms` (the reconcile pass before the create's own
+  writes), `phase_operation_ms` (the create itself: tmux splits and mirrors,
+  the Registry edit, and for an Agent the supervised child spawn),
+  `phase_second_reconcile_ms` (the reconcile pass after those writes),
+  `phase_reprove_ms` (the re-proof of any route identity the transaction
+  reused), and `phase_store_write_ms` (from the mutation callback returning
+  to the Registry update returning: normalize, validate, the durable write,
+  the unlock, and anything the store does after the unlock before it
+  returns). A phase the transaction never reached, because an earlier stage
+  failed, is absent; the store-write phase is present whenever the mutation
+  was entered. The phases appear only with `lock_held_ms`, and
+  `sum(phase ms) <= lock_held_ms` always holds on disk: a breakdown that
+  would exceed the hold (a clock that went backwards) is dropped whole.
+- `spawn_to_release_ms` is written for `agent` and `resume` only. It runs
+  from the first supervised child spawn -- the split that starts the managed
+  Pane's supervisor returning that Pane -- to the Registry update returning:
+  how much of the child's own Registry lock budget the creator consumed
+  before the child could take the lock. It is absent when no supervised
+  child was spawned, and `0 <= spawn_to_release_ms <= lock_held_ms` always
+  holds.
 
 The record is appended after the transaction returns, so never while the
 Registry lock is held, and a journal failure never changes the create's
 result, exit status, stdout, or stderr. It does not replace the invocation's
 `command.outcome`, and it does not count guard reads or time individual
 guards. The generated Window rename also runs through the same transaction
-and is not recorded, because it is not a create. Every other event family
-rejects `lock_held_ms` and the `create` component.
+and is not recorded, because it is not a create. Every event family other
+than `create.outcome` rejects the `create` component, the six phase fields,
+and `spawn_to_release_ms`; every family other than `create.outcome` and
+`registry.lock.acquisition` rejects `lock_held_ms`.
+
+Registry lock acquisitions use `component=registry` and
+`event=registry.lock.acquisition`. Every acquisition of the Registry mutation
+lock -- a Registry read, update, convergent update, schema migration, or
+admission barrier -- is measured, and one record is written for an
+acquisition that waited at least one second, held the lock at least one
+second, or timed out; every other acquisition writes nothing. The record is
+appended after the lock is released (or after the acquisition gave up), under
+the invocation's `run_id`, and it is best effort: a journal failure, or any
+failure in the recorder, never changes the Registry operation's result or
+the bytes it wrote. When a create's own acquisition is recorded, that append
+runs after the unlock but before the Registry update returns, so its cost
+falls inside that create's `lock_held_ms` and `phase_store_write_ms`. The
+record carries only:
+
+- `command` and `subcommand`: the invocation's catalog command, classified
+  like `command.outcome` and absent for an unclassified invocation. No argv
+  value, prompt, flag, path, pid, or process name is recorded.
+- `operation`: the Registry entry point that took the lock, one of `update`,
+  `update-convergent`, `load`, `migrate`, or `admission-barrier`.
+- `wait_ms`: from just before the acquisition to the grant, or to giving up.
+- `lock_held_ms`: from the grant to just after the release; present only when
+  the lock was held.
+- `duration_ms`: always exactly `wait_ms + lock_held_ms`.
+- `result`, `level`, `kind`, and `code`: a held and released lock whose work
+  succeeded is `success` with no kind or code, at level `info`, or `warn` when
+  it held the lock for five seconds or more. A held lock whose work failed
+  (a refused callback, a failed validation or write) is `error`/`error`,
+  `kind=runtime`, `code=registry.mutation.failed`. A deadline timeout is
+  `error`/`error`, `kind=runtime`, `code=registry.lock.timeout`, and any other
+  acquisition failure is `code=registry.lock.acquire-failed`; neither carries
+  `lock_held_ms`.
+
+`warn` is used by this event alone, and every other event family rejects
+`wait_ms`, the `registry` component, and level `warn`. `diagnostics log
+--level warn` selects these records; the support report's error-only
+projection carries the `error` ones.
+
+A Registry lock timeout error names the process the lock marker records as
+holder, when that process is observed running, by the leading command words
+of its `/proc/<pid>/cmdline`: the program's base name followed by the words
+after it while they look like catalog command words (a lowercase letter, then
+lowercase letters, digits, and hyphens), stopping at the first flag, `--`,
+uid, path, number, or prompt, and at four words in all -- for example
+`holder: pid 1234 (projmux create agent), running`. When the command line
+cannot be read or yields no word, the kernel process name is used, and when
+that cannot be read either, the command is reported as unavailable.
 
 An accepted `agent message send` whose Claude source Agent's registered
 Claude process is not an ancestor of the sender writes one `component=agent`,
@@ -328,7 +401,11 @@ Classification is intentionally conservative for mutation-capable interactive
 commands: opening session/project/settings/popup flows is treated as changing
 even when a user cancels. Explicit read variants (`internal status`, `list`,
 `get`, config rendering, plain welcome, and the diagnostics viewer) remain
-read-only. The successful automatic hook/poll paths `internal agent-hook ingest`, `attention
+read-only. Read-only classification governs `command.outcome` only: a
+read-only command whose locked Registry read waited for or held the lock for a
+second or more still writes its `registry.lock.acquisition` measurement, except
+Doctor, the support report, and the retired no-write argv, which never append.
+The successful automatic hook/poll paths `internal agent-hook ingest`, `attention
 arm`, `attention clear`, `attention window`, `internal tmux autosave-session-state`, and
 `window record` are also read-only so high-frequency operation does not append
 to the journal; an error from any of them still records exactly one safe error

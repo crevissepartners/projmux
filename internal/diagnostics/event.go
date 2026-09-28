@@ -57,6 +57,19 @@ type Event struct {
 	WindowUID          string `json:"window_uid,omitempty"`
 	PaneUID            string `json:"pane_uid,omitempty"`
 	AgentUID           string `json:"agent_uid,omitempty"`
+	// WaitMS is how long one Registry lock acquisition waited; only
+	// registry.lock.acquisition carries it.
+	WaitMS *int64 `json:"wait_ms,omitempty"`
+	// The create phase fields split one create.outcome's lock_held_ms into the
+	// stages of its Registry mutation, and SpawnToReleaseMS is the part of it
+	// after the first supervised child spawn. Only create.outcome carries them.
+	PhaseGuardMS           *int64 `json:"phase_guard_ms,omitempty"`
+	PhaseFirstReconcileMS  *int64 `json:"phase_first_reconcile_ms,omitempty"`
+	PhaseOperationMS       *int64 `json:"phase_operation_ms,omitempty"`
+	PhaseSecondReconcileMS *int64 `json:"phase_second_reconcile_ms,omitempty"`
+	PhaseReproveMS         *int64 `json:"phase_reprove_ms,omitempty"`
+	PhaseStoreWriteMS      *int64 `json:"phase_store_write_ms,omitempty"`
+	SpawnToReleaseMS       *int64 `json:"spawn_to_release_ms,omitempty"`
 }
 
 // NewRunID creates one opaque correlation ID for a process invocation.
@@ -111,9 +124,12 @@ func SanitizeMessage(message, home string) string {
 }
 
 var (
-	allowedLevels     = stringSet("info", "error")
-	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent)
+	// warn is accepted by the schema and by the log filter, but only
+	// registry.lock.acquisition may carry it; validateEventShape refuses it on
+	// every other family.
+	allowedLevels     = stringSet("info", "warn", "error")
+	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, registryLockAcquisitionEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -278,6 +294,12 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 }
 
 func validateEventShape(event Event) error {
+	if event.Event == registryLockAcquisitionEvent {
+		return validateRegistryLockEvent(event)
+	}
+	if event.Level == "warn" || event.Component == "registry" || event.WaitMS != nil {
+		return fmt.Errorf("registry lock fields on unrelated event")
+	}
 	if event.Event == agentMessageForeignSourceEvent {
 		return validateAgentMessageForeignSourceEvent(event)
 	}
@@ -287,7 +309,7 @@ func validateEventShape(event Event) error {
 	if event.Event == createOutcomeEvent {
 		return validateCreateOutcomeEvent(event)
 	}
-	if event.Component == "create" || event.LockHeldMS != nil {
+	if event.Component == "create" || event.LockHeldMS != nil || event.hasCreatePhaseFields() {
 		return fmt.Errorf("create fields on unrelated event")
 	}
 	if event.Event == teardownDecisionEvent {
@@ -578,6 +600,25 @@ func (event Event) hasAIFields() bool {
 }
 
 func (event Event) hasResourceFields() bool { return event.ResourceResult != "" }
+
+// hasCreatePhaseFields reports any of the create.outcome lock breakdown
+// fields, which no other family may carry.
+func (event Event) hasCreatePhaseFields() bool {
+	for _, value := range event.createPhaseFields() {
+		if value != nil {
+			return true
+		}
+	}
+	return event.SpawnToReleaseMS != nil
+}
+
+// createPhaseFields lists the phase fields in CreatePhase order.
+func (event Event) createPhaseFields() [createPhaseCount]*int64 {
+	return [createPhaseCount]*int64{
+		event.PhaseGuardMS, event.PhaseFirstReconcileMS, event.PhaseOperationMS,
+		event.PhaseSecondReconcileMS, event.PhaseReproveMS, event.PhaseStoreWriteMS,
+	}
+}
 
 func (event Event) nonNegativeCounts() bool {
 	for _, value := range []*int{event.WindowCount, event.PaneCount, event.ShellRecipeCount, event.AgentRecipeCount, event.StartupRecipeCount, event.ItemCount, event.ResumedCount, event.SkippedCount} {

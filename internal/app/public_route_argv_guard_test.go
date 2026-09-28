@@ -1018,7 +1018,7 @@ var publicRouteArgvValueGuardRows = []publicRouteArgvValueRow{
 	{route: "create antigravity", flag: "--cwd-from", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueCreateReason},
 	{route: "create notification", flag: "--severity", kind: publicRouteArgvValueStaticRow, reason: publicRouteArgvValueNotifyReason},
 
-	{route: "diagnostics log", flag: "--level", kind: publicRouteArgvValueUnechoedRow, echo: "diagnostics log --level must be info or error", reason: "the reason text names the allowed values, not the refused one"},
+	{route: "diagnostics log", flag: "--level", kind: publicRouteArgvValueUnechoedRow, echo: "diagnostics log --level must be info, warn, or error", reason: "the reason text names the allowed values, not the refused one"},
 	{route: "get notifications", flag: "--ui", kind: publicRouteArgvValueUnechoedRow, echo: "get notifications --ui must be table or sidebar", reason: "the reason text names the allowed values, not the refused one"},
 	{route: "runtime attach", flag: "--fallback", kind: publicRouteArgvValueUnechoedRow, echo: "runtime attach fallback must be one of: home, ephemeral", reason: "the reason text names the allowed values, not the refused one"},
 }

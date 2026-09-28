@@ -163,3 +163,117 @@ func TestCreateOutcomeEventClosedShape(t *testing.T) {
 		t.Fatal("component create accepted on command.outcome")
 	}
 }
+
+func createPhasesOf(ms ...int64) CreatePhases {
+	var phases CreatePhases
+	for i, value := range ms {
+		d := time.Duration(value) * time.Millisecond
+		phases[i] = &d
+	}
+	return phases
+}
+
+func createPhaseSum(event Event) (int64, int) {
+	var sum int64
+	present := 0
+	for _, value := range event.createPhaseFields() {
+		if value != nil {
+			sum += *value
+			present++
+		}
+	}
+	return sum, present
+}
+
+// TestCreateOutcomePhasesSumToAtMostTheLockHold pins the lock breakdown: the
+// phases a transaction entered are recorded, their sum never exceeds the lock
+// hold on disk (a breakdown that would is dropped whole), and the spawn share
+// belongs to Agent and resume creates alone, clamped to the hold.
+func TestCreateOutcomePhasesSumToAtMostTheLockHold(t *testing.T) {
+	t.Parallel()
+	store := NewStore(filepath.Join(t.TempDir(), "operations.jsonl"))
+	recorder := NewLifecycleRecorder(store, "create-run", "1.0.0", "tmux").Create()
+	held := createDuration(60 * time.Millisecond)
+	recorder.Record(CreateOutcome{Kind: CreateKindAgent, Result: LifecycleSuccess, Duration: 90 * time.Millisecond, LockHeld: held,
+		Phases: createPhasesOf(10, 10, 20, 10, 5, 5), SpawnToRelease: createDuration(30 * time.Millisecond)})
+	recorder.Record(CreateOutcome{Kind: CreateKindAgent, Result: LifecycleSuccess, Duration: 90 * time.Millisecond, LockHeld: held,
+		Phases: createPhasesOf(10, 10, 20, 10, 5, 6), SpawnToRelease: createDuration(time.Second)})
+	recorder.Record(CreateOutcome{Kind: CreateKindResume, Result: LifecycleError, Duration: 90 * time.Millisecond, LockHeld: held,
+		Phases: createPhasesOf(10, 10, -5), SpawnToRelease: createDuration(-time.Second)})
+	recorder.Record(CreateOutcome{Kind: CreateKindWindow, Result: LifecycleSuccess, Duration: 90 * time.Millisecond, LockHeld: held,
+		Phases: createPhasesOf(10, 10, 20, 10, 5, 5), SpawnToRelease: createDuration(30 * time.Millisecond)})
+	recorder.Record(CreateOutcome{Kind: CreateKindPane, Result: LifecycleError, Duration: 90 * time.Millisecond,
+		Phases: createPhasesOf(10), SpawnToRelease: createDuration(30 * time.Millisecond)})
+	events, err := store.Read()
+	if err != nil || len(events) != 5 {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+	if sum, present := createPhaseSum(events[0]); sum != 60 || present != 6 || *events[0].PhaseOperationMS != 20 ||
+		events[0].SpawnToReleaseMS == nil || *events[0].SpawnToReleaseMS != 30 {
+		t.Fatalf("agent breakdown = %+v, want six phases summing to 60 and spawn 30", events[0])
+	}
+	if sum, present := createPhaseSum(events[1]); present != 0 || sum != 0 || events[1].SpawnToReleaseMS == nil || *events[1].SpawnToReleaseMS != 60 {
+		t.Fatalf("over-sum breakdown = %+v, want every phase dropped and spawn clamped to the hold", events[1])
+	}
+	if sum, present := createPhaseSum(events[2]); present != 3 || sum != 20 || *events[2].PhaseOperationMS != 0 ||
+		events[2].PhaseSecondReconcileMS != nil || events[2].SpawnToReleaseMS == nil || *events[2].SpawnToReleaseMS != 0 {
+		t.Fatalf("partial resume breakdown = %+v, want the three entered phases clamped and spawn 0", events[2])
+	}
+	if sum, present := createPhaseSum(events[3]); present != 6 || sum != 60 || events[3].SpawnToReleaseMS != nil {
+		t.Fatalf("window breakdown = %+v, want phases and no spawn", events[3])
+	}
+	if events[4].LockHeldMS != nil || events[4].hasCreatePhaseFields() {
+		t.Fatalf("pre-lock outcome = %+v, want no breakdown without a lock hold", events[4])
+	}
+
+	valid := createOutcomeFixture()
+	valid.Operation = string(CreateKindAgent)
+	valid.PhaseGuardMS, valid.PhaseOperationMS, valid.PhaseStoreWriteMS = createLockHeld(10), createLockHeld(15), createLockHeld(5)
+	valid.SpawnToReleaseMS = createLockHeld(30)
+	if _, err := sanitizeEvent(valid, ""); err != nil {
+		t.Fatalf("valid breakdown rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*Event){
+		"sum over hold":  func(e *Event) { e.PhaseReproveMS = createLockHeld(1) },
+		"negative phase": func(e *Event) { e.PhaseFirstReconcileMS = createLockHeld(-1) },
+		"phase without":  func(e *Event) { e.LockHeldMS, e.SpawnToReleaseMS = nil, nil },
+		"spawn without": func(e *Event) {
+			e.LockHeldMS, e.PhaseGuardMS, e.PhaseOperationMS, e.PhaseStoreWriteMS = nil, nil, nil, nil
+		},
+		"spawn on window":    func(e *Event) { e.Operation = string(CreateKindWindow) },
+		"spawn on pane":      func(e *Event) { e.Operation = string(CreateKindPane) },
+		"spawn over hold":    func(e *Event) { e.SpawnToReleaseMS = createLockHeld(31) },
+		"negative spawn":     func(e *Event) { e.SpawnToReleaseMS = createLockHeld(-1) },
+		"wait on create":     func(e *Event) { e.WaitMS = createLockHeld(1) },
+		"warn on create":     func(e *Event) { e.Level = "warn" },
+		"registry on create": func(e *Event) { e.Component = "registry" },
+	} {
+		event := valid
+		mutate(&event)
+		if _, err := sanitizeEvent(event, ""); err == nil {
+			t.Fatalf("%s accepted %+v", name, event)
+		}
+	}
+
+	// Every other family refuses the phase fields and the spawn share.
+	for name, base := range otherFamilyFixtures() {
+		if base.Event == createOutcomeEvent {
+			continue
+		}
+		for field, mutate := range map[string]func(*Event){
+			"phase_guard_ms":            func(e *Event) { e.PhaseGuardMS = createLockHeld(0) },
+			"phase_first_reconcile_ms":  func(e *Event) { e.PhaseFirstReconcileMS = createLockHeld(0) },
+			"phase_operation_ms":        func(e *Event) { e.PhaseOperationMS = createLockHeld(0) },
+			"phase_second_reconcile_ms": func(e *Event) { e.PhaseSecondReconcileMS = createLockHeld(0) },
+			"phase_reprove_ms":          func(e *Event) { e.PhaseReproveMS = createLockHeld(0) },
+			"phase_store_write_ms":      func(e *Event) { e.PhaseStoreWriteMS = createLockHeld(0) },
+			"spawn_to_release_ms":       func(e *Event) { e.SpawnToReleaseMS = createLockHeld(0) },
+		} {
+			event := base
+			mutate(&event)
+			if _, err := sanitizeEvent(event, ""); err == nil {
+				t.Fatalf("%s accepted %s", name, field)
+			}
+		}
+	}
+}

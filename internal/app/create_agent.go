@@ -520,6 +520,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD,
 				c.runtime.supervisedLaunch(ctx, work.activation, workLaunchArgv))
 			if paneID != "" {
+				// The supervised child now runs and will want the Registry lock
+				// this transaction holds; create.outcome measures the rest of the hold.
+				markSupervisedSpawn(ctx)
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
 				}

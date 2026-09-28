@@ -1285,6 +1285,9 @@ func (c *createCommand) openIntentAgent(
 	paneID, err := c.runtime.splitPane(ctx, target.anchorPaneID, target.placement, workspace.CWD,
 		c.runtime.supervisedLaunch(ctx, activation, launchArgv))
 	if paneID != "" {
+		// The supervised child now runs and will want the Registry lock
+		// this transaction holds; create.outcome measures the rest of the hold.
+		markSupervisedSpawn(ctx)
 		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 			return intentAgentOpened{}, errors.Join(err, claimErr)
 		}

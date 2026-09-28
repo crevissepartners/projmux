@@ -1227,13 +1227,15 @@ func TestRegistryLockDeadlineIsMeasuredOnTheInjectedClock(t *testing.T) {
 }
 
 // expectedLiveHolder is the holder text for this process, which the timeout
-// tests use as the observable owner. Where /proc is absent the command name
+// tests use as the observable owner. The holder is named by the leading command
+// words of its argv, and a test binary's argv[0] is followed by -test.* flags,
+// so the name is the binary's basename alone. Where /proc is absent the command
 // cannot be read, and the error must say so instead of inventing one.
 func expectedLiveHolder(t *testing.T) string {
 	t.Helper()
 	command := "command unavailable"
-	if data, err := os.ReadFile("/proc/self/comm"); err == nil {
-		command = strings.TrimSuffix(string(data), "\n")
+	if _, err := os.ReadFile("/proc/self/cmdline"); err == nil {
+		command = filepath.Base(os.Args[0])
 	}
 	return fmt.Sprintf("holder: pid %d (%s), running", os.Getpid(), command)
 }

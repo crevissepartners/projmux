@@ -1951,10 +1951,13 @@ fi
 # hook-installed server. Their generated pane-exited/window-unlinked hooks run
 # detached (`run-shell -b`), and each converge may append a typed
 # topology.teardown.decision record whenever it finishes, independent of the
-# command under measurement. Count every other record, so any outcome, lifecycle,
-# notify, or other event the measured command itself appends still fails.
+# command under measurement. registry.lock.acquisition records are load-dependent
+# Registry lock measurements that any process, read-only ones included, may
+# append when a lock wait or hold reaches a second. Count every other record, so
+# any outcome, lifecycle, notify, or other event the measured command itself
+# appends still fails.
 operations_journal_lines_excluding_async_teardown() {
-  grep -vc '"event":"topology.teardown.decision"' "$operations_log" || true
+  grep -vc -e '"event":"topology.teardown.decision"' -e '"event":"registry.lock.acquisition"' "$operations_log" || true
 }
 
 before_read_only="$(operations_journal_lines_excluding_async_teardown)"

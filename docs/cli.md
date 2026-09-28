@@ -2147,7 +2147,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux diagnostics log [--json] [--tail <n>] [--level info|error] [--component <name>] [--path]
+projmux diagnostics log [--json] [--tail <n>] [--level info|warn|error] [--component <name>] [--path]
 projmux diagnostics agent-hook [--tail <n>] [--json] [--path]
 projmux diagnostics report [--output <path>]
 ```
@@ -2180,7 +2180,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux diagnostics log [--json] [--tail <n>] [--level info|error] [--component <name>] [--path]
+projmux diagnostics log [--json] [--tail <n>] [--level info|warn|error] [--component <name>] [--path]
 ```
 
 ### `projmux diagnostics agent-hook`
