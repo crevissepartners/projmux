@@ -82,6 +82,14 @@ type profileLaunch struct {
 	settings    string
 	codexPolicy codexappserver.ThreadPolicy
 	notApplied  []cli.ReceiptProfileItem
+	// source is how the create selected the profile
+	// (coremetadata.SettingSourceFlag or coremetadata.SettingSourceRole), and
+	// filledModel and filledEffort say whether the profile, not a flag, gave
+	// the create its model and effort. The instructions say so themselves
+	// (personaOption "profile").
+	source       string
+	filledModel  bool
+	filledEffort bool
 }
 
 func (p profileLaunch) active() bool { return p.name != "" }
@@ -152,6 +160,7 @@ func (c *createCommand) profileStore() (profile.Store, error) {
 type selectedCreateProfile struct {
 	name   string
 	option string
+	source string
 	loaded profile.Profile
 	spec   profile.Spec
 }
@@ -173,6 +182,7 @@ func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreat
 	}
 	name := flags.profile
 	option := "--profile " + flags.profile
+	source := coremetadata.SettingSourceFlag
 	role := ""
 	if name == "" {
 		labels, err := labelMap(flags.labels)
@@ -185,6 +195,7 @@ func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreat
 			return selectedCreateProfile{}, nil
 		}
 		option = "--label " + profileRoleLabel + "=" + role
+		source = coremetadata.SettingSourceRole
 	}
 	// The store is opened only once a profile has to be read, so a create
 	// that selects none never depends on the config home.
@@ -220,7 +231,7 @@ func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreat
 		}
 		return selectedCreateProfile{}, fmt.Errorf("%s %s: %w; nothing was created", spelling, option, err)
 	}
-	return selectedCreateProfile{name: name, option: option, loaded: loaded, spec: spec}, nil
+	return selectedCreateProfile{name: name, option: option, source: source, loaded: loaded, spec: spec}, nil
 }
 
 // resolveCreateProfile decides the profile one Agent create applies and merges
@@ -280,7 +291,7 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 		return usageError(fmt.Sprintf("%s %s: profile %q sets permissions, which --provider %s cannot apply (%s); nothing was created",
 			spelling, option, name, provider, profileReasonPermissionsUnsupported))
 	}
-	launch := profileLaunch{name: loaded.Name, digest: loaded.Digest, spec: spec}
+	launch := profileLaunch{name: loaded.Name, digest: loaded.Digest, spec: spec, source: selected.source}
 	if provider == aiModeCodex {
 		if launch.codexPolicy, err = codexThreadPolicy(spec.Permissions); err != nil {
 			return usageError(fmt.Sprintf("%s %s: profile %q: %v; nothing was created", spelling, option, name, err))
@@ -308,9 +319,10 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 	for _, overlap := range []struct {
 		item, value string
 		flag        *string
+		filled      *bool
 	}{
-		{profileItemModel, spec.Model, &flags.model},
-		{profileItemEffort, spec.Effort, &flags.effort},
+		{profileItemModel, spec.Model, &flags.model, &launch.filledModel},
+		{profileItemEffort, spec.Effort, &flags.effort, &launch.filledEffort},
 	} {
 		switch {
 		case overlap.value == "":
@@ -319,7 +331,7 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 		case *overlap.flag != "":
 			launch.skip(overlap.item, provider, profileReasonOverriddenByFlag)
 		default:
-			*overlap.flag = overlap.value
+			*overlap.flag, *overlap.filled = overlap.value, true
 		}
 	}
 	if claude && spec.Permissions.Sandbox != "" {

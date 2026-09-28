@@ -50,7 +50,7 @@ func TestCreateClaudeAgentWithEffortAndModelRecordsBothOnTheAgent(t *testing.T) 
 		t.Fatalf("plans = %+v, want the first launch with --effort low", launcher.plans)
 	}
 	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
-	if want := modelEffortAnnotations("sonnet", "low"); !maps.Equal(agent.Metadata.Annotations, want) {
+	if want := plusSources(modelEffortAnnotations("sonnet", "low"), sources(modelFlag, effortFlag)...); !maps.Equal(agent.Metadata.Annotations, want) {
 		t.Fatalf("Agent annotations = %v, want only %v", agent.Metadata.Annotations, want)
 	}
 	pane, ok := store.registry.Pane(agent.Status.PaneRef)
@@ -88,7 +88,7 @@ func TestCreateAgentWithOnlyAModelRecordsOnlyTheModel(t *testing.T) {
 				t.Fatalf("plans = %+v, want one launch with --model %s", launcher.plans, test.model)
 			}
 			agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
-			want := map[string]string{coremetadata.AnnotationAgentModel: test.model}
+			want := plusSources(map[string]string{coremetadata.AnnotationAgentModel: test.model}, modelFlag...)
 			if !maps.Equal(agent.Metadata.Annotations, want) {
 				t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
 			}
@@ -484,7 +484,7 @@ func TestAgentResumeWithModelAndEffortPassesBothAndRecordsBoth(t *testing.T) {
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
 	recorded := agent.Metadata.Annotations
-	wantRecorded := withModelAnnotation("opus", withEffortAnnotation("max", topic))
+	wantRecorded := plusSources(withModelAnnotation("opus", withEffortAnnotation("max", topic)), modelEffortResume...)
 	if !maps.Equal(recorded, wantRecorded) {
 		t.Fatalf("Agent annotations = %v, want %v", recorded, wantRecorded)
 	}
@@ -511,7 +511,7 @@ func TestAgentResumeWithOnlyAModelRecordsTheModel(t *testing.T) {
 		t.Fatalf("exec argv tail = %q, want %q", got, want)
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	if wantRecorded := withModelAnnotation("sonnet", withEffortAnnotation("low", topic)); !maps.Equal(agent.Metadata.Annotations, wantRecorded) {
+	if wantRecorded := plusSources(withModelAnnotation("sonnet", withEffortAnnotation("low", topic)), coremetadata.AnnotationAgentModelSource, coremetadata.SettingSourceResume); !maps.Equal(agent.Metadata.Annotations, wantRecorded) {
 		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, wantRecorded)
 	}
 }
@@ -537,7 +537,7 @@ func TestAPlainResumeKeepsTheRecordedModelAndDoesNotPassIt(t *testing.T) {
 	if got, want := execArgvTail(t, argv, aiModeClaude), []string{"--effort", "max", "--resume", personaResumeConversation}; !slices.Equal(got, want) {
 		t.Fatalf("effort-only resume exec argv tail = %q, want %q", got, want)
 	}
-	if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, modelEffortAnnotations("haiku", "max")) {
+	if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, plusSources(modelEffortAnnotations("haiku", "max"), coremetadata.AnnotationAgentEffortSource, coremetadata.SettingSourceResume)) {
 		t.Fatalf("effort-only resume annotations = %v, want the model kept", agent.Metadata.Annotations)
 	}
 }
@@ -642,7 +642,7 @@ func TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites(t *testing.
 		t.Fatalf("split-window calls = %v, want one launch with the overrides", calls)
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	if want := modelEffortAnnotations("gpt-6", "high"); !maps.Equal(agent.Metadata.Annotations, want) {
+	if want := plusSources(modelEffortAnnotations("gpt-6", "high"), modelEffortResume...); !maps.Equal(agent.Metadata.Annotations, want) {
 		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
 	}
 }

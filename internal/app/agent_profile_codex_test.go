@@ -129,7 +129,7 @@ func TestCodexNativeCreateSendsTheProfileSandboxAndApprovalOnThreadStart(t *test
 				t.Fatalf("native creates = %+v, want one carrying policy %+v", native.creates, test.want)
 			}
 			agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
-			if !maps.Equal(agent.Metadata.Annotations, profileAnnotations(test.name, loaded.Digest)) {
+			if !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations(test.name, loaded.Digest), profileFlag...)) {
 				t.Fatalf("Agent annotations = %v, want the profile pair", agent.Metadata.Annotations)
 			}
 
@@ -556,7 +556,7 @@ func TestResumePickerNativeCodexResumeResendsTheInheritedProfilePolicy(t *testin
 	}
 	agents := fx.store.registry.AgentsOf(fx.windowUID)
 	created := agents[len(agents)-1]
-	if created.Metadata.UID == "agt-beta-codex" || !maps.Equal(created.Metadata.Annotations, profileAnnotations("guard", digest)) {
+	if created.Metadata.UID == "agt-beta-codex" || !maps.Equal(created.Metadata.Annotations, plusSources(profileAnnotations("guard", digest), profileInherited...)) {
 		t.Fatalf("picker Agent %s annotations = %v, want the current digest %s", created.Metadata.UID, created.Metadata.Annotations, digest)
 	}
 

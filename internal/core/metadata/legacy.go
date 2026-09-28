@@ -585,6 +585,63 @@ const AnnotationAgentEffort = "projmux.io/effort"
 // `/model` switch made inside the session.
 const AnnotationAgentModel = "projmux.io/model"
 
+// AnnotationAgentProfileSource, AnnotationAgentInstructionsSource,
+// AnnotationAgentModelSource, and AnnotationAgentEffortSource record where an
+// Agent's profile, instructions, model, and effort came from. Each sits beside
+// the key that holds the value (AnnotationAgentProfile, AnnotationAgentPersona,
+// AnnotationAgentModel, AnnotationAgentEffort) and never changes what that key
+// means.
+//
+// Every writer of a value writes its source in the same transaction, so a
+// launch that fails rolls both back together, and a writer that leaves a value
+// as it was leaves its source as it was too:
+//
+//   - a create: the profile is SettingSourceFlag (--profile) or
+//     SettingSourceRole (a `role` label mapped it); an item the profile filled
+//     in is SettingSourceProfile and an item a create flag gave is
+//     SettingSourceFlag;
+//   - a resume-picker create: the profile and every item it inherited from the
+//     Agents recording the conversation are SettingSourceInherited;
+//   - `agent resume --model/--effort`: SettingSourceResume;
+//   - `agent relaunch`: SettingSourceRelaunch;
+//   - `agent instructions|persona attach|detach`: the instructions are
+//     SettingSourceAttach. A detach leaves the source without the persona: the
+//     Agent was explicitly given no instructions.
+//
+// An item source other than SettingSourceProfile means the value overrides
+// the profile. An absent key means the source is not known: the value was
+// recorded before sources were.
+const (
+	AnnotationAgentProfileSource      = "projmux.io/profile-source"
+	AnnotationAgentInstructionsSource = "projmux.io/instructions-source"
+	AnnotationAgentModelSource        = "projmux.io/model-source"
+	AnnotationAgentEffortSource       = "projmux.io/effort-source"
+)
+
+// The values the setting source annotations take. AnnotationAgentProfileSource
+// takes SettingSourceFlag, SettingSourceRole, SettingSourceInherited, or
+// SettingSourceRelaunch; the item sources take every value but
+// SettingSourceRole.
+const (
+	SettingSourceProfile   = "profile"
+	SettingSourceFlag      = "flag"
+	SettingSourceRole      = "role"
+	SettingSourceResume    = "resume"
+	SettingSourceRelaunch  = "relaunch"
+	SettingSourceAttach    = "attach"
+	SettingSourceInherited = "inherited"
+)
+
+// ValidSettingSource reports whether source is a value the instructions,
+// model, and effort source annotations take.
+func ValidSettingSource(source string) bool {
+	switch source {
+	case SettingSourceProfile, SettingSourceFlag, SettingSourceResume, SettingSourceRelaunch, SettingSourceAttach, SettingSourceInherited:
+		return true
+	}
+	return false
+}
+
 // AnnotationAgentProjectLinkRulesDigest records which label link rules of its
 // Project a Claude Agent's system prompt was last launched with: the sha256
 // lowercase hex digest of the rendered rules (projectlinks.Render). The key is

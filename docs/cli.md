@@ -242,6 +242,8 @@ A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. C
 
 Codex keeps the developer instructions its thread started with; resume cannot replace them.
 
+--model and --effort are recorded on the Agent with the source resume (projmux.io/model-source, projmux.io/effort-source).
+
 ### `projmux agent relaunch`
 
 Restart one exact Claude or Codex Agent on the same conversation with another model or effort
@@ -263,7 +265,7 @@ Allowed effects:
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
-The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort); later resumes re-pass the effort but not the model.
+The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.
 
 Output modes (`-o`): `json`
 

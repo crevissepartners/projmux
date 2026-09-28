@@ -182,7 +182,7 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 	}
 
 	current := coremetadata.PersonaAnnotationsOf(target)
-	want := coremetadata.AgentPersonaAnnotations{SystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff}
+	want := coremetadata.AgentPersonaAnnotations{SystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff, InstructionsSource: coremetadata.SettingSourceAttach}
 	if request.action == "attach" {
 		want.Persona, want.PersonaDigest = loaded.Name, loaded.Digest
 	}
@@ -199,7 +199,7 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 	}
 	// A Running Agent already launched with exactly this persona content and
 	// the snapshot mode that honors it has nothing to gain from a restart.
-	if running && current == want {
+	if running && current.SameLaunch(want) {
 		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
 		result.NewPaneUID = paneUID
 		return writeAgentPersonaResult(stdout, request, result)
@@ -506,12 +506,14 @@ func managedPaneMirrorLive(ctx context.Context, runtime *tmuxPaneDeleteRuntime, 
 // resumePersonaAgent brings the stopped Agent back through the `agent resume`
 // rebinder, planned from the registry as it is now.
 func (c *agentCommand) resumePersonaAgent(spelling, agentUID string, stdout, stderr io.Writer) error {
-	return c.resumeStoppedAgent(agentUID, "", "", stdout, stderr)
+	return c.resumeStoppedAgent(agentUID, "", "", "", stdout, stderr)
 }
 
 // resumeStoppedAgent is resumePersonaAgent with `agent resume --model/--effort`
-// overrides: empty values are a plain resume, byte for byte.
-func (c *agentCommand) resumeStoppedAgent(agentUID, model, effort string, stdout, stderr io.Writer) error {
+// overrides: empty values are a plain resume, byte for byte. source is where
+// the overrides came from, recorded beside them; empty means
+// coremetadata.SettingSourceResume.
+func (c *agentCommand) resumeStoppedAgent(agentUID, model, effort, source string, stdout, stderr io.Writer) error {
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
@@ -527,7 +529,7 @@ func (c *agentCommand) resumeStoppedAgent(agentUID, model, effort string, stdout
 	if err != nil {
 		return err
 	}
-	plan.modelOverride, plan.effortOverride = model, effort
+	plan.modelOverride, plan.effortOverride, plan.overrideSource = model, effort, source
 	return c.rebind.rebind("agent resume", plan, stdout, stderr)
 }
 

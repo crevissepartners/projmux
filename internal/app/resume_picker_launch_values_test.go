@@ -247,7 +247,7 @@ func TestResumePickerInheritsTheLaunchValuesOfTheAgentThatHadTheConversation(t *
 			if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 				t.Fatalf("exec argv tail = %q, want %q", got, want)
 			}
-			if !maps.Equal(agent.Metadata.Annotations, bundle) {
+			if !maps.Equal(agent.Metadata.Annotations, plusSources(bundle, sources(instructionsInh, effortInherited)...)) {
 				t.Fatalf("new Agent annotations = %v, want exactly the bundle %v", agent.Metadata.Annotations, bundle)
 			}
 			if agent.Metadata.Labels != nil {
@@ -359,7 +359,7 @@ func TestResumePickerInheritsNothingWhenTheHoldersDisagree(t *testing.T) {
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 		t.Fatalf("agreeing holders: exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(agent.Metadata.Annotations, bundle) || stderr != "" {
+	if !maps.Equal(agent.Metadata.Annotations, plusSources(bundle, sources(instructionsInh, effortInherited)...)) || stderr != "" {
 		t.Fatalf("agreeing holders: annotations = %v stderr = %q, want %v and nothing", agent.Metadata.Annotations, stderr, bundle)
 	}
 }
@@ -382,7 +382,7 @@ func TestResumePickerDisclosesInheritedValuesItCannotRepass(t *testing.T) {
 	if got, want := execArgvTail(t, argv, aiModeClaude), []string{"--resume", personaResumeConversation}; !slices.Equal(got, want) {
 		t.Fatalf("exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(agent.Metadata.Annotations, bundle) {
+	if !maps.Equal(agent.Metadata.Annotations, plusSources(bundle, sources(instructionsInh, effortInherited)...)) {
 		t.Fatalf("new Agent annotations = %v, want the bundle verbatim %v", agent.Metadata.Annotations, bundle)
 	}
 	// The seam's lines lose their `projmux: ` prefix on this path: the split
@@ -441,8 +441,9 @@ func TestResumePickerOfCodexOrAntigravityInheritsNothingButTheCodexPersona(t *te
 	}{
 		{provider: aiModeCodex, conversation: resumeFixtureConversation, source: aisessions.SourceCodexRollout,
 			wantAnnotations: map[string]string{
-				coremetadata.AnnotationAgentPersona:       "go-reviewer",
-				coremetadata.AnnotationAgentPersonaDigest: "sha256:0",
+				coremetadata.AnnotationAgentPersona:            "go-reviewer",
+				coremetadata.AnnotationAgentPersonaDigest:      "sha256:0",
+				coremetadata.AnnotationAgentInstructionsSource: coremetadata.SettingSourceInherited,
 			}},
 		{provider: aiModeAntigravity, conversation: personaResumeConversation},
 	} {
