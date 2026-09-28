@@ -219,3 +219,48 @@ func TestSetAgentProjectLinkRulesRecordsTheDigestWithTheSnapshotOff(t *testing.T
 		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
 	}
 }
+
+// TestSetAgentGuidanceRecordsTheDigestWithTheSnapshotOff pins the one mutation
+// a resume makes when the agent guidance changed: the digest is replaced (or
+// removed, when the guidance was turned off) together with the sticky snapshot
+// mode off, and every other annotation stays.
+func TestSetAgentGuidanceRecordsTheDigestWithTheSnapshotOff(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 28, 3, 0, 0, 0, time.UTC)
+	mutator := Mutator{Now: func() time.Time { return now }}
+	reg := personaAnnotationFixture()
+	const digest = "0000000000000000000000000000000000000000000000000000000000000002"
+
+	if _, err := mutator.SetAgentGuidance(&reg, "agent-1", digest); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		AnnotationAgentTopic:                "review the parser",
+		AnnotationAgentGuidanceDigest:       digest,
+		AnnotationAgentSystemPromptSnapshot: SystemPromptSnapshotOff,
+	}
+	stored, _ := reg.Agent("agent-1")
+	if !maps.Equal(stored.Metadata.Annotations, want) || !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("annotations = %v updatedAt = %v, want %v at %v", stored.Metadata.Annotations, reg.UpdatedAt, want, now)
+	}
+
+	later := Mutator{Now: func() time.Time { return now.Add(time.Hour) }}
+	if _, err := later.SetAgentGuidance(&reg, "agent-1", digest); err != nil {
+		t.Fatal(err)
+	}
+	if !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("recording the same digest moved updatedAt to %v", reg.UpdatedAt)
+	}
+
+	// Guidance turned off deletes the digest; the snapshot mode stays off.
+	if _, err := later.SetAgentGuidance(&reg, "agent-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	delete(want, AnnotationAgentGuidanceDigest)
+	if stored, _ := reg.Agent("agent-1"); !maps.Equal(stored.Metadata.Annotations, want) {
+		t.Fatalf("guidance off annotations = %v, want %v", stored.Metadata.Annotations, want)
+	}
+	if _, err := mutator.SetAgentGuidance(&reg, "agent-missing", digest); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
+	}
+}

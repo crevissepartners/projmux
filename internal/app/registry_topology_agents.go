@@ -73,6 +73,9 @@ type registryTopologyAgentPlan struct {
 	// links is the Project label link rules the launch reads; materialization
 	// records them, with the snapshot mode off, when they changed.
 	links projectLinksLaunch
+	// guidance is the agent guidance the launch reads; materialization
+	// records it the same way.
+	guidance agentGuidanceLaunch
 }
 
 // decideTopologyAgentContinueEligibility admits only a current managed activation
@@ -387,7 +390,10 @@ func planTopologyAgentReplay(
 	// The rules are the replayed Project's, the one that owns the Agent's
 	// Window, read now and compared with the digest the Agent records.
 	work.links = planProjectLinksWith(launcher, decision.provider, project, agent.Metadata.Annotations)
-	launch, err := launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID, work.links.resumeLaunchAnnotations(agent.Metadata.Annotations))
+	// So is the agent guidance, compared with the digest the Agent records.
+	work.guidance = planAgentGuidanceWith(launcher, decision.provider, agent.Metadata.Annotations)
+	launch, err := launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID,
+		work.guidance.resumeLaunchAnnotations(work.links.resumeLaunchAnnotations(agent.Metadata.Annotations)))
 	if err != nil {
 		plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
 			decision.provider, decision.conversationID, err))
@@ -404,6 +410,10 @@ func planTopologyAgentReplay(
 	}
 	// And Project label link rules the launch could not pass.
 	if notice := cmp.Or(work.links.notice(label), launch.projectLinksNotice(label)); notice != "" {
+		plan.notices = append(plan.notices, notice)
+	}
+	// And agent guidance the launch could not pass.
+	if notice := cmp.Or(work.guidance.notice(label), launch.agentGuidanceNotice(label)); notice != "" {
 		plan.notices = append(plan.notices, notice)
 	}
 	work.conversationID, work.title, work.argv = decision.conversationID, launch.title, launch.argv
@@ -469,6 +479,9 @@ func replayTopologyWindowAgents(
 			return nil, err
 		}
 		if err := replay.links.record(registry, mutator, replay.agent.Metadata.UID); err != nil {
+			return nil, err
+		}
+		if err := replay.guidance.record(registry, mutator, replay.agent.Metadata.UID); err != nil {
 			return nil, err
 		}
 		activation, err := issuePaneActivation(newGeneration, registry, mutator, pane.Metadata.UID, replay.agent.Metadata.UID, operationID)
