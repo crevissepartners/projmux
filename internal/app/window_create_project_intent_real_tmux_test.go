@@ -49,6 +49,14 @@ const (
 
 func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentRealTmux {
 	t.Helper()
+	return newProjectIntentRealTmuxOn(t, ctx, "")
+}
+
+// newProjectIntentRealTmuxOn is newProjectIntentRealTmux. A non-empty
+// freshConfig starts no server: the first create starts the app server itself
+// from that generated config, and the live Project is recorded offline.
+func newProjectIntentRealTmuxOn(t *testing.T, ctx context.Context, freshConfig string) *projectIntentRealTmux {
+	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "ppi-")
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +85,18 @@ func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentR
 	// The default app socket name, so the create's own `-L projmux` probe
 	// finds this server and nothing else.
 	socket := filepath.Join(socketDir, defaultAppSocket)
+	configPath := ""
+	if freshConfig != "" {
+		// The server this create starts reads only the generated config it is
+		// given, and nothing it runs may find the operator's home.
+		environment = append(environment, "HOME="+root, "XDG_CONFIG_HOME="+filepath.Join(root, ".config"))
+		t.Setenv("HOME", root)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, ".config"))
+		configPath = filepath.Join(root, "tmux.conf")
+		if err := os.WriteFile(configPath, []byte(freshConfig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	liveRoot, stoppedRoot := filepath.Join(root, "live"), filepath.Join(root, "stopped")
 	for _, dir := range []string{liveRoot, stoppedRoot} {
 		if err := os.Mkdir(dir, 0o755); err != nil {
@@ -90,35 +110,12 @@ func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentR
 		return strings.TrimSpace(string(out)), err
 	}
 	const liveSession, liveUID, liveWindowUID, livePaneUID = "intent-live", projectIntentLiveUID, "win-intent-live", "pan-intent-live"
-	created, err := tmux("new-session", "-d", "-s", liveSession, "-n", "main", "-c", liveRoot,
-		"-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}\t#{pid}\t#{socket_path}", "tail", "-f", "/dev/null")
-	if err != nil {
-		t.Fatalf("start isolated tmux: %v: %s", err, created)
-	}
-	fields := strings.Split(created, "\t")
-	var sessionID, windowID, paneID, serverPID string
-	if len(fields) == 5 {
-		sessionID, windowID, paneID, serverPID = fields[0], fields[1], fields[2], fields[3]
-	}
-	killRealTmuxServerOnCleanup(t, environment, socket, realTmuxServerPID(t, serverPID))
-	if len(fields) != 5 || exactTmuxHandle(sessionID, "$") == "" || fields[4] != socket {
-		t.Fatalf("isolated tmux receipt = %q, want session/window/pane/pid on %s", created, socket)
-	}
-	for _, option := range [][]string{
-		{"-g", tmuxopts.AppGlobal, "1"},
-		{"-g", runtimeMutationSocketNameOption, defaultAppSocket},
-		// A Pane created with no command runs this instead of a shell.
-		{"-g", "default-command", "exec sleep 600"},
-		{"-t", sessionID, tmuxopts.ProjectUIDSession, liveUID},
-		{"-t", sessionID, tmuxopts.ProjectPathSession, liveRoot},
-		{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"},
-		{"-w", "-t", windowID, tmuxopts.WindowUID, liveWindowUID},
-		{"-w", "-t", windowID, tmuxopts.WindowName, "main"},
-		{"-p", "-t", paneID, tmuxopts.PaneUID, livePaneUID},
-	} {
-		if out, err := tmux(append([]string{"set-option"}, option...)...); err != nil {
-			t.Fatalf("seed isolated tmux %q: %v: %s", option, err, out)
-		}
+	if freshConfig != "" {
+		// Registered after the root removal above, so LIFO kills whatever
+		// server the create left while its socket still exists.
+		killRealTmuxServerOnCleanup(t, environment, socket, 0)
+	} else {
+		startProjectIntentLiveServer(t, tmux, environment, socket, liveSession, liveUID, liveWindowUID, livePaneUID, liveRoot)
 	}
 
 	ownedBy := func(kind coremetadata.Kind, uid string) *coremetadata.OwnerRef {
@@ -130,7 +127,7 @@ func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentR
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: coremetadata.ObjectMeta{UID: liveUID, Name: liveSession, CreatedAt: resourceFixtureClock},
 		Spec:     coremetadata.ProjectSpec{Root: liveRoot, PrimaryWindowRef: liveWindowUID},
-		Status:   coremetadata.ProjectStatus{Session: &coremetadata.SessionProjection{Name: liveSession, Live: true}},
+		Status:   coremetadata.ProjectStatus{Session: &coremetadata.SessionProjection{Name: liveSession, Live: freshConfig == ""}},
 	}, {
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: coremetadata.ObjectMeta{UID: projectIntentStoppedUID, Name: projectIntentStoppedName, CreatedAt: resourceFixtureClock},
@@ -183,7 +180,8 @@ func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentR
 		runtime: &materializer{
 			runner: routed, mirror: intmetadata.NewMirror(routed),
 			sessions: inttmux.NewClient(routed, inttmux.WithSocketName(defaultAppSocket)), target: target,
-			warn: io.MultiWriter(testWarnWriter{t}, warnings), lookupEnv: lookupEnv,
+			configPath: configPath,
+			warn:       io.MultiWriter(testWarnWriter{t}, warnings), lookupEnv: lookupEnv,
 			executable: func() (string, error) { return "", errors.New("no supervisor in this test") },
 		},
 		agents:  sleepAgentLauncher{newFakeAgentLauncher()},
@@ -223,6 +221,42 @@ func newProjectIntentRealTmux(t *testing.T, ctx context.Context) *projectIntentR
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }
 	command.bindExplicitRuntime = func(ctx context.Context) error { return bind(ctx, true) }
 	return &projectIntentRealTmux{tmux: tmux, store: store, create: command, resumes: resumes, warnings: warnings}
+}
+
+// startProjectIntentLiveServer starts the isolated app server holding the live
+// Project's session, Window, and Pane, mirrored the way projmux mirrors them.
+func startProjectIntentLiveServer(t *testing.T, tmux func(args ...string) (string, error), environment []string, socket, liveSession, liveUID, liveWindowUID, livePaneUID, liveRoot string) {
+	t.Helper()
+	created, err := tmux("new-session", "-d", "-s", liveSession, "-n", "main", "-c", liveRoot,
+		"-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}\t#{pid}\t#{socket_path}", "tail", "-f", "/dev/null")
+	if err != nil {
+		t.Fatalf("start isolated tmux: %v: %s", err, created)
+	}
+	fields := strings.Split(created, "\t")
+	var sessionID, windowID, paneID, serverPID string
+	if len(fields) == 5 {
+		sessionID, windowID, paneID, serverPID = fields[0], fields[1], fields[2], fields[3]
+	}
+	killRealTmuxServerOnCleanup(t, environment, socket, realTmuxServerPID(t, serverPID))
+	if len(fields) != 5 || exactTmuxHandle(sessionID, "$") == "" || fields[4] != socket {
+		t.Fatalf("isolated tmux receipt = %q, want session/window/pane/pid on %s", created, socket)
+	}
+	for _, option := range [][]string{
+		{"-g", tmuxopts.AppGlobal, "1"},
+		{"-g", runtimeMutationSocketNameOption, defaultAppSocket},
+		// A Pane created with no command runs this instead of a shell.
+		{"-g", "default-command", "exec sleep 600"},
+		{"-t", sessionID, tmuxopts.ProjectUIDSession, liveUID},
+		{"-t", sessionID, tmuxopts.ProjectPathSession, liveRoot},
+		{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"},
+		{"-w", "-t", windowID, tmuxopts.WindowUID, liveWindowUID},
+		{"-w", "-t", windowID, tmuxopts.WindowName, "main"},
+		{"-p", "-t", paneID, tmuxopts.PaneUID, livePaneUID},
+	} {
+		if out, err := tmux(append([]string{"set-option"}, option...)...); err != nil {
+			t.Fatalf("seed isolated tmux %q: %v: %s", option, err, out)
+		}
+	}
 }
 
 func (fx *projectIntentRealTmux) sessionNames(t *testing.T) []string {
