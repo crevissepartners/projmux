@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -44,27 +46,43 @@ const snapshotFileExt = ".md"
 // rule set, with a persona of at most 64 KiB in front of it, stays below it.
 const MaxSnapshotSize = 1024 * 1024
 
-// Render returns the text a Claude system prompt carries for rules, or nil
-// when rules set nothing (no Jira URL, no Repo URL and no links): an empty
-// rendering means "no rules". The text is deterministic: the same rules render
-// the same bytes, in the stored rule order.
-func Render(rules Rules) []byte {
-	if rules.JiraURL == "" && rules.RepoURL == "" && len(rules.Links) == 0 {
+// Render returns the text a Claude system prompt carries for rules read with
+// project, or nil when rules set nothing (no Jira URL, no Repo URL, no named
+// URL and no links): an empty rendering means "no rules". The text is
+// deterministic: the same rules and Project render the same bytes, lists in
+// their stored order, named URLs and Project labels sorted. The Project's
+// variables are always part of it, so renaming the Project or changing its
+// labels changes the rendering, and so its digest.
+func Render(rules Rules, project Project) []byte {
+	if len(rules.Jira) == 0 && len(rules.Repo) == 0 && len(rules.URLs) == 0 && len(rules.Links) == 0 {
 		return nil
 	}
 	var b strings.Builder
 	b.WriteString("# Project label link rules\n\n")
 	b.WriteString("These are this Project's label link rules. A label is a key and a value, written key=value. ")
-	b.WriteString("A label whose key has a rule below links to that rule's template, with {value} replaced by the label value (path-escaped), ")
-	b.WriteString("{jira} by the Jira URL and {repo} by the Repo URL. Use these rules whenever you turn such a label into a link.\n")
-	if rules.JiraURL != "" || rules.RepoURL != "" {
-		b.WriteString("\n")
-		if rules.JiraURL != "" {
-			fmt.Fprintf(&b, "Jira URL: %s\n", rules.JiraURL)
+	b.WriteString("A label whose key has a rule below links to that rule's template with its placeholders replaced. ")
+	b.WriteString("Use these rules whenever you turn such a label into a link.\n\n")
+	b.WriteString("Placeholders: {value} is the label value. {jira[N]} and {repo[N]} are the Nth Jira and Repo URL below, counting from 0; ")
+	b.WriteString("{jira} and {repo} are {jira[0]} and {repo[0]}. {<name>} is the named URL <name>. ")
+	b.WriteString("{project.uid}, {project.name} and {project.labels.<key>} are this Project's UID, name and the value of its label <key>. ")
+	b.WriteString("A URL is substituted with its trailing \"/\" removed; {value} and every {project.*} value are path-escaped. ")
+	b.WriteString("A rule whose template uses a Project label this Project does not have produces no link.\n")
+	writeURLList(&b, "Jira URLs", "jira", rules.Jira)
+	writeURLList(&b, "Repo URLs", "repo", rules.Repo)
+	if len(rules.URLs) > 0 {
+		b.WriteString("\nNamed URLs:\n")
+		for _, name := range slices.Sorted(maps.Keys(rules.URLs)) {
+			fmt.Fprintf(&b, "- {%s}: %s\n", name, rules.URLs[name])
 		}
-		if rules.RepoURL != "" {
-			fmt.Fprintf(&b, "Repo URL: %s\n", rules.RepoURL)
+	}
+	b.WriteString("\nProject variables (the values before path-escaping):\n")
+	fmt.Fprintf(&b, "- %s: %q\n", PlaceholderProjectUID, project.UID)
+	fmt.Fprintf(&b, "- %s: %q\n", PlaceholderProjectName, project.Name)
+	for _, key := range slices.Sorted(maps.Keys(project.Labels)) {
+		if labelKeyProblem(key) != "" {
+			continue
 		}
+		fmt.Fprintf(&b, "- {%s%s}: %q\n", projectLabelPrefix, key, project.Labels[key])
 	}
 	b.WriteString("\n")
 	if len(rules.Links) == 0 {
@@ -74,12 +92,28 @@ func Render(rules Rules) []byte {
 	b.WriteString("Rules:\n")
 	for _, link := range rules.Links {
 		example := "none (the template does not produce a link)"
-		if resolved, ok := Resolve(rules, link.LabelKey, ExampleValue); ok {
+		if resolved, ok := Resolve(rules, project, link.LabelKey, ExampleValue); ok {
 			example = link.LabelKey + "=" + ExampleValue + " links to " + resolved
 		}
 		fmt.Fprintf(&b, "- label key %q: template %s; example: %s\n", link.LabelKey, link.Template, example)
 	}
 	return []byte(b.String())
+}
+
+// writeURLList renders one indexed URL list under heading, nothing when it is
+// empty. The first entry also names its short form.
+func writeURLList(b *strings.Builder, heading, name string, urls []string) {
+	if len(urls) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n%s:\n", heading)
+	for i, raw := range urls {
+		if i == 0 {
+			fmt.Fprintf(b, "- {%s[0]} (also {%s}): %s\n", name, name, raw)
+			continue
+		}
+		fmt.Fprintf(b, "- {%s[%d]}: %s\n", name, i, raw)
+	}
 }
 
 // Digest returns the sha256 lowercase hex of rendered.

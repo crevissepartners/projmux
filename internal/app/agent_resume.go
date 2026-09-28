@@ -288,10 +288,13 @@ type agentResumePlan struct {
 	// The owner chain the new managed Pane is materialized into.
 	projectUID  string
 	projectRoot string
-	workspace   coremetadata.AgentWorkspace
-	topic       string
-	windowUID   string
-	anchorUID   string
+	// project is the owner Project as the plan read it, whose name and labels
+	// are the variables of its label link rules.
+	project   coremetadata.Project
+	workspace coremetadata.AgentWorkspace
+	topic     string
+	windowUID string
+	anchorUID string
 	// shared names the other Agents that record the same conversation, in uid
 	// order. It is disclosed, never decisive: see planAgentResume.
 	shared []string
@@ -454,6 +457,7 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 		ref:            ref.Clone(),
 		projectUID:     project.Metadata.UID,
 		projectRoot:    project.Spec.Root,
+		project:        project.Clone(),
 		workspace:      agent.Spec.Workspace,
 		topic:          agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],
 		windowUID:      window.Metadata.UID,
@@ -597,7 +601,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			// that owns the Agent's Window. Rules that differ from the recorded
 			// digest launch with the snapshot off, and the transaction below
 			// records exactly the digest and mode this launch reads.
-			links = planProjectLinksWith(r.launcher, plan.provider, plan.projectUID, plan.annotations)
+			links = planProjectLinksWith(r.launcher, plan.provider, plan.project, plan.annotations)
 			launchAnnotations := links.resumeLaunchAnnotations(plan.launchAnnotations())
 			if plan.modelOverride != "" {
 				launcher, ok := r.launcher.(agentResumeModelLauncher)

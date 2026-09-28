@@ -11,16 +11,30 @@
 // The JSON format, with every field always written:
 //
 //	{
-//	  "jiraURL": "https://jira.example.com",
-//	  "repoURL": "https://github.com/example/repo",
+//	  "jira": ["https://jira.example.com", "https://jira.partner.example.com"],
+//	  "repo": ["https://github.com/example/repo"],
+//	  "urls": {"wiki": "https://wiki.example.com/spaces/APP"},
 //	  "links": [
 //	    {"labelKey": "jira", "template": "{jira}/browse/{value}"},
-//	    {"labelKey": "pr", "template": "{repo}/pull/{value}"}
+//	    {"labelKey": "partner", "template": "{jira[1]}/browse/{value}"},
+//	    {"labelKey": "pr", "template": "{repo}/pull/{value}"},
+//	    {"labelKey": "doc", "template": "{wiki}/{project.name}/{value}"}
 //	  ]
 //	}
 //
-// A template may use three placeholders: {value} (required: the label value,
-// path-escaped), {jira} (JiraURL) and {repo} (RepoURL).
+// A template may use these placeholders:
+//
+//   - {value} (required): the label value, path-escaped.
+//   - {jira[N]} and {repo[N]}: the Nth URL of jira or repo, counting from 0;
+//     {jira} and {repo} are {jira[0]} and {repo[0]}.
+//   - {<name>}: the URL urls names <name>.
+//   - {project.uid}, {project.name} and {project.labels.<key>}: the Project's
+//     UID, name and the value of its label <key>, path-escaped. Nothing else
+//     of the Project (not its root, not its annotations) is a placeholder.
+//
+// A file written before the lists existed holds "jiraURL" and "repoURL"
+// strings instead of "jira" and "repo". Load reads it as a one-URL list (an
+// empty string as none); Write always writes the format above.
 package projectlinks
 
 import (
@@ -30,9 +44,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -50,24 +66,42 @@ const FileExt = ".json"
 // than MaxFileSize is refused on Load rather than truncated. Write refuses an
 // encoding past MaxFileSize too, so it never writes a file Load would refuse.
 const (
+	// MaxJiraURLs is the largest number of Jira URLs in one Project.
+	MaxJiraURLs = 16
+	// MaxRepoURLs is the largest number of Repo URLs in one Project.
+	MaxRepoURLs = 16
+	// MaxNamedURLs is the largest number of named URLs in one Project.
+	MaxNamedURLs = 32
 	// MaxLinks is the largest number of link rules in one Project.
 	MaxLinks = 64
-	// MaxURLLength is the longest JiraURL or RepoURL, in bytes.
+	// MaxURLLength is the longest Jira, Repo or named URL, in bytes.
 	MaxURLLength = 2048
 	// MaxTemplateLength is the longest link template, in bytes.
 	MaxTemplateLength = 2048
 	// MaxLabelKeyLength is the longest label key, in bytes.
 	MaxLabelKeyLength = 64
+	// MaxURLNameLength is the longest name of a named URL, in bytes.
+	MaxURLNameLength = 32
 	// MaxFileSize is the largest rule file accepted, in bytes (64 KiB).
 	MaxFileSize = 64 * 1024
 )
 
-// Template placeholders.
+// Template placeholders with a fixed spelling. {jira[N]}, {repo[N]}, {<name>}
+// and {project.labels.<key>} are families; see the package comment.
 const (
-	PlaceholderValue = "{value}"
-	PlaceholderJira  = "{jira}"
-	PlaceholderRepo  = "{repo}"
+	PlaceholderValue       = "{value}"
+	PlaceholderJira        = "{jira}"
+	PlaceholderRepo        = "{repo}"
+	PlaceholderProjectUID  = "{project.uid}"
+	PlaceholderProjectName = "{project.name}"
+	// PlaceholderProjectLabel is the pattern of the Project label family:
+	// <key> stands for any label key.
+	PlaceholderProjectLabel = "{project.labels.<key>}"
 )
+
+// reservedURLNames are the names a named URL may not take: each is (or
+// starts) a placeholder of its own.
+var reservedURLNames = []string{"value", "jira", "repo", "project"}
 
 // sampleValue is the label value Validate expands every template with to prove
 // it yields a usable link.
@@ -75,10 +109,12 @@ const sampleValue = "SAMPLE-1"
 
 // Rules is one Project's link rules.
 type Rules struct {
-	// JiraURL is the base {jira} expands to. Empty means unset.
-	JiraURL string `json:"jiraURL"`
-	// RepoURL is the base {repo} expands to. Empty means unset.
-	RepoURL string `json:"repoURL"`
+	// Jira are the URLs {jira[N]} expand to; {jira} is the first.
+	Jira []string `json:"jira"`
+	// Repo are the URLs {repo[N]} expand to; {repo} is the first.
+	Repo []string `json:"repo"`
+	// URLs are the named URLs: {<name>} expands to URLs[name].
+	URLs map[string]string `json:"urls"`
 	// Links are the label rules, at most one per LabelKey.
 	Links []Link `json:"links"`
 }
@@ -90,8 +126,23 @@ type Link struct {
 	Template string `json:"template"`
 }
 
+// Project is what a template may read of a Project: its UID, its name and its
+// labels. It deliberately holds nothing else, so a rule can never put the
+// Project's root, its annotations or its Windows into a link.
+type Project struct {
+	UID    string
+	Name   string
+	Labels map[string]string
+}
+
+// ProjectOf takes a Registry Project's UID, name and labels (cloned), and
+// nothing else of it.
+func ProjectOf(p coremetadata.Project) Project {
+	return Project{UID: p.Metadata.UID, Name: p.Metadata.Name, Labels: maps.Clone(p.Metadata.Labels)}
+}
+
 // ValidationError is one invalid field. Field is the JSON path of the field
-// (jiraURL, links[1].template) and Reason says why it is invalid.
+// (jira[3], urls.wiki, links[1].template) and Reason says why it is invalid.
 type ValidationError struct {
 	Field  string
 	Reason string
@@ -107,26 +158,45 @@ func invalidProjectLinkField(field, format string, args ...any) error {
 
 // Validate reports the first invalid field of r, or nil.
 //
-//   - JiraURL and RepoURL may be empty. A set one is an absolute http or https
-//     URL with a host, at most MaxURLLength bytes, with no userinfo
-//     (credentials), no query, no fragment and no "{" or "}": a template
-//     appends a path to it, which a query or fragment would swallow.
+//   - Jira holds at most MaxJiraURLs URLs, Repo at most MaxRepoURLs and URLs
+//     at most MaxNamedURLs. Each URL is an absolute http or https URL with a
+//     host, at most MaxURLLength bytes, with no userinfo (credentials), no
+//     query, no fragment and no "{" or "}": a template appends a path to it,
+//     which a query or fragment would swallow.
+//   - A URLs name is a lowercase ASCII letter followed by at most
+//     MaxURLNameLength-1 lowercase letters, digits, "_" and "-", and is not
+//     value, jira, repo or project.
 //   - Links holds at most MaxLinks rules.
 //   - A LabelKey is 1 to MaxLabelKeyLength bytes of ASCII letters, digits,
 //     ".", "_" and "-". It is compared exactly, case included, so "Jira" and
 //     "jira" are two keys; whitespace is refused, not trimmed. Two rules may
 //     not share a key.
-//   - A Template is at most MaxTemplateLength bytes, contains {value}, uses no
-//     placeholder other than {value}, {jira} and {repo} (and no other "{" or
-//     "}"), uses {jira} or {repo} only when that URL is set, and expanded with
-//     a sample value is an absolute http or https URL with a host and no
+//   - A Template is at most MaxTemplateLength bytes, contains {value}, has no
+//     "{" or "}" outside a placeholder, and uses only the placeholders of the
+//     package comment: an index within its list (decimal, no leading zero),
+//     a name that URLs defines, and a Project field that exists. A
+//     {project.labels.<key>} is checked for its key's syntax only, since the
+//     label may be added later. Expanded with a sample value and a sample
+//     Project, it is an absolute http or https URL with a host and no
 //     userinfo.
 func (r Rules) Validate() error {
-	if err := validateBaseURL("jiraURL", r.JiraURL); err != nil {
+	if err := validateURLList("jira", r.Jira, MaxJiraURLs); err != nil {
 		return err
 	}
-	if err := validateBaseURL("repoURL", r.RepoURL); err != nil {
+	if err := validateURLList("repo", r.Repo, MaxRepoURLs); err != nil {
 		return err
+	}
+	if len(r.URLs) > MaxNamedURLs {
+		return invalidProjectLinkField("urls", "has %d URLs; the limit is %d", len(r.URLs), MaxNamedURLs)
+	}
+	for _, name := range slices.Sorted(maps.Keys(r.URLs)) {
+		field := "urls." + name
+		if err := validateURLName(field, name); err != nil {
+			return err
+		}
+		if err := validateBaseURL(field, r.URLs[name]); err != nil {
+			return err
+		}
 	}
 	if len(r.Links) > MaxLinks {
 		return invalidProjectLinkField("links", "has %d rules; the limit is %d", len(r.Links), MaxLinks)
@@ -148,9 +218,21 @@ func (r Rules) Validate() error {
 	return nil
 }
 
+func validateURLList(field string, urls []string, limit int) error {
+	if len(urls) > limit {
+		return invalidProjectLinkField(field, "has %d URLs; the limit is %d", len(urls), limit)
+	}
+	for i, raw := range urls {
+		if err := validateBaseURL(fmt.Sprintf("%s[%d]", field, i), raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateBaseURL(field, raw string) error {
 	if raw == "" {
-		return nil
+		return invalidProjectLinkField(field, "must not be empty")
 	}
 	if len(raw) > MaxURLLength {
 		return invalidProjectLinkField(field, "is %d bytes; the limit is %d", len(raw), MaxURLLength)
@@ -188,19 +270,52 @@ func checkLinkURL(parsed *url.URL) error {
 	return nil
 }
 
+func validateURLName(field, name string) error {
+	if slices.Contains(reservedURLNames, name) {
+		return invalidProjectLinkField(field, "name %q is reserved; value, jira, repo and project cannot name a URL", name)
+	}
+	if !isURLName(name) {
+		return invalidProjectLinkField(field, "name %q must be a lowercase ASCII letter followed by at most %d lowercase letters, digits, \"_\" or \"-\"", name, MaxURLNameLength-1)
+	}
+	return nil
+}
+
+// isURLName reports whether name has the shape of a named URL:
+// [a-z][a-z0-9_-]{0,31}. It does not look at the reserved names.
+func isURLName(name string) bool {
+	if name == "" || len(name) > MaxURLNameLength || name[0] < 'a' || name[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 func validateLabelKey(field, key string) error {
+	if reason := labelKeyProblem(key); reason != "" {
+		return invalidProjectLinkField(field, "%s", reason)
+	}
+	return nil
+}
+
+// labelKeyProblem says why key is not a label key, or "" when it is one.
+func labelKeyProblem(key string) string {
 	if key == "" {
-		return invalidProjectLinkField(field, "must not be empty")
+		return "must not be empty"
 	}
 	if len(key) > MaxLabelKeyLength {
-		return invalidProjectLinkField(field, "is %d bytes; the limit is %d", len(key), MaxLabelKeyLength)
+		return fmt.Sprintf("is %d bytes; the limit is %d", len(key), MaxLabelKeyLength)
 	}
 	for _, r := range key {
 		if !labelKeyRuneAllowed(r) {
-			return invalidProjectLinkField(field, "contains %q; only ASCII letters, digits, \".\", \"_\" and \"-\" are allowed", string(r))
+			return fmt.Sprintf("contains %q; only ASCII letters, digits, \".\", \"_\" and \"-\" are allowed", string(r))
 		}
 	}
-	return nil
+	return ""
 }
 
 func labelKeyRuneAllowed(r rune) bool {
@@ -217,41 +332,41 @@ func validateTemplate(field, template string, r Rules) error {
 	if len(template) > MaxTemplateLength {
 		return invalidProjectLinkField(field, "is %d bytes; the limit is %d", len(template), MaxTemplateLength)
 	}
+	tokens, err := tokenizeTemplate(template)
+	if err != nil {
+		return invalidProjectLinkField(field, "%s", err)
+	}
 	usesValue := false
-	rest := template
-	for {
-		open := strings.IndexAny(rest, "{}")
-		if open < 0 {
-			break
+	sample := Project{UID: "sample-uid", Name: "sample-name", Labels: map[string]string{}}
+	for _, token := range tokens {
+		if !token.placeholder {
+			continue
 		}
-		if rest[open] == '}' {
-			return invalidProjectLinkField(field, "has a \"}\" outside a placeholder")
-		}
-		end := strings.IndexAny(rest[open+1:], "{}")
-		if end < 0 || rest[open+1+end] != '}' {
-			return invalidProjectLinkField(field, "has an unterminated placeholder")
-		}
-		placeholder := rest[open : open+1+end+1]
-		switch placeholder {
-		case PlaceholderValue:
+		p := token.parsed
+		switch p.kind {
+		case placeholderValue:
 			usesValue = true
-		case PlaceholderJira:
-			if r.JiraURL == "" {
-				return invalidProjectLinkField(field, "uses {jira} but jiraURL is empty")
+		case placeholderJira:
+			if p.index >= len(r.Jira) {
+				return invalidProjectLinkField(field, "uses %s but %s", token.text, listLengthPhrase("jira", len(r.Jira)))
 			}
-		case PlaceholderRepo:
-			if r.RepoURL == "" {
-				return invalidProjectLinkField(field, "uses {repo} but repoURL is empty")
+		case placeholderRepo:
+			if p.index >= len(r.Repo) {
+				return invalidProjectLinkField(field, "uses %s but %s", token.text, listLengthPhrase("repo", len(r.Repo)))
 			}
-		default:
-			return invalidProjectLinkField(field, "has unknown placeholder %s; only {value}, {jira} and {repo} are allowed", placeholder)
+		case placeholderNamedURL:
+			if _, ok := r.URLs[p.name]; !ok {
+				return invalidProjectLinkField(field, "uses %s but urls has no %q", token.text, p.name)
+			}
+		case placeholderProjectLabel:
+			sample.Labels[p.name] = "sample-label"
 		}
-		rest = rest[open+1+end+1:]
 	}
 	if !usesValue {
 		return invalidProjectLinkField(field, "must contain {value}")
 	}
-	parsed, err := url.Parse(expandProjectLinkTemplate(template, r, sampleValue))
+	expanded, _ := expandTemplate(tokens, r, sample, sampleValue)
+	parsed, err := url.Parse(expanded)
 	if err != nil {
 		return invalidProjectLinkField(field, "does not expand to a URL: %v", err)
 	}
@@ -261,26 +376,24 @@ func validateTemplate(field, template string, r Rules) error {
 	return nil
 }
 
-// expandProjectLinkTemplate substitutes every placeholder of template in one
-// pass, so text that a substitution inserts is never expanded again. {jira}
-// and {repo} become the base URL with its trailing "/" characters trimmed, so
-// "{jira}/browse/..." has one slash whether or not the base ends in one;
-// {value} becomes url.PathEscape(value). Validate has already refused any
-// other brace.
-func expandProjectLinkTemplate(template string, r Rules, value string) string {
-	return strings.NewReplacer(
-		PlaceholderValue, url.PathEscape(value),
-		PlaceholderJira, strings.TrimRight(r.JiraURL, "/"),
-		PlaceholderRepo, strings.TrimRight(r.RepoURL, "/"),
-	).Replace(template)
+func listLengthPhrase(list string, n int) string {
+	switch n {
+	case 0:
+		return list + " has no URLs"
+	case 1:
+		return list + " has 1 URL"
+	}
+	return fmt.Sprintf("%s has %d URLs", list, n)
 }
 
-// Resolve returns the link for the label key=value: the template of the rule
-// whose LabelKey equals key exactly, expanded as described on
-// expandProjectLinkTemplate. It returns false for a key with no rule, an empty
-// value, or a result that is not an absolute http or https URL with a host and
-// no userinfo (possible only for rules that were never validated).
-func Resolve(rules Rules, key, value string) (string, bool) {
+// Resolve returns the link for the label key=value of project: the template
+// of the rule whose LabelKey equals key exactly, expanded as described on
+// expandTemplate. The value is one value: "a,b" is one link, never two. It
+// returns false for an empty value, a key with no rule, a template that uses
+// a Project label project lacks or has empty, or a result that is not an
+// absolute http or https URL with a host and no userinfo (possible only for
+// rules that were never validated).
+func Resolve(rules Rules, project Project, key, value string) (string, bool) {
 	if value == "" {
 		return "", false
 	}
@@ -288,7 +401,14 @@ func Resolve(rules Rules, key, value string) (string, bool) {
 		if link.LabelKey != key {
 			continue
 		}
-		resolved := expandProjectLinkTemplate(link.Template, rules, value)
+		tokens, err := tokenizeTemplate(link.Template)
+		if err != nil {
+			return "", false
+		}
+		resolved, ok := expandTemplate(tokens, rules, project, value)
+		if !ok {
+			return "", false
+		}
 		parsed, err := url.Parse(resolved)
 		if err != nil || checkLinkURL(parsed) != nil {
 			return "", false
@@ -296,6 +416,31 @@ func Resolve(rules Rules, key, value string) (string, bool) {
 		return resolved, true
 	}
 	return "", false
+}
+
+// Placeholders lists every placeholder a template may use with rules, in a
+// fixed order: {value}; {jira} and {jira[0]} to {jira[n-1]} when Jira has
+// URLs; the same for {repo}; {<name>} for each named URL, sorted by name;
+// {project.uid}; {project.name}; and last PlaceholderProjectLabel, which is
+// a pattern rather than a placeholder: <key> stands for any label key.
+func Placeholders(rules Rules) []string {
+	out := []string{PlaceholderValue}
+	for _, list := range []struct {
+		name string
+		urls []string
+	}{{"jira", rules.Jira}, {"repo", rules.Repo}} {
+		if len(list.urls) == 0 {
+			continue
+		}
+		out = append(out, "{"+list.name+"}")
+		for i := range list.urls {
+			out = append(out, fmt.Sprintf("{%s[%d]}", list.name, i))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(rules.URLs)) {
+		out = append(out, "{"+name+"}")
+	}
+	return append(out, PlaceholderProjectUID, PlaceholderProjectName, PlaceholderProjectLabel)
 }
 
 // ValidateProjectUID accepts exactly the shape a Project UID is minted in
@@ -339,9 +484,10 @@ func (s Store) Path(uid string) (string, error) {
 // Load reads the Project's rules. A missing file (or directory) is no rules:
 // the zero Rules and a nil error. Anything else that is not a valid rule set
 // is an error and never silently empty: a file larger than MaxFileSize, one
-// that is not exactly one JSON object of the known fields, or one whose rules
-// fail Validate. An empty links list loads as nil, so no rules and a file
-// holding none compare equal.
+// that is not exactly one JSON object of the known fields, one that mixes
+// the legacy jiraURL/repoURL with jira, repo or urls, or one whose rules fail
+// Validate. Empty lists and an empty urls map load as nil, so no rules and a
+// file holding none compare equal.
 func (s Store) Load(uid string) (Rules, error) {
 	path, err := s.Path(uid)
 	if err != nil {
@@ -379,16 +525,73 @@ func (s Store) Load(uid string) (Rules, error) {
 	return rules, nil
 }
 
-// decodeProjectLinks parses exactly one JSON object with no unknown fields.
+// projectLinksFile is the stored JSON, legacy fields included. The list and
+// map fields are raw so that a present key is seen even when it is empty or
+// null: presence is what decides a mix of the two formats.
+type projectLinksFile struct {
+	Jira    json.RawMessage `json:"jira"`
+	Repo    json.RawMessage `json:"repo"`
+	URLs    json.RawMessage `json:"urls"`
+	Links   []Link          `json:"links"`
+	JiraURL json.RawMessage `json:"jiraURL"`
+	RepoURL json.RawMessage `json:"repoURL"`
+}
+
+// decodeProjectLinks parses exactly one JSON object with no unknown fields,
+// in the current format or the legacy one (jiraURL and repoURL, each a
+// one-URL list when set), never both.
 func decodeProjectLinks(content []byte) (Rules, error) {
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
-	var rules Rules
-	if err := decoder.Decode(&rules); err != nil {
+	var stored projectLinksFile
+	if err := decoder.Decode(&stored); err != nil {
 		return Rules{}, err
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return Rules{}, errors.New("unexpected data after the JSON object")
+	}
+	legacy := stored.JiraURL != nil || stored.RepoURL != nil
+	if legacy && (stored.Jira != nil || stored.Repo != nil || stored.URLs != nil) {
+		return Rules{}, errors.New("the legacy jiraURL and repoURL cannot be mixed with jira, repo or urls")
+	}
+	rules := Rules{Links: stored.Links}
+	for _, field := range []struct {
+		name   string
+		raw    json.RawMessage
+		legacy json.RawMessage
+		into   *[]string
+	}{
+		{"jira", stored.Jira, stored.JiraURL, &rules.Jira},
+		{"repo", stored.Repo, stored.RepoURL, &rules.Repo},
+	} {
+		if field.raw != nil {
+			if err := json.Unmarshal(field.raw, field.into); err != nil {
+				return Rules{}, fmt.Errorf("%s: %w", field.name, err)
+			}
+		}
+		if field.legacy != nil {
+			var single string
+			if err := json.Unmarshal(field.legacy, &single); err != nil {
+				return Rules{}, fmt.Errorf("%sURL: %w", field.name, err)
+			}
+			if single != "" {
+				*field.into = []string{single}
+			}
+		}
+	}
+	if stored.URLs != nil {
+		if err := json.Unmarshal(stored.URLs, &rules.URLs); err != nil {
+			return Rules{}, fmt.Errorf("urls: %w", err)
+		}
+	}
+	if len(rules.Jira) == 0 {
+		rules.Jira = nil
+	}
+	if len(rules.Repo) == 0 {
+		rules.Repo = nil
+	}
+	if len(rules.URLs) == 0 {
+		rules.URLs = nil
 	}
 	if len(rules.Links) == 0 {
 		rules.Links = nil
@@ -399,9 +602,10 @@ func decodeProjectLinks(content []byte) (Rules, error) {
 // Write replaces the Project's rules, atomically: the JSON goes to a temporary
 // file in the same directory, is synced, and is renamed over the target, so a
 // reader sees either the old file or the new one and never a partial write.
-// The file is 0600 and its directory 0700. An invalid uid, rules that fail
-// Validate, or an encoding larger than MaxFileSize are refused before anything
-// is written, so an existing file is left byte-identical.
+// The file is 0600 and its directory 0700. It always writes the current
+// format, all four fields included. An invalid uid, rules that fail Validate,
+// or an encoding larger than MaxFileSize are refused before anything is
+// written, so an existing file is left byte-identical.
 func (s Store) Write(uid string, rules Rules) error {
 	path, err := s.Path(uid)
 	if err != nil {
@@ -409,6 +613,15 @@ func (s Store) Write(uid string, rules Rules) error {
 	}
 	if err := rules.Validate(); err != nil {
 		return err
+	}
+	if rules.Jira == nil {
+		rules.Jira = []string{}
+	}
+	if rules.Repo == nil {
+		rules.Repo = []string{}
+	}
+	if rules.URLs == nil {
+		rules.URLs = map[string]string{}
 	}
 	if rules.Links == nil {
 		rules.Links = []Link{}
