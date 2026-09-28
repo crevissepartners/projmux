@@ -1,5 +1,6 @@
 """Offline canary evidence/cleanup checks; public-stream parsing is tested in Go."""
 import copy
+import datetime
 import hashlib
 import concurrent.futures
 import contextlib
@@ -384,6 +385,9 @@ class DialogueEvidenceTest(unittest.TestCase):
             plan=json.loads((root/'cleanup-plan.json').read_text())
             self.assertEqual(plan['candidateSHA256'],hashlib.sha256(binary.read_bytes()).hexdigest())
             self.assertEqual(plan['candidateHead'],'a'*40)
+            sentinel=root/'.projmux-dialogue-canary-owned'
+            self.assertEqual(sentinel.read_text(),'projmux-dialogue-canary-owned-v3\n')
+            self.assertEqual(sentinel.stat().st_mode&0o777,0o600)
             self.assertFalse((root/'evidence/provider.stdin').exists())
             self.assertFalse((root/'bin/collect-claude-public-jsonl').exists())
             self.assertFalse((root/'home/.claude/settings.json').exists())
@@ -391,6 +395,100 @@ class DialogueEvidenceTest(unittest.TestCase):
             self.assertEqual((root/'home/.claude/.credentials.json').read_bytes(),credential.read_bytes())
             # Candidate exits97 if called: prepare must not launch any provider.
             self.assertEqual((root/'bin/claude').resolve(),binary)
+
+
+class DialogueCanaryGuardTest(unittest.TestCase):
+    """Opt-in, path, isolation and success-receipt guards of the live canary itself."""
+    def setUp(self):
+        self.repo=pathlib.Path(__file__).resolve().parents[1]
+        self.script=self.repo/'scripts/agent-dialogue-live-canary.sh'
+        # /tmp root: a long $TMPDIR would trip native-socket-path-bound.
+        self.temp=tempfile.TemporaryDirectory(prefix='pmx-guard-',dir='/tmp')
+        self.addCleanup(self.temp.cleanup)
+        self.parent=pathlib.Path(self.temp.name)
+        self.credential=self.parent/'auth'; self.credential.write_text('fixture authentication only'); self.credential.chmod(0o600)
+        self.candidate=self.parent/'candidate'; self.candidate.write_text('#!/bin/sh\nexit 97\n'); self.candidate.chmod(0o755)
+
+    def canary(self,mode,root,receipt,**extra):
+        env=dict(PATH=os.environ['PATH'],HOME=os.environ['HOME'],PMX_DIALOGUE_CANARY_ROOT=str(root),PMX_DIALOGUE_CANARY_RECEIPT=str(receipt),
+                 PMX_DIALOGUE_PROJMUX_BIN=str(self.candidate),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(self.candidate),PMX_DIALOGUE_REAL_CODEX_BIN=str(self.candidate),
+                 PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(self.credential),PMX_DIALOGUE_CODEX_AUTH_FILE=str(self.credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40,**extra)
+        with harness_deadline("fixture shell"): return subprocess.run(['bash',str(self.script),mode],env=env,capture_output=True,text=True,timeout=HARNESS_DEADLINE)
+
+    def test_prepare_refuses_symlinked_root_parent_and_symlink_receipt(self):
+        real=self.parent/'real'; real.mkdir(); (self.parent/'home-link').symlink_to(real)
+        result=self.canary('prepare',self.parent/'home-link/canary',self.parent/'root.receipt')
+        self.assertNotEqual(result.returncode,0); self.assertIn('parent chain contains a symlink',result.stderr)
+        self.assertEqual(list(real.iterdir()),[])
+        (self.parent/'receipt-link').symlink_to(self.parent/'receipt-target')
+        result=self.canary('prepare',self.parent/'owned',self.parent/'receipt-link')
+        self.assertNotEqual(result.returncode,0); self.assertIn('fresh non-symlink',result.stderr)
+        self.assertFalse((self.parent/'owned').exists()); self.assertFalse((self.parent/'receipt-target').exists())
+
+    def test_run_refuses_live_traffic_without_opt_in_or_with_receipt_override(self):
+        root=self.parent/'owned'
+        result=self.canary('prepare',root,self.parent/'prepared.receipt'); self.assertEqual(result.returncode,0,result.stderr)
+        result=self.canary('run',root,self.parent/'prepared.receipt')
+        self.assertEqual(result.returncode,2); self.assertIn('without PMX_DIALOGUE_LIVE_CANARY=1',result.stderr)
+        self.assertTrue((root/'home/.claude/.credentials.json').exists())
+        registry=root/'xdg-state/projmux/metadata/registry.json'; registry.parent.mkdir(parents=True); registry.write_text('{}')
+        with socket.socket(socket.AF_UNIX) as sock: sock.bind(str(root/'tmux/guard.sock'))
+        (root/'canary-input.json').write_text(json.dumps(dict(binary=str(self.candidate),registryPath=str(registry),
+            tmuxSocketPath=str(root/'tmux/guard.sock'),tmuxSocketName='guard',projectUID='project-guard')))
+        override=self.parent/'override.receipt'
+        result=self.canary('run',root,override,PMX_DIALOGUE_LIVE_CANARY='1')
+        self.assertNotEqual(result.returncode,0); self.assertIn('receipt differs from the prepared cleanup plan',result.stderr)
+        self.assertFalse(override.exists()); self.assertFalse((self.parent/'prepared.receipt').exists())
+        for name in ('home/.claude/.credentials.json','codex-home/auth.json'):
+            self.assertFalse((root/name).exists())
+
+    def test_runner_files_never_use_safe_mode_as_hook_evidence(self):
+        for path in [self.script,*self.repo.glob('scripts/agent-dialogue-*.py')]:
+            self.assertNotIn('--safe-mode',path.read_text(),path.name)
+
+    def profile(self):
+        spec=dict(receiver=dict(agentUID='claude-agent',paneUID='claude-pane',generation='claude-generation'))
+        process=dict(pid=10,ownerUID=1000,start='linux:boot:1')
+        authority=dict(sessionId='session',process=process,leaseProcess=dict(process,pid=11),registrationGeneration='registration')
+        evidence=dict(version=1,claude_code_version='2.1.263',sessionId='session',agentUID='claude-agent',paneUID='claude-pane',activationGeneration='claude-generation',
+                      routeIncarnation='route-claude',providerProcess=process,registrationGeneration='registration',helperProcess=authority['leaseProcess'],
+                      replyExecutionGate=True,tools=['Bash'],mcp_servers=[],plugins=[],pluginInitCount=0,preMarkerToolUse=0,preMarkerStderr=0,
+                      inboundPolicy='accept',publicInitObserved=True,streamFrozen=True,
+                      observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'))
+        return dict(version=5,kind='profile-evidence',profileEvidence=evidence,toolEvidence=[],autoResend=False),spec,authority
+
+    def test_profile_evidence_requires_isolated_init_without_pre_inbound_tools_or_unknown_fields(self):
+        code=runpy.run_path(str(self.repo/'scripts/agent-dialogue-canary-evidence.py'))
+        response,spec,authority=self.profile()
+        code['validate_profile'](response,spec,authority,'route-claude',initial=True)
+        for key,value in [('tools',['Bash','Edit']),('mcp_servers',['server']),('plugins',['plugin']),('preMarkerToolUse',1),
+                          ('pluginInitCount',1),('claude_code_version','2.1.264'),('unknownInitField',True)]:
+            with self.subTest(key=key):
+                changed=copy.deepcopy(response); changed['profileEvidence'][key]=value
+                with self.assertRaises(ValueError): code['validate_profile'](changed,spec,authority,'route-claude',initial=True)
+
+    def test_success_receipt_refuses_a_remaining_activation_lease(self):
+        source=self.script.read_text()
+        receipt_code=source.split('canary_receipt_json="$(python3 - "$root" "$input" "$(settings_snapshot)" <<\'PY\'\n',1)[1].split('\nPY\n)"',1)[0]
+        root=self.parent/'owned'; lease=self.parent/'lease'
+        for name,value in {'global-settings-before.json':dict(exists=False),'auth-unchanged.json':dict(unchanged=True),
+                           'cleanup-writers.json':dict(version=1,allCapturedWriterBirthsAbsent=True,writers=[]),
+                           'initial.json':dict(activationLeaseDir=str(lease),candidateHead='a'*40,candidateSHA256='b'*64,routes={},
+                                               profile=dict(claude_code_version='2.1.263'),authority=dict(sessionId='s',process={},leaseProcess={}),tmuxProcess={}),
+                           'current.json':dict(toolEvidence=[{},{}]),
+                           'source-observation.json':dict(sourceItem=dict(toolCompleted=True,closedResultMatched=True,turnCompleted=True)),
+                           'qualification-proof.json':dict(originalRef='q',toolUseID='tq'),'idle-proof.json':dict(originalRef='i',toolUseID='ti')}.items():
+            (root/'evidence').mkdir(parents=True,exist_ok=True); (root/'evidence'/name).write_text(json.dumps(value))
+        (root/'cleanup-plan.json').write_text(json.dumps(dict(runnerFiles={})))
+        spec=self.parent/'input.json'; spec.write_text(json.dumps(dict(registryPath=str(root/'absent-registry.json'),projectUID='p',windowUID='w')))
+        def receipt():
+            with harness_deadline("receipt builder"):
+                return subprocess.run([sys.executable,'-',str(root),str(spec),json.dumps(dict(exists=False))],input=receipt_code,capture_output=True,text=True,timeout=HARNESS_DEADLINE)
+        result=receipt()
+        self.assertEqual(result.returncode,0,result.stderr); self.assertTrue(json.loads(result.stdout)['activationLeaseAbsent'])
+        lease.mkdir()
+        result=receipt()
+        self.assertNotEqual(result.returncode,0); self.assertIn('activation lease remains after automatic cleanup',result.stderr)
 
 
 class DialogueAuditTest(unittest.TestCase):

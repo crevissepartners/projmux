@@ -130,7 +130,7 @@ deadcode-contract:
 vet:
 	$(GO) vet ./...
 
-test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract
+test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-shards
 	$(GO) test ./...
 
 smoke-assert-contract:

@@ -43,6 +43,11 @@ run_worker() (
   # shellcheck disable=SC1091
   # Repository root is resolved at runtime.
   source "$root/test/lib/smoke.sh"
+  # The fixture's tmux socket lives under this root, and a long TMPDIR (CI
+  # Unit Tests) overflows the unix socket path bound. A plain assignment, not a
+  # command prefix, so the TMPDIR that smoke_setup_env exports survives it; this
+  # subshell keeps it from the caller.
+  TMPDIR=/tmp
   smoke_setup_env
   PROJMUX_SMOKE_TMUX_SOCKET="isolation-${fixture}-$$-${RANDOM}"
   export PROJMUX_SMOKE_TMUX_SOCKET

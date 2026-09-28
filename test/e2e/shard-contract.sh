@@ -314,86 +314,12 @@ if python3 "$root/scripts/e2e-evidence.py" route --manifest "$manifest" L21 >/de
 fi
 echo ">> stable-ID replay routing is closed and fail-closed"
 
-dialogue_canary="$root/scripts/agent-dialogue-live-canary.sh"
+# The live dialogue canary's own contract is test/agent_dialogue_canary_test.py
+# (make ci-contract). Only the opt-in version matrix is pinned here.
 dialogue_matrix="$root/scripts/agent-dialogue-version-stress.sh"
-grep -Fq 'PMX_DIALOGUE_LIVE_CANARY:-' "$dialogue_canary"
-grep -Fq 'tools")==[] and matches[0].get("mcp_servers")==[] and matches[0].get("plugins")==[]' "$dialogue_canary"
-grep -Fq 'preInboundToolUse":0' "$dialogue_canary"
-grep -Fq 'cleanup was not registered before provider launch' "$dialogue_canary"
-grep -Fq 'projmux-dialogue-canary-owned-v3' "$dialogue_canary"
-grep -Fq 'credentialEnvPresent":False' "$dialogue_canary"
-grep -Fq '"credentialSource":{"present":True' "$dialogue_canary"
-if grep -Fq '"credentialSource":{"before"' "$dialogue_canary"; then
-  echo "live dialogue canary external receipt exposes credential hashes" >&2
-  exit 1
-fi
-grep -Fq 'exactHelperBirthAbsent' "$dialogue_canary"
-grep -Fq 'exactTmuxBirthAbsent' "$dialogue_canary"
-grep -Fq 'exactClaimBirthAbsent' "$dialogue_canary"
-grep -Fq 'activationLeaseDirAbsent' "$dialogue_canary"
-grep -Fq 'unknown current-version init field' "$dialogue_canary"
-grep -Fq 'collect-claude-public-jsonl' "$dialogue_canary"
-gate_line="$(grep -n 'traffic-gate.json").write_text' "$dialogue_canary" | cut -d: -f1)"
-qualify_line="$(grep -n 'agent message qualify' "$dialogue_canary" | tail -1 | cut -d: -f1)"
-send_line="$(grep -n 'agent message send' "$dialogue_canary" | tail -1 | cut -d: -f1)"
-[[ "$gate_line" -lt "$qualify_line" && "$qualify_line" -lt "$send_line" ]] ||
-  { echo "live dialogue canary can push before its isolation gate or ordinary send before qualification" >&2; exit 1; }
-if grep -Fq -- '--safe-mode' "$dialogue_canary"; then
-  echo "live dialogue canary incorrectly treats safe mode as hook evidence" >&2
-  exit 1
-fi
-(
-  set -euo pipefail
-  guard_root="$(mktemp -d)"
-  trap 'rm -rf -- "$guard_root"' EXIT
-  install -m 0600 /dev/null "$guard_root/credential.json"
-  ln -s "$HOME" "$guard_root/home-link"
-  if PMX_DIALOGUE_CANARY_ROOT="$guard_root/home-link/canary" \
-    PMX_DIALOGUE_CANARY_RECEIPT="$guard_root/symlink-root.receipt.json" \
-    PMX_DIALOGUE_PROJMUX_BIN=/bin/true PMX_DIALOGUE_REAL_CLAUDE_BIN=/bin/true \
-    PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE="$guard_root/credential.json" \
-    "$dialogue_canary" prepare >/dev/null 2>&1; then
-    echo "live dialogue canary accepted a root through a symlinked parent" >&2
-    exit 1
-  fi
-  ln -s "$guard_root/receipt-target" "$guard_root/receipt-link"
-  if PMX_DIALOGUE_CANARY_ROOT="$guard_root/receipt-root" \
-    PMX_DIALOGUE_CANARY_RECEIPT="$guard_root/receipt-link" \
-    PMX_DIALOGUE_PROJMUX_BIN=/bin/true PMX_DIALOGUE_REAL_CLAUDE_BIN=/bin/true \
-    PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE="$guard_root/credential.json" \
-    "$dialogue_canary" prepare >/dev/null 2>&1; then
-    echo "live dialogue canary accepted a symlink receipt" >&2
-    exit 1
-  fi
-  prepared_root="$guard_root/canary path 'quoted"
-  prepared_receipt="$guard_root/prepared.receipt.json"
-  PMX_DIALOGUE_CANARY_ROOT="$prepared_root" PMX_DIALOGUE_CANARY_RECEIPT="$prepared_receipt" \
-    PMX_DIALOGUE_PROJMUX_BIN=/bin/true PMX_DIALOGUE_REAL_CLAUDE_BIN=/bin/true \
-    PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE="$guard_root/credential.json" \
-    "$dialogue_canary" prepare >/dev/null
-  mkdir -p "$prepared_root/xdg-state/projmux/metadata"
-  install -m 0600 /dev/null "$prepared_root/xdg-state/projmux/metadata/registry.json"
-  python3 - "$prepared_root/tmux/guard.sock" <<'PY'
-import socket,sys
-value=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); value.bind(sys.argv[1]); value.close()
-PY
-  python3 - "$prepared_root" <<'PY'
-import json,pathlib,sys
-root=pathlib.Path(sys.argv[1])
-(root/"canary-input.json").write_text(json.dumps({"binary":"/bin/true",
- "registryPath":str(root/"xdg-state/projmux/metadata/registry.json"),
- "tmuxSocketPath":str(root/"tmux/guard.sock"),"tmuxSocketName":"guard","projectUID":"project-guard"})+"\n")
-PY
-  if PMX_DIALOGUE_CANARY_ROOT="$prepared_root" PMX_DIALOGUE_CANARY_RECEIPT="$guard_root/override.receipt.json" \
-    PMX_DIALOGUE_LIVE_CANARY=1 "$dialogue_canary" run >/dev/null 2>&1; then
-    echo "live dialogue canary accepted a receipt override" >&2
-    exit 1
-  fi
-  [[ ! -e "$prepared_root" && ! -e "$guard_root/override.receipt.json" ]]
-)
 grep -Fq 'PMX_DIALOGUE_VERSION_STRESS:-' "$dialogue_matrix"
 grep -Fq 'label<TAB>/absolute/executable-runner' "$dialogue_matrix"
-echo ">> real dialogue canary and version matrix remain opt-in and traffic-gated"
+echo ">> dialogue version matrix remains opt-in"
 
 # Replay result acceptance is exact: even valid terminal evidence from a
 # neighbouring contract in the routed shard must be rejected as an extra.
