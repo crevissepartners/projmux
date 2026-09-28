@@ -84,6 +84,8 @@ var publicReasonExceptions = map[string]publicReasonException{
 	`internal/app/claude_launch_options.go requireLaunchOptions spelling`:                         {routes: append(slices.Clone(publicReasonCreateAgentRoutes), "agent resume", "agent relaunch"), reason: publicReasonDynamicReason},
 	`internal/app/claude_launch_options.go requirePersonaLane spelling`:                           {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/codex_native_thread.go requireInteractiveOnlyProvider spelling`:                 {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
+	`internal/app/create_creator.go (*createCommand).decideCreator spelling`:                      {routes: publicReasonCreatorRoutes, reason: publicReasonDynamicReason},
+	`internal/app/create_creator.go parseCreatorFlag spelling`:                                    {routes: publicReasonCreatorRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create.go requireCanonicalProvider spelling`:                                    {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create_resource.go (resourceCreateFlags).refuseConflictingWindowScope spelling`: {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create_resource.go requireExplicitProject spelling`:                             {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
@@ -137,6 +139,10 @@ var publicReasonExceptions = map[string]publicReasonException{
 // publicReasonCreateAgentRoutes are the spellings the Agent create helpers
 // are handed.
 var publicReasonCreateAgentRoutes = []string{"create agent", "create codex", "create claude", "create antigravity"}
+
+// publicReasonCreatorRoutes are the spellings that define --creator: every
+// Agent create spelling and `create window`.
+var publicReasonCreatorRoutes = append(slices.Clone(publicReasonCreateAgentRoutes), "create window")
 
 // publicReasonCreateResourceRoutes are the spellings the resource create
 // helpers are handed (the parseResourceCreateFlags FlagSet routes).

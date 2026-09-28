@@ -418,27 +418,51 @@ Identity and naming:
   context may duplicate and is never a selector, reservation, ownerRef, or
   durable identity input. `metadata.labels` remains key/value classification;
   `metadata.annotations` remains non-identifying metadata such as an AI topic.
-- Creator provenance: when an explicit `create agent` (every spelling,
-  `--create-window`, and each Agent of a fan-out) or `create window --provider`
-  runs inside an Agent's managed Pane, the new Agent and its managed Pane carry
-  `projmux.io/creator-agent` (the creator Agent's bare UID),
-  `projmux.io/creator-pane` (that Agent's managed Pane's bare UID), and
-  `projmux.io/creator-basis: pane-chain`, written in the same transaction that
-  commits the Agent. They are recorded only when the unmasked ambient
-  `%N` (`__PROJMUX_RUNTIME_ANCHOR_PANE`, then `TMUX_PANE`) is exactly one live
-  Registry Pane, that Pane round-trips with its owning Agent's
-  `status.paneRef`, one `display-message` confirms it on the create's own
-  app-owned socket and server pid, and the create process descends from its
-  `#{pane_pid}`. Any failed check writes none of the keys and changes nothing
-  else about the create. Stderr gets one `creator not recorded: <reason>` line
-  only when the ambient Pane is a live Agent Pane but a later check fails; an
+- Creator provenance: every Agent create records on the new Agent and its
+  managed Pane, in the same transaction that commits the Agent, exactly one of
+  these, decided once per create (a fan-out records the same one on every
+  Agent). `projmux.io/creator-basis` names the kind of evidence, and only the
+  keys that evidence proves are written:
+  1. `pane-chain`, with `projmux.io/creator-agent` (the creator Agent's bare
+     UID) and `projmux.io/creator-pane` (that Agent's managed Pane's bare
+     UID): an explicit `create agent` (every spelling, `--create-window`, and
+     each Agent of a fan-out) or `create window --provider` ran inside an
+     Agent's managed Pane. It is recorded only when the unmasked ambient `%N`
+     (`__PROJMUX_RUNTIME_ANCHOR_PANE`, then `TMUX_PANE`) is exactly one live
+     Registry Pane, that Pane round-trips with its owning Agent's
+     `status.paneRef`, one `display-message` confirms it on the create's own
+     app-owned socket and server pid, and the create process descends from its
+     `#{pane_pid}`. It always wins.
+  2. `explicit`, with `projmux.io/creator-agent` only: the caller declared
+     `--creator uid:<agent>` and no pane chain was recorded. The declaration
+     must name an Agent in the Registry, or the create is refused before
+     anything changes. A declaration that disagrees with a recorded pane chain
+     is dropped, and stderr gets one `creator declaration not recorded:
+     pane-chain-disagrees (--creator uid:<agent>)` line.
+  3. `operator`, with `projmux.io/creator-client` only: the create ran in
+     process for a named operator client. The UI intent creates (picker, pane
+     menu, `ai split`, launch choice, the new-Window key) record the client
+     `ui`; a client layered on projmux that runs creates in process uses the
+     `recordOperatorCreator` seam. Such a create observes no pane chain,
+     because its process environment says nothing about who asked. A
+     `--creator` on it is dropped with the token `operator-client`. There is no
+     argv spelling of this basis; `TestNoArgvPathBuildsAnOperatorCreator`
+     holds its producers. Client names follow the one rule in
+     `internal/core/operatorclient`: 1-32 bytes of lowercase ASCII letters,
+     digits, and `-`, starting with a letter.
+  4. Nothing, when there is no evidence.
+
+  A failed pane-chain check changes nothing else about the create. When
+  nothing is recorded, stderr gets one `creator not recorded: <reason>` line
+  only if the ambient Pane is a live Agent Pane but a later check fails; an
   ambient Pane that is malformed, unregistered, or a Window-owned shell is
-  silent. These keys are provenance, not
-  authentication, like a message `--source`. An absent key does not mean a
-  human created the Agent: UI intent creates (picker, pane menu, `ai split`,
-  launch choice) and creates a Codex Agent issues (its
-  commands run under the app-server, not below the Pane's process) leave them
-  empty, and nothing backfills older Agents.
+  silent. The creator Agent is never the created Agent. These keys are
+  provenance, not authentication, like a message `--source`: no permission,
+  route, or selector reads them, and `explicit` can be forged, which is what
+  its basis says. An absent key does not mean a human created the Agent: a
+  Codex Agent's own commands run under the app-server, not below the Pane's
+  process, so they record nothing unless they declare `--creator`. Nothing
+  backfills older Agents.
 
 Root lifecycle:
 

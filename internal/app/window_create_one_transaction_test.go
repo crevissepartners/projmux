@@ -311,11 +311,12 @@ func TestWindowCreateDisabledProviderAnswerCreatesNothingAndSaysOneLine(t *testi
 	route.assertNothingCreated(t, registryBefore, runtimeBefore, "disabled")
 }
 
-// TestWindowCreateFromAnAgentPaneNeverRecordsTheCreator is owner ruling T3-1:
-// the new-Window key pressed inside an Agent's Pane is the operator's act, so
-// the Agent it opens carries no creator annotation -- while the explicit
-// `create window --provider` from the same Pane still records one.
-func TestWindowCreateFromAnAgentPaneNeverRecordsTheCreator(t *testing.T) {
+// TestWindowCreateFromAnAgentPaneRecordsTheUIOperatorNotThePaneChain: the
+// new-Window key pressed inside an Agent's Pane is the operator's act, so the
+// Agent it opens and its Pane record the operator client "ui" and no pane
+// chain is observed -- while the explicit `create window --provider` from the
+// same Pane still records the pane chain.
+func TestWindowCreateFromAnAgentPaneRecordsTheUIOperatorNotThePaneChain(t *testing.T) {
 	fx := newCreatorFixture(t)
 	withPopupOrigin(fx.command, fx.tmux, func(key string) string { return fx.env[key] })
 	before := fx.agentUIDs()
@@ -326,12 +327,13 @@ func TestWindowCreateFromAnAgentPaneNeverRecordsTheCreator(t *testing.T) {
 	}, &stdout, &stderr); err != nil {
 		t.Fatalf("UI Window create: %v (stderr=%q)", err, stderr.String())
 	}
-	if agents, _ := fx.newAgentsSince(t, before); len(agents) != 1 {
+	agents, panes := fx.newAgentsSince(t, before)
+	if len(agents) != 1 {
 		t.Fatalf("UI Window create opened %d Agents, want 1", len(agents))
 	}
-	assertNoCreatorKeysAnywhere(t, fx.store)
-	if got := creatorQueryCount(fx.tmux); got != 0 || strings.Contains(stderr.String(), "creator not recorded") {
-		t.Fatalf("UI Window create observed the creator: queries=%d stderr=%q", got, stderr.String())
+	assertCreatorRecord(t, agents[0], panes[0], coremetadata.OperatorCreatorAnnotations(uiOperatorClient))
+	if got := creatorQueryCount(fx.tmux); got != 0 || strings.Contains(stderr.String(), "creator") {
+		t.Fatalf("UI Window create observed the pane chain: queries=%d stderr=%q", got, stderr.String())
 	}
 
 	// Control: the same command, Pane, and seams record on the explicit route.
@@ -339,7 +341,7 @@ func TestWindowCreateFromAnAgentPaneNeverRecordsTheCreator(t *testing.T) {
 	if out, errOut, err := runRoute(t, fx.command, "window", "--provider", "claude", "--project", "uid:prj-alpha"); err != nil || errOut != "" {
 		t.Fatalf("explicit control create: stdout=%q stderr=%q err=%v", out, errOut, err)
 	}
-	agents, _ := fx.newAgentsSince(t, before)
+	agents, _ = fx.newAgentsSince(t, before)
 	if len(agents) != 1 || !maps.Equal(creatorKeysOf(agents[0].Metadata), coremetadata.CreatorAnnotations(fx.creatorAgent, fx.creatorPane)) {
 		t.Fatalf("explicit control create did not record the creator: %+v", agents)
 	}

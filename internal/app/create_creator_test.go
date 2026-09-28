@@ -23,6 +23,7 @@ const creatorTestPanePID = 7001
 var creatorAnnotationKeys = []string{
 	coremetadata.AnnotationCreatorAgent,
 	coremetadata.AnnotationCreatorPane,
+	coremetadata.AnnotationCreatorClient,
 	coremetadata.AnnotationCreatorBasis,
 }
 
@@ -436,11 +437,12 @@ func TestRegistryCreatorPaneRequiresTheAgentPaneRoundTrip(t *testing.T) {
 	}
 }
 
-// TestIntentCreateFromAnAgentPaneNeverRecordsTheCreator is owner ruling 3:
-// the UI intents (picker, pane menu, `ai split`, launch choice) reach
-// createCanonicalIntentAgent, which has no creator observation at all -- even
-// when every check would pass, as the explicit create after it proves.
-func TestIntentCreateFromAnAgentPaneNeverRecordsTheCreator(t *testing.T) {
+// TestIntentCreateFromAnAgentPaneRecordsTheUIOperatorNotThePaneChain: the UI
+// intents (picker, pane menu, `ai split`, launch choice) reach openIntentAgent,
+// which records the operator client "ui" and observes no pane chain -- even
+// when every pane-chain check would pass, as the explicit create after it
+// proves.
+func TestIntentCreateFromAnAgentPaneRecordsTheUIOperatorNotThePaneChain(t *testing.T) {
 	t.Parallel()
 	fx := newCreatorFixture(t)
 	withPopupOrigin(fx.command, fx.tmux, func(key string) string { return fx.env[key] })
@@ -451,12 +453,13 @@ func TestIntentCreateFromAnAgentPaneNeverRecordsTheCreator(t *testing.T) {
 	}, &stdout, &stderr); err != nil {
 		t.Fatalf("intent create: %v (stderr=%q)", err, stderr.String())
 	}
-	if agents, _ := fx.newAgentsSince(t, before); len(agents) != 1 {
+	agents, panes := fx.newAgentsSince(t, before)
+	if len(agents) != 1 {
 		t.Fatalf("intent created %d Agents, want 1", len(agents))
 	}
-	assertNoCreatorKeysAnywhere(t, fx.store)
-	if got := creatorQueryCount(fx.tmux); got != 0 || strings.Contains(stderr.String(), "creator not recorded") {
-		t.Fatalf("intent observed the creator: queries=%d stderr=%q", got, stderr.String())
+	assertCreatorRecord(t, agents[0], panes[0], coremetadata.OperatorCreatorAnnotations(uiOperatorClient))
+	if got := creatorQueryCount(fx.tmux); got != 0 || strings.Contains(stderr.String(), "creator") {
+		t.Fatalf("intent observed the pane chain: queries=%d stderr=%q", got, stderr.String())
 	}
 
 	// Control: the same command, Pane, and seams record on the explicit route.
@@ -465,7 +468,7 @@ func TestIntentCreateFromAnAgentPaneNeverRecordsTheCreator(t *testing.T) {
 		"agent", "--provider", "claude", "--project", "uid:prj-alpha", "--window", "uid:win-alpha-main"); err != nil || errOut != "" {
 		t.Fatalf("explicit control create: stdout=%q stderr=%q err=%v", out, errOut, err)
 	}
-	agents, _ := fx.newAgentsSince(t, before)
+	agents, _ = fx.newAgentsSince(t, before)
 	if len(agents) != 1 || !maps.Equal(creatorKeysOf(agents[0].Metadata), coremetadata.CreatorAnnotations(fx.creatorAgent, fx.creatorPane)) {
 		t.Fatalf("explicit control create did not record the creator: %+v", agents)
 	}

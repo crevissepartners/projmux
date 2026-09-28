@@ -1759,6 +1759,7 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			fs.String("persona", "", "")
 			fs.String("profile", "", "")
 			fs.Bool(claudeDialogueReplyOnlyFlag, false, "")
+			fs.String(creatorFlagName, "", "")
 			fs.String("name", "", "")
 			fs.Var(&out.labels, "label", "")
 			fs.String("output", "", "")

@@ -310,7 +310,7 @@ func TestResumePickerHoldersThatDifferOnlyInSourcesStillAgree(t *testing.T) {
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, wantArgv) {
 		t.Fatalf("exec argv tail = %q, want %q", got, wantArgv)
 	}
-	if want := plusSources(bundle, sources(instructionsInh, effortInherited)...); !maps.Equal(agent.Metadata.Annotations, want) || stderr != "" {
+	if want := withUICreator(plusSources(bundle, sources(instructionsInh, effortInherited)...)); !maps.Equal(agent.Metadata.Annotations, want) || stderr != "" {
 		t.Fatalf("new Agent annotations = %v stderr = %q, want %v and nothing", agent.Metadata.Annotations, stderr, want)
 	}
 }

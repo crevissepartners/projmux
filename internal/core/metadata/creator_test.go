@@ -51,3 +51,30 @@ func TestCreatorAnnotationsAreTheThreeBareUIDKeysAndSurviveARegistryRoundTrip(t 
 		t.Fatalf("decoded Agent annotations = %v, want %v", stored.Metadata.Annotations, want)
 	}
 }
+
+func TestCreatorBasisMapsCarryOnlyTheKeysTheirEvidenceProves(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		got  map[string]string
+		want map[string]string
+	}{
+		{name: "explicit", got: ExplicitCreatorAnnotations("agent-declared"), want: map[string]string{
+			"projmux.io/creator-agent": "agent-declared",
+			"projmux.io/creator-basis": "explicit",
+		}},
+		{name: "operator", got: OperatorCreatorAnnotations("ui"), want: map[string]string{
+			"projmux.io/creator-client": "ui",
+			"projmux.io/creator-basis":  "operator",
+		}},
+	} {
+		if !maps.Equal(test.got, test.want) {
+			t.Fatalf("%s annotations = %v, want %v", test.name, test.got, test.want)
+		}
+	}
+	first := OperatorCreatorAnnotations("ui")
+	first[AnnotationCreatorClient] = "mutated"
+	if again := OperatorCreatorAnnotations("ui"); again[AnnotationCreatorClient] != "ui" {
+		t.Fatal("OperatorCreatorAnnotations returned a shared map")
+	}
+}

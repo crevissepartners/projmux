@@ -708,7 +708,7 @@ func TestResumePickerInAProjectWithLinkRulesLaunchesThemWithTheSnapshotOff(t *te
 		coremetadata.AnnotationAgentProjectLinkRulesDigest: digest,
 		coremetadata.AnnotationAgentSystemPromptSnapshot:   coremetadata.SystemPromptSnapshotOff,
 	}
-	if !maps.Equal(agent.Metadata.Annotations, wantRecorded) {
+	if !maps.Equal(agent.Metadata.Annotations, withUICreator(wantRecorded)) {
 		t.Fatalf("picker Agent annotations = %v, want %v", agent.Metadata.Annotations, wantRecorded)
 	}
 }

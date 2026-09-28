@@ -66,8 +66,10 @@ type resourceCreateFlags struct {
 	name        string
 	provider    string
 	providerSet bool
-	cwd         string
-	addDirs     repeatedFlag
+	// creator is the bare Agent UID --creator declared, or empty.
+	creator string
+	cwd     string
+	addDirs repeatedFlag
 	// cwdSet records that --cwd was spelled at all. An explicit Agent working
 	// directory never reads the split start config.
 	cwdSet bool
@@ -449,6 +451,9 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.StringVar(&out.cwdFrom, splitCWDFromFlag, "",
 			"split start directory: project|pane; defaults to project. The CLI does not read [ai] split_cwd_from")
 	}
+	if shape.provider || shape.initialProvider {
+		fs.StringVar(&out.creator, creatorFlagName, "", creatorFlagUsage)
+	}
 	fs.StringVar(&out.name, "name", "", "explicit Projmux metadata.name for the created resource")
 	fs.Var(&out.labels, "label", "repeatable creation label: key=value")
 	fs.StringVar(&out.output, "output", "", "result projection")
@@ -505,6 +510,13 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			return resourceCreateFlags{}, usageError(fmt.Sprintf(
 				"%s --%s cannot be combined with --cwd: --cwd already names the Agent working directory; nothing was created",
 				spelling, splitCWDFromFlag))
+		}
+	}
+	creatorSet := false
+	fs.Visit(func(f *flag.Flag) { creatorSet = creatorSet || f.Name == creatorFlagName })
+	if creatorSet {
+		if out.creator, err = parseCreatorFlag(spelling, out.creator); err != nil {
+			return resourceCreateFlags{}, err
 		}
 	}
 	if err := out.refuseConflictingWindowScope(spelling); err != nil {
@@ -689,6 +701,9 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	if err != nil {
 		return err
 	}
+	if flags.creator != "" && provider == "" {
+		return usageError(fmt.Sprintf(creatorFlagRequiresAgentRefusalFmt, spelling))
+	}
 	if provider != "" {
 		if c.agents == nil {
 			return errors.New("create window: the provider launcher is not configured")
@@ -721,7 +736,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	var results []createResult
 	var openedAgent coremetadata.Agent
 	var activationTargets []agentActivationTarget
-	var creator creatorProvenance
+	var creator creatorRecord
 	var linksNotice, guidanceNotice string
 	if err := c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
@@ -753,7 +768,9 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 			// allocateWindow already derived from the same payload, which is what
 			// makes the Window's name identical with and without --provider.
 			work.payload = nil
-			creator = c.observeCreator(ctx, working)
+			if creator, err = c.decideCreator(ctx, spelling, working, flags.creator); err != nil {
+				return err
+			}
 			// The Agent's Project label link rules are the created Window's
 			// Project's.
 			c.prepareProjectLinks(provider, project, &flags)
@@ -825,7 +842,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	if err := c.warnUnregisteredClaudeActivations(activationTargets, stderr); err != nil {
 		return err
 	}
-	creator.reportSkip(stderr)
+	creator.report(stderr)
 	receipt := createResultsReceipt(coremetadata.KindWindow, results)
 	if openedAgent.Metadata.UID != "" {
 		// The receipt records what the operation did, and on this branch it
@@ -864,7 +881,7 @@ func (c *createCommand) allocateWindowAgent(
 	work windowWork,
 	flags resourceCreateFlags,
 	labels map[string]string,
-	creator creatorProvenance,
+	creator creatorRecord,
 	operationID string,
 ) (agentWork, agentPaneLaunch, error) {
 	resolver := c.resolveWorkspace
@@ -894,6 +911,7 @@ func (c *createCommand) allocateWindowAgent(
 	if err != nil {
 		return agentWork{}, agentPaneLaunch{}, MapMetadataError(err)
 	}
+	creator = creator.forAgent(working, agent.Metadata.UID)
 	pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{
 		Name:   derivedAgentPaneName(agent.Metadata.Name),
 		CWD:    workspace.CWD,
