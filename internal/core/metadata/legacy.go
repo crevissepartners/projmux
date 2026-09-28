@@ -565,11 +565,24 @@ const SystemPromptSnapshotOff = "off"
 // create that inherited it included, and by the transaction of an
 // `agent resume --effort` that launches the Agent with a new one.
 //
-// The model is deliberately not recorded, not even by `agent resume --model`,
-// which passes it once. The provider restores a conversation's model on resume
-// by itself, and re-passing a recorded model would override a `/model` switch
-// made inside the session.
+// The model is recorded beside it (AnnotationAgentModel) but, unlike the
+// effort, never re-passed.
 const AnnotationAgentEffort = "projmux.io/effort"
+
+// AnnotationAgentModel records the `--model` a Claude or Codex Agent was last
+// asked to run: the model string exactly as the operator passed it (`haiku`,
+// `sonnet`, `claude-sonnet-5`), without alias normalization. It is written by
+// the create transaction that launched the provider with that model, a model
+// filled in by a profile included, and by the transaction of an
+// `agent resume --model` or `agent relaunch --model` that launches the Agent
+// with a new one. A create, resume, or relaunch without --model neither writes
+// nor removes it.
+//
+// It is the requested model, not necessarily the one the provider runs now,
+// and later resumes do not re-pass it: the provider restores a conversation's
+// model on resume by itself, and re-passing a recorded model would override a
+// `/model` switch made inside the session.
+const AnnotationAgentModel = "projmux.io/model"
 
 // AnnotationAgentProjectLinkRulesDigest records which label link rules of its
 // Project a Claude Agent's system prompt was last launched with: the sha256

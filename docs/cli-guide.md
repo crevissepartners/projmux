@@ -1954,18 +1954,22 @@ resume. Every resume passes it again as `--effort <level>`: `agent resume`,
 Continue/topology replay, and the restart of `agent instructions
 attach|detach`. A recorded value that is not one of `low`, `medium`, `high`, `xhigh`, or `max` is
 skipped, the resume still proceeds, and one `effort-invalid` line is disclosed
-where a `persona-unavailable` line would be. The model given with `--model` is
-not recorded or passed again: Claude restores the conversation's model itself
-on resume, and passing the create-time model would override a `/model` switch
-made in the session.
+where a `persona-unavailable` line would be. The model given with `--model`
+(or filled in by a profile) is recorded as `projmux.io/model`, exactly as it
+was passed, but never passed again: Claude restores the conversation's model
+itself on resume, and passing the create-time model would override a `/model`
+switch made in the session. The record is the requested model, not
+necessarily the one the provider runs now. A create without `--model` records
+no model.
 
 `projmux agent resume <ref> [--model <model>] [--effort <level>]` resumes an
 Offline or Failed Claude or Codex Agent on the same UID and conversation with
-another model or effort. `--model` is passed once, on that launch only; the
-provider's conversation keeps it on later resumes, and projmux does not record
-it. `--effort` is recorded as `projmux.io/effort` in the resume's own
-transaction, so later plain resumes pass it again. A resume that fails rolls
-back and records nothing. Both flags take create's values and refusals: any
+another model or effort. `--model` is passed on that launch only and recorded
+as `projmux.io/model`; the provider's conversation keeps the model on later
+resumes, which do not pass it again. `--effort` is recorded as
+`projmux.io/effort`, so later plain resumes pass it again. Both are recorded in
+the resume's own transaction, so a resume that fails rolls back and records
+neither. A resume without `--model` leaves a recorded model as it was. Both flags take create's values and refusals: any
 other provider, an invalid model or effort, and `--dialogue-reply-only` are
 refused before anything changes (`nothing was changed`).
 
@@ -1978,9 +1982,9 @@ effort; at least one of the two flags is required. It is the restart of
 Pane is closed through `delete pane`, and the Agent is brought back through the
 `agent resume` rebind with the overrides (outcome `restarted`, with the new
 Pane in `newPaneUID`); an Offline or Failed Agent is only resumed (outcome
-`resumed`). `--model` is passed once, on that launch, and recorded nowhere;
-`--effort` is recorded as `projmux.io/effort` by the rebind transaction, so a
-failed launch records nothing and later plain resumes pass it again. Nothing
+`resumed`). `--model` and `--effort` are recorded as `projmux.io/model` and
+`projmux.io/effort` by the rebind transaction, so a failed launch records
+neither; later plain resumes pass the effort again but not the model. Nothing
 is written before the stop. On a Codex Agent the model and effort ride the
 native resume as `-m <model>` and `-c model_reasoning_effort=<level>`.
 
@@ -1996,14 +2000,16 @@ Agent whose interaction is not `idle` or `response_complete` -- `unknown`
 included -- without `--yes` (`relaunch-agent-busy`). Outside tmux the stop
 needs `--socket <name>` or `--socket-path <absolute>`, exactly as `delete pane`
 does. Only `--effort` equal to the recorded effort on a Running Agent reports
-`unchanged` and restarts nothing; `--model` always restarts, because projmux
-does not know which model a provider runs. `--dry-run` changes nothing and
+`unchanged` and restarts nothing; `--model` always restarts, because the
+recorded model is the last one requested, not necessarily the one the provider
+runs now (a `/model` switch in the session is not observed). `--dry-run` changes nothing and
 reports `would-restart` or `would-resume`.
 
 `-o json` prints exactly one object with `action` (`relaunch`), `dryRun`,
 `outcome` (`unchanged`, `restarted`, `resumed`, `would-restart`, or
 `would-resume`), `agentUID`, `agentName`, `provider`, `phase`, `interaction`,
-`paneUID`, `newPaneUID`, `currentEffort` (the recorded effort), `newEffort`
+`paneUID`, `newPaneUID`, `currentEffort` (the recorded effort),
+`currentModel` (the recorded model, the last one requested), `newEffort`
 (the requested effort; empty when only `--model` is given, and the recorded
 effort carries on), `newModel`, `restart`, `confirmationRequired`, and
 `unchanged`; the empty string fields are omitted. Without `-o json` the output
@@ -2077,7 +2083,8 @@ An explicit flag wins over the profile item it overlaps: `--instructions` or
 `--persona` over `instructions`, `--model` over `model`, `--effort` over
 `effort`. The profile's instructions go through the same path as
 `--instructions` (snapshot and `projmux.io/persona*` annotations, and the same
-Codex lane rule), and its effort is recorded as `projmux.io/effort`. On
+Codex lane rule), its effort is recorded as `projmux.io/effort`, and its model
+as `projmux.io/model`. On
 Claude, `allow` and `deny` are passed as `--settings <snapshot>`. Claude does
 not get `sandbox` (`claude-sandbox-bash-only`: its sandbox confines only Bash)
 or `approval` (`claude-no-matching-permission-mode`).

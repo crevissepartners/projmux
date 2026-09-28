@@ -329,8 +329,9 @@ func TestCodexPlainProfileLaunchKeepsModelEffortAndPersonaLaneRules(t *testing.T
 		t.Fatalf("Codex profile model or effort was skipped: %q", stdout)
 	}
 	agent := f.createdAgent(t)
-	if agent.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != digest || agent.Metadata.Annotations[coremetadata.AnnotationAgentEffort] != "high" {
-		t.Fatalf("codex Agent annotations = %v, want the profile pair and high effort", agent.Metadata.Annotations)
+	if agent.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] != digest || agent.Metadata.Annotations[coremetadata.AnnotationAgentEffort] != "high" ||
+		agent.Metadata.Annotations[coremetadata.AnnotationAgentModel] != "opus" {
+		t.Fatalf("codex Agent annotations = %v, want the profile pair, high effort, and model opus", agent.Metadata.Annotations)
 	}
 
 	if _, err := f.personas.Write("go-reviewer", []byte("x\n")); err != nil {

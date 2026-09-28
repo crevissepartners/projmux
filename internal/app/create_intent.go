@@ -1086,7 +1086,7 @@ func (c *createCommand) openIntentAgent(
 	}
 	annotations := flags.resumeLaunchValues
 	if flags.profileLaunch.active() {
-		annotations = flags.profileLaunch.withAnnotations(withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(annotations)))
+		annotations = flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(annotations))))
 	}
 	agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
 		Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,

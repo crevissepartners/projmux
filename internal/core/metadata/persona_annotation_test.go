@@ -140,6 +140,41 @@ func TestSetAgentEffortReplacesOnlyTheEffort(t *testing.T) {
 	}
 }
 
+// TestSetAgentModelReplacesOnlyTheModel pins the one mutation
+// `agent resume --model` and `agent relaunch --model` make: the model is
+// replaced as passed (trimmed, no alias normalization), every other annotation
+// stays, and recording the value already recorded is not a change.
+func TestSetAgentModelReplacesOnlyTheModel(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 28, 3, 0, 0, 0, time.UTC)
+	mutator := Mutator{Now: func() time.Time { return now }}
+	reg := personaAnnotationFixture()
+
+	if _, err := mutator.SetAgentModel(&reg, "agent-1", " haiku "); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{AnnotationAgentTopic: "review the parser", AnnotationAgentModel: "haiku"}
+	stored, _ := reg.Agent("agent-1")
+	if !maps.Equal(stored.Metadata.Annotations, want) || !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("annotations = %v updatedAt = %v, want %v at %v", stored.Metadata.Annotations, reg.UpdatedAt, want, now)
+	}
+
+	later := Mutator{Now: func() time.Time { return now.Add(time.Hour) }}
+	if _, err := later.SetAgentModel(&reg, "agent-1", "haiku"); err != nil {
+		t.Fatal(err)
+	}
+	if !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("recording the same model moved updatedAt to %v", reg.UpdatedAt)
+	}
+
+	if _, err := mutator.SetAgentModel(&reg, "agent-1", " "); !errors.Is(err, ErrInvalidRegistry) {
+		t.Fatalf("empty model = %v, want %v", err, ErrInvalidRegistry)
+	}
+	if _, err := mutator.SetAgentModel(&reg, "agent-missing", "sonnet"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
+	}
+}
+
 // TestSetAgentProjectLinkRulesRecordsTheDigestWithTheSnapshotOff pins the one
 // mutation a resume makes when its Project's label link rules changed: the
 // digest is replaced (or removed) together with the sticky snapshot mode off,

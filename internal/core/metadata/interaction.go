@@ -224,6 +224,31 @@ func (m Mutator) SetAgentEffort(reg *Registry, agentUID, effort string) (Agent, 
 	return agent.Clone(), nil
 }
 
+// SetAgentModel records the model an `agent resume --model` or
+// `agent relaunch --model` is about to launch one existing Agent with,
+// replacing the one it recorded. Recording the value it already records is not
+// a change. Every other annotation is left as it was.
+func (m Mutator) SetAgentModel(reg *Registry, agentUID, model string) (Agent, error) {
+	const op = "set agent model"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "model must be set")
+	}
+	if agent.Metadata.Annotations[AnnotationAgentModel] == model {
+		return agent.Clone(), nil
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	agent.Metadata.Annotations[AnnotationAgentModel] = model
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // SetAgentProjectLinkRules records the Project label link rules digest a
 // resume is about to launch one existing Agent with, replacing the one it
 // recorded; an empty digest removes the annotation (the Project has no rules
