@@ -93,7 +93,10 @@ and humans run the same entrypoints.
   pending rather than failing, so dropping that job would deadlock merges. The
   tag-triggered Release workflow uses the same four Linux shards and two suite
   selectors on separate runners, then reduces them through the fail-closed
-  `Release E2E Tests` aggregate before `Build Release` starts.
+  `Release E2E Tests` aggregate before `Build Release` starts. `make test`
+  runs `make test-e2e-shards`, so the required Unit Tests job fails on shard
+  contract drift. The live dialogue canary's own contract is
+  `test/agent_dialogue_canary_test.py`, not this target.
 - `make test-e2e-coverage` validates
   `test/e2e/ags-oedr-manifest.json`: executable scenario markers and shard
   assignments must match all 21 rows with orphan count zero. A matrix may move
