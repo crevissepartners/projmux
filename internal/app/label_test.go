@@ -242,3 +242,145 @@ func TestLabelAcceptsEveryValueCreateLabelAccepts(t *testing.T) {
 		})
 	}
 }
+
+// controlCharacterLabelOperands is the operator's reproduction of the broken
+// block: every value and one key carry a character that used to split the
+// line or reach the terminal raw.
+var controlCharacterLabelOperands = []string{
+	"k=line1\nline2",
+	"tab=a\tb",
+	"esc=x\x1b[31mred\x1b[0m",
+	"cr=before\rafter",
+	"nul=a\x01b",
+	"plain=ok",
+	"bad\nkey=v",
+}
+
+const controlCharacterLabelsRendered = `"bad\nkey"=v cr="before\rafter" esc="x\x1b[31mred\x1b[0m" k="line1\nline2" nul="a\x01b" plain=ok tab="a\tb"`
+
+// assertOneCleanLine fails when text is not exactly one newline-terminated
+// line free of raw control characters.
+func assertOneCleanLine(t *testing.T, what, text string) {
+	t.Helper()
+	body, ok := strings.CutSuffix(text, "\n")
+	if !ok || strings.Contains(body, "\n") {
+		t.Fatalf("%s = %q, want exactly one line", what, text)
+	}
+	for _, r := range body {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("%s = %q still carries raw control character %U", what, text, r)
+		}
+	}
+}
+
+// TestLabelResultLineQuotesControlCharacters is acceptance 2: the result line
+// of a write whose key or values carry control characters stays one line and
+// spells each such token in strconv.Quote form, while the stored label keeps
+// the original bytes.
+func TestLabelResultLineQuotesControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	stdout, stderr, err := runRoute(t, newTestLabelCommand(store), append([]string{"project", "alpha"}, controlCharacterLabelOperands...)...)
+	if err != nil {
+		t.Fatalf("label project error = %v (stderr=%s)", err, stderr)
+	}
+	assertOneCleanLine(t, "label stdout", stdout)
+	if want := "label project: project/alpha: labels " + controlCharacterLabelsRendered + "\n"; stdout != want {
+		t.Fatalf("label stdout = %q, want %q", stdout, want)
+	}
+
+	_, meta, ok := resourceFor(store.registry, coremetadata.KindProject, "prj-alpha")
+	if !ok {
+		t.Fatal("project disappeared")
+	}
+	if meta.Labels["k"] != "line1\nline2" || meta.Labels["bad\nkey"] != "v" || meta.Labels["esc"] != "x\x1b[31mred\x1b[0m" {
+		t.Fatalf("stored labels = %q, want the original bytes", meta.Labels)
+	}
+}
+
+// TestDescribeQuotesControlCharactersInLabelsAndAnnotations is acceptance 1
+// and 5: the Labels and Annotations rows each stay one line with the same
+// quoting the label result line uses, and `-o json` still carries the
+// original values.
+func TestDescribeQuotesControlCharactersInLabelsAndAnnotations(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	if _, stderr, err := runRoute(t, newTestLabelCommand(store), append([]string{"project", "alpha"}, controlCharacterLabelOperands...)...); err != nil {
+		t.Fatalf("label project error = %v (stderr=%s)", err, stderr)
+	}
+	for i := range store.registry.Projects {
+		if store.registry.Projects[i].Metadata.UID == "prj-alpha" {
+			store.registry.Projects[i].Metadata.Annotations = map[string]string{
+				coremetadata.AnnotationAgentTopic: "first\nsecond",
+				"plain":                           "ok",
+			}
+		}
+	}
+
+	stdout, stderr, err := runRoute(t, newTestDescribeCommand(t, store), "project", "alpha")
+	if err != nil {
+		t.Fatalf("describe project error = %v (stderr=%s)", err, stderr)
+	}
+	rows := map[string]string{}
+	for line := range strings.SplitSeq(strings.TrimSuffix(stdout, "\n"), "\n") {
+		assertOneCleanLine(t, "describe line", line+"\n")
+		if label, value, ok := strings.Cut(line, ":"); ok {
+			rows[label] = strings.TrimSpace(value)
+		}
+		if strings.HasPrefix(line, "line2") || strings.HasPrefix(line, "second") || strings.HasPrefix(line, "key=") {
+			t.Fatalf("describe stdout = %q, a metadata value continued on its own line", stdout)
+		}
+	}
+	if got := rows["Labels"]; got != controlCharacterLabelsRendered {
+		t.Fatalf("Labels row = %q, want %q", got, controlCharacterLabelsRendered)
+	}
+	if got, want := rows["Annotations"], "plain=ok "+coremetadata.AnnotationAgentTopic+`="first\nsecond"`; got != want {
+		t.Fatalf("Annotations row = %q, want %q", got, want)
+	}
+
+	structured, _, err := runRoute(t, newTestDescribeCommand(t, store), "project", "alpha", "-o", "json")
+	if err != nil {
+		t.Fatalf("describe project -o json error = %v", err)
+	}
+	for _, want := range []string{`"k": "line1\nline2"`, `"esc": "x\u001b[31mred\u001b[0m"`, `"bad\nkey": "v"`, `"first\nsecond"`} {
+		if !strings.Contains(structured, want) {
+			t.Fatalf("describe -o json = %s, want it to keep the original value %s", structured, want)
+		}
+	}
+}
+
+// TestDescribeAndLabelLeaveControlFreeMetadataUnchanged is acceptance 3: with
+// no token the quoting applies to, both surfaces print the plain sorted
+// `key=value` join byte for byte.
+func TestDescribeAndLabelLeaveControlFreeMetadataUnchanged(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	const plain = `inner=say "hi" note=two words tier= unicode=레이블`
+	stdout, stderr, err := runRoute(t, newTestLabelCommand(store), "project", "alpha", "note=two words", "unicode=레이블", "tier=", `inner=say "hi"`)
+	if err != nil {
+		t.Fatalf("label project error = %v (stderr=%s)", err, stderr)
+	}
+	if want := "label project: project/alpha: labels " + plain + "\n"; stdout != want {
+		t.Fatalf("label stdout = %q, want %q", stdout, want)
+	}
+
+	described, _, err := runRoute(t, newTestDescribeCommand(t, store), "project", "alpha")
+	if err != nil {
+		t.Fatalf("describe project error = %v", err)
+	}
+	found := false
+	for line := range strings.SplitSeq(described, "\n") {
+		if value, ok := strings.CutPrefix(line, "Labels:"); ok {
+			found = true
+			if strings.TrimLeft(value, " ") != plain {
+				t.Fatalf("Labels row = %q, want %q", line, plain)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("describe stdout = %q, want a Labels row", described)
+	}
+}

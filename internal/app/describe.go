@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -376,19 +375,12 @@ func describeTimestamp(at time.Time) string {
 	return at.UTC().Format("2006-01-02T15:04:05Z")
 }
 
-// describeMapRows renders a metadata map in deterministic key order.
+// describeMapRows renders a metadata map as one row through the same pair
+// spelling the `label` result line uses, so a control character in a key or
+// value is quoted instead of breaking the aligned block.
 func describeMapRows(label string, values map[string]string) [][2]string {
 	if len(values) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	pairs := make([]string, 0, len(keys))
-	for _, key := range keys {
-		pairs = append(pairs, key+"="+values[key])
-	}
-	return [][2]string{{label, strings.Join(pairs, " ")}}
+	return [][2]string{{label, selector.FormatLabels(values)}}
 }
