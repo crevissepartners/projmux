@@ -819,9 +819,38 @@ reachable; the full text is available from `projmux agent question list`.
 
 Pressing Esc in the popup gives the question back: the record is closed and
 Claude Code shows its own prompt. So does a popup that fails to open or that
-ends without answering after it showed; once shown and closed, a question's
-popup is not opened again. Pressing Esc in Claude Code itself cancels the wait
-and declines the question.
+ends without answering after it showed, including one whose client detached;
+once shown and closed, a question's popup is not opened again. Pressing Esc in
+Claude Code itself cancels the wait and declines the question.
+
+A question is given back only once its record is written `closed`. While the
+question store cannot be written (the disk is full, or its lock is held), a
+popup that ended leaves the record `waiting` and the hook keeps holding the
+question, so it is in neither the popup nor Claude Code's prompt; the hook
+tries again every 250 milliseconds (each try waits up to 2 seconds for the
+store lock) and hands the question back as soon as the write succeeds, so the
+record's `updatedAt` is that moment, not the moment the popup ended.
+
+A `closed` record says why it closed in its `disposition`, and that reason
+tells whether the provider still asks the question in its own prompt:
+
+| Disposition | Written when | Provider still asks |
+| --- | --- | --- |
+| `popup-dismissed` | Esc in the popup | yes |
+| `popup-failed` | the popup failed to open, ended without an answer (its client detached), or the picker failed | yes |
+| `hook-canceled` | Claude Code canceled the hook (Esc in Claude Code, or its hook timeout), which declines the question | no |
+| `hook-failed` | the hook crashed after it recorded the question | yes |
+| `channel-off` | `agent question disable` | yes |
+| `turn-ended` | the Codex turn that asked it ended | no |
+| `watch-stopped` | projmux's Codex observer stopped watching the request (its connection to Codex ended, or the observer stopped) | yes |
+| `answered-elsewhere` | Codex's own input surface answered it first | no |
+
+`agent question list` shows the reason and says whether the provider still
+asks, for example `closed (popup-failed; Claude Code still asks it in its own
+prompt)` or `closed (hook-canceled; Claude Code no longer asks it)`; `-o json`
+has the reason in `disposition`. A record closed by an older projmux has no
+reason, and a reason this projmux does not know is shown as written. The
+`question-closed` refusal of `answer` carries the same words after the reason.
 
 The same question can be answered from any shell:
 

@@ -146,8 +146,8 @@ func (c *codexQuestionChannel) HandleResolved(identity codexLifecycleIdentity, e
 
 // HandleTurnCompleted closes every waiting Codex request of this exact
 // binding once its turn ended, however it ended. One thread runs one turn at
-// a time, so the thread identity names that turn's requests. The record is
-// plain closed: an interrupted turn was not answered anywhere, and a
+// a time, so the thread identity names that turn's requests. The record
+// closes as turn-ended: an interrupted turn was not answered anywhere, and a
 // resolved notification that trails the end finds nothing waiting.
 func (c *codexQuestionChannel) HandleTurnCompleted(identity codexLifecycleIdentity, event codexappserver.LifecycleEvent) {
 	if event.Kind != codexappserver.LifecycleTurnCompleted || event.ThreadID != identity.ThreadID || c.store == nil {
@@ -163,7 +163,7 @@ func (c *codexQuestionChannel) HandleTurnCompleted(identity codexLifecycleIdenti
 	}
 	for _, record := range records {
 		if codexQuestionWaitingFor(record, identity) {
-			_, _ = store.Close(record.ID)
+			_, _ = store.Close(record.ID, agentquestion.CloseReasonTurnEnded)
 		}
 	}
 }
@@ -193,7 +193,7 @@ func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentqu
 			if c.beforeCanceledClose != nil {
 				c.beforeCanceledClose()
 			}
-			_, _ = store.Close(record.ID)
+			_, _ = store.Close(record.ID, agentquestion.CloseReasonWatchStopped)
 			return
 		case <-deadline.C:
 			// Codex also presents this request in its native TUI. Leave the
@@ -208,7 +208,7 @@ func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentqu
 				continue
 			}
 			popup.markEnded()
-			_, _ = store.Close(record.ID)
+			_, _ = store.Close(record.ID, agentquestion.CloseReasonPopupFailed)
 		case <-ticker.C:
 			current, found, err := store.Get(record.ID)
 			if err != nil || !found {
@@ -217,7 +217,7 @@ func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentqu
 			switch current.State {
 			case agentquestion.StateWaiting:
 				if popup.finished {
-					_, _ = store.Close(record.ID)
+					_, _ = store.Close(record.ID, agentquestion.CloseReasonPopupFailed)
 					continue
 				}
 				popup.maybeOpen(ctx)

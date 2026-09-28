@@ -339,7 +339,7 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 	// closed before the panic goes on to the process entry's recover.
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			_, _ = store.Close(record.ID)
+			_, _ = store.Close(record.ID, agentquestion.CloseReasonHookFailed)
 			panic(recovered)
 		}
 	}()
@@ -550,13 +550,16 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 	popup := newClaudeQuestionPopupDriver(h.popup, h.clientPoll, paneID, asker, store, record)
 	defer func() { popup.stop(answered) }()
 	popup.maybeOpen(ctx)
+	closePopupFailed := func(id string) (agentquestion.Record, error) {
+		return store.Close(id, agentquestion.CloseReasonPopupFailed)
+	}
 	for {
 		var step func(string) (agentquestion.Record, error)
 		select {
 		case <-ctx.Done():
 			// Claude Code discards a canceled hook's output, so an answer that
 			// landed just before the cancellation is not printed either.
-			_, _ = store.Close(record.ID)
+			_, _ = store.Close(record.ID, agentquestion.CloseReasonHookCanceled)
 			return agentquestion.Record{}, false
 		case <-deadline.C:
 			step = store.Settle
@@ -571,7 +574,7 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 			// with the record still waiting is given back here. Close returns
 			// the record as it stands, so a picker answer is kept.
 			popup.markEnded()
-			step = store.Close
+			step = closePopupFailed
 		case <-ticker.C:
 			current, found, err := read(store, record.ID)
 			switch {
@@ -585,7 +588,7 @@ func (h claudeQuestionHook) wait(ctx context.Context, store *agentquestion.Store
 				return agentquestion.Record{}, false
 			case current.State == agentquestion.StateWaiting && popup.finished:
 				// The popup ended but closing the record failed; try again.
-				step = store.Close
+				step = closePopupFailed
 			case current.State == agentquestion.StateWaiting:
 				// A cancellation that raced this tick writes nothing more.
 				if ctx.Err() == nil {
