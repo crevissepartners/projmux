@@ -19,15 +19,15 @@ import (
 // so an Agent that got the other Project's rules is visible in its argv.
 var (
 	linkRulesAlpha = projectlinks.Rules{
-		JiraURL: "https://jira.alpha.example.com",
-		Links:   []projectlinks.Link{{LabelKey: "jira", Template: "{jira}/browse/{value}"}},
+		Jira:  []string{"https://jira.alpha.example.com"},
+		Links: []projectlinks.Link{{LabelKey: "jira", Template: "{jira}/browse/{value}"}},
 	}
 	linkRulesBeta = projectlinks.Rules{
-		RepoURL: "https://github.com/example/beta",
-		Links:   []projectlinks.Link{{LabelKey: "pr", Template: "{repo}/pull/{value}"}},
+		Repo:  []string{"https://github.com/example/beta"},
+		Links: []projectlinks.Link{{LabelKey: "pr", Template: "{repo}/pull/{value}"}},
 	}
 	linkRulesBetaChanged = projectlinks.Rules{
-		RepoURL: "https://github.com/example/beta",
+		Repo: []string{"https://github.com/example/beta"},
 		Links: []projectlinks.Link{
 			{LabelKey: "pr", Template: "{repo}/pull/{value}"},
 			{LabelKey: "issue", Template: "{repo}/issues/{value}"},
@@ -42,8 +42,8 @@ type projectLinksAgentLauncher struct {
 	planner *aiCommand
 }
 
-func (l *projectLinksAgentLauncher) PlanProjectLinks(provider, projectUID string, recorded map[string]string) projectLinksLaunch {
-	return l.planner.PlanProjectLinks(provider, projectUID, recorded)
+func (l *projectLinksAgentLauncher) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
+	return l.planner.PlanProjectLinks(provider, project, recorded)
 }
 
 // projectLinksResumeLauncher is the exact-argv resume recorder with the
@@ -52,8 +52,8 @@ type projectLinksResumeLauncher struct {
 	*exactArgvResumeLauncher
 }
 
-func (l *projectLinksResumeLauncher) PlanProjectLinks(provider, projectUID string, recorded map[string]string) projectLinksLaunch {
-	return l.planner.PlanProjectLinks(provider, projectUID, recorded)
+func (l *projectLinksResumeLauncher) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
+	return l.planner.PlanProjectLinks(provider, project, recorded)
 }
 
 // linkRulesPaths are the projmux paths planner's own home resolves to.
@@ -109,11 +109,28 @@ func writeLinkRules(t *testing.T, paths config.Paths, projectUID string, rules p
 	}
 }
 
+// linkRulesRegistryProject is the Registry Project uid in store.
+func linkRulesRegistryProject(t *testing.T, store *fakeResourceStore, uid string) coremetadata.Project {
+	t.Helper()
+	project, ok := store.registry.Project(uid)
+	if !ok {
+		t.Fatalf("no project %q in the fixture registry", uid)
+	}
+	return project.Clone()
+}
+
+// linkRulesProject is what the rules of the Registry Project uid in store are
+// rendered with.
+func linkRulesProject(t *testing.T, store *fakeResourceStore, uid string) projectlinks.Project {
+	t.Helper()
+	return projectlinks.ProjectOf(linkRulesRegistryProject(t, store, uid))
+}
+
 // linkRulesSnapshot is the rules snapshot path and digest a launch with rules
 // is expected to use.
-func linkRulesSnapshot(t *testing.T, paths config.Paths, rules projectlinks.Rules) (string, string) {
+func linkRulesSnapshot(t *testing.T, paths config.Paths, rules projectlinks.Rules, project projectlinks.Project) (string, string) {
 	t.Helper()
-	digest := projectlinks.Digest(projectlinks.Render(rules))
+	digest := projectlinks.Digest(projectlinks.Render(rules, project))
 	path, err := projectlinks.NewDefaultSnapshotStore(paths).SnapshotPath(digest)
 	if err != nil {
 		t.Fatal(err)
@@ -122,10 +139,10 @@ func linkRulesSnapshot(t *testing.T, paths config.Paths, rules projectlinks.Rule
 }
 
 // linkRulesComposite is the composite bytes a persona and rules make.
-func linkRulesComposite(personaContent []byte, rules projectlinks.Rules) []byte {
+func linkRulesComposite(personaContent []byte, rules projectlinks.Rules, project projectlinks.Project) []byte {
 	out := append([]byte{}, personaContent...)
 	out = append(out, projectlinks.CompositeSeparator...)
-	return append(out, projectlinks.Render(rules)...)
+	return append(out, projectlinks.Render(rules, project)...)
 }
 
 // newLinkRulesCreate is `create agent` over the re-UID'd fixture, with the
@@ -214,11 +231,11 @@ func TestCreateClaudeAgentWithProjectLinkRulesLaunchesTheRulesSnapshotAndRecords
 		"agent", "--provider", "claude", "--project", "alpha", "--window", "review", "--", "review this"); err != nil || strings.Contains(stderr, projectLinksReasonUnavailable) {
 		t.Fatalf("create: stderr=%q err=%v", stderr, err)
 	}
-	wantPath, digest := linkRulesSnapshot(t, paths, linkRulesAlpha)
+	wantPath, digest := linkRulesSnapshot(t, paths, linkRulesAlpha, linkRulesProject(t, store, alpha))
 	if len(launcher.plans) != 1 || launcher.plans[0].personaFile != wantPath {
 		t.Fatalf("plans = %+v, want the rules snapshot %s", launcher.plans, wantPath)
 	}
-	if content, err := os.ReadFile(wantPath); err != nil || !bytes.Equal(content, projectlinks.Render(linkRulesAlpha)) {
+	if content, err := os.ReadFile(wantPath); err != nil || !bytes.Equal(content, projectlinks.Render(linkRulesAlpha, linkRulesProject(t, store, alpha))) {
 		t.Fatalf("rules snapshot = %q, %v", content, err)
 	}
 	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
@@ -252,7 +269,7 @@ func TestCreateClaudeAgentWithPersonaAndProjectLinkRulesLaunchesOneCompositeFile
 		t.Fatalf("plans = %+v", launcher.plans)
 	}
 	composite := launcher.plans[0].personaFile
-	wantComposite := linkRulesComposite(content, linkRulesAlpha)
+	wantComposite := linkRulesComposite(content, linkRulesAlpha, linkRulesProject(t, store, alpha))
 	if got, err := os.ReadFile(composite); err != nil || !bytes.Equal(got, wantComposite) {
 		t.Fatalf("composite %s = %q, %v; want %q", composite, got, err, wantComposite)
 	}
@@ -267,7 +284,7 @@ func TestCreateClaudeAgentWithPersonaAndProjectLinkRulesLaunchesOneCompositeFile
 	if got, err := os.ReadFile(personaPath); err != nil || !bytes.Equal(got, content) {
 		t.Fatalf("persona snapshot = %q, %v; want the untouched persona bytes", got, err)
 	}
-	_, digest := linkRulesSnapshot(t, paths, linkRulesAlpha)
+	_, digest := linkRulesSnapshot(t, paths, linkRulesAlpha, linkRulesProject(t, store, alpha))
 	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 	want := map[string]string{
 		coremetadata.AnnotationAgentPersona:                "reviewer",
@@ -320,7 +337,7 @@ func TestResumeWithChangedProjectLinkRulesPassesTheNewFileAndTurnsTheSnapshotOff
 	topic := map[string]string{coremetadata.AnnotationAgentTopic: "review"}
 
 	argv, stderr := resumeClaudeAgentWithLinkRules(t, planner, store, topic)
-	path, digest := linkRulesSnapshot(t, paths, linkRulesBeta)
+	path, digest := linkRulesSnapshot(t, paths, linkRulesBeta, linkRulesProject(t, store, beta))
 	want := []string{"--append-system-prompt-file", path, "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}
 	tail := execArgvTail(t, argv, aiModeClaude)
 	if !slices.Equal(tail, want) || stderr != "" {
@@ -342,7 +359,7 @@ func TestResumeWithChangedProjectLinkRulesPassesTheNewFileAndTurnsTheSnapshotOff
 	store = newFakeResourceStore(t)
 	reUIDLinkRulesProjectsTo(t, store, alpha, beta)
 	argv, _ = resumeClaudeAgentWithLinkRules(t, planner, store, recorded)
-	changedPath, changedDigest := linkRulesSnapshot(t, paths, linkRulesBetaChanged)
+	changedPath, changedDigest := linkRulesSnapshot(t, paths, linkRulesBetaChanged, linkRulesProject(t, store, beta))
 	want = []string{"--append-system-prompt-file", changedPath, "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}
 	if tail = execArgvTail(t, argv, aiModeClaude); !slices.Equal(tail, want) {
 		t.Fatalf("changed rules: exec argv tail = %q, want %q", tail, want)
@@ -377,7 +394,7 @@ func TestResumeWithUnchangedProjectLinkRulesKeepsTheSnapshotMode(t *testing.T) {
 	store := newFakeResourceStore(t)
 	_, beta := reUIDLinkRulesProjects(t, store)
 	writeLinkRules(t, paths, beta, linkRulesBeta)
-	path, digest := linkRulesSnapshot(t, paths, linkRulesBeta)
+	path, digest := linkRulesSnapshot(t, paths, linkRulesBeta, linkRulesProject(t, store, beta))
 	annotations := map[string]string{coremetadata.AnnotationAgentProjectLinkRulesDigest: digest}
 
 	argv, stderr := resumeClaudeAgentWithLinkRules(t, planner, store, annotations)
@@ -397,8 +414,8 @@ func TestResumeWithUnchangedProjectLinkRulesKeepsTheSnapshotMode(t *testing.T) {
 func TestResumeWithRemovedProjectLinkRulesPassesNoFileAndRemovesTheDigest(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
 	store := newFakeResourceStore(t)
-	reUIDLinkRulesProjects(t, store)
-	annotations := map[string]string{coremetadata.AnnotationAgentProjectLinkRulesDigest: projectlinks.Digest(projectlinks.Render(linkRulesBeta))}
+	_, beta := reUIDLinkRulesProjects(t, store)
+	annotations := map[string]string{coremetadata.AnnotationAgentProjectLinkRulesDigest: projectlinks.Digest(projectlinks.Render(linkRulesBeta, linkRulesProject(t, store, beta)))}
 
 	argv, stderr := resumeClaudeAgentWithLinkRules(t, planner, store, annotations)
 	want := []string{"--system-prompt-snapshot", "off", "--resume", personaResumeConversation}
@@ -420,7 +437,7 @@ func TestCorruptProjectLinkRulesLaunchWithoutThemWithOneNoticeAndRecordNothing(t
 	store := newFakeResourceStore(t)
 	_, beta := reUIDLinkRulesProjects(t, store)
 	writeLinkRules(t, paths, beta, linkRulesBeta)
-	_, digest := linkRulesSnapshot(t, paths, linkRulesBeta)
+	_, digest := linkRulesSnapshot(t, paths, linkRulesBeta, linkRulesProject(t, store, beta))
 	rulesFile, err := projectlinks.NewDefaultStore(paths).Path(beta)
 	if err != nil {
 		t.Fatal(err)
@@ -483,8 +500,8 @@ func TestProjectLinkRulesComeFromTheRegistryOwnerProjectNotTheWorkingDirectory(t
 
 	argv, _ := resumeClaudeAgentWithLinkRules(t, planner, store, nil)
 	tail := execArgvTail(t, argv, aiModeClaude)
-	betaPath, betaDigest := linkRulesSnapshot(t, paths, linkRulesBeta)
-	alphaPath, _ := linkRulesSnapshot(t, paths, linkRulesAlpha)
+	betaPath, betaDigest := linkRulesSnapshot(t, paths, linkRulesBeta, linkRulesProject(t, store, beta))
+	alphaPath, _ := linkRulesSnapshot(t, paths, linkRulesAlpha, linkRulesProject(t, store, alpha))
 	if got := systemPromptFileOf(t, tail); got != betaPath || slices.Contains(tail, alphaPath) {
 		t.Fatalf("exec argv tail = %q, want beta's rules %s and never alpha's %s", tail, betaPath, alphaPath)
 	}
@@ -493,14 +510,14 @@ func TestProjectLinkRulesComeFromTheRegistryOwnerProjectNotTheWorkingDirectory(t
 	}
 
 	// The create side reads the resolved Project too.
-	create, launcher, _, createPlanner, createAlpha, createBeta := newLinkRulesCreate(t)
+	create, launcher, createStore, createPlanner, createAlpha, createBeta := newLinkRulesCreate(t)
 	createPaths := linkRulesPaths(t, createPlanner)
 	writeLinkRules(t, createPaths, createAlpha, linkRulesAlpha)
 	writeLinkRules(t, createPaths, createBeta, linkRulesBeta)
 	if _, _, err := runRoute(t, create, "agent", "--provider", "claude", "--project", "beta", "--window", "main", "--", "go"); err != nil {
 		t.Fatal(err)
 	}
-	if wantPath, _ := linkRulesSnapshot(t, createPaths, linkRulesBeta); len(launcher.plans) != 1 || launcher.plans[0].personaFile != wantPath {
+	if wantPath, _ := linkRulesSnapshot(t, createPaths, linkRulesBeta, linkRulesProject(t, createStore, createBeta)); len(launcher.plans) != 1 || launcher.plans[0].personaFile != wantPath {
 		t.Fatalf("create plans = %+v, want beta's rules %s", launcher.plans, wantPath)
 	}
 }
@@ -519,7 +536,7 @@ func TestAgentResumeWithModelEffortAndProjectLinkRulesPassesAllBeforeTheWorkspac
 	target.Spec.Workspace = coremetadata.AgentWorkspace{CWD: "/srv/beta", AdditionalWritableRoots: []string{"/srv/beta/extra"}}
 
 	argv, _ := resumeClaudeAgentWithLinkRules(t, planner, store, nil, "--model", "opus", "--effort", "max")
-	path, digest := linkRulesSnapshot(t, paths, linkRulesBeta)
+	path, digest := linkRulesSnapshot(t, paths, linkRulesBeta, linkRulesProject(t, store, beta))
 	want := []string{"--model", "opus", "--effort", "max", "--append-system-prompt-file", path,
 		"--system-prompt-snapshot", "off", "--add-dir", "/srv/beta/extra", "--resume", personaResumeConversation}
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
@@ -548,7 +565,7 @@ func TestResumeWithPersonaAndProjectLinkRulesPassesOneCompositeFile(t *testing.T
 	if file == personaPath {
 		t.Fatalf("exec argv tail = %q passes the persona alone", tail)
 	}
-	if got, err := os.ReadFile(file); err != nil || !bytes.Equal(got, linkRulesComposite([]byte(personaResumeContent), linkRulesBeta)) {
+	if got, err := os.ReadFile(file); err != nil || !bytes.Equal(got, linkRulesComposite([]byte(personaResumeContent), linkRulesBeta, linkRulesProject(t, store, beta))) {
 		t.Fatalf("composite %s = %q, %v", file, got, err)
 	}
 	if got, err := os.ReadFile(personaPath); err != nil || string(got) != personaResumeContent {
@@ -573,13 +590,13 @@ func TestProjectLinkRulesLeaveCodexAndReplyOnlyLaunchesUnchanged(t *testing.T) {
 	writeLinkRules(t, paths, beta, linkRulesBeta)
 
 	for _, provider := range []string{aiModeCodex, aiModeAntigravity} {
-		if links := planner.PlanProjectLinks(provider, beta, nil); links.active {
+		if links := planner.PlanProjectLinks(provider, linkRulesRegistryProject(t, store, beta), nil); links.active {
 			t.Fatalf("%s planned project link rules: %+v", provider, links)
 		}
 	}
 	workspace := coremetadata.AgentWorkspace{CWD: "/work/owner", AdditionalWritableRoots: []string{"/work/extra"}}
-	_, digest := linkRulesSnapshot(t, paths, linkRulesBeta)
-	if links := planner.PlanProjectLinks(aiModeClaude, beta, nil); links.digest != digest {
+	_, digest := linkRulesSnapshot(t, paths, linkRulesBeta, linkRulesProject(t, store, beta))
+	if links := planner.PlanProjectLinks(aiModeClaude, linkRulesRegistryProject(t, store, beta), nil); links.digest != digest {
 		t.Fatalf("claude rules digest = %q, want %q", links.digest, digest)
 	}
 	annotations := map[string]string{coremetadata.AnnotationAgentProjectLinkRulesDigest: digest}
@@ -604,7 +621,7 @@ func TestProjectLinkRulesLeaveCodexAndReplyOnlyLaunchesUnchanged(t *testing.T) {
 		if name == "codex" {
 			provider = aiModeCodex
 		}
-		create.prepareProjectLinks(provider, beta, &flags)
+		create.prepareProjectLinks(provider, linkRulesRegistryProject(t, store, beta), &flags)
 		if flags.projectLinks.active || flags.resumeLaunchValues != nil {
 			t.Fatalf("%s: prepared project link rules %+v", name, flags.projectLinks)
 		}
@@ -618,23 +635,24 @@ func TestProjectLinkRulesLeaveCodexAndReplyOnlyLaunchesUnchanged(t *testing.T) {
 func TestTopologyReplayPassesChangedProjectLinkRulesAndRecordsThem(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
 	paths := linkRulesPaths(t, planner)
-	project, err := coremetadata.NewUID(coremetadata.KindProject)
+	projectUID, err := coremetadata.NewUID(coremetadata.KindProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeLinkRules(t, paths, project, linkRulesBeta)
+	writeLinkRules(t, paths, projectUID, linkRulesBeta)
 	root := t.TempDir()
+	project := coremetadata.Project{Metadata: coremetadata.ObjectMeta{UID: projectUID, Name: "beta"}, Spec: coremetadata.ProjectSpec{Root: root}}
 	agent := coremetadata.Agent{
 		Metadata: coremetadata.ObjectMeta{UID: "agent-1", Name: "reviewer"},
 		Spec:     coremetadata.AgentSpec{Provider: aiModeClaude, Workspace: coremetadata.AgentWorkspace{CWD: root}},
 		Status:   coremetadata.AgentStatus{SessionRef: claudeConversationRef(personaResumeConversation)},
 	}
 	plan := &registryTopologyPlan{}
-	work, ok := planTopologyAgentReplay(plan, coremetadata.Project{Metadata: coremetadata.ObjectMeta{UID: project}, Spec: coremetadata.ProjectSpec{Root: root}}, agent, "main/reviewer", planner)
+	work, ok := planTopologyAgentReplay(plan, project, agent, "main/reviewer", planner)
 	if !ok || len(plan.notices) != 0 {
 		t.Fatalf("replay planned %v, notices %v", ok, plan.notices)
 	}
-	path, digest := linkRulesSnapshot(t, paths, linkRulesBeta)
+	path, digest := linkRulesSnapshot(t, paths, linkRulesBeta, projectlinks.ProjectOf(project))
 	want := []string{"--append-system-prompt-file", path, "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}
 	if got := execArgvTail(t, work.argv, aiModeClaude); !slices.Equal(got, want) {
 		t.Fatalf("replay exec argv tail = %q, want %q", got, want)
@@ -679,7 +697,7 @@ func TestResumePickerInAProjectWithLinkRulesLaunchesThemWithTheSnapshotOff(t *te
 	}
 
 	agent, argv, stderr := f.pick(t, false, aiModeClaude, personaResumeConversation, "")
-	path, digest := linkRulesSnapshot(t, paths, linkRulesAlpha)
+	path, digest := linkRulesSnapshot(t, paths, linkRulesAlpha, linkRulesProject(t, store, alpha))
 	want := []string{"--append-system-prompt-file", path, "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) || stderr != "" {
 		t.Fatalf("picker exec argv tail = %q stderr = %q, want %q", got, stderr, want)
@@ -690,5 +708,84 @@ func TestResumePickerInAProjectWithLinkRulesLaunchesThemWithTheSnapshotOff(t *te
 	}
 	if !maps.Equal(agent.Metadata.Annotations, wantRecorded) {
 		t.Fatalf("picker Agent annotations = %v, want %v", agent.Metadata.Annotations, wantRecorded)
+	}
+}
+
+// linkRulesProjectName links a branch label through the Project's name.
+var linkRulesProjectName = projectlinks.Rules{
+	Repo:  []string{"https://github.com/example/beta"},
+	Links: []projectlinks.Link{{LabelKey: "branch", Template: "{repo}/tree/{project.name}/{value}"}},
+}
+
+// TestProjectLinkRulesRenderTheRegistryProjectNameAndARenameIsARulesChange
+// pins that the rules are rendered with the Registry Project's variables: a
+// create's snapshot carries the Project's name, a resume under the same name
+// changes nothing, and a resume after the Project is renamed in the Registry
+// passes a new rendering, records its digest and turns the snapshot off.
+func TestProjectLinkRulesRenderTheRegistryProjectNameAndARenameIsARulesChange(t *testing.T) {
+	create, launcher, createStore, planner, alpha, beta := newLinkRulesCreate(t)
+	paths := linkRulesPaths(t, planner)
+	writeLinkRules(t, paths, beta, linkRulesProjectName)
+
+	if _, stderr, err := runRoute(t, create, "agent", "--provider", "claude", "--project", "beta", "--window", "main", "--", "go"); err != nil || strings.Contains(stderr, projectLinksReasonUnavailable) {
+		t.Fatalf("create: stderr=%q err=%v", stderr, err)
+	}
+	if len(launcher.plans) != 1 {
+		t.Fatalf("plans = %+v", launcher.plans)
+	}
+	created, err := os.ReadFile(launcher.plans[0].personaFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`- {project.name}: "beta"`, "https://github.com/example/beta/tree/beta/EXAMPLE-123"} {
+		if !strings.Contains(string(created), want) {
+			t.Fatalf("created snapshot =\n%s\nwant it to contain %q", created, want)
+		}
+	}
+	createdDigest := projectlinks.Digest(created)
+	agent := agentNamed(t, createStore, "win-beta-main", "agent-test-1")
+	if got := agent.Metadata.Annotations[coremetadata.AnnotationAgentProjectLinkRulesDigest]; got != createdDigest {
+		t.Fatalf("create recorded digest %q, want the launched snapshot's %q", got, createdDigest)
+	}
+	annotations := map[string]string{coremetadata.AnnotationAgentProjectLinkRulesDigest: createdDigest}
+
+	// The same name renders the same rules: the resume changes nothing.
+	store := newFakeResourceStore(t)
+	reUIDLinkRulesProjectsTo(t, store, alpha, beta)
+	argv, _ := resumeClaudeAgentWithLinkRules(t, planner, store, annotations)
+	if got, want := execArgvTail(t, argv, aiModeClaude), []string{"--append-system-prompt-file", launcher.plans[0].personaFile, "--resume", personaResumeConversation}; !slices.Equal(got, want) {
+		t.Fatalf("unrenamed resume exec argv tail = %q, want %q", got, want)
+	}
+
+	// Renaming the Project in the Registry is a rules change for the next resume.
+	store = newFakeResourceStore(t)
+	reUIDLinkRulesProjectsTo(t, store, alpha, beta)
+	if _, err := (coremetadata.Mutator{}).RenameProject(&store.registry, beta, "beta-renamed"); err != nil {
+		t.Fatal(err)
+	}
+	argv, stderr := resumeClaudeAgentWithLinkRules(t, planner, store, annotations)
+	path, digest := linkRulesSnapshot(t, paths, linkRulesProjectName, linkRulesProject(t, store, beta))
+	want := []string{"--append-system-prompt-file", path, "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}
+	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) || stderr != "" {
+		t.Fatalf("renamed resume exec argv tail = %q stderr = %q, want %q", got, stderr, want)
+	}
+	if digest == createdDigest {
+		t.Fatal("renaming the Project kept the rules digest")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`- {project.name}: "beta-renamed"`, "https://github.com/example/beta/tree/beta-renamed/EXAMPLE-123"} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("renamed snapshot =\n%s\nwant it to contain %q", content, want)
+		}
+	}
+	wantRecorded := map[string]string{
+		coremetadata.AnnotationAgentProjectLinkRulesDigest: digest,
+		coremetadata.AnnotationAgentSystemPromptSnapshot:   coremetadata.SystemPromptSnapshotOff,
+	}
+	if recorded := recordedAgentAnnotations(store, "agt-beta-codex"); !maps.Equal(recorded, wantRecorded) {
+		t.Fatalf("renamed resume recorded %v, want %v", recorded, wantRecorded)
 	}
 }

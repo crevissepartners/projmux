@@ -1063,7 +1063,9 @@ func (c *createCommand) openIntentAgent(
 	// The Agent's Project label link rules are those of the Project that owns
 	// its target Window in the Registry, never of the split's directory.
 	if window, ok := working.Window(target.windowUID); ok {
-		c.prepareProjectLinks(provider, window.Metadata.OwnerUID(), &flags)
+		if project, ok := working.Project(window.Metadata.OwnerUID()); ok {
+			c.prepareProjectLinks(provider, *project, &flags)
+		}
 	}
 	var title string
 	var launchArgv []string

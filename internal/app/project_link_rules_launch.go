@@ -22,11 +22,12 @@ const projectLinksReasonUnavailable = "project-link-rules-unavailable"
 // (*aiCommand) implements it; a launcher that does not is a launch without
 // rules, which is exactly the launch every Agent had before the rules existed.
 //
-// The Project UID always comes from Registry ownership (the create's resolved
+// The Project always comes from Registry ownership (the create's resolved
 // Project, or Agent -> Window -> Project on a resume), never from a working
-// directory, a workspace or a tmux name.
+// directory, a workspace or a tmux name. Its UID names the rule file, and its
+// name and labels are the rules' Project variables.
 type projectLinksPlanner interface {
-	PlanProjectLinks(provider, projectUID string, recorded map[string]string) projectLinksLaunch
+	PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch
 }
 
 var _ projectLinksPlanner = (*aiCommand)(nil)
@@ -53,10 +54,12 @@ type projectLinksLaunch struct {
 	unavailable error
 }
 
-// PlanProjectLinks reads projectUID's current rules, renders them and writes
-// their content-addressed snapshot. recorded are the Agent annotations the
-// launch compares against (nil on a fresh create).
-func (c *aiCommand) PlanProjectLinks(provider, projectUID string, recorded map[string]string) projectLinksLaunch {
+// PlanProjectLinks reads project's current rules, renders them with the
+// Project's variables and writes their content-addressed snapshot. recorded
+// are the Agent annotations the launch compares against (nil on a fresh
+// create).
+func (c *aiCommand) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
+	projectUID := project.Metadata.UID
 	if normalizeAIMode(provider) != aiModeClaude || !coremetadata.IsProjectUIDShaped(projectUID) {
 		return projectLinksLaunch{}
 	}
@@ -72,7 +75,7 @@ func (c *aiCommand) PlanProjectLinks(provider, projectUID string, recorded map[s
 		launch.unavailable = err
 		return launch
 	}
-	rendered := projectlinks.Render(rules)
+	rendered := projectlinks.Render(rules, projectlinks.ProjectOf(project))
 	if len(rendered) == 0 {
 		return launch
 	}
@@ -188,14 +191,14 @@ func projectLinksNotice(label string, err error) string {
 		label, projectLinksReasonUnavailable, err)
 }
 
-// planProjectLinksWith asks launcher for projectUID's rules when it has the
+// planProjectLinksWith asks launcher for project's rules when it has the
 // seam, and returns the zero launch otherwise.
-func planProjectLinksWith(launcher any, provider, projectUID string, recorded map[string]string) projectLinksLaunch {
+func planProjectLinksWith(launcher any, provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
 	planner, ok := launcher.(projectLinksPlanner)
 	if !ok {
 		return projectLinksLaunch{}
 	}
-	return planner.PlanProjectLinks(provider, projectUID, recorded)
+	return planner.PlanProjectLinks(provider, project, recorded)
 }
 
 // prepareProjectLinks resolves the rules one Claude create launches with,
@@ -204,7 +207,7 @@ func planProjectLinksWith(launcher any, provider, projectUID string, recorded ma
 // system prompt lacks the rules, so it launches (and records) the digest with
 // the snapshot mode off; a fresh create records only the digest. The
 // reply-only lane and every other provider are left exactly as they were.
-func (c *createCommand) prepareProjectLinks(provider, projectUID string, flags *resourceCreateFlags) {
+func (c *createCommand) prepareProjectLinks(provider string, project coremetadata.Project, flags *resourceCreateFlags) {
 	flags.projectLinks = projectLinksLaunch{}
 	if provider != aiModeClaude || flags.dialogueReplyOnly {
 		return
@@ -213,7 +216,7 @@ func (c *createCommand) prepareProjectLinks(provider, projectUID string, flags *
 	if flags.resumeConversation != "" && c.resumes != nil {
 		launcher = c.resumes
 	}
-	links := planProjectLinksWith(launcher, provider, projectUID, flags.resumeLaunchValues)
+	links := planProjectLinksWith(launcher, provider, project, flags.resumeLaunchValues)
 	if flags.resumeConversation != "" {
 		flags.resumeLaunchValues = links.resumeLaunchAnnotations(flags.resumeLaunchValues)
 	} else {

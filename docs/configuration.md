@@ -1487,39 +1487,80 @@ edits them. A missing file means the Project has no rules.
 
 ```json
 {
-  "jiraURL": "https://jira.example.com",
-  "repoURL": "https://github.com/example/repo",
+  "jira": ["https://jira.example.com", "https://jira.partner.example.com"],
+  "repo": ["https://github.com/example/repo"],
+  "urls": {"wiki": "https://wiki.example.com/spaces/APP"},
   "links": [
     {"labelKey": "jira", "template": "{jira}/browse/{value}"},
-    {"labelKey": "pr", "template": "{repo}/pull/{value}"}
+    {"labelKey": "partner", "template": "{jira[1]}/browse/{value}"},
+    {"labelKey": "pr", "template": "{repo}/pull/{value}"},
+    {"labelKey": "doc", "template": "{wiki}/{project.labels.team}/{value}"}
   ]
 }
 ```
 
-A template expands three placeholders: `{value}` becomes the label value,
-path-escaped (`a/b c` becomes `a%2Fb%20c`); `{jira}` and `{repo}` become
-`jiraURL` and `repoURL` with any trailing `/` trimmed.
+`jira` and `repo` are lists of base URLs, and `urls` names more base URLs.
+projmux always writes all four fields.
+
+| Placeholder | Becomes |
+| --- | --- |
+| `{value}` | The label value, path-escaped (`a/b c` becomes `a%2Fb%20c`). Required in every template. |
+| `{jira[N]}`, `{repo[N]}` | The `N`th URL of `jira` or `repo`, counting from 0. `N` is decimal with no leading zero (`{jira[01]}` is refused). |
+| `{jira}`, `{repo}` | The same as `{jira[0]}` and `{repo[0]}`. |
+| `{<name>}` | The URL `urls` names `<name>`, such as `{wiki}`. |
+| `{project.uid}` | The Project UID, path-escaped. |
+| `{project.name}` | The Project name, path-escaped. |
+| `{project.labels.<key>}` | The value of the Project's label `<key>`, path-escaped. |
+
+A base URL is substituted with any trailing `/` trimmed. Every placeholder is
+substituted in one pass, so text a substitution inserts is never expanded
+again. A label value is one value: `a,b` makes one link (`a%2Cb`), not two.
+
+The Project variables are the Project's UID, name and labels in the Registry,
+and nothing else: its root directory, its annotations and its Windows are not
+placeholders, and `{project.root}` is refused. A label whose rule uses a
+Project label the Project does not have, or has empty, gets no link.
 
 A rule file must pass these checks, both when it is written and when it is
 read; a file that fails them, is not one JSON object of exactly these fields,
-or is larger than 64 KiB is an error, never treated as empty:
+or is larger than 64 KiB is an error, never treated as empty. An error names
+the field as a JSON path, such as `jira[3]`, `urls.wiki` or
+`links[2].template`.
 
-- `jiraURL` and `repoURL` may be empty. A set one is an absolute `http` or
-  `https` URL with a host, at most 2048 bytes, with no credentials
-  (`user@`), no query, no fragment and no `{` or `}`.
+- `jira` and `repo` hold at most 16 URLs each, and `urls` at most 32. Each
+  URL is an absolute `http` or `https` URL with a host, at most 2048 bytes,
+  with no credentials (`user@`), no query, no fragment and no `{` or `}`.
+- A `urls` name is a lowercase ASCII letter followed by at most 31 lowercase
+  letters, digits, `_` or `-`. `value`, `jira`, `repo` and `project` are
+  reserved and refused.
 - `links` holds at most 64 rules.
 - `labelKey` is 1 to 64 ASCII letters, digits, `.`, `_` or `-`, compared
   exactly (case-sensitive), and unique in the file.
-- `template` is at most 2048 bytes, contains `{value}`, uses no other
-  placeholder than `{value}`, `{jira}` and `{repo}`, uses `{jira}` or
-  `{repo}` only when that URL is set, and expands to an absolute `http` or
-  `https` URL without credentials.
+- `template` is at most 2048 bytes, contains `{value}`, has no `{` or `}`
+  outside a placeholder, and uses only the placeholders above: an index within
+  its list (`{jira}` needs at least one Jira URL), a name `urls` defines, and
+  a Project field that exists. `{project.labels.<key>}` is checked only for
+  its key's syntax (the `labelKey` rules), because the label may be added
+  later. Expanded with a sample value and a sample Project, the template is an
+  absolute `http` or `https` URL without credentials.
+
+Removing a URL that a template still uses is refused, like any other invalid
+rule set, and leaves the file as it was.
+
+A rule file written before the lists existed holds `"jiraURL"` and
+`"repoURL"` strings instead of `jira` and `repo`. It is still read: a
+non-empty `jiraURL` is `jira[0]` (so `{jira}` keeps working) and an empty one
+is no URL, and the same for `repoURL`. The next write stores the current
+format. A file that has `jiraURL` or `repoURL` together with any of `jira`,
+`repo` or `urls` is an error.
 
 ### Rules in a Claude Agent's system prompt
 
 A Claude Agent gets its Project's current rules in its system prompt: the
-heading, the Jira and Repo URLs, and each rule with an example link, as text
-appended with `--append-system-prompt-file`. The Project is the one that owns
+heading, the placeholders, the Jira and Repo URLs with their indices, the
+named URLs, the Project variables with their current values, and each rule
+with an example link resolved for that Project, as text appended with
+`--append-system-prompt-file`. The Project is the one that owns
 the Agent's Window in the Registry, never the one its working directory is
 under. Only Claude Agents get the rules; Codex Agents and the Claude
 reply-only lane do not.
@@ -1533,9 +1574,10 @@ reply-only lane do not.
 - A running Agent is not restarted when the rules change. The change applies
   from its next resume (`agent resume`, Continue, or the resume picker): when
   the Project's rules differ from the recorded digest (added, changed or
-  removed), that resume passes the current rules, runs with
-  `--system-prompt-snapshot off`, and records the new digest and
-  `projmux.io/system-prompt-snapshot=off`, which stays off from then on.
+  removed, or the Project renamed or its labels changed, since the Project
+  variables are part of the rendered rules), that resume passes the current
+  rules, runs with `--system-prompt-snapshot off`, and records the new digest
+  and `projmux.io/system-prompt-snapshot=off`, which stays off from then on.
   Rules equal to the recorded digest change nothing.
 - A rule file that cannot be read does not stop the Agent: it starts without
   the rules, one `project-link-rules-unavailable` line on stderr says so, and

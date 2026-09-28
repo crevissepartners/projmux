@@ -752,7 +752,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 			creator = c.observeCreator(ctx, working)
 			// The Agent's Project label link rules are the created Window's
 			// Project's.
-			c.prepareProjectLinks(provider, project.Metadata.UID, &flags)
+			c.prepareProjectLinks(provider, project, &flags)
 			if agent, agentLaunch, err = c.allocateWindowAgent(
 				working, mutator, project, provider, work, flags, labels, creator, operationID); err != nil {
 				return err

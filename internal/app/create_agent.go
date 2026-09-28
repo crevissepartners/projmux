@@ -309,7 +309,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 
 		// The Project's label link rules are read from the resolved Project,
 		// never from the working directory.
-		c.prepareProjectLinks(provider, project.Metadata.UID, &flags)
+		c.prepareProjectLinks(provider, project, &flags)
 		// The launch is constructed before anything is allocated. A missing
 		// provider binary is the most likely failure on this route, and it has
 		// to land while the operation still owns nothing.

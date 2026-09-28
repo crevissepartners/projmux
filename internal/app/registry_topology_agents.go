@@ -386,7 +386,7 @@ func planTopologyAgentReplay(
 	work := registryTopologyAgentPlan{agent: agent, provider: decision.provider, cwd: cwd}
 	// The rules are the replayed Project's, the one that owns the Agent's
 	// Window, read now and compared with the digest the Agent records.
-	work.links = planProjectLinksWith(launcher, decision.provider, project.Metadata.UID, agent.Metadata.Annotations)
+	work.links = planProjectLinksWith(launcher, decision.provider, project, agent.Metadata.Annotations)
 	launch, err := launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID, work.links.resumeLaunchAnnotations(agent.Metadata.Annotations))
 	if err != nil {
 		plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
