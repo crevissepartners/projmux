@@ -90,6 +90,12 @@ const (
 	// owns its storage (profile.DirName); the name is repeated here only so the
 	// layer is declared in this one table, and a test holds the two equal.
 	ProfilesDirName = "profiles"
+
+	// ProjectLinksDirName is the Project label link rule directory.
+	// internal/core/projectlinks owns its storage (projectlinks.DirName); the
+	// name is repeated here only so the layer is declared in this one table,
+	// and a test holds the two equal.
+	ProjectLinksDirName = "project-links"
 )
 
 // settingItems is the declaration. Adding a setting file is adding its path
@@ -123,6 +129,7 @@ var settingItems = []SettingItem{
 	declareDir(AIHooksDirName, LayerCentral),
 	declareDir(PersonasDirName, LayerCentral),
 	declareDir(ProfilesDirName, LayerCentral),
+	declareDir(ProjectLinksDirName, LayerCentral),
 	// The global lifecycle hook scripts (post-create, post-attach,
 	// pre-create) are the hook contract, which is product behavior.
 	declareDir(HooksDirName, LayerCentral),
