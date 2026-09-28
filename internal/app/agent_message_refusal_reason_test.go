@@ -33,12 +33,16 @@ func TestExplicitReplyRefusalReasonSeparatesTheEnvelopeFromCorrelation(t *testin
 	if err := correlating.Validate(); err != nil {
 		t.Fatalf("the fixture must be a valid envelope: %v", err)
 	}
-	if got := explicitReplyRefusalReason(correlating); got != "invalid-explicit-reply-correlation" {
+	mismatch := coremessage.EnvelopeRefusal(coremessage.ReasonCorrelationInvalid, "reply route or conversation mismatch")
+	if got := explicitReplyRefusalReason(correlating, mismatch); got != "invalid-explicit-reply-correlation" {
 		t.Fatalf("a well-formed reply keeps the correlation reason, got %q", got)
+	}
+	if got := explicitReplyRefusalReason(correlating, coremessage.ErrReplyConversationChanged); got != coremessage.ReasonExplicitReplyConversationChanged {
+		t.Fatalf("a changed conversation must be named, got %q", got)
 	}
 	oversized := refusalReasonEnvelopeFixture()
 	oversized.Payload = strings.Repeat("x", coremessage.MaxPayloadBytes+1)
-	if got := explicitReplyRefusalReason(oversized); got != "invalid-explicit-reply-envelope" {
+	if got := explicitReplyRefusalReason(oversized, mismatch); got != "invalid-explicit-reply-envelope" {
 		t.Fatalf("an oversized reply must not be named a correlation failure, got %q", got)
 	}
 }

@@ -478,10 +478,13 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			return fmt.Errorf("%s: reply correlation failed: %w", spelling, getErr)
 		}
 		envelope.ConversationRef = original.Envelope.ConversationRef
-		// The store compares a reply's routes to the original's exactly and has
-		// no authority to read either incarnation value. Answer in the shape the
-		// original used whenever the current route accepts it; otherwise keep
-		// the current value so correlation is still refused below.
+		// The reply predicate (coremessage.ReplyRoutes) compares incarnations
+		// exactly and has no authority to read either value. Answer in the shape
+		// the original used whenever the current route accepts it; otherwise
+		// keep the current value so the changed conversation is refused below.
+		// The Pane and activation stay the current ones: a relaunch into the
+		// same conversation still correlates, and the reply goes to the Agent
+		// as it runs now.
 		if sourceRoute.AcceptsIncarnation(original.Envelope.Target.Incarnation) {
 			envelope.Source.Incarnation = original.Envelope.Target.Incarnation
 		}
@@ -503,7 +506,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			return fmt.Errorf("%s: %w", spelling, c.replyCorrelationRefusal(replyTo, "explicit-reply-deadline-expired"))
 		}
 		if err := coremessage.ValidateReply(original.Envelope, envelope); err != nil {
-			return fmt.Errorf("%s: %w; %w", spelling, err, c.replyCorrelationRefusal(replyTo, explicitReplyRefusalReason(envelope)))
+			return fmt.Errorf("%s: %w; %w", spelling, err, c.replyCorrelationRefusal(replyTo, explicitReplyRefusalReason(envelope, err)))
 		}
 	}
 	// The envelope is judged before any provider work. The store refuses the
@@ -621,9 +624,19 @@ func agentMessageReceiptFailureAction(receipt agentMessageReceipt, claudeContent
 // when the reply envelope itself is what broke. The correlation token sends a
 // reader to --reply-to and previousRef, where a payload over the envelope
 // limit is not to be found.
-func explicitReplyRefusalReason(reply coremessage.Envelope) string {
+func explicitReplyRefusalReason(reply coremessage.Envelope, correlation error) string {
 	if reply.Validate() != nil {
 		return "invalid-explicit-reply-envelope"
+	}
+	return explicitReplyCorrelationReason(correlation)
+}
+
+// explicitReplyCorrelationReason names a ValidateReply refusal for the CLI and
+// the Claude helper alike. The same Agents in another conversation is its own
+// cause with its own action; every other refusal is a correlation mismatch.
+func explicitReplyCorrelationReason(err error) string {
+	if errors.Is(err, coremessage.ErrReplyConversationChanged) {
+		return coremessage.ReasonExplicitReplyConversationChanged
 	}
 	return "invalid-explicit-reply-correlation"
 }

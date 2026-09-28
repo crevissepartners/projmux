@@ -273,8 +273,9 @@ func sessionReplyCommandFixture(t *testing.T, incarnation func(*claudeCoordinati
 }
 
 // R7: a reply built by `agent message send --reply-to` answers in the shape
-// of its original, so the store's exact reply comparison holds for either
-// accepted incarnation, and a foreign original is still refused.
+// of its original, so the exact incarnation comparison holds for either
+// accepted incarnation, and an original from another session of the same
+// Agent is refused as another conversation.
 func TestAgentMessageReplyMirrorsSessionIncarnation(t *testing.T) {
 	for _, test := range []struct {
 		name        string
@@ -297,7 +298,8 @@ func TestAgentMessageReplyMirrorsSessionIncarnation(t *testing.T) {
 				t.Fatal(getErr)
 			}
 			if !test.accept {
-				if err == nil || !strings.Contains(err.Error(), "invalid-explicit-reply-correlation") || found || writer.writes != writes {
+				if err == nil || !strings.Contains(err.Error(), coremessage.ReasonExplicitReplyConversationChanged) ||
+					strings.Contains(err.Error(), "invalid-explicit-reply-correlation") || found || writer.writes != writes {
 					t.Fatalf("foreign original answered: %s %v found=%t writes=%d", output, err, found, writer.writes-writes)
 				}
 				return

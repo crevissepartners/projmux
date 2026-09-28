@@ -87,6 +87,9 @@ func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, regist
 
 func explicitReplyRefusal(response claudeCoordinationResponse) error {
 	action := "inspect original and previous reply status; do not resend"
+	if response.Reason == coremessage.ReasonExplicitReplyConversationChanged {
+		action = "the original belongs to another conversation of that Agent; send a new message without --reply-to"
+	}
 	if response.ReplyDelivery != nil {
 		return fmt.Errorf("%s; previousRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
 			response.Reason, response.ReplyRef, response.ReplyDelivery.State, response.ReplyDelivery.Reason,
@@ -114,7 +117,11 @@ func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envel
 	// The reply target is no longer pinned to Codex. Plain homogeneous sends
 	// already succeed through the broker, so refusing only their replies left a
 	// lane that half worked and reported no reason for the half that did not.
-	if b == nil || b.store == nil || coremessage.ValidateReply(original, reply) != nil ||
+	correlation := coremessage.ValidateReply(original, reply)
+	if errors.Is(correlation, coremessage.ErrReplyConversationChanged) {
+		return false, correlation
+	}
+	if b == nil || b.store == nil || correlation != nil ||
 		!original.Deadline.After(time.Now()) || !b.Current(reply) {
 		return false, coremessage.EnvelopeRefusal(coremessage.ReasonCorrelationInvalid,
 			"the reply does not correlate with a live original on the current route")
@@ -252,8 +259,11 @@ func (h *claudeCoordinationHub) judgeExplicitReplyLocked(reply coremessage.Envel
 		return refuse(coremessage.ReasonExplicitReplyOperatorOrigin)
 	}
 	if h.closed || broker == nil || original.envelope == nil || !original.delivered ||
-		!messageRouteAccepts(source, reply.Source) || coremessage.ValidateReply(*original.envelope, reply) != nil {
+		!messageRouteAccepts(source, reply.Source) {
 		return refuse("invalid-explicit-reply-correlation")
+	}
+	if err := coremessage.ValidateReply(*original.envelope, reply); err != nil {
+		return refuse(explicitReplyCorrelationReason(err))
 	}
 	if !original.deadline.After(h.now()) || !reply.Deadline.After(h.now()) {
 		return refuse("explicit-reply-deadline-expired")
@@ -300,6 +310,7 @@ func (h *claudeCoordinationHub) judgeExplicitReplyLocked(reply coremessage.Envel
 			{messagestore.ErrCapacity, "broker-reply-store-capacity"},
 			{messagestore.ErrNotFound, "broker-reply-original-not-found"},
 			{messagestore.ErrMalformedStore, "broker-reply-store-malformed"},
+			{coremessage.ErrReplyConversationChanged, coremessage.ReasonExplicitReplyConversationChanged},
 			{coremessage.ErrInvalidEnvelope, "invalid-explicit-reply-correlation"},
 		} {
 			if errors.Is(err, rejection.err) {

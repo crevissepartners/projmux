@@ -308,9 +308,18 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 				return &ReplyConflictError{Previous: record, Reason: "reply-already-committed"}
 			}
 		}
-		if original.Delivery.State != coremessage.StateDelivered ||
-			!source.Same(original.Envelope.Target) || !target.Same(original.Envelope.Source) {
+		if original.Delivery.State != coremessage.StateDelivered {
 			return &ReplyConflictError{Previous: previous, Reason: "invalid-explicit-reply-correlation"}
+		}
+		// The routes are judged by the one reply predicate, so a relaunch into
+		// the same conversation, which moves an Agent to a new Pane and
+		// activation, still correlates here as it does for the caller.
+		if err := coremessage.ReplyRoutes(original.Envelope, candidate); err != nil {
+			reason := "invalid-explicit-reply-correlation"
+			if errors.Is(err, coremessage.ErrReplyConversationChanged) {
+				reason = coremessage.ReasonExplicitReplyConversationChanged
+			}
+			return &ReplyConflictError{Previous: previous, Reason: reason}
 		}
 		if !original.Envelope.Deadline.After(s.clock()) || !deadline.After(s.clock()) {
 			return &ReplyConflictError{Previous: previous, Reason: "explicit-reply-deadline-expired"}

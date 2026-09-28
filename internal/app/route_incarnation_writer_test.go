@@ -161,7 +161,7 @@ func TestAgentMessageStatusAndReplyCorrelationSurviveSameSessionReregistrationWi
 				t.Fatal(getErr)
 			}
 			if !test.current {
-				if err == nil || !strings.Contains(err.Error(), "invalid-explicit-reply-correlation") || found || adapter.replies != 0 {
+				if err == nil || !strings.Contains(err.Error(), coremessage.ReasonExplicitReplyConversationChanged) || found || adapter.replies != 0 {
 					t.Fatalf("reply across a new session committed: %s %v found=%t replies=%d", output, err, found, adapter.replies)
 				}
 				return

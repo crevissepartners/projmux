@@ -145,6 +145,12 @@ func TestEnvelopeRetryAndReplyCorrelationRandomizedProperties(t *testing.T) {
 		if err := ValidateReply(original, reply); err != nil {
 			t.Fatalf("seed=%d exact reply rejected: %v", seed, err)
 		}
+		relaunched := reply
+		relaunched.Target.PaneUID += "-relaunched"
+		relaunched.Target.ActivationGeneration += "-relaunched"
+		if err := ValidateReply(original, relaunched); err != nil {
+			t.Fatalf("seed=%d reply after a relaunch into the same conversation rejected: %v", seed, err)
+		}
 		foreign := reply
 		switch random.Intn(4) {
 		case 0:
@@ -154,7 +160,7 @@ func TestEnvelopeRetryAndReplyCorrelationRandomizedProperties(t *testing.T) {
 		case 2:
 			foreign.Source.AgentUID += "-foreign"
 		case 3:
-			foreign.Target.ActivationGeneration += "-foreign"
+			foreign.Target.Incarnation += "-foreign"
 		}
 		if ValidateReply(original, foreign) == nil {
 			t.Fatalf("seed=%d foreign reply accepted: %#v", seed, foreign)
