@@ -63,3 +63,19 @@ func TestClaudeProviderFrameLimitStaysAboveThePayloadLimit(t *testing.T) {
 		t.Fatal("the frame limit must stay above the payload limit for this ordering to hold")
 	}
 }
+
+// TestExplicitReplyRefusalShowsAnOldHelperTokenAsIs is C-2 acceptance 3. A
+// Claude helper that started before this build still answers every refusal
+// below with the correlation token, on the same coordination version; the new
+// CLI prints whatever token a helper sends, with the unchanged action.
+func TestExplicitReplyRefusalShowsAnOldHelperTokenAsIs(t *testing.T) {
+	t.Parallel()
+	for _, reason := range []string{"invalid-explicit-reply-correlation", "broker-reply-helper-closed", "a-token-from-a-later-helper"} {
+		got := explicitReplyRefusal(claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused",
+			Reason: reason, ReplyRef: "message-previous"}).Error()
+		want := reason + "; previousRef=message-previous; inspect original and previous reply status; do not resend"
+		if got != want {
+			t.Fatalf("refusal = %q, want %q", got, want)
+		}
+	}
+}

@@ -117,14 +117,18 @@ func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envel
 	// The reply target is no longer pinned to Codex. Plain homogeneous sends
 	// already succeed through the broker, so refusing only their replies left a
 	// lane that half worked and reported no reason for the half that did not.
-	correlation := coremessage.ValidateReply(original, reply)
-	if errors.Is(correlation, coremessage.ErrReplyConversationChanged) {
-		return false, correlation
+	// Each refusal before the store keeps its own cause; the hub names it.
+	if b == nil || b.store == nil {
+		return false, errClaudeReplyStoreUnavailable
 	}
-	if b == nil || b.store == nil || correlation != nil ||
-		!original.Deadline.After(time.Now()) || !b.Current(reply) {
-		return false, coremessage.EnvelopeRefusal(coremessage.ReasonCorrelationInvalid,
-			"the reply does not correlate with a live original on the current route")
+	if err := coremessage.ValidateReply(original, reply); err != nil {
+		return false, err
+	}
+	if !original.Deadline.After(time.Now()) {
+		return false, errClaudeReplyOriginalExpired
+	}
+	if !b.Current(reply) {
+		return false, errClaudeReplyRouteStale
 	}
 	_, created, err := b.store.PutReply(original.MessageRef, reply.MessageRef, reply.Payload, reply.Source,
 		reply.Target, reply.AcceptedAt, reply.Deadline)
@@ -134,6 +138,14 @@ func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envel
 // errClaudeHelperNotCurrent refuses a durable original to a helper the
 // Registry does not name as the Agent's current authority.
 var errClaudeHelperNotCurrent = errors.New("claude helper is not the Registry's current authority")
+
+// Refusals CommitReply makes before any store call. They leave no durable
+// change, and the hub reports each by its own token.
+var (
+	errClaudeReplyStoreUnavailable = errors.New("claude reply broker has no message store")
+	errClaudeReplyOriginalExpired  = errors.New("claude reply original deadline has passed")
+	errClaudeReplyRouteStale       = errors.New("claude reply route is not current")
+)
 
 // claudeStoredOriginalReader is the optional broker lookup of an original this
 // helper did not push. A broker without it gives the helper its own pushed
@@ -222,7 +234,7 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	}
 	lookup, ok := broker.(claudeStoredOriginalReader)
 	if !ok {
-		return refuse("invalid-explicit-reply-correlation")
+		return refuse("broker-reply-store-unavailable")
 	}
 	// Read again on every miss; only the reservation below outlives the call.
 	record, found, err := lookup.StoredOriginal(reply.ReplyTo, source)
@@ -231,8 +243,10 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 		return refuse("broker-reply-store-busy")
 	case errors.Is(err, messagestore.ErrMalformedStore):
 		return refuse("broker-reply-store-malformed")
+	case errors.Is(err, errClaudeHelperNotCurrent):
+		return refuse("broker-reply-helper-not-current")
 	case err != nil:
-		return refuse("invalid-explicit-reply-correlation")
+		return refuse("broker-reply-store-unavailable")
 	case !found:
 		return refuse("broker-reply-original-not-found")
 	}
@@ -258,12 +272,22 @@ func (h *claudeCoordinationHub) judgeExplicitReplyLocked(reply coremessage.Envel
 	if original.envelope != nil && original.envelope.Operator() {
 		return refuse(coremessage.ReasonExplicitReplyOperatorOrigin)
 	}
-	if h.closed || broker == nil || original.envelope == nil || !original.delivered ||
-		!messageRouteAccepts(source, reply.Source) {
-		return refuse("invalid-explicit-reply-correlation")
+	// Each cause is its own token; only a reply that does not match the
+	// original's Agents, providers, or conversation is a correlation refusal.
+	switch {
+	case h.closed:
+		return refuse("broker-reply-helper-closed")
+	case broker == nil:
+		return refuse("broker-reply-unavailable")
+	case original.envelope == nil:
+		return refuse("broker-reply-original-without-envelope")
+	case !original.delivered:
+		return refuse(coremessage.ReasonBrokerReplyOriginalNotDelivered)
+	case !messageRouteAccepts(source, reply.Source):
+		return refuse("explicit-reply-source-route-stale")
 	}
 	if err := coremessage.ValidateReply(*original.envelope, reply); err != nil {
-		return refuse(explicitReplyCorrelationReason(err))
+		return refuse(explicitReplyRefusalReason(reply, err))
 	}
 	if !original.deadline.After(h.now()) || !reply.Deadline.After(h.now()) {
 		return refuse("explicit-reply-deadline-expired")
@@ -310,13 +334,20 @@ func (h *claudeCoordinationHub) judgeExplicitReplyLocked(reply coremessage.Envel
 			{messagestore.ErrCapacity, "broker-reply-store-capacity"},
 			{messagestore.ErrNotFound, "broker-reply-original-not-found"},
 			{messagestore.ErrMalformedStore, "broker-reply-store-malformed"},
-			{coremessage.ErrReplyConversationChanged, coremessage.ReasonExplicitReplyConversationChanged},
-			{coremessage.ErrInvalidEnvelope, "invalid-explicit-reply-correlation"},
+			{errClaudeReplyStoreUnavailable, "broker-reply-store-unavailable"},
+			{errClaudeReplyOriginalExpired, "explicit-reply-deadline-expired"},
+			{errClaudeReplyRouteStale, "explicit-reply-route-stale"},
 		} {
 			if errors.Is(err, rejection.err) {
 				reservation.replyReserved = false
 				return refuse(rejection.reason)
 			}
+		}
+		// ValidateReply's refusal: a correlation or conversation mismatch, or
+		// a reply envelope that is itself invalid.
+		if errors.Is(err, coremessage.ErrInvalidEnvelope) {
+			reservation.replyReserved = false
+			return refuse(explicitReplyRefusalReason(reply, err))
 		}
 		reservation.replyRef = reply.MessageRef
 		return refuse("broker-reply-outcome-unknown")

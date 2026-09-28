@@ -41,6 +41,16 @@ const (
 // sender sends a new message instead.
 const ReasonExplicitReplyConversationChanged = "explicit-reply-conversation-changed"
 
+// Reply refusal tokens more than one judgement reports. The correlation token
+// is kept for a reply whose Agents, providers, or conversationRef do not match
+// the original; every other cause has its own token so a reader knows what to
+// do from the token alone. An original that never reached its target has
+// nothing to answer, whichever of the store and the Claude helper judges it.
+const (
+	ReasonExplicitReplyCorrelation        = "invalid-explicit-reply-correlation"
+	ReasonBrokerReplyOriginalNotDelivered = "broker-reply-original-not-delivered"
+)
+
 // Stable reason tokens naming which class of envelope rule a refusal broke.
 // A sender acts on the class, not on the exact field: a payload is split or
 // re-encoded, a route is re-resolved, a correlation is re-read from the

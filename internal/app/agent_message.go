@@ -620,25 +620,20 @@ func agentMessageReceiptFailureAction(receipt agentMessageReceipt, claudeContent
 	return agentMessageSendFailureAction(receipt.Delivery, claudeContentBytes)
 }
 
-// explicitReplyRefusalReason keeps a refused reply from naming correlation
-// when the reply envelope itself is what broke. The correlation token sends a
-// reader to --reply-to and previousRef, where a payload over the envelope
-// limit is not to be found.
+// explicitReplyRefusalReason names a ValidateReply refusal for the CLI and the
+// Claude helper alike. A reply envelope that is itself invalid is not named as
+// correlation: that token sends a reader to --reply-to and previousRef, where
+// a payload over the envelope limit is not to be found. The same Agents in
+// another conversation is its own cause with its own action; every other
+// refusal is a correlation mismatch.
 func explicitReplyRefusalReason(reply coremessage.Envelope, correlation error) string {
 	if reply.Validate() != nil {
 		return "invalid-explicit-reply-envelope"
 	}
-	return explicitReplyCorrelationReason(correlation)
-}
-
-// explicitReplyCorrelationReason names a ValidateReply refusal for the CLI and
-// the Claude helper alike. The same Agents in another conversation is its own
-// cause with its own action; every other refusal is a correlation mismatch.
-func explicitReplyCorrelationReason(err error) string {
-	if errors.Is(err, coremessage.ErrReplyConversationChanged) {
+	if errors.Is(correlation, coremessage.ErrReplyConversationChanged) {
 		return coremessage.ReasonExplicitReplyConversationChanged
 	}
-	return "invalid-explicit-reply-correlation"
+	return coremessage.ReasonExplicitReplyCorrelation
 }
 
 func (c *agentCommand) replyCorrelationRefusal(originalRef, reason string) error {

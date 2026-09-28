@@ -309,13 +309,13 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 			}
 		}
 		if original.Delivery.State != coremessage.StateDelivered {
-			return &ReplyConflictError{Previous: previous, Reason: "invalid-explicit-reply-correlation"}
+			return &ReplyConflictError{Previous: previous, Reason: coremessage.ReasonBrokerReplyOriginalNotDelivered}
 		}
 		// The routes are judged by the one reply predicate, so a relaunch into
 		// the same conversation, which moves an Agent to a new Pane and
 		// activation, still correlates here as it does for the caller.
 		if err := coremessage.ReplyRoutes(original.Envelope, candidate); err != nil {
-			reason := "invalid-explicit-reply-correlation"
+			reason := coremessage.ReasonExplicitReplyCorrelation
 			if errors.Is(err, coremessage.ErrReplyConversationChanged) {
 				reason = coremessage.ReasonExplicitReplyConversationChanged
 			}

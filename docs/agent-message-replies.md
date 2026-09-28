@@ -52,10 +52,52 @@ helper was replaced, for example by compact. The new helper did not push the
 original, so it reads the original from the durable store and judges it by the
 same checks. It reads the store only while its own route is the Registry's
 current authority for the Agent; a replaced or unregistered helper reads and
-writes nothing. `broker-reply-original-not-found` means the original is in
-neither the helper nor the store. `invalid-explicit-reply-correlation` means the
-reply's Agents, providers, or `conversationRef` do not match the original, or
-the helper is not the current one.
+writes nothing, and is refused with `broker-reply-helper-not-current`.
+`broker-reply-original-not-found` means the original is in neither the helper
+nor the store.
+
+## Reply refusal tokens
+
+Each refusal names its cause with one token. The CLI prints it after
+`replyTo=<ref>:`, the Claude helper returns it as the `reply-refused` reason,
+and the store returns it as the reply conflict reason. A token asks for one
+action, so two causes that need different actions never share one.
+`invalid-explicit-reply-correlation` is kept for a reply that does not match
+its original. Every refusal here except `broker-reply-outcome-unknown` comes
+before the reply is written anywhere: no provider saw it, so following the
+action cannot duplicate it. The retry rules below govern an attempt that was
+stored.
+
+| Token | Cause | Action |
+| --- | --- | --- |
+| `invalid-explicit-reply-correlation` | The reply's Agents, providers, or `conversationRef` do not match the original. | Check that `--reply-to` names a message you received and that the positional Agent is its sender. |
+| `explicit-reply-conversation-changed` | One of the original's Agents is now in another provider conversation. | Send a new message without `--reply-to`. |
+| `invalid-explicit-reply-envelope` | The reply itself is not a valid envelope, for example a payload over the limit. | Correct the reply, for example shorten it, and send it with a fresh ref. |
+| `explicit-reply-operator-origin` | The original is operator input from the web client. | There is no Agent to answer; do not reply to it. |
+| `explicit-reply-deadline-expired` | The original's deadline has passed. | Send a new message without `--reply-to`. |
+| `explicit-reply-deadline-extended` | The reply's deadline is later than the original's. | Send the reply without a longer `--ttl`. |
+| `explicit-reply-source-route-stale`, `explicit-reply-target-route-stale` | The replying or the answered Agent's route is not its current one, for example during a relaunch, or the helper serving the reply is not the replying Agent's. | Wait until the Agent is registered again, then send the reply. |
+| `explicit-reply-route-stale` | The helper found a route no longer current at the moment it committed. | As above. |
+| `broker-reply-original-not-found` | The original is in neither the helper nor the store, for example because it was reclaimed. | Send a new message without `--reply-to`. |
+| `broker-reply-original-not-delivered` | The original never reached its target, so there is nothing to answer. | Inspect the original with `agent message status`; do not reply to it. |
+| `broker-reply-original-without-envelope` | The helper holds the ref, but not as an Agent message it can answer. | Send a new message without `--reply-to`. |
+| `broker-reply-helper-closed` | The replying Agent's Claude helper is shutting down, for example for a restart. | Wait for the new helper to register, then send the reply. |
+| `broker-reply-helper-not-current` | The Registry no longer names this helper as the Agent's current one; it was replaced. | Wait for the current helper to register, then send the reply. |
+| `broker-reply-unavailable` | The helper runs without a message broker and can commit no reply. | Relaunch the Agent so it starts a helper with one. |
+| `broker-reply-store-unavailable` | The helper could not use the durable message store. | Check the state directory, then send the reply. |
+| `broker-reply-store-busy` | Another writer held the message store. | Send the reply again. |
+| `broker-reply-store-malformed` | The message store file could not be read as a store. | Inspect the store; do not resend until it reads. |
+| `broker-reply-store-capacity` | The store is full and nothing can be reclaimed; see below. | Wait for records to be reclaimed. |
+| `reply-already-committed` | Another reply to the original was already committed. | Inspect it with `previousRef`; do not resend. |
+| `reply-ref-envelope-mismatch` | The same reply ref was used before with different content. | Use a fresh ref. |
+| `broker-reply-outcome-unknown` | A commit was attempted and its result is not known. | Inspect the reply status; do not resend. |
+
+A Claude helper that started before a build keeps that build's tokens until it
+is replaced. An older helper therefore still reports most of these causes as
+`invalid-explicit-reply-correlation`, and the CLI prints whichever token the
+helper sent.
+
+## Retries
 
 A same-ref call returns the original immutable receipt and never pushes again.
 Changing its payload is refused with the earlier ref and cause. A fresh ref
