@@ -263,6 +263,12 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 // failure mode -- a resume that cannot find its conversation quietly becoming a
 // fresh conversation -- is exactly the context loss the separation prevents.
 //
+// --model and --effort launch this one resume with another model or effort.
+// The model is passed once and recorded nowhere: the provider's conversation
+// keeps it on later resumes. The effort is recorded on the Agent by the rebind
+// transaction, so later plain resumes re-pass it. Both are validated here with
+// create's rules, and only for a Claude or Codex Agent.
+//
 // Every refusal below happens against a read-only registry snapshot, so a failed
 // resume opens no transaction, creates no tmux object, and starts no
 // conversation of any kind.
@@ -275,6 +281,8 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	flags := resourceQueryFlags{kind: coremetadata.KindAgent}
 	flags.register(fs)
 	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "claude only: resume this UID into one isolated reply-only activation; qualification required")
+	model := fs.String("model", "", "claude or codex: model name this resume runs; passed once, not recorded")
+	effort := fs.String("effort", "", "claude or codex: effort level, recorded on the Agent: "+strings.Join(claudeEffortLevels, "|"))
 	refs, err := parseWithPositionals(fs, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -306,6 +314,13 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if err := requireResumablePhase(spelling, agent); err != nil {
 		return err
 	}
+	provider := coremetadata.NormalizeProvider(agent.Spec.Provider)
+	if provider == "" && agent.Status.SessionRef != nil {
+		provider = coremetadata.NormalizeProvider(agent.Status.SessionRef.Provider)
+	}
+	if err := requireLaunchOptions(spelling, provider, *model, *effort, *dialogueReplyOnly, "nothing was changed"); err != nil {
+		return err
+	}
 	if err := requireClaudeDialogueMode(agent.Spec.Provider, *dialogueReplyOnly, nil); err != nil {
 		return err
 	}
@@ -314,6 +329,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	plan.dialogueReplyOnly = *dialogueReplyOnly
+	plan.modelOverride, plan.effortOverride = *model, *effort
 	return c.rebind.rebind(spelling, plan, stdout, stderr)
 }
 

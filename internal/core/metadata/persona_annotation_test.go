@@ -105,3 +105,37 @@ func TestSetAgentPersonaRefusesAHalfPairAnUnknownModeAndAMissingAgent(t *testing
 		})
 	}
 }
+
+// TestSetAgentEffortReplacesOnlyTheEffort pins the one mutation
+// `agent resume --effort` makes: the effort is replaced, every other
+// annotation stays, and recording the value already recorded is not a change.
+func TestSetAgentEffortReplacesOnlyTheEffort(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 28, 3, 0, 0, 0, time.UTC)
+	mutator := Mutator{Now: func() time.Time { return now }}
+	reg := personaAnnotationFixture()
+
+	if _, err := mutator.SetAgentEffort(&reg, "agent-1", "max"); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{AnnotationAgentTopic: "review the parser", AnnotationAgentEffort: "max"}
+	stored, _ := reg.Agent("agent-1")
+	if !maps.Equal(stored.Metadata.Annotations, want) || !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("annotations = %v updatedAt = %v, want %v at %v", stored.Metadata.Annotations, reg.UpdatedAt, want, now)
+	}
+
+	later := Mutator{Now: func() time.Time { return now.Add(time.Hour) }}
+	if _, err := later.SetAgentEffort(&reg, "agent-1", "max"); err != nil {
+		t.Fatal(err)
+	}
+	if !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("recording the same effort moved updatedAt to %v", reg.UpdatedAt)
+	}
+
+	if _, err := mutator.SetAgentEffort(&reg, "agent-1", " "); !errors.Is(err, ErrInvalidRegistry) {
+		t.Fatalf("empty effort = %v, want %v", err, ErrInvalidRegistry)
+	}
+	if _, err := mutator.SetAgentEffort(&reg, "agent-missing", "low"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
+	}
+}

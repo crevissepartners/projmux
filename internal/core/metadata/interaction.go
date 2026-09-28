@@ -199,6 +199,31 @@ func (m Mutator) SetAgentProfileDigest(reg *Registry, agentUID, name, digest str
 	return agent.Clone(), nil
 }
 
+// SetAgentEffort records the effort an `agent resume --effort` is about to
+// launch one existing Agent with, replacing the one it recorded. Recording the
+// value it already records is not a change. Every other annotation is left as
+// it was.
+func (m Mutator) SetAgentEffort(reg *Registry, agentUID, effort string) (Agent, error) {
+	const op = "set agent effort"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "effort must be set")
+	}
+	if agent.Metadata.Annotations[AnnotationAgentEffort] == effort {
+		return agent.Clone(), nil
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	agent.Metadata.Annotations[AnnotationAgentEffort] = effort
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // SetAgentActivation records bounded launch acknowledgement metadata.
 func (m Mutator) SetAgentActivation(reg *Registry, agentUID string, state AgentActivationState, source, reason string) (Agent, error) {
 	const op = "set agent activation"

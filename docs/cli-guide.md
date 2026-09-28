@@ -1959,6 +1959,16 @@ not recorded or passed again: Claude restores the conversation's model itself
 on resume, and passing the create-time model would override a `/model` switch
 made in the session.
 
+`projmux agent resume <ref> [--model <model>] [--effort <level>]` resumes an
+Offline or Failed Claude or Codex Agent on the same UID and conversation with
+another model or effort. `--model` is passed once, on that launch only; the
+provider's conversation keeps it on later resumes, and projmux does not record
+it. `--effort` is recorded as `projmux.io/effort` in the resume's own
+transaction, so later plain resumes pass it again. A resume that fails rolls
+back and records nothing. Both flags take create's values and refusals: any
+other provider, an invalid model or effort, and `--dialogue-reply-only` are
+refused before anything changes (`nothing was changed`).
+
 A Claude conversation opened from the resume picker creates a new Agent, and
 when Agents in the Registry already record that conversation (in any Project or
 Window, live or not) the new Agent inherits their launch values: the named
