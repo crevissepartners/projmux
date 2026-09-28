@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
@@ -255,9 +256,19 @@ func (c *aiCommand) resumeSystemPromptFile(mode string, annotations map[string]s
 }
 
 // readPersonaSnapshot reads the persona snapshot at path, bounded like every
-// persona read.
+// persona read. The file is opened inside its own directory, the snapshot
+// directory RecordedSnapshotPath already proved it a regular file of, so
+// the read cannot leave that directory.
 func readPersonaSnapshot(path string) ([]byte, error) {
-	file, err := os.Open(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("no persona snapshot at %s", path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	file, err := root.Open(filepath.Base(path))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("no persona snapshot at %s", path)
 	}
