@@ -216,6 +216,86 @@ func (m Mutator) SetAgentProfileDigest(reg *Registry, agentUID, name, digest str
 	return agent.Clone(), nil
 }
 
+// SetAgentProfile replaces the profile one existing Agent records, as an
+// `agent relaunch --profile` launches it: the name, the digest of the content
+// applied, and where the profile came from (AnnotationAgentProfileSource) are
+// written together. An empty name removes all three: the Agent records no
+// profile. Every other annotation is left as it was.
+func (m Mutator) SetAgentProfile(reg *Registry, agentUID, name, digest, source string) (Agent, error) {
+	const op = "set agent profile"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	name, digest, source = strings.TrimSpace(name), strings.TrimSpace(digest), strings.TrimSpace(source)
+	if name != "" && (digest == "" || !ValidProfileSource(source)) {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "profile %q needs a digest and a profile source, got %q and %q", name, digest, source)
+	}
+	if name == "" {
+		digest, source = "", ""
+	}
+	want := map[string]string{
+		AnnotationAgentProfile:       name,
+		AnnotationAgentProfileDigest: digest,
+		AnnotationAgentProfileSource: source,
+	}
+	changed := false
+	for key, value := range want {
+		if agent.Metadata.Annotations[key] != value {
+			changed = true
+		}
+	}
+	if !changed {
+		return agent.Clone(), nil
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	for key, value := range want {
+		if value == "" {
+			delete(agent.Metadata.Annotations, key)
+		} else {
+			agent.Metadata.Annotations[key] = value
+		}
+	}
+	if len(agent.Metadata.Annotations) == 0 {
+		agent.Metadata.Annotations = nil
+	}
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
+// ClearAgentEffort removes the effort one existing Agent records and its
+// source: a launch without a profile that no longer passes an effort. Every
+// other annotation is left as it was.
+func (m Mutator) ClearAgentEffort(reg *Registry, agentUID string) (Agent, error) {
+	return m.clearAgentSetting(reg, "clear agent effort", agentUID, AnnotationAgentEffort, AnnotationAgentEffortSource)
+}
+
+// ClearAgentModel is ClearAgentEffort for the model.
+func (m Mutator) ClearAgentModel(reg *Registry, agentUID string) (Agent, error) {
+	return m.clearAgentSetting(reg, "clear agent model", agentUID, AnnotationAgentModel, AnnotationAgentModelSource)
+}
+
+func (m Mutator) clearAgentSetting(reg *Registry, op, agentUID, valueKey, sourceKey string) (Agent, error) {
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	_, hasValue := agent.Metadata.Annotations[valueKey]
+	_, hasSource := agent.Metadata.Annotations[sourceKey]
+	if !hasValue && !hasSource {
+		return agent.Clone(), nil
+	}
+	delete(agent.Metadata.Annotations, valueKey)
+	delete(agent.Metadata.Annotations, sourceKey)
+	if len(agent.Metadata.Annotations) == 0 {
+		agent.Metadata.Annotations = nil
+	}
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // SetAgentEffort records the effort an `agent resume --effort` or
 // `agent relaunch --effort` is about to launch one existing Agent with,
 // replacing the one it recorded, and records where it came from

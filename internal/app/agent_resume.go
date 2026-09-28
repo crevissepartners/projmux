@@ -332,6 +332,17 @@ type agentResumePlan struct {
 	// coremetadata.SettingSourceRelaunch for `agent relaunch`, and
 	// coremetadata.SettingSourceResume (the empty value) for `agent resume`.
 	overrideSource string
+	// layerChanges are the changes `agent relaunch` makes to the layers
+	// themselves: --profile, --instructions and --reset. Empty on every other
+	// rebind.
+	layerChanges agentSettingsRequest
+}
+
+// settingsRequest is what this rebind asks of the Agent's layers.
+func (p agentResumePlan) settingsRequest() agentSettingsRequest {
+	request := p.layerChanges
+	request.model, request.effort, request.source = p.modelOverride, p.effortOverride, p.settingSource()
+	return request
 }
 
 // settingSource is the source the rebind transaction records beside the
@@ -608,9 +619,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// and zero provider calls. Its current sandbox and approval ride the
 		// thread/resume below, and resumed carries the digest the transaction
 		// records -- the same record a Claude resume makes.
-		resumed, nativePolicy, err = r.create.codexResumeProfile(plan.annotations)
+		settings, err = r.resolveSettings(plan.provider, plan.annotations, plan.settingsRequest())
 		if err == nil {
-			settings, err = r.resolveSettings(plan.provider, plan.annotations, plan.modelOverride, plan.effortOverride, plan.settingSource())
+			// A relaunch that switches the profile resumes with the new one.
+			resumed, nativePolicy, err = r.create.codexResumeProfile(settings.launchAnnotations(plan.annotations))
 		}
 		if err == nil {
 			nativeCtx, cancel := prepareNativeContext(context.Background())
@@ -652,19 +664,24 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			// The settings are resolved from the layers. A profile that is
 			// gone or invalid leaves them unlayered, so the seam below
 			// refuses the resume exactly as it did before layers existed.
-			if resolved, resolveErr := r.resolveSettings(plan.provider, plan.annotations, plan.modelOverride, plan.effortOverride, plan.settingSource()); resolveErr == nil {
-				settings = resolved
+			if resolved, resolveErr := r.resolveSettings(plan.provider, plan.annotations, plan.settingsRequest()); resolveErr == nil {
+				settings = resolved.writeSnapshot()
+			} else if plan.layerChanges.changesLayers() {
+				// A change to the layers is never launched without them.
+				err = resolveErr
 			}
 			launchAnnotations := guidance.resumeLaunchAnnotations(links.resumeLaunchAnnotations(settings.launchAnnotations(plan.launchAnnotations())))
-			if model := settings.model(plan.modelOverride); settings.snapshotErr != nil {
+			switch model := settings.model(plan.modelOverride); {
+			case err != nil:
+			case settings.snapshotErr != nil:
 				err = settings.snapshotErr
-			} else if model != "" {
+			case model != "":
 				launcher, ok := r.launcher.(agentResumeModelLauncher)
 				if !ok {
 					return errors.New(spelling + ": the resume launcher cannot pass --model")
 				}
 				resumed, err = launcher.PlanAgentResumeWithModel(plan.provider, workspace, plan.conversationID, launchAnnotations, model)
-			} else {
+			default:
 				resumed, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID, launchAnnotations)
 			}
 			title, launchArgv = resumed.title, resumed.argv
@@ -732,6 +749,15 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// Persist the normalized effective workspace for legacy Agents whose
 		// pre-Phase6 spec was empty, before any runtime object is created.
 		agent.Spec.Workspace = workspace
+		// The layered settings are recorded with their sources in the same
+		// transaction, before any runtime object exists: the profile a
+		// relaunch switched to, the effort, the model when it was passed, and
+		// the instructions with the snapshot mode off when their content
+		// changed. A failure anywhere later rolls the whole transaction back,
+		// so a resume that does not launch records neither value nor source.
+		if err := settings.record(working, mutator, plan.agentUID); err != nil {
+			return err
+		}
 		// The profile this launch re-applied is recorded with the digest of
 		// the content it applied, in the same transaction.
 		if err := recordResumedProfileDigest(working, mutator, plan.agentUID, resumed); err != nil {
@@ -744,15 +770,6 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		}
 		// And the agent guidance, the same way.
 		if err := guidance.record(working, mutator, plan.agentUID); err != nil {
-			return err
-		}
-		// The layered settings are recorded with their sources in the same
-		// transaction, before any runtime object exists: the effort, the
-		// model when it was passed, and the instructions with the snapshot
-		// mode off when their content changed. A failure anywhere later
-		// rolls the whole transaction back, so a resume that does not launch
-		// records neither value nor source.
-		if err := settings.record(working, mutator, plan.agentUID); err != nil {
 			return err
 		}
 		// An unlayered launch records only its overrides, as before.

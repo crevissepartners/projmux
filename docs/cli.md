@@ -121,7 +121,7 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]
-projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
@@ -157,7 +157,7 @@ Subcommands:
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor |
-| [`projmux agent relaunch`](#projmux-agent-relaunch) | Restart one exact Claude or Codex Agent on the same conversation with another model or effort |
+| [`projmux agent relaunch`](#projmux-agent-relaunch) | Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort |
 | [`projmux agent instructions`](#projmux-agent-instructions) | Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent persona`](#projmux-agent-persona) | Attach or detach a persona on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent turn`](#projmux-agent-turn) | Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn |
@@ -248,7 +248,7 @@ Items the Agent does not override take its profile's current instructions, model
 
 ### `projmux agent relaunch`
 
-Restart one exact Claude or Codex Agent on the same conversation with another model or effort
+Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -264,12 +264,16 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.
 
-Without --model or --effort it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
+--profile switches the Agent's profile (none: no profile) and clears every override but the ones given with it; naming the profile it has keeps its overrides. --instructions overrides the instructions (none: no instructions), and --reset removes the overrides of instructions, model, or effort (all: every one) so they follow the profile again. It is all one restart.
+
+A Codex Agent refuses a change of its instructions (codex-instructions-immutable) and a profile switch that would keep the old sandbox or approval (relaunch-codex-permissions-kept).
+
+Without flags it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
 
 Output modes (`-o`): `json`
 

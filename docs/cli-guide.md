@@ -1917,8 +1917,12 @@ An existing Claude Agent can attach named instructions later, or detach them:
 `projmux agent instructions detach <agent-ref>` (both with `[--project <ref>]
 [--window <ref>] [--yes] [--dry-run] [-o json]`). The old
 `agent persona attach|detach` spellings remain aliases. Both names operate on
-the same Agent keys, snapshot, and digest. The Agent keeps its uid and provider
-conversation. A Running Agent's managed Pane is closed through
+the same Agent keys, snapshot, and digest. An attach is
+`agent relaunch <agent-ref> --instructions <name>` and a detach is
+`agent relaunch <agent-ref> --instructions none`, recorded with the source
+`attach` and printed in the attach's own output: the same restart, the same
+[settings layers](#settings-layers), and the same launch. The Agent keeps its
+uid and provider conversation. A Running Agent's managed Pane is closed through
 `delete pane`, which leaves it Offline, and the Agent is resumed through the
 same rebind `agent resume` uses, on a new managed Pane; an Offline or Failed
 Agent is only resumed. Before that the command writes the snapshot and records
@@ -1941,9 +1945,13 @@ new instructions, and whether that confirmation is required without changing
 anything. The Agent owning the Pane the command runs in is refused with
 `persona-self-target`; an Agent with no stored conversation is refused with
 `persona-no-conversation`. Attaching the instructions an Agent already runs with,
-same name and same content digest, reports `unchanged` and restarts nothing;
-after the instructions file is edited the digest differs and the attach restarts
-with the new snapshot. Outside tmux the stop needs `--socket <name>` or
+same name and same content digest, with the snapshot mode off, reports
+`unchanged` and restarts nothing, unless the Agent's other settings resolve to
+something else (a profile edit, for example); after the instructions file is
+edited the digest differs and the attach restarts with the new snapshot. Unlike
+`agent relaunch`, which writes nothing before the stop, an attach records the
+instructions before it, so a plain `agent resume` finishes an attach whose
+resume failed. Outside tmux the stop needs `--socket <name>` or
 `--socket-path <absolute>`, exactly as `delete pane` does. Refusals leave no
 snapshot, Registry, or Pane change. If the resume fails after the stop, the
 Agent stays Offline with its new annotations and stderr prints the
@@ -1980,21 +1988,43 @@ neither. A resume without `--model` leaves a recorded model as it was. Both flag
 other provider, an invalid model or effort, and `--dialogue-reply-only` are
 refused before anything changes (`nothing was changed`).
 
-`projmux agent relaunch <agent-ref> [--model <model>] [--effort <level>]
+`projmux agent relaunch <agent-ref> [--profile <name>|none] [--instructions
+<name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all]
 [--project <ref>] [--window <ref>] [--yes] [--dry-run] [--socket <name> |
 --socket-path <absolute>] [-o json]` restarts one existing Claude or Codex
-Agent on the same UID and the same provider conversation with another model or
-effort. Without either flag it restarts the Agent with the settings its
-[layers](#settings-layers) resolve to now -- after a profile edit, for
-example -- and reports `unchanged` when they are what the Agent runs already. It is the restart of
-`agent instructions attach` without the instructions: a Running Agent's managed
+Agent on the same UID and the same provider conversation with other settings,
+all in one restart. It is the one way to change an Agent's
+[settings layers](#settings-layers):
+
+- `--profile <name>` switches the Agent to that profile (`none`: to no
+  profile). A switch clears every override: the instructions, model, and
+  effort take the new profile's values (none where it sets none), its
+  permissions apply, and only the overrides given with it (`--instructions`,
+  `--model`, `--effort`) are overrides again. The profile is recorded with
+  `projmux.io/profile-source=relaunch`. Naming the profile the Agent already
+  has is no switch: its overrides stay. This is how an Agent created before
+  profiles, or created without one, gets a profile; a `role` label is read
+  only when an Agent is created, never by a relaunch.
+- `--instructions <name>` overrides the instructions (`none`: explicitly no
+  instructions), `--model` and `--effort` override the model and the effort.
+- `--reset <item>[,...]` removes the override of `instructions`, `model`, or
+  `effort` (`all`: of every item), so the item takes the profile's current
+  value again, or none where the profile sets none or there is no profile. A
+  model left without a value is not passed and its recorded value is removed.
+  Giving an item a value and resetting it in the same command is a usage
+  error.
+
+Without any of them it restarts the Agent with the settings its layers resolve
+to now -- after a profile edit, for example -- and reports `unchanged` when
+they are what the Agent runs already. It is the restart
+`agent instructions attach` runs: a Running Agent's managed
 Pane is closed through `delete pane`, and the Agent is brought back through the
 `agent resume` rebind with the overrides (outcome `restarted`, with the new
 Pane in `newPaneUID`); an Offline or Failed Agent is only resumed (outcome
-`resumed`). `--model` and `--effort` are recorded as `projmux.io/model` and
-`projmux.io/effort` by the rebind transaction, so a failed launch records
-neither; later plain resumes pass the effort again but not the model. Nothing
-is written before the stop. On a Codex Agent the model and effort ride the
+`resumed`). The settings are recorded by the rebind transaction -- the profile,
+`projmux.io/model`, `projmux.io/effort`, the instructions, and their sources --
+so a failed launch records none of them; later plain resumes pass the effort
+again but not the model. Nothing is written before the stop. On a Codex Agent the model and effort ride the
 native resume as `-m <model>` and `-c model_reasoning_effort=<level>`.
 
 The refusals are those of `agent instructions attach`, with their own reason
@@ -2006,11 +2036,24 @@ Offline, or Failed, or one whose final resume would be refused (a Codex thread
 with no durable endpoint included) (`relaunch-no-conversation`); the Agent
 owning the Pane the command runs in (`relaunch-self-target`); and a Running
 Agent whose interaction is not `idle` or `response_complete` -- `unknown`
-included -- without `--yes` (`relaunch-agent-busy`). Outside tmux the stop
-needs `--socket <name>` or `--socket-path <absolute>`, exactly as `delete pane`
-does. A Running Agent without `--model` whose settings, `--effort` included,
-resolve to exactly what it was launched with reports `unchanged` and restarts
-nothing; `--model` always restarts, because the
+included -- without `--yes` (`relaunch-agent-busy`). A change to the layers
+adds its own: a profile that does not exist or that `profile list` marks
+invalid (the store's reason, such as `profile-not-found`) or that names another
+provider (`profile-provider-mismatch`); instructions that cannot be read
+(`persona-not-found`), named or brought by a profile or a reset; on a Codex
+Agent, any change of its instructions -- `--instructions`, a profile with other
+instructions, or a reset of them (`codex-instructions-immutable`: its thread
+keeps the developer message it started with) -- and a profile switch that
+would leave the thread on the old profile's sandbox or approval, because the
+new profile sets none where the old one set one or cannot be read
+(`relaunch-codex-permissions-kept`: a Codex resume can set a sandbox or an
+approval but not remove one). A Codex switch to a profile with the same
+instructions and both permissions, and any model or effort, is allowed.
+Outside tmux the stop needs `--socket <name>` or `--socket-path <absolute>`,
+exactly as `delete pane` does. A Running Agent without `--model` whose
+settings, `--effort` included, resolve to exactly what it was launched with,
+and whose `--profile`, `--instructions`, or `--reset` changes no recorded value,
+source, or profile, reports `unchanged` and restarts nothing; `--model` always restarts, because the
 recorded model is the last one requested, not necessarily the one the provider
 runs now (a `/model` switch in the session is not observed). `--dry-run` changes nothing and
 reports `would-restart` or `would-resume`.
@@ -2029,18 +2072,23 @@ and `source`, and `instructions`, `model`, and `effort` each with `value`,
 `relaunchReasons` (why the two differ, in this order: `profile-changed`,
 `instructions-changed`, `instructions-content-changed`, `model-changed`,
 `effort-changed`; empty when they do not); the empty string fields before
-`currentSettings` are omitted. Without `-o json` the output of the stop and the
-resume is followed by one result line.
+`currentSettings` are omitted. A switched profile, overridden or reset items,
+and their sources show on the `newSettings` side. Without `-o json` the output
+of the stop and the resume is followed by one result line, which also names
+the profile and the instructions when their names change (`profile=role
+instructions=lead`, `none` for none).
 
 If closing the managed Pane reports an error, the command checks whether that
 Pane is still alive: if it is, the old session keeps running and the command
 fails with the Registry unchanged; if it is already closed, the resume proceeds
 with a warning on stderr; if it cannot tell, stderr prints the same
 `projmux agent relaunch` command to re-run. If the resume fails after the stop,
-the Agent stays Offline with its previous effort and stderr prints the
+the Agent stays Offline with its previous settings and stderr prints the
 `projmux agent resume uid:<agent> --project uid:<project> --window
 uid:<window> --model <model> --effort <level>` command, with the flags that
-were given, that finishes the job.
+were given, that finishes the job; after `--profile`, `--instructions`, or
+`--reset`, which `agent resume` cannot carry, it prints the same
+`projmux agent relaunch` command instead, which only resumes the Offline Agent.
 
 A Claude conversation opened from the resume picker creates a new Agent, and
 when Agents in the Registry already record that conversation (in any Project or
@@ -2166,10 +2214,10 @@ their own keys (`projmux.io/profile`, `projmux.io/persona`, `projmux.io/model`,
 | --- | --- |
 | `flag` | `create agent` (and a UI create) for `--profile`, `--instructions`/`--persona`, `--model`, and `--effort` |
 | `role` | `projmux.io/profile-source` only: the profile a `role` label selected |
-| `profile` | item sources only: the item the create's profile filled in |
+| `profile` | item sources only: the item the create's profile filled in, or that a resume, a relaunch `--reset`, or a relaunch `--profile` switch put in the profile layer |
 | `inherited` | a resume picker selection, for the profile, instructions, and effort it inherited |
 | `resume` | `agent resume --model/--effort` |
-| `relaunch` | `agent relaunch --model/--effort` |
+| `relaunch` | `agent relaunch`: `--profile` (for `projmux.io/profile-source`), `--instructions`, `--model`, and `--effort` |
 | `attach` | `projmux.io/instructions-source` only: `agent instructions\|persona attach\|detach` |
 
 An item source other than `profile` means the value overrides the profile.
@@ -2211,6 +2259,12 @@ not set, or no value where the profile sets one -- is an override of unknown
 source that keeps no source key. An Agent without a profile overrides every
 item. So the first resume after the upgrade launches exactly what the Agent
 launched before.
+
+The layers change only through `agent relaunch` (and its
+`agent instructions attach|detach` spellings): `--profile` switches the profile
+layer and clears the overrides, `--instructions`, `--model`, and `--effort`
+add overrides, and `--reset` removes them. An item with neither a profile nor
+an override has no value and no source.
 
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`

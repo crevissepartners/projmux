@@ -205,9 +205,9 @@ func personaAgentEffects() *AllowedEffects {
 }
 
 // relaunchAgentEffects is `agent relaunch`: the Agent keeps its identity and
-// name, its managed Pane is replaced when it was Running, its effort
-// annotation is replaced when --effort is given, and its provider runtime is
-// stopped and materialized again. An `unchanged` run and a dry run change
+// name, its managed Pane is replaced when it was Running, its settings
+// annotations are replaced by the ones it relaunches with, and its provider
+// runtime is stopped and materialized again. An `unchanged` run and a dry run change
 // nothing.
 func relaunchAgentEffects() *AllowedEffects {
 	return allowedEffects(
@@ -861,7 +861,7 @@ var routes = []Route{
 			"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]",
 			"projmux agent topic set <text> [<agent-ref>] [--agent <ref>]",
 			"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]",
-			"projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
+			"projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
@@ -911,18 +911,25 @@ var routes = []Route{
 			},
 			{
 				// Relaunch is `delete pane` on a Running Agent's managed Pane
-				// followed by the `agent resume` rebind with --model and
-				// --effort; an Offline or Failed Agent is only resumed. The
-				// Agent keeps its uid and its provider conversation, and the
-				// rebind records both the model and the effort.
+				// followed by the `agent resume` rebind with the settings the
+				// Agent's layers and the flags resolve to; an Offline or
+				// Failed Agent is only resumed. The Agent keeps its uid and
+				// its provider conversation, and the rebind records the
+				// settings. `agent instructions attach|detach` run the same
+				// restart.
 				Effects:    relaunchAgentEffects(),
 				Name:       "relaunch",
 				Invocation: InvocationExplicit,
-				Summary:    "Restart one exact Claude or Codex Agent on the same conversation with another model or effort",
-				Notes:      []string{"The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.", "Without --model or --effort it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons."},
-				Usage:      []string{"projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
-				Canonical:  []string{"agent relaunch"},
-				Outputs:    []OutputMode{OutputModeJSON},
+				Summary:    "Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort",
+				Notes: []string{
+					"The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.",
+					"--profile switches the Agent's profile (none: no profile) and clears every override but the ones given with it; naming the profile it has keeps its overrides. --instructions overrides the instructions (none: no instructions), and --reset removes the overrides of instructions, model, or effort (all: every one) so they follow the profile again. It is all one restart.",
+					"A Codex Agent refuses a change of its instructions (codex-instructions-immutable) and a profile switch that would keep the old sandbox or approval (relaunch-codex-permissions-kept).",
+					"Without flags it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.",
+				},
+				Usage:     []string{"projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
+				Canonical: []string{"agent relaunch"},
+				Outputs:   []OutputMode{OutputModeJSON},
 			},
 			{
 				// Attach and detach are `delete pane` on a Running Agent's

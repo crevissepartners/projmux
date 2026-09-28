@@ -30,6 +30,17 @@
 // the profile layer this way, and nothing for one it kept as an unknown
 // override, so the layer of that item is decided the same way next time.
 //
+// # Changing the layers
+//
+// One launch may also change the layers (`agent relaunch`): an explicit
+// override of an item (Input.Instructions, Input.Model, Input.Effort), the
+// removal of an item's override so it follows the profile again (Input.Reset),
+// and a switch to another profile or to none (Input.Switch). A switch clears
+// every override: each item takes the new profile's value, or none without a
+// profile, and only the explicit overrides of the same launch are overrides
+// again. A switch to the profile the Agent already records is no switch, and
+// its overrides stay.
+//
 // The package is pure: the caller reads the profile and the instructions
 // content and hands them in. Resume, relaunch and any other reader call the
 // same Resolve, so they cannot disagree about what an Agent would launch with.
@@ -60,6 +71,16 @@ const (
 	// ReasonEffortChanged is an effort that differs from the recorded one.
 	ReasonEffortChanged = "effort-changed"
 )
+
+// The items of the layers, as `agent relaunch --reset` names them.
+const (
+	ItemInstructions = "instructions"
+	ItemModel        = "model"
+	ItemEffort       = "effort"
+)
+
+// Items are the items of the layers, in the order Settings holds them.
+func Items() []string { return []string{ItemInstructions, ItemModel, ItemEffort} }
 
 // Profile is the current content of the profile an Agent records: its name,
 // the digest of its content, and the items it sets ("" for an item it does
@@ -95,9 +116,36 @@ type Input struct {
 	// instructions on resume (Codex): the launch keeps the recorded
 	// instructions and InstructionsNotApplied says what it could not apply.
 	InstructionsFixed bool
-	// Model and Effort are the explicit overrides of this launch, if any.
-	Model  *Override
-	Effort *Override
+	// Instructions, Model and Effort are the explicit overrides of this
+	// launch, if any. An Instructions value of "" is an explicit "no
+	// instructions".
+	Instructions *Override
+	Model        *Override
+	Effort       *Override
+	// Reset names the items (ItemInstructions, ItemModel, ItemEffort) whose
+	// override this launch removes: they take the profile's value, or none
+	// without a profile.
+	Reset []string
+	// Switch replaces the profile the Agent records with NewProfile (nil for
+	// none), recorded under SwitchSource. Profile is still the profile the
+	// Agent records, read now, or nil when it records none or it cannot be
+	// read: it only describes the settings the Agent recorded. A switch to
+	// the name the Agent records is no switch.
+	Switch       bool
+	NewProfile   *Profile
+	SwitchSource string
+}
+
+// switches reports whether in replaces the profile the Agent records.
+func (in Input) switches() bool {
+	if !in.Switch {
+		return false
+	}
+	name := ""
+	if in.NewProfile != nil {
+		name = in.NewProfile.Name
+	}
+	return name != in.Annotations[metadata.AnnotationAgentProfile]
 }
 
 // Setting is one item on one side of a launch: the value, the source it is
@@ -157,6 +205,22 @@ type Resolution struct {
 	// Reasons are why the launch differs from the recorded one, in the order
 	// the Reason constants are declared; empty when it would not.
 	Reasons []string
+	// ProfileSwitched reports a launch that replaces the profile the Agent
+	// records with New.Profile (none when its name is "").
+	ProfileSwitched bool
+}
+
+// LayersChanged reports whether the launch records other settings than the
+// Agent recorded: another value, source or layer of an item, or another
+// profile. The profile's own values are not compared; Reasons say when those
+// change what the launch runs with.
+func (r Resolution) LayersChanged() bool {
+	return withoutProfileValues(r.Current) != withoutProfileValues(r.New)
+}
+
+func withoutProfileValues(s Settings) Settings {
+	s.Instructions.ProfileValue, s.Model.ProfileValue, s.Effort.ProfileValue = "", "", ""
+	return s
 }
 
 // InstructionsChanged reports whether the launch passes other instructions
@@ -168,9 +232,9 @@ func (r Resolution) InstructionsChanged() bool {
 // Resolve computes the launch settings of one Agent from its layers.
 func Resolve(in Input) Resolution {
 	a := in.Annotations
-	var profileValues Profile
+	var recorded Profile
 	if in.Profile != nil {
-		profileValues = *in.Profile
+		recorded = *in.Profile
 	}
 	var out Resolution
 	out.Current.Profile = ProfileLayer{
@@ -178,19 +242,50 @@ func Resolve(in Input) Resolution {
 		Digest: a[metadata.AnnotationAgentProfileDigest],
 		Source: a[metadata.AnnotationAgentProfileSource],
 	}
+	// layer is the profile the launch runs with: the recorded one, or the
+	// one it switches to.
+	layer := in.Profile
 	out.New.Profile = out.Current.Profile
-	if in.Profile != nil {
-		out.New.Profile.Name, out.New.Profile.Digest = in.Profile.Name, in.Profile.Digest
+	if out.ProfileSwitched = in.switches(); out.ProfileSwitched {
+		layer = in.NewProfile
+		out.New.Profile = ProfileLayer{}
+		if layer != nil {
+			out.New.Profile = ProfileLayer{Name: layer.Name, Digest: layer.Digest, Source: in.SwitchSource}
+		}
+	} else if layer != nil {
+		out.New.Profile.Name, out.New.Profile.Digest = layer.Name, layer.Digest
+	}
+	var layerValues Profile
+	if layer != nil {
+		layerValues = *layer
 	}
 
-	out.Current.Instructions, out.New.Instructions = resolveItem(in.Profile != nil, a,
-		metadata.AnnotationAgentPersona, metadata.AnnotationAgentInstructionsSource, profileValues.Instructions, nil)
-	out.Current.Model, out.New.Model = resolveItem(in.Profile != nil, a,
-		metadata.AnnotationAgentModel, metadata.AnnotationAgentModelSource, profileValues.Model, in.Model)
-	out.Current.Effort, out.New.Effort = resolveItem(in.Profile != nil, a,
-		metadata.AnnotationAgentEffort, metadata.AnnotationAgentEffortSource, profileValues.Effort, in.Effort)
+	item := func(name, valueKey, sourceKey, recordedValue, layerValue string, override *Override) (Setting, Setting) {
+		current := recordedSetting(in.Profile != nil, a, valueKey, sourceKey, recordedValue)
+		next := current
+		switch {
+		case out.ProfileSwitched || slices.Contains(in.Reset, name):
+			// The override is gone: the item is the profile's, or nothing.
+			next = Setting{Value: layerValue, ProfileValue: layerValue, Override: layer == nil}
+			if layer != nil {
+				next.Source = metadata.SettingSourceProfile
+			}
+		case !current.Override:
+			next.Value, next.Source = layerValue, metadata.SettingSourceProfile
+		}
+		if override != nil {
+			next.Value, next.Source, next.Override = override.Value, override.Source, true
+		}
+		return current, next
+	}
+	out.Current.Instructions, out.New.Instructions = item(ItemInstructions,
+		metadata.AnnotationAgentPersona, metadata.AnnotationAgentInstructionsSource, recorded.Instructions, layerValues.Instructions, in.Instructions)
+	out.Current.Model, out.New.Model = item(ItemModel,
+		metadata.AnnotationAgentModel, metadata.AnnotationAgentModelSource, recorded.Model, layerValues.Model, in.Model)
+	out.Current.Effort, out.New.Effort = item(ItemEffort,
+		metadata.AnnotationAgentEffort, metadata.AnnotationAgentEffortSource, recorded.Effort, layerValues.Effort, in.Effort)
 
-	if in.Profile != nil && in.Profile.Digest != out.Current.Profile.Digest {
+	if out.New.Profile.Name != out.Current.Profile.Name || (layer != nil && layer.Digest != out.Current.Profile.Digest) {
 		out.Reasons = append(out.Reasons, ReasonProfileChanged)
 	}
 	out.resolveInstructions(in)
@@ -249,9 +344,9 @@ func (out *Resolution) resolveInstructions(in Input) {
 	}
 }
 
-// resolveItem is the layer rule of one item: the recorded setting and the one
-// the next launch uses.
-func resolveItem(hasProfile bool, a map[string]string, valueKey, sourceKey, profileValue string, override *Override) (Setting, Setting) {
+// recordedSetting is one item as the Agent recorded it, and whether the
+// recorded value overrides the profile the Agent records.
+func recordedSetting(hasProfile bool, a map[string]string, valueKey, sourceKey, profileValue string) Setting {
 	recorded := a[valueKey]
 	source, hasSource := a[sourceKey]
 	current := Setting{Value: recorded, Source: source, ProfileValue: profileValue}
@@ -265,12 +360,5 @@ func resolveItem(hasProfile bool, a map[string]string, valueKey, sourceKey, prof
 		// No source recorded: the value predates sources (O-1).
 		current.Override = recorded != profileValue
 	}
-	next := current
-	switch {
-	case override != nil:
-		next.Value, next.Source, next.Override = override.Value, override.Source, true
-	case !current.Override:
-		next.Value, next.Source = profileValue, metadata.SettingSourceProfile
-	}
-	return current, next
+	return current
 }

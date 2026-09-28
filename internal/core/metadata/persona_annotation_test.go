@@ -403,3 +403,76 @@ func TestSetAgentSettingFromProfileKeepsTheSourceWithoutAValue(t *testing.T) {
 		t.Fatalf("recording what the Agent records already moved updatedAt to %v", reg.UpdatedAt)
 	}
 }
+
+// TestSetAgentProfileReplacesOrClearsTheProfileWithItsSource pins the writer of
+// an `agent relaunch --profile` switch: name, digest and source move together,
+// an empty name removes all three, and a name without a digest or with an
+// item-only source is refused.
+func TestSetAgentProfileReplacesOrClearsTheProfileWithItsSource(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC)
+	mutator := Mutator{Now: func() time.Time { return now }}
+	reg := personaAnnotationFixture()
+	agent := &reg.Agents[0]
+	agent.Metadata.Annotations[AnnotationAgentProfile] = "role"
+	agent.Metadata.Annotations[AnnotationAgentProfileDigest] = "sha256:old"
+	agent.Metadata.Annotations[AnnotationAgentProfileSource] = SettingSourceRole
+
+	if _, err := mutator.SetAgentProfile(&reg, "agent-1", "review", "sha256:new", SettingSourceRelaunch); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := reg.Agent("agent-1")
+	got := stored.Metadata.Annotations
+	if got[AnnotationAgentProfile] != "review" || got[AnnotationAgentProfileDigest] != "sha256:new" || got[AnnotationAgentProfileSource] != SettingSourceRelaunch || !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("annotations = %v updatedAt = %v", got, reg.UpdatedAt)
+	}
+	for _, bad := range [][3]string{{"review", "", SettingSourceRelaunch}, {"review", "sha256:new", SettingSourceProfile}, {"review", "sha256:new", ""}} {
+		if _, err := mutator.SetAgentProfile(&reg, "agent-1", bad[0], bad[1], bad[2]); err == nil {
+			t.Fatalf("SetAgentProfile%q succeeded", bad)
+		}
+	}
+	if _, err := mutator.SetAgentProfile(&reg, "agent-1", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ = reg.Agent("agent-1")
+	for _, key := range []string{AnnotationAgentProfile, AnnotationAgentProfileDigest, AnnotationAgentProfileSource} {
+		if _, ok := stored.Metadata.Annotations[key]; ok {
+			t.Fatalf("clearing the profile left %s in %v", key, stored.Metadata.Annotations)
+		}
+	}
+}
+
+// TestClearAgentSettingRemovesTheValueAndItsSource pins the writer of an item
+// left with no layer: value and source go together, and clearing nothing is
+// not a change.
+func TestClearAgentSettingRemovesTheValueAndItsSource(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC)
+	mutator := Mutator{Now: func() time.Time { return now }}
+	reg := personaAnnotationFixture()
+	agent := &reg.Agents[0]
+	agent.Metadata.Annotations[AnnotationAgentEffort] = "high"
+	agent.Metadata.Annotations[AnnotationAgentEffortSource] = SettingSourceRelaunch
+	agent.Metadata.Annotations[AnnotationAgentModel] = "opus"
+
+	if _, err := mutator.ClearAgentEffort(&reg, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.ClearAgentModel(&reg, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := reg.Agent("agent-1")
+	for _, key := range []string{AnnotationAgentEffort, AnnotationAgentEffortSource, AnnotationAgentModel, AnnotationAgentModelSource} {
+		if _, ok := stored.Metadata.Annotations[key]; ok {
+			t.Fatalf("clearing left %s in %v", key, stored.Metadata.Annotations)
+		}
+	}
+	later := now.Add(time.Hour)
+	mutator.Now = func() time.Time { return later }
+	if _, err := mutator.ClearAgentEffort(&reg, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("clearing nothing moved updatedAt to %v", reg.UpdatedAt)
+	}
+}
