@@ -398,7 +398,9 @@ func TestColumnActionsReuseUnavailableSnapshotAndEmptyListsStayEmpty(t *testing.
 			t.Fatalf("unavailable %s: %v stderr=%q", mode, err, stderr)
 		}
 		rows := columnarRows(t, stdout)
-		for i, want := range []string{"start,delete", "start,delete", "rebind,delete"} {
+		// No transport means nothing was observed: the rows are unknown and
+		// offer only delete; MissingRoot still asks for rebind.
+		for i, want := range []string{"delete", "delete", "rebind,delete"} {
 			if rows[i]["ACTIONS"] != want {
 				t.Fatalf("unavailable %s row %d actions=%q want=%q", mode, i, rows[i]["ACTIONS"], want)
 			}

@@ -116,6 +116,16 @@ attached to (`$TMUX`). Outside tmux -- another terminal, an IDE, a script --
 they observe the app server `-L projmux`, so a live Window reads `live` there
 too; with no app server running, rows read `offline`.
 
+STATUS is one of `live`, `offline`, `unknown`, or `missing-root`. `offline`
+means the server was read and no runtime object mirrors the resource.
+`unknown` means the server could not be read, so the resource was neither seen
+running nor seen absent. An `unknown` row offers only `delete` in ACTIONS -- no
+`start`, `resume`, or `open` -- because starting something that may already be
+running is not safe. A Project's STATUS and ACTIONS both come from the same
+observation of its session, not from the stored session projection. `-o json`
+is unchanged: it carries no STATUS, and `context.observed` still reports
+whether the context was observed.
+
 The resource routes (`get`, `describe`, `create`, `rename`, `label`, `rebind`,
 `delete`, `agent resume`) address stored resources through one shared selector
 grammar.

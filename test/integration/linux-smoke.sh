@@ -2668,13 +2668,16 @@ for nav_absent in runtime-home runtime-scratch ghost plain; do
 done
 
 # Acceptance: the same Registry renders the same rows in the same order with no
-# tmux server at all, with the status downgraded rather than the row dropped, and
-# with the action that would bring it back.
+# tmux server at all, with the status downgraded rather than the row dropped.
+# Nothing was observed, so the rows offer neither open nor start/resume -- only
+# delete, because starting something that may already be running is not safe.
 env -u TMUX -u TMUX_PANE PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
   "$bin" switch preview "uid:$runtime_project_uid" >"$PROJMUX_SMOKE_WORKDIR/nav-dark.txt"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "host unknown  transport no tmux transport"
 nav_expect_rows "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "unknown"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "start,delete"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "delete"
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "start,delete"
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "resume,delete"
 smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "open,delete"
 # Identity and order are the same list; status and invocation-scoped context
 # are overlays. The preview intentionally renders Context rather than the

@@ -178,12 +178,26 @@ const ReasonRuntimeUnbound = "RuntimeUnbound"
 //
 // The empty observation means "nothing is bound", which is the fail-closed
 // reading: it can only ever downgrade a resource to offline, never invent a
-// live one.
+// live one. A caller that knows part of the machine could not be read says so
+// in Unobserved, and a caller that observed the Project sessions says so in
+// Sessions; the zero value of both keeps the historical reading, which is what
+// identity-only resolvers built with no observation rely on.
 type RuntimeObservation struct {
 	// Windows is the set of Window uids a live tmux window still mirrors.
 	Windows map[string]bool
 	// Panes is the set of Pane uids a live tmux pane still mirrors.
 	Panes map[string]bool
+	// Sessions is the set of Project uids whose persistent tmux session was
+	// observed live. It is consulted only when SessionsObserved is set; without
+	// it a Project's status falls back to its stored session projection.
+	Sessions map[string]bool
+	// SessionsObserved reports that Sessions is an observation of this
+	// invocation rather than an absent one.
+	SessionsObserved bool
+	// Unobserved is the set of uids, of any kind, whose runtime object could
+	// not be judged because the observation it depends on could not be taken.
+	// Such a uid is neither live nor offline: nothing was seen either way.
+	Unobserved map[string]bool
 }
 
 // BoundWindow reports whether a live tmux window still mirrors uid.
@@ -198,10 +212,27 @@ func (o RuntimeObservation) BoundWindow(uid string) bool { return o.Windows[uid]
 // BoundPane reports whether a live tmux pane still mirrors uid.
 func (o RuntimeObservation) BoundPane(uid string) bool { return o.Panes[uid] }
 
+// BoundSession reports whether Project uid's persistent session was observed
+// live. The second result is false when no session observation was taken, in
+// which case the first result carries no information.
+func (o RuntimeObservation) BoundSession(uid string) (live, observed bool) {
+	return o.Sessions[uid], o.SessionsObserved
+}
+
+// IsUnobserved reports whether uid's runtime object could not be judged by this
+// observation.
+func (o RuntimeObservation) IsUnobserved(uid string) bool { return o.Unobserved[uid] }
+
 // Clone returns a deep copy so a resolver can never observe its snapshot
 // changing under it.
 func (o RuntimeObservation) Clone() RuntimeObservation {
-	return RuntimeObservation{Windows: cloneBoolSet(o.Windows), Panes: cloneBoolSet(o.Panes)}
+	return RuntimeObservation{
+		Windows:          cloneBoolSet(o.Windows),
+		Panes:            cloneBoolSet(o.Panes),
+		Sessions:         cloneBoolSet(o.Sessions),
+		SessionsObserved: o.SessionsObserved,
+		Unobserved:       cloneBoolSet(o.Unobserved),
+	}
 }
 
 func cloneBoolSet(in map[string]bool) map[string]bool {

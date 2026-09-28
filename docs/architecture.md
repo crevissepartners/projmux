@@ -1400,14 +1400,25 @@ Runtime observation and resource status:
   live tmux object still mirrors its `@projmux_window_uid` /
   `@projmux_pane_uid`. A registry object bound to nothing live is an **orphan**,
   and an orphan is not live.
-- `selector.ObservedStatus(missingRoot, bound)` is the **single** derivation
-  rule in the codebase, and every kind goes through it. `missing-root` outranks
-  everything, then `bound` decides `live` vs `offline`. The MissingRoot
-  precedence contract is unchanged, and it now applies to a Window or Pane whose
-  owning Project lost its root even while tmux is still running them.
+- `selector.ObservedStatus(missingRoot, bound, unobserved)` is the **single**
+  derivation rule in the codebase, and every kind goes through it.
+  `missing-root` outranks everything, then `bound` is `live`, then a resource
+  whose observation could not be taken is `unknown`, and only a readable
+  observation with nothing bound is `offline` -- the same precedence the
+  resource graph applies. The MissingRoot precedence contract is unchanged, and
+  it now applies to a Window or Pane whose owning Project lost its root even
+  while tmux is still running them.
+- `get` and `describe` build their observation from the resolved resource
+  graph, so a row's STATUS and the ACTIONS `registryview` offers for it come
+  from one judgement. An `unknown` row offers only `delete`: it was not seen
+  live, so `open` has nothing to move to, and it was not seen absent, so
+  `start`/`resume` could target something already running.
 - A **Project** is the one kind whose runtime object is a tmux *session*, which
-  has no `@projmux` uid of its own, so Project status still reads the stored
-  `status.session` projection (see *Resource metadata model* for its writers).
+  has no `@projmux` uid of its own. On `get` and `describe` its status is the
+  graph's observation of that session; an identity-only resolver that took no
+  observation (`selector.New`) still reads the stored `status.session`
+  projection (see *Resource metadata model* for its writers) and never reports
+  `unknown`.
 - An **Agent** owns no tmux object of its own — there is no `@projmux_agent_uid`
   and there must not be one, because an Agent outlives the managed Pane it is
   bound to. Its runtime object is **that managed Pane**, named by

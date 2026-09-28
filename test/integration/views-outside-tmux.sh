@@ -196,6 +196,25 @@ grep -qF " offline " <<<" $other_row " || fail "a view inside another tmux did n
 end_server "$other_socket"
 echo "PASS: a view inside another tmux keeps observing the inherited server"
 
+# (5) A server that is running but cannot be read is not an empty machine: with
+# the app socket refusing connections the view cannot observe anything, so the
+# Window and the Project read unknown and offer neither start nor open. The
+# socket mode is restored before anything else talks to the server.
+socket_mode="$(stat -c '%a' "$socket_path")"
+chmod 000 "$socket_path"
+unread_windows="$(run_outside get windows -p "uid:$project_uid" -o wide)"
+unread_projects="$(run_outside get projects -o wide)"
+unread_describe="$(run_outside describe window "uid:$window_uid")"
+chmod "$socket_mode" "$socket_path"
+unread_row="$(row "$unread_windows" "$window_name")"
+unread_project_row="$(row "$unread_projects" "$(basename "$project_root")")"
+for checked in "$unread_row" "$unread_project_row"; do
+  [[ " $(tr -s ' ' <<<"$checked") " == *" unknown delete "* ]] || fail "unreadable app server row is not unknown with delete only: $checked"
+done
+[[ "$unread_describe" == *unknown* ]] || fail "describe window with an unreadable app server is not unknown: $unread_describe"
+[[ "$(iso_tmux display-message -p '#{pid}')" == "$server_pid" ]] || fail "the app server did not survive the unreadable window"
+echo "PASS: outside-tmux view of an unreadable app server reads unknown and offers only delete"
+
 # (3) No server behind the app socket: outside tmux the view reads offline.
 end_server "$app_socket"
 if iso_tmux_by_name "$app_socket" display-message -p '#{socket_path}' >/dev/null 2>&1; then
@@ -203,7 +222,7 @@ if iso_tmux_by_name "$app_socket" display-message -p '#{socket_path}' >/dev/null
 fi
 absent_windows="$(run_outside get windows -p "uid:$project_uid" -o wide)"
 absent_row="$(row "$absent_windows" "$window_name")"
-grep -qF " offline " <<<" $absent_row " || fail "outside-tmux view without an app server is not offline: $absent_row"
+grep -qF " offline start,delete " <<<" $(tr -s ' ' <<<"$absent_row") " || fail "outside-tmux view without an app server is not offline with start: $absent_row"
 if iso_tmux_by_name "$app_socket" display-message -p '#{socket_path}' >/dev/null 2>&1; then
   fail "an outside-tmux view started an app server"
 fi

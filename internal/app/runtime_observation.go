@@ -69,36 +69,62 @@ type resourceReadLookup func(coremetadata.Registry) resourceReadSnapshot
 
 func runtimeResourceReadLookup(reader *runtimeDiagnosticsReader) resourceReadLookup {
 	return func(registry coremetadata.Registry) resourceReadSnapshot {
-		fallback := func() resourceReadSnapshot {
-			return resourceReadSnapshot{contexts: registryview.NewContextProjector(registry), navigation: resourceNavigationRows(resourcegraph.Resolve(registry, resourcegraph.Inventory{}))}
+		inventory := resourcegraph.Inventory{}
+		if reader != nil && reader.observe != nil {
+			if transport, err := reader.viewTransport(); err == nil {
+				inventory = reader.observe(context.Background(), transport)
+			}
 		}
-		if reader == nil || reader.observe == nil {
-			return fallback()
-		}
-		transport, err := reader.viewTransport()
-		if err != nil {
-			return fallback()
-		}
-		inventory := reader.observe(context.Background(), transport)
 		graph := resourcegraph.Resolve(registry, inventory)
-		windows := make(map[string]bool)
-		for _, node := range graph.Windows {
-			if node.Status == resourcegraph.StatusLive {
-				windows[node.Window.Metadata.UID] = true
-			}
-		}
-		panes := make(map[string]bool)
-		for _, node := range graph.Panes {
-			if node.Status == resourcegraph.StatusLive {
-				panes[node.Pane.Metadata.UID] = true
-			}
-		}
 		return resourceReadSnapshot{
-			runtime:    coremetadata.RuntimeObservation{Windows: windows, Panes: panes},
+			runtime:    graphRuntimeObservation(graph),
 			contexts:   registryview.NewObservedContextProjector(graph),
 			navigation: resourceNavigationRows(graph),
 		}
 	}
+}
+
+// graphRuntimeObservation carries the graph's own row statuses into the
+// selector observation, so STATUS and ACTIONS are read from one judgement.
+//
+// A bool set of live uids cannot say "this could not be observed", which is how
+// an unreadable machine used to print as offline beside an action list that
+// knew better. Unknown rows are named explicitly, and the Project sessions are
+// marked observed so a Project's status comes from the same graph rather than
+// from its stored session projection. A graph resolved with no transport marks
+// every runtime-bearing row unknown, which is the truthful answer when no
+// observation could be taken at all.
+func graphRuntimeObservation(graph resourcegraph.Graph) coremetadata.RuntimeObservation {
+	observed := coremetadata.RuntimeObservation{
+		Windows:          make(map[string]bool),
+		Panes:            make(map[string]bool),
+		Sessions:         make(map[string]bool),
+		SessionsObserved: true,
+		Unobserved:       make(map[string]bool),
+	}
+	mark := func(set map[string]bool, uid string, status resourcegraph.Status) {
+		switch status {
+		case resourcegraph.StatusLive:
+			set[uid] = true
+		case resourcegraph.StatusUnknown:
+			observed.Unobserved[uid] = true
+		}
+	}
+	for _, node := range graph.Projects {
+		mark(observed.Sessions, node.Project.Metadata.UID, node.Status)
+	}
+	for _, node := range graph.Windows {
+		mark(observed.Windows, node.Window.Metadata.UID, node.Status)
+	}
+	for _, node := range graph.Panes {
+		mark(observed.Panes, node.Pane.Metadata.UID, node.Status)
+	}
+	for _, node := range graph.Agents {
+		if node.Status == resourcegraph.StatusUnknown {
+			observed.Unobserved[node.Agent.Metadata.UID] = true
+		}
+	}
+	return observed
 }
 
 // resourceNavigationRows indexes the existing action projector without changing

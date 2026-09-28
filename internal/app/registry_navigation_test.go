@@ -150,8 +150,8 @@ func TestRegistryNavigationOutsideTmuxProbesNoDefaultServer(t *testing.T) {
 		if row.Status != resourcegraph.StatusUnknown {
 			t.Fatalf("row %q status = %q, want unknown outside tmux", row.ID, row.Status)
 		}
-		if !row.Allows(registryview.ActionStart) && !row.Allows(registryview.ActionResume) {
-			t.Fatalf("row %q actions = %v, want the offline revive action", row.ID, row.Actions)
+		if !reflect.DeepEqual(row.Actions, []registryview.Action{registryview.ActionDelete}) {
+			t.Fatalf("row %q actions = %v, want only delete for an unobserved row", row.ID, row.Actions)
 		}
 	}
 }
