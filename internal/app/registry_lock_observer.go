@@ -10,7 +10,8 @@ import (
 // invocation's registry.lock.acquisition recorder, which journals the ones that
 // waited or held for at least a second, or timed out. The record is attributed
 // to the invocation's catalog command, classified from args; no argv text
-// reaches the journal. A nil recorder installs nothing, and neither does an
+// reaches the journal. The same observation then feeds the invocation's open
+// tmux.apply breakdown, if any, after the journal saw it unchanged. A nil recorder installs nothing, and neither does an
 // invocation that must never append to the journal -- Doctor, the support
 // report, and the retired no-write argv -- so a slow locked Registry read
 // inside them cannot break their no-write contract. The returned function
@@ -19,7 +20,26 @@ func ObserveRegistryLock(lifecycle *diagnostics.LifecycleRecorder, args []string
 	if lifecycle == nil || diagnostics.JournalForbidden(args) {
 		return func() {}
 	}
-	return intmetadata.SetLockObserver(newRegistryLockObserver(lifecycle.RegistryLock(diagnostics.Classify(args))))
+	return intmetadata.SetLockObserver(withApplyLockTally(lifecycle,
+		newRegistryLockObserver(lifecycle.RegistryLock(diagnostics.Classify(args)))))
+}
+
+// withApplyLockTally runs journal first, exactly as it would run alone, and
+// then counts the same observation into the lifecycle's open tmux.apply
+// breakdown. Outside an apply the second half finds no recorder and reads no
+// clock. A panic in either half is recovered by the Store, never reaching the
+// Registry operation; journal running first means the tally can never keep a
+// registry.lock.acquisition record from being written.
+func withApplyLockTally(lifecycle *diagnostics.LifecycleRecorder, journal intmetadata.LockObserver) intmetadata.LockObserver {
+	return func(observation intmetadata.LockObservation) {
+		if journal != nil {
+			journal(observation)
+		}
+		lifecycle.ObserveApplyLock(diagnostics.ApplyLockObservation{
+			Wait: observation.Wait, Held: observation.Held,
+			Released: observation.Outcome == intmetadata.LockOutcomeReleased,
+		})
+	}
 }
 
 // newRegistryLockObserver maps the Store's own observation onto the journal's

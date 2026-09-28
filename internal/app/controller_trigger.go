@@ -799,12 +799,18 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	if err != nil {
 		return pass, err
 	}
+	lock := beginApplyLock(ctx, diagnostics.ApplyLockKindBindingConverge)
 	rebound, err := r.store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		defer lock.Returned()
+		// Absorbing the receipts edits the Registry; reconcile marks its own
+		// observation and binding writes.
+		lock.Phase(diagnostics.ApplyLockPhaseCommit)
 		if _, err := absorbTerminationReceipts(working, mutator, receipts); err != nil {
 			return err
 		}
 		return reconciler.reconcile(ctx, working, mutator, operationID)
 	})
+	lock.End()
 	if err != nil {
 		return pass, err
 	}
@@ -880,15 +886,20 @@ func (r *controllerTriggerRunner) lowerProjectSessionsEndedOnHookServer(ctx cont
 	}
 	verified := explicitTmuxRunner{runner: r.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 	lowered := 0
+	lock := beginApplyLock(ctx, diagnostics.ApplyLockKindSessionLower)
 	_, err = r.store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		defer lock.Returned()
 		lowered = 0
+		lock.Phase(diagnostics.ApplyLockPhaseObserve)
 		present, reachable, err := listHookServerSessionNames(ctx, verified)
 		if err != nil || !reachable {
 			return err
 		}
+		lock.Phase(diagnostics.ApplyLockPhaseCommit)
 		lowered = len(mutator.LowerProjectSessionsEndedOnServer(working, route.expectedSocketPath, present))
 		return nil
 	})
+	lock.End()
 	if err != nil {
 		return 0, err
 	}
@@ -989,7 +1000,10 @@ func runLockedAutomaticMirrorRecovery(ctx context.Context, store *resourceStore,
 		return 0, errors.New("automatic recovery write store is not configured")
 	}
 	recovered := 0
+	lock := beginApplyLock(ctx, diagnostics.ApplyLockKindMirrorRecovery)
+	defer lock.End()
 	_, _, err := store.updateConvergent(func(working *coremetadata.Registry) error {
+		defer lock.Returned()
 		before := working.Clone()
 		var recoveryErr error
 		recovered, recoveryErr = runAutomaticMirrorRecovery(ctx, runner, target, working.Clone(), trigger, routeHint...)
@@ -1024,6 +1038,10 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 	if err := requireAutomaticRecoveryPaths(pathName); err != nil {
 		return 0, err
 	}
+	// Inside the mirror-recovery transaction the route proof and the inventory
+	// are its observation, the graph and authorization its plan, and the
+	// guarded runtime writes its commit.
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseObserve)
 	var route runtimeMutationRoute
 	if len(routeHint) > 0 {
 		route = routeHint[0]
@@ -1040,6 +1058,7 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 	exactTarget := tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}
 	inventory := intmetadata.NewInventoryObserver(runner, exactTarget.ExplicitProjection()).Observe(ctx)
 	inventory.Transport = target.ExplicitProjection()
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhasePlan)
 	graph := resourcegraph.Resolve(registry, inventory)
 	candidates := controllerRecoveryCandidates(graph, trigger)
 	if len(candidates) == 0 {
@@ -1052,6 +1071,7 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 		return 0, fmt.Errorf("automatic recovery refused %s: %s", action.Key, action.Reason)
 	}
 	kernel := &resourceControllerKernel{target: target, runner: runner, route: &route}
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseCommit)
 	if err := kernel.guardPlan(ctx, "", plan.Writes()); err != nil {
 		return 0, err
 	}

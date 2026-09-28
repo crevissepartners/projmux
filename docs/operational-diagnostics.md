@@ -43,6 +43,59 @@ operation instead of recording nested outcomes. Lifecycle ownership replaces
 the generic top-level `command.outcome`; it never duplicates it. Start/outcome
 append failures are ignored and do not change the command result.
 
+The `lifecycle.outcome` of `operation=tmux.apply` (`config apply` and the
+hidden `internal tmux apply`) also carries a step and Registry lock
+breakdown. It is measurement only: the apply's steps, their order, its
+stdout, stderr, exit status, rollback, and every lock boundary are exactly
+as without it. The record is appended after the apply route returned, so
+after every Registry lock it took was released, and a journal failure
+changes nothing about the apply. Only closed names and integers are added;
+every other event family, including `lifecycle.outcome` of any other
+operation and `lifecycle.start`, rejects each of these fields.
+
+- One `step_<name>_ms` field per apply step the apply entered, in order:
+  `step_keymap_migration_ms` (keymap migration),
+  `step_hook_file_migration_ms` (managed agent hook file migration),
+  `step_retired_file_reclaim_ms` (retired snapshot, Codex generation, and
+  sidebar startup file reclaim and the status bar default seed),
+  `step_route_bind_ms` (binding to the exact live app server),
+  `step_bell_hook_migration_ms` (managed tmux bell hook migration),
+  `step_config_write_ms` (writing the generated config),
+  `step_key_sequence_retire_ms` (retiring recorded key sequence state),
+  `step_source_file_ms` (the route guard and `source-file`),
+  `step_route_marker_ms` (the logical socket marker),
+  `step_exhausted_replay_ms` (replaying retry-exhausted clean exits), and
+  `step_converge_ms` (the controller convergence). A step the apply did not
+  enter -- `--no-reload`, no live server, or an earlier failure -- is absent.
+  Steps are measured on the same clock as `duration_ms`, start no earlier
+  than it, and do not overlap; each opens where the previous one closes, so
+  the few statements between two steps count toward the earlier one. Each is
+  rounded down to whole milliseconds, and `sum(step ms) <= duration_ms`
+  always holds on disk: a step set that would exceed it is dropped whole.
+- `lock_acquisition_count`, `lock_wait_total_ms`, and `lock_held_total_ms`
+  total every Registry lock acquisition the apply made while it ran, whatever
+  site made it, with the wait and hold the Registry Store measured for
+  `registry.lock.acquisition`. They are present whenever the breakdown is,
+  and zero when the apply took no lock.
+- `longest_lock_kind`, `longest_lock_step`, `longest_lock_wait_ms`, and
+  `longest_lock_held_ms` describe the one released acquisition that held the
+  lock longest. The kind is the Registry transaction it belonged to:
+  `preexisting-dead-agent`, `control-targets`, `mirror-recovery`,
+  `binding-converge`, `lifecycle-reconcile`, `session-lower`, or `other` for
+  an acquisition no site named. The step is the apply step it ran in, or
+  `other` outside every step. All four are absent when no acquisition held
+  the lock, and the longest wait and hold never exceed the totals.
+- `longest_lock_observe_ms`, `longest_lock_plan_ms`, `longest_lock_commit_ms`,
+  and `longest_lock_store_write_ms` split that hold: live tmux reads and
+  their classification, plan and reconcile computation, Registry and tmux
+  writes inside the transaction, and from the transaction's callback
+  returning to the release being observed (normalize, validate, the durable
+  write, the unlock). A phase the transaction did not mark is absent, and the
+  grant and the Store's locked read before the first mark are left
+  unattributed. `sum(phase ms) <= longest_lock_held_ms` always holds on disk:
+  a breakdown that would exceed the hold is dropped whole and the rest of the
+  longest lock is kept.
+
 Project lifecycle operator diagnostics also keep plans mutually exclusive:
 `stop`, `close-window`, `delete-project`, and `fresh` are distinct operation
 classes. Startup and unregister failures print the closed action, failing

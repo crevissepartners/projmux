@@ -70,6 +70,9 @@ type commandLifecycle struct {
 	result    LifecycleResult
 	code      Code
 	finished  bool
+	// apply is the step and lock breakdown of a tmux.apply scope, opened by
+	// Apply; nil for every other operation.
+	apply *ApplyRecorder
 }
 
 // LifecycleRecorder coalesces all nested tmux steps from one explicit CLI
@@ -203,7 +206,7 @@ func (r *LifecycleRecorder) finishCommand(scope *commandLifecycle, commandErr er
 		}
 	}
 	now := r.now()
-	event := r.event(now, level, "lifecycle.outcome", string(result), scope, code, kind)
+	event := r.outcomeEvent(now, level, string(result), scope, code, kind)
 	if r.command == scope {
 		r.command = nil
 	}
@@ -235,7 +238,7 @@ func (r *LifecycleRecorder) seal(result LifecycleResult, code Code) {
 		}
 	}
 	now := r.now()
-	event := r.event(now, level, "lifecycle.outcome", string(result), scope, code, kind)
+	event := r.outcomeEvent(now, level, string(result), scope, code, kind)
 	if r.command == scope {
 		r.command = nil
 	}
@@ -248,6 +251,22 @@ func (r *LifecycleRecorder) seal(result LifecycleResult, code Code) {
 
 func resultCodeIsSuccessOnly(code Code) bool {
 	return code == CodeTmuxApplyReloadSkipped
+}
+
+// outcomeEvent is the lifecycle.outcome of scope. A tmux.apply scope with an
+// apply recorder adds its breakdown; a breakdown that fails validation is
+// dropped whole and the outcome is written without it.
+func (r *LifecycleRecorder) outcomeEvent(at time.Time, level, result string, scope *commandLifecycle, code Code, kind string) Event {
+	event := r.event(at, level, "lifecycle.outcome", result, scope, code, kind)
+	if scope.apply == nil || scope.operation != OperationTmuxApply {
+		return event
+	}
+	withBreakdown := event
+	withBreakdown.setApplyBreakdown(scope.apply.breakdown())
+	if validateApplyBreakdown(withBreakdown) != nil {
+		return event
+	}
+	return withBreakdown
 }
 
 func (r *LifecycleRecorder) event(at time.Time, level, name, result string, scope *commandLifecycle, code Code, kind string) Event {
