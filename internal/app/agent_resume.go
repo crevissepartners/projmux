@@ -77,6 +77,20 @@ type agentResumeLaunch struct {
 	// records no profile. Every consumer records the digest on the Agent.
 	profileName   string
 	profileDigest string
+	// projectLinksUnavailable is set when the launch annotations name Project
+	// label link rules whose snapshot this launch could not pass. Like
+	// personaUnavailable it never fails the resume: the consumer discloses
+	// projectLinksNotice.
+	projectLinksUnavailable error
+}
+
+// projectLinksNotice is the one-line disclosure of Project label link rules
+// the resume could not pass, or "" when there is nothing to disclose.
+func (l agentResumeLaunch) projectLinksNotice(label string) string {
+	if l.projectLinksUnavailable == nil {
+		return ""
+	}
+	return projectLinksNotice(label, l.projectLinksUnavailable)
 }
 
 // personaNotice is the one-line disclosure of a persona the resume could not
@@ -173,11 +187,15 @@ func (c *aiCommand) PlanAgentResumeWithModel(provider string, workspace coremeta
 	// after them, for the same reason.
 	effort, effortInvalid, effortSkipped := claudeResumeEffort(mode, annotations)
 	personaFile, personaUnavailable := c.resumePersonaSnapshot(mode, annotations)
+	// A Claude Agent launched with its Project's label link rules gets the
+	// snapshot its digest annotation names, alone or after the persona in one
+	// composite file: Claude keeps only the last --append-system-prompt-file.
+	systemPromptFile, projectLinksUnavailable := c.resumeSystemPromptFile(mode, annotations, personaFile)
 	profileName, profileDigest, settingsFile, codexPolicy, err := c.resumeProfileSettings(mode, annotations)
 	if err != nil {
 		return agentResumeLaunch{}, err
 	}
-	prefix := append(claudeLaunchOptionArgs(model, effort, personaFile), claudeSettingsArgs(settingsFile)...)
+	prefix := append(claudeLaunchOptionArgs(model, effort, systemPromptFile), claudeSettingsArgs(settingsFile)...)
 	if mode == aiModeCodex {
 		prefix = append(codexLaunchOptionArgs(model, effort), codexCLIProfileArgs(codexPolicy)...)
 	}
@@ -193,6 +211,7 @@ func (c *aiCommand) PlanAgentResumeWithModel(provider string, workspace coremeta
 		title: plan.title, argv: plan.commandArgs, personaUnavailable: personaUnavailable,
 		effortInvalid: effortInvalid, effortSkipped: effortSkipped,
 		profileName: profileName, profileDigest: profileDigest,
+		projectLinksUnavailable: projectLinksUnavailable,
 	}, nil
 }
 
@@ -533,8 +552,9 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var nativeRoute codexNativeEndpointRoute
 	var title string
 	var launchArgv []string
-	var personaNotice, effortNotice string
+	var personaNotice, effortNotice, linksNotice string
 	var resumed agentResumeLaunch
+	var links projectLinksLaunch
 	var nativePolicy codexappserver.ThreadPolicy
 	var err error
 	if plan.provider == aiModeCodex {
@@ -571,18 +591,25 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 				return errors.New("claude reply-only resume launcher is unavailable")
 			}
 			title, launchArgv, err = launcher.PlanClaudeDialogueLaunch(workspace, plan.conversationID)
-		} else if plan.modelOverride != "" {
-			launcher, ok := r.launcher.(agentResumeModelLauncher)
-			if !ok {
-				return errors.New(spelling + ": the resume launcher cannot pass --model")
-			}
-			resumed, err = launcher.PlanAgentResumeWithModel(plan.provider, workspace, plan.conversationID, plan.launchAnnotations(), plan.modelOverride)
-			title, launchArgv = resumed.title, resumed.argv
-			personaNotice, effortNotice = resumed.personaNotice(plan.agentName), resumed.effortNotice(plan.agentName)
 		} else {
-			resumed, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID, plan.launchAnnotations())
+			// The Project's current label link rules are read from the Project
+			// that owns the Agent's Window. Rules that differ from the recorded
+			// digest launch with the snapshot off, and the transaction below
+			// records exactly the digest and mode this launch reads.
+			links = planProjectLinksWith(r.launcher, plan.provider, plan.projectUID, plan.annotations)
+			launchAnnotations := links.resumeLaunchAnnotations(plan.launchAnnotations())
+			if plan.modelOverride != "" {
+				launcher, ok := r.launcher.(agentResumeModelLauncher)
+				if !ok {
+					return errors.New(spelling + ": the resume launcher cannot pass --model")
+				}
+				resumed, err = launcher.PlanAgentResumeWithModel(plan.provider, workspace, plan.conversationID, launchAnnotations, plan.modelOverride)
+			} else {
+				resumed, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID, launchAnnotations)
+			}
 			title, launchArgv = resumed.title, resumed.argv
 			personaNotice, effortNotice = resumed.personaNotice(plan.agentName), resumed.effortNotice(plan.agentName)
+			linksNotice = cmp.Or(links.notice(plan.agentName), resumed.projectLinksNotice(plan.agentName))
 		}
 	}
 	if err != nil {
@@ -646,6 +673,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// The profile this launch re-applied is recorded with the digest of
 		// the content it applied, in the same transaction.
 		if err := recordResumedProfileDigest(working, mutator, plan.agentUID, resumed); err != nil {
+			return err
+		}
+		// So are the Project label link rules this launch reads, when they
+		// changed, with the sticky snapshot mode off.
+		if err := links.record(working, mutator, plan.agentUID); err != nil {
 			return err
 		}
 		// The effort override is recorded in the same transaction, before any
@@ -799,6 +831,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// The Agent is back without the effort it recorded, for the same reason
 		// and with the same best-effort disclosure.
 		fmt.Fprintln(stderr, effortNotice)
+	}
+	if linksNotice != "" {
+		// The Agent is back without its Project's label link rules, disclosed
+		// the same way.
+		fmt.Fprintln(stderr, linksNotice)
 	}
 
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)

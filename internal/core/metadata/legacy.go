@@ -547,9 +547,10 @@ const (
 // makes every resume pass `--system-prompt-snapshot off`. Claude records the
 // first request's system prompt and replays that record on resume, so a
 // persona attached after the conversation started would otherwise be ignored.
-// The key is sticky: attach and detach write it and nothing removes it,
-// because the recorded prompt predates the attach and can never be trusted
-// again for that conversation.
+// The key is sticky: attach and detach write it, so does a resume whose
+// Project label link rules changed (AnnotationAgentProjectLinkRulesDigest),
+// and nothing removes it, because the recorded prompt predates the change and
+// can never be trusted again for that conversation.
 const AnnotationAgentSystemPromptSnapshot = "projmux.io/system-prompt-snapshot"
 
 // SystemPromptSnapshotOff is the one value AnnotationAgentSystemPromptSnapshot
@@ -569,6 +570,16 @@ const SystemPromptSnapshotOff = "off"
 // by itself, and re-passing a recorded model would override a `/model` switch
 // made inside the session.
 const AnnotationAgentEffort = "projmux.io/effort"
+
+// AnnotationAgentProjectLinkRulesDigest records which label link rules of its
+// Project a Claude Agent's system prompt was last launched with: the sha256
+// lowercase hex digest of the rendered rules (projectlinks.Render). The key is
+// absent when the Agent was launched without rules. It is written by the create
+// transaction that launched the provider with the rules, and by a resume that
+// found the Project's current rules differ from the recorded digest; that
+// resume records AnnotationAgentSystemPromptSnapshot off in the same mutation,
+// because the conversation's recorded prompt carries the old rules.
+const AnnotationAgentProjectLinkRulesDigest = "projmux.io/project-link-rules-digest"
 
 // AnnotationAgentQuestionChannel opts one Claude Agent into answering its
 // AskUserQuestion prompts from the command line. The only value is

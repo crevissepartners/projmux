@@ -80,11 +80,9 @@ MigrateGlobalLegacyScripts	Global legacy hook migration must remain available wh
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
 MigrateRegistry	Ambient-environment entry point of MigrateRegistryWithEnvironment retained as the registry schema migration seam.
 NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
-NewDefaultStore	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
 NewState	Recent-window state constructor retained as the test seam over the live normalizeEntries MRU contract.
-NewStore	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 NewWithConfig	Credential and endpoint injection constructor retained as the only seam that exercises the live Claude usage adapter without real credentials.
 NewWithRoot	Rollout-root injection constructor retained as the only seam that pins the live rollout parser without probing the installed Codex.
 NextPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
@@ -109,7 +107,6 @@ RenderSwitchPreview	Default badge-style entry point of RenderSwitchPreviewWithAI
 Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained as the frame inner-width seam.
 Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
 RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
-Resolve	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
 Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
 ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained with the per-provider ResumeCommand wrappers after snapshot replay, its only product caller, was removed.
@@ -117,7 +114,6 @@ ResumeCommand	Per-provider Agent CLI resume command wrappers retained as the tes
 ResumeDefaultThread	The default-endpoint resume wrapper is retained for installed protocol qualification; generation-pinned product routing uses explicit routes.
 RouteLocalFieldProjections	Closed route-local field projection catalog retained as the test seam that keeps -o cwd out of the shared enum.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
-Rules.Validate	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Run	Recorder-free CLI bootstrap retained as the test seam over the live App.Run dispatch that RunWithLifecycleDiagnostics ships.
 RunGuarded	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 RunTests	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
@@ -132,7 +128,6 @@ SmokeRoot	Test-only installed qualification API retained for canonical isolated 
 StartDefaultThread	The default-endpoint start wrapper is retained for installed turn-free protocol qualification; generation-pinned product routing uses explicit routes.
 Store.Delete	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Store.Dir	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
-Store.Load	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
 Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
@@ -143,8 +138,6 @@ TeardownEventKinds	Closed teardown event vocabulary retained as the test seam th
 TeardownObservations	The closed teardown-observation catalog is called by the product path and retained for authority proofs.
 Text.Locale	Resolved-locale accessor retained as the test seam that pins the live catalog fallback resolution.
 UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
-ValidateProjectUID	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
-ValidationError.Error	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
@@ -154,16 +147,13 @@ boundedBuffer.Bytes	Test-only installed qualification helper retained for bounde
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
 buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test pins that the shipped parser accepts the documented format.
 buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained as the popup launcher environment seam.
-checkLinkURL	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
 codexHooksBlock	Default-events entry point of codexHooksBlockForEvents retained as the managed Codex hook block seam.
 committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
 decodeHistory	Per-generation reclaim log decoder reached only through ReadArchive, retained with it so the skipped-line accounting stays under test.
-decodeProjectLinks	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
-expandProjectLinkTemplate	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 formatRelativeAge	Fallback-locale entry point of formatRelativeAgeLocale retained as the status notify age bucket seam.
 formatStatusNotify	Fallback-locale entry point of formatStatusNotifyWithLiveLocale retained as the status notify width tier seam.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
@@ -176,9 +166,7 @@ guardPrivateRoot	Test-only guard helper retained behind the shared guard API tha
 guardReclaimKilledRoots	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardRootMakerParent	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardSweepHelperRoots	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
-invalidProjectLinkField	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
-labelKeyRuneAllowed	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
 loadCentralAgentUsageVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
@@ -201,7 +189,6 @@ notifyCommand.buildNotifyLiveReport	Fallback-locale entry point of buildNotifyLi
 notifySidebarEntriesWithLive	Fallback-locale collapsed-entry projection of the live notify sidebar read model retained as the classification seam.
 notifySidebarStateBadge	Live-display entry point of notifySidebarStateBadgeForDisplay retained as the sidebar state palette seam.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
-openProjectLinksFile	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 openReadyThreadClient	The default-endpoint client helper remains behind installed protocol qualification wrappers, not generation-pinned product routing.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
@@ -232,14 +219,10 @@ unsupportedRootsError	The default-endpoint roots refusal helper remains part of 
 validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.
 validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.
 validTeardownObservation	The closed observation validator is retained inside the pure teardown decision authority.
-validateBaseURL	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 validateCapabilityTMUXSocketRoot	Test-only installed qualification helper retained to reject overlong private tmux routes before lifecycle mutation.
 validateInheritedEnvironment	Test-only installed qualification helper retained for inherited tmux refusal proof.
-validateLabelKey	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 validateManagedIdentity	Test-only installed qualification helper retained for foreign PID/socket cleanup refusal proof.
-validateTemplate	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.
 versionOrUnknown	Test-only installed qualification helper retained for nonblank version-tuple evidence.
 waitForProcessExit	Test-only installed qualification helper retained for independently bounded direct kill-wait proof.
 waitForRetirement	Test-only installed qualification helper retained for bounded PID/socket retirement proof.
 writeLedgerShim	Test-only installed qualification helper retained for complete semantic command observation.
-writeProjectLinksAtomic	Internal helper of the internal/core/projectlinks rule API, retained with it for the web backend; no in-tree caller until that backend lands.

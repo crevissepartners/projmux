@@ -128,6 +128,10 @@ type resourceCreateFlags struct {
 	// from the Agents that already recorded resumeConversation. It is set only
 	// inside that create's transaction, and nil everywhere else.
 	resumeLaunchValues map[string]string
+	// projectLinks is the create's Project label link rules, resolved by
+	// prepareProjectLinks inside the create transaction. The zero value
+	// changes no argv and no annotation.
+	projectLinks projectLinksLaunch
 }
 
 // resourceCreateShape selects which optional flag groups a resource-backed
@@ -714,6 +718,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	var openedAgent coremetadata.Agent
 	var activationTargets []agentActivationTarget
 	var creator creatorProvenance
+	var linksNotice string
 	if err := c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -745,10 +750,14 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 			// makes the Window's name identical with and without --provider.
 			work.payload = nil
 			creator = c.observeCreator(ctx, working)
+			// The Agent's Project label link rules are the created Window's
+			// Project's.
+			c.prepareProjectLinks(provider, project.Metadata.UID, &flags)
 			if agent, agentLaunch, err = c.allocateWindowAgent(
 				working, mutator, project, provider, work, flags, labels, creator, operationID); err != nil {
 				return err
 			}
+			linksNotice = flags.projectLinks.notice(agent.agent.Metadata.Name)
 		}
 
 		sessionName, err := c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
@@ -797,6 +806,10 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 		return nil
 	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
+	}
+	if linksNotice != "" {
+		// A lost disclosure must not turn a committed create into a failure.
+		fmt.Fprintln(stderr, linksNotice)
 	}
 	if err := c.confirmAgentActivations(activationTargets); err != nil {
 		return err
@@ -865,7 +878,7 @@ func (c *createCommand) allocateWindowAgent(
 		// the generated one and its managed Pane derives from that.
 		Provider:    provider,
 		Labels:      labels,
-		Annotations: creator.annotations(),
+		Annotations: flags.projectLinks.withCreateAnnotation(creator.annotations()),
 		Workspace:   workspace,
 		Activation:  activationStateForPayload(flags.payload),
 		OperationID: operationID,

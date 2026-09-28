@@ -307,6 +307,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			return err
 		}
 
+		// The Project's label link rules are read from the resolved Project,
+		// never from the working directory.
+		c.prepareProjectLinks(provider, project.Metadata.UID, &flags)
 		// The launch is constructed before anything is allocated. A missing
 		// provider binary is the most likely failure on this route, and it has
 		// to land while the operation still owns nothing.
@@ -386,13 +389,16 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,
-				Annotations: flags.profileLaunch.withAnnotations(withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(creator.annotations()))),
+				Annotations: flags.projectLinks.withCreateAnnotation(flags.profileLaunch.withAnnotations(withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(creator.annotations())))),
 				Workspace:   workspace,
 				Activation:  activationStateForPayload(flags.payload),
 				OperationID: operationID,
 			})
 			if err != nil {
 				return MapMetadataError(err)
+			}
+			if notice := flags.projectLinks.notice(agent.Metadata.Name); notice != "" {
+				notices = append(notices, notice)
 			}
 			pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{
 				Name:   derivedAgentPaneName(agent.Metadata.Name),
@@ -863,6 +869,12 @@ func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace
 		settingsFile := flags.profileLaunch.settings
 		if provider != aiModeClaude {
 			personaFile, settingsFile = "", ""
+		}
+		// Claude keeps only the last --append-system-prompt-file, so the
+		// Project's label link rules ride the one file: the rules snapshot,
+		// or the composite of the persona and the rules.
+		if provider == aiModeClaude && flags.projectLinks.systemPromptFile != "" {
+			personaFile = flags.projectLinks.systemPromptFile
 		}
 		switch {
 		case provider == aiModeCodex && !nativeCodexFreshCreateRequired(provider, flags) && !flags.profileLaunch.codexPolicy.IsZero():
