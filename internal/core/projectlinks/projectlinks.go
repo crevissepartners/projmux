@@ -4,9 +4,10 @@
 // A Project's rules are one JSON file, <ConfigDir>/project-links/<uid>.json,
 // named by the Project UID so a rename or a moved root keeps its rules. This
 // package is the only owner of that path, of the JSON format, of what a valid
-// rule set is, and of how a label resolves to a link. The web client edits the
-// rules through a backend that calls this package; there is no CLI edit
-// command.
+// rule set is, and of how a label resolves to a link. The rules belong to the
+// Project, and every surface shares them: a Claude Agent's system prompt shows
+// them, and a client that edits them, such as the web client, reads and writes
+// them through this package. There is no CLI edit command.
 //
 // The JSON format, with every field always written:
 //
@@ -31,10 +32,6 @@
 //   - {project.uid}, {project.name} and {project.labels.<key>}: the Project's
 //     UID, name and the value of its label <key>, path-escaped. Nothing else
 //     of the Project (not its root, not its annotations) is a placeholder.
-//
-// A file written before the lists existed holds "jiraURL" and "repoURL"
-// strings instead of "jira" and "repo". Load reads it as a one-URL list (an
-// empty string as none); Write always writes the format above.
 package projectlinks
 
 import (
@@ -484,10 +481,9 @@ func (s Store) Path(uid string) (string, error) {
 // Load reads the Project's rules. A missing file (or directory) is no rules:
 // the zero Rules and a nil error. Anything else that is not a valid rule set
 // is an error and never silently empty: a file larger than MaxFileSize, one
-// that is not exactly one JSON object of the known fields, one that mixes
-// the legacy jiraURL/repoURL with jira, repo or urls, or one whose rules fail
-// Validate. Empty lists and an empty urls map load as nil, so no rules and a
-// file holding none compare equal.
+// that is not exactly one JSON object of the known fields, or one whose rules
+// fail Validate. Empty lists and an empty urls map load as nil, so no rules
+// and a file holding none compare equal.
 func (s Store) Load(uid string) (Rules, error) {
 	path, err := s.Path(uid)
 	if err != nil {
@@ -525,21 +521,16 @@ func (s Store) Load(uid string) (Rules, error) {
 	return rules, nil
 }
 
-// projectLinksFile is the stored JSON, legacy fields included. The list and
-// map fields are raw so that a present key is seen even when it is empty or
-// null: presence is what decides a mix of the two formats.
+// projectLinksFile is the stored JSON. The list and map fields are raw so
+// that a value of the wrong type is reported under its field name.
 type projectLinksFile struct {
-	Jira    json.RawMessage `json:"jira"`
-	Repo    json.RawMessage `json:"repo"`
-	URLs    json.RawMessage `json:"urls"`
-	Links   []Link          `json:"links"`
-	JiraURL json.RawMessage `json:"jiraURL"`
-	RepoURL json.RawMessage `json:"repoURL"`
+	Jira  json.RawMessage `json:"jira"`
+	Repo  json.RawMessage `json:"repo"`
+	URLs  json.RawMessage `json:"urls"`
+	Links []Link          `json:"links"`
 }
 
-// decodeProjectLinks parses exactly one JSON object with no unknown fields,
-// in the current format or the legacy one (jiraURL and repoURL, each a
-// one-URL list when set), never both.
+// decodeProjectLinks parses exactly one JSON object with no unknown fields.
 func decodeProjectLinks(content []byte) (Rules, error) {
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
@@ -550,32 +541,18 @@ func decodeProjectLinks(content []byte) (Rules, error) {
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return Rules{}, errors.New("unexpected data after the JSON object")
 	}
-	legacy := stored.JiraURL != nil || stored.RepoURL != nil
-	if legacy && (stored.Jira != nil || stored.Repo != nil || stored.URLs != nil) {
-		return Rules{}, errors.New("the legacy jiraURL and repoURL cannot be mixed with jira, repo or urls")
-	}
 	rules := Rules{Links: stored.Links}
 	for _, field := range []struct {
-		name   string
-		raw    json.RawMessage
-		legacy json.RawMessage
-		into   *[]string
+		name string
+		raw  json.RawMessage
+		into *[]string
 	}{
-		{"jira", stored.Jira, stored.JiraURL, &rules.Jira},
-		{"repo", stored.Repo, stored.RepoURL, &rules.Repo},
+		{"jira", stored.Jira, &rules.Jira},
+		{"repo", stored.Repo, &rules.Repo},
 	} {
 		if field.raw != nil {
 			if err := json.Unmarshal(field.raw, field.into); err != nil {
 				return Rules{}, fmt.Errorf("%s: %w", field.name, err)
-			}
-		}
-		if field.legacy != nil {
-			var single string
-			if err := json.Unmarshal(field.legacy, &single); err != nil {
-				return Rules{}, fmt.Errorf("%sURL: %w", field.name, err)
-			}
-			if single != "" {
-				*field.into = []string{single}
 			}
 		}
 	}
