@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
@@ -290,12 +288,12 @@ func TestLoadRefusesCorruptFile(t *testing.T) {
 	}{
 		{name: "empty-file", content: "", want: "is not valid project links JSON"},
 		{name: "not-json", content: "jira = https://x", want: "is not valid project links JSON"},
-		{name: "truncated", content: `{"jiraURL": "https://j.example.com", "links": [`, want: "is not valid project links JSON"},
+		{name: "truncated", content: `{"jira": ["https://j.example.com"], "links": [`, want: "is not valid project links JSON"},
 		{name: "wrong-type", content: `{"links": {"jira": "x"}}`, want: "is not valid project links JSON"},
-		{name: "unknown-field", content: `{"jiraURL": "", "repoURL": "", "links": [], "extra": 1}`, want: "is not valid project links JSON"},
+		{name: "unknown-field", content: `{"jira": [], "repo": [], "links": [], "extra": 1}`, want: "is not valid project links JSON"},
 		{name: "trailing-data", content: `{"links": []} {"links": []}`, want: "is not valid project links JSON"},
 		{name: "invalid-stored-rules", content: `{"links": [{"labelKey": "jira", "template": "{jira}/browse/{value}"}]}`, want: "holds invalid rules: links[0].template: uses {jira} but jira has no URLs"},
-		{name: "oversized", content: `{"jiraURL": "` + strings.Repeat("a", MaxFileSize) + `"}`, want: "the limit is 65536 bytes"},
+		{name: "oversized", content: `{"jira": ["` + strings.Repeat("a", MaxFileSize) + `"]}`, want: "the limit is 65536 bytes"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -680,70 +678,28 @@ func TestWriteRefusesRemovingAURLATemplateUses(t *testing.T) {
 	}
 }
 
-func TestLoadReadsLegacyJiraURLAndRepoURLAndWriteUpgradesTheFormat(t *testing.T) {
+func TestLoadRefusesThePreListJiraURLAndRepoURLFields(t *testing.T) {
 	t.Parallel()
-	store, _ := newTestStore(t)
-	uid := newProjectUID(t)
-	writeRawRules(t, store, uid, []byte(`{
-  "jiraURL": "https://jira.example.com",
-  "repoURL": "https://github.com/example/repo",
-  "links": [
-    {"labelKey": "jira", "template": "{jira}/browse/{value}"},
-    {"labelKey": "pr", "template": "{repo[0]}/pull/{value}"}
-  ]
-}`))
-	got, err := store.Load(uid)
-	if err != nil {
-		t.Fatalf("Load(legacy) error = %v", err)
-	}
-	want := Rules{
-		Jira: []string{"https://jira.example.com"},
-		Repo: []string{"https://github.com/example/repo"},
-		Links: []Link{
-			{LabelKey: "jira", Template: "{jira}/browse/{value}"},
-			{LabelKey: "pr", Template: "{repo[0]}/pull/{value}"},
-		},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Load(legacy) = %+v, want %+v", got, want)
-	}
-	if err := store.Write(uid, got); err != nil {
-		t.Fatal(err)
-	}
-	path, _ := store.Path(uid)
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(content, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if keys := slices.Sorted(maps.Keys(fields)); !slices.Equal(keys, []string{"jira", "links", "repo", "urls"}) {
-		t.Fatalf("rewritten file keys = %v, want only the current format's", keys)
-	}
-
-	// An empty legacy URL is no URL.
-	writeRawRules(t, store, uid, []byte(`{"jiraURL": "", "repoURL": "", "links": []}`))
-	if got, err := store.Load(uid); err != nil || !reflect.DeepEqual(got, Rules{}) {
-		t.Fatalf("Load(empty legacy) = %+v, %v; want zero Rules", got, err)
-	}
-}
-
-func TestLoadRefusesLegacyFieldsMixedWithNewOnes(t *testing.T) {
-	t.Parallel()
-	for name, content := range map[string]string{
-		"jiraURL-with-jira":       `{"jiraURL": "https://j.example.com", "jira": ["https://j.example.com"], "links": []}`,
-		"repoURL-with-empty-urls": `{"repoURL": "", "urls": {}, "links": []}`,
-		"jiraURL-with-null-repo":  `{"jiraURL": "", "repo": null}`,
+	for _, tt := range []struct {
+		name    string
+		content string
+		field   string
+	}{
+		{name: "both-old-fields", content: `{"jiraURL": "https://j.example.com", "repoURL": "", "links": []}`, field: "jiraURL"},
+		{name: "repoURL-only", content: `{"repoURL": "https://github.com/example/repo", "links": []}`, field: "repoURL"},
+		{name: "jiraURL-with-jira", content: `{"jira": ["https://j.example.com"], "jiraURL": "https://j.example.com", "links": []}`, field: "jiraURL"},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			store, _ := newTestStore(t)
 			uid := newProjectUID(t)
-			writeRawRules(t, store, uid, []byte(content))
-			if got, err := store.Load(uid); err == nil || !strings.Contains(err.Error(), "cannot be mixed") {
-				t.Fatalf("Load(%s) = %+v, %v; want a mixed-format error", content, got, err)
+			writeRawRules(t, store, uid, []byte(tt.content))
+			got, err := store.Load(uid)
+			if err == nil || !strings.Contains(err.Error(), "is not valid project links JSON") || !strings.Contains(err.Error(), `unknown field "`+tt.field+`"`) {
+				t.Fatalf("Load(%s) = %+v, %v; want an unknown field %q error", tt.content, got, err, tt.field)
+			}
+			if !reflect.DeepEqual(got, Rules{}) {
+				t.Fatalf("Load(%s) rules = %+v on error, want zero Rules", tt.content, got)
 			}
 		})
 	}

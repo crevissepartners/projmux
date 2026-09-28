@@ -1482,8 +1482,10 @@ Project link rules turn a Project's labels into links, for example a
 Project has at most one rule file, `<config dir>/project-links/<project-uid>.json`
 (by default `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/project-links/`), named
 by the Project UID (`proj-...`) so renaming the Project or moving its root
-keeps its rules. The web client edits the rules; there is no CLI command that
-edits them. A missing file means the Project has no rules.
+keeps its rules. The rules belong to the Project, and every surface shares
+them: a Claude Agent's system prompt shows them (see below), and a client that
+edits them, such as the web client, reads and writes this same file. There is
+no CLI command that edits them. A missing file means the Project has no rules.
 
 ```json
 {
@@ -1546,13 +1548,6 @@ the field as a JSON path, such as `jira[3]`, `urls.wiki` or
 
 Removing a URL that a template still uses is refused, like any other invalid
 rule set, and leaves the file as it was.
-
-A rule file written before the lists existed holds `"jiraURL"` and
-`"repoURL"` strings instead of `jira` and `repo`. It is still read: a
-non-empty `jiraURL` is `jira[0]` (so `{jira}` keeps working) and an empty one
-is no URL, and the same for `repoURL`. The next write stores the current
-format. A file that has `jiraURL` or `repoURL` together with any of `jira`,
-`repo` or `urls` is an error.
 
 ### Rules in a Claude Agent's system prompt
 
