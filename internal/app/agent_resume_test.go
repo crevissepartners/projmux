@@ -92,6 +92,12 @@ func (l *exactArgvResumeLauncher) PlanAgentResume(provider string, workspace cor
 	return launch, err
 }
 
+// ResolveAgentSettings resolves the layered settings over the real planner's
+// home, as the production resume launcher does.
+func (l *exactArgvResumeLauncher) ResolveAgentSettings(provider string, annotations map[string]string, model, effort, source string) (agentSettingsLaunch, error) {
+	return l.planner.ResolveAgentSettings(provider, annotations, model, effort, source)
+}
+
 // pinnedResumeTestLauncher gives a test explicit native endpoint authority
 // while preserving its existing presentation recorder. It never launches the
 // recorder's plain argv; PlanNativeCodexResume returns only the pinned route.

@@ -236,6 +236,43 @@ func (m Mutator) SetAgentModel(reg *Registry, agentUID, model, source string) (A
 	return m.setAgentSetting(reg, "set agent model", agentUID, "model", AnnotationAgentModel, AnnotationAgentModelSource, model, source)
 }
 
+// SetAgentEffortFromProfile records that one existing Agent's effort follows
+// its profile: effort is what a resume is about to launch it with from the
+// profile ("" when the profile sets none, which removes the value), and the
+// source is SettingSourceProfile, kept even without a value so the effort goes
+// on following the profile. Every other annotation is left as it was.
+func (m Mutator) SetAgentEffortFromProfile(reg *Registry, agentUID, effort string) (Agent, error) {
+	return m.setAgentProfileSetting(reg, "set agent effort", agentUID, AnnotationAgentEffort, AnnotationAgentEffortSource, effort)
+}
+
+// SetAgentModelFromProfile is SetAgentEffortFromProfile for the model.
+func (m Mutator) SetAgentModelFromProfile(reg *Registry, agentUID, model string) (Agent, error) {
+	return m.setAgentProfileSetting(reg, "set agent model", agentUID, AnnotationAgentModel, AnnotationAgentModelSource, model)
+}
+
+func (m Mutator) setAgentProfileSetting(reg *Registry, op, agentUID, valueKey, sourceKey, value string) (Agent, error) {
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	value = strings.TrimSpace(value)
+	recorded, hasValue := agent.Metadata.Annotations[valueKey]
+	if (hasValue && recorded == value || !hasValue && value == "") && agent.Metadata.Annotations[sourceKey] == SettingSourceProfile {
+		return agent.Clone(), nil
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	if value == "" {
+		delete(agent.Metadata.Annotations, valueKey)
+	} else {
+		agent.Metadata.Annotations[valueKey] = value
+	}
+	agent.Metadata.Annotations[sourceKey] = SettingSourceProfile
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // setAgentSetting writes one launch setting and its source together: both are
 // required, and the source must be one ValidSettingSource accepts.
 func (m Mutator) setAgentSetting(reg *Registry, op, agentUID, item, valueKey, sourceKey, value, source string) (Agent, error) {

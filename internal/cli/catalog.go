@@ -906,7 +906,7 @@ var routes = []Route{
 				Summary:          "Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor",
 				CanonicalSummary: "Rebind an Offline or Failed Agent to a new managed Pane",
 				Usage:            []string{"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]"},
-				Notes:            []string{"A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.", "Codex keeps the developer instructions its thread started with; resume cannot replace them.", "--model and --effort are recorded on the Agent with the source resume (projmux.io/model-source, projmux.io/effort-source)."},
+				Notes:            []string{"A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.", "Codex keeps the developer instructions its thread started with; resume cannot replace them.", "--model and --effort are recorded on the Agent with the source resume (projmux.io/model-source, projmux.io/effort-source).", "Items the Agent does not override take its profile's current instructions, model, and effort; the model is passed only when it changed."},
 				Canonical:        []string{"agent resume"},
 			},
 			{
@@ -919,7 +919,7 @@ var routes = []Route{
 				Name:       "relaunch",
 				Invocation: InvocationExplicit,
 				Summary:    "Restart one exact Claude or Codex Agent on the same conversation with another model or effort",
-				Notes:      []string{"The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model."},
+				Notes:      []string{"The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.", "Without --model or --effort it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons."},
 				Usage:      []string{"projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
 				Canonical:  []string{"agent relaunch"},
 				Outputs:    []OutputMode{OutputModeJSON},

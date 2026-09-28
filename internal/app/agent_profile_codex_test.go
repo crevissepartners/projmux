@@ -447,7 +447,7 @@ func TestCodexAgentResumeResendsTheCurrentProfilePolicyAndRecordsItsDigest(t *te
 		t.Fatalf("native resumes = %+v, want one carrying %+v", native.resumes, want)
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	if !maps.Equal(agent.Metadata.Annotations, profileAnnotations("guard", edited)) || agent.Status.PaneRef == "" {
+	if !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations("guard", edited), allFollowProfile...)) || agent.Status.PaneRef == "" {
 		t.Fatalf("resumed Agent annotations = %v paneRef=%q, want the current digest %s", agent.Metadata.Annotations, agent.Status.PaneRef, edited)
 	}
 
