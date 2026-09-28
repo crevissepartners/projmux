@@ -224,6 +224,38 @@ func (m Mutator) SetAgentEffort(reg *Registry, agentUID, effort string) (Agent, 
 	return agent.Clone(), nil
 }
 
+// SetAgentProjectLinkRules records the Project label link rules digest a
+// resume is about to launch one existing Agent with, replacing the one it
+// recorded; an empty digest removes the annotation (the Project has no rules
+// any more). It always records AnnotationAgentSystemPromptSnapshot off in the
+// same mutation: Claude replays the system prompt a conversation recorded, so a
+// changed rule set reaches it only with the snapshot off, and the mode is
+// sticky. Every other annotation is left as it was.
+func (m Mutator) SetAgentProjectLinkRules(reg *Registry, agentUID, digest string) (Agent, error) {
+	const op = "set agent project link rules"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	digest = strings.TrimSpace(digest)
+	recorded, hasRecorded := agent.Metadata.Annotations[AnnotationAgentProjectLinkRulesDigest]
+	sameDigest := hasRecorded && recorded == digest || !hasRecorded && digest == ""
+	if sameDigest && agent.Metadata.Annotations[AnnotationAgentSystemPromptSnapshot] == SystemPromptSnapshotOff {
+		return agent.Clone(), nil
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	if digest == "" {
+		delete(agent.Metadata.Annotations, AnnotationAgentProjectLinkRulesDigest)
+	} else {
+		agent.Metadata.Annotations[AnnotationAgentProjectLinkRulesDigest] = digest
+	}
+	agent.Metadata.Annotations[AnnotationAgentSystemPromptSnapshot] = SystemPromptSnapshotOff
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // SetAgentActivation records bounded launch acknowledgement metadata.
 func (m Mutator) SetAgentActivation(reg *Registry, agentUID string, state AgentActivationState, source, reason string) (Agent, error) {
 	const op = "set agent activation"

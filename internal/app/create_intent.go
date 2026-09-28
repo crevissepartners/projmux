@@ -1060,6 +1060,11 @@ func (c *createCommand) openIntentAgent(
 			flags.resumeLaunchValues = merged
 		}
 	}
+	// The Agent's Project label link rules are those of the Project that owns
+	// its target Window in the Registry, never of the split's directory.
+	if window, ok := working.Window(target.windowUID); ok {
+		c.prepareProjectLinks(provider, window.Metadata.OwnerUID(), &flags)
+	}
 	var title string
 	var launchArgv []string
 	var resumeLaunch agentResumeLaunch
@@ -1085,12 +1090,15 @@ func (c *createCommand) openIntentAgent(
 	}
 	agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
 		Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,
-		Annotations: withResumedProfileDigest(annotations, resumeLaunch),
+		Annotations: flags.projectLinks.withCreateAnnotation(withResumedProfileDigest(annotations, resumeLaunch)),
 	})
 	if err != nil {
 		return intentAgentOpened{}, MapMetadataError(err)
 	}
-	for _, notice := range []string{resumeLaunch.personaNotice(agent.Metadata.Name), resumeLaunch.effortNotice(agent.Metadata.Name)} {
+	for _, notice := range []string{
+		resumeLaunch.personaNotice(agent.Metadata.Name), resumeLaunch.effortNotice(agent.Metadata.Name),
+		flags.projectLinks.notice(agent.Metadata.Name), resumeLaunch.projectLinksNotice(agent.Metadata.Name),
+	} {
 		if notice != "" {
 			notices = append(notices, notice)
 		}

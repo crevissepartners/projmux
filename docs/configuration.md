@@ -1515,6 +1515,35 @@ or is larger than 64 KiB is an error, never treated as empty:
   `{repo}` only when that URL is set, and expands to an absolute `http` or
   `https` URL without credentials.
 
+### Rules in a Claude Agent's system prompt
+
+A Claude Agent gets its Project's current rules in its system prompt: the
+heading, the Jira and Repo URLs, and each rule with an example link, as text
+appended with `--append-system-prompt-file`. The Project is the one that owns
+the Agent's Window in the Registry, never the one its working directory is
+under. Only Claude Agents get the rules; Codex Agents and the Claude
+reply-only lane do not.
+
+- Create passes the rules and records their digest on the Agent
+  (`projmux.io/project-link-rules-digest`). With a persona too, Claude is
+  given one file holding the persona, a `---` separator, and the rules,
+  because Claude keeps only the last `--append-system-prompt-file`. A
+  resume-picker create also runs with the system prompt snapshot off, since
+  the picked conversation recorded a prompt without the rules.
+- A running Agent is not restarted when the rules change. The change applies
+  from its next resume (`agent resume`, Continue, or the resume picker): when
+  the Project's rules differ from the recorded digest (added, changed or
+  removed), that resume passes the current rules, runs with
+  `--system-prompt-snapshot off`, and records the new digest and
+  `projmux.io/system-prompt-snapshot=off`, which stays off from then on.
+  Rules equal to the recorded digest change nothing.
+- A rule file that cannot be read does not stop the Agent: it starts without
+  the rules, one `project-link-rules-unavailable` line on stderr says so, and
+  its recorded digest is left as it was.
+
+The rendered rules and the persona-and-rules files are content-addressed
+below the state directory, in `project-links/`.
+
 ## Setting Layers
 
 Settings live in two layers:

@@ -139,3 +139,48 @@ func TestSetAgentEffortReplacesOnlyTheEffort(t *testing.T) {
 		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
 	}
 }
+
+// TestSetAgentProjectLinkRulesRecordsTheDigestWithTheSnapshotOff pins the one
+// mutation a resume makes when its Project's label link rules changed: the
+// digest is replaced (or removed) together with the sticky snapshot mode off,
+// and every other annotation stays.
+func TestSetAgentProjectLinkRulesRecordsTheDigestWithTheSnapshotOff(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 28, 3, 0, 0, 0, time.UTC)
+	mutator := Mutator{Now: func() time.Time { return now }}
+	reg := personaAnnotationFixture()
+	const digest = "0000000000000000000000000000000000000000000000000000000000000001"
+
+	if _, err := mutator.SetAgentProjectLinkRules(&reg, "agent-1", digest); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		AnnotationAgentTopic:                  "review the parser",
+		AnnotationAgentProjectLinkRulesDigest: digest,
+		AnnotationAgentSystemPromptSnapshot:   SystemPromptSnapshotOff,
+	}
+	stored, _ := reg.Agent("agent-1")
+	if !maps.Equal(stored.Metadata.Annotations, want) || !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("annotations = %v updatedAt = %v, want %v at %v", stored.Metadata.Annotations, reg.UpdatedAt, want, now)
+	}
+
+	later := Mutator{Now: func() time.Time { return now.Add(time.Hour) }}
+	if _, err := later.SetAgentProjectLinkRules(&reg, "agent-1", digest); err != nil {
+		t.Fatal(err)
+	}
+	if !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("recording the same digest moved updatedAt to %v", reg.UpdatedAt)
+	}
+
+	// Removed rules delete the digest; the snapshot mode stays off.
+	if _, err := later.SetAgentProjectLinkRules(&reg, "agent-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	delete(want, AnnotationAgentProjectLinkRulesDigest)
+	if stored, _ := reg.Agent("agent-1"); !maps.Equal(stored.Metadata.Annotations, want) {
+		t.Fatalf("removed rules annotations = %v, want %v", stored.Metadata.Annotations, want)
+	}
+	if _, err := mutator.SetAgentProjectLinkRules(&reg, "agent-missing", digest); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
+	}
+}
