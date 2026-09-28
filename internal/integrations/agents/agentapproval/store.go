@@ -111,6 +111,12 @@ var (
 	// the log keeps an allowed or denied line for an answer that did not take
 	// effect, with nothing after it to say so.
 	ErrUncommittedAudit = errors.New("could not write the uncommitted audit line")
+	// ErrCommittedNotSynced is a record write whose new file had already
+	// taken its place when a later step, such as the directory sync, failed.
+	// The write took effect and its audit line was written; only whether it
+	// survives a power loss or an OS crash is unknown. A call that returns it
+	// also returns its result, and the caller treats it as a warning.
+	ErrCommittedNotSynced = errors.New("the record took effect, but its directory could not be synced")
 )
 
 var idPattern = regexp.MustCompile(`^permission-[0-9a-f]{16}$`)
@@ -173,6 +179,9 @@ type Store struct {
 	// afterCommitHook, when set by an in-package test, fails a record write
 	// after the new file was renamed into place.
 	afterCommitHook func() error
+	// dirSync makes a renamed store file durable in its directory; nil is
+	// syncDir.
+	dirSync func(dir string) error
 }
 
 // NewStore opens the store under stateDir. Nothing is touched until the first
@@ -201,6 +210,14 @@ func (s *Store) WithAuditLimit(limit int64) *Store {
 	return &out
 }
 
+// WithDirSync returns the same store syncing its directory with sync after
+// each record replacement, so a test can fail that step.
+func (s *Store) WithDirSync(sync func(dir string) error) *Store {
+	out := *s
+	out.dirSync = sync
+	return &out
+}
+
 // Path is the store file.
 func (s *Store) Path() string {
 	if s == nil {
@@ -226,7 +243,8 @@ func (s *Store) clock() time.Time {
 
 // Create stores one new waiting record and audits it as requested. ID,
 // AgentUID, ToolName, ToolInput, and Deadline are the caller's; CreatedAt
-// defaults to now.
+// defaults to now. An error wrapping ErrCommittedNotSynced comes with the
+// stored record: the request is recorded and audited.
 func (s *Store) Create(record Record) (Record, error) {
 	now := s.clock()
 	if record.CreatedAt.IsZero() {
@@ -260,16 +278,17 @@ func (s *Store) Create(record Record) (Record, error) {
 			return err
 		}
 		state.Records = append(records, record)
-		if err := s.writeLocked(state); err != nil {
-			return err
+		warning := s.writeLocked(state)
+		if warning != nil && !errors.Is(warning, ErrCommittedNotSynced) {
+			return warning
 		}
 		s.auditLocked(auditLine(AuditRequested, record, now))
-		return nil
+		return warning
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrCommittedNotSynced) {
 		return Record{}, err
 	}
-	return record, nil
+	return record, err
 }
 
 // compactInput stores a tool input object without insignificant whitespace.
@@ -335,8 +354,9 @@ func (s *Store) List(agentUID string) ([]Record, error) {
 // ErrNotCommitted and the write failure. When that uncommitted line cannot be
 // appended either, the error also wraps ErrUncommittedAudit and names the log,
 // which then keeps a line for an answer that did not take effect. A failure
-// after the rename returns the error with no uncommitted line: the record is
-// committed and the hook acts on it. The log may over-report an answer, never
+// after the rename, such as the directory sync, wraps ErrCommittedNotSynced
+// and comes with the answered record and no uncommitted line: the answer took
+// effect and the hook acts on it. The log may over-report an answer, never
 // under-report one.
 func (s *Store) Answer(id, agentUID string, allow bool, via string) (Record, error) {
 	var out Record
@@ -375,18 +395,15 @@ func (s *Store) Answer(id, agentUID string, allow bool, via string) (Record, err
 		if err := s.appendAuditLocked(line); err != nil {
 			return fmt.Errorf("%w: %s: %w", ErrAudit, s.auditPath, err)
 		}
-		committed, err := s.writeLockedCommit(state)
-		if err != nil && committed {
-			return err
-		}
-		if err != nil {
+		warning := s.writeLocked(state)
+		if warning != nil && !errors.Is(warning, ErrCommittedNotSynced) {
 			if auditErr := s.appendAuditLocked(uncommittedLine(line, UncommittedRecordWriteFailed, s.clock())); auditErr != nil {
-				return fmt.Errorf("%w: %w; %w: %s: %w", ErrNotCommitted, err, ErrUncommittedAudit, s.auditPath, auditErr)
+				return fmt.Errorf("%w: %w; %w: %s: %w", ErrNotCommitted, warning, ErrUncommittedAudit, s.auditPath, auditErr)
 			}
-			return fmt.Errorf("%w: %w", ErrNotCommitted, err)
+			return fmt.Errorf("%w: %w", ErrNotCommitted, warning)
 		}
 		out = record
-		return nil
+		return warning
 	})
 	return out, err
 }
@@ -483,6 +500,10 @@ func (s *Store) Settle(id string) (Record, error) {
 // Close ends one waiting record without an answer, for reason. A record
 // already past its deadline expires instead. It returns the record as it now
 // stands.
+//
+// Settle and Close return an error wrapping ErrCommittedNotSynced with the
+// record they settled: the transition took effect and its expired or closed
+// line was written.
 func (s *Store) Close(id, reason string) (Record, error) {
 	return s.transition(id, reason, func(record Record, now time.Time) (State, bool) {
 		if record.State != StateWaiting {
@@ -524,8 +545,9 @@ func (s *Store) transition(id, reason string, next func(Record, time.Time) (Stat
 			return err
 		}
 		state.Records = records
-		if err := s.writeLocked(state); err != nil {
-			return err
+		warning := s.writeLocked(state)
+		if warning != nil && !errors.Is(warning, ErrCommittedNotSynced) {
+			return warning
 		}
 		line := auditLine(AuditClosed, record, now)
 		if target == StateExpired {
@@ -535,7 +557,7 @@ func (s *Store) transition(id, reason string, next func(Record, time.Time) (Stat
 		}
 		s.auditLocked(line)
 		out = record
-		return nil
+		return warning
 	})
 	return out, err
 }
@@ -549,6 +571,8 @@ func (s *Store) transition(id, reason string, next func(Record, time.Time) (Stat
 // PostToolUse runs it for every tool call, so it is cheap when there is
 // nothing to do: a missing store file, and an unlocked read that finds no
 // single candidate, return before the lock or any directory is created.
+// An error wrapping ErrCommittedNotSynced comes with true: the record closed
+// and its closed line was written.
 func (s *Store) CloseAnsweredInTerminal(sessionID, toolName string, toolInput json.RawMessage) (bool, error) {
 	if s == nil || s.path == "" || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(toolName) == "" {
 		return false, nil
@@ -590,14 +614,15 @@ func (s *Store) CloseAnsweredInTerminal(sessionID, toolName string, toolInput js
 			return err
 		}
 		state.Records = records
-		if err := s.writeLocked(state); err != nil {
-			return err
+		warning := s.writeLocked(state)
+		if warning != nil && !errors.Is(warning, ErrCommittedNotSynced) {
+			return warning
 		}
 		line := auditLine(AuditClosed, record, now)
 		line.Reason = CloseReasonAnsweredInTerminal
 		s.auditLocked(line)
 		closed = true
-		return nil
+		return warning
 	})
 	return closed, err
 }
@@ -779,8 +804,14 @@ func decodeState(data []byte) (diskState, error) {
 	return state, nil
 }
 
+// writeLocked replaces the store file. An error wrapping ErrCommittedNotSynced
+// came after the new file took its place, so the write took effect; any other
+// error left the old file.
 func (s *Store) writeLocked(state diskState) error {
-	_, err := s.writeLockedCommit(state)
+	committed, err := s.writeLockedCommit(state)
+	if err != nil && committed {
+		return fmt.Errorf("%w: %w", ErrCommittedNotSynced, err)
+	}
 	return err
 }
 
@@ -838,6 +869,9 @@ func (s *Store) writeLockedCommit(state diskState) (committed bool, err error) {
 		if err := s.afterCommitHook(); err != nil {
 			return true, err
 		}
+	}
+	if s.dirSync != nil {
+		return true, s.dirSync(dir)
 	}
 	return true, syncDir(dir)
 }

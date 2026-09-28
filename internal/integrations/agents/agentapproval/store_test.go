@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -682,9 +684,58 @@ func TestStoreAnswerRecordWriteFailureKeepsTheWrittenLine(t *testing.T) {
 	}
 }
 
-// A record write that fails after the new file was renamed into place
-// committed the answer: the error is returned as before, the record is
-// settled, and no uncommitted line is written.
+// failDirSync fails the directory sync after a record replacement the way the
+// kernel does, naming the directory.
+func failDirSync(dir string) error { return &fs.PathError{Op: "sync", Path: dir, Err: syscall.EIO} }
+
+// assertCommittedNotSynced holds the shape of a post-rename failure: the error
+// wraps ErrCommittedNotSynced and the sync failure naming the directory, and
+// none of the not-taken-effect errors.
+func assertCommittedNotSynced(t *testing.T, store *Store, err error) {
+	t.Helper()
+	dir := filepath.Dir(store.Path())
+	if !errors.Is(err, ErrCommittedNotSynced) || !errors.Is(err, syscall.EIO) || !strings.Contains(err.Error(), dir) ||
+		errors.Is(err, ErrNotCommitted) || errors.Is(err, ErrUncommittedAudit) || errors.Is(err, ErrAudit) {
+		t.Fatalf("err = %v, want ErrCommittedNotSynced wrapping the sync failure of %s", err, dir)
+	}
+}
+
+// An answer whose record file was renamed into place before the directory
+// sync failed took effect: it comes back settled with ErrCommittedNotSynced,
+// the log keeps its one answer line with no uncommitted line, and a second
+// answer is refused as already answered.
+func TestStoreAnswerSyncFailureAfterCommitTookEffect(t *testing.T) {
+	t.Parallel()
+
+	for _, allow := range []bool{true, false} {
+		event, state := AuditDenied, StateDenied
+		if allow {
+			event, state = AuditAllowed, StateAllowed
+		}
+		t.Run(event, func(t *testing.T) {
+			t.Parallel()
+			store, clock := newTestStore(t)
+			createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
+			answered, err := store.WithDirSync(failDirSync).Answer(testID(1), "agt-a", allow, ViaCLI)
+			assertCommittedNotSynced(t, store, err)
+			if answered.ID != testID(1) || answered.State != state || answered.Via != ViaCLI {
+				t.Fatalf("answered = %+v, want %s via cli", answered, state)
+			}
+			if record, _, _ := store.Get(testID(1)); record.State != state {
+				t.Fatalf("record = %+v, want %s", record, state)
+			}
+			if got := strings.Join(auditEvents(readAudit(t, store.AuditPath())), ","); got != AuditRequested+","+event {
+				t.Fatalf("audit events = %s, want one answer line and no uncommitted line", got)
+			}
+			if _, err := store.Answer(testID(1), "agt-a", !allow, ViaCLI); !errors.Is(err, ErrNotPending) {
+				t.Fatalf("second answer err = %v, want ErrNotPending", err)
+			}
+		})
+	}
+}
+
+// A post-rename failure other than the sync, such as the test hook, is the
+// same committed warning.
 func TestStoreAnswerFailureAfterCommitWritesNoUncommittedLine(t *testing.T) {
 	t.Parallel()
 
@@ -693,15 +744,127 @@ func TestStoreAnswerFailureAfterCommitWritesNoUncommittedLine(t *testing.T) {
 	injected := errors.New("injected failure after the rename")
 	failing := *store
 	failing.afterCommitHook = func() error { return injected }
-	_, err := failing.Answer(testID(1), "agt-a", true, ViaCLI)
-	if !errors.Is(err, injected) || errors.Is(err, ErrNotCommitted) || errors.Is(err, ErrUncommittedAudit) || errors.Is(err, ErrAudit) {
-		t.Fatalf("answer err = %v, want the bare post-commit failure", err)
+	answered, err := failing.Answer(testID(1), "agt-a", true, ViaCLI)
+	if !errors.Is(err, injected) || !errors.Is(err, ErrCommittedNotSynced) || errors.Is(err, ErrNotCommitted) || errors.Is(err, ErrUncommittedAudit) || errors.Is(err, ErrAudit) {
+		t.Fatalf("answer err = %v, want ErrCommittedNotSynced wrapping the post-commit failure", err)
+	}
+	if answered.State != StateAllowed {
+		t.Fatalf("answered = %+v, want allowed", answered)
 	}
 	if record, _, _ := store.Get(testID(1)); record.State != StateAllowed {
 		t.Fatalf("record = %+v, want allowed", record)
 	}
 	if got := strings.Join(auditEvents(readAudit(t, store.AuditPath())), ","); got != AuditRequested+","+AuditAllowed {
 		t.Fatalf("audit events = %s, want no uncommitted line", got)
+	}
+}
+
+// A request whose record file was renamed into place before the directory
+// sync failed is recorded: Create returns the waiting record with
+// ErrCommittedNotSynced, its requested line is written, and a later answer
+// settles it.
+func TestStoreCreateSyncFailureAfterCommitIsRecorded(t *testing.T) {
+	t.Parallel()
+
+	store, clock := newTestStore(t)
+	created, err := store.WithDirSync(failDirSync).Create(Record{
+		ID: testID(1), AgentUID: "agt-a", PaneUID: "pan-agt-a", SessionID: "sess-1",
+		ToolName: "Bash", ToolInput: json.RawMessage(testBashInput), Deadline: clock.Now().Add(5 * time.Minute),
+	})
+	assertCommittedNotSynced(t, store, err)
+	if created.ID != testID(1) || created.State != StateWaiting {
+		t.Fatalf("created = %+v, want the waiting record", created)
+	}
+	assertStillWaiting(t, store, testID(1))
+	if got := auditLinesFor(t, store, AuditRequested, testID(1)); got != 1 {
+		t.Fatalf("requested lines = %d, want 1", got)
+	}
+	if answered, err := store.Answer(testID(1), "agt-a", true, ViaCLI); err != nil || answered.State != StateAllowed {
+		t.Fatalf("answer = %+v, %v", answered, err)
+	}
+}
+
+// Settle, Close, and a terminal close whose record file was renamed into place
+// before the directory sync failed took effect: each returns its result with
+// ErrCommittedNotSynced and writes its expired or closed line.
+func TestStoreTransitionSyncFailureAfterCommitWritesItsLine(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, event, reason string
+		state               State
+		run                 func(*Store, *testClock) (Record, bool, error)
+	}{
+		{name: "settle", event: AuditExpired, state: StateExpired, run: func(store *Store, clock *testClock) (Record, bool, error) {
+			clock.Advance(10 * time.Minute)
+			record, err := store.Settle(testID(1))
+			return record, true, err
+		}},
+		{name: "close", event: AuditClosed, reason: CloseReasonCanceled, state: StateClosed, run: func(store *Store, _ *testClock) (Record, bool, error) {
+			record, err := store.Close(testID(1), CloseReasonCanceled)
+			return record, true, err
+		}},
+		{name: "close past deadline", event: AuditExpired, state: StateExpired, run: func(store *Store, clock *testClock) (Record, bool, error) {
+			clock.Advance(10 * time.Minute)
+			record, err := store.Close(testID(1), CloseReasonCanceled)
+			return record, true, err
+		}},
+		{name: "terminal close", event: AuditClosed, reason: CloseReasonAnsweredInTerminal, state: StateClosed, run: func(store *Store, _ *testClock) (Record, bool, error) {
+			closed, err := store.CloseAnsweredInTerminal("sess-1", "Bash", json.RawMessage(testBashInput))
+			return Record{ID: testID(1), State: StateClosed}, closed, err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store, clock := newTestStore(t)
+			createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
+			record, done, err := test.run(store.WithDirSync(failDirSync), clock)
+			assertCommittedNotSynced(t, store, err)
+			if !done || record.ID != testID(1) || record.State != test.state {
+				t.Fatalf("result = %+v, %t; want %s", record, done, test.state)
+			}
+			if got, _, _ := store.Get(testID(1)); got.State != test.state {
+				t.Fatalf("record = %+v, want %s", got, test.state)
+			}
+			lines := readAudit(t, store.AuditPath())
+			if got := strings.Join(auditEvents(lines), ","); got != AuditRequested+","+test.event {
+				t.Fatalf("audit events = %s, want requested,%s", got, test.event)
+			}
+			if last := lines[len(lines)-1]; last.RequestID != testID(1) || last.Reason != test.reason {
+				t.Fatalf("%s line = %+v, want reason %q", test.event, last, test.reason)
+			}
+		})
+	}
+}
+
+// A record write that fails before the rename is still a failure that left
+// the old file: every writer returns it bare, with no result and no line.
+func TestStoreWriteFailureBeforeCommitChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	store, clock := newTestStore(t)
+	createTestRecord(t, store, clock, 1, "agt-a", "sess-1", "Bash", testBashInput)
+	injected := errors.New("injected record write failure")
+	failing := *store
+	failing.writeHook = func() error { return injected }
+	if created, err := failing.Create(Record{
+		ID: testID(2), AgentUID: "agt-a", SessionID: "sess-2", ToolName: "Bash",
+		ToolInput: json.RawMessage(testBashInput), Deadline: clock.Now().Add(5 * time.Minute),
+	}); !errors.Is(err, injected) || errors.Is(err, ErrCommittedNotSynced) || created.ID != "" {
+		t.Fatalf("create = %+v, %v; want the bare failure", created, err)
+	}
+	if record, err := failing.Close(testID(1), CloseReasonCanceled); !errors.Is(err, injected) || errors.Is(err, ErrCommittedNotSynced) || record.ID != "" {
+		t.Fatalf("close = %+v, %v; want the bare failure", record, err)
+	}
+	if closed, err := failing.CloseAnsweredInTerminal("sess-1", "Bash", json.RawMessage(testBashInput)); !errors.Is(err, injected) || errors.Is(err, ErrCommittedNotSynced) || closed {
+		t.Fatalf("terminal close = %t, %v; want the bare failure", closed, err)
+	}
+	assertStillWaiting(t, store, testID(1))
+	if _, ok, _ := store.Get(testID(2)); ok {
+		t.Fatal("a failed create left its record")
+	}
+	if got := strings.Join(auditEvents(readAudit(t, store.AuditPath())), ","); got != AuditRequested {
+		t.Fatalf("audit events = %s, want only the first requested line", got)
 	}
 }
 

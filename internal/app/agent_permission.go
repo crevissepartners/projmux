@@ -109,7 +109,7 @@ func (c *agentCommand) runPermissionApproval(args []string, stdout, stderr io.Wr
 	if answering != config.AgentApprovalAnsweringProjmux {
 		return refuse(permissionReasonAnsweringOff, "has no captured permission requests while agent-approval-answering is claude; run `projmux config agent-approvals --answering projmux` first")
 	}
-	return c.answerPermissionRequest(request, agent, refuse, stdout)
+	return c.answerPermissionRequest(request, agent, refuse, stdout, stderr)
 }
 
 // parseAgentPermissionArgs parses one `agent approval list|answer` argv. The
@@ -286,21 +286,31 @@ func writeAgentPermissionList(out io.Writer, result agentPermissionList, now tim
 
 // answerPermissionRequest settles one request under the store lock. The store
 // judges the state again under its lock, so of two racing answers exactly one
-// lands, and a refusal changes nothing.
-func (c *agentCommand) answerPermissionRequest(request agentPermissionRequest, agent coremetadata.Agent, refuse func(string, string) error, stdout io.Writer) error {
+// lands, and a refusal changes nothing. An answer whose record took effect
+// but whose directory sync failed succeeds with one warning line on stderr.
+func (c *agentCommand) answerPermissionRequest(request agentPermissionRequest, agent coremetadata.Agent, refuse func(string, string) error, stdout, stderr io.Writer) error {
 	store, err := c.openApprovalStore()
 	if err != nil {
 		return fmt.Errorf("%s: %w", request.spelling, err)
 	}
 	answered, err := store.Answer(request.requestID, agent.Metadata.UID, request.allow, request.via)
+	var warning error
+	if errors.Is(err, agentapproval.ErrCommittedNotSynced) {
+		warning, err = err, nil
+	}
 	if err != nil {
 		if reason, detail := permissionStoreRefusal(err); reason != "" {
 			return refuse(reason, fmt.Sprintf("permission request %q %s", request.requestID, detail))
 		}
 		return permissionAnswerError(request, err)
 	}
-	_, err = fmt.Fprintf(stdout, "%s %s for agent/%s\n", answered.ID, answered.State, agent.Metadata.Name)
-	return err
+	if _, err := fmt.Fprintf(stdout, "%s %s for agent/%s\n", answered.ID, answered.State, agent.Metadata.Name); err != nil {
+		return err
+	}
+	if warning != nil {
+		fmt.Fprintf(stderr, "%s: warning: %v; permission request %q is %s and needs no second answer\n", request.spelling, warning, answered.ID, answered.State)
+	}
+	return nil
 }
 
 // permissionAnswerError spells a store failure of a Claude answer that is not

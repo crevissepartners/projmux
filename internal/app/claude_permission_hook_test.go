@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -480,6 +481,104 @@ func TestAgentApprovalAnswerFailsWhenTheAuditLogCannotBeWritten(t *testing.T) {
 	listed, _, err := runRoute(t, fixture.command, "approval", "list", "uid:"+questionTestAgent)
 	if err != nil || !strings.Contains(listed, id+"\twaiting\t") {
 		t.Fatalf("list = %q, %v; want %s still waiting", listed, err, id)
+	}
+}
+
+// failPermissionDirSync fails the approval store's directory sync after the
+// new record is in place, the way the kernel does, naming the directory.
+func failPermissionDirSync(dir string) error {
+	return &fs.PathError{Op: "sync", Path: dir, Err: syscall.EIO}
+}
+
+// C-1 (Epic 336): an answer whose record is already in place when the directory
+// sync fails took effect. `agent approval answer` exits 0 with its usual line
+// on stdout and one warning line on stderr naming the directory and the sync
+// error, the waiting hook prints the decision, and the log keeps the one answer
+// line with no uncommitted line.
+func TestAgentApprovalAnswerTookEffectWhenTheDirectorySyncFails(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ verdict, state, output string }{
+		{verdict: "--allow", state: "allowed", output: `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` + "\n"},
+		{verdict: "--deny", state: "denied", output: string(claudePermissionDenyDecision)},
+	} {
+		t.Run(test.state, func(t *testing.T) {
+			t.Parallel()
+			fixture := newPermissionFixture(t, config.AgentApprovalAnsweringProjmux)
+			id, done := fixture.startDefault(t, context.Background())
+			fixture.command.approvalStore = func() (*agentapproval.Store, error) {
+				return fixture.approvals.WithDirSync(failPermissionDirSync), nil
+			}
+			stdout, stderr, err := runRoute(t, fixture.command, "approval", "answer", "uid:"+questionTestAgent, id, test.verdict)
+			if err != nil || publicRouteArgvExitCode(err) != 0 || stdout != id+" "+test.state+" for agent/codex\n" {
+				t.Fatalf("answer stdout=%q err=%v, want exit 0 and the usual line", stdout, err)
+			}
+			dir := filepath.Dir(fixture.approvals.Path())
+			want := fmt.Sprintf("agent approval answer: warning: the record took effect, but its directory could not be synced: sync %s: input/output error; "+
+				"permission request %q is %s and needs no second answer\n", dir, id, test.state)
+			if stderr != want {
+				t.Fatalf("answer stderr = %q, want %q", stderr, want)
+			}
+			if got := waitHookOutput(t, done); got != test.output {
+				t.Fatalf("hook output = %q, want %q", got, test.output)
+			}
+			if record, _, _ := fixture.approvals.Get(id); string(record.State) != test.state {
+				t.Fatalf("record = %+v, want %s", record, test.state)
+			}
+			if got := permissionAuditEvents(readPermissionAudit(t, fixture.approvals)); got != "requested,"+test.state {
+				t.Fatalf("audit = %s, want requested,%s and no uncommitted line", got, test.state)
+			}
+		})
+	}
+}
+
+// C-1 (Epic 336): a request whose record is already in place when the
+// directory sync fails is recorded. The hook warns on stderr, writes the
+// requested line, keeps waiting, and prints the decision a later answer gives.
+func TestClaudePermissionHookWaitsOnARequestRecordedBeforeItsDirectorySyncFailed(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPermissionFixture(t, config.AgentApprovalAnsweringProjmux)
+	hook := fixture.hook(time.Minute)
+	hook.store = func() (*agentapproval.Store, error) { return fixture.approvals.WithDirSync(failPermissionDirSync), nil }
+	type result struct{ stdout, stderr string }
+	done := make(chan result, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		hook.run(context.Background(), []string{"--pane=" + questionTestPane},
+			strings.NewReader(permissionTestPayload("default", "Bash", permissionTestInput, "")), &stdout, &stderr)
+		done <- result{stdout.String(), stderr.String()}
+	}()
+	id := ""
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && id == ""; time.Sleep(5 * time.Millisecond) {
+		if records, err := fixture.approvals.List(questionTestAgent); err == nil && len(records) == 1 && permissionAuditRequested(fixture.approvals, records[0].ID) {
+			id = records[0].ID
+		}
+	}
+	if id == "" {
+		t.Fatal("the hook never recorded its permission request and its requested audit line")
+	}
+	select {
+	case out := <-done:
+		t.Fatalf("the hook gave up on a recorded request: %+v", out)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, _, err := runRoute(t, fixture.command, "approval", "answer", "uid:"+questionTestAgent, id, "--allow"); err != nil {
+		t.Fatal(err)
+	}
+	var out result
+	select {
+	case out = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hook never printed the decision")
+	}
+	assertBareAllow(t, out.stdout)
+	dir := filepath.Dir(fixture.approvals.Path())
+	if want := fmt.Sprintf("projmux: warning: permission request %s recorded: the record took effect, but its directory could not be synced: sync %s: input/output error\n", id, dir); out.stderr != want {
+		t.Fatalf("hook stderr = %q, want %q", out.stderr, want)
+	}
+	if got := permissionAuditEvents(readPermissionAudit(t, fixture.approvals)); got != "requested,allowed" {
+		t.Fatalf("audit = %s", got)
 	}
 }
 

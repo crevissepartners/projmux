@@ -952,9 +952,13 @@ record write then fails before the new record replaces the old one, the answer
 did not take effect: `answer` fails, the request stays waiting, and an
 `uncommitted` line with `reason` `record-write-failed` follows the answer line
 for the same request id. If that `uncommitted` line cannot be written either,
-`answer` says so and the log keeps the `allowed` or `denied` line alone. No
-`uncommitted` line is written when the answer took effect, or when its outcome
-is unknown, such as a crash between the line and the record write; a later
+`answer` says so and the log keeps the `allowed` or `denied` line alone. If
+the new record is already in place and only the sync of its directory fails,
+the write took effect: `answer` succeeds with a warning on stderr, the hook
+keeps waiting on a request it recorded, and the `requested`, `expired`, and
+`closed` lines are written as usual, but that write may not survive a power
+loss. No `uncommitted` line is written when the answer took effect, or when its
+outcome is unknown, such as a crash between the line and the record write; a later
 `expired` or `closed` line for the same request shows how it ended. Read the
 log this way: an `allowed` or `denied` line followed by an `uncommitted` line
 for the same request id did not take effect. The log may over-report an answer,
