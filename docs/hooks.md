@@ -987,11 +987,20 @@ the write took effect: `answer` succeeds with a warning on stderr, the hook
 keeps waiting on a request it recorded, and the `requested`, `expired`, and
 `closed` lines are written as usual, but that write may not survive a power
 loss. No `uncommitted` line is written when the answer took effect, or when its
-outcome is unknown, such as a crash between the line and the record write; a later
-`expired` or `closed` line for the same request shows how it ended. Read the
-log this way: an `allowed` or `denied` line followed by an `uncommitted` line
-for the same request id did not take effect. The log may over-report an answer,
-never under-report one.
+outcome is unknown, such as a crash between the line and the record write. No
+line marks that crash afterwards: the request stays waiting, and a later
+`expired`, `closed`, `allowed`, or `denied` line for the same request id shows
+how it actually ended. For example, `requested`, `allowed`, `denied` for one
+request id means the first answer never took effect and the request was denied;
+`requested`, `allowed`, `expired` means it expired without a decision. If the
+hook died too, as when the machine went down, no later line may follow and the
+answer's outcome stays unknown. A write killed before its rename can leave a
+`.requests.tmp-*` file in `<state dir>/agent-approvals/`; the next write of the
+store removes it. Read the log this way: an `allowed` or `denied` line followed
+by an `uncommitted` line for the same request id did not take effect, and
+otherwise the last `expired`, `closed`, `allowed`, or `denied` line for a
+request id shows how it ended. The log may over-report an answer, never
+under-report one.
 
 #### Codex Answers
 
@@ -1018,8 +1027,10 @@ before claiming the approval (`stale-epoch`, `stale-binding`, `unavailable`,
 failure may have reached Codex: the line stays alone and `answer` says the
 decision may or may not have reached Codex, so the log may over-report a Codex
 answer too. If the `uncommitted` line cannot be written, `answer` says so and
-the log keeps the answer line alone. An answer given in the Codex TUI or with `agent approval
-review` is not logged.
+the log keeps the answer line alone. A crash of `answer` between the line and
+the send also leaves the answer line alone, and no later line follows it: read
+it like a send that may or may not have reached Codex. An answer given in the
+Codex TUI or with `agent approval review` is not logged.
 
 ## Antigravity Hook Ingest
 
