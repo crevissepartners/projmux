@@ -13,6 +13,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -91,6 +92,16 @@ func claudeAdmissionSuccessor(t *testing.T, bootstrap claudeEndpointBootstrap) c
 	}
 	bootstrap.Registration.Authority.RegistrationGeneration = hex.EncodeToString(nonce)
 	return bootstrap
+}
+
+// claudeRegistrationRefusalReason is the closed reason a helper refusal
+// carries, or "" for nil or an untyped error.
+func claudeRegistrationRefusalReason(err error) diagnostics.ClaudeRegistrationReason {
+	var refusal *claudeRegistrationRefusal
+	if errors.As(err, &refusal) {
+		return refusal.reason
+	}
+	return claudeRegistrationProceed
 }
 
 func beginClaudeAdmission(reg *coremetadata.Registry, bootstrap claudeEndpointBootstrap) error {
@@ -296,8 +307,8 @@ func TestClaudeEndpointAdmissionReleasedHelperExitsCleanWhenRecordFails(t *testi
 	helper.assertReleased(t)
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("superseded helper recorded its registration")
+		if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationClaimRefusedNewer {
+			t.Fatalf("superseded helper exit = %v, want %q", err, diagnostics.ClaudeRegistrationClaimRefusedNewer)
 		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("released helper did not exit after Record failed")
@@ -333,8 +344,8 @@ func TestClaudeEndpointAdmissionStaleReleasedHelperKeepsNewerRegistration(t *tes
 	helper.assertReleased(t)
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("stale helper recorded its registration")
+		if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationClaimRefusedNewer {
+			t.Fatalf("stale helper exit = %v, want %q", err, diagnostics.ClaudeRegistrationClaimRefusedNewer)
 		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("stale released helper did not exit")
@@ -425,8 +436,8 @@ func TestClaudeEndpointAdmissionReleasedHelperWaitingOnLockSurvivesSupervisorCle
 	helper.assertReleased(t)
 	select {
 	case err := <-done:
-		if err == nil || err.Error() != "claude registration admission failed" {
-			t.Fatalf("helper exit = %v, want only its Record refusal", err)
+		if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationProviderProcessGone {
+			t.Fatalf("helper exit = %v, want only its claim refusal for the gone provider", err)
 		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("released helper did not exit after the provider was gone")
@@ -469,7 +480,7 @@ func claudeAdmissionHookBootstrap(t *testing.T, f *claudeEndpointTestFixture) cl
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap, ok := claudeRegistrationBootstrap(reg, f.bootstrap.RegistryPath, []byte(`{"hook_event_name":"SessionStart","session_id":"actual-session"}`), func(key string) string {
+	bootstrap, reason := claudeRegistrationBootstrap(reg, f.bootstrap.RegistryPath, []byte(`{"hook_event_name":"SessionStart","session_id":"actual-session"}`), func(key string) string {
 		switch key {
 		case internalActivationPaneUIDEnv:
 			return f.bootstrap.PaneUID
@@ -482,8 +493,8 @@ func claudeAdmissionHookBootstrap(t *testing.T, f *claudeEndpointTestFixture) cl
 		}
 		return ""
 	}, f.provider.Process.Pid)
-	if !ok {
-		t.Fatal("valid SessionStart refused")
+	if reason != claudeRegistrationProceed {
+		t.Fatalf("valid SessionStart refused: %s", reason)
 	}
 	return bootstrap
 }

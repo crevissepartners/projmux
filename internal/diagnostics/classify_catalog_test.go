@@ -232,7 +232,7 @@ func TestMutationsTheBoundaryDoesNotAnswerStayStateChanging(t *testing.T) {
 }
 
 func TestUnknownArgvStaysUnclassified(t *testing.T) {
-	for _, argv := range [][]string{{"nosuchcmd"}, {"internal"}, {"internal", "nosuch"}, {"get", "nosuchkind"}, {"supervise"}, {"agent-pane", "picker"}, {"activation-exec"}} {
+	for _, argv := range [][]string{{"nosuchcmd"}, {"internal"}, {"internal", "nosuch"}, {"get", "nosuchkind"}, {"supervise"}, {"agent-pane", "picker"}, {"activation-exec"}, {"claude-endpoint-register"}, {"claude-endpoint-helper"}} {
 		got := Classify(argv)
 		if argv[0] == "get" {
 			if got.Command != "get" || got.Subcommand != "" {

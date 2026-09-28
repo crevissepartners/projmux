@@ -170,6 +170,8 @@ func TestClassifyCoversEveryTopLevelRule(t *testing.T) {
 		{args: []string{"internal", "agent-pane", "picker"}},
 		{args: []string{"internal", "supervise"}},
 		{args: []string{"internal", "activation-exec"}},
+		{args: []string{"internal", "claude-endpoint-register"}},
+		{args: []string{"internal", "claude-endpoint-helper"}},
 	}
 	seen := make(map[string]bool, len(tests))
 	for _, tt := range tests {

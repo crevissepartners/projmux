@@ -18,6 +18,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -100,6 +101,22 @@ func TestClaudeEndpointHookMigrationPreservesStatusAndUserHooks(t *testing.T) {
 	}
 }
 
+// serveClaudeEndpoint runs one helper's serve with the production idle gate.
+func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer) error {
+	return serveClaudeEndpointWithIdleGate(ctx, bootstrap, ack, claudeEndpointIdleOptions{
+		stat: (*intmetadata.Store).RegistryFileIdentity, now: time.Now, floor: claudeEndpointIdleRegistryFloor})
+}
+
+// serveClaudeEndpointWithIdleGate is serveClaudeRegistration as an error: a
+// *claudeRegistrationRefusal for a refusal before Ready, and nil once a Ready
+// helper stopped serving.
+func serveClaudeEndpointWithIdleGate(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer, idle claudeEndpointIdleOptions) error {
+	if reason := serveClaudeRegistration(ctx, bootstrap, ack, idle); reason.Refusal() {
+		return refuseClaudeRegistration(reason)
+	}
+	return nil
+}
+
 func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "pce-test-")
@@ -136,7 +153,7 @@ func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 	if err := os.Chmod(inbox.Addr().String(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bootstrap, ok := claudeRegistrationBootstrap(*h.registry, path, []byte(`{"hook_event_name":"SessionStart","session_id":"actual-session"}`), func(key string) string {
+	bootstrap, reason := claudeRegistrationBootstrap(*h.registry, path, []byte(`{"hook_event_name":"SessionStart","session_id":"actual-session"}`), func(key string) string {
 		switch key {
 		case internalActivationPaneUIDEnv:
 			return h.paneUID
@@ -149,8 +166,8 @@ func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 		}
 		return ""
 	}, provider.Process.Pid)
-	if !ok {
-		t.Fatal("valid SessionStart refused")
+	if reason != claudeRegistrationProceed {
+		t.Fatalf("valid SessionStart refused: %s", reason)
 	}
 	leaseDir = claudeActivationLeaseDir(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation)
 	if _, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
@@ -397,17 +414,19 @@ func TestClaudeEndpointBootstrapRejectsForeignAndSecretClaims(t *testing.T) {
 		parent  int
 		session string
 		change  func(*coremetadata.Registry, map[string]string)
+		want    diagnostics.ClaudeRegistrationReason
 	}{
-		{"unmanaged nested producer", os.Getpid(), "actual-session", nil},
-		{"secret session identity", f.provider.Process.Pid, f.bootstrap.Token, nil},
-		{"stale generation", f.provider.Process.Pid, "actual-session", func(_ *coremetadata.Registry, env map[string]string) { env[internalActivationGenerationEnv] = "old" }},
+		{"unmanaged nested producer", os.Getpid(), "actual-session", nil, diagnostics.ClaudeRegistrationProviderProcessMismatch},
+		{"secret session identity", f.provider.Process.Pid, f.bootstrap.Token, nil, diagnostics.ClaudeRegistrationSessionIDEmbedsLocator},
+		{"stale generation", f.provider.Process.Pid, "actual-session", func(_ *coremetadata.Registry, env map[string]string) { env[internalActivationGenerationEnv] = "old" },
+			diagnostics.ClaudeRegistrationPaneBindingMismatch},
 		{"absent socket", f.provider.Process.Pid, "actual-session", func(_ *coremetadata.Registry, env map[string]string) {
 			env["CLAUDE_CODE_MESSAGING_SOCKET"] = filepath.Join(f.root, "absent.sock")
-		}},
+		}, diagnostics.ClaudeRegistrationMessagingSocket},
 		{"wrong owner kind", f.provider.Process.Pid, "actual-session", func(reg *coremetadata.Registry, _ map[string]string) {
 			pane, _ := reg.Pane(f.bootstrap.PaneUID)
 			pane.Metadata.OwnerRef.Kind = coremetadata.KindWindow
-		}},
+		}, diagnostics.ClaudeRegistrationAgentMismatch},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := reg.Clone()
@@ -418,8 +437,8 @@ func TestClaudeEndpointBootstrapRejectsForeignAndSecretClaims(t *testing.T) {
 			}
 			payload, _ := json.Marshal(map[string]string{"hook_event_name": "SessionStart", "session_id": test.session})
 			before := current.Clone()
-			if _, ok := claudeRegistrationBootstrap(current, f.bootstrap.RegistryPath, payload, func(key string) string { return env[key] }, test.parent); ok {
-				t.Fatal("foreign bootstrap accepted")
+			if _, reason := claudeRegistrationBootstrap(current, f.bootstrap.RegistryPath, payload, func(key string) string { return env[key] }, test.parent); reason != test.want {
+				t.Fatalf("bootstrap reason = %q, want %q", reason, test.want)
 			}
 			if !reflect.DeepEqual(current, before) {
 				t.Fatal("refused bootstrap changed Registry")

@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 // internalSubcommands lists the hidden internal plumbing namespaces, in help
@@ -70,6 +72,9 @@ type internalCommand struct {
 	// codexBroker is the Codex endpoint broker runtime. It is the only
 	// internal route whose process outlives the invocation that started it.
 	codexBroker rawArgvCommand
+	// claudeRegistration journals the Claude SessionStart registration hook
+	// and its detached helper. A nil recorder records nothing.
+	claudeRegistration *diagnostics.ClaudeRegistrationRecorder
 }
 
 func newInternalCommand() *internalCommand {
@@ -108,9 +113,9 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "activation-exec":
 		return forwardRawArgv(c.activationExec, "internal activation-exec", "activation-exec", nil, rest, stdout, stderr)
 	case "claude-endpoint-register":
-		return runClaudeEndpointRegistration(rest)
+		return runClaudeEndpointRegistration(rest, c.claudeRegistration)
 	case claudeEndpointHelperRoute:
-		return runClaudeEndpointHelper(rest)
+		return runClaudeEndpointHelper(rest, c.claudeRegistration)
 	case "claude-dialogue-exec":
 		return runClaudeDialogueExec(rest)
 	case "claude-dialogue-observe":
