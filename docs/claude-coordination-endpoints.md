@@ -293,8 +293,8 @@ The client is a name value, never a list projmux keeps: 1-32 bytes of lowercase
 ASCII letters, digits, and `-`, starting with a letter (`internal/core/operatorclient`).
 Operator input is `"kind":"operator"` with a client name under that rule; a
 name outside it is not operator input and is refused as
-`operator-client-invalid` where one is built. Records earlier builds wrote
-with the client `web` stay operator input under the same rule.
+`operator-client-invalid` where one is built. Records an earlier build wrote
+with its fixed client name stay operator input under the same rule.
 
 - **Envelope.** Operator input carries `"origin":{"kind":"operator","client":"<client>"}`
   and no `source` key; its authority is
