@@ -35,6 +35,12 @@ const (
 	ReasonOperatorOriginTargetNotClaude = "operator-origin-target-not-claude"
 )
 
+// ReasonExplicitReplyConversationChanged refuses a reply between the
+// original's own Agents, on their own providers, when one of them is now in
+// another provider conversation. The original cannot be answered there; the
+// sender sends a new message instead.
+const ReasonExplicitReplyConversationChanged = "explicit-reply-conversation-changed"
+
 // Stable reason tokens naming which class of envelope rule a refusal broke.
 // A sender acts on the class, not on the exact field: a payload is split or
 // re-encoded, a route is re-resolved, a correlation is re-read from the
@@ -60,6 +66,10 @@ var (
 	// but Claude. Codex already takes web input as a native user turn, so the
 	// envelope path is Claude's alone.
 	ErrOperatorOriginTargetNotClaude = fmt.Errorf("%w: %s", ErrInvalidEnvelope, ReasonOperatorOriginTargetNotClaude)
+	// ErrReplyConversationChanged is ReplyRoutes' refusal of a reply whose
+	// Agents and providers are the original's and whose conversation is not.
+	// It wraps ErrInvalidEnvelope so existing refusal handling still applies.
+	ErrReplyConversationChanged = fmt.Errorf("%w: %s", ErrInvalidEnvelope, ReasonExplicitReplyConversationChanged)
 )
 
 // EnvelopeRefusal wraps ErrInvalidEnvelope with the class of rule that broke
@@ -144,6 +154,37 @@ func (r Route) Valid() bool {
 
 func (r Route) Same(other Route) bool {
 	return r.Valid() && r == other
+}
+
+// sameAgent reports whether two valid routes name the same Agent on the same
+// provider, whatever its Pane, activation, or conversation.
+func (r Route) sameAgent(other Route) bool {
+	return r.Valid() && other.Valid() && r.AgentUID == other.AgentUID && r.Provider == other.Provider
+}
+
+// ReplyRoutes is the one judgement of a reply's routes against its original.
+// The reply must go back from the original's target Agent to its source
+// Agent, on the same providers and in the same provider conversations
+// (Incarnation). The Pane and activation generation may differ: a relaunch
+// into the same conversation replaces both, and a reply still answers there.
+//
+// It proves no route current. Every caller already resolves the reply's
+// routes from the Registry, so a reply is only ever addressed to an Agent's
+// current activation, never to the Pane the original named. Incarnations
+// compare exactly; a caller that can read the provider authority first
+// answers in the shape the original used (AcceptsIncarnation).
+//
+// Another Agent or provider is a correlation mismatch. The same Agents and
+// providers in another conversation is ErrReplyConversationChanged.
+func ReplyRoutes(original, reply Envelope) error {
+	back, forth := reply.Source, reply.Target
+	if !back.sameAgent(original.Target) || !forth.sameAgent(original.Source) {
+		return EnvelopeRefusal(ReasonCorrelationInvalid, "reply route or conversation mismatch")
+	}
+	if back.Incarnation != original.Target.Incarnation || forth.Incarnation != original.Source.Incarnation {
+		return ErrReplyConversationChanged
+	}
+	return nil
 }
 
 // Envelope is the durable coordination message. Origin and Source are
@@ -268,9 +309,10 @@ func (e Envelope) SameRetry(candidate Envelope) bool {
 }
 
 // ValidateReply proves broker correlation rather than trusting a native reply
-// address or caller-authored source. The new message must reverse the original
-// route exactly and remain in its conversation. Operator input has no route to
-// reverse, so a reply to it is ErrOperatorOriginReply.
+// address or caller-authored source. The new message must answer the
+// original's ref in its conversationRef and reverse its routes by ReplyRoutes.
+// Operator input has no route to reverse, so a reply to it is
+// ErrOperatorOriginReply.
 func ValidateReply(original, reply Envelope) error {
 	if err := original.Validate(); err != nil {
 		return err
@@ -282,10 +324,10 @@ func ValidateReply(original, reply Envelope) error {
 		return err
 	}
 	if reply.ReplyTo != original.MessageRef || reply.ConversationRef != original.ConversationRef ||
-		reply.MessageRef == original.MessageRef || !reply.Source.Same(original.Target) || !reply.Target.Same(original.Source) {
+		reply.MessageRef == original.MessageRef {
 		return EnvelopeRefusal(ReasonCorrelationInvalid, "reply route or conversation mismatch")
 	}
-	return nil
+	return ReplyRoutes(original, reply)
 }
 
 // ValidRef reports whether value is a well-formed Registry ref: already

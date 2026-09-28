@@ -1,10 +1,21 @@
 # Explicit reply recovery
 
 An explicit Claude reply names the original request with `--reply-to`. The
-broker preserves that request's `conversationRef`, reverses its exact source
-and target routes, and retains peer, untrusted, coordination-only authority.
-Both activations and the original deadline must still be current. A reply
-cannot extend that deadline. Source metadata remains an unverified routing
+broker preserves that request's `conversationRef`, reverses its source and
+target Agents, and retains peer, untrusted, coordination-only authority. The
+reply goes to each Agent's current activation, and the original deadline must
+still be current. A reply cannot extend that deadline.
+
+Correlation follows the Agent and its provider conversation, not one
+activation. Either Agent may have been relaunched into the same conversation
+since the original, for example by `agent relaunch`: it now runs in a new Pane
+under a new activation, and a reply to the earlier message still commits and
+is delivered there. A reply to another Agent or on another provider is still
+refused as `invalid-explicit-reply-correlation`. When one of the original's
+Agents is now in another provider conversation (another Claude session), the
+reply is refused with `explicit-reply-conversation-changed` and stores
+nothing; the original cannot be answered there, so send a new message without
+`--reply-to`. Source metadata remains an unverified routing
 claim; an explicit reply also requires the registered provider's descendant
 caller and any existing qualification and execution guard.
 
@@ -43,8 +54,8 @@ same checks. It reads the store only while its own route is the Registry's
 current authority for the Agent; a replaced or unregistered helper reads and
 writes nothing. `broker-reply-original-not-found` means the original is in
 neither the helper nor the store. `invalid-explicit-reply-correlation` means the
-reply's route or conversation does not match the original, or the helper is not
-the current one.
+reply's Agents, providers, or `conversationRef` do not match the original, or
+the helper is not the current one.
 
 A same-ref call returns the original immutable receipt and never pushes again.
 Changing its payload is refused with the earlier ref and cause. A fresh ref

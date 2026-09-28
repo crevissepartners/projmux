@@ -135,7 +135,7 @@ func TestStoreExplicitReplyNonzeroUnknownAndExpiredNeverRetry(t *testing.T) {
 }
 
 func TestStoreExplicitReplyRetryKeepsDeadlineAndExactRoute(t *testing.T) {
-	for _, mode := range []string{"original expired", "reply expired", "deadline extended", "source stale", "target stale", "codex outcome"} {
+	for _, mode := range []string{"original expired", "reply expired", "deadline extended", "source stale", "target in another conversation", "target another agent", "codex outcome"} {
 		t.Run(mode, func(t *testing.T) {
 			store, original := retryStoreFixture(t)
 			if mode == "codex outcome" {
@@ -160,8 +160,10 @@ func TestStoreExplicitReplyRetryKeepsDeadlineAndExactRoute(t *testing.T) {
 				deadline = original.Deadline.Add(time.Second)
 			case "source stale":
 				source.Incarnation = "old"
-			case "target stale":
-				target.ActivationGeneration = "old"
+			case "target in another conversation":
+				target.Incarnation = "old"
+			case "target another agent":
+				target.AgentUID = "agent-other"
 			}
 			if _, created, err := store.PutReply(original.MessageRef, "retry", "corrected", source, target, accepted, deadline); err == nil || created {
 				t.Fatalf("%s allowed retry", mode)
