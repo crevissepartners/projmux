@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -325,5 +326,126 @@ func TestStoreConcurrentAnswersSettleTheRecordOnce(t *testing.T) {
 	}
 	if won != 1 || refused != writers-1 {
 		t.Fatalf("won=%d refused=%d, want 1 and %d", won, refused, writers-1)
+	}
+}
+
+// seedRecord is a record as some release wrote it, written straight to disk.
+func seedRecord(n int, agentUID string, state State, disposition string, now time.Time) Record {
+	record := Record{
+		ID: testID(n), AgentUID: agentUID, Questions: json.RawMessage(testQuestionsJSON),
+		CreatedAt: now, Deadline: now.Add(5 * time.Minute), State: state, Disposition: disposition, UpdatedAt: now,
+	}
+	if state == StateAnswered {
+		record.Answers = testAnswers
+	}
+	return record
+}
+
+func writeSeededStore(t *testing.T, store *Store, records ...Record) {
+	t.Helper()
+	data, err := json.Marshal(diskState{Version: storeVersion, Records: records})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreReadsClosedRecordsWithAnyWellFormedReasonAndKeepsThem(t *testing.T) {
+	t.Parallel()
+
+	store, clock := newTestStore(t)
+	now := clock.Now()
+	longest := "a" + strings.Repeat("0-", 19) + "z"
+	codex := seedRecord(8, "agt-c", StateClosed, "answered-elsewhere", now)
+	codex.Provider = "codex"
+	codex.RequestID = "request-1"
+	codex.Questions = json.RawMessage(`[{"id":"q","question":"Pick","options":[{"label":"A"}]}]`)
+	expiring := seedRecord(5, "agt-a", StateWaiting, "", now)
+	expiring.Deadline = now.Add(-time.Second)
+	writeSeededStore(t, store,
+		seedRecord(1, "agt-a", StateClosed, "popup-dismissed", now),
+		seedRecord(2, "agt-a", StateClosed, "reason-no-release-writes-yet", now),
+		seedRecord(3, "agt-a", StateWaiting, "", now),
+		seedRecord(4, "agt-a", StateWaiting, "", now),
+		expiring,
+		seedRecord(6, "agt-b", StateWaiting, "", now),
+		seedRecord(7, "agt-b", StateClosed, longest, now),
+		codex,
+	)
+	reasons := map[string]string{testID(1): "popup-dismissed", testID(2): "reason-no-release-writes-yet", testID(7): longest, testID(8): "answered-elsewhere"}
+	keepsReasons := func(step string) {
+		t.Helper()
+		for id, want := range reasons {
+			got, found, err := store.Get(id)
+			if err != nil || !found || got.State != StateClosed || got.Disposition != want || !got.UpdatedAt.Equal(now) {
+				t.Fatalf("after %s: Get(%s) = %s/%q at %s, found=%t, err=%v", step, id, got.State, got.Disposition, got.UpdatedAt, found, err)
+			}
+		}
+	}
+
+	keepsReasons("seeding")
+	list, err := store.List("agt-a")
+	if err != nil || len(list) != 5 {
+		t.Fatalf("List = %d records, %v", len(list), err)
+	}
+	clock.Advance(time.Second)
+	if _, err := store.Answer(testID(3), "agt-a", testAnswers); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	keepsReasons("Answer")
+	if got, err := store.Close(testID(4)); err != nil || got.State != StateClosed || got.Disposition != "" {
+		t.Fatalf("Close = %s/%q, %v", got.State, got.Disposition, err)
+	}
+	keepsReasons("Close")
+	if got, err := store.Settle(testID(5)); err != nil || got.State != StateExpired {
+		t.Fatalf("Settle = %s, %v", got.State, err)
+	}
+	keepsReasons("Settle")
+	if closed, err := store.CloseAgent("agt-b"); err != nil || closed != 1 {
+		t.Fatalf("CloseAgent = %d, %v", closed, err)
+	}
+	keepsReasons("CloseAgent")
+	createTestRecord(t, store, clock, 9, "agt-a")
+	keepsReasons("Create")
+
+	for id, want := range map[string]error{testID(1): ErrClosed, testID(2): ErrClosed, testID(8): ErrAnsweredElsewhere} {
+		agentUID := "agt-a"
+		if id == testID(8) {
+			agentUID = "agt-c"
+		}
+		if _, err := store.Answer(id, agentUID, testAnswers); !errors.Is(err, want) {
+			t.Errorf("Answer(%s) err = %v, want %v", id, err, want)
+		}
+	}
+	keepsReasons("refused answers")
+}
+
+func TestStoreRejectsAReasonOutsideItsFormOrOnAnOpenRecord(t *testing.T) {
+	t.Parallel()
+
+	now := storeTestEpoch
+	claudeElsewhere := seedRecord(1, "agt-a", StateClosed, "answered-elsewhere", now)
+	for name, record := range map[string]Record{
+		"upper case":                   seedRecord(1, "agt-a", StateClosed, "Popup-dismissed", now),
+		"leading digit":                seedRecord(1, "agt-a", StateClosed, "1popup", now),
+		"leading dash":                 seedRecord(1, "agt-a", StateClosed, "-popup", now),
+		"underscore":                   seedRecord(1, "agt-a", StateClosed, "popup_dismissed", now),
+		"space":                        seedRecord(1, "agt-a", StateClosed, "popup dismissed", now),
+		"forty-one bytes":              seedRecord(1, "agt-a", StateClosed, "a"+strings.Repeat("b", 40), now),
+		"waiting with a reason":        seedRecord(1, "agt-a", StateWaiting, "popup-dismissed", now),
+		"answered with a reason":       seedRecord(1, "agt-a", StateAnswered, "popup-dismissed", now),
+		"expired with a reason":        seedRecord(1, "agt-a", StateExpired, "popup-dismissed", now),
+		"answered-elsewhere on claude": claudeElsewhere,
+	} {
+		store, _ := newTestStore(t)
+		writeSeededStore(t, store, record)
+		if _, _, err := store.Get(testID(1)); !errors.Is(err, ErrMalformedStore) {
+			t.Errorf("%s: Get err = %v, want ErrMalformedStore", name, err)
+		}
 	}
 }

@@ -583,6 +583,53 @@ func TestAgentQuestionChannelSwitchAndProviderRefusals(t *testing.T) {
 	}
 }
 
+// TestAgentQuestionListShowsAClosedRecordsReasonAsWritten pins that a store a
+// later release wrote, with a close reason this release never writes, still
+// lists, and that the reason shows as written in both outputs.
+func TestAgentQuestionListShowsAClosedRecordsReasonAsWritten(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, true)
+	record := fixture.createQuestionRecord(t)
+	if _, err := fixture.store.Close(record.ID); err != nil {
+		t.Fatal(err)
+	}
+	const reason = "reason-no-release-writes-yet"
+	data, err := os.ReadFile(fixture.store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["records"].([]any)[0].(map[string]any)["disposition"] = reason
+	if data, err = json.Marshal(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.store.Path(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent, "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed agentQuestionList
+	if err := json.Unmarshal([]byte(stdout), &listed); err != nil || len(listed.Questions) != 1 ||
+		listed.Questions[0].State != agentquestion.StateClosed || listed.Questions[0].Disposition != reason {
+		t.Fatalf("list json = %s (%v)", stdout, err)
+	}
+	if stdout, _, err := runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent); err != nil ||
+		!strings.Contains(stdout, record.ID+"\tclosed ("+reason+")\n") {
+		t.Fatalf("list text = %q, %v", stdout, err)
+	}
+	_, _, err = runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, record.ID, "--option", "1=make", "--option", "2=main")
+	if err == nil || !strings.Contains(err.Error(), "(question-closed)") {
+		t.Fatalf("answer to the closed record err = %v, want question-closed", err)
+	}
+}
+
 // TestAgentQuestionListJSONAlwaysEmitsIsOther pins the isOther key on every
 // listed prompt: Codex keeps its stored value, including false, and Claude
 // always reports true because its popup and BuildAnswers take free text.
