@@ -417,7 +417,7 @@ func TestClaudeEndpointBootstrapRejectsForeignAndSecretClaims(t *testing.T) {
 		want    diagnostics.ClaudeRegistrationReason
 	}{
 		{"unmanaged nested producer", os.Getpid(), "actual-session", nil, diagnostics.ClaudeRegistrationProviderProcessMismatch},
-		{"secret session identity", f.provider.Process.Pid, f.bootstrap.Token, nil, diagnostics.ClaudeRegistrationSessionIDCredential},
+		{"secret session identity", f.provider.Process.Pid, f.bootstrap.Token, nil, diagnostics.ClaudeRegistrationSessionIDEmbedsLocator},
 		{"stale generation", f.provider.Process.Pid, "actual-session", func(_ *coremetadata.Registry, env map[string]string) { env[internalActivationGenerationEnv] = "old" },
 			diagnostics.ClaudeRegistrationPaneBindingMismatch},
 		{"absent socket", f.provider.Process.Pid, "actual-session", func(_ *coremetadata.Registry, env map[string]string) {

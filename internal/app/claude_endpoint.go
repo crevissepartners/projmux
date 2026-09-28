@@ -252,13 +252,13 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 	}
 	socket, token := env("CLAUDE_CODE_MESSAGING_SOCKET"), env("CLAUDE_CODE_MESSAGING_TOKEN")
 	if socket == "" || token == "" || len(token) > 4096 || strings.ContainsAny(token, "\r\n\x00") {
-		return matched, diagnostics.ClaudeRegistrationMessagingCredential
+		return matched, diagnostics.ClaudeRegistrationMessagingEnvInvalid
 	}
 	// Hook identities are untrusted data too. Refuse a credential or locator
 	// embedded in any field destined for Registry, even when syntactically valid.
 	for _, value := range []string{payload.SessionID} {
 		if strings.Contains(value, token) || strings.Contains(value, socket) {
-			return matched, diagnostics.ClaudeRegistrationSessionIDCredential
+			return matched, diagnostics.ClaudeRegistrationSessionIDEmbedsLocator
 		}
 	}
 	if _, err := inspectClaudeSocket(socket); err != nil {

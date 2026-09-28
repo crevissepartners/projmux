@@ -46,8 +46,8 @@ const (
 	ClaudeRegistrationPaneBindingMismatch     ClaudeRegistrationReason = "pane-binding-mismatch"
 	ClaudeRegistrationAgentMismatch           ClaudeRegistrationReason = "agent-mismatch"
 	ClaudeRegistrationProviderProcessMismatch ClaudeRegistrationReason = "provider-process-mismatch"
-	ClaudeRegistrationMessagingCredential     ClaudeRegistrationReason = "messaging-credential-invalid"
-	ClaudeRegistrationSessionIDCredential     ClaudeRegistrationReason = "session-id-embeds-credential"
+	ClaudeRegistrationMessagingEnvInvalid     ClaudeRegistrationReason = "messaging-credential-invalid"
+	ClaudeRegistrationSessionIDEmbedsLocator  ClaudeRegistrationReason = "session-id-embeds-credential"
 	ClaudeRegistrationMessagingSocket         ClaudeRegistrationReason = "messaging-socket-unavailable"
 	ClaudeRegistrationNonceUnavailable        ClaudeRegistrationReason = "nonce-unavailable"
 	ClaudeRegistrationAuthorityInvalid        ClaudeRegistrationReason = "authority-invalid"
@@ -145,8 +145,8 @@ var claudeRegistrationReasonTable = [...]claudeRegistrationReasonSpec{
 	{ClaudeRegistrationPaneBindingMismatch, claudeRegistrationFromHook, claudeRegistrationRefused},
 	{ClaudeRegistrationAgentMismatch, claudeRegistrationFromHook, claudeRegistrationRefused},
 	{ClaudeRegistrationProviderProcessMismatch, claudeRegistrationFromHook, claudeRegistrationRefused},
-	{ClaudeRegistrationMessagingCredential, claudeRegistrationFromHook, claudeRegistrationRefused},
-	{ClaudeRegistrationSessionIDCredential, claudeRegistrationFromHook, claudeRegistrationRefused},
+	{ClaudeRegistrationMessagingEnvInvalid, claudeRegistrationFromHook, claudeRegistrationRefused},
+	{ClaudeRegistrationSessionIDEmbedsLocator, claudeRegistrationFromHook, claudeRegistrationRefused},
 	{ClaudeRegistrationMessagingSocket, claudeRegistrationFromHook | claudeRegistrationFromHelper, claudeRegistrationRefused},
 	{ClaudeRegistrationNonceUnavailable, claudeRegistrationFromHook, claudeRegistrationRefused},
 	{ClaudeRegistrationAuthorityInvalid, claudeRegistrationFromHook | claudeRegistrationFromHelper, claudeRegistrationRefused},

@@ -460,13 +460,9 @@ func TestClaudeRegistrationHookRecordsAtAllowedPointsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var withUIDs []diagnostics.Event
-	for _, event := range events[1:] {
-		withUIDs = append(withUIDs, event)
-	}
 	assertClaudeRegistrationRecords(t, events[:1], diagnostics.ClaudeRegistrationSourceHook, claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationPaneBindingMismatch)
-	assertClaudeRegistrationRecords(t, withUIDs, diagnostics.ClaudeRegistrationSourceHook, matched,
-		diagnostics.ClaudeRegistrationProviderProcessMismatch, diagnostics.ClaudeRegistrationMessagingCredential)
+	assertClaudeRegistrationRecords(t, events[1:], diagnostics.ClaudeRegistrationSourceHook, matched,
+		diagnostics.ClaudeRegistrationProviderProcessMismatch, diagnostics.ClaudeRegistrationMessagingEnvInvalid)
 	journalBytes, err := os.ReadFile(journalPath)
 	if err != nil {
 		t.Fatal(err)
