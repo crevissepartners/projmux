@@ -36,6 +36,10 @@ const (
 	TransportSourceSocketName   TransportSource = "explicit-socket-name"
 	TransportSourceSocketPath   TransportSource = "explicit-socket-path"
 	TransportSourceInheritedEnv TransportSource = "inherited-tmux-env"
+	// TransportSourceAppSocket is the app's own socket name, which a Registry
+	// view (`get`, `describe`) observes when neither a flag nor $TMUX names a
+	// server. ResolveTransport never returns it; only the view route adds it.
+	TransportSourceAppSocket TransportSource = "app-socket"
 )
 
 // AppOwnedMarker is the exact value of the server-global @projmux_app option on
