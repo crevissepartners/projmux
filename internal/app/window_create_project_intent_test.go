@@ -219,6 +219,22 @@ func TestProjectWindowIntentStartsAStoppedProjectLikeFreshCreateWindow(t *testin
 	assertSameStart := func(t *testing.T, a, b started) {
 		t.Helper()
 		freshNew, intentNew := tmuxCallsNamed(a.tmux, "new-session"), tmuxCallsNamed(b.tmux, "new-session")
+		// The session's first Pane is launched under its own generation. The two
+		// routes mint their generations in a different order, so the fixture
+		// sequence gives that one value a different number; it is not the start.
+		maskGeneration := func(calls [][]string) {
+			for index := range calls {
+				call := slices.Clone(calls[index])
+				calls[index] = call
+				for i := 0; i+1 < len(call); i++ {
+					if call[i] == "--generation" {
+						call[i+1] = "<generation>"
+					}
+				}
+			}
+		}
+		maskGeneration(freshNew)
+		maskGeneration(intentNew)
 		if len(freshNew) != 1 || len(intentNew) != 1 || !slices.Equal(freshNew[0], intentNew[0]) {
 			t.Fatalf("new-session fresh=%q intent=%q, want one identical call", freshNew, intentNew)
 		}

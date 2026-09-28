@@ -1199,7 +1199,15 @@ func executeRegistryTopology(
 	// The session's own first Window and Pane arrive with the atomic
 	// new-session result. Adopting those exact ids, rather than re-listing the
 	// session, is what keeps a concurrently created sibling from being claimed.
-	created, err := runtime.ensureSessionAt(ctx, plan.project, plan.sessionName, firstCWD, first.window.Metadata.Name, ledger)
+	// Its first Pane is launched like every other Pane of this pass, under its
+	// own generation, so it records its own %N below.
+	created, firstActivation, err := runtime.ensureSessionLaunching(ctx, plan.project, plan.sessionName, firstCWD, first.window.Metadata.Name,
+		func() (superviseSpec, error) {
+			if first.bootstrap.Metadata.UID == "" {
+				return superviseSpec{}, nil
+			}
+			return activate(first.bootstrap.Metadata.UID)
+		}, ledger)
 	if err != nil {
 		return err
 	}
@@ -1222,6 +1230,7 @@ func executeRegistryTopology(
 		if err := runtime.mirrorPane(ctx, created.PaneID, first.bootstrap); err != nil {
 			return err
 		}
+		observeActivationRuntime(registry, mutator, firstActivation, created.PaneID, runtime.warn)
 		first.liveID, first.create = created.WindowID, false
 		for pi := range first.panes {
 			paneWork := &first.panes[pi]

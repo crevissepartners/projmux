@@ -167,7 +167,7 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 			return nil, fmt.Errorf("runtime mutation plan: action %q carries hidden managed verb operand %q", action.Verb, operand)
 		}
 	}
-	if len(action.Command) > 0 && action.Verb != mutationCreateWindow && action.Verb != mutationCreatePane {
+	if len(action.Command) > 0 && !runtimeMutationCarriesChildCommand(action.Verb) {
 		return nil, fmt.Errorf("runtime mutation plan: action %q carries an unexpected child command", action.Verb)
 	}
 	var verb string
@@ -277,7 +277,8 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 		// before new-session creates its first object. Keep the global tmux
 		// option in printable typed data and assemble it before the verb.
 		if len(action.Operands) >= 2 && action.Operands[0] == "-f" {
-			return append(append([]string(nil), action.Operands[:2]...), append([]string{"new-session"}, action.Operands[2:]...)...), nil
+			argv := append(append([]string(nil), action.Operands[:2]...), append([]string{"new-session"}, action.Operands[2:]...)...)
+			return append(argv, action.Command...), nil
 		}
 		verb = "new-session"
 	case mutationBootstrapControlSession:
@@ -414,9 +415,16 @@ func guardRuntimeMutationQueueRoute(ctx context.Context, runner tmuxCommandRunne
 	return guardResolvedRuntimeMutationRoute(ctx, runner, route)
 }
 
+// runtimeMutationCarriesChildCommand reports whether a verb starts a Pane and
+// so may carry that Pane's launch argv. A new session's first Pane is launched
+// exactly like a new Window's or split's Pane.
+func runtimeMutationCarriesChildCommand(verb runtimeMutationVerb) bool {
+	return verb == mutationCreateWindow || verb == mutationCreatePane || verb == mutationCreateSession
+}
+
 func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 	if len(action.Command) > 0 {
-		if action.Verb != mutationCreateWindow && action.Verb != mutationCreatePane {
+		if !runtimeMutationCarriesChildCommand(action.Verb) {
 			return fmt.Errorf("runtime mutation plan: action %q carries an unsupported child command", action.Verb)
 		}
 		if strings.HasPrefix(action.Command[0], "-") {

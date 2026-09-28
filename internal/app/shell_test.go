@@ -710,7 +710,7 @@ func TestShellTypedPrepareFailuresReachCLIAndClosedJournal(t *testing.T) {
 
 // sessionCheckFailure fails the materializer's session existence check with
 // err, which is the "check tmux session" site canonical shell startup reaches
-// through ensureSessionAt.
+// through ensureSessionLaunching.
 type sessionCheckFailure struct {
 	*fakeSessionMaterializer
 	err error

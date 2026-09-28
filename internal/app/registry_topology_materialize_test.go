@@ -488,7 +488,7 @@ func TestRegistryTopologyMaterializationPostMutationHookFailureRollsBackExactHan
 // and no rollback can undo a hook's side effects. So a foreign live claim on a
 // desired Window or Pane uid must be refused before the session is created, not
 // after -- which means the server-wide uid preflight cannot wait for
-// ensureSessionAt.
+// ensureSessionLaunching.
 func TestRegistryTopologyMaterializationOfflineForeignUIDRefusesBeforeSessionCreate(t *testing.T) {
 	for _, tc := range []struct {
 		name string

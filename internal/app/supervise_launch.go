@@ -33,6 +33,9 @@ func superviseArgv(binary string, spec superviseSpec, argv0 string, child []stri
 	if spec.DialogueReplyOnly {
 		argv = append(argv, "--"+claudeDialogueReplyOnlyFlag)
 	}
+	if spec.ServerDefaultCommand {
+		argv = append(argv, "--"+superviseServerDefaultCommandFlag)
+	}
 	if argv0 != "" {
 		argv = append(argv, "--argv0", argv0)
 	}
@@ -83,7 +86,7 @@ func (m *materializer) environment(name string) string {
 // created on rather than guessed from this process's environment.
 func (m *materializer) defaultPaneCommand(ctx context.Context) (resolvedPaneCommand, error) {
 	if memo := m.paneDefaults; memo != nil && m.expectedSocketPath != "" && memo.socket == filepath.Clean(m.expectedSocketPath) {
-		return m.resolvePaneCommand(memo.shell, memo.command), nil
+		return resolvePaneCommand(memo.shell, memo.command, m.environment("SHELL")), nil
 	}
 	shell, err := m.read(ctx, "show-options", "-gv", "default-shell")
 	if err != nil {
@@ -93,13 +96,15 @@ func (m *materializer) defaultPaneCommand(ctx context.Context) (resolvedPaneComm
 	if err != nil {
 		return resolvedPaneCommand{}, fmt.Errorf("read tmux default-command: %w", err)
 	}
-	return m.resolvePaneCommand(shell, command), nil
+	return resolvePaneCommand(shell, command, m.environment("SHELL")), nil
 }
 
-func (m *materializer) resolvePaneCommand(shell, command string) resolvedPaneCommand {
+// resolvePaneCommand applies tmux's rule to one default-shell/default-command
+// pair; envShell stands in for an empty default-shell, as tmux's own SHELL does.
+func resolvePaneCommand(shell, command, envShell string) resolvedPaneCommand {
 	shell = strings.TrimSpace(shell)
 	if shell == "" {
-		shell = m.environment("SHELL")
+		shell = strings.TrimSpace(envShell)
 	}
 	if shell == "" {
 		shell = "/bin/sh"
@@ -197,6 +202,23 @@ func (m *materializer) supervisedLaunch(ctx context.Context, spec superviseSpec,
 		child, argv0 = resolved.argv, resolved.argv0
 	}
 	return superviseArgv(binary, spec, argv0, child)
+}
+
+// supervisedLaunchOnFreshServer is supervisedLaunch for the first Pane of a
+// server this new-session starts. No server exists to read default-shell and
+// default-command from yet, so the supervisor reads them from the server it
+// runs in. The fallback is supervisedLaunch's: an unsupervised default Pane.
+func (m *materializer) supervisedLaunchOnFreshServer(spec superviseSpec) []string {
+	if m == nil || !spec.valid() || spec.AgentUID != "" {
+		return nil
+	}
+	binary, err := m.executablePath()
+	if err != nil {
+		m.warnUnsupervised(spec, fmt.Sprintf("resolve the projmux binary: %v", err))
+		return nil
+	}
+	spec.ServerDefaultCommand = true
+	return superviseArgv(binary, spec, "", nil)
 }
 
 func creatorRegistryPath() (string, error) {
