@@ -1296,6 +1296,12 @@ func (m *materializer) option(ctx context.Context, target, format string) string
 func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 	entries := ledger.entries()
 	var steps []runtimeMutationStep
+	// serverEnded is set only once a kill of this plan is proven to have ended
+	// the server the plan guarded (see rollbackKillEndedServer). Every ledger
+	// object lived on that server, so each later step's target ended with it:
+	// such a step sends that socket nothing more and converges as absent. A
+	// server that ended without such a proof keeps every step's own verdict.
+	serverEnded := false
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
 		got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.ownershipOption()+"}")
@@ -1325,6 +1331,9 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 			Action:           action,
 			TargetRouteGuard: m.targetRouteGuard(action),
 			Reobserve: func(ctx context.Context) (bool, error) {
+				if serverEnded {
+					return true, nil
+				}
 				absent, err := m.observeMutationEffect(ctx, action)
 				// Killing the server's last session ends the server, so the
 				// post-write route read of the plan's own socket answers with
@@ -1353,9 +1362,13 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 				})
 			},
 			Apply: func(ctx context.Context) error {
+				if serverEnded {
+					return nil
+				}
 				_, err := runRuntimeMutationCommand(ctx, m.runner, action)
 				if err == nil {
 					killed = true
+					serverEnded = m.rollbackKillEndedServer(ctx, action)
 					return nil
 				}
 				// Every guard ran before the first kill, so an earlier kill of
@@ -1376,6 +1389,21 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 	if err := executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps)); err != nil && m.warn != nil {
 		fmt.Fprintf(m.warn, "projmux: rollback stopped before an unguarded runtime write: %v\n", err)
 	}
+}
+
+// rollbackKillEndedServer reports whether the rollback kill that just succeeded
+// ended the server the plan guarded. Every guard, the kill's own server
+// generation check included, ran before the first write, so the proof is the
+// next read of that exact physical socket answering with a teardown response
+// instead of a server. A live server, another socket, or any other failure is
+// no proof.
+func (m *materializer) rollbackKillEndedServer(ctx context.Context, action plannedRuntimeMutation) bool {
+	if m.routeAuthority == nil || m.expectedSocketPath == "" ||
+		filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(m.expectedSocketPath) {
+		return false
+	}
+	_, err := m.runnerAtPhysicalSocket(m.expectedSocketPath).Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	return err != nil && tmuxServerTeardownFailure(err)
 }
 
 // tmuxServerTeardownFailure is the closed set of tmux responses for a server
