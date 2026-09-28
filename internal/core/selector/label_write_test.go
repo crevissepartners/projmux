@@ -144,6 +144,68 @@ func TestFormatLabelsIsStableAndUsesTheSetSpelling(t *testing.T) {
 	}
 }
 
+// TestFormatLabelsQuotesTokensThatWouldBreakTheLine is the quoting table. A
+// key or value carrying a rune strconv.IsPrint rejects, invalid UTF-8, or a
+// leading `"` renders in strconv.Quote form; everything else, including a space
+// and printable non-ASCII text, renders exactly as stored.
+func TestFormatLabelsQuotesTokensThatWouldBreakTheLine(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+		want  string
+	}{
+		{name: "newline", key: "k", value: "line1\nline2", want: `k="line1\nline2"`},
+		{name: "tab", key: "tab", value: "a\tb", want: `tab="a\tb"`},
+		{name: "carriage return", key: "cr", value: "before\rafter", want: `cr="before\rafter"`},
+		{name: "escape sequence", key: "esc", value: "x\x1b[31mred\x1b[0m", want: `esc="x\x1b[31mred\x1b[0m"`},
+		{name: "C0 control", key: "nul", value: "a\x01b", want: `nul="a\x01b"`},
+		{name: "C1 next line", key: "c1", value: "a\u0085b", want: `c1="a\u0085b"`},
+		{name: "line separator", key: "ls", value: "a\u2028b", want: `ls="a\u2028b"`},
+		{name: "invalid UTF-8", key: "bad", value: "a\xffb", want: `bad="a\xffb"`},
+		{name: "leading quote", key: "q", value: `"quoted"`, want: `q="\"quoted\""`},
+		{name: "inner quote stays", key: "q", value: `say "hi"`, want: `q=say "hi"`},
+		{name: "empty value", key: "tier", value: "", want: "tier="},
+		{name: "space", key: "note", value: "two words", want: "note=two words"},
+		{name: "printable non-ASCII", key: "unicode", value: "레이블", want: "unicode=레이블"},
+		{name: "control character in the key", key: "bad\nkey", value: "v", want: `"bad\nkey"=v`},
+		{name: "both quoted", key: "k\t", value: "v\r", want: `"k\t"="v\r"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := FormatLabels(map[string]string{test.key: test.value})
+			if got != test.want {
+				t.Fatalf("FormatLabels(%q=%q) = %s, want %s", test.key, test.value, got, test.want)
+			}
+			if strings.ContainsAny(got, "\n\r\t\x1b") {
+				t.Fatalf("FormatLabels(%q=%q) = %q still carries a raw control character", test.key, test.value, got)
+			}
+		})
+	}
+}
+
+// TestFormatLabelsLeavesControlFreePairsByteIdentical pins that the quoting is
+// invisible to every map without a token it applies to: the line is the plain
+// sorted `key=value` join it was before quoting existed.
+func TestFormatLabelsLeavesControlFreePairsByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	labels := map[string]string{
+		"role":    "epic-worker",
+		"note":    "two words",
+		"unicode": "레이블",
+		"url":     "https://example.test/merge_requests/1?tab=diffs",
+		"inner":   `say "hi"`,
+		"tier":    "",
+	}
+	want := `inner=say "hi" note=two words role=epic-worker tier= unicode=레이블 url=https://example.test/merge_requests/1?tab=diffs`
+	if got := FormatLabels(labels); got != want {
+		t.Fatalf("FormatLabels = %q, want %q", got, want)
+	}
+}
+
 // TestWriteGrammarAcceptsEveryValueTheReadGrammarProduces pins the one property
 // the two grammars must share: a value written by `key=value` is spelled the
 // same way `--selector key=value` spells it, so a label is selectable by the

@@ -538,6 +538,18 @@ Two properties follow from that grammar and are worth stating outright:
   `create --label` has never had them and one field must not have two contracts
   depending on which route wrote it.
 
+Because nothing constrains the characters of a key or value, the human-readable
+lines that print a metadata map quote the ones that would break them. The
+`label` result line and the `Labels:` and `Annotations:` rows of `describe`
+spell each pair as `key=value` on one line, and a key or value renders in Go
+`strconv.Quote` form when it holds a character `strconv.IsPrint` rejects (a
+newline, tab, CR, ESC, or other control or format character; the ASCII space
+is printable), is not valid UTF-8, or starts with `"`. So a value written as
+`$'line1\nline2'` prints as `k="line1\nline2"`, and a key written as
+`$'bad\nkey'` prints as `"bad\nkey"=v`. Every other key and value, including
+printable non-ASCII text, prints exactly as stored. Quoting is display only:
+the stored value, `--selector`, and `-o json` keep the original bytes.
+
 What belongs in a label is decided by one question: is this a value you will
 ever filter on? `--selector key=value` reads labels and only labels, so
 classification that selects (`role=epic-owner`, `phase=task-0`) belongs there.

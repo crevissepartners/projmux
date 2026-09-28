@@ -2,7 +2,9 @@ package selector
 
 import (
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // LabelRemovalSuffix is the trailing token that spells a removal in the label
@@ -108,7 +110,11 @@ func LabelChangeSets(changes []LabelChange) (map[string]string, []string) {
 	return set, remove
 }
 
-// FormatLabels renders a label map in stable key order for result text.
+// FormatLabels renders a label or annotation map in stable key order as one
+// line of space-separated `key=value` pairs. It is the single human-readable
+// spelling of a metadata map: the `label` result line and the `describe`
+// Labels and Annotations rows both print through it, so a key or value that
+// would break the line renders the same way on each (see quoteLabelToken).
 func FormatLabels(labels map[string]string) string {
 	keys := make([]string, 0, len(labels))
 	for key := range labels {
@@ -117,7 +123,27 @@ func FormatLabels(labels map[string]string) string {
 	slices.Sort(keys)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, key+LabelAssignmentSeparator+labels[key])
+		parts = append(parts, quoteLabelToken(key)+LabelAssignmentSeparator+quoteLabelToken(labels[key]))
 	}
 	return strings.Join(parts, " ")
+}
+
+// quoteLabelToken returns a key or value as printed on a one-line pair list.
+// Neither writer constrains the characters of a key or value, so a newline
+// would split the line and an ESC or CR would reach the terminal raw. A token
+// holding a rune strconv.IsPrint rejects (the ASCII space is printable), a
+// token that is not valid UTF-8, and a token starting with `"` render in
+// strconv.Quote form; the last case keeps an original value from reading as a
+// quoted one. Every other token, including printable non-ASCII text, is
+// printed unchanged. The stored value and machine output keep the original.
+func quoteLabelToken(token string) string {
+	if strings.HasPrefix(token, `"`) || !utf8.ValidString(token) {
+		return strconv.Quote(token)
+	}
+	for _, r := range token {
+		if !strconv.IsPrint(r) {
+			return strconv.Quote(token)
+		}
+	}
+	return token
 }
