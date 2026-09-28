@@ -182,17 +182,17 @@ func TestRegistryLockObservationReportsTimeoutAndFailures(t *testing.T) {
 	t.Run("a failing callback", func(t *testing.T) {
 		t.Parallel()
 		refused := errors.New("callback refused")
-		run := func(observe bool) (coremetadata.Registry, error, *[]LockObservation) {
+		run := func(observe bool) (coremetadata.Registry, *[]LockObservation, error) {
 			store := testStore(t)
 			var observed *[]LockObservation
 			if observe {
 				observed = recordLockObservations(t, store)
 			}
 			registry, err := store.Update(func(*coremetadata.Registry) error { return refused })
-			return registry, err, observed
+			return registry, observed, err
 		}
-		silentRegistry, silentErr, _ := run(false)
-		registry, err, observed := run(true)
+		silentRegistry, _, silentErr := run(false)
+		registry, observed, err := run(true)
 		if !errors.Is(err, refused) || err != silentErr || !reflect.DeepEqual(registry, silentRegistry) {
 			t.Fatalf("observed Update = (%+v, %v), want the unobserved (%+v, %v)", registry, err, silentRegistry, silentErr)
 		}
@@ -229,7 +229,7 @@ func TestRegistryLockObserverCannotChangeTheMutation(t *testing.T) {
 	t.Parallel()
 
 	refused := errors.New("callback refused")
-	run := func(observe bool) (coremetadata.Registry, coremetadata.Registry, error, string) {
+	run := func(observe bool) (coremetadata.Registry, coremetadata.Registry, string, error) {
 		store := testStore(t)
 		if observe {
 			store.SetLockObserver(func(LockObservation) { panic("observer failure") })
@@ -243,10 +243,10 @@ func TestRegistryLockObserverCannotChangeTheMutation(t *testing.T) {
 		if !reflect.DeepEqual(refusedRegistry, coremetadata.Registry{}) {
 			t.Fatalf("refused Update returned %+v", refusedRegistry)
 		}
-		return committed, refusedRegistry, refusedErr, readFile(t, store.Path())
+		return committed, refusedRegistry, readFile(t, store.Path()), refusedErr
 	}
-	silentCommitted, _, silentErr, silentBytes := run(false)
-	committed, _, err, bytes := run(true)
+	silentCommitted, _, silentBytes, silentErr := run(false)
+	committed, _, bytes, err := run(true)
 	if !reflect.DeepEqual(committed, silentCommitted) || err != silentErr || !errors.Is(err, refused) || bytes != silentBytes {
 		t.Fatalf("a panicking observer changed the mutation:\nobserved=(%+v, %v)\nsilent  =(%+v, %v)\nbytes equal=%t",
 			committed, err, silentCommitted, silentErr, bytes == silentBytes)
