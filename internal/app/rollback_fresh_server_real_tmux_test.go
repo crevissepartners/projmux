@@ -33,9 +33,11 @@ func TestRefusedFreshServerCreateEndsItsServerWithoutARollbackWarning(t *testing
 	}
 	registryBefore := fx.store.snapshot()
 
+	// tmux versions differ in whether the failed hook's own text reaches the
+	// error, so the refusal is judged by the new-window failure alone.
 	_, _, err := runRoute(t, fx.create, "window", "--project", "uid:"+projectIntentStoppedUID)
-	if err == nil || !strings.Contains(err.Error(), "'exit 1' returned 1") {
-		t.Fatalf("error = %v, want the requested Window's own tmux refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "create tmux window in session") {
+		t.Fatalf("error = %v, want the requested Window's refused new-window", err)
 	}
 	if fx.store.writes != 0 || fx.store.snapshot() != registryBefore {
 		t.Fatalf("refused create wrote the Registry: writes=%d", fx.store.writes)

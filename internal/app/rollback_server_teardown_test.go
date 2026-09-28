@@ -33,6 +33,9 @@ type serverEndingRollbackSeam struct {
 	kills             int
 	// killsAfterEnd counts the kill commands sent to the ended server.
 	killsAfterEnd int
+	// staleReadsAfterEnd answers that many reads after the end as the server
+	// would while it is still exiting, so they see no teardown yet.
+	staleReadsAfterEnd int
 }
 
 func (s *serverEndingRollbackSeam) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -42,6 +45,10 @@ func (s *serverEndingRollbackSeam) Run(ctx context.Context, name string, args ..
 		if s.kills == s.externalEndAtKill {
 			s.ended = true
 		}
+	}
+	if s.ended && !kill && s.staleReadsAfterEnd > 0 {
+		s.staleReadsAfterEnd--
+		return s.rollbackTmuxSeam.Run(ctx, name, args...)
 	}
 	if s.ended {
 		if kill {
@@ -65,9 +72,10 @@ func (s *serverEndingRollbackSeam) Run(ctx context.Context, name string, args ..
 // listing. When that step's own kill succeeded, the ended server is the
 // absence the step wanted, whichever of tmux's two teardown responses the read
 // raced into, and every later step's target ended with that server: the plan
-// sends that socket no further kill and does not stop. Any other failure of
-// that read still stops the plan, and so does a server that ended without a
-// kill of this plan ending it.
+// sends that socket no further kill and does not stop. A later kill that meets
+// the teardown after an own kill converges on the same proof, read again. Any
+// other failure of that read still stops the plan, and so does a server that
+// ended before any kill of this plan succeeded.
 func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 	typed := func(kind inttmux.CommandFailureKind, stderr string) error {
 		return rollbackTeardownFailure{appTypedCommandFailure{failure: inttmux.CommandFailure{Kind: kind, Stderr: stderr}}}
@@ -134,6 +142,37 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 			},
 		},
 		{
+			// The read after the session kill still reaches the exiting
+			// server, so only the Window's kill meets the teardown. The
+			// proof, read again there, converges the step.
+			name: "a later kill that meets the teardown the confirming read missed converges",
+			afterEnd: func(socket string) error {
+				return typed(inttmux.CommandFailureExit, "no server running on "+socket)
+			},
+			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *runtimeLedger {
+				seam.staleReadsAfterEnd = 1
+				session := seam.addSession("owned")
+				session.opts[tmuxopts.ProjectUIDSession] = "prj-owned"
+				window := seedLiveWindow(t, seam.fakeTmux, session, "win-owned", "pan-owned")
+				ledger := &runtimeLedger{}
+				ledger.record(runtimeWindow, window.id, "win-owned")
+				ledger.record(runtimeSession, session.id, "prj-owned")
+				return ledger
+			},
+			check: func(t *testing.T, seam *serverEndingRollbackSeam, warnings string) {
+				if seam.staleReadsAfterEnd != 0 {
+					t.Fatalf("the confirming read did not race the ending server: %#v", seam.calls)
+				}
+				if strings.Contains(warnings, "rollback stopped") {
+					t.Fatalf("rollback stopped on the server its own kill ended: %q", warnings)
+				}
+				if countTmuxVerb(seam.fakeTmux, "kill-window") != 1 || seam.killsAfterEnd != 1 {
+					t.Fatalf("kill-window calls = %d, kills after end = %d, want the one kill that met the teardown: %#v",
+						countTmuxVerb(seam.fakeTmux, "kill-window"), seam.killsAfterEnd, seam.calls)
+				}
+			},
+		},
+		{
 			name: "a server that ended before any kill of the plan stops it",
 			afterEnd: func(socket string) error {
 				return typed(inttmux.CommandFailureExit, "no server running on "+socket)
@@ -146,8 +185,10 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 		},
 		{
 			// The first kill leaves the server alive with the second session,
-			// so no kill of this plan ended the server the second kill meets.
-			name: "a server that ended after an own kill left it alive stops the plan",
+			// and the server is gone before the second kill. An own kill has
+			// succeeded, and every ledger object ended with that server, so
+			// the second step converges on the proof read at its kill.
+			name: "a server gone after an own kill left it alive converges",
 			afterEnd: func(socket string) error {
 				return typed(inttmux.CommandFailureExit, "no server running on "+socket)
 			},
@@ -162,7 +203,11 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 				ledger.record(runtimeSession, second.id, "prj-second")
 				return ledger
 			},
-			check: wantStoppedOnExternalEnd,
+			check: func(t *testing.T, seam *serverEndingRollbackSeam, warnings string) {
+				if strings.Contains(warnings, "rollback stopped") {
+					t.Fatalf("rollback stopped after an own kill on a server that is gone: %q", warnings)
+				}
+			},
 		},
 		{
 			name:     "a different typed exit on the route read still stops the plan",
