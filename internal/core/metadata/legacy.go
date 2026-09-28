@@ -610,7 +610,11 @@ const AnnotationAgentModel = "projmux.io/model"
 //   - a resume-picker create: the profile and every item it inherited from the
 //     Agents recording the conversation are SettingSourceInherited;
 //   - `agent resume --model/--effort`: SettingSourceResume;
-//   - `agent relaunch`: SettingSourceRelaunch;
+//   - `agent relaunch`: SettingSourceRelaunch, for the profile it switches
+//     to (--profile) and for the items it overrides (--instructions, --model,
+//     --effort); an item it puts back in the profile layer (--reset, or every
+//     item of a --profile switch) is SettingSourceProfile, and one left with
+//     no layer at all (no profile) has no source;
 //   - `agent instructions|persona attach|detach`: the instructions are
 //     SettingSourceAttach. A detach leaves the source without the persona: the
 //     Agent was explicitly given no instructions.
@@ -642,6 +646,16 @@ const (
 	SettingSourceAttach    = "attach"
 	SettingSourceInherited = "inherited"
 )
+
+// ValidProfileSource reports whether source is a value
+// AnnotationAgentProfileSource takes.
+func ValidProfileSource(source string) bool {
+	switch source {
+	case SettingSourceFlag, SettingSourceRole, SettingSourceInherited, SettingSourceRelaunch:
+		return true
+	}
+	return false
+}
 
 // ValidSettingSource reports whether source is a value the instructions,
 // model, and effort source annotations take.

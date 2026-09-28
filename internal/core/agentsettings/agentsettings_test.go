@@ -230,3 +230,122 @@ func TestSettingsJSONIsTheShapeRelaunchPrints(t *testing.T) {
 		t.Fatalf("settings JSON = %s\nwant %s", got, want)
 	}
 }
+
+// overridden is an Agent on the role profile that overrides its model and
+// effort and follows its instructions.
+func overridden() map[string]string {
+	return with(createdFromProfile(),
+		metadata.AnnotationAgentProfileSource, metadata.SettingSourceRole,
+		metadata.AnnotationAgentInstructionsSource, metadata.SettingSourceProfile,
+		metadata.AnnotationAgentModel, "haiku",
+		metadata.AnnotationAgentModelSource, metadata.SettingSourceFlag,
+		metadata.AnnotationAgentEffort, "low",
+		metadata.AnnotationAgentEffortSource, metadata.SettingSourceRelaunch)
+}
+
+// TestASwitchClearsEveryOverrideAndTakesTheNewProfile is the profile switch of
+// Task 3: every override is dropped, each item takes the new profile's value,
+// and only the overrides given with the switch are overrides again.
+func TestASwitchClearsEveryOverrideAndTakesTheNewProfile(t *testing.T) {
+	review := &Profile{Name: "review", Digest: "sha256:r1", Instructions: "reviewer", Model: "sonnet"}
+	got := Resolve(Input{
+		Annotations: overridden(), Profile: roleProfile("sha256:p1"),
+		InstructionsDigest: digests(map[string]string{"lead": digestA, "reviewer": digestB}),
+		Switch:             true, NewProfile: review, SwitchSource: metadata.SettingSourceRelaunch,
+		Effort: &Override{Value: "max", Source: metadata.SettingSourceRelaunch},
+	})
+	if !got.ProfileSwitched || got.New.Profile != (ProfileLayer{Name: "review", Digest: "sha256:r1", Source: metadata.SettingSourceRelaunch}) {
+		t.Fatalf("new profile = %+v switched=%t, want review from relaunch", got.New.Profile, got.ProfileSwitched)
+	}
+	want := Settings{
+		Profile:      got.New.Profile,
+		Instructions: Setting{Value: "reviewer", Source: metadata.SettingSourceProfile, ProfileValue: "reviewer"},
+		Model:        Setting{Value: "sonnet", Source: metadata.SettingSourceProfile, ProfileValue: "sonnet"},
+		Effort:       Setting{Value: "max", Source: metadata.SettingSourceRelaunch, Override: true},
+	}
+	if got.New != want {
+		t.Fatalf("new settings =\n%+v\nwant\n%+v", got.New, want)
+	}
+	if got.Current.Model != (Setting{Value: "haiku", Source: metadata.SettingSourceFlag, ProfileValue: "opus", Override: true}) {
+		t.Fatalf("current model = %+v, want the recorded override over the old profile", got.Current.Model)
+	}
+	wantReasons := []string{ReasonProfileChanged, ReasonInstructionsChanged, ReasonModelChanged, ReasonEffortChanged}
+	if !slices.Equal(got.Reasons, wantReasons) || !got.PassModel || got.InstructionsDigest != digestB {
+		t.Fatalf("reasons %v passModel %t digest %q, want %v true %q", got.Reasons, got.PassModel, got.InstructionsDigest, wantReasons, digestB)
+	}
+
+	// A profile the switch cannot read the old one of still switches.
+	got = Resolve(Input{Annotations: overridden(), InstructionsDigest: digests(map[string]string{"reviewer": digestB}),
+		Switch: true, NewProfile: review, SwitchSource: metadata.SettingSourceRelaunch})
+	if got.New.Effort != (Setting{Source: metadata.SettingSourceProfile}) || got.Current.Effort.ProfileValue != "" {
+		t.Fatalf("switch from an unreadable profile: new effort %+v current %+v", got.New.Effort, got.Current.Effort)
+	}
+}
+
+// TestASwitchToTheRecordedProfileKeepsTheOverrides pins that naming the
+// profile the Agent records again is no switch: its overrides stay.
+func TestASwitchToTheRecordedProfileKeepsTheOverrides(t *testing.T) {
+	plain := Resolve(Input{Annotations: overridden(), Profile: roleProfile("sha256:p1"), InstructionsDigest: digests(map[string]string{"lead": digestA})})
+	same := Resolve(Input{Annotations: overridden(), Profile: roleProfile("sha256:p1"), InstructionsDigest: digests(map[string]string{"lead": digestA}),
+		Switch: true, NewProfile: roleProfile("sha256:p1"), SwitchSource: metadata.SettingSourceRelaunch})
+	if same.ProfileSwitched || same.New != plain.New || !slices.Equal(same.Reasons, plain.Reasons) || same.LayersChanged() {
+		t.Fatalf("same-name switch = %+v, want the plain resolution %+v", same, plain)
+	}
+}
+
+// TestASwitchToNoProfileLeavesNoLayer is `--profile none`: the profile and
+// every override go, and each item has no value and no source.
+func TestASwitchToNoProfileLeavesNoLayer(t *testing.T) {
+	got := Resolve(Input{Annotations: overridden(), Profile: roleProfile("sha256:p1"),
+		InstructionsDigest: digests(map[string]string{"lead": digestA}), Switch: true, SwitchSource: metadata.SettingSourceRelaunch})
+	none := Setting{Override: true}
+	if !got.ProfileSwitched || got.New != (Settings{Instructions: none, Model: none, Effort: none}) {
+		t.Fatalf("new settings = %+v, want no profile and no values", got.New)
+	}
+	if want := []string{ReasonProfileChanged, ReasonInstructionsChanged, ReasonEffortChanged}; !slices.Equal(got.Reasons, want) || got.PassModel {
+		t.Fatalf("reasons %v passModel %t, want %v and no model passed", got.Reasons, got.PassModel, want)
+	}
+}
+
+// TestAResetPutsOnlyItsItemsBackInTheProfileLayer is `--reset`: the named
+// items follow the profile again, and the rest keep their overrides. An item
+// the profile does not set is left with no value, and a model left without
+// one is not passed.
+func TestAResetPutsOnlyItsItemsBackInTheProfileLayer(t *testing.T) {
+	known := digests(map[string]string{"lead": digestA})
+	got := Resolve(Input{Annotations: overridden(), Profile: roleProfile("sha256:p1"), InstructionsDigest: known, Reset: []string{ItemEffort}})
+	if got.New.Effort != (Setting{Value: "high", Source: metadata.SettingSourceProfile, ProfileValue: "high"}) || got.New.Model != got.Current.Model {
+		t.Fatalf("reset effort: effort %+v model %+v, want the profile's effort and the model override kept", got.New.Effort, got.New.Model)
+	}
+	if !slices.Equal(got.Reasons, []string{ReasonEffortChanged}) || got.PassModel {
+		t.Fatalf("reset effort reasons %v passModel %t", got.Reasons, got.PassModel)
+	}
+
+	noModel := &Profile{Name: "role", Digest: "sha256:p1", Instructions: "lead", Effort: "high"}
+	got = Resolve(Input{Annotations: overridden(), Profile: noModel, InstructionsDigest: known, Reset: []string{ItemModel}})
+	if got.New.Model != (Setting{Source: metadata.SettingSourceProfile}) || got.PassModel || len(got.Reasons) != 0 || !got.LayersChanged() {
+		t.Fatalf("reset model to a profile without one: %+v passModel %t reasons %v", got.New.Model, got.PassModel, got.Reasons)
+	}
+
+	got = Resolve(Input{Annotations: with(overridden(), metadata.AnnotationAgentProfile, "", metadata.AnnotationAgentProfileDigest, ""),
+		InstructionsDigest: known, Reset: Items()})
+	if got.New.Effort != (Setting{Override: true}) || got.New.Instructions != (Setting{Override: true}) {
+		t.Fatalf("reset without a profile: %+v", got.New)
+	}
+}
+
+// TestAnInstructionsOverrideOfNoneIsAnExplicitNone pins `--instructions none`
+// and a detach: no instructions, recorded as an override.
+func TestAnInstructionsOverrideOfNoneIsAnExplicitNone(t *testing.T) {
+	got := Resolve(Input{Annotations: overridden(), Profile: roleProfile("sha256:p1"), InstructionsDigest: digests(map[string]string{"lead": digestA}),
+		Instructions: &Override{Source: metadata.SettingSourceRelaunch}})
+	if got.New.Instructions != (Setting{Source: metadata.SettingSourceRelaunch, ProfileValue: "lead", Override: true}) || !got.InstructionsChanged() || got.InstructionsDigest != "" {
+		t.Fatalf("instructions none = %+v digest %q", got.New.Instructions, got.InstructionsDigest)
+	}
+	// Codex keeps its thread's instructions and says it did not apply them.
+	got = Resolve(Input{Annotations: overridden(), Profile: roleProfile("sha256:p1"), InstructionsDigest: digests(map[string]string{"lead": digestA}),
+		InstructionsFixed: true, Instructions: &Override{Source: metadata.SettingSourceRelaunch}})
+	if !got.InstructionsNotApplied || got.New.Instructions.Value != "lead" || got.InstructionsChanged() {
+		t.Fatalf("codex instructions none = %+v notApplied %t", got.New.Instructions, got.InstructionsNotApplied)
+	}
+}

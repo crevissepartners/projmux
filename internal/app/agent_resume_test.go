@@ -92,10 +92,10 @@ func (l *exactArgvResumeLauncher) PlanAgentResume(provider string, workspace cor
 	return launch, err
 }
 
-// ResolveAgentSettings resolves the layered settings over the real planner's
-// home, as the production resume launcher does.
-func (l *exactArgvResumeLauncher) ResolveAgentSettings(provider string, annotations map[string]string, model, effort, source string) (agentSettingsLaunch, error) {
-	return l.planner.ResolveAgentSettings(provider, annotations, model, effort, source)
+// ResolveAgentSettingsRequest resolves the layered settings over the real
+// planner's home, as the production resume launcher does.
+func (l *exactArgvResumeLauncher) ResolveAgentSettingsRequest(provider string, annotations map[string]string, request agentSettingsRequest) (agentSettingsLaunch, error) {
+	return l.planner.ResolveAgentSettingsRequest(provider, annotations, request)
 }
 
 // pinnedResumeTestLauncher gives a test explicit native endpoint authority

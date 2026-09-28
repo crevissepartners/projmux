@@ -82,13 +82,16 @@ type agentPersonaRequest struct {
 // runPersona gives one existing Claude Agent a persona, or takes it away, and
 // relaunches that Agent's provider on the same conversation.
 //
-// It is the two shipped routes run back to back, not a third way to restart a
-// provider: a Running Agent's managed Pane is closed through `delete pane`,
-// which leaves the Agent Offline, and the Agent is brought back through the
-// `agent resume` rebinder, which keeps its uid and its conversation. Between
-// the checks and the stop the command writes the persona snapshot and changes
-// the Agent's persona annotations in one Registry mutation, so the resume
-// seam finds the new persona the same way every later resume will.
+// It is `agent relaunch --instructions <name>` (detach: `--instructions
+// none`), recorded with the source attach, with its own output: the same
+// agentRestart plans and runs it, so the settings come from the same layers
+// and the stop and the resume are the same. A Running Agent's managed Pane is
+// closed through `delete pane`, which leaves the Agent Offline, and the Agent
+// is brought back through the `agent resume` rebinder, which keeps its uid and
+// its conversation. What differs is when the instructions are recorded:
+// between the checks and the stop the command writes the persona snapshot and
+// changes the Agent's persona annotations in one Registry mutation, so the
+// resume seam finds the new persona the same way every later resume will.
 //
 // Every refusal happens before the snapshot is written and leaves no trace.
 // A resume that fails after the stop leaves the Agent Offline with the new
@@ -138,24 +141,9 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		}
 		return refuse(persona.ReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; a persona applies only to --provider %s", target.Spec.Provider, aiModeClaude))
 	}
-	if target.Status.SessionRef.Empty() || strings.TrimSpace(target.Status.SessionRef.ConversationID()) == "" {
-		return refuse(personaReasonNoConversation, "has no provider conversation to resume; projmux records one the first time its provider hook fires")
-	}
-	running := target.Status.Phase == coremetadata.PhaseRunning
-	if !running && !slices.Contains(resumableAgentPhases, target.Status.Phase) {
-		if noun == "instructions" {
-			return refuse(personaReasonNoConversation, fmt.Sprintf("is %s; instructions are attached only to a %s, %s, or %s Agent",
-				target.Status.Phase, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
-		}
-		return refuse(personaReasonNoConversation, fmt.Sprintf("is %s; a persona is attached only to a %s, %s, or %s Agent",
-			target.Status.Phase, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
-	}
-	var paneUID string
-	if running {
-		paneUID = strings.TrimSpace(target.Status.PaneRef)
-		if _, ok := registry.Pane(paneUID); !ok {
-			return refuse(personaReasonNoConversation, fmt.Sprintf("is %s but its managed pane %q is not in the registry", target.Status.Phase, paneUID))
-		}
+	restart := c.newAgentRestart(request.spelling, registry, target, provider, personaTokens(noun), refuse)
+	if err := restart.checkTarget(); err != nil {
+		return err
 	}
 	var loaded persona.Persona
 	if request.action == "attach" {
@@ -171,35 +159,33 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 			return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
 		}
 	}
-	// The resume this command ends with is planned now, against the registry
-	// the stop will leave behind, so a resume `agent resume` would refuse is
-	// refused here while nothing has changed.
-	if err := c.preflightPersonaResume(registry, target, paneUID); err != nil {
-		return refuse(personaReasonNoConversation, "cannot be resumed: "+err.Error())
-	}
-	if running && c.invokedFromAgentPane(registry, target.Metadata.UID) {
-		return refuse(personaReasonSelfTarget, "owns the Pane this command runs in; closing that Pane would end the command before the resume. Run it from another Pane")
+	// The instructions this command gives are an override recorded with the
+	// source attach, `none` for a detach.
+	instructions := loaded.Name
+	if err := c.plan(restart, agentSettingsRequest{instructions: &instructions, source: coremetadata.SettingSourceAttach}); err != nil {
+		return err
 	}
 
+	running, paneUID := restart.running, restart.paneUID
 	current := coremetadata.PersonaAnnotationsOf(target)
 	want := coremetadata.AgentPersonaAnnotations{SystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff, InstructionsSource: coremetadata.SettingSourceAttach}
 	if request.action == "attach" {
 		want.Persona, want.PersonaDigest = loaded.Name, loaded.Digest
 	}
-	interaction := target.EffectiveInteraction(c.clock()).Kind
 	result := agentPersonaResult{
 		Action: request.action, DryRun: request.dryRun,
 		AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: provider,
-		Phase: target.Status.Phase, Interaction: interaction, PaneUID: paneUID,
+		Phase: target.Status.Phase, Interaction: restart.interaction, PaneUID: paneUID,
 		CurrentPersona: current.Persona, CurrentPersonaDigest: current.PersonaDigest,
 		NewPersona: want.Persona, NewPersonaDigest: want.PersonaDigest,
 		SystemPromptSnapshot: want.SystemPromptSnapshot,
 		Restart:              running,
-		ConfirmationRequired: running && interaction != coremetadata.InteractionIdle && interaction != coremetadata.InteractionResponseComplete,
+		ConfirmationRequired: restart.confirmationRequired(),
 	}
 	// A Running Agent already launched with exactly this persona content and
-	// the snapshot mode that honors it has nothing to gain from a restart.
-	if running && current.SameLaunch(want) {
+	// the snapshot mode that honors it, whose other settings its layers
+	// resolve to what it runs, has nothing to gain from a restart.
+	if running && current.SameLaunch(want) && len(restart.settings.resolution.Reasons) == 0 {
 		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
 		result.NewPaneUID = paneUID
 		return writeAgentPersonaResult(stdout, request, result)
@@ -211,84 +197,81 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		}
 		return writeAgentPersonaResult(stdout, request, result)
 	}
-	if result.ConfirmationRequired && !request.yes {
-		return refuse(personaReasonAgentBusy, fmt.Sprintf("is %s with interaction %s; restarting it would cut that turn. Re-run with --yes to restart it anyway, or with --dry-run to review",
-			target.Status.Phase, interaction))
-	}
-	if running {
-		// The stop runs through `delete pane`, which refuses outside tmux
-		// without an exact socket. Refuse that here, before anything changes.
-		if _, err := resolveDeleteTarget(request.spelling, request.socket, c.lookupEnv); err != nil {
-			return err
-		}
-	}
-
-	if request.action == "attach" {
-		store, err := c.openPersonaStore()
-		if err != nil {
-			return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
-		}
-		if _, err := store.WriteSnapshot(loaded.Content); err != nil {
-			return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
-		}
-	}
-	if err := c.setAgentPersona(request.spelling, target, want); err != nil {
-		return err
-	}
-
-	forward := stdout
-	if request.json {
-		forward = io.Discard
-	}
-	if running {
-		if err := c.stopAgentPane(request.socket, paneUID, forward, stderr); err != nil {
-			// `delete pane` can fail after its live half already closed the
-			// Pane, so the error alone does not say whether the old provider
-			// session still runs. Observe it before choosing which annotations
-			// the Agent keeps.
-			liveness, observeErr := c.observeStoppedAgentPane(request.spelling, request.socket, target.Metadata.UID, paneUID)
+	newPane, err := c.run(restart, agentRestartSteps{
+		yes: request.yes, socket: request.socket, json: request.json,
+		beforeStop: func() error {
+			if request.action == "attach" {
+				store, err := c.openPersonaStore()
+				if err != nil {
+					return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
+				}
+				if _, err := store.WriteSnapshot(loaded.Content); err != nil {
+					return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
+				}
+			}
+			return c.setAgentPersona(request.spelling, target, want)
+		},
+		stopFailed: func(err error, liveness personaPaneLiveness, observeErr error) error {
 			if liveness == personaPaneClosed {
 				// The old session is gone, so the old annotations describe
 				// nothing that runs. Keep the new ones and resume: restoring
 				// them would bring the next resume back without the persona.
 				fmt.Fprintf(stderr, "projmux: warning: closing agent/%s's managed pane %s reported an error, but that pane is already closed, so its new persona is kept and the Agent is resumed: %v\n",
 					target.Metadata.Name, paneUID, err)
-			} else {
-				// The Agent may still run its old provider session, so its
-				// annotations go back to what that session was launched with:
-				// leaving the new ones would make a re-run report `unchanged`
-				// for a persona the provider never received.
-				if restoreErr := c.setAgentPersona(request.spelling, target, current); restoreErr != nil {
-					return fmt.Errorf("%s: closing agent/%s's managed pane failed: %w; restoring its persona annotations also failed: %v",
-						request.spelling, target.Metadata.Name, err, restoreErr)
-				}
-				if liveness == personaPaneUnknown {
-					fmt.Fprintf(stderr, "projmux: could not observe whether agent/%s's managed pane %s is still alive (%v); its persona annotations were restored, and re-running the same command recovers: %s\n",
-						target.Metadata.Name, paneUID, observeErr, personaRerunCommand(registry, target, request))
-					return fmt.Errorf("%s: closing agent/%s's managed pane failed and whether it is still alive could not be observed, so its persona annotations were restored: %w",
-						request.spelling, target.Metadata.Name, err)
-				}
-				return fmt.Errorf("%s: closing agent/%s's managed pane failed, so its persona annotations were restored: %w",
+				return nil
+			}
+			// The Agent may still run its old provider session, so its
+			// annotations go back to what that session was launched with:
+			// leaving the new ones would make a re-run report `unchanged` for
+			// a persona the provider never received.
+			if restoreErr := c.setAgentPersona(request.spelling, target, current); restoreErr != nil {
+				return fmt.Errorf("%s: closing agent/%s's managed pane failed: %w; restoring its persona annotations also failed: %v",
+					request.spelling, target.Metadata.Name, err, restoreErr)
+			}
+			if liveness == personaPaneUnknown {
+				fmt.Fprintf(stderr, "projmux: could not observe whether agent/%s's managed pane %s is still alive (%v); its persona annotations were restored, and re-running the same command recovers: %s\n",
+					target.Metadata.Name, paneUID, observeErr, personaRerunCommand(registry, target, request))
+				return fmt.Errorf("%s: closing agent/%s's managed pane failed and whether it is still alive could not be observed, so its persona annotations were restored: %w",
 					request.spelling, target.Metadata.Name, err)
 			}
-		}
-	}
-	if err := c.resumePersonaAgent(request.spelling, target.Metadata.UID, forward, stderr); err != nil {
-		fmt.Fprintf(stderr, "projmux: agent/%s records %s but did not resume: %v\n", target.Metadata.Name, describePersonaAnnotations(want, noun), err)
-		fmt.Fprintf(stderr, "projmux: recover with: %s\n", personaRecoveryCommand(registry, target))
-		return fmt.Errorf("%s: agent/%s is %s with its new persona annotations and needs `agent resume`: %w",
-			request.spelling, target.Metadata.Name, coremetadata.PhaseOffline, err)
+			return fmt.Errorf("%s: closing agent/%s's managed pane failed, so its persona annotations were restored: %w",
+				request.spelling, target.Metadata.Name, err)
+		},
+		// The instructions are recorded already, so the resume reads them
+		// like every later resume will.
+		resume: agentSettingsRequest{},
+		resumeFailed: func(err error) error {
+			fmt.Fprintf(stderr, "projmux: agent/%s records %s but did not resume: %v\n", target.Metadata.Name, describePersonaAnnotations(want, noun), err)
+			fmt.Fprintf(stderr, "projmux: recover with: %s\n", personaRecoveryCommand(registry, target))
+			return fmt.Errorf("%s: agent/%s is %s with its new persona annotations and needs `agent resume`: %w",
+				request.spelling, target.Metadata.Name, coremetadata.PhaseOffline, err)
+		},
+	}, stdout, stderr)
+	if err != nil {
+		return err
 	}
 	result.Outcome = personaOutcomeResumed
 	if running {
 		result.Outcome = personaOutcomeRestarted
 	}
-	if after, err := c.loadRegistry(); err == nil {
-		if resumed, ok := after.Agent(target.Metadata.UID); ok {
-			result.NewPaneUID = resumed.Status.PaneRef
-		}
-	}
+	result.NewPaneUID = newPane
 	return writeAgentPersonaResult(stdout, request, result)
+}
+
+// personaTokens are the refusal tokens of `agent instructions|persona
+// attach|detach`.
+func personaTokens(noun string) agentRestartTokens {
+	return agentRestartTokens{
+		busy: personaReasonAgentBusy, selfTarget: personaReasonSelfTarget, noConversation: personaReasonNoConversation,
+		phase: func(phase coremetadata.AgentPhase) string {
+			if noun == "instructions" {
+				return fmt.Sprintf("is %s; instructions are attached only to a %s, %s, or %s Agent",
+					phase, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed)
+			}
+			return fmt.Sprintf("is %s; a persona is attached only to a %s, %s, or %s Agent",
+				phase, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed)
+		},
+	}
 }
 
 // parseAgentPersonaArgs parses `attach <agent-ref> <persona>` and
@@ -357,16 +340,9 @@ func (c *agentCommand) openPersonaStore() (persona.Store, error) {
 	return persona.NewDefaultStore(paths), nil
 }
 
-// preflightPersonaResume plans the final resume against the registry the stop
-// would leave: the Running Agent's managed Pane deleted by the same mutator
-// `delete pane` runs. Nothing is written.
-func (c *agentCommand) preflightPersonaResume(registry coremetadata.Registry, agent coremetadata.Agent, paneUID string) error {
-	_, err := c.predictStoppedAgentResume(registry, agent, paneUID)
-	return err
-}
-
-// predictStoppedAgentResume is preflightPersonaResume that also returns the
-// plan, for a caller that checks more of it before anything changes.
+// predictStoppedAgentResume plans the final resume of a restart against the
+// registry the stop would leave: the Running Agent's managed Pane deleted by
+// the same mutator `delete pane` runs. Nothing is written.
 func (c *agentCommand) predictStoppedAgentResume(registry coremetadata.Registry, agent coremetadata.Agent, paneUID string) (agentResumePlan, error) {
 	predicted := registry.Clone()
 	if paneUID != "" {
@@ -503,17 +479,12 @@ func managedPaneMirrorLive(ctx context.Context, runtime *tmuxPaneDeleteRuntime, 
 	return slices.ContainsFunc(rows, func(row livePaneDeleteRow) bool { return row.paneUID == paneUID }), nil
 }
 
-// resumePersonaAgent brings the stopped Agent back through the `agent resume`
-// rebinder, planned from the registry as it is now.
-func (c *agentCommand) resumePersonaAgent(spelling, agentUID string, stdout, stderr io.Writer) error {
-	return c.resumeStoppedAgent(agentUID, "", "", "", stdout, stderr)
-}
-
-// resumeStoppedAgent is resumePersonaAgent with `agent resume --model/--effort`
-// overrides: empty values are a plain resume, byte for byte. source is where
-// the overrides came from, recorded beside them; empty means
-// coremetadata.SettingSourceResume.
-func (c *agentCommand) resumeStoppedAgent(agentUID, model, effort, source string, stdout, stderr io.Writer) error {
+// resumeStoppedAgent brings the stopped Agent back through the `agent resume`
+// rebinder, planned from the registry as it is now, with what request asks of
+// its layers: the zero request is a plain resume, byte for byte. The model
+// and effort are `agent resume --model/--effort` overrides recorded under
+// request.source (empty means coremetadata.SettingSourceResume).
+func (c *agentCommand) resumeStoppedAgent(agentUID string, request agentSettingsRequest, stdout, stderr io.Writer) error {
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
@@ -529,7 +500,8 @@ func (c *agentCommand) resumeStoppedAgent(agentUID, model, effort, source string
 	if err != nil {
 		return err
 	}
-	plan.modelOverride, plan.effortOverride, plan.overrideSource = model, effort, source
+	plan.modelOverride, plan.effortOverride, plan.overrideSource = request.model, request.effort, request.source
+	plan.layerChanges = agentSettingsRequest{profile: request.profile, instructions: request.instructions, reset: request.reset}
 	return c.rebind.rebind("agent resume", plan, stdout, stderr)
 }
 
