@@ -92,15 +92,15 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 var exactTransportRoots = []string{"reconcile", "get", "runtime", "delete"}
 
 // exactTransportRoutes are single routes outside those roots that accept the
-// same exact-server flags. `agent persona attach|detach` stops a Running Agent
-// by running `delete pane` on its managed Pane, and passes --socket and
-// --socket-path through unchanged, so it needs exactly the flags `delete`
-// needs outside tmux and no other routing rule. `unregister project` runs the
+// same exact-server flags. `agent persona attach|detach` and `agent relaunch`
+// stop a Running Agent by running `delete pane` on its managed Pane, and pass
+// --socket and --socket-path through unchanged, so they need exactly the flags
+// `delete` needs outside tmux and no other routing rule. `unregister project` runs the
 // same parser as `delete` ((*deleteCommand).runKind) with the same exact-server
 // flags, and uses them only through lenientDeletionRoute to pick the tmux
 // server that proves the deletion record's actor; it is not binding
 // convergence.
-var exactTransportRoutes = []string{"agent instructions", "agent persona", "unregister project"}
+var exactTransportRoutes = []string{"agent relaunch", "agent instructions", "agent persona", "unregister project"}
 
 // exactTransportUsage reports whether one usage line spells an exact
 // transport route, which a parent namespace's usage list repeats.

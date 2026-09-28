@@ -204,6 +204,23 @@ func personaAgentEffects() *AllowedEffects {
 	)
 }
 
+// relaunchAgentEffects is `agent relaunch`: the Agent keeps its identity and
+// name, its managed Pane is replaced when it was Running, its effort
+// annotation is replaced when --effort is given, and its provider runtime is
+// stopped and materialized again. An `unchanged` run and a dry run change
+// nothing.
+func relaunchAgentEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged, IdentityReused},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged, TopologyReplaced},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateReplaced},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityExactOne},
+	)
+}
+
 func renameResourceEffects() *AllowedEffects {
 	return allowedEffects(
 		[]IdentityEffect{IdentityUnchanged},
@@ -844,6 +861,7 @@ var routes = []Route{
 			"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]",
 			"projmux agent topic set <text> [<agent-ref>] [--agent <ref>]",
 			"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]",
+			"projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
@@ -871,7 +889,7 @@ var routes = []Route{
 			"projmux agent sessions project <project-ref> [-o json]",
 			"projmux agent sessions attribute [--dry-run] [-o json]",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent approval list", "agent approval answer", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer", "agent sessions list", "agent sessions backfill", "agent sessions project", "agent sessions attribute"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent relaunch", "agent instructions attach", "agent instructions detach", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent approval list", "agent approval answer", "agent review", "agent integrate", "agent usage", "agent capabilities", "agent models", "agent message send", "agent message status", "agent message qualify", "agent wait", "agent question enable", "agent question disable", "agent question list", "agent question answer", "agent sessions list", "agent sessions backfill", "agent sessions project", "agent sessions attribute"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -890,6 +908,21 @@ var routes = []Route{
 				Usage:            []string{"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]"},
 				Notes:            []string{"A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.", "Codex keeps the developer instructions its thread started with; resume cannot replace them."},
 				Canonical:        []string{"agent resume"},
+			},
+			{
+				// Relaunch is `delete pane` on a Running Agent's managed Pane
+				// followed by the `agent resume` rebind with --model and
+				// --effort; an Offline or Failed Agent is only resumed. The
+				// Agent keeps its uid and its provider conversation, the rebind
+				// records the effort, and the model is recorded nowhere.
+				Effects:    relaunchAgentEffects(),
+				Name:       "relaunch",
+				Invocation: InvocationExplicit,
+				Summary:    "Restart one exact Claude or Codex Agent on the same conversation with another model or effort",
+				Notes:      []string{"The model is passed to this one launch and not recorded; the effort is recorded on the Agent, so later resumes re-pass it."},
+				Usage:      []string{"projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
+				Canonical:  []string{"agent relaunch"},
+				Outputs:    []OutputMode{OutputModeJSON},
 			},
 			{
 				// Attach and detach are `delete pane` on a Running Agent's

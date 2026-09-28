@@ -310,7 +310,7 @@ func exactAgentActionEligibility(registry coremetadata.Registry, agent coremetad
 		if agent.Status.SessionRef == nil || agent.Status.SessionRef.Provider != agent.Spec.Provider || agent.Status.SessionRef.ConversationID() == "" {
 			return false, "provider conversation identity is unavailable"
 		}
-	case "persona.attach", "persona.detach":
+	case "persona.attach", "persona.detach", "relaunch":
 		if agent.Status.Phase != coremetadata.PhaseRunning && !slicesContainsAgentPhase(resumableAgentPhases, agent.Status.Phase) {
 			return false, "requires a Running, Offline, or Failed Agent"
 		}

@@ -241,12 +241,12 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		forward = io.Discard
 	}
 	if running {
-		if err := c.stopAgentPane(request, paneUID, forward, stderr); err != nil {
+		if err := c.stopAgentPane(request.socket, paneUID, forward, stderr); err != nil {
 			// `delete pane` can fail after its live half already closed the
 			// Pane, so the error alone does not say whether the old provider
 			// session still runs. Observe it before choosing which annotations
 			// the Agent keeps.
-			liveness, observeErr := c.observeStoppedAgentPane(request, target.Metadata.UID, paneUID)
+			liveness, observeErr := c.observeStoppedAgentPane(request.spelling, request.socket, target.Metadata.UID, paneUID)
 			if liveness == personaPaneClosed {
 				// The old session is gone, so the old annotations describe
 				// nothing that runs. Keep the new ones and resume: restoring
@@ -361,21 +361,27 @@ func (c *agentCommand) openPersonaStore() (persona.Store, error) {
 // would leave: the Running Agent's managed Pane deleted by the same mutator
 // `delete pane` runs. Nothing is written.
 func (c *agentCommand) preflightPersonaResume(registry coremetadata.Registry, agent coremetadata.Agent, paneUID string) error {
+	_, err := c.predictStoppedAgentResume(registry, agent, paneUID)
+	return err
+}
+
+// predictStoppedAgentResume is preflightPersonaResume that also returns the
+// plan, for a caller that checks more of it before anything changes.
+func (c *agentCommand) predictStoppedAgentResume(registry coremetadata.Registry, agent coremetadata.Agent, paneUID string) (agentResumePlan, error) {
 	predicted := registry.Clone()
 	if paneUID != "" {
 		if c.store == nil || c.store.mutator == nil {
-			return errors.New("the registry mutator is not configured")
+			return agentResumePlan{}, errors.New("the registry mutator is not configured")
 		}
 		if err := c.store.mutator().DeletePane(&predicted, paneUID); err != nil {
-			return err
+			return agentResumePlan{}, err
 		}
 	}
 	stopped, ok := predicted.Agent(agent.Metadata.UID)
 	if !ok {
-		return fmt.Errorf("agent %q disappeared", agent.Metadata.UID)
+		return agentResumePlan{}, fmt.Errorf("agent %q disappeared", agent.Metadata.UID)
 	}
-	_, err := c.prepareResume("agent resume", predicted, stopped)
-	return err
+	return c.prepareResume("agent resume", predicted, stopped)
 }
 
 // invokedFromAgentPane reports whether this process runs in the managed Pane
@@ -408,16 +414,16 @@ func (c *agentCommand) setAgentPersona(spelling string, planned coremetadata.Age
 // stopAgentPane closes the Agent's managed Pane through `delete pane`, which
 // leaves the Agent Offline. The socket flags are passed through unchanged, so
 // the live half addresses exactly the server `delete pane` would.
-func (c *agentCommand) stopAgentPane(request agentPersonaRequest, paneUID string, stdout, stderr io.Writer) error {
+func (c *agentCommand) stopAgentPane(socket deleteSocketFlags, paneUID string, stdout, stderr io.Writer) error {
 	if c.paneDelete == nil {
 		return errors.New("the managed Pane delete route is not configured")
 	}
 	args := []string{"pane", selector.UIDPrefix + paneUID, "--yes"}
-	if request.socket.socket != "" {
-		args = append(args, "--socket", request.socket.socket)
+	if socket.socket != "" {
+		args = append(args, "--socket", socket.socket)
 	}
-	if request.socket.socketPath != "" {
-		args = append(args, "--socket-path", request.socket.socketPath)
+	if socket.socketPath != "" {
+		args = append(args, "--socket-path", socket.socketPath)
 	}
 	return c.paneDelete.Run(args, stdout, stderr)
 }
@@ -440,7 +446,7 @@ const (
 // Registry half committed. Otherwise the exact server `delete pane` addressed
 // answers, because the live half can close the Pane before the Registry
 // commit fails. The error explains a personaPaneUnknown answer.
-func (c *agentCommand) observeStoppedAgentPane(request agentPersonaRequest, agentUID, paneUID string) (personaPaneLiveness, error) {
+func (c *agentCommand) observeStoppedAgentPane(spelling string, socket deleteSocketFlags, agentUID, paneUID string) (personaPaneLiveness, error) {
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return personaPaneUnknown, err
@@ -455,7 +461,7 @@ func (c *agentCommand) observeStoppedAgentPane(request agentPersonaRequest, agen
 	if _, ok := registry.Pane(paneUID); !ok {
 		return personaPaneClosed, nil
 	}
-	target, err := resolveDeleteTarget(request.spelling, request.socket, c.lookupEnv)
+	target, err := resolveDeleteTarget(spelling, socket, c.lookupEnv)
 	if err != nil {
 		return personaPaneUnknown, err
 	}
@@ -500,6 +506,12 @@ func managedPaneMirrorLive(ctx context.Context, runtime *tmuxPaneDeleteRuntime, 
 // resumePersonaAgent brings the stopped Agent back through the `agent resume`
 // rebinder, planned from the registry as it is now.
 func (c *agentCommand) resumePersonaAgent(spelling, agentUID string, stdout, stderr io.Writer) error {
+	return c.resumeStoppedAgent(agentUID, "", "", stdout, stderr)
+}
+
+// resumeStoppedAgent is resumePersonaAgent with `agent resume --model/--effort`
+// overrides: empty values are a plain resume, byte for byte.
+func (c *agentCommand) resumeStoppedAgent(agentUID, model, effort string, stdout, stderr io.Writer) error {
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
@@ -515,6 +527,7 @@ func (c *agentCommand) resumePersonaAgent(spelling, agentUID string, stdout, std
 	if err != nil {
 		return err
 	}
+	plan.modelOverride, plan.effortOverride = model, effort
 	return c.rebind.rebind("agent resume", plan, stdout, stderr)
 }
 

@@ -98,6 +98,21 @@ func claudeOnly(mode AgentSupportMode, precision CompletionPrecision) []AgentCap
 	return out
 }
 
+// claudeAndCodex marks Claude and Codex supported with mode and every other
+// provider an explicit unsupported cell.
+func claudeAndCodex(mode AgentSupportMode, precision CompletionPrecision) []AgentCapabilityCell {
+	out := make([]AgentCapabilityCell, 0, len(providerOrder))
+	for _, provider := range AgentProviders() {
+		cell := AgentCapabilityCell{Provider: provider, Mode: SupportUnsupported, CompletionPrecision: CompletionNone}
+		if provider == Claude || provider == Codex {
+			cell.Mode = mode
+			cell.CompletionPrecision = precision
+		}
+		out = append(out, cell)
+	}
+	return out
+}
+
 func questionCells(precision CompletionPrecision) []AgentCapabilityCell {
 	out := claudeOnly(SupportProviderHook, precision)
 	for i := range out {
@@ -159,6 +174,7 @@ var agentActions = []AgentAction{
 	{ID: "topic.set", Group: "topic", Route: "agent topic", Callable: true, Cells: cells(SupportGenericRegistry, CompletionRegistryCommit)},
 	{ID: "topic.clear", Group: "topic", Route: "agent topic", Callable: true, Cells: cells(SupportGenericRegistry, CompletionRegistryCommit)},
 	{ID: "resume", Group: "resume", Route: "agent resume", Callable: true, Cells: cells(SupportProviderResume, CompletionProviderLaunch)},
+	{ID: "relaunch", Group: "relaunch", Route: "agent relaunch", Callable: true, Cells: claudeAndCodex(SupportProviderResume, CompletionProviderLaunch)},
 	{ID: "instructions.attach", Group: "instructions", Route: "agent instructions attach", Callable: true, Cells: claudeOnly(SupportProviderResume, CompletionProviderLaunch)},
 	{ID: "instructions.detach", Group: "instructions", Route: "agent instructions detach", Callable: true, Cells: claudeOnly(SupportProviderResume, CompletionProviderLaunch)},
 	{ID: "persona.attach", Group: "persona", Route: "agent instructions attach", Callable: true, Cells: claudeOnly(SupportProviderResume, CompletionProviderLaunch)},
