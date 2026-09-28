@@ -339,12 +339,16 @@ func TestClaudeQuestionHookCanceledClosesSilentlyAndRefusesALateAnswer(t *testin
 	if got := waitHookOutput(t, done); got != "" {
 		t.Fatalf("canceled hook printed %q", got)
 	}
-	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateClosed {
-		t.Fatalf("state = %s, want closed", record.State)
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateClosed || record.Disposition != "hook-canceled" {
+		t.Fatalf("state = %s/%q, want closed/hook-canceled", record.State, record.Disposition)
 	}
 	_, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, id, "--option", "1=make", "--option", "2=main")
-	if err == nil || !strings.Contains(err.Error(), "(question-closed)") {
-		t.Fatalf("late answer err = %v, want question-closed", err)
+	if err == nil || !strings.Contains(err.Error(), "was closed before an answer arrived (hook-canceled); Claude Code no longer asks it (question-closed)") {
+		t.Fatalf("late answer err = %v, want question-closed saying Claude Code no longer asks it", err)
+	}
+	listed, _, err := runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent)
+	if err != nil || !strings.Contains(listed, id+"\tclosed (hook-canceled; Claude Code no longer asks it)\n") {
+		t.Fatalf("list = %q, %v", listed, err)
 	}
 }
 
@@ -360,8 +364,12 @@ func TestClaudeQuestionHookDisableHandsTheQuestionBack(t *testing.T) {
 	if got := waitHookOutput(t, done); got != "" {
 		t.Fatalf("hook printed %q after disable", got)
 	}
-	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateClosed {
-		t.Fatalf("state = %s, want closed", record.State)
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateClosed || record.Disposition != "channel-off" {
+		t.Fatalf("state = %s/%q, want closed/channel-off", record.State, record.Disposition)
+	}
+	listed, _, err := runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent)
+	if err != nil || !strings.Contains(listed, id+"\tclosed (channel-off; Claude Code still asks it in its own prompt)\n") {
+		t.Fatalf("list = %q, %v", listed, err)
 	}
 	agent, _ := fixture.resources.registry.Agent(questionTestAgent)
 	if coremetadata.QuestionChannelEnabled(*agent) {
@@ -591,7 +599,7 @@ func TestAgentQuestionListShowsAClosedRecordsReasonAsWritten(t *testing.T) {
 
 	fixture := newQuestionFixture(t, true)
 	record := fixture.createQuestionRecord(t)
-	if _, err := fixture.store.Close(record.ID); err != nil {
+	if _, err := fixture.store.Close(record.ID, agentquestion.CloseReasonPopupFailed); err != nil {
 		t.Fatal(err)
 	}
 	const reason = "reason-no-release-writes-yet"
@@ -698,5 +706,54 @@ func TestAgentQuestionListJSONAlwaysEmitsIsOther(t *testing.T) {
 				t.Fatalf("secret answer key listed: %s", stdout)
 			}
 		}
+	}
+}
+
+// TestAgentQuestionClosedRefusalSaysWhetherTheProviderStillAsks pins, for
+// every close reason, the answer refusal and the list line: the token stays
+// question-closed (answered-elsewhere keeps its own), and the detail says
+// whether the provider still asks the question in its own prompt. A reason
+// this release does not know reads as before.
+func TestAgentQuestionClosedRefusalSaysWhetherTheProviderStillAsks(t *testing.T) {
+	t.Parallel()
+
+	const claudeAsks = "Claude Code still asks it in its own prompt"
+	const codexAsks = "Codex still asks it in its own input surface"
+	for _, test := range []struct {
+		provider, disposition string
+		reason, detail, line  string
+	}{
+		{"", "popup-dismissed", questionReasonClosed, "was closed before an answer arrived (popup-dismissed); " + claudeAsks, "closed (popup-dismissed; " + claudeAsks + ")"},
+		{"", "popup-failed", questionReasonClosed, "was closed before an answer arrived (popup-failed); " + claudeAsks, "closed (popup-failed; " + claudeAsks + ")"},
+		{"", "hook-canceled", questionReasonClosed, "was closed before an answer arrived (hook-canceled); Claude Code no longer asks it", "closed (hook-canceled; Claude Code no longer asks it)"},
+		{"", "hook-failed", questionReasonClosed, "was closed before an answer arrived (hook-failed); " + claudeAsks, "closed (hook-failed; " + claudeAsks + ")"},
+		{"", "channel-off", questionReasonClosed, "was closed before an answer arrived (channel-off); " + claudeAsks, "closed (channel-off; " + claudeAsks + ")"},
+		{"codex", "popup-dismissed", questionReasonClosed, "was closed before an answer arrived (popup-dismissed); " + codexAsks, "closed (popup-dismissed; " + codexAsks + ")"},
+		{"codex", "popup-failed", questionReasonClosed, "was closed before an answer arrived (popup-failed); " + codexAsks, "closed (popup-failed; " + codexAsks + ")"},
+		{"codex", "channel-off", questionReasonClosed, "was closed before an answer arrived (channel-off); " + codexAsks, "closed (channel-off; " + codexAsks + ")"},
+		{"codex", "watch-stopped", questionReasonClosed, "was closed before an answer arrived (watch-stopped); " + codexAsks, "closed (watch-stopped; " + codexAsks + ")"},
+		{"codex", "turn-ended", questionReasonClosed, "was closed before an answer arrived (turn-ended); Codex no longer asks it", "closed (turn-ended; Codex no longer asks it)"},
+		{"codex", "answered-elsewhere", questionReasonAnsweredElsewhere, "was already answered in Codex's own input surface", "closed (answered-elsewhere; Codex no longer asks it)"},
+		{"", "reason-no-release-writes-yet", questionReasonClosed, "was closed before an answer arrived", "closed (reason-no-release-writes-yet)"},
+		{"", "", questionReasonClosed, "was closed before an answer arrived", "closed"},
+	} {
+		record := agentquestion.Record{ID: "question-0000000000000001", Provider: test.provider, State: agentquestion.StateClosed, Disposition: test.disposition}
+		if reason, detail := questionRecordRefusal(record); reason != test.reason || detail != test.detail {
+			t.Errorf("%s/%q refusal = %s %q, want %s %q", test.provider, test.disposition, reason, detail, test.reason, test.detail)
+		}
+		var out strings.Builder
+		view := agentQuestionView{ID: record.ID, State: record.State, Disposition: record.Disposition, asking: questionClosedAsking(record)}
+		if err := writeAgentQuestionList(&out, agentQuestionList{AgentName: "a", Channel: "on", Questions: []agentQuestionView{view}}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if want := record.ID + "\t" + test.line + "\n"; !strings.Contains(out.String(), want) {
+			t.Errorf("%s/%q list = %q, want line %q", test.provider, test.disposition, out.String(), want)
+		}
+		if data, err := json.Marshal(view); err != nil || strings.Contains(string(data), "asking") || strings.Contains(string(data), "still asks") {
+			t.Errorf("%s/%q json = %s, %v; want no new key", test.provider, test.disposition, data, err)
+		}
+	}
+	if reason, detail := questionRecordRefusal(agentquestion.Record{State: agentquestion.StateExpired, Disposition: ""}); reason != questionReasonExpired || detail != "expired; Claude Code asked it in its own prompt" {
+		t.Errorf("expired refusal = %s %q", reason, detail)
 	}
 }

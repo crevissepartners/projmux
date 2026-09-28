@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -569,6 +571,8 @@ func TestClaudeQuestionHookFailurePathsGiveTheQuestionBack(t *testing.T) {
 		setup func(*questionFixture, *claudeQuestionHook, *fakeQuestionPopup)
 		// recorded is whether the path gets as far as recording the question.
 		recorded bool
+		// reason is the close reason a recorded question ends with.
+		reason agentquestion.CloseReason
 	}{
 		{name: "hook failure: no question id", setup: func(_ *questionFixture, hook *claudeQuestionHook, _ *fakeQuestionPopup) {
 			hook.newID = func() (string, error) { return "", errors.New("no entropy") }
@@ -576,24 +580,24 @@ func TestClaudeQuestionHookFailurePathsGiveTheQuestionBack(t *testing.T) {
 		{name: "store failure", setup: func(_ *questionFixture, hook *claudeQuestionHook, _ *fakeQuestionPopup) {
 			hook.store = func() (*agentquestion.Store, error) { return nil, errors.New("no state dir") }
 		}},
-		{name: "popup open failure", recorded: true, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "popup open failure", recorded: true, reason: agentquestion.CloseReasonPopupFailed, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error {
 				return errors.New("display-popup: no current client")
 			}
 		}},
-		{name: "picker crash", recorded: true, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "picker crash", recorded: true, reason: agentquestion.CloseReasonPopupFailed, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			// The popup's process ends without touching the record.
 			popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error {
 				return errors.New("exit status 2")
 			}
 		}},
-		{name: "popup goroutine panic", recorded: true, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "popup goroutine panic", recorded: true, reason: agentquestion.CloseReasonPopupFailed, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error { panic("popup bug") }
 		}},
-		{name: "Esc in the popup", recorded: true, setup: func(fixture *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "Esc in the popup", recorded: true, reason: agentquestion.CloseReasonPopupDismissed, setup: func(fixture *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			fixture.runPickerInPopup(popup, pickRow("make"), pressEsc)
 		}},
-		{name: "picker error in the popup", recorded: true, setup: func(fixture *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "picker error in the popup", recorded: true, reason: agentquestion.CloseReasonPopupFailed, setup: func(fixture *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			fixture.runPickerInPopup(popup, func(intpicker.Options) (intpicker.Result, error) { return intpicker.Result{}, errors.New("no tty") })
 		}},
 	} {
@@ -626,14 +630,91 @@ func TestClaudeQuestionHookFailurePathsGiveTheQuestionBack(t *testing.T) {
 				}
 				return
 			}
-			if len(records) != 1 || records[0].State != agentquestion.StateClosed {
-				t.Fatalf("records = %#v, want one closed", records)
+			if len(records) != 1 || records[0].State != agentquestion.StateClosed || records[0].Disposition != string(test.reason) {
+				t.Fatalf("records = %#v, want one closed with %s", records, test.reason)
 			}
 			// A popup that showed and ended is never opened again.
 			if _, opens, _ := popup.counts(); opens != 1 {
 				t.Fatalf("popup opened %d times, want 1", opens)
 			}
 		})
+	}
+}
+
+// TestClaudeQuestionPickerClosesWithItsOwnReason runs the picker alone, with
+// no hook behind it to close the record: Esc gives the question back as
+// popup-dismissed and a picker that fails as popup-failed.
+func TestClaudeQuestionPickerClosesWithItsOwnReason(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		steps  []func(intpicker.Options) (intpicker.Result, error)
+		reason agentquestion.CloseReason
+	}{
+		{name: "Esc", steps: steps(pickRow("make"), pressEsc), reason: agentquestion.CloseReasonPopupDismissed},
+		{name: "picker error", steps: steps(func(intpicker.Options) (intpicker.Result, error) { return intpicker.Result{}, errors.New("no tty") }), reason: agentquestion.CloseReasonPopupFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newQuestionFixture(t, true)
+			record := fixture.createQuestionRecord(t)
+			picker, _ := fixture.picker(test.steps...)
+			_ = picker.run(record.ID, questionTestAgent)
+			got, _, err := fixture.store.Get(record.ID)
+			if err != nil || got.State != agentquestion.StateClosed || got.Disposition != string(test.reason) {
+				t.Fatalf("record = %s/%q, %v, want closed/%s", got.State, got.Disposition, err, test.reason)
+			}
+		})
+	}
+}
+
+// TestClaudeQuestionHookRetriesAFailedCloseAsPopupFailed is repro R2: the
+// popup ends while the store cannot be written, so the record keeps waiting
+// until a later look closes it, still as popup-failed.
+func TestClaudeQuestionHookRetriesAFailedCloseAsPopupFailed(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, false)
+	fixture.answering = config.AgentQuestionAnsweringProjmux
+	popup := newFakeQuestionPopup("client-1")
+	released := make(chan time.Time, 1)
+	popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error {
+		// Hold the store lock past one close's lock wait, then end the popup.
+		lock, err := os.OpenFile(fixture.store.Path()+".flock", os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return err
+		}
+		if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+			_ = lock.Close()
+			return err
+		}
+		go func() {
+			time.Sleep(3 * time.Second)
+			released <- time.Now()
+			_ = lock.Close()
+		}()
+		return errors.New("client detached")
+	}
+	fixture.popup = popup
+	hook := fixture.hook(time.Minute)
+	var stdout bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hook.run(context.Background(), []string{"--pane=" + questionTestPane}, strings.NewReader(questionTestPayload("PreToolUse", "AskUserQuestion")), &stdout, &bytes.Buffer{})
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the hook did not return")
+	}
+	records, _ := fixture.store.List(questionTestAgent)
+	if stdout.Len() != 0 || len(records) != 1 || records[0].State != agentquestion.StateClosed || records[0].Disposition != string(agentquestion.CloseReasonPopupFailed) {
+		t.Fatalf("stdout = %q records = %#v, want no decision and one popup-failed record", stdout.String(), records)
+	}
+	if at := <-released; records[0].UpdatedAt.Before(at.Add(-time.Millisecond)) {
+		t.Fatalf("record closed at %s, before the lock was released at %s", records[0].UpdatedAt, at)
 	}
 }
 
@@ -1243,8 +1324,8 @@ func TestClaudeQuestionHookPanicExitsZeroWithNoOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.recorded != (len(records) == 1) || (test.recorded && records[0].State != agentquestion.StateClosed) {
-				t.Fatalf("records = %#v, want recorded=%v and closed", records, test.recorded)
+			if test.recorded != (len(records) == 1) || (test.recorded && (records[0].State != agentquestion.StateClosed || records[0].Disposition != string(agentquestion.CloseReasonHookFailed))) {
+				t.Fatalf("records = %#v, want recorded=%v and closed as hook-failed", records, test.recorded)
 			}
 		})
 	}

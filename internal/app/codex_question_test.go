@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
@@ -114,6 +117,77 @@ func TestCodexQuestionPopupAnswersThroughExistingResponder(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("popup answer did not reach Codex binding")
+	}
+}
+
+// TestCodexQuestionPopupEndClosesAsPopupFailed is a Codex popup that ended
+// without an answer: the record closes as popup-failed, at once or, when the
+// store cannot be written then, on a later look, and Codex is sent nothing.
+func TestCodexQuestionPopupEndClosesAsPopupFailed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// holdLock keeps the store lock past one close's lock wait.
+		holdLock bool
+	}{
+		{name: "popup ended"},
+		{name: "store busy when the popup ended", holdLock: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newQuestionFixture(t, false)
+			agent, _ := fixture.resources.registry.Agent(questionTestAgent)
+			agent.Spec.Provider = aiModeCodex
+			popup := newFakeQuestionPopup("client-1")
+			popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error {
+				if tc.holdLock {
+					lock, err := os.OpenFile(fixture.store.Path()+".flock", os.O_CREATE|os.O_RDWR, 0o600)
+					if err != nil {
+						return err
+					}
+					if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+						_ = lock.Close()
+						return err
+					}
+					time.AfterFunc(3*time.Second, func() { _ = lock.Close() })
+				}
+				return errors.New("client detached")
+			}
+			channel := codexQuestionChannel{
+				loadRegistry: fixture.resources.store().load,
+				store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
+				popup:        popup,
+				answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux },
+				window:       func() time.Duration { return time.Minute },
+				newID:        agentquestion.NewID,
+				poll:         time.Millisecond,
+			}
+			t.Cleanup(channel.Wait)
+			responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			channel.Handle(ctx, codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: "%7", Generation: "gen-1", ThreadID: "thread-1"}, codexappserver.Notification{
+				Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`),
+				Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","options":[{"label":"A"}]}]}`),
+			}, responder)
+			popup.waitOpened(t)
+			deadline := time.After(15 * time.Second)
+			for {
+				records, err := fixture.store.List(questionTestAgent)
+				if err == nil && len(records) == 1 && records[0].State != agentquestion.StateWaiting {
+					if records[0].State != agentquestion.StateClosed || records[0].Disposition != string(agentquestion.CloseReasonPopupFailed) {
+						t.Fatalf("record = %s/%q, want closed/popup-failed", records[0].State, records[0].Disposition)
+					}
+					break
+				}
+				select {
+				case <-deadline:
+					t.Fatalf("record still waiting: %+v, %v", records, err)
+				case <-time.After(5 * time.Millisecond):
+				}
+			}
+			if len(responder.replies) != 0 {
+				t.Fatal("a closed question answered the Codex request")
+			}
+		})
 	}
 }
 
@@ -242,8 +316,9 @@ func TestCodexQuestionChannelCloseAndExpiryLeaveNativePromptAnswerable(t *testin
 		window time.Duration
 		close  bool
 		want   agentquestion.State
+		reason string
 	}{
-		{name: "disable", window: time.Minute, close: true, want: agentquestion.StateClosed},
+		{name: "disable", window: time.Minute, close: true, want: agentquestion.StateClosed, reason: "channel-off"},
 		{name: "expiry", window: 20 * time.Millisecond, want: agentquestion.StateExpired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,6 +358,9 @@ func TestCodexQuestionChannelCloseAndExpiryLeaveNativePromptAnswerable(t *testin
 					t.Fatalf("record missing after %s: %v", tc.name, err)
 				}
 				if record.State == tc.want {
+					if record.Disposition != tc.reason {
+						t.Fatalf("record disposition = %q, want %q", record.Disposition, tc.reason)
+					}
 					break
 				}
 				select {
@@ -410,8 +488,8 @@ func TestCodexQuestionWaitJoinsTheCanceledWaiterBeforeItsStoreWrite(t *testing.T
 		}
 		close(release)
 		<-joined
-		if got := state(); got != agentquestion.StateClosed {
-			t.Fatalf("record state after Wait = %s, want %s", got, agentquestion.StateClosed)
+		if got, _, _ := fixture.store.Get(records[0].ID); got.State != agentquestion.StateClosed || got.Disposition != string(agentquestion.CloseReasonWatchStopped) {
+			t.Fatalf("record after Wait = %s/%q, want closed/watch-stopped", got.State, got.Disposition)
 		}
 	})
 }
@@ -482,7 +560,7 @@ func TestCodexQuestionTurnEndClosesOnlyThisBindingsWaitingRequest(t *testing.T) 
 			}
 			channel.HandleTurnCompleted(codexTurnEndIdentity, codexTurnCompleted("thread-1", state))
 			record, _, err := fixture.store.Get(own.ID)
-			if err != nil || record.State != agentquestion.StateClosed || record.Disposition != "" {
+			if err != nil || record.State != agentquestion.StateClosed || record.Disposition != string(agentquestion.CloseReasonTurnEnded) {
 				t.Fatalf("turn end state/disposition = %s/%q, err = %v", record.State, record.Disposition, err)
 			}
 			for _, id := range others {
@@ -519,12 +597,12 @@ func TestCodexQuestionTurnEndStopsPopupAndRefusesLateCLIAnswer(t *testing.T) {
 		t.Fatalf("store answer after turn end = %v, want %v", err, agentquestion.ErrClosed)
 	}
 	_, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, record.ID, "--index", "1=1")
-	if err == nil || !strings.Contains(err.Error(), questionReasonClosed) {
+	if err == nil || !strings.Contains(err.Error(), questionReasonClosed) || !strings.Contains(err.Error(), "(turn-ended); Codex no longer asks it") {
 		t.Fatalf("late CLI answer refusal = %v", err)
 	}
 }
 
-func TestCodexQuestionResolvedAfterTurnEndKeepsPlainClose(t *testing.T) {
+func TestCodexQuestionResolvedAfterTurnEndKeepsTheTurnEndedClose(t *testing.T) {
 	fixture := newQuestionFixture(t, true)
 	channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringClaude)
 	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
@@ -532,7 +610,7 @@ func TestCodexQuestionResolvedAfterTurnEndKeepsPlainClose(t *testing.T) {
 	channel.HandleTurnCompleted(codexTurnEndIdentity, codexTurnCompleted("thread-1", codexappserver.TurnStateInterrupted))
 	channel.HandleResolved(codexTurnEndIdentity, codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleRequestResolved, ThreadID: "thread-1", RequestID: "17"})
 	record, _, err := fixture.store.Get(record.ID)
-	if err != nil || record.State != agentquestion.StateClosed || record.Disposition != "" {
+	if err != nil || record.State != agentquestion.StateClosed || record.Disposition != string(agentquestion.CloseReasonTurnEnded) {
 		t.Fatalf("state/disposition after trailing resolve = %s/%q, err = %v", record.State, record.Disposition, err)
 	}
 }
@@ -576,11 +654,11 @@ func TestCodexNativeObserverClosesQuestionOfAnInterruptedTurn(t *testing.T) {
 	}
 	waitForCodexObserverEvents(t, sink, 5)
 	records, err := fixture.store.List(questionTestAgent)
-	if err != nil || len(records) != 1 || records[0].State != agentquestion.StateClosed || records[0].Disposition != "" {
+	if err != nil || len(records) != 1 || records[0].State != agentquestion.StateClosed || records[0].Disposition != string(agentquestion.CloseReasonTurnEnded) {
 		for _, record := range records {
 			t.Logf("record %s: %s/%q", record.ID, record.State, record.Disposition)
 		}
-		t.Fatalf("interrupted turn's question count = %d, want one plain closed record, err = %v", len(records), err)
+		t.Fatalf("interrupted turn's question count = %d, want one turn-ended record, err = %v", len(records), err)
 	}
 	cancel()
 	if err := <-done; err != nil {

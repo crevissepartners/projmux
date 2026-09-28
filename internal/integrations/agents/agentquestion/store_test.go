@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -121,7 +124,7 @@ func TestStoreAnswerSettlesAWaitingRecordExactlyOnce(t *testing.T) {
 	if err != nil || settled.State != StateAnswered {
 		t.Fatalf("Settle after answer = %#v, %v", settled, err)
 	}
-	closed, err := store.Close(record.ID)
+	closed, err := store.Close(record.ID, CloseReasonPopupFailed)
 	if err != nil || closed.State != StateAnswered {
 		t.Fatalf("Close after answer = %#v, %v", closed, err)
 	}
@@ -201,8 +204,8 @@ func TestStoreCloseEndsAWaitingRecordAndLaterAnswersAreRefused(t *testing.T) {
 
 	store, clock := newTestStore(t)
 	record := createTestRecord(t, store, clock, 1, "agt-a")
-	closed, err := store.Close(record.ID)
-	if err != nil || closed.State != StateClosed {
+	closed, err := store.Close(record.ID, CloseReasonHookCanceled)
+	if err != nil || closed.State != StateClosed || closed.Disposition != "hook-canceled" {
 		t.Fatalf("Close = %#v, %v", closed, err)
 	}
 	if _, err := store.Answer(record.ID, "agt-a", testAnswers); !errors.Is(err, ErrClosed) {
@@ -210,7 +213,7 @@ func TestStoreCloseEndsAWaitingRecordAndLaterAnswersAreRefused(t *testing.T) {
 	}
 	late := createTestRecord(t, store, clock, 2, "agt-a")
 	clock.Advance(6 * time.Minute)
-	if got, err := store.Close(late.ID); err != nil || got.State != StateExpired {
+	if got, err := store.Close(late.ID, CloseReasonPopupFailed); err != nil || got.State != StateExpired || got.Disposition != "" {
 		t.Fatalf("Close past deadline = %#v, %v", got, err)
 	}
 }
@@ -234,9 +237,66 @@ func TestStoreCloseAgentClosesOnlyThatAgentsWaitingRecords(t *testing.T) {
 			t.Errorf("%s state = %s, want %s", id, got.State, want)
 		}
 	}
+	if got, _, _ := store.Get(waiting.ID); got.Disposition != string(CloseReasonChannelOff) {
+		t.Errorf("closed record disposition = %q, want %q", got.Disposition, CloseReasonChannelOff)
+	}
+	if got, _, _ := store.Get(answered.ID); got.Disposition != "" {
+		t.Errorf("answered record disposition = %q, want none", got.Disposition)
+	}
 	before := readStoreBytes(t, store)
 	if closed, err := store.CloseAgent("agt-a"); err != nil || closed != 0 || !bytes.Equal(before, readStoreBytes(t, store)) {
 		t.Fatalf("repeat CloseAgent = %d, %v, unchanged=%t", closed, err, bytes.Equal(before, readStoreBytes(t, store)))
+	}
+}
+
+// TestStoreCloseRecordsEachReasonAndSaysWhetherTheProviderStillAsks pins the
+// reason vocabulary: every reason is a well-formed disposition, Close stores
+// it as written, and only a canceled hook, an ended Codex turn, and an answer
+// in Codex's own surface leave nothing asking.
+func TestStoreCloseRecordsEachReasonAndSaysWhetherTheProviderStillAsks(t *testing.T) {
+	t.Parallel()
+
+	stillAsks := map[CloseReason]bool{
+		CloseReasonAnsweredElsewhere: false,
+		CloseReasonChannelOff:        true,
+		CloseReasonHookCanceled:      false,
+		CloseReasonHookFailed:        true,
+		CloseReasonPopupDismissed:    true,
+		CloseReasonPopupFailed:       true,
+		CloseReasonTurnEnded:         false,
+		CloseReasonWatchStopped:      true,
+	}
+	if len(closeReasonsStillAsked) != len(stillAsks) {
+		t.Fatalf("the store writes %d reasons, want the %d of this test", len(closeReasonsStillAsked), len(stillAsks))
+	}
+	store, clock := newTestStore(t)
+	for i, reason := range slices.Sorted(maps.Keys(closeReasonsStillAsked)) {
+		want, ok := stillAsks[reason]
+		if !ok {
+			t.Fatalf("the store writes %q, which this test does not pin", reason)
+		}
+		if !dispositionPattern.MatchString(string(reason)) {
+			t.Errorf("%q is not a well-formed disposition", reason)
+		}
+		if asks, known := ProviderStillAsks(string(reason)); !known || asks != want {
+			t.Errorf("ProviderStillAsks(%q) = %t, %t, want %t, true", reason, asks, known, want)
+		}
+		if reason == CloseReasonAnsweredElsewhere {
+			continue // Codex only, written by CloseAnsweredElsewhere.
+		}
+		record := createTestRecord(t, store, clock, i+1, "agt-a")
+		closed, err := store.Close(record.ID, reason)
+		if err != nil || closed.State != StateClosed || closed.Disposition != string(reason) {
+			t.Fatalf("Close(%q) = %s/%q, %v", reason, closed.State, closed.Disposition, err)
+		}
+		if got, _, err := store.Get(record.ID); err != nil || got.Disposition != string(reason) {
+			t.Fatalf("Get after Close(%q) = %q, %v", reason, got.Disposition, err)
+		}
+	}
+	for _, disposition := range []string{"", "reason-no-release-writes-yet"} {
+		if asks, known := ProviderStillAsks(disposition); asks || known {
+			t.Errorf("ProviderStillAsks(%q) = %t, %t, want false, false", disposition, asks, known)
+		}
 	}
 }
 
@@ -245,7 +305,7 @@ func TestStorePrunesSettledRecordsAndNeverEvictsWaitingOnes(t *testing.T) {
 
 	store, clock := newTestStore(t)
 	old := createTestRecord(t, store, clock, 1, "agt-a")
-	if _, err := store.Close(old.ID); err != nil {
+	if _, err := store.Close(old.ID, CloseReasonPopupFailed); err != nil {
 		t.Fatal(err)
 	}
 	clock.Advance(terminalRetention + time.Second)
@@ -261,7 +321,7 @@ func TestStorePrunesSettledRecordsAndNeverEvictsWaitingOnes(t *testing.T) {
 	if _, err := store.Create(Record{ID: testID(maxRecords + 1), AgentUID: "agt-a", Questions: json.RawMessage(testQuestionsJSON), Deadline: clock.Now().Add(time.Minute)}); !errors.Is(err, ErrCapacity) {
 		t.Fatalf("create in a store full of waiting records err = %v, want ErrCapacity", err)
 	}
-	if _, err := store.Close(testID(7)); err != nil {
+	if _, err := store.Close(testID(7), CloseReasonPopupFailed); err != nil {
 		t.Fatal(err)
 	}
 	createTestRecord(t, store, clock, maxRecords+1, "agt-a")
@@ -398,7 +458,7 @@ func TestStoreReadsClosedRecordsWithAnyWellFormedReasonAndKeepsThem(t *testing.T
 		t.Fatalf("Answer: %v", err)
 	}
 	keepsReasons("Answer")
-	if got, err := store.Close(testID(4)); err != nil || got.State != StateClosed || got.Disposition != "" {
+	if got, err := store.Close(testID(4), CloseReasonPopupDismissed); err != nil || got.State != StateClosed || got.Disposition != "popup-dismissed" {
 		t.Fatalf("Close = %s/%q, %v", got.State, got.Disposition, err)
 	}
 	keepsReasons("Close")
@@ -447,5 +507,36 @@ func TestStoreRejectsAReasonOutsideItsFormOrOnAnOpenRecord(t *testing.T) {
 		if _, _, err := store.Get(testID(1)); !errors.Is(err, ErrMalformedStore) {
 			t.Errorf("%s: Get err = %v, want ErrMalformedStore", name, err)
 		}
+	}
+}
+
+// TestCloseReasonDocsTableMatchesTheStore holds docs/hooks.md's close reason
+// table to the reasons the store writes and to whether each leaves the
+// provider asking.
+func TestCloseReasonDocsTableMatchesTheStore(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "hooks.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, table, found := strings.Cut(string(raw), "| Disposition | Written when | Provider still asks |\n")
+	if !found {
+		t.Fatal("docs/hooks.md has no close reason table")
+	}
+	row := regexp.MustCompile("^\\| `([a-z][a-z0-9-]*)` \\| .+ \\| (yes|no) \\|$")
+	documented := map[CloseReason]bool{}
+	for _, line := range strings.Split(table, "\n")[1:] {
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		match := row.FindStringSubmatch(line)
+		if match == nil {
+			t.Fatalf("close reason row %q is not `reason` | when | yes/no", line)
+		}
+		documented[CloseReason(match[1])] = match[2] == "yes"
+	}
+	if !maps.Equal(documented, closeReasonsStillAsked) {
+		t.Fatalf("docs close reasons = %v, store = %v", documented, closeReasonsStillAsked)
 	}
 }

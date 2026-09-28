@@ -25,8 +25,8 @@ const (
 	questionReasonNotPending = "question-not-pending"
 	// questionReasonExpired: the answer window ended.
 	questionReasonExpired = "question-expired"
-	// questionReasonClosed: the prompt was canceled, or the channel was turned
-	// off, before an answer arrived.
+	// questionReasonClosed: the record closed before an answer arrived; its
+	// detail says why and whether the provider still asks it.
 	questionReasonClosed = "question-closed"
 	// questionReasonAnsweredElsewhere: Codex's own input surface resolved first.
 	questionReasonAnsweredElsewhere = "question-answered-elsewhere"
@@ -217,6 +217,9 @@ type agentQuestionView struct {
 	UpdatedAt   time.Time             `json:"updatedAt"`
 	Prompts     []agentQuestionPrompt `json:"prompts"`
 	Answers     map[string]string     `json:"answers,omitempty"`
+	// asking is the text form's word on whether the provider still asks a
+	// closed question; JSON readers take it from the disposition.
+	asking string
 }
 
 // agentQuestionPrompt is one question of a record, numbered the way `answer`
@@ -257,7 +260,7 @@ func (c *agentCommand) listQuestions(request agentQuestionRequest, agent coremet
 		if err != nil {
 			continue
 		}
-		view := agentQuestionView{ID: record.ID, State: record.State, Disposition: record.Disposition, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers}
+		view := agentQuestionView{ID: record.ID, State: record.State, Disposition: record.Disposition, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers, asking: questionClosedAsking(record)}
 		for i, question := range questions {
 			// Claude always takes free text, as its popup and BuildAnswers do;
 			// Codex takes it only when the question sets isOther.
@@ -288,7 +291,10 @@ func writeAgentQuestionList(out io.Writer, result agentQuestionList, now time.Ti
 	}
 	for _, view := range result.Questions {
 		fmt.Fprintf(&b, "%s\t%s", view.ID, view.State)
-		if view.Disposition != "" {
+		switch {
+		case view.asking != "":
+			fmt.Fprintf(&b, " (%s; %s)", view.Disposition, view.asking)
+		case view.Disposition != "":
 			fmt.Fprintf(&b, " (%s)", view.Disposition)
 		}
 		if view.State == agentquestion.StateWaiting {
@@ -379,6 +385,14 @@ func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coreme
 		return refuse(questionReasonInvalidAnswer, err.Error())
 	}
 	answered, err := store.Answer(record.ID, agent.Metadata.UID, answers)
+	if errors.Is(err, agentquestion.ErrClosed) {
+		// The record closed after the read above; describe it as it closed.
+		if current, found, getErr := store.Get(record.ID); getErr == nil && found {
+			if reason, detail := questionRecordRefusal(current); reason != "" {
+				return refuse(reason, fmt.Sprintf("question %s %s", record.ID, detail))
+			}
+		}
+	}
 	if err != nil {
 		if reason, detail := questionStoreRefusal(err); reason != "" {
 			return refuse(reason, fmt.Sprintf("question %s %s", record.ID, detail))
@@ -393,7 +407,32 @@ func questionRecordRefusal(record agentquestion.Record) (string, string) {
 	if record.State == agentquestion.StateClosed && record.Disposition == "answered-elsewhere" {
 		return questionReasonAnsweredElsewhere, "was already answered in Codex's own input surface"
 	}
-	return questionStateRefusal(record.State)
+	reason, detail := questionStateRefusal(record.State)
+	if asking := questionClosedAsking(record); reason == questionReasonClosed && asking != "" {
+		detail = fmt.Sprintf("%s (%s); %s", detail, record.Disposition, asking)
+	}
+	return reason, detail
+}
+
+// questionClosedAsking says whether the provider still asks a closed record's
+// question in its own prompt. It is empty for any other record, and for a
+// closed one without a reason this release knows.
+func questionClosedAsking(record agentquestion.Record) string {
+	if record.State != agentquestion.StateClosed {
+		return ""
+	}
+	asks, known := agentquestion.ProviderStillAsks(record.Disposition)
+	if !known {
+		return ""
+	}
+	provider, surface := "Claude Code", "its own prompt"
+	if record.Provider == "codex" {
+		provider, surface = "Codex", "its own input surface"
+	}
+	if asks {
+		return provider + " still asks it in " + surface
+	}
+	return provider + " no longer asks it"
 }
 
 // questionStateRefusal is the refusal for a record that cannot take an answer.

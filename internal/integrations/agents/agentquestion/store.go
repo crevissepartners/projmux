@@ -48,10 +48,58 @@ const (
 	StateAnswered State = "answered"
 	// StateExpired: the answer window ended first. Terminal.
 	StateExpired State = "expired"
-	// StateClosed: the hook was canceled, or the channel was turned off,
-	// before an answer arrived. Terminal.
+	// StateClosed: the record ended before an answer arrived; its
+	// Disposition is the CloseReason. Terminal.
 	StateClosed State = "closed"
 )
+
+// CloseReason is why a record closed without an answer. It is stored as the
+// record's Disposition, and it tells whether the provider still asks the
+// question in its own prompt.
+type CloseReason string
+
+const (
+	// CloseReasonPopupDismissed: Esc in the picker gave the question back.
+	CloseReasonPopupDismissed CloseReason = "popup-dismissed"
+	// CloseReasonPopupFailed: the popup failed, or ended without an answer
+	// (its client left), so the question was given back.
+	CloseReasonPopupFailed CloseReason = "popup-failed"
+	// CloseReasonHookCanceled: Claude Code canceled the hook, which declines
+	// the question.
+	CloseReasonHookCanceled CloseReason = "hook-canceled"
+	// CloseReasonHookFailed: the hook crashed and gave the question back.
+	CloseReasonHookFailed CloseReason = "hook-failed"
+	// CloseReasonChannelOff: `agent question disable` gave the question back.
+	CloseReasonChannelOff CloseReason = "channel-off"
+	// CloseReasonTurnEnded: the Codex turn that asked it ended.
+	CloseReasonTurnEnded CloseReason = "turn-ended"
+	// CloseReasonWatchStopped: projmux stopped watching a Codex request that
+	// Codex still holds.
+	CloseReasonWatchStopped CloseReason = "watch-stopped"
+	// CloseReasonAnsweredElsewhere: Codex's own input surface answered first.
+	CloseReasonAnsweredElsewhere CloseReason = "answered-elsewhere"
+)
+
+// closeReasonsStillAsked maps every reason this release writes to whether
+// the provider still asks the question in its own prompt after it.
+var closeReasonsStillAsked = map[CloseReason]bool{
+	CloseReasonPopupDismissed:    true,
+	CloseReasonPopupFailed:       true,
+	CloseReasonHookCanceled:      false,
+	CloseReasonHookFailed:        true,
+	CloseReasonChannelOff:        true,
+	CloseReasonTurnEnded:         false,
+	CloseReasonWatchStopped:      true,
+	CloseReasonAnsweredElsewhere: false,
+}
+
+// ProviderStillAsks reports whether the provider still asks a question that
+// closed with disposition in its own prompt. known is false for an empty or
+// unknown disposition, which says nothing either way.
+func ProviderStillAsks(disposition string) (asks, known bool) {
+	asks, known = closeReasonsStillAsked[CloseReason(disposition)]
+	return asks, known
+}
 
 // Terminal reports whether no further transition is possible.
 func (s State) Terminal() bool { return s != StateWaiting }
@@ -343,10 +391,10 @@ func (s *Store) Settle(id string) (Record, error) {
 	})
 }
 
-// Close ends one waiting record without an answer: the hook was canceled. A
-// record already past its deadline expires instead. It returns the record as it
-// now stands.
-func (s *Store) Close(id string) (Record, error) {
+// Close ends one waiting record without an answer and records reason as its
+// disposition. A record already past its deadline expires instead. It returns
+// the record as it now stands.
+func (s *Store) Close(id string, reason CloseReason) (Record, error) {
 	return s.transition(id, func(record Record, now time.Time) (State, string, bool) {
 		if record.State != StateWaiting {
 			return record.State, "", false
@@ -354,7 +402,7 @@ func (s *Store) Close(id string) (Record, error) {
 		if !now.Before(record.Deadline) {
 			return StateExpired, "", true
 		}
-		return StateClosed, "", true
+		return StateClosed, string(reason), true
 	})
 }
 
@@ -368,7 +416,7 @@ func (s *Store) CloseAnsweredElsewhere(id, agentUID, sessionID, requestID string
 		if !now.Before(record.Deadline) {
 			return StateExpired, "", true
 		}
-		return StateClosed, "answered-elsewhere", true
+		return StateClosed, string(CloseReasonAnsweredElsewhere), true
 	})
 }
 
@@ -412,8 +460,9 @@ func (s *Store) transition(id string, next func(Record, time.Time) (State, strin
 }
 
 // CloseAgent closes every record of agentUID still waiting, and reports how
-// many it closed. Turning an Agent's question channel off calls it, so each
-// hook holding one of them returns the question to Claude Code's own prompt.
+// many it closed, each with CloseReasonChannelOff. Turning an Agent's question
+// channel off calls it, so each hook holding one of them returns the question
+// to Claude Code's own prompt.
 func (s *Store) CloseAgent(agentUID string) (int, error) {
 	closed := 0
 	err := s.withLock(func() error {
@@ -428,6 +477,7 @@ func (s *Store) CloseAgent(agentUID string) (int, error) {
 				continue
 			}
 			record.State = StateClosed
+			record.Disposition = string(CloseReasonChannelOff)
 			record.UpdatedAt = now
 			state.Records[i] = record
 			closed++

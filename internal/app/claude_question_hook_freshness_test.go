@@ -479,7 +479,7 @@ func TestClaudeQuestionHookRefreshStopsWhenTheRecordEnds(t *testing.T) {
 					case <-ctx.Done():
 						return nil
 					}
-					_, err := fixture.store.Close(target.QuestionID)
+					_, err := fixture.store.Close(target.QuestionID, agentquestion.CloseReasonPopupDismissed)
 					close(escaped)
 					return err
 				}

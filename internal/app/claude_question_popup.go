@@ -524,7 +524,7 @@ func (p claudeQuestionPicker) run(questionID, agentUID string) error {
 	}
 	questions, err := record.ParsedQuestions()
 	if err != nil {
-		_, _ = p.store.Close(record.ID)
+		_, _ = p.store.Close(record.ID, agentquestion.CloseReasonPopupFailed)
 		return err
 	}
 	if record.Provider == "codex" {
@@ -537,9 +537,13 @@ func (p claudeQuestionPicker) run(questionID, agentUID string) error {
 		}
 	}
 	selections, ok, err := collectClaudeQuestionSelections(p.runner, p.text, questions, record.Provider == "codex")
-	if err != nil || !ok {
-		_, _ = p.store.Close(record.ID)
+	if err != nil {
+		_, _ = p.store.Close(record.ID, agentquestion.CloseReasonPopupFailed)
 		return err
+	}
+	if !ok {
+		_, _ = p.store.Close(record.ID, agentquestion.CloseReasonPopupDismissed)
+		return nil
 	}
 	var answers map[string]string
 	if record.Provider == "codex" {
@@ -548,7 +552,7 @@ func (p claudeQuestionPicker) run(questionID, agentUID string) error {
 		answers, err = agentquestion.BuildAnswers(questions, selections)
 	}
 	if err != nil {
-		_, _ = p.store.Close(record.ID)
+		_, _ = p.store.Close(record.ID, agentquestion.CloseReasonPopupFailed)
 		return err
 	}
 	if _, err := p.store.Answer(record.ID, agentUID, answers); err != nil {
