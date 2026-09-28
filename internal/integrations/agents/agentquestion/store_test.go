@@ -300,6 +300,31 @@ func TestStoreCloseRecordsEachReasonAndSaysWhetherTheProviderStillAsks(t *testin
 	}
 }
 
+// TestStoreCloseRefusesAReasonNoReaderTakes pins that Close writes nothing for
+// a reason outside the disposition form, or for answered-elsewhere on a Claude
+// record, so the store stays readable and the record keeps waiting.
+func TestStoreCloseRefusesAReasonNoReaderTakes(t *testing.T) {
+	t.Parallel()
+
+	store, clock := newTestStore(t)
+	record := createTestRecord(t, store, clock, 1, "agt-a")
+	before := readStoreBytes(t, store)
+	for _, reason := range []CloseReason{"", "Popup-Failed", "popup failed", CloseReason(strings.Repeat("a", 41)), CloseReasonAnsweredElsewhere} {
+		if got, err := store.Close(record.ID, reason); !errors.Is(err, ErrInvalidRecord) {
+			t.Fatalf("Close(%q) = %s/%q, %v, want ErrInvalidRecord", reason, got.State, got.Disposition, err)
+		}
+	}
+	if !bytes.Equal(before, readStoreBytes(t, store)) {
+		t.Fatal("a refused Close changed the store")
+	}
+	if got, _, err := store.Get(record.ID); err != nil || got.State != StateWaiting {
+		t.Fatalf("record after refused closes = %s, %v, want waiting", got.State, err)
+	}
+	if got, err := store.Close(record.ID, CloseReasonPopupFailed); err != nil || got.Disposition != string(CloseReasonPopupFailed) {
+		t.Fatalf("valid Close after refusals = %s/%q, %v", got.State, got.Disposition, err)
+	}
+}
+
 func TestStorePrunesSettledRecordsAndNeverEvictsWaitingOnes(t *testing.T) {
 	t.Parallel()
 

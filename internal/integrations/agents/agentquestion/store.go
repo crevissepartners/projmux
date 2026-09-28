@@ -393,17 +393,32 @@ func (s *Store) Settle(id string) (Record, error) {
 
 // Close ends one waiting record without an answer and records reason as its
 // disposition. A record already past its deadline expires instead. It returns
-// the record as it now stands.
+// the record as it now stands. A reason no reader would take on that record
+// (outside the disposition form, or answered-elsewhere on a record that is not
+// Codex's) is refused with ErrInvalidRecord and nothing is written, so one bad
+// reason never makes the whole store malformed.
 func (s *Store) Close(id string, reason CloseReason) (Record, error) {
-	return s.transition(id, func(record Record, now time.Time) (State, string, bool) {
+	if !dispositionPattern.MatchString(string(reason)) {
+		return Record{}, ErrInvalidRecord
+	}
+	invalid := false
+	record, err := s.transition(id, func(record Record, now time.Time) (State, string, bool) {
 		if record.State != StateWaiting {
 			return record.State, "", false
 		}
 		if !now.Before(record.Deadline) {
 			return StateExpired, "", true
 		}
+		if !validDisposition(Record{State: StateClosed, Provider: record.Provider, Disposition: string(reason)}) {
+			invalid = true
+			return record.State, "", false
+		}
 		return StateClosed, string(reason), true
 	})
+	if err == nil && invalid {
+		return Record{}, ErrInvalidRecord
+	}
+	return record, err
 }
 
 // CloseAnsweredElsewhere records that Codex's own input surface resolved the

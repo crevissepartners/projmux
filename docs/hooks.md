@@ -827,9 +827,9 @@ A question is given back only once its record is written `closed`. While the
 question store cannot be written (the disk is full, or its lock is held), a
 popup that ended leaves the record `waiting` and the hook keeps holding the
 question, so it is in neither the popup nor Claude Code's prompt; the hook
-tries again about once a second and hands the question back as soon as the
-write succeeds, so the record's `updatedAt` is that moment, not the moment
-the popup ended.
+tries again every 250 milliseconds (each try waits up to 2 seconds for the
+store lock) and hands the question back as soon as the write succeeds, so the
+record's `updatedAt` is that moment, not the moment the popup ended.
 
 A `closed` record says why it closed in its `disposition`, and that reason
 tells whether the provider still asks the question in its own prompt:
