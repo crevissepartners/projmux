@@ -1154,7 +1154,7 @@ func (c *createCommand) openIntentAgent(
 		prompt, _ := nativePrompt(flags.payload)
 		nativeCtx, cancel := prepareNativeContext(ctx)
 		prepared, nativeErr := c.codexNative.Create(nativeCtx, plan.nativeRoute, codexNativeCreateInput{
-			Workspace: workspace, DeveloperInstructions: flags.personaLaunch.content,
+			Workspace: workspace, DeveloperInstructions: flags.agentGuidance.developerInstructions(flags.personaLaunch.content),
 			Policy: flags.profileLaunch.codexPolicy, Prompt: prompt, RequestKey: activation.Generation,
 		})
 		cancel()

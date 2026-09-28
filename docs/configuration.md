@@ -1589,8 +1589,10 @@ below the state directory, in `project-links/`.
 ## Agent Guidance
 
 Every managed Claude Agent gets a short agent guidance text at the front of
-its system prompt. It tells the Agent to create other agents with
-`projmux create agent` instead of a subagent built into its provider, and to
+its system prompt, and a Codex Agent gets it at the front of its thread's
+developer instructions when it starts its own thread. It tells the Agent to
+create other agents with `projmux create agent` instead of a subagent built
+into its provider, and to
 message them with `projmux agent message send` instead of a message channel
 local to its provider. The guidance lives in one file,
 `<config dir>/agent-guidance.md` (by default
@@ -1626,7 +1628,15 @@ the file. The file is at most 64 KiB.
   than 64 KiB does not stop the Agent: it starts without the guidance, one
   `agent-guidance-unavailable` line on stderr says so, and nothing is
   recorded.
-- Codex Agents and the Claude reply-only lane do not receive the guidance yet.
+- A Codex Agent receives the guidance on a fresh create that starts its own
+  thread (a create with a prompt): the guidance and the persona go to that
+  thread as its developer instructions, in that order, each present only when
+  the Agent has it and separated by the same `---` line, and the Agent records
+  the guidance digest. A Codex resume, and a Codex create without a prompt or
+  with `--interactive-only`, do not receive it. A thread keeps the developer
+  instructions it was started with, so a changed guidance reaches a Codex
+  Agent only through a new create.
+- The Claude reply-only lane does not receive the guidance.
 
 The guidance and the files composed from it are content-addressed below the
 state directory, in `agent-guidance/`.

@@ -63,11 +63,13 @@ func newCodexNativeThreadController(stateDir string) defaultCodexNativeThreadCon
 // DeveloperInstructions, Prompt and RequestKey are all free text and only
 // their names tell them apart.
 //
-// DeveloperInstructions is the persona snapshot content the thread is started
-// with. Empty means the create sends no such field at all, which is what every
-// create did before a Codex Agent could have a persona. It is start-only: a
-// thread keeps the instructions it was started with, and resume re-sends
-// nothing (see (*aiCommand).resumePersonaSnapshot).
+// DeveloperInstructions is what the thread is started with: the agent
+// guidance and the persona snapshot content, in that order
+// (agentGuidanceLaunch.developerInstructions). Empty means the create sends
+// no such field at all, which is what every create did before a Codex Agent
+// could have either. It is start-only: a thread keeps the instructions it was
+// started with, and resume re-sends nothing (see
+// (*aiCommand).resumePersonaSnapshot).
 //
 // Policy is the sandbox and approval of the Agent's profile, in the wire
 // vocabulary (codexThreadPolicy). The zero value sends neither key, which is
