@@ -142,6 +142,8 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"window_uid", event.WindowUID},
 		{"pane_uid", event.PaneUID},
 		{"agent_uid", event.AgentUID},
+		{"longest_lock_kind", event.LongestLockKind},
+		{"longest_lock_step", event.LongestLockStep},
 	} {
 		if field.value != "" {
 			parts = append(parts, field.name+"="+field.value)
@@ -159,6 +161,7 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"item_count", event.ItemCount},
 		{"resumed_count", event.ResumedCount},
 		{"skipped_count", event.SkippedCount},
+		{"lock_acquisition_count", event.LockAcquisitionCount},
 	} {
 		if count.value != nil {
 			parts = append(parts, fmt.Sprintf("%s=%d", count.name, *count.value))
@@ -178,6 +181,25 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"phase_reprove_ms", event.PhaseReproveMS},
 		{"phase_store_write_ms", event.PhaseStoreWriteMS},
 		{"spawn_to_release_ms", event.SpawnToReleaseMS},
+		{"step_keymap_migration_ms", event.StepKeymapMigrationMS},
+		{"step_hook_file_migration_ms", event.StepHookFileMigrationMS},
+		{"step_retired_file_reclaim_ms", event.StepRetiredFileReclaimMS},
+		{"step_route_bind_ms", event.StepRouteBindMS},
+		{"step_bell_hook_migration_ms", event.StepBellHookMigrationMS},
+		{"step_config_write_ms", event.StepConfigWriteMS},
+		{"step_key_sequence_retire_ms", event.StepKeySequenceRetireMS},
+		{"step_source_file_ms", event.StepSourceFileMS},
+		{"step_route_marker_ms", event.StepRouteMarkerMS},
+		{"step_exhausted_replay_ms", event.StepExhaustedReplayMS},
+		{"step_converge_ms", event.StepConvergeMS},
+		{"lock_wait_total_ms", event.LockWaitTotalMS},
+		{"lock_held_total_ms", event.LockHeldTotalMS},
+		{"longest_lock_wait_ms", event.LongestLockWaitMS},
+		{"longest_lock_held_ms", event.LongestLockHeldMS},
+		{"longest_lock_observe_ms", event.LongestLockObserveMS},
+		{"longest_lock_plan_ms", event.LongestLockPlanMS},
+		{"longest_lock_commit_ms", event.LongestLockCommitMS},
+		{"longest_lock_store_write_ms", event.LongestLockStoreWriteMS},
 	} {
 		if timing.value != nil {
 			parts = append(parts, fmt.Sprintf("%s=%d", timing.name, *timing.value))

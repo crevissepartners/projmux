@@ -11,6 +11,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -193,7 +194,10 @@ func (c *controlSessionConverger) convergeTargetWithEvidence(ctx context.Context
 
 	var binding coremetadata.ControlSessionBinding
 	var registry coremetadata.Registry
+	lock := beginApplyLock(ctx, diagnostics.ApplyLockKindControlTargets)
 	changed, err := c.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		defer lock.Returned()
+		lock.Phase(diagnostics.ApplyLockPhaseObserve)
 		// The preflight above avoids opening a Registry transaction for a refusal
 		// or a converged target. Once a write is needed, none of its live evidence
 		// authorizes the transaction: another actor can claim the exact session or
@@ -212,6 +216,7 @@ func (c *controlSessionConverger) convergeTargetWithEvidence(ctx context.Context
 		if err != nil {
 			return err
 		}
+		lock.Phase(diagnostics.ApplyLockPhasePlan)
 		lockedPlan := controller.PlanControlTargetConvergence(controlTargetControllerState(target, sessionName, declared, lockedMarkers, *working, lockedObserved, lockedTargets))
 		if lockedPlan.Refused() {
 			return controlTargetRefusal{reason: lockedPlan.Reason}
@@ -229,6 +234,7 @@ func (c *controlSessionConverger) convergeTargetWithEvidence(ctx context.Context
 		// may run it more than once, and a matcher carries the claims of exactly
 		// one pass. Reusing one across attempts would leave every candidate
 		// claimed and turn the second attempt into a mint-everything pass.
+		lock.Phase(diagnostics.ApplyLockPhaseCommit)
 		binder := coremetadata.NewBindingMatcher(lockedRuntime)
 		result, err := mutator.BindControlSession(working, lockedObserved, c.shell, operationID, binder)
 		if err != nil {

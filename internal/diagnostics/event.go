@@ -70,6 +70,32 @@ type Event struct {
 	PhaseReproveMS         *int64 `json:"phase_reprove_ms,omitempty"`
 	PhaseStoreWriteMS      *int64 `json:"phase_store_write_ms,omitempty"`
 	SpawnToReleaseMS       *int64 `json:"spawn_to_release_ms,omitempty"`
+	// The apply breakdown fields are carried by a tmux.apply lifecycle.outcome
+	// alone. The step fields are one per applyStepTable row, present only for
+	// a step the apply entered; the lock fields total every Registry lock
+	// acquisition of the apply and describe the one it held longest.
+	StepKeymapMigrationMS    *int64 `json:"step_keymap_migration_ms,omitempty"`
+	StepHookFileMigrationMS  *int64 `json:"step_hook_file_migration_ms,omitempty"`
+	StepRetiredFileReclaimMS *int64 `json:"step_retired_file_reclaim_ms,omitempty"`
+	StepRouteBindMS          *int64 `json:"step_route_bind_ms,omitempty"`
+	StepBellHookMigrationMS  *int64 `json:"step_bell_hook_migration_ms,omitempty"`
+	StepConfigWriteMS        *int64 `json:"step_config_write_ms,omitempty"`
+	StepKeySequenceRetireMS  *int64 `json:"step_key_sequence_retire_ms,omitempty"`
+	StepSourceFileMS         *int64 `json:"step_source_file_ms,omitempty"`
+	StepRouteMarkerMS        *int64 `json:"step_route_marker_ms,omitempty"`
+	StepExhaustedReplayMS    *int64 `json:"step_exhausted_replay_ms,omitempty"`
+	StepConvergeMS           *int64 `json:"step_converge_ms,omitempty"`
+	LockAcquisitionCount     *int   `json:"lock_acquisition_count,omitempty"`
+	LockWaitTotalMS          *int64 `json:"lock_wait_total_ms,omitempty"`
+	LockHeldTotalMS          *int64 `json:"lock_held_total_ms,omitempty"`
+	LongestLockKind          string `json:"longest_lock_kind,omitempty"`
+	LongestLockStep          string `json:"longest_lock_step,omitempty"`
+	LongestLockWaitMS        *int64 `json:"longest_lock_wait_ms,omitempty"`
+	LongestLockHeldMS        *int64 `json:"longest_lock_held_ms,omitempty"`
+	LongestLockObserveMS     *int64 `json:"longest_lock_observe_ms,omitempty"`
+	LongestLockPlanMS        *int64 `json:"longest_lock_plan_ms,omitempty"`
+	LongestLockCommitMS      *int64 `json:"longest_lock_commit_ms,omitempty"`
+	LongestLockStoreWriteMS  *int64 `json:"longest_lock_store_write_ms,omitempty"`
 }
 
 // NewRunID creates one opaque correlation ID for a process invocation.
@@ -294,6 +320,11 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 }
 
 func validateEventShape(event Event) error {
+	// Checked before any family's own validator returns, so every family but
+	// the tmux.apply lifecycle.outcome refuses the apply breakdown fields.
+	if err := validateApplyBreakdown(event); err != nil {
+		return err
+	}
 	if event.Event == registryLockAcquisitionEvent {
 		return validateRegistryLockEvent(event)
 	}

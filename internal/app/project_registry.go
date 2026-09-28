@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -394,6 +395,10 @@ func (r *registryReconciler) reconcileGuarded(
 	// pass of a create runs after the create's own writes.
 	r.inPass, r.passSnapshot = true, nil
 	defer func() { r.inPass, r.passSnapshot = false, nil }()
+	// Inside a config-apply binding transaction the live reads below are its
+	// observation and the import and binding steps its commit; elsewhere these
+	// marks do nothing.
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseObserve)
 	live, err := r.liveSessions(ctx)
 	if err != nil {
 		return err
@@ -428,6 +433,7 @@ func (r *registryReconciler) reconcileGuarded(
 		binder = coremetadata.NewApprovedOrphanBindingMatcher(runtime)
 	}
 
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseCommit)
 	unresolved, err := r.importLiveSessions(ctx, working, mutator, operationID, reconcileLive, binder)
 	if err != nil {
 		return err
@@ -449,6 +455,7 @@ func (r *registryReconciler) reconcileGuarded(
 	// imported and stamp a MissingRuntime condition on a Window that is plainly
 	// there -- and, now that binding reapply exists, on a Window this very pass
 	// just reattached.
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseObserve)
 	r.observeRuntime(ctx, working, mutator, r.unwrittenPassSnapshot())
 	return nil
 }

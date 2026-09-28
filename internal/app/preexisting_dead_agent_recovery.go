@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -123,7 +124,7 @@ func (r *controllerTriggerRunner) reconcileOnePreexistingDeadAgentPane(
 		return pass, false, nil
 	}
 
-	exits, err := reconcileLifecycle(ctx, lifecycleDirtyEvent{
+	exits, err := reconcileLifecycle(withApplyLockKind(ctx, diagnostics.ApplyLockKindPreexistingDeadAgent), lifecycleDirtyEvent{
 		target: target, paneUID: candidate.pane.Metadata.UID,
 		runtimePaneID:       candidate.observation.PaneID,
 		generation:          candidate.pane.Status.Activation.Generation,

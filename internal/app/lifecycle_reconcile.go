@@ -1051,8 +1051,11 @@ func reconcileLifecycle(
 	// re-executed closure cannot leave a stale or duplicate decision behind.
 	var locked *lifecycleTeardownRecord
 	var lockedErr error
+	lock := beginApplyLock(ctx, diagnostics.ApplyLockKindLifecycleReconcile)
 	_, err = store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		defer lock.Returned()
 		locked, lockedErr = nil, nil
+		lock.Phase(diagnostics.ApplyLockPhaseObserve)
 		fresh, observeErr := inventory.LivePaneUIDs(ctx)
 		if observeErr != nil {
 			// Abort with zero writes and preserve every resource, exactly as the
@@ -1080,6 +1083,7 @@ func reconcileLifecycle(
 			observationFailed = true
 			return observeErr
 		}
+		lock.Phase(diagnostics.ApplyLockPhasePlan)
 		applyTo := working
 		if event.exhaustedReplay {
 			candidate := working.Clone()
@@ -1103,6 +1107,7 @@ func reconcileLifecycle(
 			return err
 		}
 		locked = cascade.teardownRecord()
+		lock.Phase(diagnostics.ApplyLockPhaseCommit)
 		if event.exhaustedReplay && !cascade.paneAgent.Changed {
 			result.receiptsChanged = false
 			return nil
@@ -1147,6 +1152,7 @@ func reconcileLifecycle(
 		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead.uids), lockedEvent))
 		return nil
 	})
+	lock.End()
 	result.transactions = 1
 	if observationFailed {
 		result.projected = nil

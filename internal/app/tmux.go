@@ -1624,6 +1624,12 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 	if c.diagnostics != nil {
 		c.diagnostics.Mark(diagnostics.OperationTmuxApply)
 	}
+	// The step and Registry lock breakdown of this apply's lifecycle.outcome.
+	// It only measures: nil without a journal, and closed before the outcome
+	// is written, which happens after this route returned.
+	apply := c.diagnostics.Apply()
+	defer apply.Close()
+	apply.Step(diagnostics.ApplyStepKeymapMigration)
 
 	// The keymap migration runs before a single byte of generated config is
 	// written, and the whole route aborts if it fails.
@@ -1667,6 +1673,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 		return cause
 	}
 	if c.ai != nil {
+		apply.Step(diagnostics.ApplyStepHookFileMigration)
 		migrationAI := c.managedIngestMigrationAI()
 		count, rollback, err := migrationAI.beginManagedIngestProducerFileMigration()
 		if err != nil {
@@ -1689,6 +1696,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 	// --no-reload and live server state, so every apply that goes on to write
 	// reaches it exactly once. It never fails the apply and has no rollback:
 	// the files it removes are read by nothing.
+	apply.Step(diagnostics.ApplyStepRetiredFileReclaim)
 	c.reclaimRetiredSnapshotFiles(stdout)
 	// The retired private Codex generation pool left its own files behind, and
 	// reclaims them on the same step and under the same rules.
@@ -1702,6 +1710,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 	resolved := ""
 	var err error
 	writeGenerated := func() error {
+		apply.Step(diagnostics.ApplyStepConfigWrite)
 		resolved, err = c.writeAppConfig(*binaryOverride, *configPath)
 		if err != nil {
 			return err
@@ -1733,7 +1742,8 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 		return err
 	}
 
-	ctx := context.Background()
+	ctx := withApplyRecorder(context.Background(), apply)
+	apply.Step(diagnostics.ApplyStepRouteBind)
 	// Bind the logical invocation to one physical app-owned server before the
 	// first live read or write. Every migration, retirement, source and
 	// controller call below uses this exact -S authority; -L remains printable
@@ -1761,6 +1771,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 	}
 
 	if c.ai != nil {
+		apply.Step(diagnostics.ApplyStepBellHookMigration)
 		migrationAI := c.managedIngestMigrationAIForRoute(applyRoute)
 		migrated, rollback, err := migrationAI.beginManagedTmuxBellProducerMigration()
 		if err != nil {
@@ -1778,6 +1789,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 	// Retire the previously recorded sequence roots/tables before the new
 	// config binds the current trie. This is ordered against source-file on
 	// purpose — the generated config only records state, it never removes it.
+	apply.Step(diagnostics.ApplyStepKeySequenceRetire)
 	if err := c.retireGeneratedKeySequenceState(ctx, applyRoute); err != nil {
 		if c.diagnostics != nil {
 			c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplyReloadFailed)
@@ -1785,6 +1797,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 		return rollbackManagedIngest(fmt.Errorf("retire generated key sequence state on -L %s: %w", socketName, err))
 	}
 
+	apply.Step(diagnostics.ApplyStepSourceFile)
 	if err := guardConfigApplyRuntimeRoute(ctx, c.runner, applyRoute, false); err != nil {
 		return rollbackManagedIngest(fmt.Errorf("guard generated config source on -L %s: %w", socketName, err))
 	}
@@ -1802,6 +1815,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 	// mutation producers may start under an inherited -S path, but they must
 	// recover the exact -L route without guessing from that path's basename:
 	// this marker plus a bidirectional socket_path check is the authority.
+	apply.Step(diagnostics.ApplyStepRouteMarker)
 	if err := c.writeRuntimeMutationRouteMarker(ctx, applyRoute); err != nil {
 		return rollbackManagedIngest(fmt.Errorf("record app logical socket marker on -L %s: %w", socketName, err))
 	}
@@ -1823,9 +1837,11 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 	// same app-owned physical socket and server generation. Re-evaluate only
 	// retry-exhausted exact clean exits at that boundary, before the ordinary
 	// config-apply convergence drains its own non-terminal event.
+	apply.Step(diagnostics.ApplyStepExhaustedReplay)
 	if _, err := c.replayExhaustedCleanExits(ctx, target); err != nil {
 		return rollbackManagedIngest(fmt.Errorf("replay exhausted clean-exit events on -L %s: %w", socketName, err))
 	}
+	apply.Step(diagnostics.ApplyStepConverge)
 	outcome, err := c.trigger(ctx, controllerTrigger{
 		reason: controllerTriggerConfigApply, target: target,
 	})
