@@ -389,7 +389,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,
-				Annotations: flags.projectLinks.withCreateAnnotation(flags.profileLaunch.withAnnotations(withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(creator.annotations())))),
+				Annotations: flags.projectLinks.withCreateAnnotation(flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(creator.annotations()))))),
 				Workspace:   workspace,
 				Activation:  activationStateForPayload(flags.payload),
 				OperationID: operationID,

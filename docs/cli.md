@@ -263,7 +263,7 @@ Allowed effects:
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
-The model is passed to this one launch and not recorded; the effort is recorded on the Agent, so later resumes re-pass it.
+The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort); later resumes re-pass the effort but not the model.
 
 Output modes (`-o`): `json`
 

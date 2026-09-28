@@ -85,8 +85,8 @@ func TestAgentRelaunchRestartsAnIdleRunningClaudeAgentWithTheModelAndEffortOnThe
 	if got := f.lastArgvTail(t); !slices.Equal(got, want) {
 		t.Fatalf("relaunch exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(after.Metadata.Annotations, effortAnnotations("max")) {
-		t.Fatalf("annotations = %v, want only the new effort (the model is not recorded)", after.Metadata.Annotations)
+	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("opus", "max")) {
+		t.Fatalf("annotations = %v, want only the new model and effort", after.Metadata.Annotations)
 	}
 }
 
@@ -101,8 +101,25 @@ func TestAgentRelaunchWithOnlyAModelKeepsTheRecordedEffort(t *testing.T) {
 	if got := f.lastArgvTail(t); !slices.Equal(got, want) {
 		t.Fatalf("relaunch exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(after.Metadata.Annotations, effortAnnotations("high")) {
-		t.Fatalf("annotations = %v, want the recorded effort kept", after.Metadata.Annotations)
+	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("sonnet", "high")) {
+		t.Fatalf("annotations = %v, want the new model and the recorded effort kept", after.Metadata.Annotations)
+	}
+}
+
+func TestAgentRelaunchWithOnlyAnEffortKeepsTheRecordedModelAndDoesNotPassIt(t *testing.T) {
+	f := newRelaunchFixture(t)
+	f.setAnnotations(modelEffortAnnotations("haiku", "high"))
+	stdout, stderr, err := runRoute(t, f.command, "relaunch", "uid:"+personaAttachAgent, "--effort", "max")
+	if err != nil {
+		t.Fatalf("relaunch: stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	after := f.assertRestartedOnTheSameConversation(t, personaAttachPane)
+	want := []string{"--effort", "max", "--resume", personaResumeConversation}
+	if got := f.lastArgvTail(t); !slices.Equal(got, want) {
+		t.Fatalf("relaunch exec argv tail = %q, want %q", got, want)
+	}
+	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("haiku", "max")) {
+		t.Fatalf("annotations = %v, want the recorded model kept", after.Metadata.Annotations)
 	}
 }
 
@@ -169,8 +186,8 @@ func TestAgentRelaunchOfACodexAgentPassesTheCodexModelAndEffortFlags(t *testing.
 		after.Status.SessionRef.ConversationID() != resumeFixtureConversation {
 		t.Fatalf("codex Agent after relaunch = %s on %q %+v", after.Status.Phase, after.Status.PaneRef, after.Status.SessionRef)
 	}
-	if !maps.Equal(after.Metadata.Annotations, effortAnnotations("xhigh")) {
-		t.Fatalf("annotations = %v, want only the new effort", after.Metadata.Annotations)
+	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("gpt-6", "xhigh")) {
+		t.Fatalf("annotations = %v, want only the new model and effort", after.Metadata.Annotations)
 	}
 	if !strings.Contains(stdout, `"outcome":"restarted"`) || !strings.Contains(stdout, `"provider":"codex"`) {
 		t.Fatalf("codex relaunch JSON = %s", stdout)
@@ -320,14 +337,18 @@ func TestAgentRelaunchOfAnOfflineAgentWithTheRecordedEffortStillResumes(t *testi
 
 func TestAgentRelaunchExecutedJSONOfARunningAgentReportsTheNewPane(t *testing.T) {
 	f := newRelaunchFixture(t)
+	f.setAnnotations(modelEffortAnnotations("haiku", "high"))
 	stdout, stderr, err := runRoute(t, f.command, "relaunch", "uid:"+personaAttachAgent, "--model", "opus", "--effort", "max", "-o", "json")
 	if err != nil {
 		t.Fatalf("relaunch: stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 	after := f.assertRestartedOnTheSameConversation(t, personaAttachPane)
-	want := `{"action":"relaunch","dryRun":false,"outcome":"restarted","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","newPaneUID":"` + after.Status.PaneRef + `","currentEffort":"high","newEffort":"max","newModel":"opus","restart":true,"confirmationRequired":false,"unchanged":false}` + "\n"
+	want := `{"action":"relaunch","dryRun":false,"outcome":"restarted","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","newPaneUID":"` + after.Status.PaneRef + `","currentEffort":"high","currentModel":"haiku","newEffort":"max","newModel":"opus","restart":true,"confirmationRequired":false,"unchanged":false}` + "\n"
 	if stdout != want {
 		t.Fatalf("restarted relaunch JSON =\n%s\nwant\n%s", stdout, want)
+	}
+	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("opus", "max")) {
+		t.Fatalf("annotations = %v, want the new model and effort", after.Metadata.Annotations)
 	}
 }
 
@@ -349,6 +370,21 @@ func TestAgentRelaunchDryRunJSONChangesNothing(t *testing.T) {
 		wantText := "agent relaunch: agent/codex uid=agt-alpha-codex phase=Running interaction=idle from effort=high to effort=high model=opus; would restart it on the same conversation; confirmation-required=false\ndry-run: nothing was changed\n"
 		if err != nil || stdout != wantText {
 			t.Fatalf("dry run text = %q, %v; want %q", stdout, err, wantText)
+		}
+		assertRelaunchNothingChanged(t, f, before, beforeAnnotations)
+	})
+	t.Run("running with a recorded model", func(t *testing.T) {
+		f := newRelaunchFixture(t)
+		f.setAnnotations(modelEffortAnnotations("haiku", "high"))
+		before, beforeAnnotations := f.store.snapshot(), f.agent(t).Metadata.Annotations
+		stdout, _, err := runRoute(t, f.command, "relaunch", "uid:"+personaAttachAgent, "--model", "haiku", "--dry-run", "-o", "json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The recorded model is reported, and matching it still restarts.
+		want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","currentEffort":"high","currentModel":"haiku","newModel":"haiku","restart":true,"confirmationRequired":false,"unchanged":false}` + "\n"
+		if stdout != want {
+			t.Fatalf("dry run JSON =\n%s\nwant\n%s", stdout, want)
 		}
 		assertRelaunchNothingChanged(t, f, before, beforeAnnotations)
 	})
@@ -487,7 +523,7 @@ func TestAgentRelaunchResumeFailureLeavesTheAgentOfflineWithItsOldEffortAndAReco
 	if got := f.lastArgvTail(t); !slices.Equal(got, []string{"--model", "opus", "--effort", "max", "--resume", personaResumeConversation}) {
 		t.Fatalf("recovery exec argv tail = %q", got)
 	}
-	if after := f.agent(t); after.Status.Phase != coremetadata.PhaseRunning || !maps.Equal(after.Metadata.Annotations, effortAnnotations("max")) {
+	if after := f.agent(t); after.Status.Phase != coremetadata.PhaseRunning || !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("opus", "max")) {
 		t.Fatalf("recovered Agent = %s %v", after.Status.Phase, after.Metadata.Annotations)
 	}
 }

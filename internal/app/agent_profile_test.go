@@ -201,7 +201,8 @@ func TestCreateClaudeAgentWithoutAProfileKeepsTheExactArgv(t *testing.T) {
 // TestCreateClaudeAgentWithAProfileLaunchesItsSettingsModelEffortAndInstructions
 // is acceptance 2: the profile's permissions reach Claude as --settings
 // <snapshot>, its model and effort as --model/--effort, and its instructions
-// through the persona path, with the persona, effort and profile annotations.
+// through the persona path, with the persona, effort, model, and profile
+// annotations.
 func TestCreateClaudeAgentWithAProfileLaunchesItsSettingsModelEffortAndInstructions(t *testing.T) {
 	t.Parallel()
 	f := newProfileFixture(t)
@@ -232,6 +233,7 @@ func TestCreateClaudeAgentWithAProfileLaunchesItsSettingsModelEffortAndInstructi
 		coremetadata.AnnotationAgentPersona:       "go-reviewer",
 		coremetadata.AnnotationAgentPersonaDigest: persona.Digest(instructions),
 		coremetadata.AnnotationAgentEffort:        "high",
+		coremetadata.AnnotationAgentModel:         "opus",
 		coremetadata.AnnotationAgentProfile:       "guard",
 		coremetadata.AnnotationAgentProfileDigest: digest,
 	}
@@ -264,8 +266,9 @@ func TestExplicitCreateFlagsWinOverTheProfileItemsTheyOverlap(t *testing.T) {
 		t.Fatalf("exec argv tail = %q, want %q", got, want)
 	}
 	agent := f.createdAgent(t)
-	if agent.Metadata.Annotations[coremetadata.AnnotationAgentPersona] != "mine" || agent.Metadata.Annotations[coremetadata.AnnotationAgentEffort] != "low" {
-		t.Fatalf("Agent annotations = %v, want the flag's persona and effort", agent.Metadata.Annotations)
+	if agent.Metadata.Annotations[coremetadata.AnnotationAgentPersona] != "mine" || agent.Metadata.Annotations[coremetadata.AnnotationAgentEffort] != "low" ||
+		agent.Metadata.Annotations[coremetadata.AnnotationAgentModel] != "sonnet" {
+		t.Fatalf("Agent annotations = %v, want the flag's persona, effort, and model", agent.Metadata.Annotations)
 	}
 	for _, item := range []string{"instructions", "model", "effort"} {
 		line := "profile-not-applied item=" + item + " provider=claude reason=" + profileReasonOverriddenByFlag
@@ -537,6 +540,72 @@ func TestUICreateResolvesTheProfileLikeTheTypedCreate(t *testing.T) {
 	}
 	if plan, err := f.create.prepareIntentAgent(aiModeClaude, resourceCreateFlags{labels: repeatedFlag{"role=r"}, resumeConversation: personaResumeConversation}); err != nil || plan.flags.profileLaunch.active() {
 		t.Fatalf("UI resume-picker answer resolved a profile: %+v, %v", plan.flags.profileLaunch, err)
+	}
+}
+
+// TestUICreateRecordsTheProfileModelAndEffortOnTheAgent drives a fresh UI
+// Agent answer through openIntentAgent's profile branch: the profile's model
+// and effort launch the Agent and are recorded on it, as projmux.io/model and
+// projmux.io/effort, beside the profile pair. The intent argv cannot name a
+// profile, so the parsed flags carry --profile the way prepareIntentAgent's
+// own test does.
+func TestUICreateRecordsTheProfileModelAndEffortOnTheAgent(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	fx.create.homeDir = agentLaunchArgvTestCommand(t).homeDir
+	paths, err := savedSettingsPaths(fx.create.homeDir, fx.create.lookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := profile.NewDefaultStore(paths).Write("tuned", []byte("model = \"opus\"\neffort = \"high\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := fx.create.agents.(*fakeAgentLauncher)
+
+	intent := agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right", anchorPaneID: fx.originID}
+	argv, provider, conversation, err := intent.canonicalArgv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := fx.create.resolveCanonicalIntentScope(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchDir, _ := fx.create.intentSplitLaunchDir(scope, conversation)
+	var stdout, stderr bytes.Buffer
+	flags, err := intentAgentFlags(intent, argv, conversation, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags.profile = "tuned"
+	before := make(map[string]bool, len(fx.store.registry.Agents))
+	for _, agent := range fx.store.registry.Agents {
+		before[agent.Metadata.UID] = true
+	}
+	if _, err := fx.create.createCanonicalIntentAgent(scope, intent, provider, launchDir, flags, &stdout, &stderr); err != nil {
+		t.Fatalf("UI create: %v (stderr=%q)", err, stderr.String())
+	}
+
+	if len(launcher.plans) != 1 || launcher.plans[0].model != "opus" || launcher.plans[0].effort != "high" {
+		t.Fatalf("plans = %+v, want one launch with the profile's model opus and effort high", launcher.plans)
+	}
+	var created []coremetadata.Agent
+	for _, agent := range fx.store.registry.Agents {
+		if !before[agent.Metadata.UID] {
+			created = append(created, agent)
+		}
+	}
+	if len(created) != 1 {
+		t.Fatalf("UI create made %d Agents, want 1", len(created))
+	}
+	want := map[string]string{
+		coremetadata.AnnotationAgentModel:         "opus",
+		coremetadata.AnnotationAgentEffort:        "high",
+		coremetadata.AnnotationAgentProfile:       "tuned",
+		coremetadata.AnnotationAgentProfileDigest: entry.Digest,
+	}
+	if got := created[0].Metadata.Annotations; !maps.Equal(got, want) {
+		t.Fatalf("UI Agent annotations = %v, want %v", got, want)
 	}
 }
 

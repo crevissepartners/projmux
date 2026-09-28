@@ -50,6 +50,7 @@ type agentRelaunchResult struct {
 	PaneUID              string                            `json:"paneUID,omitempty"`
 	NewPaneUID           string                            `json:"newPaneUID,omitempty"`
 	CurrentEffort        string                            `json:"currentEffort,omitempty"`
+	CurrentModel         string                            `json:"currentModel,omitempty"`
 	NewEffort            string                            `json:"newEffort,omitempty"`
 	NewModel             string                            `json:"newModel,omitempty"`
 	Restart              bool                              `json:"restart"`
@@ -78,10 +79,10 @@ type agentRelaunchRequest struct {
 // with --model and --effort, which keeps its uid and its conversation. An
 // Offline or Failed Agent is only resumed.
 //
-// Nothing is written before the stop. The effort is recorded by the rebind
-// transaction, the way `agent resume --effort` records it, so a launch that
-// fails records nothing; the model is passed once and recorded nowhere. Every
-// refusal happens before any change and leaves no trace.
+// Nothing is written before the stop. The model and effort are recorded by
+// the rebind transaction, the way `agent resume --model/--effort` records
+// them, so a launch that fails records neither. Every refusal happens before
+// any change and leaves no trace.
 //
 // A stop that reports an error is not taken at its word, because `delete
 // pane` can fail after the Pane is already gone: the Registry and the exact
@@ -161,13 +162,16 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		Action: "relaunch", DryRun: request.dryRun,
 		AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: provider,
 		Phase: target.Status.Phase, Interaction: interaction, PaneUID: paneUID,
-		CurrentEffort: currentEffort, NewEffort: request.effort, NewModel: request.model,
+		CurrentEffort: currentEffort, CurrentModel: target.Metadata.Annotations[coremetadata.AnnotationAgentModel],
+		NewEffort: request.effort, NewModel: request.model,
 		Restart:              running,
 		ConfirmationRequired: running && interaction != coremetadata.InteractionIdle && interaction != coremetadata.InteractionResponseComplete,
 	}
 	// A Running Agent already launched with exactly this effort has nothing
-	// to gain from a restart. A --model always restarts: projmux does not
-	// record the model a provider runs, so it cannot know it is the same.
+	// to gain from a restart. A --model always restarts: the recorded model is
+	// the last one requested, not necessarily the one the provider runs now (a
+	// `/model` switch inside the session is not observed), so matching the
+	// record cannot prove nothing would change.
 	if running && request.model == "" && request.effort == currentEffort {
 		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
 		result.NewPaneUID = paneUID
@@ -263,7 +267,7 @@ func parseAgentRelaunchArgs(args []string, stderr io.Writer) (agentRelaunchReque
 	setRouteUsage(fs)
 	request.flags = resourceQueryFlags{kind: coremetadata.KindAgent}
 	request.flags.register(fs)
-	fs.StringVar(&request.model, "model", "", "claude or codex: model name the relaunch runs; passed once, not recorded")
+	fs.StringVar(&request.model, "model", "", "claude or codex: model name the relaunch runs; recorded on the Agent")
 	fs.StringVar(&request.effort, "effort", "", "claude or codex: effort level, recorded on the Agent: "+strings.Join(claudeEffortLevels, "|"))
 	fs.BoolVar(&request.yes, "yes", false, "restart the Agent even when its interaction shows a turn in progress or unknown")
 	fs.BoolVar(&request.dryRun, "dry-run", false, "report the target, its interaction, and the model and effort change without changing anything")

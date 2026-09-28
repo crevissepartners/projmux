@@ -913,13 +913,13 @@ var routes = []Route{
 				// Relaunch is `delete pane` on a Running Agent's managed Pane
 				// followed by the `agent resume` rebind with --model and
 				// --effort; an Offline or Failed Agent is only resumed. The
-				// Agent keeps its uid and its provider conversation, the rebind
-				// records the effort, and the model is recorded nowhere.
+				// Agent keeps its uid and its provider conversation, and the
+				// rebind records both the model and the effort.
 				Effects:    relaunchAgentEffects(),
 				Name:       "relaunch",
 				Invocation: InvocationExplicit,
 				Summary:    "Restart one exact Claude or Codex Agent on the same conversation with another model or effort",
-				Notes:      []string{"The model is passed to this one launch and not recorded; the effort is recorded on the Agent, so later resumes re-pass it."},
+				Notes:      []string{"The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort); later resumes re-pass the effort but not the model."},
 				Usage:      []string{"projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
 				Canonical:  []string{"agent relaunch"},
 				Outputs:    []OutputMode{OutputModeJSON},

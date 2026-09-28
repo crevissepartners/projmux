@@ -140,8 +140,9 @@ func (l agentResumeLaunch) effortNotice(label string) string {
 // An Agent created or resumed with --effort records it, and Claude and Codex
 // resumes re-pass valid values. An invalid recorded value is skipped and
 // disclosed. The model is not re-passed on ordinary resume: the conversation
-// owns it. Only `agent resume --model` passes one, once, through
-// PlanAgentResumeWithModel.
+// owns it. Only `agent resume --model` passes one, through
+// PlanAgentResumeWithModel; the rebind records it on the Agent
+// (AnnotationAgentModel), and later plain resumes still do not re-pass it.
 //
 // A Claude Agent created with a profile is resumed with that profile's
 // current permissions: the profile is re-read by name, its settings snapshot
@@ -154,7 +155,7 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 
 // PlanAgentResumeWithModel is PlanAgentResume with model passed once, where
 // create puts it: ahead of the effort. The model is validated by the
-// `agent resume` preflight and recorded nowhere.
+// `agent resume` preflight and recorded by the rebind transaction, not here.
 func (c *aiCommand) PlanAgentResumeWithModel(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string, model string) (agentResumeLaunch, error) {
 	mode := normalizeAIMode(provider)
 	resumeArgv, err := resumeArgsForAgent(mode, conversationID)
@@ -297,9 +298,9 @@ type agentResumePlan struct {
 	// annotations are the Agent's own, handed to the resume seam unread.
 	annotations map[string]string
 	// modelOverride and effortOverride are `agent resume --model/--effort`,
-	// both empty on every other rebind. The model is passed once and recorded
-	// nowhere; the effort is recorded on the Agent by the rebind transaction
-	// and launched with, so later plain resumes re-pass it.
+	// both empty on every other rebind. Both are recorded on the Agent by the
+	// rebind transaction and launched with. Later plain resumes re-pass the
+	// effort but not the model, which the conversation owns.
 	modelOverride  string
 	effortOverride string
 }
@@ -680,11 +681,17 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err := links.record(working, mutator, plan.agentUID); err != nil {
 			return err
 		}
-		// The effort override is recorded in the same transaction, before any
-		// runtime object exists. A failure anywhere later rolls the whole
-		// transaction back, so a resume that does not launch records nothing.
+		// The effort and model overrides are recorded in the same transaction,
+		// before any runtime object exists. A failure anywhere later rolls the
+		// whole transaction back, so a resume that does not launch records
+		// neither.
 		if plan.effortOverride != "" {
 			if _, err := mutator.SetAgentEffort(working, plan.agentUID, plan.effortOverride); err != nil {
+				return MapMetadataError(err)
+			}
+		}
+		if plan.modelOverride != "" {
+			if _, err := mutator.SetAgentModel(working, plan.agentUID, plan.modelOverride); err != nil {
 				return MapMetadataError(err)
 			}
 		}

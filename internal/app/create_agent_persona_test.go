@@ -80,6 +80,7 @@ func TestCreateClaudeAgentWithPersonaLaunchesTheSnapshotAndAnnotatesTheAgent(t *
 	want := map[string]string{
 		coremetadata.AnnotationAgentPersona:       "reviewer",
 		coremetadata.AnnotationAgentPersonaDigest: persona.Digest(snapshot),
+		coremetadata.AnnotationAgentModel:         "sonnet",
 	}
 	if len(agent.Metadata.Annotations) != len(want) {
 		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)

@@ -22,16 +22,22 @@ func effortAnnotations(effort string) map[string]string {
 	return map[string]string{coremetadata.AnnotationAgentEffort: effort}
 }
 
+// modelEffortAnnotations is the annotation set an Agent created or resumed with
+// both --model and --effort records.
+func modelEffortAnnotations(model, effort string) map[string]string {
+	return map[string]string{coremetadata.AnnotationAgentModel: model, coremetadata.AnnotationAgentEffort: effort}
+}
+
 // wantEffortInvalidNotice is the exact disclosure of a skipped effort.
 func wantEffortInvalidNotice(label, effort string) string {
 	return "projmux: agent/" + label + " resumed without its effort \"" + effort +
 		"\" (effort-invalid): not one of low, medium, high, xhigh, max"
 }
 
-// TestCreateClaudeAgentWithEffortRecordsItOnTheAgent pins the create half: the
-// same create that launches Claude with --effort records it on the Agent, and
-// on the Agent only.
-func TestCreateClaudeAgentWithEffortRecordsItOnTheAgent(t *testing.T) {
+// TestCreateClaudeAgentWithEffortAndModelRecordsBothOnTheAgent pins the create
+// half: the same create that launches Claude with --effort and --model records
+// both on the Agent, and on the Agent only.
+func TestCreateClaudeAgentWithEffortAndModelRecordsBothOnTheAgent(t *testing.T) {
 	t.Parallel()
 	store := newFakeResourceStore(t)
 	create, launcher := newTestAgentCreateCommand(t, store, newFakeTmux())
@@ -44,27 +50,59 @@ func TestCreateClaudeAgentWithEffortRecordsItOnTheAgent(t *testing.T) {
 		t.Fatalf("plans = %+v, want the first launch with --effort low", launcher.plans)
 	}
 	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
-	if want := effortAnnotations("low"); !maps.Equal(agent.Metadata.Annotations, want) {
-		t.Fatalf("Agent annotations = %v, want only %v (the model is not recorded)", agent.Metadata.Annotations, want)
+	if want := modelEffortAnnotations("sonnet", "low"); !maps.Equal(agent.Metadata.Annotations, want) {
+		t.Fatalf("Agent annotations = %v, want only %v", agent.Metadata.Annotations, want)
 	}
 	pane, ok := store.registry.Pane(agent.Status.PaneRef)
 	if !ok {
 		t.Fatalf("Agent pane %q missing", agent.Status.PaneRef)
 	}
-	if _, found := pane.Metadata.Annotations[coremetadata.AnnotationAgentEffort]; found {
-		t.Fatalf("Pane carries %s: %v", coremetadata.AnnotationAgentEffort, pane.Metadata.Annotations)
+	for _, key := range []string{coremetadata.AnnotationAgentEffort, coremetadata.AnnotationAgentModel} {
+		if _, found := pane.Metadata.Annotations[key]; found {
+			t.Fatalf("Pane carries %s: %v", key, pane.Metadata.Annotations)
+		}
 	}
 }
 
-// TestCreateClaudeAgentWithoutEffortStoresWhatItStoredBefore pins that a
-// create without --effort, with or without --model, writes no annotation map
-// at all: the stored Agent is byte-identical to the one before the effort was
-// recorded.
-func TestCreateClaudeAgentWithoutEffortStoresWhatItStoredBefore(t *testing.T) {
+// TestCreateAgentWithOnlyAModelRecordsOnlyTheModel pins the model half of the
+// create write on both providers: the model is recorded exactly as passed, as
+// the Agent's only annotation, and no effort appears.
+func TestCreateAgentWithOnlyAModelRecordsOnlyTheModel(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		provider, model string
+		extra           []string
+	}{
+		{aiModeClaude, "haiku", []string{"--", "review this"}},
+		{aiModeCodex, "gpt-6", []string{"--interactive-only"}},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			create, launcher := newTestAgentCreateCommand(t, store, newFakeTmux())
+			args := append([]string{"agent", "--provider", test.provider, "--model", test.model, "--project", "alpha", "--window", "review"}, test.extra...)
+			if _, stderr, err := runRoute(t, create, args...); err != nil {
+				t.Fatalf("create: %v (stderr=%q)", err, stderr)
+			}
+			if len(launcher.plans) != 1 || launcher.plans[0].model != test.model || launcher.plans[0].effort != "" {
+				t.Fatalf("plans = %+v, want one launch with --model %s", launcher.plans, test.model)
+			}
+			agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
+			want := map[string]string{coremetadata.AnnotationAgentModel: test.model}
+			if !maps.Equal(agent.Metadata.Annotations, want) {
+				t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
+			}
+		})
+	}
+}
+
+// TestCreateClaudeAgentWithoutLaunchOptionsStoresWhatItStoredBefore pins that
+// a create without --effort and --model writes no annotation map at all: the
+// stored Agent is byte-identical to the one before either was recorded.
+func TestCreateClaudeAgentWithoutLaunchOptionsStoresWhatItStoredBefore(t *testing.T) {
 	t.Parallel()
 	for name, args := range map[string][]string{
 		"no launch options": {"agent", "--provider", "claude"},
-		"model only":        {"agent", "--provider", "claude", "--model", "opus"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -82,7 +120,7 @@ func TestCreateClaudeAgentWithoutEffortStoresWhatItStoredBefore(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(raw), "annotations") || strings.Contains(string(raw), "effort") || strings.Contains(string(raw), "opus") {
+			if strings.Contains(string(raw), "annotations") || strings.Contains(string(raw), "effort") || strings.Contains(string(raw), "model") {
 				t.Fatalf("Agent metadata gained launch-option state: %s", raw)
 			}
 		})
@@ -117,6 +155,33 @@ func TestEffortAnnotationMergesWithTheOtherCreateKeys(t *testing.T) {
 	}
 	if !maps.Equal(base, before) {
 		t.Fatalf("adding the effort wrote into base: %v", base)
+	}
+}
+
+// TestModelAnnotationMergesWithTheOtherCreateKeys is the same merge table for
+// the model helper.
+func TestModelAnnotationMergesWithTheOtherCreateKeys(t *testing.T) {
+	t.Parallel()
+	base := withEffortAnnotation("high", coremetadata.CreatorAnnotations("agent-creator", "pane-creator"))
+
+	if got := withModelAnnotation("", nil); got != nil {
+		t.Fatalf("no base, no model = %#v, want nil", got)
+	}
+	if got := withModelAnnotation("", base); !maps.Equal(got, base) {
+		t.Fatalf("no model = %v, want base %v", got, base)
+	}
+	if got, want := withModelAnnotation("haiku", nil), map[string]string{coremetadata.AnnotationAgentModel: "haiku"}; !maps.Equal(got, want) {
+		t.Fatalf("model only = %v, want %v", got, want)
+	}
+	before := maps.Clone(base)
+	got := withModelAnnotation("claude-sonnet-5", base)
+	want := maps.Clone(base)
+	want[coremetadata.AnnotationAgentModel] = "claude-sonnet-5"
+	if !maps.Equal(got, want) {
+		t.Fatalf("model over creator and effort = %v, want %v", got, want)
+	}
+	if !maps.Equal(base, before) {
+		t.Fatalf("adding the model wrote into base: %v", base)
 	}
 }
 
@@ -403,11 +468,11 @@ func resumeClaudeAgentWithFlags(t *testing.T, planner *aiCommand, annotations ma
 	return store, launcher.argv[0]
 }
 
-// TestAgentResumeWithModelAndEffortPassesBothAndRecordsOnlyTheEffort is the
-// override chain on a Claude Agent: `agent resume --model X --effort Y`
-// launches with both where create puts them and records only Y, and the next
-// plain resume of that Agent re-passes Y and no model.
-func TestAgentResumeWithModelAndEffortPassesBothAndRecordsOnlyTheEffort(t *testing.T) {
+// TestAgentResumeWithModelAndEffortPassesBothAndRecordsBoth is the override
+// chain on a Claude Agent: `agent resume --model X --effort Y` launches with
+// both where create puts them and records both, and the next plain resume of
+// that Agent re-passes Y and no model, keeping X recorded.
+func TestAgentResumeWithModelAndEffortPassesBothAndRecordsBoth(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
 	topic := map[string]string{coremetadata.AnnotationAgentTopic: "review"}
 
@@ -418,32 +483,61 @@ func TestAgentResumeWithModelAndEffortPassesBothAndRecordsOnlyTheEffort(t *testi
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
 	recorded := agent.Metadata.Annotations
-	if wantRecorded := withEffortAnnotation("max", topic); !maps.Equal(recorded, wantRecorded) {
-		t.Fatalf("Agent annotations = %v, want %v (the model is not recorded)", recorded, wantRecorded)
-	}
-	if raw, _ := json.Marshal(agent.Metadata); strings.Contains(string(raw), "opus") {
-		t.Fatalf("Agent metadata recorded the model: %s", raw)
+	wantRecorded := withModelAnnotation("opus", withEffortAnnotation("max", topic))
+	if !maps.Equal(recorded, wantRecorded) {
+		t.Fatalf("Agent annotations = %v, want %v", recorded, wantRecorded)
 	}
 
-	_, argv = resumeClaudeAgentWithFlags(t, planner, recorded)
+	store, argv = resumeClaudeAgentWithFlags(t, planner, recorded)
 	want = []string{"--effort", "max", "--resume", personaResumeConversation}
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 		t.Fatalf("next plain resume exec argv tail = %q, want %q", got, want)
 	}
+	if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, wantRecorded) {
+		t.Fatalf("plain resume annotations = %v, want %v kept", agent.Metadata.Annotations, wantRecorded)
+	}
 }
 
-// TestAgentResumeWithOnlyAModelRecordsNothing pins A-1 alone: a model-only
-// override launches with --model and leaves an Agent without annotations
-// without any.
-func TestAgentResumeWithOnlyAModelRecordsNothing(t *testing.T) {
+// TestAgentResumeWithOnlyAModelRecordsTheModel pins a model-only override: it
+// launches with --model (and the recorded effort), records the model as
+// passed, and leaves the effort and every other annotation as they were.
+func TestAgentResumeWithOnlyAModelRecordsTheModel(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
-	store, argv := resumeClaudeAgentWithFlags(t, planner, nil, "--model", "sonnet")
-	want := []string{"--model", "sonnet", "--resume", personaResumeConversation}
+	topic := map[string]string{coremetadata.AnnotationAgentTopic: "review"}
+	store, argv := resumeClaudeAgentWithFlags(t, planner, withEffortAnnotation("low", topic), "--model", "sonnet")
+	want := []string{"--model", "sonnet", "--effort", "low", "--resume", personaResumeConversation}
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 		t.Fatalf("exec argv tail = %q, want %q", got, want)
 	}
-	if agent, _ := store.registry.Agent("agt-beta-codex"); agent.Metadata.Annotations != nil {
-		t.Fatalf("a model-only resume annotated the Agent: %v", agent.Metadata.Annotations)
+	agent, _ := store.registry.Agent("agt-beta-codex")
+	if wantRecorded := withModelAnnotation("sonnet", withEffortAnnotation("low", topic)); !maps.Equal(agent.Metadata.Annotations, wantRecorded) {
+		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, wantRecorded)
+	}
+}
+
+// TestAPlainResumeKeepsTheRecordedModelAndDoesNotPassIt pins that the record
+// is never re-passed: an Agent that records a model resumes, without --model,
+// with exactly the argv of one that records none, and keeps the record; an
+// effort-only override leaves it too.
+func TestAPlainResumeKeepsTheRecordedModelAndDoesNotPassIt(t *testing.T) {
+	planner := agentLaunchArgvTestCommand(t)
+	recorded := modelEffortAnnotations("haiku", "high")
+
+	_, unrecorded := resumeClaudeAgentWithFlags(t, planner, effortAnnotations("high"))
+	store, argv := resumeClaudeAgentWithFlags(t, planner, recorded)
+	if !slices.Equal(argv, unrecorded) {
+		t.Fatalf("plain resume argv = %q, want the model-free %q", argv, unrecorded)
+	}
+	if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, recorded) {
+		t.Fatalf("plain resume annotations = %v, want %v", agent.Metadata.Annotations, recorded)
+	}
+
+	store, argv = resumeClaudeAgentWithFlags(t, planner, recorded, "--effort", "max")
+	if got, want := execArgvTail(t, argv, aiModeClaude), []string{"--effort", "max", "--resume", personaResumeConversation}; !slices.Equal(got, want) {
+		t.Fatalf("effort-only resume exec argv tail = %q, want %q", got, want)
+	}
+	if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, modelEffortAnnotations("haiku", "max")) {
+		t.Fatalf("effort-only resume annotations = %v, want the model kept", agent.Metadata.Annotations)
 	}
 }
 
@@ -517,7 +611,7 @@ func TestResumeSeamPassesTheModelOverrideBeforeTheWorkspace(t *testing.T) {
 // TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites pins the
 // override on the native Codex lane: the preflight plan and the plan after
 // thread/resume both carry -m and the effort, the launched argv spells them,
-// and only the effort is recorded.
+// and both are recorded.
 func TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites(t *testing.T) {
 	store := newFakeResourceStore(t)
 	route := nativeTestRoute("generation-override", coremetadata.CodexGenerationCurrent)
@@ -547,7 +641,7 @@ func TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites(t *testing.
 		t.Fatalf("split-window calls = %v, want one launch with the overrides", calls)
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	if want := effortAnnotations("high"); !maps.Equal(agent.Metadata.Annotations, want) {
+	if want := modelEffortAnnotations("gpt-6", "high"); !maps.Equal(agent.Metadata.Annotations, want) {
 		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
 	}
 }
@@ -607,30 +701,43 @@ func TestAgentResumeRefusesModelAndEffortItCannotHonorWithZeroMutations(t *testi
 	}
 }
 
-// TestAFailedEffortOverrideResumeRecordsNoEffort pins what a failed launch
-// leaves: the effort is written inside the rebind transaction, and a split
-// that fails rolls that transaction back, so the Agent keeps the effort it
-// recorded before.
-func TestAFailedEffortOverrideResumeRecordsNoEffort(t *testing.T) {
-	store := newFakeResourceStore(t)
-	target, _ := store.registry.Agent("agt-beta-codex")
-	target.Spec.Provider = aiModeClaude
-	target.Status.SessionRef = claudeConversationRef(personaResumeConversation)
-	target.Metadata.Annotations = effortAnnotations("low")
-	tmux := newFakeTmux()
-	tmux.fail = []string{"split-window"}
-	tmux.failMessage = "no space for new pane"
-	command, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
-	command.rebind.launcher = &exactArgvResumeLauncher{fakeResumeLauncher: recorder, planner: agentLaunchArgvTestCommand(t)}
-	before := store.snapshot()
+// TestAFailedOverrideResumeRecordsNoEffortAndNoModel pins what a failed
+// launch leaves: the effort and the model are written inside the rebind
+// transaction, and a split that fails rolls that transaction back, so the
+// Agent keeps what it recorded before -- a recorded model, or none.
+func TestAFailedOverrideResumeRecordsNoEffortAndNoModel(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		recorded map[string]string
+		flags    []string
+	}{
+		{"effort", effortAnnotations("low"), []string{"--effort", "max"}},
+		{"model over none", effortAnnotations("low"), []string{"--model", "sonnet"}},
+		{"model over a recorded one", modelEffortAnnotations("haiku", "low"), []string{"--model", "sonnet", "--effort", "max"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			target, _ := store.registry.Agent("agt-beta-codex")
+			target.Spec.Provider = aiModeClaude
+			target.Status.SessionRef = claudeConversationRef(personaResumeConversation)
+			target.Metadata.Annotations = maps.Clone(test.recorded)
+			tmux := newFakeTmux()
+			tmux.fail = []string{"split-window"}
+			tmux.failMessage = "no space for new pane"
+			command, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
+			command.rebind.launcher = &exactArgvResumeLauncher{fakeResumeLauncher: recorder, planner: agentLaunchArgvTestCommand(t)}
+			before := store.snapshot()
 
-	if _, _, err := runRoute(t, command, "resume", "uid:agt-beta-codex", "--effort", "max"); err == nil {
-		t.Fatal("resume succeeded despite a failing split")
-	}
-	if store.writes != 0 || store.snapshot() != before {
-		t.Fatalf("a rolled-back override resume committed %d writes", store.writes)
-	}
-	if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, effortAnnotations("low")) {
-		t.Fatalf("Agent annotations = %v, want the effort it recorded before", agent.Metadata.Annotations)
+			args := append([]string{"resume", "uid:agt-beta-codex"}, test.flags...)
+			if _, _, err := runRoute(t, command, args...); err == nil {
+				t.Fatal("resume succeeded despite a failing split")
+			}
+			if store.writes != 0 || store.snapshot() != before {
+				t.Fatalf("a rolled-back override resume committed %d writes", store.writes)
+			}
+			if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, test.recorded) {
+				t.Fatalf("Agent annotations = %v, want what it recorded before %v", agent.Metadata.Annotations, test.recorded)
+			}
+		})
 	}
 }

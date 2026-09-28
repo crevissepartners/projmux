@@ -162,6 +162,22 @@ func withEffortAnnotation(effort string, base map[string]string) map[string]stri
 	return out
 }
 
+// withModelAnnotation adds the model a new Agent is created with to base, the
+// Agent annotations the create already records, with the same contract as
+// withEffortAnnotation: without a model it returns base itself (nil included),
+// otherwise a new map, and it never writes into base.
+func withModelAnnotation(model string, base map[string]string) map[string]string {
+	if model == "" {
+		return base
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = make(map[string]string, 1)
+	}
+	out[coremetadata.AnnotationAgentModel] = model
+	return out
+}
+
 // claudeEffortReasonInvalid is the reason token of a recorded effort a resume
 // does not re-pass because it is not one of claudeEffortLevels.
 const claudeEffortReasonInvalid = "effort-invalid"
