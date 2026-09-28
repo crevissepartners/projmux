@@ -1191,6 +1191,22 @@ pmx() {
     "$bin" "$@"
 }
 
+# pmx_unobserved is pmx without the create shim (which pins every tmux call to
+# this run's server) and with an empty TMUX_TMPDIR, so the app socket a view
+# observes outside tmux has no server behind it: Registry reads that must not
+# see any live runtime (the stored-displayName leak checks below) use it.
+mkdir -p "$create_root/tt-empty"
+chmod 0700 "$create_root/tt-empty"
+pmx_unobserved() {
+  env -u TMUX -u TMUX_PANE \
+    TMUX_TMPDIR="$create_root/tt-empty" \
+    XDG_STATE_HOME="$create_root/state" \
+    XDG_CONFIG_HOME="$create_root/config" \
+    PROJMUX_MANAGED_ROOTS="$create_root/legacy:$create_root/work" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
 create_registry="$create_root/state/projmux/metadata/registry.json"
 SMOKE_CONTRACT_TERMINAL_STATE_PATH="$create_registry"
 if [[ -e "$create_registry" ]]; then
@@ -1533,11 +1549,22 @@ if ! awk -v stable="$alpha_window_name" '
   echo "legacy Window compact projection lost its durable name or four-field shape" >&2
   exit 1
 fi
-pmx get windows --project alpha -o wide >"$create_root/alpha-windows-table.out"
-# The inherited tmux identity is stripped, so this is deliberately the
-# no-transport projector: this imported legacy Window has no anchor Pane, so
-# the literal Window fallback is context and stable NAME remains the durable
-# address. The stored runtime display sentinel must not leak.
+# Outside tmux a view observes the app socket, which here is this run's
+# server, so the plain outside-tmux read reports the live Window.
+pmx get windows --project alpha -o wide >"$create_root/alpha-windows-observed.out"
+if ! awk -v stable="$alpha_window_name" '
+  NR == 2 { found = $1 == "window" && $2 == stable && $3 == "live" && $6 == "live-window-name" && $7 == "true" }
+  END { exit !found }
+' "$create_root/alpha-windows-observed.out"; then
+  echo "outside-tmux Window table did not observe the app server (want stable=$alpha_window_name live):" >&2
+  cat "$create_root/alpha-windows-observed.out" >&2
+  exit 1
+fi
+pmx_unobserved get windows --project alpha -o wide >"$create_root/alpha-windows-table.out"
+# With no server behind the app socket nothing is observed: this imported
+# legacy Window has no anchor Pane, so the literal Window fallback is context
+# and stable NAME remains the durable address. The stored runtime display
+# sentinel must not leak.
 smoke_assert_file_contains "$create_root/alpha-windows-table.out" "CONTEXT"
 smoke_assert_file_contains "$create_root/alpha-windows-table.out" "SOURCE"
 smoke_assert_file_contains "$create_root/alpha-windows-table.out" "OBSERVED"
@@ -1557,7 +1584,8 @@ if grep -Fq "$legacy_window_name_before" "$create_root/alpha-windows-table.out";
 fi
 
 # Plural resource JSON carries context from the same invocation snapshot. The
-# outside-tmux reads remain unobserved; the exact inherited socket admits only
+# reads with no server behind the app socket remain unobserved; the exact
+# inherited socket admits only
 # the UID-bound Window and Pane live display values. The read projection must
 # not touch Registry bytes.
 alpha_window_uid="$(ctx display-message -p -t "$legacy_window_id" '#{@projmux_window_uid}')"
@@ -1565,8 +1593,8 @@ alpha_pane_uid="$(ctx display-message -p -t "$legacy_pane" '#{@projmux_pane_uid}
 smoke_require_uid "context JSON Window" window "$alpha_window_uid"
 smoke_require_uid "context JSON Pane" pane "$alpha_pane_uid"
 cp "$create_registry" "$create_root/context-json.registry.before"
-pmx get windows --project alpha --window "uid:$alpha_window_uid" -o json >"$create_root/context-window-offline.json"
-pmx get panes --project alpha --window "uid:$alpha_window_uid" --pane "uid:$alpha_pane_uid" -o json >"$create_root/context-pane-offline.json"
+pmx_unobserved get windows --project alpha --window "uid:$alpha_window_uid" -o json >"$create_root/context-window-offline.json"
+pmx_unobserved get panes --project alpha --window "uid:$alpha_window_uid" --pane "uid:$alpha_pane_uid" -o json >"$create_root/context-pane-offline.json"
 pmx_live get windows --project alpha --window "uid:$alpha_window_uid" -o json >"$create_root/context-window-live.json"
 pmx_live get panes --project alpha --window "uid:$alpha_window_uid" --pane "uid:$alpha_pane_uid" -o json >"$create_root/context-pane-live.json"
 python3 - \
@@ -1615,7 +1643,7 @@ if ! cmp "$create_root/context-json.registry.before" "$create_registry"; then
   echo "context resource JSON mutated the Registry" >&2
   exit 1
 fi
-pmx describe window "$alpha_window_name" -p alpha >"$create_root/alpha-window.describe"
+pmx_unobserved describe window "$alpha_window_name" -p alpha >"$create_root/alpha-window.describe"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "Context:"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "ContextSource:"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "window-fallback"
@@ -3933,6 +3961,24 @@ delete_pmx() {
     "$bin" "$@"
 }
 
+# delete_pmx_view runs the Registry views (`get`, `describe`) outside the delete
+# shim. Outside tmux a view observes the app socket `-L projmux`; through the
+# shim that call would be logged as a default-route call the delete assertion
+# below forbids, and mapped onto the delete server. Without the shim it asks
+# the app socket in this TMUX_TMPDIR, where no server runs, so the uid, name
+# and JSON values the later steps read stay the unobserved ones.
+delete_pmx_view() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$delete_root/home" \
+    XDG_CONFIG_HOME="$delete_root/config" \
+    XDG_STATE_HOME="$delete_root/state" \
+    XDG_RUNTIME_DIR="$delete_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$delete_root/work" \
+    TMUX_TMPDIR="$delete_root/tmux" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
 delete_tmux new-session -d -s work-alpha -n primary -c "$delete_root/work/alpha" sleep 600
 delete_tmux set-option -t work-alpha -q @projmux_project_path "$delete_root/work/alpha"
 delete_tmux new-window -d -t work-alpha: -n sibling -c "$delete_root/work/alpha" sleep 600
@@ -4100,8 +4146,8 @@ delete_beta="$(delete_tmux display-message -p -t work-beta:only '#{window_id}')"
 delete_primary_uid="$(delete_tmux show-options -wqv -t "$delete_primary" @projmux_window_uid)"
 delete_sibling_uid="$(delete_tmux show-options -wqv -t "$delete_sibling" @projmux_window_uid)"
 delete_beta_uid="$(delete_tmux show-options -wqv -t "$delete_beta" @projmux_window_uid)"
-delete_alpha_project_uid="$(delete_pmx describe project alpha -o uid)"
-delete_beta_project_uid="$(delete_pmx describe project beta -o uid)"
+delete_alpha_project_uid="$(delete_pmx_view describe project alpha -o uid)"
+delete_beta_project_uid="$(delete_pmx_view describe project beta -o uid)"
 if [[ -z "$delete_primary_uid" || -z "$delete_sibling_uid" || -z "$delete_beta_uid" || -z "$delete_alpha_project_uid" || -z "$delete_beta_project_uid" ]]; then
   echo "delete Window e2e apply left an identity mirror empty" >&2
   exit 1
@@ -4134,8 +4180,8 @@ delete_pmx_inside() {
 # Explicit registration allocates stable Window metadata.name independently of
 # tmux window_name, so the references are read back from the Registry
 # rather than assumed from the session layout above.
-delete_primary_name="$(delete_pmx describe window "uid:$delete_primary_uid" -o name | tr -d '[:space:]')"
-delete_beta_name="$(delete_pmx describe window "uid:$delete_beta_uid" -o name | tr -d '[:space:]')"
+delete_primary_name="$(delete_pmx_view describe window "uid:$delete_primary_uid" -o name | tr -d '[:space:]')"
+delete_beta_name="$(delete_pmx_view describe window "uid:$delete_beta_uid" -o name | tr -d '[:space:]')"
 if [[ -z "$delete_primary_name" ]] || [[ -z "$delete_beta_name" ]]; then
   echo "app-owned host could not read back a Window name" >&2
   exit 1
@@ -4210,13 +4256,13 @@ if [[ "$(delete_tmux display-message -p -t "$delete_sibling" '#{window_id}')" !=
   echo "external Window delete changed sibling $delete_sibling" >&2
   exit 1
 fi
-delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-external"
+delete_pmx_view get windows --all-projects -o uid >"$delete_root/windows.after-external"
 if grep -Fqx "$delete_primary_uid" "$delete_root/windows.after-external" || \
   ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-external"; then
   echo "external Window delete did not preserve exact registry sibling" >&2
   exit 1
 fi
-delete_pmx get projects -o uid >"$delete_root/projects.after-external"
+delete_pmx_view get projects -o uid >"$delete_root/projects.after-external"
 smoke_assert_file_contains "$delete_root/projects.after-external" "$delete_alpha_project_uid"
 smoke_assert_file_contains "$delete_root/external.out" "live killed tmux window $delete_primary"
 delete_await_controller_observed_idle external-window-delete
@@ -4226,9 +4272,9 @@ delete_await_controller_observed_idle external-window-delete
 # retains the zero-Window Project reservation and allocates no replacement;
 # alpha and the foreign socket remain byte-semantically untouched.
 {
-  delete_pmx get windows --project "uid:$delete_alpha_project_uid" -o uid
-  delete_pmx get panes --project "uid:$delete_alpha_project_uid" -o uid
-  delete_pmx get agents --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx_view get windows --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx_view get panes --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx_view get agents --project "uid:$delete_alpha_project_uid" -o uid
 } | sort >"$delete_root/alpha-graph.before-beta-delete"
 delete_other_before_last_window="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"
 delete_pmx_delete window "uid:$delete_beta_uid" --dry-run >"$delete_root/last-dry-run.out"
@@ -4243,11 +4289,11 @@ if grep -Fq "retryable drift" "$delete_root/last.out"; then
   echo "last-Window delete reported retryable drift after a successful root cascade" >&2
   exit 1
 fi
-delete_pmx get projects -o uid >"$delete_root/projects.after-last-delete"
-delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-last-delete"
+delete_pmx_view get projects -o uid >"$delete_root/projects.after-last-delete"
+delete_pmx_view get windows --all-projects -o uid >"$delete_root/windows.after-last-delete"
 if ! grep -Fqx "$delete_beta_project_uid" "$delete_root/projects.after-last-delete" ||
   grep -Fqx "$delete_beta_uid" "$delete_root/windows.after-last-delete" ||
-  ! delete_pmx describe project "uid:$delete_beta_project_uid" -o json >"$delete_root/beta-after-last-delete.json" ||
+  ! delete_pmx_view describe project "uid:$delete_beta_project_uid" -o json >"$delete_root/beta-after-last-delete.json" ||
   ! grep -Fq '"primaryWindowRef": ""' "$delete_root/beta-after-last-delete.json"; then
   echo "last-Window canonical cascade did not retain an exact zero-Window beta Project" >&2
   exit 1
@@ -4258,9 +4304,9 @@ if [[ "$(wc -l <"$delete_root/windows.after-last-delete" | tr -d '[:space:]')" !
   exit 1
 fi
 {
-  delete_pmx get windows --project "uid:$delete_alpha_project_uid" -o uid
-  delete_pmx get panes --project "uid:$delete_alpha_project_uid" -o uid
-  delete_pmx get agents --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx_view get windows --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx_view get panes --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx_view get agents --project "uid:$delete_alpha_project_uid" -o uid
 } | sort >"$delete_root/alpha-graph.after-beta-delete"
 cmp "$delete_root/alpha-graph.before-beta-delete" "$delete_root/alpha-graph.after-beta-delete"
 delete_other_after_last_window="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"
@@ -4311,7 +4357,7 @@ if ! smoke_wait_until 10 "self-target delete to leave durable stdout and close $
   cat "$delete_root/self.err" >&2 || true
   exit 1
 fi
-delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-self"
+delete_pmx_view get windows --all-projects -o uid >"$delete_root/windows.after-self"
 if grep -Fqx "$self_uid" "$delete_root/windows.after-self"; then
   echo "self-target delete left Registry uid $self_uid" >&2
   exit 1
@@ -4356,11 +4402,11 @@ exec sleep 600
 DELETE_CODEX_STUB
 chmod 0755 "$delete_shim/codex"
 delete_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
-delete_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
+delete_agent_uid="$(delete_pmx_view get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_agent_pane" @projmux_pane_uid)"
 echo ">> delete managed Pane target agent=$delete_agent_uid pane=$delete_agent_pane uid=$delete_agent_pane_uid"
 delete_pmx_delete pane "uid:$delete_agent_pane_uid" --yes >"$delete_root/managed-pane.out"
-delete_pmx describe agent "uid:$delete_agent_uid" -o json >"$delete_root/managed-agent-offline.json"
+delete_pmx_view describe agent "uid:$delete_agent_uid" -o json >"$delete_root/managed-agent-offline.json"
 smoke_assert_file_contains "$delete_root/managed-agent-offline.json" '"phase": "Offline"'
 if grep -Fq '"paneRef"' "$delete_root/managed-agent-offline.json"; then
   echo "managed Pane delete left Agent paneRef behind" >&2
@@ -4369,7 +4415,7 @@ fi
 delete_await_controller_observed_idle managed-pane-delete
 
 delete_agent_two_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
-delete_agent_two_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
+delete_agent_two_uid="$(delete_pmx_view get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_agent_two_pane_uid="$(delete_tmux show-options -pqv -t "$delete_agent_two_pane" @projmux_pane_uid)"
 echo ">> delete Agent target agent=$delete_agent_two_uid pane=$delete_agent_two_pane uid=$delete_agent_two_pane_uid"
 delete_pmx_delete agent "uid:$delete_agent_two_uid" --dry-run >"$delete_root/agent-dry-run.out"
@@ -4380,7 +4426,7 @@ if [[ "$(delete_tmux display-message -p -t "$delete_agent_two_pane" '#{pane_id}'
   echo "Agent delete left managed Pane $delete_agent_two_pane live" >&2
   exit 1
 fi
-delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid >"$delete_root/agents.after-delete"
+delete_pmx_view get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid >"$delete_root/agents.after-delete"
 if grep -Fqx "$delete_agent_two_uid" "$delete_root/agents.after-delete"; then
   echo "Agent delete left Registry uid $delete_agent_two_uid" >&2
   exit 1
@@ -4396,7 +4442,7 @@ delete_await_controller_observed_idle managed-agent-delete
 # app-owned, then the Agent with the app marker removed (standalone), keeping a
 # live Agent and the complete already-absent tmux inventory byte-identical.
 delete_live_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
-delete_live_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
+delete_live_agent_uid="$(delete_pmx_view get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_live_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_live_agent_pane" @projmux_pane_uid)"
 
 # A detached daemon's deletion is never the Agent's. The fake Codex fixture's
@@ -4501,7 +4547,7 @@ if [[ "$(delete_tmux show-options -gqv @projmux_app)" != "1" ]]; then
 fi
 delete_tmux kill-pane -t "$delete_offline_pane"
 delete_offline_pane_converged() {
-  delete_pmx describe pane "uid:$delete_offline_pane_uid" -o json >"$delete_root/offline-pane.json" 2>/dev/null &&
+  delete_pmx_view describe pane "uid:$delete_offline_pane_uid" -o json >"$delete_root/offline-pane.json" 2>/dev/null &&
     grep -Fq '"type": "MissingRuntime"' "$delete_root/offline-pane.json" &&
     grep -Fq '"reason": "RuntimeUnbound"' "$delete_root/offline-pane.json"
 }
@@ -4509,12 +4555,12 @@ smoke_wait_until 10 "raw Pane loss to converge to durable MissingRuntime evidenc
   delete_offline_pane_converged
 delete_await_controller_observed_idle raw-pane-loss
 delete_offline_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
-delete_offline_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
+delete_offline_agent_uid="$(delete_pmx_view get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_offline_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_offline_agent_pane" @projmux_pane_uid)"
 delete_tmux kill-pane -t "$delete_offline_agent_pane"
 delete_offline_agent_converged() {
-  delete_pmx describe agent "uid:$delete_offline_agent_uid" -o json >"$delete_root/offline-agent.json" 2>/dev/null &&
-    delete_pmx describe pane "uid:$delete_offline_agent_pane_uid" -o json >"$delete_root/offline-agent-pane.json" 2>/dev/null &&
+  delete_pmx_view describe agent "uid:$delete_offline_agent_uid" -o json >"$delete_root/offline-agent.json" 2>/dev/null &&
+    delete_pmx_view describe pane "uid:$delete_offline_agent_pane_uid" -o json >"$delete_root/offline-agent-pane.json" 2>/dev/null &&
     grep -Fq '"phase": "Offline"' "$delete_root/offline-agent.json" &&
     grep -Fq '"type": "MissingRuntime"' "$delete_root/offline-agent-pane.json"
 }
@@ -4523,10 +4569,10 @@ smoke_wait_until 10 "raw Agent Pane loss to converge to Offline/MissingRuntime e
 delete_await_controller_observed_idle raw-agent-pane-loss
 delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort >"$delete_root/offline-pane.tmux-before"
 {
-  delete_pmx get projects -o uid
-  delete_pmx get windows --all-projects -o uid
-  delete_pmx get panes --all-projects -o uid
-  delete_pmx get agents --all-projects -o uid
+  delete_pmx_view get projects -o uid
+  delete_pmx_view get windows --all-projects -o uid
+  delete_pmx_view get panes --all-projects -o uid
+  delete_pmx_view get agents --all-projects -o uid
 } | grep -Fvx -e "$delete_offline_pane_uid" -e "$delete_offline_agent_uid" -e "$delete_offline_agent_pane_uid" | sort >"$delete_root/offline-sibling-graph.before"
 sha256sum "$delete_root/offline-sibling-graph.before" >"$delete_root/offline-sibling-graph.before.sha256"
 delete_await_registry_stable offline-pane-dry-run \
@@ -4559,14 +4605,14 @@ delete_pmx_delete agent "uid:$delete_offline_agent_uid" --yes >"$delete_root/off
 smoke_assert_file_contains "$delete_root/offline-agent.out" "registry-only deleted this Agent; no tmux Pane was killed"
 delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort >"$delete_root/offline-agent.tmux-after"
 cmp "$delete_root/offline-agent.tmux-before" "$delete_root/offline-agent.tmux-after"
-delete_pmx describe agent "uid:$delete_live_agent_uid" -o json >"$delete_root/live-agent.after-offline-deletes.json"
+delete_pmx_view describe agent "uid:$delete_live_agent_uid" -o json >"$delete_root/live-agent.after-offline-deletes.json"
 smoke_assert_file_contains "$delete_root/live-agent.after-offline-deletes.json" '"phase": "Running"'
 smoke_assert_file_contains "$delete_root/live-agent.after-offline-deletes.json" "\"paneRef\": \"$delete_live_agent_pane_uid\""
 {
-  delete_pmx get projects -o uid
-  delete_pmx get windows --all-projects -o uid
-  delete_pmx get panes --all-projects -o uid
-  delete_pmx get agents --all-projects -o uid
+  delete_pmx_view get projects -o uid
+  delete_pmx_view get windows --all-projects -o uid
+  delete_pmx_view get panes --all-projects -o uid
+  delete_pmx_view get agents --all-projects -o uid
 } | sort >"$delete_root/offline-sibling-graph.after"
 sha256sum "$delete_root/offline-sibling-graph.after" >"$delete_root/offline-sibling-graph.after.sha256"
 cmp "$delete_root/offline-sibling-graph.before" "$delete_root/offline-sibling-graph.after"
@@ -4606,7 +4652,7 @@ delete_offline_window="$(
 delete_offline_shell="$(delete_tmux display-message -p -t "$delete_offline_window" '#{pane_id}')"
 delete_offline_shell_uid="$(delete_tmux show-options -pqv -t "$delete_offline_shell" @projmux_pane_uid)"
 delete_offline_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o pane-id)"
-delete_offline_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o uid | tail -n 1)"
+delete_offline_agent_uid="$(delete_pmx_view get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o uid | tail -n 1)"
 if [[ -z "$delete_offline_window_uid" || -z "$delete_offline_shell_uid" || -z "$delete_offline_agent_pane" || -z "$delete_offline_agent_uid" ]]; then
   echo "offline Window delete fixture has an empty Registry identity" >&2
   exit 1
@@ -4636,9 +4682,9 @@ fi
 
 delete_pmx_delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes >"$delete_root/offline.out"
 smoke_assert_file_contains "$delete_root/offline.out" "registry-only deleted this Window; no tmux Window was killed"
-delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-offline"
-delete_pmx get panes --all-projects -o uid >"$delete_root/panes.after-offline"
-delete_pmx get agents --all-projects -o uid >"$delete_root/agents.after-offline"
+delete_pmx_view get windows --all-projects -o uid >"$delete_root/windows.after-offline"
+delete_pmx_view get panes --all-projects -o uid >"$delete_root/panes.after-offline"
+delete_pmx_view get agents --all-projects -o uid >"$delete_root/agents.after-offline"
 if grep -Fqx "$delete_offline_window_uid" "$delete_root/windows.after-offline"; then
   echo "offline Window cascade left Window uid $delete_offline_window_uid" >&2
   exit 1
@@ -4843,7 +4889,7 @@ fi
 smoke_assert_file_contains "$delete_root/pane-session-last.out" "Window uid="
 
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-after-pane-delete.out"
-delete_pmx get panes --all-projects -o uid >"$delete_root/panes.after-reconcile"
+delete_pmx_view get panes --all-projects -o uid >"$delete_root/panes.after-reconcile"
 for deleted_uid in "$delete_split_uid" "$delete_agent_pane_uid" "$delete_agent_two_pane_uid" \
   "$delete_offline_pane_uid" "$delete_offline_agent_pane_uid" "$delete_last_pane_uid" "$delete_gamma_pane_uid"; do
   if grep -Fqx "$deleted_uid" "$delete_root/panes.after-reconcile"; then
@@ -4897,7 +4943,7 @@ if grep -Fq "live would kill tmux window" "$delete_root/no-server-dry-run.out"; 
 fi
 delete_pmx_delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --yes >"$delete_root/no-server.out"
 smoke_assert_file_contains "$delete_root/no-server.out" "registry-only deleted this Window; no tmux Window was killed"
-delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-no-server"
+delete_pmx_view get windows --all-projects -o uid >"$delete_root/windows.after-no-server"
 if grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-no-server"; then
   echo "absent-server canonical delete left Registry Window $delete_sibling_uid" >&2
   exit 1
