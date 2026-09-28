@@ -94,12 +94,13 @@ type threadStartParams struct {
 	CWD                   string   `json:"cwd,omitempty"`
 	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`
 	Model                 string   `json:"model,omitempty"`
-	// DeveloperInstructions is the persona the thread is started with. Upstream
-	// records it once as the thread's `developer` message, so it is a
-	// start-only field: thread/resume neither records nor applies one, which is
-	// why threadResumeParams has no counterpart. It carries omitempty because a
-	// thread started without a persona must send the exact request it sent
-	// before this field existed -- the key itself absent, not an empty string.
+	// DeveloperInstructions is the agent guidance and persona the thread is
+	// started with. Upstream records it once as the thread's `developer`
+	// message, so it is a start-only field: thread/resume neither records nor
+	// applies one, which is why threadResumeParams has no counterpart. It
+	// carries omitempty because a thread started without either must send the
+	// exact request it sent before this field existed -- the key itself absent,
+	// not an empty string.
 	DeveloperInstructions string `json:"developerInstructions,omitempty"`
 	// Sandbox and ApprovalPolicy are the thread policy a named profile asks
 	// for, already spelled in the wire vocabulary (see ThreadPolicy). Both

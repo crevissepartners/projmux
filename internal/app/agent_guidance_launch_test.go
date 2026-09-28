@@ -31,6 +31,10 @@ func (l *agentGuidanceAgentLauncher) PlanAgentGuidance(provider string, recorded
 	return l.planner.PlanAgentGuidance(provider, recorded)
 }
 
+func (l *agentGuidanceAgentLauncher) PlanCodexAgentGuidance() agentGuidanceLaunch {
+	return l.planner.PlanCodexAgentGuidance()
+}
+
 // agentGuidanceResumeLauncher is the exact-argv resume recorder with the
 // production rules and guidance seams of its planner.
 type agentGuidanceResumeLauncher struct {
@@ -529,9 +533,11 @@ func TestUnreadableAgentGuidanceLaunchesWithoutItWithOneNoticeAndRecordsNothing(
 }
 
 // TestAgentGuidanceLeavesCodexAndReplyOnlyLaunchesUnchanged is acceptance 7:
-// the guidance is Claude-only. Codex, and the Claude reply-only lane, plan no
-// guidance and launch with the argv they had before, even with a digest
-// annotation recorded.
+// a launch the guidance does not reach plans none and launches with the argv
+// it had before, even with a digest annotation recorded. That is every Codex
+// launch but a fresh create that starts its own thread -- a Codex resume, a
+// create without a prompt, --interactive-only, a resume-picker create -- and
+// the Claude reply-only lane.
 func TestAgentGuidanceLeavesCodexAndReplyOnlyLaunchesUnchanged(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
 	for _, provider := range []string{aiModeCodex, aiModeAntigravity} {
@@ -557,18 +563,28 @@ func TestAgentGuidanceLeavesCodexAndReplyOnlyLaunchesUnchanged(t *testing.T) {
 	}
 
 	create := &createCommand{agents: &agentGuidanceAgentLauncher{&exactArgvAgentLauncher{fakeAgentLauncher: newFakeAgentLauncher(), planner: planner}}}
+	prompted := []string{"review this"}
 	for name, flags := range map[string]resourceCreateFlags{
-		"codex":      {},
-		"reply-only": {dialogueReplyOnly: true},
+		"codex":                  {},
+		"codex interactive-only": {payload: prompted, interactiveOnly: true},
+		"codex resume":           {payload: prompted, resumeConversation: resumeFixtureConversation},
+		"reply-only":             {dialogueReplyOnly: true},
 	} {
 		provider := aiModeClaude
-		if name == "codex" {
+		if strings.HasPrefix(name, "codex") {
 			provider = aiModeCodex
 		}
 		create.prepareAgentGuidance(provider, &flags)
 		if flags.agentGuidance.active || flags.resumeLaunchValues != nil {
 			t.Fatalf("%s: prepared agent guidance %+v", name, flags.agentGuidance)
 		}
+	}
+	// The one Codex lane the guidance reaches, for contrast.
+	fresh := resourceCreateFlags{payload: prompted}
+	create.prepareAgentGuidance(aiModeCodex, &fresh)
+	if !fresh.agentGuidance.active || fresh.agentGuidance.digest != agentguidance.Digest(agentguidance.Default()) ||
+		fresh.agentGuidance.systemPromptFile != "" {
+		t.Fatalf("codex fresh create prepared %+v, want the default guidance and no file", fresh.agentGuidance)
 	}
 }
 

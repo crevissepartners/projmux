@@ -28,23 +28,38 @@ type agentGuidancePlanner interface {
 
 var _ agentGuidancePlanner = (*aiCommand)(nil)
 
-// agentGuidanceLaunch is what one Claude launch does with the agent guidance.
-// The zero value is "not applicable" (another provider, the reply-only lane,
-// or a launcher without the seam) and changes no argv and no annotation.
+// codexAgentGuidancePlanner is the optional launcher seam that reads the
+// current agent guidance for a Codex fresh create, the one Codex lane that
+// starts a thread of its own. A launcher that does not implement it gives a
+// Codex create no guidance, exactly as before the guidance reached Codex.
+type codexAgentGuidancePlanner interface {
+	PlanCodexAgentGuidance() agentGuidanceLaunch
+}
+
+var _ codexAgentGuidancePlanner = (*aiCommand)(nil)
+
+// agentGuidanceLaunch is what one launch does with the agent guidance. The
+// zero value is "not applicable" (another provider or lane, the reply-only
+// lane, or a launcher without the seam) and changes no argv, no developer
+// instructions and no annotation.
 //
 // The guidance is the first part of the one --append-system-prompt-file a
 // Claude launch passes: guidance, then the persona, then the Project's label
 // link rules, each part present only when the launch has it and the parts
-// joined by projectlinks.CompositeSeparator.
+// joined by projectlinks.CompositeSeparator. A Codex fresh create sends it
+// the same way, ahead of the persona, as the thread's developer instructions
+// (developerInstructions).
 type agentGuidanceLaunch struct {
 	active bool
 	store  agentguidance.Store
 	// recorded is the digest the Agent records, "" when it records none.
 	recorded string
-	// digest and snapshotPath are the current guidance, both empty when the
-	// guidance is off.
+	// digest, snapshotPath and text are the current guidance, all empty when
+	// the guidance is off. text is sent only to a Codex thread and is never
+	// put in an argv or the Registry.
 	digest       string
 	snapshotPath string
+	text         []byte
 	// systemPromptFile is the one file a fresh create hands Claude: the
 	// guidance snapshot, or the composite of the guidance and the file the
 	// create would otherwise pass. Resumes find theirs in the seam from the
@@ -62,7 +77,23 @@ func (c *aiCommand) PlanAgentGuidance(provider string, recorded map[string]strin
 	if normalizeAIMode(provider) != aiModeClaude {
 		return agentGuidanceLaunch{}
 	}
-	launch := agentGuidanceLaunch{active: true, recorded: recorded[coremetadata.AnnotationAgentGuidanceDigest]}
+	launch := c.loadAgentGuidance()
+	launch.recorded = recorded[coremetadata.AnnotationAgentGuidanceDigest]
+	return launch
+}
+
+// PlanCodexAgentGuidance reads the current guidance for a Codex fresh create
+// and writes its snapshot, exactly as PlanAgentGuidance does for a Claude
+// create. A Codex resume never asks: a thread keeps the developer
+// instructions it was started with.
+func (c *aiCommand) PlanCodexAgentGuidance() agentGuidanceLaunch {
+	return c.loadAgentGuidance()
+}
+
+// loadAgentGuidance is the active launch of the current guidance: its text,
+// digest and content-addressed snapshot, or why it could not be read.
+func (c *aiCommand) loadAgentGuidance() agentGuidanceLaunch {
+	launch := agentGuidanceLaunch{active: true}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		launch.unavailable = err
@@ -82,7 +113,7 @@ func (c *aiCommand) PlanAgentGuidance(provider string, recorded map[string]strin
 		launch.unavailable = err
 		return launch
 	}
-	launch.digest, launch.snapshotPath = snapshot.Digest, snapshot.Path
+	launch.digest, launch.snapshotPath, launch.text = snapshot.Digest, snapshot.Path, guidance.Text
 	return launch
 }
 
@@ -112,6 +143,21 @@ func (l agentGuidanceLaunch) withCreateFile(base string) agentGuidanceLaunch {
 	}
 	l.systemPromptFile = composite
 	return l
+}
+
+// developerInstructions are the developer instructions a Codex fresh create
+// starts its thread with, given persona, the persona content ("" for none):
+// the guidance, then projectlinks.CompositeSeparator and persona, each part
+// present only when the create has it. Without guidance it is persona itself,
+// so a create with the guidance off sends exactly what it sent before.
+func (l agentGuidanceLaunch) developerInstructions(persona string) string {
+	if !l.active || l.unavailable != nil || l.digest == "" {
+		return persona
+	}
+	if persona == "" {
+		return string(l.text)
+	}
+	return string(l.text) + projectlinks.CompositeSeparator + persona
 }
 
 // withCreateAnnotation adds the digest a fresh create launched with to base.
@@ -201,15 +247,32 @@ func planAgentGuidanceWith(launcher any, provider string, recorded map[string]st
 	return planner.PlanAgentGuidance(provider, recorded)
 }
 
-// prepareAgentGuidance resolves the guidance one Claude create launches with
-// into flags.agentGuidance; its notice is disclosed once the Agent has a name.
+// planCodexAgentGuidanceWith asks launcher for a Codex fresh create's guidance
+// when it has the seam, and returns the zero launch otherwise.
+func planCodexAgentGuidanceWith(launcher any) agentGuidanceLaunch {
+	planner, ok := launcher.(codexAgentGuidancePlanner)
+	if !ok {
+		return agentGuidanceLaunch{}
+	}
+	return planner.PlanCodexAgentGuidance()
+}
+
+// prepareAgentGuidance resolves the guidance one create launches with into
+// flags.agentGuidance; its notice is disclosed once the Agent has a name.
 // It runs after prepareProjectLinks, because the guidance goes in front of the
 // file that prepared. A resume-picker create joins a conversation whose
 // recorded system prompt lacks the guidance, so it launches (and records) the
 // digest with the snapshot mode off; a fresh create records only the digest.
-// The reply-only lane and every other provider are left exactly as they were.
+// A Codex fresh create (nativeCodexFreshCreateRequired) sends the guidance as
+// its thread's developer instructions and records the digest; it passes no
+// file. The reply-only lane, every other Codex lane and every other provider
+// are left exactly as they were.
 func (c *createCommand) prepareAgentGuidance(provider string, flags *resourceCreateFlags) {
 	flags.agentGuidance = agentGuidanceLaunch{}
+	if provider == aiModeCodex && nativeCodexFreshCreateRequired(provider, *flags) {
+		flags.agentGuidance = planCodexAgentGuidanceWith(c.agents)
+		return
+	}
 	if provider != aiModeClaude || flags.dialogueReplyOnly {
 		return
 	}
