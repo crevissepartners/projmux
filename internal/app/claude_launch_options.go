@@ -24,22 +24,29 @@ var claudeModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}$
 // surface before any resource is allocated. The name is retained for callers
 // that originally used the Claude-only validator.
 func requireClaudeLaunchOptions(spelling, provider string, flags resourceCreateFlags) error {
-	if flags.model == "" && flags.effort == "" {
+	return requireLaunchOptions(spelling, provider, flags.model, flags.effort, flags.dialogueReplyOnly, "nothing was created")
+}
+
+// requireLaunchOptions is the one model and effort validator of create and
+// `agent resume`. outcome ends every refusal: what the refusing verb left
+// untouched ("nothing was created" or "nothing was changed").
+func requireLaunchOptions(spelling, provider, model, effort string, dialogueReplyOnly bool, outcome string) error {
+	if model == "" && effort == "" {
 		return nil
 	}
 	if provider != aiModeClaude && provider != aiModeCodex {
-		return usageError(fmt.Sprintf("%s --model and --effort apply only to --provider %s or %s; nothing was created", spelling, aiModeClaude, aiModeCodex))
+		return usageError(fmt.Sprintf("%s --model and --effort apply only to --provider %s or %s; %s", spelling, aiModeClaude, aiModeCodex, outcome))
 	}
-	if flags.dialogueReplyOnly {
-		return usageError(fmt.Sprintf("%s --model and --effort cannot be combined with --%s; nothing was created",
-			spelling, claudeDialogueReplyOnlyFlag))
+	if dialogueReplyOnly {
+		return usageError(fmt.Sprintf("%s --model and --effort cannot be combined with --%s; %s",
+			spelling, claudeDialogueReplyOnlyFlag, outcome))
 	}
-	if flags.model != "" && !claudeModelName.MatchString(flags.model) {
-		return usageError(fmt.Sprintf("%s --model %q is not a model name; nothing was created", spelling, flags.model))
+	if model != "" && !claudeModelName.MatchString(model) {
+		return usageError(fmt.Sprintf("%s --model %q is not a model name; %s", spelling, model, outcome))
 	}
-	if flags.effort != "" && !slices.Contains(claudeEffortLevels, flags.effort) {
-		return usageError(fmt.Sprintf("%s --effort must be one of: %s; nothing was created",
-			spelling, strings.Join(claudeEffortLevels, ", ")))
+	if effort != "" && !slices.Contains(claudeEffortLevels, effort) {
+		return usageError(fmt.Sprintf("%s --effort must be one of: %s; %s",
+			spelling, strings.Join(claudeEffortLevels, ", "), outcome))
 	}
 	return nil
 }

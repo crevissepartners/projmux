@@ -10,6 +10,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // effortInvalidFixture is a hand-edited effort Claude does not take.
@@ -354,5 +355,282 @@ func TestAgentPersonaAttachWithAnInvalidRecordedEffortStillRestarts(t *testing.T
 	}
 	if wantNotice := wantEffortInvalidNotice(f.agent(t).Metadata.Name, effortInvalidFixture); !strings.Contains(stderr, wantNotice) {
 		t.Fatalf("attach stderr = %q, want %q", stderr, wantNotice)
+	}
+}
+
+// PlanAgentResumeWithModel lets the exact-argv recorder carry an
+// `agent resume --model` through the real seam of its planner.
+func (l *exactArgvResumeLauncher) PlanAgentResumeWithModel(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string, model string) (agentResumeLaunch, error) {
+	launch, err := l.planner.PlanAgentResumeWithModel(provider, workspace, conversationID, annotations, model)
+	if err == nil {
+		l.argv = append(l.argv, slices.Clone(launch.argv))
+	}
+	return launch, err
+}
+
+// resumeClaudeAgentWithFlags is resumeClaudeAgentWithAnnotations with extra
+// `agent resume` flags. It returns the store, so the caller can read what the
+// resume recorded, and the one argv the provider was launched with.
+func resumeClaudeAgentWithFlags(t *testing.T, planner *aiCommand, annotations map[string]string, flags ...string) (*fakeResourceStore, []string) {
+	t.Helper()
+	store := newFakeResourceStore(t)
+	target, _ := store.registry.Agent("agt-beta-codex")
+	target.Spec.Provider = aiModeClaude
+	target.Status.SessionRef = claudeConversationRef(personaResumeConversation)
+	target.Metadata.Annotations = maps.Clone(annotations)
+
+	tmux := newFakeTmux()
+	command, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	launcher := &exactArgvResumeLauncher{fakeResumeLauncher: recorder, planner: planner}
+	command.rebind.launcher = launcher
+
+	args := append([]string{"resume", "uid:" + target.Metadata.UID}, flags...)
+	stdout, stderr, err := runRoute(t, command, args...)
+	if err != nil || !strings.Contains(stdout, "resumed") {
+		t.Fatalf("resume %v: stdout=%q stderr=%q err=%v", flags, stdout, stderr, err)
+	}
+	if len(launcher.argv) != 1 {
+		t.Fatalf("planned %d provider argv values, want 1", len(launcher.argv))
+	}
+	calls := splitWindowCalls(tmux)
+	if len(calls) != 1 {
+		t.Fatalf("split-window calls = %v, want exactly one provider launch", calls)
+	}
+	separator := slices.Index(calls[0], "--")
+	if separator < 0 || !slices.Equal(calls[0][separator+1:], launcher.argv[0]) {
+		t.Fatalf("launched child argv = %q, want exact %q", calls[0], launcher.argv[0])
+	}
+	return store, launcher.argv[0]
+}
+
+// TestAgentResumeWithModelAndEffortPassesBothAndRecordsOnlyTheEffort is the
+// override chain on a Claude Agent: `agent resume --model X --effort Y`
+// launches with both where create puts them and records only Y, and the next
+// plain resume of that Agent re-passes Y and no model.
+func TestAgentResumeWithModelAndEffortPassesBothAndRecordsOnlyTheEffort(t *testing.T) {
+	planner := agentLaunchArgvTestCommand(t)
+	topic := map[string]string{coremetadata.AnnotationAgentTopic: "review"}
+
+	store, argv := resumeClaudeAgentWithFlags(t, planner, withEffortAnnotation("low", topic), "--model", "opus", "--effort", "max")
+	want := []string{"--model", "opus", "--effort", "max", "--resume", personaResumeConversation}
+	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
+		t.Fatalf("override resume exec argv tail = %q, want %q", got, want)
+	}
+	agent, _ := store.registry.Agent("agt-beta-codex")
+	recorded := agent.Metadata.Annotations
+	if wantRecorded := withEffortAnnotation("max", topic); !maps.Equal(recorded, wantRecorded) {
+		t.Fatalf("Agent annotations = %v, want %v (the model is not recorded)", recorded, wantRecorded)
+	}
+	if raw, _ := json.Marshal(agent.Metadata); strings.Contains(string(raw), "opus") {
+		t.Fatalf("Agent metadata recorded the model: %s", raw)
+	}
+
+	_, argv = resumeClaudeAgentWithFlags(t, planner, recorded)
+	want = []string{"--effort", "max", "--resume", personaResumeConversation}
+	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
+		t.Fatalf("next plain resume exec argv tail = %q, want %q", got, want)
+	}
+}
+
+// TestAgentResumeWithOnlyAModelRecordsNothing pins A-1 alone: a model-only
+// override launches with --model and leaves an Agent without annotations
+// without any.
+func TestAgentResumeWithOnlyAModelRecordsNothing(t *testing.T) {
+	planner := agentLaunchArgvTestCommand(t)
+	store, argv := resumeClaudeAgentWithFlags(t, planner, nil, "--model", "sonnet")
+	want := []string{"--model", "sonnet", "--resume", personaResumeConversation}
+	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
+		t.Fatalf("exec argv tail = %q, want %q", got, want)
+	}
+	if agent, _ := store.registry.Agent("agt-beta-codex"); agent.Metadata.Annotations != nil {
+		t.Fatalf("a model-only resume annotated the Agent: %v", agent.Metadata.Annotations)
+	}
+}
+
+// TestAgentResumeWithoutOverridesKeepsTheArgvItHadBefore pins that the new
+// seam without a model is PlanAgentResume byte for byte on every provider and
+// every recorded effort, and that a flagless `agent resume` stores nothing new.
+func TestAgentResumeWithoutOverridesKeepsTheArgvItHadBefore(t *testing.T) {
+	planner := agentLaunchArgvTestCommand(t)
+	conversations := map[string]string{
+		aiModeClaude:      personaResumeConversation,
+		aiModeCodex:       resumeFixtureConversation,
+		aiModeAntigravity: personaResumeConversation,
+	}
+	for provider, conversation := range conversations {
+		workspace := coremetadata.AgentWorkspace{CWD: "/work/owner"}
+		if provider != aiModeAntigravity {
+			workspace.AdditionalWritableRoots = []string{"/work/extra"}
+		}
+		for _, annotations := range []map[string]string{nil, effortAnnotations("high"), effortAnnotations(effortInvalidFixture)} {
+			before, err := planner.PlanAgentResume(provider, workspace, conversation, annotations)
+			if err != nil {
+				t.Fatalf("%s PlanAgentResume: %v", provider, err)
+			}
+			after, err := planner.PlanAgentResumeWithModel(provider, workspace, conversation, annotations, "")
+			if err != nil {
+				t.Fatalf("%s PlanAgentResumeWithModel: %v", provider, err)
+			}
+			if !slices.Equal(after.argv, before.argv) || after.title != before.title || after.effortSkipped != before.effortSkipped {
+				t.Fatalf("%s %v: argv = %q, want %q", provider, annotations, after.argv, before.argv)
+			}
+		}
+	}
+
+	store, argv := resumeClaudeAgentWithFlags(t, planner, nil)
+	if got, want := execArgvTail(t, argv, aiModeClaude), []string{"--resume", personaResumeConversation}; !slices.Equal(got, want) {
+		t.Fatalf("plain resume exec argv tail = %q, want %q", got, want)
+	}
+	if agent, _ := store.registry.Agent("agt-beta-codex"); agent.Metadata.Annotations != nil {
+		t.Fatalf("a plain resume annotated the Agent: %v", agent.Metadata.Annotations)
+	}
+}
+
+// TestResumeSeamPassesTheModelOverrideBeforeTheWorkspace pins the argv
+// placement of the override on both CLI lanes: the model and the effort come
+// before the workspace arguments, so Claude's variadic --add-dir cannot take
+// them, in the order create spells them.
+func TestResumeSeamPassesTheModelOverrideBeforeTheWorkspace(t *testing.T) {
+	planner := agentLaunchArgvTestCommand(t)
+	workspace := coremetadata.AgentWorkspace{CWD: "/work/owner", AdditionalWritableRoots: []string{"/work/extra"}}
+	for _, test := range []struct {
+		provider, conversation string
+		want                   []string
+	}{
+		{aiModeClaude, personaResumeConversation, []string{"--model", "opus[1m]", "--effort", "xhigh", "--add-dir", "/work/extra", "--resume", personaResumeConversation}},
+		{aiModeCodex, resumeFixtureConversation, []string{"-m", "gpt-6", "-c", "model_reasoning_effort=xhigh", "-C", "/work/owner", "--add-dir", "/work/extra", "resume", resumeFixtureConversation}},
+	} {
+		model := "opus[1m]"
+		if test.provider == aiModeCodex {
+			model = "gpt-6"
+		}
+		launch, err := planner.PlanAgentResumeWithModel(test.provider, workspace, test.conversation, effortAnnotations("xhigh"), model)
+		if err != nil {
+			t.Fatalf("%s: %v", test.provider, err)
+		}
+		if got := execArgvTail(t, launch.argv, test.provider); !slices.Equal(got, test.want) {
+			t.Fatalf("%s exec argv tail = %q, want %q", test.provider, got, test.want)
+		}
+	}
+}
+
+// TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites pins the
+// override on the native Codex lane: the preflight plan and the plan after
+// thread/resume both carry -m and the effort, the launched argv spells them,
+// and only the effort is recorded.
+func TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites(t *testing.T) {
+	store := newFakeResourceStore(t)
+	route := nativeTestRoute("generation-override", coremetadata.CodexGenerationCurrent)
+	ref := nativeTestSessionRef(route, resumeFixtureConversation)
+	ref.ObservedAt = resourceFixtureClock
+	setFixtureSessionRef(t, store, "agt-beta-codex", ref)
+	tmux := newFakeTmux()
+	command, legacy, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	panes := &fakeNativePaneLauncher{}
+	command.rebind.launcher = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
+	command.rebind.create.codexNative = &fakeNativeThreadController{resolvedRoute: route, resumeBinding: codexappserver.ThreadBinding{ThreadID: resumeFixtureConversation}}
+
+	stdout, stderr, err := runRoute(t, command, "resume", "uid:agt-beta-codex", "--model", "gpt-6", "--effort", "high")
+	if err != nil || stdout != "agent/codex resumed\n" {
+		t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if len(panes.plans) != 2 {
+		t.Fatalf("native pane plans = %+v, want the preflight and the post-resume plan", panes.plans)
+	}
+	for i, plan := range panes.plans {
+		if plan.model != "gpt-6" || plan.effort != "high" {
+			t.Fatalf("native pane plan %d = %+v, want model gpt-6 effort high", i, plan)
+		}
+	}
+	calls := splitWindowCalls(tmux)
+	if len(calls) != 1 || !strings.Contains(strings.Join(calls[0], " "), "-m gpt-6 -c model_reasoning_effort=high resume") {
+		t.Fatalf("split-window calls = %v, want one launch with the overrides", calls)
+	}
+	agent, _ := store.registry.Agent("agt-beta-codex")
+	if want := effortAnnotations("high"); !maps.Equal(agent.Metadata.Annotations, want) {
+		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
+	}
+}
+
+// TestAgentResumeRefusesModelAndEffortItCannotHonorWithZeroMutations is the
+// preflight table of the overrides: each refusal is create's, ending
+// "nothing was changed", and leaves zero transactions, writes, and tmux calls.
+func TestAgentResumeRefusesModelAndEffortItCannotHonorWithZeroMutations(t *testing.T) {
+	t.Parallel()
+	claudeAgent := func(t *testing.T, store *fakeResourceStore) {
+		target, _ := store.registry.Agent("agt-beta-codex")
+		target.Spec.Provider = aiModeClaude
+		target.Status.SessionRef = claudeConversationRef(personaResumeConversation)
+	}
+	antigravityAgent := func(t *testing.T, store *fakeResourceStore) {
+		target, _ := store.registry.Agent("agt-beta-codex")
+		target.Spec.Provider = aiModeAntigravity
+		ref, ok := coremetadata.NewAgentSessionRef(coremetadata.AgentSessionObservation{Provider: aiModeAntigravity, SessionID: personaResumeConversation}, resourceFixtureClock)
+		if !ok {
+			t.Fatal("antigravity session fixture was rejected")
+		}
+		target.Status.SessionRef = ref
+	}
+	for _, test := range []struct {
+		name    string
+		prepare func(*testing.T, *fakeResourceStore)
+		flags   []string
+		want    string
+	}{
+		{"model that reads as an option", claudeAgent, []string{"--model=-x"}, `agent resume --model "-x" is not a model name; nothing was changed`},
+		{"model with a space", claudeAgent, []string{"--model", "a b"}, `agent resume --model "a b" is not a model name; nothing was changed`},
+		{"unknown effort", claudeAgent, []string{"--effort", "turbo"}, "agent resume --effort must be one of: low, medium, high, xhigh, max; nothing was changed"},
+		{"unsupported provider", antigravityAgent, []string{"--effort", "high"}, "agent resume --model and --effort apply only to --provider claude or codex; nothing was changed"},
+		{"reply-only with a model", claudeAgent, []string{"--dialogue-reply-only", "--model", "opus"}, "agent resume --model and --effort cannot be combined with --dialogue-reply-only; nothing was changed"},
+		{"reply-only with an effort", claudeAgent, []string{"--dialogue-reply-only", "--effort", "low"}, "agent resume --model and --effort cannot be combined with --dialogue-reply-only; nothing was changed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			test.prepare(t, store)
+			tmux := newFakeTmux()
+			command, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
+			before, beforeTmux := store.snapshot(), tmux.state()
+
+			args := append([]string{"resume", "uid:agt-beta-codex"}, test.flags...)
+			stdout, _, err := runRoute(t, command, args...)
+			if err == nil || !IsUsageError(err) || err.Error() != test.want {
+				t.Fatalf("resume %v = %v, want usage error %q", test.flags, err, test.want)
+			}
+			if stdout != "" || store.transactions != 0 || store.writes != 0 || store.snapshot() != before {
+				t.Fatalf("refused resume acted: stdout=%q transactions=%d writes=%d", stdout, store.transactions, store.writes)
+			}
+			if len(tmux.calls) != 0 || tmux.state() != beforeTmux || len(launcher.plans) != 0 || len(launcher.gated) != 0 {
+				t.Fatalf("refused resume reached tmux or the launcher: tmux=%v plans=%v gated=%v", tmux.calls, launcher.plans, launcher.gated)
+			}
+		})
+	}
+}
+
+// TestAFailedEffortOverrideResumeRecordsNoEffort pins what a failed launch
+// leaves: the effort is written inside the rebind transaction, and a split
+// that fails rolls that transaction back, so the Agent keeps the effort it
+// recorded before.
+func TestAFailedEffortOverrideResumeRecordsNoEffort(t *testing.T) {
+	store := newFakeResourceStore(t)
+	target, _ := store.registry.Agent("agt-beta-codex")
+	target.Spec.Provider = aiModeClaude
+	target.Status.SessionRef = claudeConversationRef(personaResumeConversation)
+	target.Metadata.Annotations = effortAnnotations("low")
+	tmux := newFakeTmux()
+	tmux.fail = []string{"split-window"}
+	tmux.failMessage = "no space for new pane"
+	command, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	command.rebind.launcher = &exactArgvResumeLauncher{fakeResumeLauncher: recorder, planner: agentLaunchArgvTestCommand(t)}
+	before := store.snapshot()
+
+	if _, _, err := runRoute(t, command, "resume", "uid:agt-beta-codex", "--effort", "max"); err == nil {
+		t.Fatal("resume succeeded despite a failing split")
+	}
+	if store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("a rolled-back override resume committed %d writes", store.writes)
+	}
+	if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, effortAnnotations("low")) {
+		t.Fatalf("Agent annotations = %v, want the effort it recorded before", agent.Metadata.Annotations)
 	}
 }

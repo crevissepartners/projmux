@@ -556,15 +556,18 @@ const AnnotationAgentSystemPromptSnapshot = "projmux.io/system-prompt-snapshot"
 // carries.
 const SystemPromptSnapshotOff = "off"
 
-// AnnotationAgentEffort records the `--effort` a Claude Agent was created with,
-// so every resume of it re-passes the same effort: Claude does not restore the
-// effort of a resumed conversation. The value is one of Claude's effort
-// levels. It is written only by the create transaction that launched the
-// provider with that effort, a resume-picker create that inherited it included.
+// AnnotationAgentEffort records the `--effort` a Claude or Codex Agent was
+// created with or last resumed with, so every resume of it re-passes the same
+// effort: the provider does not restore the effort of a resumed conversation.
+// The value is one of Claude's effort levels. It is written by the create
+// transaction that launched the provider with that effort, a resume-picker
+// create that inherited it included, and by the transaction of an
+// `agent resume --effort` that launches the Agent with a new one.
 //
-// The model is deliberately not recorded. Claude restores a conversation's
-// model on resume by itself, and re-passing the create-time model would
-// override a `/model` switch made inside the session.
+// The model is deliberately not recorded, not even by `agent resume --model`,
+// which passes it once. The provider restores a conversation's model on resume
+// by itself, and re-passing a recorded model would override a `/model` switch
+// made inside the session.
 const AnnotationAgentEffort = "projmux.io/effort"
 
 // AnnotationAgentQuestionChannel opts one Claude Agent into answering its
