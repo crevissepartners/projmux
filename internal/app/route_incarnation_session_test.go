@@ -171,7 +171,7 @@ func TestClaudeExplicitReplyCommitReadsSessionIncarnation(t *testing.T) {
 				}
 				return
 			}
-			if got.Kind != "reply-refused" || got.Reason != "invalid-explicit-reply-correlation" || broker.replies != 0 {
+			if got.Kind != "reply-refused" || got.Reason != "explicit-reply-source-route-stale" || broker.replies != 0 {
 				t.Fatalf("foreign reply source accepted: %+v replies=%d", got, broker.replies)
 			}
 		})

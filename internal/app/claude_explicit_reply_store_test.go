@@ -95,7 +95,7 @@ func TestClaudeHelperOfAnotherSessionCannotAnswerStoredOriginal(t *testing.T) {
 	}
 	before := storeFileBytes(t, store)
 	got := newClaudeCoordinationHub().commitExplicitReply(explicitTestReply(original, "answer"), other, broker)
-	if got.Kind != "reply-refused" || got.Reason != "invalid-explicit-reply-correlation" {
+	if got.Kind != "reply-refused" || got.Reason != "explicit-reply-source-route-stale" {
 		t.Fatalf("another session answered the original: %+v", got)
 	}
 	if _, found, err := store.Reply(original.MessageRef); err != nil || found {
@@ -216,7 +216,7 @@ func TestStoredOriginalRefusesWithThePushedOriginalTokens(t *testing.T) {
 		want     string
 	}{
 		{name: "operator origin", operator: true, deliver: true, want: coremessage.ReasonExplicitReplyOperatorOrigin},
-		{name: "not delivered", want: "invalid-explicit-reply-correlation"},
+		{name: "not delivered", want: coremessage.ReasonBrokerReplyOriginalNotDelivered},
 		{name: "deadline expired", deliver: true, expired: true, want: "explicit-reply-deadline-expired"},
 		{name: "deadline extended", deliver: true, extended: true, want: "explicit-reply-deadline-extended"},
 	} {
@@ -301,7 +301,7 @@ func TestNonCurrentClaudeHelperCannotAnswerStoredOriginal(t *testing.T) {
 			reply := explicitTestReply(original, "answer")
 			before := storeFileBytes(t, store)
 			got := newClaudeCoordinationHub().commitExplicitReply(reply, route, broker)
-			if got.Kind != "reply-refused" || got.Reason != "invalid-explicit-reply-correlation" {
+			if got.Kind != "reply-refused" || got.Reason != "broker-reply-helper-not-current" {
 				t.Fatalf("non-current helper answered: %+v", got)
 			}
 			if !bytes.Equal(before, storeFileBytes(t, store)) {
@@ -354,7 +354,7 @@ func TestLiveClaudeBrokerReadsStoredOriginalOnlyForRegistryCurrentHelper(t *test
 	}
 	reply := explicitTestReply(original, "answer after compact")
 	before := storeFileBytes(t, store)
-	if got := newClaudeCoordinationHub().commitExplicitReply(reply, previous, live); got.Kind != "reply-refused" || got.Reason != "invalid-explicit-reply-correlation" {
+	if got := newClaudeCoordinationHub().commitExplicitReply(reply, previous, live); got.Kind != "reply-refused" || got.Reason != "broker-reply-helper-not-current" {
 		t.Fatalf("previous helper answered through the live broker: %+v", got)
 	}
 	if !bytes.Equal(before, storeFileBytes(t, store)) {
