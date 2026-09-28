@@ -1052,6 +1052,13 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 		var err error
 		route, err = resolveControllerRuntimeMutationRoute(ctx, runner, target, func(string) string { return "" })
 		if err != nil {
+			// A server that is not running holds no orphan mirror to discard.
+			// Project open then starts the server itself, the way create does,
+			// so absence is an empty recovery, not a refusal. Every other route
+			// failure still refuses.
+			if inttmux.IsNoServerFailure(err) {
+				return 0, nil
+			}
 			return 0, err
 		}
 	}
