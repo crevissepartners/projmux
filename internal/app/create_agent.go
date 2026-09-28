@@ -270,7 +270,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	prompt, nativePromptExact := nativePrompt(flags.payload)
 	nativeCreate := nativeCodexFreshCreateRequired(provider, flags)
 	var nativeRoute codexNativeEndpointRoute
-	var creator creatorProvenance
+	var creator creatorRecord
 	if nativeCreate {
 		if !nativePromptExact {
 			return nativeCreatePreparationRefusal(spelling, &codexNativeRouteError{Reason: "unsupported-create-shape"})
@@ -377,8 +377,10 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		// Metadata phase. Every Agent and every managed Pane is allocated before
 		// the first tmux call, so an explicit --name that collides in the target
 		// root refuses with zero runtime objects created. The creator is
-		// observed once, before the first allocation, for the whole fan-out.
-		creator = c.observeCreator(ctx, working)
+		// decided once, before the first allocation, for the whole fan-out.
+		if creator, err = c.decideCreator(ctx, spelling, working, flags.creator); err != nil {
+			return err
+		}
 		agents := make([]agentWork, 0, len(plan.targets))
 		for _, target := range plan.targets {
 			window, ok := working.Window(target.windowUID)
@@ -399,6 +401,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if err != nil {
 				return MapMetadataError(err)
 			}
+			agentCreator := creator.forAgent(working, agent.Metadata.UID)
 			if notice := flags.projectLinks.notice(agent.Metadata.Name); notice != "" {
 				notices = append(notices, notice)
 			}
@@ -413,7 +416,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if err != nil {
 				return MapMetadataError(err)
 			}
-			pane = creator.annotatePane(working, pane)
+			pane = agentCreator.annotatePane(working, pane)
 			activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
 			if err != nil {
 				return err
@@ -599,7 +602,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	if err := c.warnUnregisteredClaudeActivations(activationTargets, stderr); err != nil {
 		return err
 	}
-	creator.reportSkip(stderr)
+	creator.report(stderr)
 	receipt := createPlannedReceipt(coremetadata.KindAgent, results, selectedWindowUIDs)
 	receipt.Profile = flags.profileLaunch.receipt()
 	if mode != cli.OutputModeDefault && mode != cli.OutputModeReceipt {

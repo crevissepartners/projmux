@@ -247,7 +247,7 @@ func TestResumePickerInheritsTheLaunchValuesOfTheAgentThatHadTheConversation(t *
 			if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 				t.Fatalf("exec argv tail = %q, want %q", got, want)
 			}
-			if !maps.Equal(agent.Metadata.Annotations, plusSources(bundle, sources(instructionsInh, effortInherited)...)) {
+			if !maps.Equal(agent.Metadata.Annotations, withUICreator(plusSources(bundle, sources(instructionsInh, effortInherited)...))) {
 				t.Fatalf("new Agent annotations = %v, want exactly the bundle %v", agent.Metadata.Annotations, bundle)
 			}
 			if agent.Metadata.Labels != nil {
@@ -281,7 +281,7 @@ func TestResumePickerWithNoRecordedHolderLaunchesAndStoresWhatItDidBefore(t *tes
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(controlArgv, unannotated.argv) || controlAgent.Metadata.Annotations != nil || controlStderr != "" {
+		if !slices.Equal(controlArgv, unannotated.argv) || !maps.Equal(controlAgent.Metadata.Annotations, withUICreator(nil)) || controlStderr != "" {
 			t.Fatalf("window=%t control: argv=%q annotations=%v stderr=%q, want the unannotated resume", window, controlArgv, controlAgent.Metadata.Annotations, controlStderr)
 		}
 
@@ -359,7 +359,7 @@ func TestResumePickerInheritsNothingWhenTheHoldersDisagree(t *testing.T) {
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 		t.Fatalf("agreeing holders: exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(agent.Metadata.Annotations, plusSources(bundle, sources(instructionsInh, effortInherited)...)) || stderr != "" {
+	if !maps.Equal(agent.Metadata.Annotations, withUICreator(plusSources(bundle, sources(instructionsInh, effortInherited)...))) || stderr != "" {
 		t.Fatalf("agreeing holders: annotations = %v stderr = %q, want %v and nothing", agent.Metadata.Annotations, stderr, bundle)
 	}
 }
@@ -382,7 +382,7 @@ func TestResumePickerDisclosesInheritedValuesItCannotRepass(t *testing.T) {
 	if got, want := execArgvTail(t, argv, aiModeClaude), []string{"--resume", personaResumeConversation}; !slices.Equal(got, want) {
 		t.Fatalf("exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(agent.Metadata.Annotations, plusSources(bundle, sources(instructionsInh, effortInherited)...)) {
+	if !maps.Equal(agent.Metadata.Annotations, withUICreator(plusSources(bundle, sources(instructionsInh, effortInherited)...))) {
 		t.Fatalf("new Agent annotations = %v, want the bundle verbatim %v", agent.Metadata.Annotations, bundle)
 	}
 	// The seam's lines lose their `projmux: ` prefix on this path: the split
@@ -456,7 +456,7 @@ func TestResumePickerOfCodexOrAntigravityInheritsNothingButTheCodexPersona(t *te
 		if !slices.Equal(argv, controlArgv) {
 			t.Fatalf("%s: argv = %q, want the control %q", test.provider, argv, controlArgv)
 		}
-		if !maps.Equal(agent.Metadata.Annotations, test.wantAnnotations) {
+		if !maps.Equal(agent.Metadata.Annotations, withUICreator(test.wantAnnotations)) {
 			t.Fatalf("%s: stored annotations = %v, want %v", test.provider, agent.Metadata.Annotations, test.wantAnnotations)
 		}
 		if test.wantAnnotations == nil {

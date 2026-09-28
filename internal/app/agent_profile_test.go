@@ -611,7 +611,7 @@ func TestUICreateRecordsTheProfileModelAndEffortOnTheAgent(t *testing.T) {
 		coremetadata.AnnotationAgentModelSource:   coremetadata.SettingSourceProfile,
 		coremetadata.AnnotationAgentEffortSource:  coremetadata.SettingSourceProfile,
 	}
-	if got := created[0].Metadata.Annotations; !maps.Equal(got, want) {
+	if got := created[0].Metadata.Annotations; !maps.Equal(got, withUICreator(want)) {
 		t.Fatalf("UI Agent annotations = %v, want %v", got, want)
 	}
 }
@@ -817,7 +817,7 @@ func TestResumePickerInheritsTheProfileAndAppliesItsCurrentContent(t *testing.T)
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 		t.Fatalf("picker exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations("guard", entry.Digest), append(slices.Clone(profileInherited), allFollowProfile...)...)) {
+	if !maps.Equal(agent.Metadata.Annotations, withUICreator(plusSources(profileAnnotations("guard", entry.Digest), append(slices.Clone(profileInherited), allFollowProfile...)...))) {
 		t.Fatalf("picker Agent annotations = %v, want the current digest", agent.Metadata.Annotations)
 	}
 

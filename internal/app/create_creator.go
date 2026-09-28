@@ -11,25 +11,40 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 )
 
-// Creator provenance: when an explicit `create agent` (any spelling, including
-// --create-window and a fan-out) or `create window --provider` runs inside an
-// Agent's managed Pane, the new Agent and its managed Pane record which Agent
-// and Pane that was, in the same Registry transaction that commits them.
+// Creator provenance: every Agent create records, on the new Agent and its
+// managed Pane and in the same Registry transaction that commits them, the
+// strongest creator evidence it has, and the kind of that evidence
+// (coremetadata.CreatorBasis*):
 //
-// The record is provenance, never authentication, and it is written only when
-// every check below holds. A failed check writes none of the keys and changes
-// nothing else about the create: not the target, the route, the topology,
-// stdout, or the exit code. The route's own masking of the ambient Pane for an
-// explicit target is untouched; this observation reads the unmasked
-// environment on its own and never feeds back into route authority.
+//  1. pane-chain: an explicit `create agent` (any spelling, including
+//     --create-window and a fan-out) or `create window --provider` ran inside
+//     an Agent's managed Pane, proven by the checks below. It always wins.
+//  2. explicit: the caller declared `--creator uid:<agent>` and no pane chain
+//     was recorded. A declaration that names no Agent refuses the create
+//     before anything changes; one that disagrees with a recorded pane chain
+//     is dropped with one stderr line.
+//  3. operator: the create ran in process for a named operator client -- the
+//     UI intents (client "ui"), or a client layered on top of projmux through
+//     recordOperatorCreator. Such a create observes no pane chain, because
+//     its process environment says nothing about who asked.
+//  4. nothing, when there is no evidence.
 //
-// Cost is ordered cheapest first. The Registry checks run in memory inside the
-// transaction, so an ambient Pane that is not a live Agent Pane costs zero
-// extra tmux calls; only when they pass does one `display-message` confirm the
-// Pane on the route's own server, and then one bounded /proc walk.
+// The record is provenance, never authentication. Apart from the refused
+// declaration, no outcome changes anything else about the create: not the
+// target, the route, the topology, stdout, or the exit code. The route's own
+// masking of the ambient Pane for an explicit target is untouched; the
+// pane-chain observation reads the unmasked environment on its own and never
+// feeds back into route authority.
+//
+// The pane-chain checks are ordered cheapest first. The Registry checks run in
+// memory inside the transaction, so an ambient Pane that is not a live Agent
+// Pane costs zero extra tmux calls; only when they pass does one
+// `display-message` confirm the Pane on the route's own server, and then one
+// bounded /proc walk.
 
 // Reason tokens, printed as `creator not recorded: <token>` unless
 // creatorSkipIsSilent says otherwise. They are a closed, stable vocabulary.
@@ -64,32 +79,6 @@ type creatorProvenance struct {
 
 func (p creatorProvenance) recorded() bool { return p.agentUID != "" && p.paneUID != "" }
 
-// annotations is the map CreateAgentOptions.Annotations takes: nil unless
-// every check passed.
-func (p creatorProvenance) annotations() map[string]string {
-	if !p.recorded() {
-		return nil
-	}
-	return coremetadata.CreatorAnnotations(p.agentUID, p.paneUID)
-}
-
-// annotatePane records the same keys on the managed Pane the create just
-// attached, in the working Registry of the same transaction.
-func (p creatorProvenance) annotatePane(working *coremetadata.Registry, pane coremetadata.Pane) coremetadata.Pane {
-	if !p.recorded() || working == nil {
-		return pane
-	}
-	stored, ok := working.Pane(pane.Metadata.UID)
-	if !ok {
-		return pane
-	}
-	if stored.Metadata.Annotations == nil {
-		stored.Metadata.Annotations = map[string]string{}
-	}
-	maps.Copy(stored.Metadata.Annotations, p.annotations())
-	return stored.Clone()
-}
-
 // creatorSkipIsSilent names the skips that print nothing: the ambient Pane
 // never looked like an Agent Pane, so a create run from an ordinary shell or
 // from outside projmux's Registry is not told about a record it was never
@@ -113,7 +102,7 @@ func (p creatorProvenance) reportSkip(stderr io.Writer) {
 	_, _ = fmt.Fprintf(stderr, creatorNotRecordedDiagnosticFmt, p.skip)
 }
 
-// observeCreator runs the creator checks against the transaction's working
+// observeCreator runs the pane-chain checks against the transaction's working
 // Registry, which reconcile has already refreshed. It never fails the create.
 func (c *createCommand) observeCreator(ctx context.Context, working *coremetadata.Registry) creatorProvenance {
 	if c == nil {
@@ -121,6 +110,176 @@ func (c *createCommand) observeCreator(ctx context.Context, working *coremetadat
 	}
 	return observePaneChainActor(ctx, c.lookupEnv, c.processAncestors, working,
 		func(ctx context.Context, paneID, _ string) (int, string) { return c.confirmCreatorAnchor(ctx, paneID) })
+}
+
+// Declaration tokens, printed as `creator declaration not recorded: <token>`
+// when a valid --creator loses to stronger evidence. A closed vocabulary.
+const (
+	creatorDeclinedPaneChain           = "pane-chain-disagrees"
+	creatorDeclinedOperator            = "operator-client"
+	creatorDeclinedDiagnosticFmt       = "creator declaration not recorded: %s (--creator uid:%s)\n"
+	creatorFlagName                    = "creator"
+	creatorFlagUsage                   = "Agent that created this one, as uid:<agent>; recorded as the explicit creator basis only when no pane chain is observed"
+	creatorFlagRequiresAgentRefusalFmt = "%s --creator applies only to an Agent; name an Agent --provider; nothing was created"
+)
+
+// uiOperatorClient is the operator client name the UI intents record.
+const uiOperatorClient = "ui"
+
+// creatorRecord is what one create invocation records on every Agent it
+// allocates. It is decided once per create, before the first allocation, and
+// reused for the whole fan-out.
+type creatorRecord struct {
+	// basis is one coremetadata.CreatorBasis*, or empty for no record.
+	basis    string
+	agentUID string
+	paneUID  string
+	client   string
+	// observed is the pane-chain observation, kept for its skip line when
+	// nothing was recorded.
+	observed creatorProvenance
+	// declared is the bare Agent UID of a --creator the record did not use,
+	// and declined names why.
+	declared string
+	declined string
+}
+
+// newOperatorCreator is the operator creator record, or no record for a name
+// outside the client rule. Its producers are the in-process seams only:
+// TestNoArgvPathBuildsAnOperatorCreator holds the list.
+func newOperatorCreator(client string) creatorRecord {
+	if operatorclient.Validate(client) != nil {
+		return creatorRecord{}
+	}
+	return creatorRecord{basis: coremetadata.CreatorBasisOperator, client: client}
+}
+
+// recordOperatorCreator makes every later create of this command record the
+// operator creator client instead of observing a pane chain. It is the seam
+// for an operator client that runs creates in process on the operator's behalf,
+// whose inherited environment and parent chain say nothing about who asked.
+// There is no argv spelling of it.
+func (c *createCommand) recordOperatorCreator(client string) error {
+	if err := operatorclient.Validate(client); err != nil {
+		return err
+	}
+	c.operatorCreatorClient = client
+	return nil
+}
+
+// parseCreatorFlag checks the argv-only shape of a --creator value and returns
+// the bare Agent UID. Whether that Agent exists is decided in the transaction.
+func parseCreatorFlag(spelling, value string) (string, error) {
+	bare, ok := strings.CutPrefix(value, "uid:")
+	if !ok || strings.TrimSpace(bare) != bare || bare == "" || strings.ContainsAny(bare, ":/ \t") {
+		return "", usageError(fmt.Sprintf("%s --creator must be an exact Agent reference uid:<agent>; got %q; nothing was created", spelling, value))
+	}
+	return bare, nil
+}
+
+// decideCreator picks the one record this create writes. declared is the bare
+// Agent UID of --creator, or empty. A declaration that names no Agent in the
+// working Registry is refused, whatever else the create would record: the
+// argv is wrong on its own terms.
+func (c *createCommand) decideCreator(ctx context.Context, spelling string, working *coremetadata.Registry, declared string) (creatorRecord, error) {
+	if declared != "" {
+		if _, ok := working.Agent(declared); !ok {
+			return creatorRecord{}, usageError(fmt.Sprintf("%s --creator uid:%s names no Agent in the Registry; nothing was created", spelling, declared))
+		}
+	}
+	if c != nil && c.operatorCreatorClient != "" {
+		record := newOperatorCreator(c.operatorCreatorClient)
+		if declared != "" {
+			record.declared, record.declined = declared, creatorDeclinedOperator
+		}
+		return record, nil
+	}
+	observed := c.observeCreator(ctx, working)
+	if observed.recorded() {
+		record := creatorRecord{basis: coremetadata.CreatorBasisPaneChain, agentUID: observed.agentUID, paneUID: observed.paneUID}
+		if declared != "" && declared != observed.agentUID {
+			record.declared, record.declined = declared, creatorDeclinedPaneChain
+		}
+		return record, nil
+	}
+	if declared != "" {
+		return creatorRecord{basis: coremetadata.CreatorBasisExplicit, agentUID: declared, observed: observed}, nil
+	}
+	return creatorRecord{observed: observed}, nil
+}
+
+// annotations is the map CreateAgentOptions.Annotations takes: nil when there
+// is no record.
+func (r creatorRecord) annotations() map[string]string {
+	switch r.basis {
+	case coremetadata.CreatorBasisPaneChain:
+		return coremetadata.CreatorAnnotations(r.agentUID, r.paneUID)
+	case coremetadata.CreatorBasisExplicit:
+		return coremetadata.ExplicitCreatorAnnotations(r.agentUID)
+	case coremetadata.CreatorBasisOperator:
+		return coremetadata.OperatorCreatorAnnotations(r.client)
+	}
+	return nil
+}
+
+// withAnnotations returns base with the record's keys added, as a new map. With
+// no record it returns base itself.
+func (r creatorRecord) withAnnotations(base map[string]string) map[string]string {
+	annotations := r.annotations()
+	if annotations == nil {
+		return base
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = make(map[string]string, len(annotations))
+	}
+	maps.Copy(out, annotations)
+	return out
+}
+
+// forAgent is the record for one allocated Agent. The creator is never the
+// created Agent itself: if the record would name it, the keys are removed from
+// the stored Agent and nothing is recorded on its Pane. Every basis already
+// resolves its Agent before allocation, so this is a guarantee, not a path.
+func (r creatorRecord) forAgent(working *coremetadata.Registry, agentUID string) creatorRecord {
+	if r.agentUID == "" || r.agentUID != agentUID {
+		return r
+	}
+	if stored, ok := working.Agent(agentUID); ok {
+		for key := range r.annotations() {
+			delete(stored.Metadata.Annotations, key)
+		}
+	}
+	return creatorRecord{observed: r.observed}
+}
+
+// annotatePane records the same keys on the managed Pane the create just
+// attached, in the working Registry of the same transaction.
+func (r creatorRecord) annotatePane(working *coremetadata.Registry, pane coremetadata.Pane) coremetadata.Pane {
+	annotations := r.annotations()
+	if annotations == nil || working == nil {
+		return pane
+	}
+	stored, ok := working.Pane(pane.Metadata.UID)
+	if !ok {
+		return pane
+	}
+	if stored.Metadata.Annotations == nil {
+		stored.Metadata.Annotations = map[string]string{}
+	}
+	maps.Copy(stored.Metadata.Annotations, annotations)
+	return stored.Clone()
+}
+
+// report prints what a committed create owes stderr: the pane-chain skip line
+// when nothing was recorded, and one line for a declaration it did not use.
+func (r creatorRecord) report(stderr io.Writer) {
+	if r.basis == "" {
+		r.observed.reportSkip(stderr)
+	}
+	if r.declined != "" && stderr != nil {
+		_, _ = fmt.Fprintf(stderr, creatorDeclinedDiagnosticFmt, r.declined, r.declared)
+	}
 }
 
 // paneChainAnchorConfirm is the one server-side step of the pane-chain

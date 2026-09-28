@@ -258,7 +258,7 @@ func TestResumePickerLaunchesWhatTheResumeOfItsAgentWould(t *testing.T) {
 		t.Fatalf("picker exec tail = %q (stderr %q), want %q", got, stderr, want)
 	}
 	wantAnnotations := plusSources(withAnnotations(bundle, coremetadata.AnnotationAgentPersonaDigest, persona.Digest(edited)), sources(instructionsInh, effortInherited)...)
-	if !maps.Equal(agent.Metadata.Annotations, wantAnnotations) {
+	if !maps.Equal(agent.Metadata.Annotations, withUICreator(wantAnnotations)) {
 		t.Fatalf("picker Agent annotations = %v\nwant %v", agent.Metadata.Annotations, wantAnnotations)
 	}
 

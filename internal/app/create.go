@@ -164,10 +164,13 @@ type createCommand struct {
 	homeDir   func() (string, error)
 	lookupEnv func(string) string
 	// processAncestors walks this process's parent chain for the creator
-	// provenance check (create_creator.go). Nil skips that observation
-	// silently: fixtures that build the command directly, and the web API,
-	// which runs creates in-process on another caller's behalf.
+	// pane-chain check (create_creator.go). Nil skips that observation
+	// silently: fixtures that build the command directly.
 	processAncestors func() ([]int, error)
+	// operatorCreatorClient, when set through recordOperatorCreator, is the
+	// operator client every create of this command records as its creator in
+	// place of the pane-chain observation.
+	operatorCreatorClient string
 	// bindWindowRuntime records the exact last-positive tmux owner pair for a
 	// canonical Window create. Nil selects Mutator.ObserveWindowRuntimeBinding;
 	// the seam exists so transaction/ledger rollback can be exercised at this

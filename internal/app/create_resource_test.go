@@ -2356,6 +2356,9 @@ func TestCreateHelpAdvertisesOnlyImplementedProjections(t *testing.T) {
 				fs.String("placement", "", "")
 				fs.String(splitCWDFromFlag, "", "")
 			}
+			if test.shape.provider || test.shape.initialProvider {
+				fs.String(creatorFlagName, "", "")
+			}
 			fs.String("name", "", "")
 			fs.Var(&out.labels, "label", "")
 			fs.String("output", "", "")

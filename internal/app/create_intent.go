@@ -119,8 +119,8 @@ func (c *createCommand) projectCanonicalOriginWindowBinding(
 // Window shape `create window --provider` commits -- the shell Pane is created,
 // the Agent Pane splits off it, and the shell is retired -- so the Window holds
 // exactly the Agent Pane, and any failure on the way rolls the whole Window
-// back. The Agent records no creator: the key press is the operator's, even
-// when it is pressed inside an Agent's Pane.
+// back. The Agent records the operator creator client "ui": the key press is
+// the operator's, even when it is pressed inside an Agent's Pane.
 //
 // The intent is scoped by exactly one of its anchor Pane and its Project UID.
 // The Project scope has no origin Window to bind and no pressing client: it
@@ -1145,6 +1145,10 @@ func (c *createCommand) openIntentAgent(
 	// the sources go on the annotations only, never into the bundle the
 	// launch was planned from.
 	annotations := withInheritedSettingSources(flags.resumeLaunchValues, flags.resumeLaunchValues)
+	// The key press is the operator's, even inside an Agent's Pane, so a UI
+	// Agent records the operator creator client "ui" and observes no pane chain.
+	creator := newOperatorCreator(uiOperatorClient)
+	annotations = creator.withAnnotations(annotations)
 	if flags.profileLaunch.active() {
 		annotations = withCreateSettingSources(flags, flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(annotations)))))
 	}
@@ -1155,6 +1159,7 @@ func (c *createCommand) openIntentAgent(
 	if err != nil {
 		return intentAgentOpened{}, MapMetadataError(err)
 	}
+	creator = creator.forAgent(working, agent.Metadata.UID)
 	// The layers are recorded with their sources in the same transaction:
 	// the items that follow the profile record it as their source.
 	if err := settings.record(working, mutator, agent.Metadata.UID); err != nil {
@@ -1205,6 +1210,7 @@ func (c *createCommand) openIntentAgent(
 	if err != nil {
 		return intentAgentOpened{}, MapMetadataError(err)
 	}
+	pane = creator.annotatePane(working, pane)
 	activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
 	if err != nil {
 		return intentAgentOpened{}, err

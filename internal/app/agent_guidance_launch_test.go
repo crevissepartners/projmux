@@ -456,8 +456,8 @@ func TestResumePickerLaunchesTheAgentGuidanceWithTheSnapshotOff(t *testing.T) {
 		agent, argv, stderr := f.pick(t, false, aiModeClaude, personaResumeConversation, "")
 		tail := execArgvTail(t, argv, aiModeClaude)
 		if !on {
-			if want := []string{"--resume", personaResumeConversation}; !slices.Equal(tail, want) || len(agent.Metadata.Annotations) != 0 {
-				t.Fatalf("off: picker exec argv tail = %q annotations %v, want %q and none", tail, agent.Metadata.Annotations, want)
+			if want := []string{"--resume", personaResumeConversation}; !slices.Equal(tail, want) || !maps.Equal(agent.Metadata.Annotations, withUICreator(nil)) {
+				t.Fatalf("off: picker exec argv tail = %q annotations %v, want %q and only the creator record", tail, agent.Metadata.Annotations, want)
 			}
 			continue
 		}
@@ -466,7 +466,7 @@ func TestResumePickerLaunchesTheAgentGuidanceWithTheSnapshotOff(t *testing.T) {
 			t.Fatalf("picker exec argv tail = %q stderr = %q, want %q", tail, stderr, want)
 		}
 		want := map[string]string{coremetadata.AnnotationAgentGuidanceDigest: digest, coremetadata.AnnotationAgentSystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff}
-		if !maps.Equal(agent.Metadata.Annotations, want) {
+		if !maps.Equal(agent.Metadata.Annotations, withUICreator(want)) {
 			t.Fatalf("picker Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
 		}
 	}
