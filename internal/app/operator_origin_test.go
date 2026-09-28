@@ -18,11 +18,24 @@ import (
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 )
 
+// operatorTestClient is the operator client these fixtures name. It is not a
+// client any build ships, so a frame, status, or receipt that still knew one
+// client by name would fail here.
+const operatorTestClient = "console"
+
 // operatorDialogueEnvelope is dialogueEnvelope as operator input: the same
 // Claude target, an operator origin, and no source route.
 func operatorDialogueEnvelope(ref string, deadline time.Time) claudeCoordinationEnvelope {
+	return operatorDialogueEnvelopeFrom(operatorTestClient, ref, deadline)
+}
+
+func operatorDialogueEnvelopeFrom(client, ref string, deadline time.Time) claudeCoordinationEnvelope {
 	private := dialogueEnvelope(ref, deadline)
-	private.BrokerEnvelope.Origin = coremessage.OperatorWebOrigin()
+	origin, err := coremessage.OperatorOrigin(client)
+	if err != nil {
+		panic(err)
+	}
+	private.BrokerEnvelope.Origin = origin
 	private.BrokerEnvelope.Source = coremessage.Route{}
 	private.BrokerEnvelope.Authority = coremessage.OperatorAuthority()
 	private.Source = claudeCoordinationSourceOf(coremessage.OperatorAuthority())
@@ -42,10 +55,10 @@ func TestClaudeOperatorFrameShapeIsPinned(t *testing.T) {
 	const want = `{"kind":"projmux-coordination","schemaVersion":2,` +
 		`"authority":"untrusted-coordination-only","messageRef":"message-frame-operator",` +
 		`"conversationRef":"conversation-message-frame-operator",` +
-		`"source":{"kind":"operator","client":"web"},` +
+		`"source":{"kind":"operator","client":"console"},` +
 		`"target":{"agentUID":"claude-agent","provider":"claude"},` +
 		`"payload":"semantic marker",` +
-		`"sourceNotice":"Operator input that arrived through the projmux web client; projmux did not verify the person.",` +
+		`"sourceNotice":"Operator input that arrived through the projmux console client; projmux did not verify the person.",` +
 		`"replyAction":""}`
 	if content != want {
 		t.Fatalf("operator frame =\n%s\nwant\n%s", content, want)
@@ -55,6 +68,41 @@ func TestClaudeOperatorFrameShapeIsPinned(t *testing.T) {
 	sized, err := renderProviderCoordinationContent(envelope, "/usr/bin/projmux", true)
 	if err != nil || sized != want {
 		t.Fatalf("sized operator frame = %s, %v", sized, err)
+	}
+}
+
+// TestClaudeOperatorFrameNamesTheClientItCameThrough renders one operator frame
+// per client: the source and the notice carry that client's name and nothing
+// else changes. The name earlier builds wrote renders the notice they rendered,
+// byte for byte, so a Claude session sees no change for their records.
+func TestClaudeOperatorFrameNamesTheClientItCameThrough(t *testing.T) {
+	now := time.Unix(71_500, 0).UTC()
+	const earlierNotice = "Operator input that arrived through the projmux web client; projmux did not verify the person."
+	for _, client := range []string{operatorTestClient, "ui", "client-2", "web"} {
+		envelope := operatorDialogueEnvelopeFrom(client, "message-frame-"+client, now.Add(time.Minute))
+		if err := envelope.BrokerEnvelope.Validate(); err != nil {
+			t.Fatalf("%s fixture: %v", client, err)
+		}
+		content, err := providerCoordinationContent(envelope, "/usr/bin/projmux")
+		if err != nil {
+			t.Fatalf("%s provider content: %v", client, err)
+		}
+		var frame struct {
+			Source       map[string]string `json:"source"`
+			SourceNotice string            `json:"sourceNotice"`
+			ReplyAction  string            `json:"replyAction"`
+		}
+		if err := json.Unmarshal([]byte(content), &frame); err != nil {
+			t.Fatal(err)
+		}
+		wantNotice := "Operator input that arrived through the projmux " + client + " client; projmux did not verify the person."
+		if len(frame.Source) != 2 || frame.Source["kind"] != coremessage.OriginKindOperator || frame.Source["client"] != client ||
+			frame.SourceNotice != wantNotice || frame.ReplyAction != "" {
+			t.Fatalf("%s frame = %s", client, content)
+		}
+		if client == "web" && frame.SourceNotice != earlierNotice {
+			t.Fatalf("the earlier client's notice changed: %q", frame.SourceNotice)
+		}
 	}
 }
 
@@ -68,7 +116,7 @@ func TestClaudePushHubDeliversOperatorInputWithoutASourceRoute(t *testing.T) {
 	if got.State != agentdelivery.StateDelivered || poster.calls != 1 || broker.handoffs != 1 || broker.deliveries != 1 {
 		t.Fatalf("delivery=%+v writes=%d handoffs=%d deliveries=%d", got, poster.calls, broker.handoffs, broker.deliveries)
 	}
-	for _, want := range []string{`"source":{"kind":"operator","client":"web"}`, `"replyAction":""`, coordinationOperatorSourceNotice} {
+	for _, want := range []string{`"source":{"kind":"operator","client":"console"}`, `"replyAction":""`, coordinationOperatorSourceNotice(operatorTestClient)} {
 		if !strings.Contains(poster.content, want) {
 			t.Fatalf("content %s lacks %s", poster.content, want)
 		}
@@ -233,14 +281,14 @@ func TestAgentMessageStatusLabelsOperatorInputAndKeepsAgentOutput(t *testing.T) 
 	if got := status("message-agent-status", "-o", "json"); got != agentJSON {
 		t.Fatalf("agent JSON status =\n%s\nwant\n%s", got, agentJSON)
 	}
-	if got := status("message-operator-status"); got != "message-operator-status\tdelivered\tsource=operator (web)\n" {
+	if got := status("message-operator-status"); got != "message-operator-status\tdelivered\tsource=operator (console)\n" {
 		t.Fatalf("operator text status = %q", got)
 	}
 	var receipt map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(status("message-operator-status", "-o", "json")), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := receipt["source"]; ok || string(receipt["origin"]) != `{"kind":"operator","client":"web"}` {
+	if _, ok := receipt["source"]; ok || string(receipt["origin"]) != `{"kind":"operator","client":"console"}` {
 		t.Fatalf("operator JSON status source=%s origin=%s", receipt["source"], receipt["origin"])
 	}
 }

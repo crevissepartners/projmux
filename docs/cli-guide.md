@@ -669,7 +669,7 @@ pending Codex approvals without a picker, over the same exact binding:
 
 ```sh
 projmux agent approval list <agent-ref> [-o json]
-projmux agent approval answer <agent-ref> <request-id> --allow|--deny [--via popup|cli|web]
+projmux agent approval answer <agent-ref> <request-id> --allow|--deny [--via popup|cli|<client>]
 ```
 
 `list` works whatever `agent-approval-answering` says and prints it. Each

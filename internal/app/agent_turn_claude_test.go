@@ -12,6 +12,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 )
 
 type claudeTurnRunner struct {
@@ -128,7 +129,7 @@ func TestClaudeTurnInterruptSendsExactlyOneEscAfterAudit(t *testing.T) {
 		entries := claudeTurnAudit(t, auditPath)
 		prewriteSeen = len(entries) == 1 && entries[0].Result == "requested"
 	}
-	out, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", "web")
+	out, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", operatorTestClient)
 	if err != nil || !prewriteSeen || claudeSendCount(runner) != 1 || !strings.Contains(out, "agent=uid:agt-alpha-codex pane=uid:pan-alpha-codex delivery=sent") {
 		t.Fatalf("out=%q err=%v prewrite=%t sends=%d", out, err, prewriteSeen, claudeSendCount(runner))
 	}
@@ -137,7 +138,7 @@ func TestClaudeTurnInterruptSendsExactlyOneEscAfterAudit(t *testing.T) {
 		t.Fatalf("last tmux command=%v", last)
 	}
 	entries := claudeTurnAudit(t, auditPath)
-	if len(entries) != 2 || entries[1].Result != "delivered" || entries[1].Via != "web" || entries[1].AgentUID != "agt-alpha-codex" || entries[1].PaneUID != "pan-alpha-codex" || entries[1].At.IsZero() {
+	if len(entries) != 2 || entries[1].Result != "delivered" || entries[1].Via != operatorTestClient || entries[1].AgentUID != "agt-alpha-codex" || entries[1].PaneUID != "pan-alpha-codex" || entries[1].At.IsZero() {
 		t.Fatalf("audit=%+v", entries)
 	}
 }
@@ -169,7 +170,7 @@ func TestClaudeTurnInterruptRefusesUnsafeTargetsWithoutSending(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd, store, runner, _ := claudeTurnFixture(t)
 			tt.change(store, runner)
-			_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", "web")
+			_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", operatorTestClient)
 			if err == nil || claudeSendCount(runner) != 0 {
 				t.Fatalf("err=%v sends=%d", err, claudeSendCount(runner))
 			}
@@ -178,10 +179,10 @@ func TestClaudeTurnInterruptRefusesUnsafeTargetsWithoutSending(t *testing.T) {
 }
 
 func TestClaudeTurnInterruptRequiresViaAndAuditPrewrite(t *testing.T) {
-	for _, via := range [][]string{nil, {"--via", "cli"}, {"--via", "popup"}} {
+	for _, via := range [][]string{nil, {"--via"}, {"--client", operatorTestClient}} {
 		cmd, _, runner, _ := claudeTurnFixture(t)
 		args := append([]string{"turn", "interrupt", "uid:agt-alpha-codex"}, via...)
-		if _, _, err := runRoute(t, cmd, args...); err == nil || claudeSendCount(runner) != 0 {
+		if _, _, err := runRoute(t, cmd, args...); err == nil || !IsUsageError(err) || claudeSendCount(runner) != 0 {
 			t.Fatalf("via=%v err=%v", via, err)
 		}
 	}
@@ -189,7 +190,7 @@ func TestClaudeTurnInterruptRequiresViaAndAuditPrewrite(t *testing.T) {
 	if err := os.Mkdir(auditPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", "web")
+	_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", operatorTestClient)
 	if err == nil || !strings.Contains(err.Error(), "audit log") || claudeSendCount(runner) != 0 {
 		t.Fatalf("err=%v sends=%d", err, claudeSendCount(runner))
 	}
@@ -206,7 +207,7 @@ func TestClaudeTurnInterruptDeliveryAndRaceFailuresAreAudited(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd, _, runner, auditPath := claudeTurnFixture(t)
 			tt.change(runner)
-			_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", "web")
+			_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", operatorTestClient)
 			if err == nil {
 				t.Fatal("expected explicit failure")
 			}
@@ -234,7 +235,7 @@ func TestClaudeTurnInterruptRejectsTurnReplacementBeforeEsc(t *testing.T) {
 			}
 		}
 	}
-	_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", "web")
+	_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", operatorTestClient)
 	if err == nil || !strings.Contains(err.Error(), "turn or Pane activation changed") || claudeSendCount(runner) != 0 {
 		t.Fatalf("err=%v sends=%d", err, claudeSendCount(runner))
 	}
@@ -253,6 +254,45 @@ func TestClaudePaneFrameRejectsAmbiguousOutput(t *testing.T) {
 	} {
 		if _, err := parseClaudePaneFrame([]byte(raw)); err == nil {
 			t.Fatalf("accepted malformed frame %q", raw)
+		}
+	}
+}
+
+// TestClaudeTurnInterruptViaTakesAnyClientNameAndAuditsIt is the --via table:
+// projmux's own channels and any operator client name under the operatorclient
+// rule are accepted and written to the audit as received, including the one
+// name earlier builds required. A name outside the rule is refused with the
+// rule's token before any audit line or key.
+func TestClaudeTurnInterruptViaTakesAnyClientNameAndAuditsIt(t *testing.T) {
+	for _, test := range []struct {
+		via   string
+		valid bool
+	}{
+		{operatorTestClient, true},
+		{"cli", true},
+		{"popup", true},
+		{"ui", true},
+		{"web", true}, // the name earlier builds required
+		{"", false},
+		{"Console", false},
+		{"2console", false},
+		{"con sole", false},
+		{strings.Repeat("c", operatorclient.MaxBytes+1), false},
+	} {
+		cmd, _, runner, auditPath := claudeTurnFixture(t)
+		_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", test.via)
+		if !test.valid {
+			if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "--via: "+operatorclient.ReasonInvalid) || claudeSendCount(runner) != 0 {
+				t.Fatalf("--via %q err=%v sends=%d, want the %s refusal", test.via, err, claudeSendCount(runner), operatorclient.ReasonInvalid)
+			}
+			if _, statErr := os.Stat(auditPath); !os.IsNotExist(statErr) {
+				t.Fatalf("--via %q wrote an audit before refusing: %v", test.via, statErr)
+			}
+			continue
+		}
+		entries := claudeTurnAudit(t, auditPath)
+		if err != nil || claudeSendCount(runner) != 1 || len(entries) != 2 || entries[0].Via != test.via || entries[1].Via != test.via {
+			t.Fatalf("--via %q err=%v sends=%d audit=%+v", test.via, err, claudeSendCount(runner), entries)
 		}
 	}
 }

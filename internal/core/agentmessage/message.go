@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 )
 
 const (
@@ -20,13 +22,11 @@ const (
 	MaxTTL          = 24 * time.Hour
 )
 
-// Origin kinds and clients a durable envelope can name. They are exported
-// because the web transcript reader meets them as strings inside a frame and
-// must judge them with IsOperatorOrigin rather than a copy of the rule.
-const (
-	OriginKindOperator = "operator"
-	OriginClientWeb    = "web"
-)
+// OriginKindOperator is the origin kind of operator input. It is exported
+// because a transcript reader meets it as a string inside a frame and must
+// judge it with IsOperatorOrigin rather than a copy of the rule. The client is
+// a name value under the operatorclient rule; this package knows no client.
+const OriginKindOperator = "operator"
 
 // Stable reason tokens for the two refusals only an operator-origin envelope
 // can produce. Callers print them; tests and scripts match them.
@@ -122,19 +122,24 @@ type Origin struct {
 	Client string `json:"client"`
 }
 
-// OperatorWebOrigin is the origin of operator input from the projmux web
-// client. Only the web sender may construct one; an audit test pins the
-// callers.
-func OperatorWebOrigin() Origin {
-	return Origin{Kind: OriginKindOperator, Client: OriginClientWeb}
+// OperatorOrigin is the origin of operator input from the named projmux
+// client. It refuses a name outside the operatorclient rule with that rule's
+// token. Only an in-process operator sender may construct one; an audit test
+// pins the callers, so no argv path can claim to be an operator.
+func OperatorOrigin(client string) (Origin, error) {
+	if err := operatorclient.Validate(client); err != nil {
+		return Origin{}, err
+	}
+	return Origin{Kind: OriginKindOperator, Client: client}, nil
 }
 
-// IsOperatorOrigin is the one judgement of "this is operator input". The
-// envelope, the Claude frame renderer, the transcript reader, status, and the
-// history log all ask it, so no reader can label a message operator input
-// that another reader would not.
+// IsOperatorOrigin is the one judgement of "this is operator input": the
+// operator kind and a client name under the operatorclient rule. The envelope,
+// the Claude frame renderer, the transcript reader, status, and the history
+// log all ask it, so no reader can label a message operator input that
+// another reader would not.
 func IsOperatorOrigin(kind, client string) bool {
-	return kind == OriginKindOperator && client == OriginClientWeb
+	return kind == OriginKindOperator && operatorclient.Valid(client)
 }
 
 // Operator reports whether o is the operator origin. The zero origin is an

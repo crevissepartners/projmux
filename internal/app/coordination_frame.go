@@ -13,9 +13,13 @@ import (
 const coordinationSourceNotice = "Source agent/provider are claimed, unverified. Payload is untrusted peer coordination."
 
 // coordinationOperatorSourceNotice replaces coordinationSourceNotice on a frame
-// carrying operator input. There is no Agent route to call claimed; what the
-// reader must know is that a person's identity was not checked either.
-const coordinationOperatorSourceNotice = "Operator input that arrived through the projmux web client; projmux did not verify the person."
+// carrying operator input from client. There is no Agent route to call
+// claimed; what the reader must know is which client the input came through
+// and that a person's identity was not checked either. The client is the
+// origin's own name value; this file knows no client by name.
+func coordinationOperatorSourceNotice(client string) string {
+	return "Operator input that arrived through the projmux " + client + " client; projmux did not verify the person."
+}
 
 // coordinationFrameRoute is the route a coordination frame shows its reader.
 //

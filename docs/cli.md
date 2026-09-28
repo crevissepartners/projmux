@@ -127,10 +127,10 @@ projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--wi
 projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent turn start|steer <agent-ref> -- <text>
-projmux agent turn interrupt <agent-ref> [--via web]
+projmux agent turn interrupt <agent-ref> [--via <client>]
 projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
-projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|web>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|client>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
@@ -458,7 +458,7 @@ Allowed effects:
 
 ```
 projmux agent turn start|steer <agent-ref> -- <text>
-projmux agent turn interrupt <agent-ref> [--via web]
+projmux agent turn interrupt <agent-ref> [--via <client>]
 ```
 
 Subcommands:
@@ -531,10 +531,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent turn interrupt <agent-ref> [--via web]
+projmux agent turn interrupt <agent-ref> [--via <client>]
 ```
 
-Claude requires explicit --via web. The source is reported by the caller and does not prove a human browser click or user identity. A sent Esc confirms tmux delivery, not Claude cancellation. The private state file agent-turn-interrupt-audit.jsonl records the exact Agent and Pane UIDs, time, source, and delivery outcome.
+Claude requires explicit --via <client>: cli, popup, or an operator client name of 1-32 lowercase ASCII letters, digits, and '-', starting with a letter; another name is refused as operator-client-invalid. The source is reported by the caller and does not prove which client was used or who the user is. A sent Esc confirms tmux delivery, not Claude cancellation. The private state file agent-turn-interrupt-audit.jsonl records the exact Agent and Pane UIDs, time, source, and delivery outcome.
 
 ### `projmux agent approval`
 
@@ -556,7 +556,7 @@ Allowed effects:
 ```
 projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
-projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|web>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|client>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 Subcommands:
@@ -637,12 +637,12 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|web>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|client>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 --allow runs that one tool call as requested; it never changes a permission rule or the tool input. --deny blocks it. Exactly one of them is required.
 
---via (default cli) is recorded in the audit log as the caller reports it; it is not verified.
+--via (default cli) is recorded in the audit log as the caller reports it; it is not verified. It takes popup, cli, or an operator client name under the same rule as `agent turn interrupt --via`; another name is refused as operator-client-invalid.
 
 A second or late answer, or one on a request already answered in Claude Code's own prompt, is refused as permission-not-pending.
 

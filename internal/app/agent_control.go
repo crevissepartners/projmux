@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -407,20 +408,23 @@ func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 		return err
 	case "interrupt":
 		if len(args) != 2 && len(args) != 4 {
-			return usageError("agent turn interrupt requires <agent-ref> [--via web]")
+			return usageError("agent turn interrupt requires <agent-ref> [--via <client>]")
 		}
 		registry, agent, err := c.resolveOneAgent("agent turn interrupt", args[1], selector.VerbReview)
 		if err != nil {
 			return err
 		}
 		if agent.Spec.Provider == aiModeClaude {
-			if len(args) != 4 || args[2] != "--via" || args[3] != "web" {
-				return usageError("Claude turn interrupt requires explicit --via web (caller-reported source)")
+			if len(args) != 4 || args[2] != "--via" {
+				return usageError("Claude turn interrupt requires explicit --via <client> (caller-reported source)")
 			}
-			return c.interruptClaudeTurn(registry, agent, stdout)
+			if err := operatorclient.Validate(args[3]); err != nil {
+				return usageError(fmt.Sprintf("Claude turn interrupt --via: %v", err))
+			}
+			return c.interruptClaudeTurn(registry, agent, args[3], stdout)
 		}
 		if len(args) != 2 {
-			return usageError("--via web is available only for Claude turn interrupt")
+			return usageError("--via is available only for Claude turn interrupt")
 		}
 		binding, err := c.bindAgentControl("agent turn interrupt", registry, agent)
 		if err != nil {

@@ -44,7 +44,7 @@ execution guard, use the existing bounded command without that flag:
 projmux agent message send uid:<original-source-agent> --reply-to <original-request-ref> -- '<corrected reply>'
 ```
 
-Operator input from the web client has no Agent route to reverse, so a reply
+Operator input from an operator client has no Agent route to reverse, so a reply
 to it is refused with `explicit-reply-operator-origin` and stores nothing.
 
 Within the same provider session, a reply also commits after the Claude lease
@@ -73,7 +73,7 @@ stored.
 | `invalid-explicit-reply-correlation` | The reply's Agents, providers, or `conversationRef` do not match the original. | Check that `--reply-to` names a message you received and that the positional Agent is its sender. |
 | `explicit-reply-conversation-changed` | One of the original's Agents is now in another provider conversation. | Send a new message without `--reply-to`. |
 | `invalid-explicit-reply-envelope` | The reply itself is not a valid envelope, for example a payload over the limit. | Correct the reply, for example shorten it, and send it with a fresh ref. |
-| `explicit-reply-operator-origin` | The original is operator input from the web client. | There is no Agent to answer; do not reply to it. |
+| `explicit-reply-operator-origin` | The original is operator input from an operator client. | There is no Agent to answer; do not reply to it. |
 | `explicit-reply-deadline-expired` | The original's deadline has passed. | Send a new message without `--reply-to`. |
 | `explicit-reply-deadline-extended` | The reply's deadline is later than the original's. | Send the reply without a longer `--ttl`. |
 | `explicit-reply-source-route-stale`, `explicit-reply-target-route-stale` | The replying or the answered Agent's route is not its current one, for example during a relaunch, or the helper serving the reply is not the replying Agent's. | Wait until the Agent is registered again, then send the reply. |
@@ -158,7 +158,7 @@ the Pane and activation generation fence a live delivery, and the incarnation
 follows the provider conversation; all three mean nothing once the record has
 left the store. The envelope's `deadline` is not written. A line for operator
 input (see [Operator input](claude-coordination-endpoints.md#operator-input)) carries
-`"origin":{"kind":"operator","client":"web"}` in place of `source`; an Agent
+`"origin":{"kind":"operator","client":"<client>"}` in place of `source`; an Agent
 message's line has no `origin`. Every other key is always present.
 
 Lines written by earlier builds may still be in the same file. They carry full

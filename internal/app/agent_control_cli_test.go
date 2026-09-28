@@ -618,3 +618,21 @@ func TestAgentControlBindingLookupUsesResolvedLogicalRouteOnly(t *testing.T) {
 		})
 	}
 }
+
+// TestAgentControlCLICodexInterruptRefusesVia keeps --via a Claude-only
+// declaration: a Codex interrupt that names any client, valid or not, is a
+// usage error before any control call.
+func TestAgentControlCLICodexInterruptRefusesVia(t *testing.T) {
+	for _, via := range []string{operatorTestClient, "cli", "Console"} {
+		cmd, _, _ := exactControlCLICommand(t)
+		calls := 0
+		cmd.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+			calls++
+			return agentControlResponse{}, errors.New("must not be called")
+		}
+		_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex", "--via", via)
+		if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "--via is available only for Claude turn interrupt") || calls != 0 {
+			t.Fatalf("--via %q err=%v calls=%d", via, err, calls)
+		}
+	}
+}

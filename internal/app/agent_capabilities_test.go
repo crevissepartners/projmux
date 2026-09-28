@@ -214,7 +214,7 @@ func TestUnsupportedNativeAgentActionsRefuseBeforeRuntimeOrProviderEffects(t *te
 				stdout, stderr, err := runRoute(t, cmd, test.args...)
 				want := "does not support native exact control"
 				if provider == "claude" && test.name == "turn interrupt" {
-					want = "requires explicit --via web"
+					want = "requires explicit --via <client>"
 				}
 				if err == nil || !strings.Contains(err.Error(), want) {
 					t.Fatalf("error = %v", err)
