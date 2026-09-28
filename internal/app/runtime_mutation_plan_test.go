@@ -3448,7 +3448,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 	requiredPlanSites := map[string]bool{
 		"materialize.go:finalizeSessionStartup":                            true,
 		"materialize.go:rollback":                                          true,
-		"materialize.go:ensureSessionAt":                                   true,
+		"materialize.go:ensureSessionLaunching":                            true,
 		"materialize.go:writeCreatedProjectRouteMarker":                    true,
 		"materialize.go:recoverCreatedProjectByLease":                      true,
 		"materialize.go:claimRuntimeUID":                                   true,

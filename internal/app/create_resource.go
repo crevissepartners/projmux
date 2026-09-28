@@ -1773,7 +1773,8 @@ func (c *createCommand) ensureProjectRuntime(
 			}
 		}
 	}
-	created, err := c.runtime.ensureSession(ctx, project, sessionName, initialWindowName(working, project.Metadata.UID), ledger)
+	created, initialActivation, err := c.runtime.ensureSessionLaunching(ctx, project, sessionName, project.Spec.Root,
+		initialWindowName(working, project.Metadata.UID), c.initialPaneActivation(working, mutator, project.Metadata.UID, operationID), ledger)
 	if err != nil {
 		return "", err
 	}
@@ -1782,7 +1783,7 @@ func (c *createCommand) ensureProjectRuntime(
 		// them to the Project's first bootstrap Window is what keeps the runtime
 		// a projection of the stored topology instead of an orphan window
 		// sitting next to it.
-		if err := c.adoptInitialWindow(ctx, working, mutator, project, created, ledger); err != nil {
+		if err := c.adoptInitialWindow(ctx, working, mutator, project, created, initialActivation, ledger); err != nil {
 			return "", err
 		}
 	}
@@ -1832,6 +1833,23 @@ func initialWindowName(registry *coremetadata.Registry, projectUID string) strin
 	return windows[0].Metadata.Name
 }
 
+// initialPaneActivation issues the activation of the default shell Pane
+// adoptInitialWindow will bind to a new session's first Pane, so that Pane is
+// launched under its own generation like any other Pane this create starts.
+func (c *createCommand) initialPaneActivation(registry *coremetadata.Registry, mutator coremetadata.Mutator, projectUID, operationID string) sessionFirstPaneActivation {
+	return func() (superviseSpec, error) {
+		windows := registry.WindowsOf(projectUID)
+		if len(windows) == 0 {
+			return superviseSpec{}, nil
+		}
+		primary, ok := registry.WindowDefaultShell(windows[0].Metadata.UID)
+		if !ok {
+			return superviseSpec{}, nil
+		}
+		return c.issuePaneActivation(registry, mutator, primary.Metadata.UID, "", operationID)
+	}
+}
+
 // adoptInitialWindow binds the window and pane a freshly created session came
 // with to the Project's first stored Window and that Window's default shell.
 //
@@ -1840,7 +1858,9 @@ func initialWindowName(registry *coremetadata.Registry, projectUID string) strin
 // someone else. The exact initial Window and Pane are claimed and recorded as
 // separate ledger entries before their full mirrors, so rollback can verify and
 // remove each owned handle even when a hook moved it out of the new Session.
-func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coremetadata.Registry, mutator coremetadata.Mutator, project coremetadata.Project, created intmux.NewSessionResult, ledger *runtimeLedger) error {
+// activation is the generation the Pane was launched under; its %N is recorded
+// once the Pane is claimed.
+func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coremetadata.Registry, mutator coremetadata.Mutator, project coremetadata.Project, created intmux.NewSessionResult, activation superviseSpec, ledger *runtimeLedger) error {
 	windows := registry.WindowsOf(project.Metadata.UID)
 	if len(windows) == 0 {
 		return nil
@@ -1871,7 +1891,13 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 	if err := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, primary.Metadata.UID, ledger); err != nil {
 		return err
 	}
-	return c.runtime.mirrorPane(ctx, created.PaneID, *primary)
+	if err := c.runtime.mirrorPane(ctx, created.PaneID, *primary); err != nil {
+		return err
+	}
+	if activation.PaneUID == primary.Metadata.UID {
+		observeActivationRuntime(registry, mutator, activation, created.PaneID, c.runtime.warn)
+	}
+	return nil
 }
 
 // createOperation is one create body, run inside the registry transaction.

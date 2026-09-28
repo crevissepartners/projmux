@@ -250,7 +250,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		} else {
 			// The Window is allocated first, exactly as fresh `create window`
 			// allocates it before ensureProjectRuntime, so a stopped Project
-			// adopts the same first Window into its new session. ensureSession
+			// adopts the same first Window into its new session. ensureSessionAt
 			// installs this transaction's lease on the session whether it
 			// created it or found it live, so it is not written again here.
 			sessionID, err := c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)

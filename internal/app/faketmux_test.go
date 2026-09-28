@@ -555,6 +555,7 @@ func (f *fakeTmux) runNewSession(args []string) ([]byte, error) {
 		return nil, fmt.Errorf("fake tmux: new-session target %q is missing or already exists", name)
 	}
 	session := f.addSession(name)
+	session.windows[0].panes[0].command = strings.Join(trailingCommand(args), " ")
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] != "-e" {
 			continue
@@ -726,7 +727,7 @@ func (f *fakeTmux) runSelectWindow(args []string) ([]byte, error) {
 // trailingCommand returns the shell-command tail of a new-window/split-window
 // argv: everything after the last recognized option pair.
 func trailingCommand(args []string) []string {
-	valued := map[string]bool{"-t": true, "-c": true, "-n": true, "-F": true}
+	valued := map[string]bool{"-t": true, "-c": true, "-n": true, "-F": true, "-s": true, "-e": true}
 	i := 1
 	for i < len(args) {
 		arg := args[i]

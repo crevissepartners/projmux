@@ -1395,7 +1395,14 @@ func tmuxServerTeardownFailure(err error) bool {
 	return failure.Kind == inttmux.CommandFailureExit && strings.TrimSpace(failure.Stderr) == "server exited unexpectedly"
 }
 
-// ensureSession makes the Project's persistent tmux session live.
+// sessionFirstPaneActivation issues the activation of the Pane a new session
+// brings with it. It runs inside the caller's Registry transaction, and only
+// once new-session is certain to run: a session that is already live keeps
+// the generation its first Pane already runs under. A zero spec launches the
+// Pane unsupervised, as before.
+type sessionFirstPaneActivation func() (superviseSpec, error)
+
+// ensureSessionLaunching makes the Project's persistent tmux session live.
 //
 // A session that already exists is reused untouched, which is what keeps the
 // pre-create/post-create hooks on their documented trigger: they fire when a
@@ -1405,81 +1412,98 @@ func tmuxServerTeardownFailure(err error) bool {
 // new session's own first Window. mirrorWindow turns automatic-rename off, so
 // that Window has to be born with its Registry name; a blank name keeps tmux's
 // default name for a caller with no Window to adopt.
-func (m *materializer) ensureSession(
-	ctx context.Context,
-	project coremetadata.Project,
-	sessionName, firstWindowName string,
-	ledger *runtimeLedger,
-) (intmux.NewSessionResult, error) {
-	return m.ensureSessionAt(ctx, project, sessionName, project.Spec.Root, firstWindowName, ledger)
-}
-
-// ensureSessionAt is ensureSession with an explicit initial-shell-Pane cwd.
 //
-// Registry topology materialization starts a Project's first stored shell Pane
-// in that Pane's own recorded cwd, while the Project identity, the hook
-// contract's PROJMUX_CWD, and the session path anchor all stay on the canonical
+// runtimeCWD is the initial shell Pane's cwd. Registry topology
+// materialization starts a Project's first stored shell Pane in that Pane's
+// own recorded cwd, while the Project identity, the hook contract's
+// PROJMUX_CWD, and the session path anchor all stay on the canonical
 // spec.root. Passing spec.root here is exactly the ordinary create path.
-func (m *materializer) ensureSessionAt(
+//
+// A new session's first Pane is launched the way every other Pane of the pass
+// is: under the supervisor of its own generation, issued by firstPane. The
+// activation is returned so the caller records the Pane's %N with
+// observeActivationRuntime in the same transaction, after it has claimed the
+// Pane. It is zero when the session already existed.
+func (m *materializer) ensureSessionLaunching(
 	ctx context.Context,
 	project coremetadata.Project,
 	sessionName, runtimeCWD, firstWindowName string,
+	firstPane sessionFirstPaneActivation,
 	ledger *runtimeLedger,
-) (intmux.NewSessionResult, error) {
+) (intmux.NewSessionResult, superviseSpec, error) {
 	// Bind an existing invocation server to its physical socket before the
 	// printable declaration is built. A genuinely absent server remains the
 	// one create-session-only absent-before-create case.
 	if err := m.guardExactRoute(ctx, true); err != nil {
-		return intmux.NewSessionResult{}, err
+		return intmux.NewSessionResult{}, superviseSpec{}, err
 	}
 	startsFreshServer := m.expectedSocketPath == ""
 	exists, err := m.sessions.SessionExists(ctx, sessionName)
 	if err != nil {
-		return intmux.NewSessionResult{}, fmt.Errorf("check tmux session %q: %w", sessionName, err)
+		return intmux.NewSessionResult{}, superviseSpec{}, fmt.Errorf("check tmux session %q: %w", sessionName, err)
 	}
 	if exists {
 		identity, err := m.requireOwnedSession(ctx, project, sessionName)
 		if err != nil {
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
-		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, nil
+		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, superviseSpec{}, nil
 	}
 	if identity, found, err := m.preflightSessionOwnership(ctx, project, sessionName); err != nil {
-		return intmux.NewSessionResult{}, err
+		return intmux.NewSessionResult{}, superviseSpec{}, err
 	} else if found {
 		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
-		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, nil
+		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, superviseSpec{}, nil
 	}
 	lifecycle, ok := m.sessions.(persistentSessionLifecycle)
 	if !ok {
-		return intmux.NewSessionResult{}, errors.New("materialize tmux session: typed persistent lifecycle seam is unavailable")
+		return intmux.NewSessionResult{}, superviseSpec{}, errors.New("materialize tmux session: typed persistent lifecycle seam is unavailable")
 	}
 	request, appeared, err := lifecycle.PreparePersistentSessionCreate(ctx, sessionName, runtimeCWD, project.Spec.Root,
 		map[string]string{createOperationEnvironment: ledger.operationMarker})
 	if err != nil {
-		return intmux.NewSessionResult{}, err
+		return intmux.NewSessionResult{}, superviseSpec{}, err
 	}
 	if appeared {
 		identity, err := m.requireOwnedSession(ctx, project, sessionName)
 		if err != nil {
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
-		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, nil
+		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, superviseSpec{}, nil
+	}
+	var (
+		activation superviseSpec
+		launch     []string
+	)
+	if firstPane != nil {
+		issued, err := firstPane()
+		if err != nil {
+			lifecycle.AbortPersistentSessionCreate()
+			return intmux.NewSessionResult{}, superviseSpec{}, err
+		}
+		if issued.valid() {
+			activation = issued
+			if startsFreshServer {
+				launch = m.supervisedLaunchOnFreshServer(activation)
+			} else {
+				launch = m.supervisedLaunch(ctx, activation, nil)
+			}
+		}
 	}
 	args := []string{}
 	if startsFreshServer {
 		configPath, err := m.generatedAppConfigPath()
 		if err != nil {
 			lifecycle.AbortPersistentSessionCreate()
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 		args = append(args, "-f", configPath)
 	}
@@ -1500,6 +1524,7 @@ func (m *materializer) ensureSessionAt(
 		m.boundMutationTarget("project-declaration", sessionName, project.Metadata.UID),
 		"unique Project uid/root or absent session name",
 		"one detached owned session exists", args...)
+	action.Command = launch
 	var rawOutput []byte
 	ensureErr := m.runMaterializeMutation(ctx, action, func() error {
 		_, found, guardErr := m.preflightSessionOwnership(ctx, project, sessionName)
@@ -1548,18 +1573,18 @@ func (m *materializer) ensureSessionAt(
 			m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
 		}
 		lifecycle.AbortPersistentSessionCreate()
-		return intmux.NewSessionResult{}, fmt.Errorf("materialize tmux session %q: %w", sessionName, ensureErr)
+		return intmux.NewSessionResult{}, superviseSpec{}, fmt.Errorf("materialize tmux session %q: %w", sessionName, ensureErr)
 	}
 	if exactTmuxHandle(result.SessionID, "$") == "" || exactTmuxHandle(result.WindowID, "@") == "" || exactTmuxHandle(result.PaneID, "%") == "" {
 		if startsFreshServer {
 			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.operationMarker); rollbackErr != nil {
-				return intmux.NewSessionResult{}, errors.Join(errors.New("materialize tmux session: atomic result is incomplete"), rollbackErr)
+				return intmux.NewSessionResult{}, superviseSpec{}, errors.Join(errors.New("materialize tmux session: atomic result is incomplete"), rollbackErr)
 			}
 		} else {
 			m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
 		}
 		lifecycle.AbortPersistentSessionCreate()
-		return intmux.NewSessionResult{}, fmt.Errorf("materialize tmux session %q: atomic result is incomplete", sessionName)
+		return intmux.NewSessionResult{}, superviseSpec{}, fmt.Errorf("materialize tmux session %q: atomic result is incomplete", sessionName)
 	}
 	if startsFreshServer {
 		if err := m.bindCreatedProjectRouteAuthority(ctx, result, ledger.operationMarker); err != nil {
@@ -1567,40 +1592,40 @@ func (m *materializer) ensureSessionAt(
 				err = errors.Join(err, fmt.Errorf("created Project owned rollback incomplete: %w", rollbackErr))
 			}
 			lifecycle.AbortPersistentSessionCreate()
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 		if err := m.writeCreatedProjectRouteMarker(ctx, result, ledger.operationMarker); err != nil {
 			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.operationMarker); rollbackErr != nil {
 				err = errors.Join(err, fmt.Errorf("created Project owned rollback incomplete: %w", rollbackErr))
 			}
 			lifecycle.AbortPersistentSessionCreate()
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 		if err := m.guardExactRoute(ctx, false, m.expectedSocketPath); err != nil {
 			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.operationMarker); rollbackErr != nil {
 				err = errors.Join(err, fmt.Errorf("created Project owned rollback incomplete: %w", rollbackErr))
 			}
 			lifecycle.AbortPersistentSessionCreate()
-			return intmux.NewSessionResult{}, err
+			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 	}
 	if err := m.writeCreatedProjectAnchor(ctx, result, project, ledger.operationMarker); err != nil {
 		m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
 		lifecycle.AbortPersistentSessionCreate()
-		return intmux.NewSessionResult{}, err
+		return intmux.NewSessionResult{}, superviseSpec{}, err
 	}
 	if err := lifecycle.CompletePersistentSessionCreate(ctx, request, result); err != nil {
 		m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
-		return intmux.NewSessionResult{}, err
+		return intmux.NewSessionResult{}, superviseSpec{}, err
 	}
 	ledger.markSession(result.SessionID)
 	if claimErr := m.claimRuntimeUIDForRollback(ctx, runtimeSession, result.SessionID, project.Metadata.UID, ledger); claimErr != nil {
-		return intmux.NewSessionResult{}, claimErr
+		return intmux.NewSessionResult{}, superviseSpec{}, claimErr
 	}
 	if err := m.mirrorProject(ctx, result.SessionID, project); err != nil {
-		return intmux.NewSessionResult{}, err
+		return intmux.NewSessionResult{}, superviseSpec{}, err
 	}
-	return result, nil
+	return result, activation, nil
 }
 
 func (m *materializer) bindCreatedProjectRouteAuthority(ctx context.Context, result intmux.NewSessionResult, marker string) error {

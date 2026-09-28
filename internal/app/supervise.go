@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,7 +54,16 @@ type superviseSpec struct {
 	// through private PMX_INTERNAL context, never the public PROJMUX hook API.
 	ClaudeRegistration bool
 	DialogueReplyOnly  bool
+	// ServerDefaultCommand launches no planned child: the supervisor runs the
+	// process tmux itself would have started, read from the server the Pane
+	// runs in. Only a session's first Pane on a server its own new-session
+	// starts uses it, because no server exists to read before that.
+	ServerDefaultCommand bool
 }
+
+// superviseServerDefaultCommandFlag is the private flag that carries
+// superviseSpec.ServerDefaultCommand.
+const superviseServerDefaultCommandFlag = "server-default-command"
 
 // valid reports whether the spec can identify a receipt at all.
 func (s superviseSpec) valid() bool {
@@ -96,6 +107,9 @@ type superviseCommand struct {
 	runActivation func(argv []string, argv0 string, spec superviseSpec) (processOutcome, error)
 	now           func() time.Time
 	warn          io.Writer
+	// serverPaneDefaults reads default-shell and default-command from the
+	// server this supervisor runs in. Nil reads them through tmux.
+	serverPaneDefaults func() (shell, command string, err error)
 }
 
 // newSuperviseCommand wires the production runners. recorder is the
@@ -156,6 +170,7 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 	registryPath := fs.String("registry-path", "", "private creator-resolved Registry authority for an Agent launch")
 	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "private next-activation reply profile")
 	argv0 := fs.String("argv0", "", "argv[0] the child is exec'd with; a leading '-' requests a login shell")
+	serverDefault := fs.Bool(superviseServerDefaultCommandFlag, false, "run the server's own default pane command instead of a child")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -163,6 +178,13 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return flagParseError(err)
 	}
 	child := fs.Args()
+	if *serverDefault {
+		if len(child) != 0 || strings.TrimSpace(*argv0) != "" {
+			return usageError("internal supervise --" + superviseServerDefaultCommandFlag + " takes no command")
+		}
+		resolved := c.resolveServerDefaultCommand()
+		child, *argv0 = resolved.argv, resolved.argv0
+	}
 	if len(child) == 0 {
 		return usageError("internal supervise requires a command after --")
 	}
@@ -203,6 +225,34 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	c.recordOutcome(spec, outcome, stderr)
 	return superviseExitError{code: outcome.exitStatus()}
+}
+
+// resolveServerDefaultCommand is defaultPaneCommand read from inside the Pane.
+// tmux gives every Pane its server in TMUX, so a plain tmux client reaches the
+// exact server that started this process. A failed read falls back the way
+// tmux does for an unset option: the login shell named by SHELL.
+func (c *superviseCommand) resolveServerDefaultCommand() resolvedPaneCommand {
+	read := c.serverPaneDefaults
+	if read == nil {
+		read = readServerPaneDefaults
+	}
+	shell, command, err := read()
+	if err != nil {
+		shell, command = "", ""
+	}
+	return resolvePaneCommand(shell, command, os.Getenv("SHELL"))
+}
+
+func readServerPaneDefaults() (string, string, error) {
+	shell, err := exec.Command("tmux", "show-options", "-gv", "default-shell").Output()
+	if err != nil {
+		return "", "", err
+	}
+	command, err := exec.Command("tmux", "show-options", "-gv", "default-command").Output()
+	if err != nil {
+		return "", "", err
+	}
+	return string(shell), string(command), nil
 }
 
 // recordOutcome appends the observed receipt, best effort.
