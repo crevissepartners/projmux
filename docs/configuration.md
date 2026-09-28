@@ -1475,13 +1475,53 @@ creating a Pane or resuming the Agent. The native lane still accepts it.
 `allow` and `deny` are not given to Codex and appear as not applied in create
 receipts.
 
+## Project Link Rules
+
+Project link rules turn a Project's labels into links, for example a
+`jira=ABC-123` label into `https://jira.example.com/browse/ABC-123`. Each
+Project has at most one rule file, `<config dir>/project-links/<project-uid>.json`
+(by default `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/project-links/`), named
+by the Project UID (`proj-...`) so renaming the Project or moving its root
+keeps its rules. The web client edits the rules; there is no CLI command that
+edits them. A missing file means the Project has no rules.
+
+```json
+{
+  "jiraURL": "https://jira.example.com",
+  "repoURL": "https://github.com/example/repo",
+  "links": [
+    {"labelKey": "jira", "template": "{jira}/browse/{value}"},
+    {"labelKey": "pr", "template": "{repo}/pull/{value}"}
+  ]
+}
+```
+
+A template expands three placeholders: `{value}` becomes the label value,
+path-escaped (`a/b c` becomes `a%2Fb%20c`); `{jira}` and `{repo}` become
+`jiraURL` and `repoURL` with any trailing `/` trimmed.
+
+A rule file must pass these checks, both when it is written and when it is
+read; a file that fails them, is not one JSON object of exactly these fields,
+or is larger than 64 KiB is an error, never treated as empty:
+
+- `jiraURL` and `repoURL` may be empty. A set one is an absolute `http` or
+  `https` URL with a host, at most 2048 bytes, with no credentials
+  (`user@`), no query, no fragment and no `{` or `}`.
+- `links` holds at most 64 rules.
+- `labelKey` is 1 to 64 ASCII letters, digits, `.`, `_` or `-`, compared
+  exactly (case-sensitive), and unique in the file.
+- `template` is at most 2048 bytes, contains `{value}`, uses no other
+  placeholder than `{value}`, `{jira}` and `{repo}`, uses `{jira}` or
+  `{repo}` only when that URL is set, and expands to an absolute `http` or
+  `https` URL without credentials.
+
 ## Setting Layers
 
 Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/`, `project-links/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 Central files live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/`, except
