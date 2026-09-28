@@ -114,6 +114,8 @@ func (s realTmuxQuestionServer) pickerWrapper(t *testing.T) string {
 // Its drawn output is kept only as a bounded tail, so a runaway redraw cannot
 // grow the test's memory; marks count every byte ever drawn.
 type realTmuxQuestionClient struct {
+	// name is the client's tty, which tmux names the client by.
+	name    string
 	master  *os.File
 	mu      sync.Mutex
 	screen  []byte
@@ -182,7 +184,7 @@ func (s realTmuxQuestionServer) attach(t *testing.T) *realTmuxQuestionClient {
 	if err := unix.IoctlSetWinsize(int(tty.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 48, Col: 160}); err != nil {
 		t.Fatal(err)
 	}
-	client := &realTmuxQuestionClient{master: master}
+	client := &realTmuxQuestionClient{master: master, name: "/dev/pts/" + strconv.Itoa(index)}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	command := exec.CommandContext(ctx, "tmux", "-S", s.socket, "-f", "/dev/null", "attach-session", "-t", "qa")
 	command.Env = s.environment
@@ -476,8 +478,8 @@ func TestClaudeQuestionPopupRealTmuxEscGivesTheQuestionBack(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("the hook did not return")
 	}
-	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateClosed {
-		t.Fatalf("state = %s, want closed", record.State)
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateClosed || record.Disposition != string(agentquestion.CloseReasonPopupDismissed) {
+		t.Fatalf("record = %s/%q, want closed/%s", record.State, record.Disposition, agentquestion.CloseReasonPopupDismissed)
 	}
 }
 
@@ -594,5 +596,99 @@ func TestClaudeQuestionPopupRealTmuxQueuesASecondQuestionOnOneClient(t *testing.
 	}
 	if record, _, _ := fixture.store.Get(second); record.State != agentquestion.StateAnswered {
 		t.Fatalf("second state = %s, want answered", record.State)
+	}
+}
+
+// detachRealTmuxQuestionClient detaches client from the server, as an
+// operator closing that terminal would, and waits until tmux lists it no
+// more.
+func (s realTmuxQuestionServer) detachRealTmuxQuestionClient(t *testing.T, client *realTmuxQuestionClient) {
+	t.Helper()
+	if out, err := s.tmux("detach-client", "-t", client.name); err != nil {
+		t.Fatalf("detach %s: %v: %s", client.name, err, out)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		out, _ := s.tmux("list-clients", "-F", "#{client_name}")
+		if !strings.Contains(out, client.name) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s is still attached: %s", client.name, out)
+		}
+	}
+}
+
+// requireRealTmuxQuestionWaiting holds that the hook has not returned and its
+// record still waits.
+func requireRealTmuxQuestionWaiting(t *testing.T, fixture *questionFixture, id string, done <-chan string) {
+	t.Helper()
+	select {
+	case got := <-done:
+		t.Fatalf("the hook returned %q after the popup's client left", got)
+	default:
+	}
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateWaiting {
+		t.Fatalf("record = %s/%q, want waiting after the popup's client left", record.State, record.Disposition)
+	}
+}
+
+// TestClaudeQuestionPopupRealTmuxReopensOnTheClientLeftAfterADetach is two
+// clients with the popup on the one used last: that client detaches, the
+// record keeps waiting, the popup opens again on the other client, and the
+// answer picked there is the hook's decision.
+func TestClaudeQuestionPopupRealTmuxReopensOnTheClientLeftAfterADetach(t *testing.T) {
+	server := startRealTmuxQuestionServer(t)
+	first := server.attach(t)
+	second := server.attach(t)
+	rows, err := server.tmux("list-clients", "-F", "#{client_name}\t#{pane_id}\t#{client_control_mode}\t#{client_activity}")
+	if err != nil {
+		t.Fatalf("list clients: %v: %s", err, rows)
+	}
+	viewing, other := first, second
+	if claudeQuestionViewingClient(rows, server.paneID) == second.name {
+		viewing, other = second, first
+	}
+	fixture, hook := server.questionFixture(t)
+	otherMark := other.mark()
+	id, done := startRealTmuxQuestionHook(t, fixture, hook)
+
+	viewing.waitFor(t, 0, "Which build tool?")
+	if other.drewSince(otherMark, "Which build tool?") {
+		t.Fatal("the popup opened on the client not used last")
+	}
+	otherMark = other.mark()
+	server.detachRealTmuxQuestionClient(t, viewing)
+	requireRealTmuxQuestionWaiting(t, fixture, id, done)
+	answerRealTmuxQuestionPicker(t, other, otherMark)
+	if got := waitRealTmuxQuestionHook(t, done); !strings.Contains(got, `"answers":{"Which branch?":"main","Which build tool?":"make"}`) {
+		t.Fatalf("decision = %q, want the answer from the popup that opened again", got)
+	}
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
+		t.Fatalf("record = %s/%q, want answered", record.State, record.Disposition)
+	}
+}
+
+// TestClaudeQuestionPopupRealTmuxWaitsForAClientAfterTheOnlyOneDetached is the
+// only client detaching from its popup: the record keeps waiting with no
+// client, and the popup opens again once a client attaches.
+func TestClaudeQuestionPopupRealTmuxWaitsForAClientAfterTheOnlyOneDetached(t *testing.T) {
+	server := startRealTmuxQuestionServer(t)
+	client := server.attach(t)
+	fixture, hook := server.questionFixture(t)
+	id, done := startRealTmuxQuestionHook(t, fixture, hook)
+
+	client.waitFor(t, 0, "Which build tool?")
+	server.detachRealTmuxQuestionClient(t, client)
+	// Several looks at 100ms each find no client.
+	time.Sleep(time.Second)
+	requireRealTmuxQuestionWaiting(t, fixture, id, done)
+
+	again := server.attach(t)
+	answerRealTmuxQuestionPicker(t, again, 0)
+	if got := waitRealTmuxQuestionHook(t, done); !strings.Contains(got, `"answers":{"Which branch?":"main","Which build tool?":"make"}`) {
+		t.Fatalf("decision = %q, want the answer from the popup on the client that attached", got)
+	}
+	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
+		t.Fatalf("record = %s/%q, want answered", record.State, record.Disposition)
 	}
 }

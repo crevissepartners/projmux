@@ -818,18 +818,26 @@ client smaller than that is the question shortened with `…` so the options sta
 reachable; the full text is available from `projmux agent question list`.
 
 Pressing Esc in the popup gives the question back: the record is closed and
-Claude Code shows its own prompt. So does a popup that fails to open or that
-ends without answering after it showed, including one whose client detached;
-once shown and closed, a question's popup is not opened again. Pressing Esc in
-Claude Code itself cancels the wait and declines the question.
+Claude Code shows its own prompt. So does a picker that fails. A popup that
+ends any other way while the question still waits, most often because its
+client detached, does not give the question back: the question stays in
+projmux, and the next look, within about a second, opens the popup again on the
+client you used most recently, or on the first client to attach when none is
+left. Only a popup that keeps failing gives the question back: three popups in
+a row that each ended within 2 seconds of opening, a popup that failed to open
+among them. A popup that stayed up longer starts that count again, so leaving
+clients never runs it out. Pressing Esc in Claude Code itself cancels the wait
+and declines the question.
 
 A question is given back only once its record is written `closed`. While the
-question store cannot be written (the disk is full, or its lock is held), a
-popup that ended leaves the record `waiting` and the hook keeps holding the
-question, so it is in neither the popup nor Claude Code's prompt; the hook
-tries again every 250 milliseconds (each try waits up to 2 seconds for the
-store lock) and hands the question back as soon as the write succeeds, so the
-record's `updatedAt` is that moment, not the moment the popup ended.
+question store cannot be written (the disk is full, or its lock is held), Esc
+in the popup cannot close the record, which still waits, so the popup opens
+again. When the hook gives the question back after popups that kept failing,
+the record stays `waiting` and the hook keeps holding the question, so it is in
+neither a popup nor Claude Code's prompt; the hook tries again every 250
+milliseconds (each try waits up to 2 seconds for the store lock) and hands the
+question back as soon as the write succeeds, so the record's `updatedAt` is
+that moment, not the moment the last popup ended.
 
 A `closed` record says why it closed in its `disposition`, and that reason
 tells whether the provider still asks the question in its own prompt:
@@ -837,7 +845,7 @@ tells whether the provider still asks the question in its own prompt:
 | Disposition | Written when | Provider still asks |
 | --- | --- | --- |
 | `popup-dismissed` | Esc in the popup | yes |
-| `popup-failed` | the popup failed to open, ended without an answer (its client detached), or the picker failed | yes |
+| `popup-failed` | the picker failed; for a Claude question, three popups in a row failed to open or ended within 2 seconds of opening; for a Codex question, the popup failed to open or ended without an answer (its client detached) | yes |
 | `hook-canceled` | Claude Code canceled the hook (Esc in Claude Code, or its hook timeout), which declines the question | no |
 | `hook-failed` | the hook crashed after it recorded the question | yes |
 | `channel-off` | `agent question disable` | yes |
