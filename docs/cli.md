@@ -244,6 +244,8 @@ Codex keeps the developer instructions its thread started with; resume cannot re
 
 --model and --effort are recorded on the Agent with the source resume (projmux.io/model-source, projmux.io/effort-source).
 
+Items the Agent does not override take its profile's current instructions, model, and effort; the model is passed only when it changed.
+
 ### `projmux agent relaunch`
 
 Restart one exact Claude or Codex Agent on the same conversation with another model or effort
@@ -266,6 +268,8 @@ projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> 
 ```
 
 The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.
+
+Without --model or --effort it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
 
 Output modes (`-o`): `json`
 

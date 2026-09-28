@@ -140,9 +140,13 @@ func (l agentResumeLaunch) effortNotice(label string) string {
 // route must not do, because a resume that silently starts a new conversation
 // loses the operator's context without telling them.
 //
-// A Claude Agent created with a persona is resumed with the same start-time
-// snapshot, found from its persona-digest annotation and never from the
-// current persona file. A snapshot that is gone does not stop the resume.
+// A Claude Agent created with a persona is resumed with the snapshot its
+// persona-digest annotation names. A snapshot that is gone does not stop the
+// resume. The seam reads the annotations it is given: the `agent resume`
+// rebind hands it the instructions its settings layers resolve to, with a new
+// snapshot and the snapshot mode off when their name or current content
+// changed (agentSettingsLaunch.launchAnnotations); Continue replay hands it
+// the recorded ones.
 //
 // A Claude Agent whose persona was attached or detached after its
 // conversation started also records the system prompt snapshot mode `off`,
@@ -154,9 +158,10 @@ func (l agentResumeLaunch) effortNotice(label string) string {
 // An Agent created or resumed with --effort records it, and Claude and Codex
 // resumes re-pass valid values. An invalid recorded value is skipped and
 // disclosed. The model is not re-passed on ordinary resume: the conversation
-// owns it. Only `agent resume --model` passes one, through
-// PlanAgentResumeWithModel; the rebind records it on the Agent
-// (AnnotationAgentModel), and later plain resumes still do not re-pass it.
+// owns it. Only a rebind passes one, through PlanAgentResumeWithModel: an
+// `agent resume --model`, or the profile's model when it differs from the
+// recorded one (agentsettings.Resolve); the rebind records it on the Agent
+// (AnnotationAgentModel), and later plain resumes do not re-pass it.
 //
 // A Claude Agent created with a profile is resumed with that profile's
 // current permissions: the profile is re-read by name, its settings snapshot
@@ -587,8 +592,12 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var nativeRoute codexNativeEndpointRoute
 	var title string
 	var launchArgv []string
-	var personaNotice, effortNotice, linksNotice, guidanceNotice string
+	var personaNotice, effortNotice, linksNotice, guidanceNotice, settingsNotice string
 	var resumed agentResumeLaunch
+	// settings are the layered settings this launch runs with: the
+	// overrides, then the profile as it is now (agentsettings.Resolve). The
+	// rebind transaction records them.
+	var settings agentSettingsLaunch
 	var links projectLinksLaunch
 	var guidance agentGuidanceLaunch
 	var nativePolicy codexappserver.ThreadPolicy
@@ -601,6 +610,9 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// records -- the same record a Claude resume makes.
 		resumed, nativePolicy, err = r.create.codexResumeProfile(plan.annotations)
 		if err == nil {
+			settings, err = r.resolveSettings(plan.provider, plan.annotations, plan.modelOverride, plan.effortOverride, plan.settingSource())
+		}
+		if err == nil {
 			nativeCtx, cancel := prepareNativeContext(context.Background())
 			nativeRoute, err = resolveCodexNativeResumeRoute(nativeCtx, r.create.codexNative, plan.ref, "uid:"+plan.agentUID)
 			cancel()
@@ -610,10 +622,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			if !nativeLaunchCapable {
 				return nativeResumePreparationRefusal(spelling, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
 			}
-			effort, invalid, skipped := claudeResumeEffort(aiModeCodex, plan.launchAnnotations())
+			effort, invalid, skipped := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
 			resumed.effortInvalid, resumed.effortSkipped = invalid, skipped
-			title, launchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, plan.conversationID, plan.modelOverride, effort)
+			title, launchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, plan.conversationID, settings.model(plan.modelOverride), effort)
 			effortNotice = resumed.effortNotice(plan.agentName)
+			settingsNotice = settings.notice(plan.agentName)
 		}
 	} else {
 		if plan.dialogueReplyOnly && plan.annotations[coremetadata.AnnotationAgentProfile] != "" {
@@ -636,13 +649,21 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			// The agent guidance is compared with its recorded digest the same
 			// way, and launched and recorded the same way.
 			guidance = planAgentGuidanceWith(r.launcher, plan.provider, plan.annotations)
-			launchAnnotations := guidance.resumeLaunchAnnotations(links.resumeLaunchAnnotations(plan.launchAnnotations()))
-			if plan.modelOverride != "" {
+			// The settings are resolved from the layers. A profile that is
+			// gone or invalid leaves them unlayered, so the seam below
+			// refuses the resume exactly as it did before layers existed.
+			if resolved, resolveErr := r.resolveSettings(plan.provider, plan.annotations, plan.modelOverride, plan.effortOverride, plan.settingSource()); resolveErr == nil {
+				settings = resolved
+			}
+			launchAnnotations := guidance.resumeLaunchAnnotations(links.resumeLaunchAnnotations(settings.launchAnnotations(plan.launchAnnotations())))
+			if model := settings.model(plan.modelOverride); settings.snapshotErr != nil {
+				err = settings.snapshotErr
+			} else if model != "" {
 				launcher, ok := r.launcher.(agentResumeModelLauncher)
 				if !ok {
 					return errors.New(spelling + ": the resume launcher cannot pass --model")
 				}
-				resumed, err = launcher.PlanAgentResumeWithModel(plan.provider, workspace, plan.conversationID, launchAnnotations, plan.modelOverride)
+				resumed, err = launcher.PlanAgentResumeWithModel(plan.provider, workspace, plan.conversationID, launchAnnotations, model)
 			} else {
 				resumed, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID, launchAnnotations)
 			}
@@ -650,6 +671,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			personaNotice, effortNotice = resumed.personaNotice(plan.agentName), resumed.effortNotice(plan.agentName)
 			linksNotice = cmp.Or(links.notice(plan.agentName), resumed.projectLinksNotice(plan.agentName))
 			guidanceNotice = cmp.Or(guidance.notice(plan.agentName), resumed.agentGuidanceNotice(plan.agentName))
+			settingsNotice = settings.notice(plan.agentName)
 		}
 	}
 	if err != nil {
@@ -724,16 +746,22 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err := guidance.record(working, mutator, plan.agentUID); err != nil {
 			return err
 		}
-		// The effort and model overrides are recorded with their source in the
-		// same transaction, before any runtime object exists. A failure
-		// anywhere later rolls the whole transaction back, so a resume that
-		// does not launch records neither value nor source.
-		if plan.effortOverride != "" {
+		// The layered settings are recorded with their sources in the same
+		// transaction, before any runtime object exists: the effort, the
+		// model when it was passed, and the instructions with the snapshot
+		// mode off when their content changed. A failure anywhere later
+		// rolls the whole transaction back, so a resume that does not launch
+		// records neither value nor source.
+		if err := settings.record(working, mutator, plan.agentUID); err != nil {
+			return err
+		}
+		// An unlayered launch records only its overrides, as before.
+		if plan.effortOverride != "" && !settings.layered {
 			if _, err := mutator.SetAgentEffort(working, plan.agentUID, plan.effortOverride, plan.settingSource()); err != nil {
 				return MapMetadataError(err)
 			}
 		}
-		if plan.modelOverride != "" {
+		if plan.modelOverride != "" && !settings.layered {
 			if _, err := mutator.SetAgentModel(working, plan.agentUID, plan.modelOverride, plan.settingSource()); err != nil {
 				return MapMetadataError(err)
 			}
@@ -800,8 +828,8 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			cancel()
 			switch {
 			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) == strings.TrimSpace(plan.conversationID):
-				effort, _, _ := claudeResumeEffort(aiModeCodex, plan.launchAnnotations())
-				workTitle, workLaunchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, prepared.ThreadID, plan.modelOverride, effort)
+				effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
+				workTitle, workLaunchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, prepared.ThreadID, settings.model(plan.modelOverride), effort)
 				if err != nil {
 					return nativeLaunchError(spelling, err)
 				}
@@ -891,6 +919,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// The Agent is back without the agent guidance, disclosed the same
 		// way.
 		fmt.Fprintln(stderr, guidanceNotice)
+	}
+	if settingsNotice != "" {
+		// The Agent is back with its recorded instructions instead of the
+		// ones its layers ask for, disclosed the same way.
+		fmt.Fprintln(stderr, settingsNotice)
 	}
 
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)

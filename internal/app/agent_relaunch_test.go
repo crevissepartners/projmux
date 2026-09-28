@@ -201,7 +201,6 @@ func TestAgentRelaunchRefusalsCarryTheirReasonAndLeaveNoTrace(t *testing.T) {
 		arrange func(*personaAttachFixture)
 		want    string
 	}{
-		{name: "neither model nor effort", want: "agent relaunch requires --model, --effort, or both; nothing was changed"},
 		{name: "bad model", flags: []string{"--model", "a b"}, want: `agent relaunch --model "a b" is not a model name; nothing was changed`},
 		{name: "bad effort", flags: []string{"--effort", "turbo"}, want: "agent relaunch --effort must be one of: low, medium, high, xhigh, max; nothing was changed"},
 		{name: "antigravity agent", flags: []string{"--effort", "max"}, want: relaunchReasonProviderUnsupported, arrange: func(f *personaAttachFixture) {
@@ -294,7 +293,7 @@ func TestAgentRelaunchWithTheRecordedEffortOfARunningAgentIsUnchanged(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"action":"relaunch","dryRun":false,"outcome":"unchanged","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"in_progress","paneUID":"pan-alpha-codex","newPaneUID":"pan-alpha-codex","currentEffort":"high","newEffort":"high","restart":false,"confirmationRequired":false,"unchanged":true}` + "\n"
+	want := `{"action":"relaunch","dryRun":false,"outcome":"unchanged","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"in_progress","paneUID":"pan-alpha-codex","newPaneUID":"pan-alpha-codex","currentEffort":"high","newEffort":"high","restart":false,"confirmationRequired":false,"unchanged":true,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"relaunch","profileValue":"","override":true}},"relaunchReasons":[]}` + "\n"
 	if stdout != want {
 		t.Fatalf("unchanged relaunch JSON =\n%s\nwant\n%s", stdout, want)
 	}
@@ -329,7 +328,7 @@ func TestAgentRelaunchOfAnOfflineAgentWithTheRecordedEffortStillResumes(t *testi
 	if after.Status.Phase != coremetadata.PhaseRunning {
 		t.Fatal("the Offline Agent did not resume")
 	}
-	want := `{"action":"relaunch","dryRun":false,"outcome":"resumed","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Offline","interaction":"unknown","newPaneUID":"` + after.Status.PaneRef + `","currentEffort":"high","newEffort":"high","restart":false,"confirmationRequired":false,"unchanged":false}` + "\n"
+	want := `{"action":"relaunch","dryRun":false,"outcome":"resumed","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Offline","interaction":"unknown","newPaneUID":"` + after.Status.PaneRef + `","currentEffort":"high","newEffort":"high","restart":false,"confirmationRequired":false,"unchanged":false,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"relaunch","profileValue":"","override":true}},"relaunchReasons":[]}` + "\n"
 	if stdout != want {
 		t.Fatalf("resumed relaunch JSON =\n%s\nwant\n%s", stdout, want)
 	}
@@ -343,7 +342,7 @@ func TestAgentRelaunchExecutedJSONOfARunningAgentReportsTheNewPane(t *testing.T)
 		t.Fatalf("relaunch: stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 	after := f.assertRestartedOnTheSameConversation(t, personaAttachPane)
-	want := `{"action":"relaunch","dryRun":false,"outcome":"restarted","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","newPaneUID":"` + after.Status.PaneRef + `","currentEffort":"high","currentModel":"haiku","newEffort":"max","newModel":"opus","restart":true,"confirmationRequired":false,"unchanged":false}` + "\n"
+	want := `{"action":"relaunch","dryRun":false,"outcome":"restarted","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","newPaneUID":"` + after.Status.PaneRef + `","currentEffort":"high","currentModel":"haiku","newEffort":"max","newModel":"opus","restart":true,"confirmationRequired":false,"unchanged":false,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"haiku","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"opus","source":"relaunch","profileValue":"","override":true},"effort":{"value":"max","source":"relaunch","profileValue":"","override":true}},"relaunchReasons":["model-changed","effort-changed"]}` + "\n"
 	if stdout != want {
 		t.Fatalf("restarted relaunch JSON =\n%s\nwant\n%s", stdout, want)
 	}
@@ -360,7 +359,7 @@ func TestAgentRelaunchDryRunJSONChangesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","currentEffort":"high","newEffort":"max","newModel":"opus","restart":true,"confirmationRequired":false,"unchanged":false}` + "\n"
+		want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","currentEffort":"high","newEffort":"max","newModel":"opus","restart":true,"confirmationRequired":false,"unchanged":false,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"opus","source":"relaunch","profileValue":"","override":true},"effort":{"value":"max","source":"relaunch","profileValue":"","override":true}},"relaunchReasons":["model-changed","effort-changed"]}` + "\n"
 		if stdout != want {
 			t.Fatalf("dry run JSON =\n%s\nwant\n%s", stdout, want)
 		}
@@ -382,7 +381,7 @@ func TestAgentRelaunchDryRunJSONChangesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The recorded model is reported, and matching it still restarts.
-		want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","currentEffort":"high","currentModel":"haiku","newModel":"haiku","restart":true,"confirmationRequired":false,"unchanged":false}` + "\n"
+		want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","currentEffort":"high","currentModel":"haiku","newModel":"haiku","restart":true,"confirmationRequired":false,"unchanged":false,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"haiku","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"haiku","source":"relaunch","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"relaunchReasons":[]}` + "\n"
 		if stdout != want {
 			t.Fatalf("dry run JSON =\n%s\nwant\n%s", stdout, want)
 		}
@@ -396,7 +395,7 @@ func TestAgentRelaunchDryRunJSONChangesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"in_progress","paneUID":"pan-alpha-codex","currentEffort":"high","newModel":"opus","restart":true,"confirmationRequired":true,"unchanged":false}` + "\n"
+		want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"in_progress","paneUID":"pan-alpha-codex","currentEffort":"high","newModel":"opus","restart":true,"confirmationRequired":true,"unchanged":false,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"opus","source":"relaunch","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"relaunchReasons":["model-changed"]}` + "\n"
 		if stdout != want {
 			t.Fatalf("busy dry run JSON =\n%s\nwant\n%s", stdout, want)
 		}
@@ -410,7 +409,7 @@ func TestAgentRelaunchDryRunJSONChangesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := `{"action":"relaunch","dryRun":true,"outcome":"would-resume","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Offline","interaction":"unknown","currentEffort":"high","newEffort":"low","restart":false,"confirmationRequired":false,"unchanged":false}` + "\n"
+		want := `{"action":"relaunch","dryRun":true,"outcome":"would-resume","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Offline","interaction":"unknown","currentEffort":"high","newEffort":"low","restart":false,"confirmationRequired":false,"unchanged":false,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"low","source":"relaunch","profileValue":"","override":true}},"relaunchReasons":["effort-changed"]}` + "\n"
 		if stdout != want {
 			t.Fatalf("offline dry run JSON =\n%s\nwant\n%s", stdout, want)
 		}

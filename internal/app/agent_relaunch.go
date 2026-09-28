@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/agentsettings"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
@@ -38,6 +40,11 @@ const (
 // agentRelaunchResult is the stable projection of one `agent relaunch` run.
 // `--dry-run -o json` is what a confirmation dialog reads, so the fields
 // describe the target and the change before anything happens.
+//
+// CurrentSettings and NewSettings are the Agent's layered settings as it
+// recorded them and as the relaunch runs them (agentsettings.Resolve), and
+// RelaunchReasons are why the two differ, empty when they do not. They come
+// after every older field, which keep their names and meaning.
 type agentRelaunchResult struct {
 	Action               string                            `json:"action"`
 	DryRun               bool                              `json:"dryRun"`
@@ -56,6 +63,9 @@ type agentRelaunchResult struct {
 	Restart              bool                              `json:"restart"`
 	ConfirmationRequired bool                              `json:"confirmationRequired"`
 	Unchanged            bool                              `json:"unchanged"`
+	CurrentSettings      agentsettings.Settings            `json:"currentSettings"`
+	NewSettings          agentsettings.Settings            `json:"newSettings"`
+	RelaunchReasons      []string                          `json:"relaunchReasons"`
 }
 
 // agentRelaunchRequest is one parsed `agent relaunch` argv.
@@ -71,7 +81,11 @@ type agentRelaunchRequest struct {
 }
 
 // runRelaunch restarts one existing Claude or Codex Agent on the same uid and
-// the same provider conversation with another model or effort.
+// the same provider conversation with another model or effort, or, without
+// either, with the settings its layers resolve to now: its overrides, then its
+// profile as it is now. A Running Agent whose layers resolve to what it runs
+// already is left alone (`unchanged`); otherwise the relaunch restarts it and
+// says why (relaunchReasons).
 //
 // It is the `agent persona` restart without the persona: a Running Agent's
 // managed Pane is closed through `delete pane`, which leaves the Agent
@@ -156,6 +170,15 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		return refuse(relaunchReasonSelfTarget, "owns the Pane this command runs in; closing that Pane would end the command before the resume. Run it from another Pane")
 	}
 
+	// The settings the relaunch runs with are resolved now, the way the
+	// rebind resolves them after the stop, so a profile the resume would
+	// refuse is refused here while nothing has changed.
+	var settings agentSettingsLaunch
+	if c.rebind != nil && c.rebind.create != nil {
+		if settings, err = c.rebind.resolveSettings(provider, target.Metadata.Annotations, request.model, request.effort, coremetadata.SettingSourceRelaunch); err != nil {
+			return refuse(relaunchReasonNoConversation, "cannot be resumed: "+err.Error())
+		}
+	}
 	currentEffort := target.Metadata.Annotations[coremetadata.AnnotationAgentEffort]
 	interaction := target.EffectiveInteraction(c.clock()).Kind
 	result := agentRelaunchResult{
@@ -166,13 +189,16 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		NewEffort: request.effort, NewModel: request.model,
 		Restart:              running,
 		ConfirmationRequired: running && interaction != coremetadata.InteractionIdle && interaction != coremetadata.InteractionResponseComplete,
+		CurrentSettings:      settings.resolution.Current,
+		NewSettings:          settings.resolution.New,
+		RelaunchReasons:      append([]string{}, settings.resolution.Reasons...),
 	}
-	// A Running Agent already launched with exactly this effort has nothing
-	// to gain from a restart. A --model always restarts: the recorded model is
-	// the last one requested, not necessarily the one the provider runs now (a
-	// `/model` switch inside the session is not observed), so matching the
-	// record cannot prove nothing would change.
-	if running && request.model == "" && request.effort == currentEffort {
+	// A Running Agent whose layers resolve to exactly what it was launched
+	// with has nothing to gain from a restart. A --model always restarts: the
+	// recorded model is the last one requested, not necessarily the one the
+	// provider runs now (a `/model` switch inside the session is not
+	// observed), so matching the record cannot prove nothing would change.
+	if running && request.model == "" && len(settings.resolution.Reasons) == 0 {
 		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
 		result.NewPaneUID = paneUID
 		return writeAgentRelaunchResult(stdout, request, result)
@@ -289,9 +315,6 @@ func parseAgentRelaunchArgs(args []string, stderr io.Writer) (agentRelaunchReque
 	if output != "" && output != "json" {
 		return agentRelaunchRequest{}, usageError(fmt.Sprintf("%s: unsupported output %q; want json", spelling, output))
 	}
-	if request.model == "" && request.effort == "" {
-		return agentRelaunchRequest{}, usageError(spelling + " requires --model, --effort, or both; nothing was changed")
-	}
 	request.json = output == "json"
 	request.agentRef = positionals[0]
 	request.flags.addPositionalRef(request.agentRef)
@@ -342,16 +365,18 @@ func relaunchEffortWord(effort string) string {
 }
 
 // describeRelaunchTarget is the launch options a relaunch ends with: the
-// requested effort, or the recorded one it carries on, and the model when one
-// was given.
+// requested effort, or the one its layers resolve to, and the model when one
+// was given or its layers pass one.
 func describeRelaunchTarget(result agentRelaunchResult) string {
-	effort := result.NewEffort
-	if effort == "" {
+	effort := cmp.Or(result.NewEffort, result.NewSettings.Effort.Value)
+	if result.NewEffort == "" && !slices.Contains(result.RelaunchReasons, agentsettings.ReasonEffortChanged) {
 		effort = result.CurrentEffort
 	}
 	description := "effort=" + relaunchEffortWord(effort)
-	if result.NewModel != "" {
-		description += " model=" + result.NewModel
+	if model := result.NewModel; model != "" {
+		description += " model=" + model
+	} else if slices.Contains(result.RelaunchReasons, agentsettings.ReasonModelChanged) {
+		description += " model=" + result.NewSettings.Model.Value
 	}
 	return description
 }

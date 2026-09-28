@@ -678,7 +678,7 @@ func TestAgentResumeReappliesTheCurrentProfileAndRecordsItsDigest(t *testing.T) 
 		t.Fatalf("resume exec argv tail = %q, want %q", got, want)
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	if got := agent.Metadata.Annotations; !maps.Equal(got, profileAnnotations("guard", edited)) {
+	if got := agent.Metadata.Annotations; !maps.Equal(got, plusSources(profileAnnotations("guard", edited), instructionsEffortFollowProfile...)) {
 		t.Fatalf("resumed Agent annotations = %v, want the current digest %s", got, edited)
 	}
 

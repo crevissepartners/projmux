@@ -1860,14 +1860,21 @@ and `profile-instructions-in-use`, instructions that a stored
 each such profile, and deletes nothing; change or delete those profiles
 first. Instructions no profile names delete as before.
 
-The content is fixed when an Agent starts: create copies it to the existing
+The content is copied when an Agent starts: create copies it to the existing
 content-addressed snapshot `<state dir>/personas/sha256-<hex>.md`, passes only
 that path on the Claude command line, and records the existing
 `projmux.io/persona` and `projmux.io/persona-digest` keys on the Agent. The
 new and old CLI names use the same digest and keys. `agent resume` and
-Continue/topology replay pass that snapshot again, found from the recorded
-digest rather than the editable file, so editing or deleting the file does
-not change an existing Agent. An Agent with the old keys and snapshot resumes
+`agent relaunch` compare the current content of the instructions the Agent's
+[settings layers](#settings-layers) name with the recorded digest: when the
+file was edited, or the layers name other instructions, they pass a snapshot
+of the current content, record its digest and
+`projmux.io/system-prompt-snapshot=off`, and the Claude launch passes
+`--system-prompt-snapshot off`; when nothing changed they pass the recorded
+snapshot again. Instructions that cannot be read now keep the recorded
+snapshot, with one `persona-unavailable` line on stderr. Continue/topology
+replay passes the recorded snapshot, found from the recorded digest rather
+than the editable file. An Agent with the old keys and snapshot resumes
 without migration. If the snapshot is gone, resume proceeds without the
 instructions and discloses one `persona-unavailable` line (on stderr for
 `agent resume`, among the replay notices for Continue). Missing, oversized,
@@ -1977,7 +1984,9 @@ refused before anything changes (`nothing was changed`).
 [--project <ref>] [--window <ref>] [--yes] [--dry-run] [--socket <name> |
 --socket-path <absolute>] [-o json]` restarts one existing Claude or Codex
 Agent on the same UID and the same provider conversation with another model or
-effort; at least one of the two flags is required. It is the restart of
+effort. Without either flag it restarts the Agent with the settings its
+[layers](#settings-layers) resolve to now -- after a profile edit, for
+example -- and reports `unchanged` when they are what the Agent runs already. It is the restart of
 `agent instructions attach` without the instructions: a Running Agent's managed
 Pane is closed through `delete pane`, and the Agent is brought back through the
 `agent resume` rebind with the overrides (outcome `restarted`, with the new
@@ -1999,8 +2008,9 @@ owning the Pane the command runs in (`relaunch-self-target`); and a Running
 Agent whose interaction is not `idle` or `response_complete` -- `unknown`
 included -- without `--yes` (`relaunch-agent-busy`). Outside tmux the stop
 needs `--socket <name>` or `--socket-path <absolute>`, exactly as `delete pane`
-does. Only `--effort` equal to the recorded effort on a Running Agent reports
-`unchanged` and restarts nothing; `--model` always restarts, because the
+does. A Running Agent without `--model` whose settings, `--effort` included,
+resolve to exactly what it was launched with reports `unchanged` and restarts
+nothing; `--model` always restarts, because the
 recorded model is the last one requested, not necessarily the one the provider
 runs now (a `/model` switch in the session is not observed). `--dry-run` changes nothing and
 reports `would-restart` or `would-resume`.
@@ -2011,9 +2021,16 @@ reports `would-restart` or `would-resume`.
 `paneUID`, `newPaneUID`, `currentEffort` (the recorded effort),
 `currentModel` (the recorded model, the last one requested), `newEffort`
 (the requested effort; empty when only `--model` is given, and the recorded
-effort carries on), `newModel`, `restart`, `confirmationRequired`, and
-`unchanged`; the empty string fields are omitted. Without `-o json` the output
-of the stop and the resume is followed by one result line.
+effort carries on), `newModel`, `restart`, `confirmationRequired`,
+`unchanged`, `currentSettings` and `newSettings` (the settings as the Agent
+recorded them and as the relaunch runs them: `profile` with `name`, `digest`,
+and `source`, and `instructions`, `model`, and `effort` each with `value`,
+`source` -- empty when not known -- `profileValue`, and `override`), and
+`relaunchReasons` (why the two differ, in this order: `profile-changed`,
+`instructions-changed`, `instructions-content-changed`, `model-changed`,
+`effort-changed`; empty when they do not); the empty string fields before
+`currentSettings` are omitted. Without `-o json` the output of the stop and the
+resume is followed by one result line.
 
 If closing the managed Pane reports an error, the command checks whether that
 Pane is still alive: if it is, the old session keeps running and the command
@@ -2119,7 +2136,10 @@ replay, and the resume picker -- re-reads the profile by name, passes its
 current rules as `--settings`, and records the new digest. A profile that is
 gone or invalid -- including one now marked `profile-role-claimed` -- refuses
 the resume (`profile-resume-unavailable`, naming the underlying reason); there is no
-resume without its permissions. The model is still not passed again. A resume
+resume without its permissions. `agent resume` and `agent relaunch` also take
+the profile's current instructions, model, and effort for the items the Agent
+does not override ([settings layers](#settings-layers)); Continue/topology
+replay and the resume picker launch the recorded values. A resume
 picker selection inherits the profile when every Agent recording the
 conversation records the same one, and refuses when they disagree.
 
@@ -2160,7 +2180,37 @@ rolls back both, a restored attach or detach restores both, and a command that
 writes no value writes no source. An Agent without a source key recorded its
 value before sources were, and the source is unknown. The source keys are not
 part of the resume picker's inheritance agreement: Agents that record the same
-values with different sources still agree. Sources change no launch argument.
+values with different sources still agree.
+
+<a id="settings-layers"></a>
+**Settings layers.** `agent resume` and `agent relaunch` launch an Agent with
+its settings resolved from two layers: an item the Agent overrides keeps the
+recorded value, and an item it does not override takes the profile's value as
+the profile is now (none when the profile sets none). The items are the
+instructions, the model, and the effort; permissions come only from the
+profile. So an edit to a profile reaches every Agent that uses it on its next
+`agent resume` or plain `agent relaunch`, except for the items that Agent
+overrides:
+
+- The effort is passed on every launch, as before.
+- The model is passed only when the resolved model differs from the recorded
+  `projmux.io/model` (a profile whose model changed); an unchanged model is not
+  passed, so the provider restores the conversation's own, a `/model` switch
+  included.
+- The instructions are passed as a snapshot of their current content, with
+  the system prompt snapshot off, when their name or content changed, as
+  described above. A Codex thread keeps the developer instructions it started
+  with: its resume passes the rest and discloses the instructions it did not
+  apply (`codex-instructions-immutable`), recording nothing for them.
+
+The launch records each value and source it ran with in its own transaction.
+An item without a source key predates sources; its layer is decided from its
+value: equal to the profile's current value means the profile layer, which the
+launch then records as `profile`, and anything else -- a value the profile does
+not set, or no value where the profile sets one -- is an override of unknown
+source that keeps no source key. An Agent without a profile overrides every
+item. So the first resume after the upgrade launches exactly what the Agent
+launched before.
 
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`

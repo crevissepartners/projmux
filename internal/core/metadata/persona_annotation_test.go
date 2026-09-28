@@ -368,3 +368,38 @@ func TestSetAgentGuidanceRecordsTheDigestWithTheSnapshotOff(t *testing.T) {
 		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
 	}
 }
+
+// TestSetAgentSettingFromProfileKeepsTheSourceWithoutAValue pins the profile
+// layer writer: the value follows the profile, none included, and the source
+// stays profile so the item goes on following it.
+func TestSetAgentSettingFromProfileKeepsTheSourceWithoutAValue(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 28, 3, 0, 0, 0, time.UTC)
+	mutator := Mutator{Now: func() time.Time { return now }}
+	reg := personaAnnotationFixture()
+	agent := &reg.Agents[0]
+	agent.Metadata.Annotations[AnnotationAgentEffort] = "high"
+	agent.Metadata.Annotations[AnnotationAgentModel] = "opus"
+
+	if _, err := mutator.SetAgentEffortFromProfile(&reg, "agent-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.SetAgentModelFromProfile(&reg, "agent-1", "sonnet"); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := reg.Agent("agent-1")
+	got := stored.Metadata.Annotations
+	if _, ok := got[AnnotationAgentEffort]; ok || got[AnnotationAgentEffortSource] != SettingSourceProfile ||
+		got[AnnotationAgentModel] != "sonnet" || got[AnnotationAgentModelSource] != SettingSourceProfile || !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("annotations = %v updatedAt = %v", got, reg.UpdatedAt)
+	}
+
+	later := now.Add(time.Hour)
+	mutator.Now = func() time.Time { return later }
+	if _, err := mutator.SetAgentEffortFromProfile(&reg, "agent-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("recording what the Agent records already moved updatedAt to %v", reg.UpdatedAt)
+	}
+}

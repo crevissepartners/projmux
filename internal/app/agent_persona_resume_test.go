@@ -238,10 +238,12 @@ func TestTopologyReplayRepassesThePersonaSnapshot(t *testing.T) {
 	}
 }
 
-// TestResumeUsesTheStartTimePersonaSnapshotNotTheEditedFile pins that editing
-// a persona after create never changes what a resume passes: the Agent gets
-// the snapshot its digest annotation names, holding the original bytes.
-func TestResumeUsesTheStartTimePersonaSnapshotNotTheEditedFile(t *testing.T) {
+// TestAgentResumePassesTheEditedPersonaAndReplayKeepsTheStartTimeSnapshot
+// pins what editing a persona after create changes: `agent resume` passes a
+// snapshot of the edited file with the recorded system prompt turned off
+// (settings layers, U2 (a)), and Continue/topology replay still passes the
+// snapshot the digest annotation names, holding the original bytes.
+func TestAgentResumePassesTheEditedPersonaAndReplayKeepsTheStartTimeSnapshot(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
 	turnAgentGuidanceOff(t, planner)
 	original := []byte(personaResumeContent)
@@ -278,7 +280,14 @@ func TestResumeUsesTheStartTimePersonaSnapshotNotTheEditedFile(t *testing.T) {
 	if strings.Contains(stderr, persona.ReasonUnavailable) {
 		t.Fatalf("agent resume disclosed %s: %q", persona.ReasonUnavailable, stderr)
 	}
-	assertOriginal(t, "agent resume", argv)
+	tail := execArgvTail(t, argv, aiModeClaude)
+	if want := []string{"--append-system-prompt-file", editedSnapshot, "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}; !slices.Equal(tail, want) {
+		t.Fatalf("agent resume exec argv tail %q, want the edited snapshot %q", tail, want)
+	}
+	if content, err := os.ReadFile(editedSnapshot); err != nil || !bytes.Equal(content, edited) {
+		t.Fatalf("agent resume snapshot holds %q (%v), want the edited bytes", content, err)
+	}
+	assertNoPersonaContent(t, argv, string(original), string(edited))
 
 	work, _ := planClaudeTopologyReplay(t, planner, t.TempDir(), withPersona)
 	assertOriginal(t, "topology replay", work.argv)

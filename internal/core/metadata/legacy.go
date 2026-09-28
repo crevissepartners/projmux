@@ -509,9 +509,13 @@ const AnnotationAgentTopic = "projmux.io/agent-topic"
 // by the create transaction that launched the provider with that content, and
 // never on the Pane.
 //
-// `agent persona attach|detach` is the one other writer: it changes both keys on
+// `agent persona attach|detach` is one other writer: it changes both keys on
 // an existing Agent together with AnnotationAgentSystemPromptSnapshot, in one
-// mutation, before it relaunches that Agent's provider session.
+// mutation, before it relaunches that Agent's provider session. The rebind of
+// `agent resume` and `agent relaunch` is the other: when the instructions the
+// Agent's settings layers name (agentsettings.Resolve) differ from these keys
+// by name or by current content, it records the new pair with the snapshot
+// mode off in the transaction that launches them.
 //
 // A resume-picker create is such a create transaction: when the Agents that
 // already recorded the picked Claude conversation agree on these keys,
@@ -564,10 +568,12 @@ const SystemPromptSnapshotOff = "off"
 // The value is one of Claude's effort levels. It is written by the create
 // transaction that launched the provider with that effort, a resume-picker
 // create that inherited it included, and by the transaction of an
-// `agent resume --effort` that launches the Agent with a new one.
+// `agent resume` or `agent relaunch` that launches the Agent with another one:
+// an --effort, or the effort of its profile as it is now when the Agent does
+// not override it (agentsettings.Resolve).
 //
 // The model is recorded beside it (AnnotationAgentModel) but, unlike the
-// effort, never re-passed.
+// effort, re-passed only when it changes.
 const AnnotationAgentEffort = "projmux.io/effort"
 
 // AnnotationAgentModel records the `--model` a Claude or Codex Agent was last
@@ -576,13 +582,14 @@ const AnnotationAgentEffort = "projmux.io/effort"
 // the create transaction that launched the provider with that model, a model
 // filled in by a profile included, and by the transaction of an
 // `agent resume --model` or `agent relaunch --model` that launches the Agent
-// with a new one. A create, resume, or relaunch without --model neither writes
-// nor removes it.
+// with a new one. An `agent resume` or `agent relaunch` whose Agent follows its
+// profile's model passes and records the profile's model when it differs from
+// this one; no launch removes it.
 //
 // It is the requested model, not necessarily the one the provider runs now,
-// and later resumes do not re-pass it: the provider restores a conversation's
-// model on resume by itself, and re-passing a recorded model would override a
-// `/model` switch made inside the session.
+// and later resumes do not re-pass it while it is unchanged: the provider
+// restores a conversation's model on resume by itself, and re-passing a
+// recorded model would override a `/model` switch made inside the session.
 const AnnotationAgentModel = "projmux.io/model"
 
 // AnnotationAgentProfileSource, AnnotationAgentInstructionsSource,
@@ -610,7 +617,11 @@ const AnnotationAgentModel = "projmux.io/model"
 //
 // An item source other than SettingSourceProfile means the value overrides
 // the profile. An absent key means the source is not known: the value was
-// recorded before sources were.
+// recorded before sources were. agentsettings.Resolve decides the layer of such
+// an item, and an `agent resume` or `agent relaunch` that finds it in the
+// profile layer records SettingSourceProfile for it. SettingSourceProfile is
+// kept on an item whose profile stopped setting it, so it goes on following
+// the profile.
 const (
 	AnnotationAgentProfileSource      = "projmux.io/profile-source"
 	AnnotationAgentInstructionsSource = "projmux.io/instructions-source"
