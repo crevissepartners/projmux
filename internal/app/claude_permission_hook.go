@@ -251,7 +251,11 @@ func (h claudePermissionHook) run(ctx context.Context, args []string, stdin io.R
 		AgentType: strings.TrimSpace(payload.AgentType), ToolName: payload.ToolName, ToolInput: json.RawMessage(toolInput),
 		CreatedAt: created, Deadline: created.Add(window),
 	})
-	if err != nil {
+	if errors.Is(err, agentapproval.ErrCommittedNotSynced) {
+		// The request is recorded and audited, so the hook waits for its
+		// answer like any other.
+		fmt.Fprintf(stderr, "projmux: warning: permission request %s recorded: %v\n", record.ID, err)
+	} else if err != nil {
 		fmt.Fprintf(stderr, "projmux: permission request not recorded: %v\n", err)
 		return
 	}
@@ -350,6 +354,11 @@ func (h claudePermissionHook) wait(ctx context.Context, store *agentapproval.Sto
 			}
 		}
 		settled, err := store.Settle(record.ID)
+		if errors.Is(err, agentapproval.ErrCommittedNotSynced) {
+			// The record settled and its line was written; only the
+			// directory sync failed.
+			err = nil
+		}
 		if errors.Is(err, agentapproval.ErrNotFound) || (err != nil && pastGiveUp()) {
 			return agentapproval.Record{}, false
 		}
