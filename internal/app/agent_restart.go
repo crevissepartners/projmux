@@ -52,6 +52,10 @@ type agentRestart struct {
 	// refuse is the command's own refusal: every refusal of the restart,
 	// whichever step makes it, reads as that command's.
 	refuse func(reason, detail string) error
+	// comparesPromptParts makes the plan compare the agent guidance and the
+	// Project's label link rules the resume would pass with the recorded
+	// ones too, so their change is a reason to restart (`agent relaunch`).
+	comparesPromptParts bool
 }
 
 // agentRestartTokens are the refusal reason tokens of one restarting command,
@@ -108,6 +112,11 @@ func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest) error
 		return r.refuse(r.tokens.noConversation, "cannot be resumed: "+err.Error())
 	}
 	if c.rebind != nil && c.rebind.create != nil {
+		if r.comparesPromptParts && !resumePlan.dialogueReplyOnly {
+			// The same reads the resume makes, from the same Project.
+			request = request.withPromptParts(planAgentGuidanceWith(c.rebind.launcher, r.provider, r.target.Metadata.Annotations),
+				planProjectLinksWith(c.rebind.launcher, r.provider, resumePlan.project, r.target.Metadata.Annotations))
+		}
 		if r.settings, err = c.rebind.resolveSettings(r.provider, r.target.Metadata.Annotations, request); err != nil {
 			var switchErr *relaunchProfileError
 			if errors.As(err, &switchErr) {

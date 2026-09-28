@@ -349,3 +349,51 @@ func TestAnInstructionsOverrideOfNoneIsAnExplicitNone(t *testing.T) {
 		t.Fatalf("codex instructions none = %+v notApplied %t", got.New.Instructions, got.InstructionsNotApplied)
 	}
 }
+
+// TestGuidanceAndLinkRulesChangesAreReasonsAfterTheItems is Epic decision
+// T4-0: the agent guidance and the Project's label link rules the launch
+// passes are compared with the digests the Agent recorded, after the item
+// reasons and in this order. A part the launch does not pass (nil) gives no
+// reason, whatever the Agent recorded; turning a part off ("") is a change
+// from a recorded digest. Neither is an item: the settings are the same.
+func TestGuidanceAndLinkRulesChangesAreReasonsAfterTheItems(t *testing.T) {
+	recorded := with(createdFromProfile(),
+		metadata.AnnotationAgentGuidanceDigest, "sha256:g1",
+		metadata.AnnotationAgentProjectLinkRulesDigest, "sha256:l1")
+	str := func(s string) *string { return &s }
+	for _, test := range []struct {
+		name                string
+		annotations         map[string]string
+		guidance, linkRules *string
+		effort              string
+		want                []string
+	}{
+		{name: "both recorded", annotations: recorded, guidance: str("sha256:g1"), linkRules: str("sha256:l1")},
+		{name: "not passed", annotations: recorded},
+		{name: "guidance edited", annotations: recorded, guidance: str("sha256:g2"), linkRules: str("sha256:l1"),
+			want: []string{ReasonGuidanceChanged}},
+		{name: "guidance turned off", annotations: recorded, guidance: str(""), linkRules: str("sha256:l1"),
+			want: []string{ReasonGuidanceChanged}},
+		{name: "link rules added", annotations: createdFromProfile(), linkRules: str("sha256:l1"),
+			want: []string{ReasonLinkRulesChanged}},
+		{name: "none recorded, none passed", annotations: createdFromProfile(), guidance: str(""), linkRules: str("")},
+		{name: "after the items", annotations: recorded, guidance: str("sha256:g2"), linkRules: str("sha256:l2"), effort: "low",
+			want: []string{ReasonEffortChanged, ReasonGuidanceChanged, ReasonLinkRulesChanged}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			in := Input{Annotations: test.annotations, Profile: roleProfile("sha256:p1"),
+				InstructionsDigest: digests(map[string]string{"lead": digestA}), Guidance: test.guidance, LinkRules: test.linkRules}
+			if test.effort != "" {
+				in.Effort = &Override{Value: test.effort, Source: metadata.SettingSourceRelaunch}
+			}
+			got := Resolve(in)
+			if !slices.Equal(got.Reasons, test.want) {
+				t.Fatalf("reasons = %v, want %v", got.Reasons, test.want)
+			}
+			in.Guidance, in.LinkRules = nil, nil
+			if without := Resolve(in); without.New != got.New || without.Current != got.Current || without.PassModel != got.PassModel {
+				t.Fatalf("the prompt parts changed the settings: %+v, want %+v", got.New, without.New)
+			}
+		})
+	}
+}

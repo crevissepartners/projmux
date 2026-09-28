@@ -70,6 +70,12 @@ const (
 	ReasonModelChanged = "model-changed"
 	// ReasonEffortChanged is an effort that differs from the recorded one.
 	ReasonEffortChanged = "effort-changed"
+	// ReasonGuidanceChanged is agent guidance whose current digest differs
+	// from the recorded one: guidance added, edited or turned off.
+	ReasonGuidanceChanged = "guidance-changed"
+	// ReasonLinkRulesChanged is Project label link rules whose current digest
+	// differs from the recorded one: rules added, edited or removed.
+	ReasonLinkRulesChanged = "link-rules-changed"
 )
 
 // The items of the layers, as `agent relaunch --reset` names them.
@@ -134,6 +140,14 @@ type Input struct {
 	Switch       bool
 	NewProfile   *Profile
 	SwitchSource string
+	// Guidance and LinkRules are the digests of the agent guidance and of the
+	// Project's label link rules the launch passes ("" for none), compared
+	// with the digests the Agent recorded. nil when the launch does not pass
+	// them at all -- another provider or lane, or they cannot be read now --
+	// and then they give no reason. They are not items: nothing overrides
+	// them, and the launch reads them itself.
+	Guidance  *string
+	LinkRules *string
 }
 
 // switches reports whether in replaces the profile the Agent records.
@@ -296,6 +310,12 @@ func Resolve(in Input) Resolution {
 	}
 	if out.New.Effort.Value != out.Current.Effort.Value {
 		out.Reasons = append(out.Reasons, ReasonEffortChanged)
+	}
+	if in.Guidance != nil && *in.Guidance != a[metadata.AnnotationAgentGuidanceDigest] {
+		out.Reasons = append(out.Reasons, ReasonGuidanceChanged)
+	}
+	if in.LinkRules != nil && *in.LinkRules != a[metadata.AnnotationAgentProjectLinkRulesDigest] {
+		out.Reasons = append(out.Reasons, ReasonLinkRulesChanged)
 	}
 	return out
 }

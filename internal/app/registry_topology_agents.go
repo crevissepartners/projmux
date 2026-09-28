@@ -28,7 +28,10 @@ type topologyAgentLauncher interface {
 	// payload: reopening a Project is not the moment to re-send an initial task.
 	PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error)
 	// PlanAgentResume builds the provider resume argv for one stored
-	// conversation id, from the Agent's annotations passed through unread.
+	// conversation id, from the Agent's annotations with the settings its
+	// layers resolve to, and the link rules and guidance it launches with, in
+	// place -- the annotations `agent resume` hands the same seam. A launch
+	// whose layers pass a model asks the optional agentResumeModelLauncher.
 	PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
@@ -76,6 +79,9 @@ type registryTopologyAgentPlan struct {
 	// guidance is the agent guidance the launch reads; materialization
 	// records it the same way.
 	guidance agentGuidanceLaunch
+	// settings are the layered settings the launch runs with, resolved the
+	// way `agent resume` resolves them; materialization records them.
+	settings agentSettingsLaunch
 }
 
 // decideTopologyAgentContinueEligibility admits only a current managed activation
@@ -392,8 +398,33 @@ func planTopologyAgentReplay(
 	work.links = planProjectLinksWith(launcher, decision.provider, project, agent.Metadata.Annotations)
 	// So is the agent guidance, compared with the digest the Agent records.
 	work.guidance = planAgentGuidanceWith(launcher, decision.provider, agent.Metadata.Annotations)
-	launch, err := launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID,
-		work.guidance.resumeLaunchAnnotations(work.links.resumeLaunchAnnotations(agent.Metadata.Annotations)))
+	// The settings come from the layers, exactly as on `agent resume`: the
+	// overrides, then the profile as it is now. A profile that is gone or
+	// invalid leaves them unlayered, so the seam below refuses the replay of
+	// this Agent exactly as it did before layers existed.
+	if resolver, ok := launcher.(agentSettingsResolver); ok {
+		request := agentSettingsRequest{}.withPromptParts(work.guidance, work.links)
+		if resolved, err := resolver.ResolveAgentSettingsRequest(decision.provider, agent.Metadata.Annotations, request); err == nil {
+			work.settings = resolved.writeSnapshot()
+		}
+	}
+	launchAnnotations := work.guidance.resumeLaunchAnnotations(work.links.resumeLaunchAnnotations(work.settings.launchAnnotations(agent.Metadata.Annotations)))
+	var launch agentResumeLaunch
+	var err error
+	switch model := work.settings.model(""); {
+	case work.settings.snapshotErr != nil:
+		err = work.settings.snapshotErr
+	case model != "":
+		// The model the layers pass, the way the `agent resume` rebind does.
+		withModel, ok := launcher.(agentResumeModelLauncher)
+		if !ok {
+			err = errors.New("the resume launcher cannot pass --model")
+			break
+		}
+		launch, err = withModel.PlanAgentResumeWithModel(decision.provider, workspace, decision.conversationID, launchAnnotations, model)
+	default:
+		launch, err = launcher.PlanAgentResume(decision.provider, workspace, decision.conversationID, launchAnnotations)
+	}
 	if err != nil {
 		plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
 			decision.provider, decision.conversationID, err))
@@ -414,6 +445,10 @@ func planTopologyAgentReplay(
 	}
 	// And agent guidance the launch could not pass.
 	if notice := cmp.Or(work.guidance.notice(label), launch.agentGuidanceNotice(label)); notice != "" {
+		plan.notices = append(plan.notices, notice)
+	}
+	// And instructions the layers ask for that the launch does not pass.
+	if notice := work.settings.notice(label); notice != "" {
 		plan.notices = append(plan.notices, notice)
 	}
 	work.conversationID, work.title, work.argv = decision.conversationID, launch.title, launch.argv
@@ -474,6 +509,11 @@ func replayTopologyWindowAgents(
 		}
 		if err != nil {
 			return nil, MapMetadataError(err)
+		}
+		// The layered settings are recorded with their sources, in the same
+		// order and the same transaction as on `agent resume`.
+		if err := replay.settings.record(registry, mutator, replay.agent.Metadata.UID); err != nil {
+			return nil, err
 		}
 		if err := recordResumedProfileDigest(registry, mutator, replay.agent.Metadata.UID, replay.resumed); err != nil {
 			return nil, err

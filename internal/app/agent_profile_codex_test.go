@@ -556,7 +556,7 @@ func TestResumePickerNativeCodexResumeResendsTheInheritedProfilePolicy(t *testin
 	}
 	agents := fx.store.registry.AgentsOf(fx.windowUID)
 	created := agents[len(agents)-1]
-	if created.Metadata.UID == "agt-beta-codex" || !maps.Equal(created.Metadata.Annotations, plusSources(profileAnnotations("guard", digest), profileInherited...)) {
+	if created.Metadata.UID == "agt-beta-codex" || !maps.Equal(created.Metadata.Annotations, plusSources(profileAnnotations("guard", digest), append(slices.Clone(profileInherited), allFollowProfile...)...)) {
 		t.Fatalf("picker Agent %s annotations = %v, want the current digest %s", created.Metadata.UID, created.Metadata.Annotations, digest)
 	}
 

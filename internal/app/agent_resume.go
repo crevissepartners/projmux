@@ -143,10 +143,10 @@ func (l agentResumeLaunch) effortNotice(label string) string {
 // A Claude Agent created with a persona is resumed with the snapshot its
 // persona-digest annotation names. A snapshot that is gone does not stop the
 // resume. The seam reads the annotations it is given: the `agent resume`
-// rebind hands it the instructions its settings layers resolve to, with a new
-// snapshot and the snapshot mode off when their name or current content
-// changed (agentSettingsLaunch.launchAnnotations); Continue replay hands it
-// the recorded ones.
+// rebind, Continue replay and a resume-picker create hand it the instructions
+// the settings layers resolve to, with a new snapshot and the snapshot mode
+// off when their name or current content changed
+// (agentSettingsLaunch.launchAnnotations).
 //
 // A Claude Agent whose persona was attached or detached after its
 // conversation started also records the system prompt snapshot mode `off`,
@@ -158,10 +158,11 @@ func (l agentResumeLaunch) effortNotice(label string) string {
 // An Agent created or resumed with --effort records it, and Claude and Codex
 // resumes re-pass valid values. An invalid recorded value is skipped and
 // disclosed. The model is not re-passed on ordinary resume: the conversation
-// owns it. Only a rebind passes one, through PlanAgentResumeWithModel: an
-// `agent resume --model`, or the profile's model when it differs from the
-// recorded one (agentsettings.Resolve); the rebind records it on the Agent
-// (AnnotationAgentModel), and later plain resumes do not re-pass it.
+// owns it. Only a layered launch passes one, through
+// PlanAgentResumeWithModel: an `agent resume --model`, or the profile's model
+// when it differs from the recorded one (agentsettings.Resolve); the launch
+// records it on the Agent (AnnotationAgentModel), and later plain resumes do
+// not re-pass it.
 //
 // A Claude Agent created with a profile is resumed with that profile's
 // current permissions: the profile is re-read by name, its settings snapshot
@@ -664,7 +665,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			// The settings are resolved from the layers. A profile that is
 			// gone or invalid leaves them unlayered, so the seam below
 			// refuses the resume exactly as it did before layers existed.
-			if resolved, resolveErr := r.resolveSettings(plan.provider, plan.annotations, plan.settingsRequest()); resolveErr == nil {
+			if resolved, resolveErr := r.resolveSettings(plan.provider, plan.annotations, plan.settingsRequest().withPromptParts(guidance, links)); resolveErr == nil {
 				settings = resolved.writeSnapshot()
 			} else if plan.layerChanges.changesLayers() {
 				// A change to the layers is never launched without them.

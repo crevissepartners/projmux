@@ -113,7 +113,8 @@ var relaunchTokens = agentRestartTokens{
 // is now. A profile switch clears every override; only the overrides given
 // with it are overrides again. All of it is one restart.
 //
-// A Running Agent whose layers resolve to what it runs already, and that is
+// A Running Agent whose layers resolve to what it runs already, whose agent
+// guidance and Project label link rules are the ones it recorded, and that is
 // not asked to change them, is left alone (`unchanged`); otherwise the
 // relaunch restarts it and says why (relaunchReasons). A --model always
 // restarts.
@@ -167,6 +168,7 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		provider = coremetadata.NormalizeProvider(target.Status.SessionRef.Provider)
 	}
 	restart := c.newAgentRestart(spelling, registry, target, provider, relaunchTokens, refuse)
+	restart.comparesPromptParts = true
 	if provider != aiModeClaude && provider != aiModeCodex {
 		return refuse(relaunchReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; --model and --effort apply only to --provider %s or %s", target.Spec.Provider, aiModeClaude, aiModeCodex))
 	}
