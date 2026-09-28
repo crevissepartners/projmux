@@ -1,7 +1,7 @@
 {
   "schema": "projmux.security.current-findings.v1",
-  "package_count": 78,
-  "package_set_sha256": "ccafb9df86dcc36d0592df77698ef657d4ac4c0bd9d59f2b5f1b4c6cc6297caa",
+  "package_count": 79,
+  "package_set_sha256": "7620e09d89dcb5668a3b330217dee8d368e7e762928d863d60bcb3b20da2a431",
   "scanners": {
     "gosec": {
       "finding_count": 125,

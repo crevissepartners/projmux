@@ -298,6 +298,7 @@ func TestEffortRecordedAtCreateReachesEveryResumeConsumer(t *testing.T) {
 	recorded := agentNamed(t, store, "win-alpha-review", "agent-test-1").Metadata.Annotations
 
 	planner := agentLaunchArgvTestCommand(t)
+	turnAgentGuidanceOff(t, planner)
 	want := []string{"--effort", "low", "--resume", personaResumeConversation}
 
 	_, argv, stderr := resumeClaudeAgentWithAnnotations(t, planner, recorded)

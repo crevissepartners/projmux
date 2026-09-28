@@ -1067,6 +1067,9 @@ func (c *createCommand) openIntentAgent(
 			c.prepareProjectLinks(provider, *project, &flags)
 		}
 	}
+	// The agent guidance belongs to no Project, so it is prepared even when
+	// the Window's Project cannot be found.
+	c.prepareAgentGuidance(provider, &flags)
 	var title string
 	var launchArgv []string
 	var resumeLaunch agentResumeLaunch
@@ -1092,7 +1095,7 @@ func (c *createCommand) openIntentAgent(
 	}
 	agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
 		Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,
-		Annotations: flags.projectLinks.withCreateAnnotation(withResumedProfileDigest(annotations, resumeLaunch)),
+		Annotations: flags.agentGuidance.withCreateAnnotation(flags.projectLinks.withCreateAnnotation(withResumedProfileDigest(annotations, resumeLaunch))),
 	})
 	if err != nil {
 		return intentAgentOpened{}, MapMetadataError(err)
@@ -1100,6 +1103,7 @@ func (c *createCommand) openIntentAgent(
 	for _, notice := range []string{
 		resumeLaunch.personaNotice(agent.Metadata.Name), resumeLaunch.effortNotice(agent.Metadata.Name),
 		flags.projectLinks.notice(agent.Metadata.Name), resumeLaunch.projectLinksNotice(agent.Metadata.Name),
+		flags.agentGuidance.notice(agent.Metadata.Name), resumeLaunch.agentGuidanceNotice(agent.Metadata.Name),
 	} {
 		if notice != "" {
 			notices = append(notices, notice)

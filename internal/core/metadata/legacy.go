@@ -548,8 +548,9 @@ const (
 // first request's system prompt and replays that record on resume, so a
 // persona attached after the conversation started would otherwise be ignored.
 // The key is sticky: attach and detach write it, so does a resume whose
-// Project label link rules changed (AnnotationAgentProjectLinkRulesDigest),
-// and nothing removes it, because the recorded prompt predates the change and
+// Project label link rules changed (AnnotationAgentProjectLinkRulesDigest) or
+// whose agent guidance changed (AnnotationAgentGuidanceDigest), and nothing
+// removes it, because the recorded prompt predates the change and
 // can never be trusted again for that conversation.
 const AnnotationAgentSystemPromptSnapshot = "projmux.io/system-prompt-snapshot"
 
@@ -593,6 +594,17 @@ const AnnotationAgentModel = "projmux.io/model"
 // resume records AnnotationAgentSystemPromptSnapshot off in the same mutation,
 // because the conversation's recorded prompt carries the old rules.
 const AnnotationAgentProjectLinkRulesDigest = "projmux.io/project-link-rules-digest"
+
+// AnnotationAgentGuidanceDigest records which agent guidance (the projmux
+// text put at the front of a managed Claude Agent's system prompt) the Agent
+// was last launched with: the sha256 lowercase hex digest of the guidance
+// bytes. The key is absent when the Agent was launched without guidance. It is
+// written by the create transaction that launched the provider with the
+// guidance, and by a resume that found the current guidance differs from the
+// recorded digest; that resume records AnnotationAgentSystemPromptSnapshot off
+// in the same mutation, because the conversation's recorded prompt carries the
+// old guidance.
+const AnnotationAgentGuidanceDigest = "projmux.io/agent-guidance-digest"
 
 // AnnotationAgentQuestionChannel opts one Claude Agent into answering its
 // AskUserQuestion prompts from the command line. The only value is

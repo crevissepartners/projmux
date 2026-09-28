@@ -634,6 +634,7 @@ func TestProjectLinkRulesLeaveCodexAndReplyOnlyLaunchesUnchanged(t *testing.T) {
 // writes exactly that digest.
 func TestTopologyReplayPassesChangedProjectLinkRulesAndRecordsThem(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
+	turnAgentGuidanceOff(t, planner)
 	paths := linkRulesPaths(t, planner)
 	projectUID, err := coremetadata.NewUID(coremetadata.KindProject)
 	if err != nil {

@@ -82,6 +82,20 @@ type agentResumeLaunch struct {
 	// personaUnavailable it never fails the resume: the consumer discloses
 	// projectLinksNotice.
 	projectLinksUnavailable error
+	// agentGuidanceUnavailable is set when the launch annotations name agent
+	// guidance whose snapshot this launch could not pass. Like
+	// projectLinksUnavailable it never fails the resume: the consumer
+	// discloses agentGuidanceNotice.
+	agentGuidanceUnavailable error
+}
+
+// agentGuidanceNotice is the one-line disclosure of agent guidance the resume
+// could not pass, or "" when there is nothing to disclose.
+func (l agentResumeLaunch) agentGuidanceNotice(label string) string {
+	if l.agentGuidanceUnavailable == nil {
+		return ""
+	}
+	return agentGuidanceNotice(label, l.agentGuidanceUnavailable)
 }
 
 // projectLinksNotice is the one-line disclosure of Project label link rules
@@ -192,6 +206,9 @@ func (c *aiCommand) PlanAgentResumeWithModel(provider string, workspace coremeta
 	// snapshot its digest annotation names, alone or after the persona in one
 	// composite file: Claude keeps only the last --append-system-prompt-file.
 	systemPromptFile, projectLinksUnavailable := c.resumeSystemPromptFile(mode, annotations, personaFile)
+	// The agent guidance its digest annotation names goes in front of that
+	// file, in one composite, for the same reason.
+	systemPromptFile, agentGuidanceUnavailable := c.resumeGuidanceSystemPromptFile(mode, annotations, systemPromptFile)
 	profileName, profileDigest, settingsFile, codexPolicy, err := c.resumeProfileSettings(mode, annotations)
 	if err != nil {
 		return agentResumeLaunch{}, err
@@ -212,7 +229,7 @@ func (c *aiCommand) PlanAgentResumeWithModel(provider string, workspace coremeta
 		title: plan.title, argv: plan.commandArgs, personaUnavailable: personaUnavailable,
 		effortInvalid: effortInvalid, effortSkipped: effortSkipped,
 		profileName: profileName, profileDigest: profileDigest,
-		projectLinksUnavailable: projectLinksUnavailable,
+		projectLinksUnavailable: projectLinksUnavailable, agentGuidanceUnavailable: agentGuidanceUnavailable,
 	}, nil
 }
 
@@ -557,9 +574,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var nativeRoute codexNativeEndpointRoute
 	var title string
 	var launchArgv []string
-	var personaNotice, effortNotice, linksNotice string
+	var personaNotice, effortNotice, linksNotice, guidanceNotice string
 	var resumed agentResumeLaunch
 	var links projectLinksLaunch
+	var guidance agentGuidanceLaunch
 	var nativePolicy codexappserver.ThreadPolicy
 	var err error
 	if plan.provider == aiModeCodex {
@@ -602,7 +620,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			// digest launch with the snapshot off, and the transaction below
 			// records exactly the digest and mode this launch reads.
 			links = planProjectLinksWith(r.launcher, plan.provider, plan.project, plan.annotations)
-			launchAnnotations := links.resumeLaunchAnnotations(plan.launchAnnotations())
+			// The agent guidance is compared with its recorded digest the same
+			// way, and launched and recorded the same way.
+			guidance = planAgentGuidanceWith(r.launcher, plan.provider, plan.annotations)
+			launchAnnotations := guidance.resumeLaunchAnnotations(links.resumeLaunchAnnotations(plan.launchAnnotations()))
 			if plan.modelOverride != "" {
 				launcher, ok := r.launcher.(agentResumeModelLauncher)
 				if !ok {
@@ -615,6 +636,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			title, launchArgv = resumed.title, resumed.argv
 			personaNotice, effortNotice = resumed.personaNotice(plan.agentName), resumed.effortNotice(plan.agentName)
 			linksNotice = cmp.Or(links.notice(plan.agentName), resumed.projectLinksNotice(plan.agentName))
+			guidanceNotice = cmp.Or(guidance.notice(plan.agentName), resumed.agentGuidanceNotice(plan.agentName))
 		}
 	}
 	if err != nil {
@@ -683,6 +705,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// So are the Project label link rules this launch reads, when they
 		// changed, with the sticky snapshot mode off.
 		if err := links.record(working, mutator, plan.agentUID); err != nil {
+			return err
+		}
+		// And the agent guidance, the same way.
+		if err := guidance.record(working, mutator, plan.agentUID); err != nil {
 			return err
 		}
 		// The effort and model overrides are recorded in the same transaction,
@@ -847,6 +873,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// The Agent is back without its Project's label link rules, disclosed
 		// the same way.
 		fmt.Fprintln(stderr, linksNotice)
+	}
+	if guidanceNotice != "" {
+		// The Agent is back without the agent guidance, disclosed the same
+		// way.
+		fmt.Fprintln(stderr, guidanceNotice)
 	}
 
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)

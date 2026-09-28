@@ -281,6 +281,36 @@ func (m Mutator) SetAgentProjectLinkRules(reg *Registry, agentUID, digest string
 	return agent.Clone(), nil
 }
 
+// SetAgentGuidance records the agent guidance digest a resume is about to
+// launch one existing Agent with, replacing the one it recorded; an empty
+// digest removes the annotation (the guidance is off). It always records
+// AnnotationAgentSystemPromptSnapshot off in the same mutation, for the reason
+// SetAgentProjectLinkRules does. Every other annotation is left as it was.
+func (m Mutator) SetAgentGuidance(reg *Registry, agentUID, digest string) (Agent, error) {
+	const op = "set agent guidance"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	digest = strings.TrimSpace(digest)
+	recorded, hasRecorded := agent.Metadata.Annotations[AnnotationAgentGuidanceDigest]
+	sameDigest := hasRecorded && recorded == digest || !hasRecorded && digest == ""
+	if sameDigest && agent.Metadata.Annotations[AnnotationAgentSystemPromptSnapshot] == SystemPromptSnapshotOff {
+		return agent.Clone(), nil
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	if digest == "" {
+		delete(agent.Metadata.Annotations, AnnotationAgentGuidanceDigest)
+	} else {
+		agent.Metadata.Annotations[AnnotationAgentGuidanceDigest] = digest
+	}
+	agent.Metadata.Annotations[AnnotationAgentSystemPromptSnapshot] = SystemPromptSnapshotOff
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // SetAgentActivation records bounded launch acknowledgement metadata.
 func (m Mutator) SetAgentActivation(reg *Registry, agentUID string, state AgentActivationState, source, reason string) (Agent, error) {
 	const op = "set agent activation"

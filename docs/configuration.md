@@ -1586,6 +1586,51 @@ reply-only lane do not.
 The rendered rules and the persona-and-rules files are content-addressed
 below the state directory, in `project-links/`.
 
+## Agent Guidance
+
+Every managed Claude Agent gets a short agent guidance text at the front of
+its system prompt. It tells the Agent to create other agents with
+`projmux create agent` instead of a subagent built into its provider, and to
+message them with `projmux agent message send` instead of a message channel
+local to its provider. The guidance lives in one file,
+`<config dir>/agent-guidance.md` (by default
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-guidance.md`), and there is no
+CLI command that edits it.
+
+| File | Guidance |
+| --- | --- |
+| Missing | The built-in default text. This is the state of a new install. |
+| Only whitespace (an empty file included) | Off: nothing is added and nothing is recorded. |
+| Any other content | That content, byte for byte, in place of the default. |
+
+To turn the guidance off, leave the file empty (`: > agent-guidance.md`). To
+use your own text, write it to the file. To go back to the default, delete
+the file. The file is at most 64 KiB.
+
+- The guidance, the persona and the Project's label link rules reach Claude
+  as one `--append-system-prompt-file`, in that order, each present only when
+  the Agent has it and separated by a `---` line, because Claude keeps only
+  the last file it is given.
+- Create passes the current guidance and records its digest on the Agent
+  (`projmux.io/agent-guidance-digest`).
+- A change applies from the next Claude create or resume (`agent resume`,
+  `agent relaunch`, Continue, or the resume picker). Running sessions are not
+  restarted. A resume whose guidance differs from the recorded digest (changed,
+  added to an Agent created before the guidance existed, or turned off) passes
+  the current guidance, runs with `--system-prompt-snapshot off`, and records
+  the new digest (or removes it) and `projmux.io/system-prompt-snapshot=off`.
+  A resume-picker create always runs with the snapshot off while the guidance
+  is on, since the picked conversation's recorded prompt cannot be shown to
+  hold it. Guidance equal to the recorded digest changes nothing.
+- A guidance file that cannot be read, is not a regular file, or is larger
+  than 64 KiB does not stop the Agent: it starts without the guidance, one
+  `agent-guidance-unavailable` line on stderr says so, and nothing is
+  recorded.
+- Codex Agents and the Claude reply-only lane do not receive the guidance yet.
+
+The guidance and the files composed from it are content-addressed below the
+state directory, in `agent-guidance/`.
+
 ## Setting Layers
 
 Settings live in two layers:

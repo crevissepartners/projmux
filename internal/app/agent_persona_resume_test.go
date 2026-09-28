@@ -191,6 +191,7 @@ func TestAgentResumeRepassesThePersonaSnapshot(t *testing.T) {
 // Agent anyway and is a plan notice, not a skip.
 func TestTopologyReplayRepassesThePersonaSnapshot(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
+	turnAgentGuidanceOff(t, planner)
 	withPersona, snapshotPath := createPersonaForResume(t, planner, "go-reviewer", []byte(personaResumeContent))
 	root := t.TempDir()
 
@@ -242,6 +243,7 @@ func TestTopologyReplayRepassesThePersonaSnapshot(t *testing.T) {
 // the snapshot its digest annotation names, holding the original bytes.
 func TestResumeUsesTheStartTimePersonaSnapshotNotTheEditedFile(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
+	turnAgentGuidanceOff(t, planner)
 	original := []byte(personaResumeContent)
 	withPersona, snapshotPath := createPersonaForResume(t, planner, "go-reviewer", original)
 

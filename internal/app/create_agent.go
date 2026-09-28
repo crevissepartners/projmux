@@ -310,6 +310,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		// The Project's label link rules are read from the resolved Project,
 		// never from the working directory.
 		c.prepareProjectLinks(provider, project, &flags)
+		// The agent guidance goes in front of whatever file that prepared.
+		c.prepareAgentGuidance(provider, &flags)
 		// The launch is constructed before anything is allocated. A missing
 		// provider binary is the most likely failure on this route, and it has
 		// to land while the operation still owns nothing.
@@ -389,7 +391,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,
-				Annotations: flags.projectLinks.withCreateAnnotation(flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(creator.annotations()))))),
+				Annotations: flags.agentGuidance.withCreateAnnotation(flags.projectLinks.withCreateAnnotation(flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(creator.annotations())))))),
 				Workspace:   workspace,
 				Activation:  activationStateForPayload(flags.payload),
 				OperationID: operationID,
@@ -398,6 +400,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				return MapMetadataError(err)
 			}
 			if notice := flags.projectLinks.notice(agent.Metadata.Name); notice != "" {
+				notices = append(notices, notice)
+			}
+			if notice := flags.agentGuidance.notice(agent.Metadata.Name); notice != "" {
 				notices = append(notices, notice)
 			}
 			pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{
@@ -875,6 +880,10 @@ func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace
 		// or the composite of the persona and the rules.
 		if provider == aiModeClaude && flags.projectLinks.systemPromptFile != "" {
 			personaFile = flags.projectLinks.systemPromptFile
+		}
+		// The agent guidance goes in front of both, in the same one file.
+		if provider == aiModeClaude && flags.agentGuidance.systemPromptFile != "" {
+			personaFile = flags.agentGuidance.systemPromptFile
 		}
 		switch {
 		case provider == aiModeCodex && !nativeCodexFreshCreateRequired(provider, flags) && !flags.profileLaunch.codexPolicy.IsZero():

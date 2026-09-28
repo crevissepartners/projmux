@@ -296,6 +296,7 @@ func TestAgentInstructionsAttachAndLegacyDetachUseTheSameSnapshot(t *testing.T) 
 // and leaves every other argv byte-identical.
 func TestSystemPromptSnapshotOffReachesBothResumeConsumers(t *testing.T) {
 	planner := agentLaunchArgvTestCommand(t)
+	turnAgentGuidanceOff(t, planner)
 	withPersona, snapshot := createPersonaForResume(t, planner, "go-reviewer", []byte(personaResumeContent))
 	off := map[string]string{coremetadata.AnnotationAgentSystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff}
 	withPersonaOff := map[string]string{coremetadata.AnnotationAgentSystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff}
