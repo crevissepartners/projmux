@@ -817,7 +817,7 @@ func TestResumePickerInheritsTheProfileAndAppliesItsCurrentContent(t *testing.T)
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 		t.Fatalf("picker exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations("guard", entry.Digest), profileInherited...)) {
+	if !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations("guard", entry.Digest), append(slices.Clone(profileInherited), allFollowProfile...)...)) {
 		t.Fatalf("picker Agent annotations = %v, want the current digest", agent.Metadata.Annotations)
 	}
 

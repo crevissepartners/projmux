@@ -11,8 +11,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/profile"
 )
 
-// agentSettingsLaunch is the layered settings one `agent resume` or `agent
-// relaunch` launches an existing Agent with: the resolution, and the snapshot
+// agentSettingsLaunch is the layered settings one `agent resume`, `agent
+// relaunch`, Continue replay or resume-picker create launches an Agent with: the resolution, and the snapshot
 // of the new instructions content when the launch passes one. The zero value
 // means the launch is not layered and reads the Agent's annotations as they
 // are.
@@ -43,6 +43,11 @@ type agentSettingsRequest struct {
 	profile      *string
 	reset        []string
 	source       string
+	// guidance and linkRules are the digests of the agent guidance and the
+	// Project's label link rules this launch passes (withPromptParts), nil
+	// when it passes none of its own. They change no layer; the resolver
+	// only reports that they differ from the recorded ones.
+	guidance, linkRules *string
 }
 
 // changesLayers reports a request that changes the layers themselves rather
@@ -87,6 +92,20 @@ func (r *agentRebinder) resolveSettings(provider string, annotations map[string]
 		return agentSettingsLaunch{}, errors.New("the resume launcher cannot change an Agent's profile or instructions")
 	}
 	return agentSettingsLaunch{}, nil
+}
+
+// withPromptParts is request with the digests of the agent guidance and the
+// Project's label link rules the launch passes, as planAgentGuidanceWith and
+// planProjectLinksWith read them. A part the launch does not pass, or cannot
+// read now, stays nil: it gives the resolver nothing to compare.
+func (q agentSettingsRequest) withPromptParts(guidance agentGuidanceLaunch, links projectLinksLaunch) agentSettingsRequest {
+	if guidance.active && guidance.unavailable == nil {
+		q.guidance = &guidance.digest
+	}
+	if links.active && links.unavailable == nil {
+		q.linkRules = &links.digest
+	}
+	return q
 }
 
 // relaunchProfileError is a profile an `agent relaunch --profile` cannot
@@ -176,6 +195,7 @@ func resolveAgentSettings(homeDir func() (string, error), lookupEnv func(string)
 	if request.effort != "" {
 		in.Effort = &agentsettings.Override{Value: request.effort, Source: request.source}
 	}
+	in.Guidance, in.LinkRules = request.guidance, request.linkRules
 	var store persona.Store
 	var storeErr error
 	if paths, err := configPaths(homeDir, lookupEnv); err == nil {

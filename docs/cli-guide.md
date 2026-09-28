@@ -1864,17 +1864,19 @@ The content is copied when an Agent starts: create copies it to the existing
 content-addressed snapshot `<state dir>/personas/sha256-<hex>.md`, passes only
 that path on the Claude command line, and records the existing
 `projmux.io/persona` and `projmux.io/persona-digest` keys on the Agent. The
-new and old CLI names use the same digest and keys. `agent resume` and
-`agent relaunch` compare the current content of the instructions the Agent's
+new and old CLI names use the same digest and keys. `agent resume`,
+`agent relaunch`, Continue/topology replay, and a resume-picker create compare
+the current content of the instructions the Agent's
 [settings layers](#settings-layers) name with the recorded digest: when the
 file was edited, or the layers name other instructions, they pass a snapshot
 of the current content, record its digest and
 `projmux.io/system-prompt-snapshot=off`, and the Claude launch passes
 `--system-prompt-snapshot off`; when nothing changed they pass the recorded
 snapshot again. Instructions that cannot be read now keep the recorded
-snapshot, with one `persona-unavailable` line on stderr. Continue/topology
-replay passes the recorded snapshot, found from the recorded digest rather
-than the editable file. An Agent with the old keys and snapshot resumes
+snapshot, with one `persona-unavailable` line (on stderr for `agent resume`,
+among the replay notices for Continue; a resume-picker create, which already
+discloses what of the inherited snapshot it cannot re-pass, adds no line).
+An Agent with the old keys and snapshot resumes
 without migration. If the snapshot is gone, resume proceeds without the
 instructions and discloses one `persona-unavailable` line (on stderr for
 `agent resume`, among the replay notices for Continue). Missing, oversized,
@@ -2052,6 +2054,7 @@ instructions and both permissions, and any model or effort, is allowed.
 Outside tmux the stop needs `--socket <name>` or `--socket-path <absolute>`,
 exactly as `delete pane` does. A Running Agent without `--model` whose
 settings, `--effort` included, resolve to exactly what it was launched with,
+whose agent guidance and Project label link rules are the ones it recorded,
 and whose `--profile`, `--instructions`, or `--reset` changes no recorded value,
 source, or profile, reports `unchanged` and restarts nothing; `--model` always restarts, because the
 recorded model is the last one requested, not necessarily the one the provider
@@ -2069,9 +2072,15 @@ effort carries on), `newModel`, `restart`, `confirmationRequired`,
 recorded them and as the relaunch runs them: `profile` with `name`, `digest`,
 and `source`, and `instructions`, `model`, and `effort` each with `value`,
 `source` -- empty when not known -- `profileValue`, and `override`), and
-`relaunchReasons` (why the two differ, in this order: `profile-changed`,
-`instructions-changed`, `instructions-content-changed`, `model-changed`,
-`effort-changed`; empty when they do not); the empty string fields before
+`relaunchReasons` (why the relaunch would launch something other than what the
+Agent recorded, in this order: `profile-changed`, `instructions-changed`,
+`instructions-content-changed`, `model-changed`, `effort-changed`,
+`guidance-changed` (the current agent guidance digest differs from the
+recorded `projmux.io/agent-guidance-digest`: guidance added, edited, or turned
+off), `link-rules-changed` (the Project's current label link rules digest
+differs from the recorded `projmux.io/project-link-rules-digest`); empty when
+it would not. The last two are Claude only, like the guidance and the rules
+themselves, and change no setting); the empty string fields before
 `currentSettings` are omitted. A switched profile, overridden or reset items,
 and their sources show on the `newSettings` side. Without `-o json` the output
 of the stop and the resume is followed by one result line, which also names
@@ -2184,10 +2193,11 @@ replay, and the resume picker -- re-reads the profile by name, passes its
 current rules as `--settings`, and records the new digest. A profile that is
 gone or invalid -- including one now marked `profile-role-claimed` -- refuses
 the resume (`profile-resume-unavailable`, naming the underlying reason); there is no
-resume without its permissions. `agent resume` and `agent relaunch` also take
-the profile's current instructions, model, and effort for the items the Agent
-does not override ([settings layers](#settings-layers)); Continue/topology
-replay and the resume picker launch the recorded values. A resume
+resume without its permissions. `agent resume`, `agent relaunch`, and
+Continue/topology replay also take the profile's current instructions, model,
+and effort for the items the Agent does not override
+([settings layers](#settings-layers)); the resume picker resolves the values it
+inherits the same way, each an override of the new Agent. A resume
 picker selection inherits the profile when every Agent recording the
 conversation records the same one, and refuses when they disagree.
 
@@ -2231,14 +2241,16 @@ part of the resume picker's inheritance agreement: Agents that record the same
 values with different sources still agree.
 
 <a id="settings-layers"></a>
-**Settings layers.** `agent resume` and `agent relaunch` launch an Agent with
-its settings resolved from two layers: an item the Agent overrides keeps the
+**Settings layers.** `agent resume`, `agent relaunch`, Continue (the topology
+replay that brings a Project's Agents back), and a resume-picker create launch
+an Agent with its settings resolved from two layers: an item the Agent overrides keeps the
 recorded value, and an item it does not override takes the profile's value as
 the profile is now (none when the profile sets none). The items are the
 instructions, the model, and the effort; permissions come only from the
 profile. So an edit to a profile reaches every Agent that uses it on its next
-`agent resume` or plain `agent relaunch`, except for the items that Agent
-overrides:
+`agent resume`, plain `agent relaunch`, or Continue, except for the items that
+Agent overrides, and each of those launches of one Agent passes the same
+model, effort, and instructions:
 
 - The effort is passed on every launch, as before.
 - The model is passed only when the resolved model differs from the recorded
@@ -2259,6 +2271,15 @@ not set, or no value where the profile sets one -- is an override of unknown
 source that keeps no source key. An Agent without a profile overrides every
 item. So the first resume after the upgrade launches exactly what the Agent
 launched before.
+
+A resume-picker create resolves the Agent it records the same way: the
+values and the profile it inherits from the Agents that already hold the
+conversation are that Agent's record, where each inherited value is an
+override (source `inherited`) and an item nothing inherited follows the
+profile. Inherited instructions whose file was edited therefore launch as a
+snapshot of the new content with the system prompt snapshot off, exactly as
+`agent resume` of the new Agent would. No model is inherited, so none is
+passed. Which values are inherited, and when holders disagree, is unchanged.
 
 The layers change only through `agent relaunch` (and its
 `agent instructions attach|detach` spellings): `--profile` switches the profile

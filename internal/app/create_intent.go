@@ -959,6 +959,45 @@ func (c *createCommand) prepareIntentAgent(provider string, flags resourceCreate
 	return plan, nil
 }
 
+// resolvePickerSettings resolves the settings of the Agent a resume-picker
+// create records from inherited, the launch values and profile pair it
+// inherited: from the create's home for Codex, whose inherited profile policy
+// is re-read there too (codexResumeProfile), and through the resume launcher
+// for any other provider -- the homes a rebind reads. A profile that is gone
+// or invalid leaves the settings unlayered, so the launch refuses exactly as
+// it did before layers existed. The snapshot of new instructions content is
+// written here, inside the create's transaction.
+func (c *createCommand) resolvePickerSettings(provider string, inherited map[string]string) (agentSettingsLaunch, error) {
+	annotations := withInheritedSettingSources(inherited, inherited)
+	var settings agentSettingsLaunch
+	var err error
+	if provider == aiModeCodex {
+		settings, err = resolveAgentSettings(c.homeDir, c.lookupEnv, provider, annotations, agentSettingsRequest{})
+	} else if resolver, ok := c.resumes.(agentSettingsResolver); ok {
+		settings, err = resolver.ResolveAgentSettingsRequest(provider, annotations, agentSettingsRequest{})
+	}
+	if err != nil {
+		return agentSettingsLaunch{}, nil
+	}
+	if settings = settings.writeSnapshot(); settings.snapshotErr != nil {
+		return agentSettingsLaunch{}, settings.snapshotErr
+	}
+	return settings, nil
+}
+
+// pickerSettingsNotice is the one settings notice a resume-picker create
+// adds: instructions its Codex thread cannot take. Inherited instructions
+// whose file cannot be read now launch with the inherited snapshot -- the
+// launch the create made before settings layers -- and the picker already
+// discloses once what of that snapshot it cannot re-pass (personaNotice), so
+// that is not said a second time.
+func pickerSettingsNotice(settings agentSettingsLaunch, name string) string {
+	if !settings.resolution.InstructionsNotApplied {
+		return ""
+	}
+	return settings.notice(name)
+}
+
 // prepareIntentProfile resolves the profile of one fresh UI Agent answer and
 // writes its snapshots, exactly as runResourceAgent and createAgent do for the
 // typed command. An answer that resolves no profile is left untouched.
@@ -1060,6 +1099,19 @@ func (c *createCommand) openIntentAgent(
 			flags.resumeLaunchValues = merged
 		}
 	}
+	// The inherited values and profile then go through the settings layers,
+	// the way `agent resume` of the Agent this create records would take
+	// them: an inherited value is an override (its source is inherited), an
+	// item nothing inherited follows the profile as it is now, and inherited
+	// instructions whose content changed launch with a new snapshot and the
+	// snapshot mode off. No model is inherited, so none is passed (U1).
+	var settings agentSettingsLaunch
+	if strings.TrimSpace(flags.resumeConversation) != "" {
+		if settings, err = c.resolvePickerSettings(provider, flags.resumeLaunchValues); err != nil {
+			return intentAgentOpened{}, err
+		}
+		flags.resumeLaunchValues = settings.launchAnnotations(flags.resumeLaunchValues)
+	}
 	// The Agent's Project label link rules are those of the Project that owns
 	// its target Window in the Registry, never of the split's directory.
 	if window, ok := working.Window(target.windowUID); ok {
@@ -1103,10 +1155,19 @@ func (c *createCommand) openIntentAgent(
 	if err != nil {
 		return intentAgentOpened{}, MapMetadataError(err)
 	}
+	// The layers are recorded with their sources in the same transaction:
+	// the items that follow the profile record it as their source.
+	if err := settings.record(working, mutator, agent.Metadata.UID); err != nil {
+		return intentAgentOpened{}, err
+	}
+	if stored, ok := working.Agent(agent.Metadata.UID); ok {
+		agent = stored.Clone()
+	}
 	for _, notice := range []string{
 		resumeLaunch.personaNotice(agent.Metadata.Name), resumeLaunch.effortNotice(agent.Metadata.Name),
 		flags.projectLinks.notice(agent.Metadata.Name), resumeLaunch.projectLinksNotice(agent.Metadata.Name),
 		flags.agentGuidance.notice(agent.Metadata.Name), resumeLaunch.agentGuidanceNotice(agent.Metadata.Name),
+		pickerSettingsNotice(settings, agent.Metadata.Name),
 	} {
 		if notice != "" {
 			notices = append(notices, notice)
