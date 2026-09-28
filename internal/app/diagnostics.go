@@ -65,7 +65,7 @@ func (c *diagnosticsCommand) runLog(args []string, stdout, stderr io.Writer) err
 	}
 	*level = strings.ToLower(strings.TrimSpace(*level))
 	if *level != "" && !diagnostics.ValidLevel(*level) {
-		return usageError("diagnostics log --level must be info or error")
+		return usageError("diagnostics log --level must be info, warn, or error")
 	}
 	*component = strings.TrimSpace(*component)
 	path, err := diagnostics.DefaultPath(c.lookupEnv, c.homeDir)
@@ -165,8 +165,23 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		}
 	}
 	parts = append(parts, fmt.Sprintf("duration_ms=%d", event.DurationMS))
-	if event.LockHeldMS != nil {
-		parts = append(parts, fmt.Sprintf("lock_held_ms=%d", *event.LockHeldMS))
+	for _, timing := range []struct {
+		name  string
+		value *int64
+	}{
+		{"wait_ms", event.WaitMS},
+		{"lock_held_ms", event.LockHeldMS},
+		{"phase_guard_ms", event.PhaseGuardMS},
+		{"phase_first_reconcile_ms", event.PhaseFirstReconcileMS},
+		{"phase_operation_ms", event.PhaseOperationMS},
+		{"phase_second_reconcile_ms", event.PhaseSecondReconcileMS},
+		{"phase_reprove_ms", event.PhaseReproveMS},
+		{"phase_store_write_ms", event.PhaseStoreWriteMS},
+		{"spawn_to_release_ms", event.SpawnToReleaseMS},
+	} {
+		if timing.value != nil {
+			parts = append(parts, fmt.Sprintf("%s=%d", timing.name, *timing.value))
+		}
 	}
 	parts = append(parts, "run_id="+event.RunID, "version="+event.Version, "mux_backend="+event.MuxBackend)
 	if event.Kind != "" {

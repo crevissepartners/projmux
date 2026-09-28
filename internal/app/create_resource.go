@@ -1996,23 +1996,95 @@ func (c *createCommand) createOutcomeClock() func() time.Time {
 // from entering the mutation closure to the Registry update returning, so it
 // covers the closure, the store's own normalize/validate/write, and the unlock,
 // and never the wait for the lock or the Registry read before the closure.
+//
+// The span is also split into the closed create phases. enter opens the guard
+// phase, each mark closes the open phase and opens the next on one clock
+// reading, and leave closes whichever phase is open, so the phases tile the
+// hold exactly. A phase the transaction never reached stays nil. The first
+// supervised child spawn inside the span is stamped too, so leave can report
+// how much of the hold came after it.
+//
+// One span belongs to one transaction and is only touched from the goroutine
+// running it; it travels to the operation through the context, never through
+// the createCommand, which concurrent transactions may share.
 type createLockSpan struct {
 	clock     func() time.Time
 	entered   bool
 	enteredAt time.Time
 	held      *time.Duration
+
+	phase          diagnostics.CreatePhase
+	phaseStartedAt time.Time
+	phases         diagnostics.CreatePhases
+
+	spawned        bool
+	spawnedAt      time.Time
+	spawnToRelease *time.Duration
 }
 
 func (s *createLockSpan) enter() {
 	if !s.entered {
 		s.entered, s.enteredAt = true, s.clock()
+		s.phase, s.phaseStartedAt = diagnostics.CreatePhaseGuard, s.enteredAt
 	}
+}
+
+// mark closes the open phase and opens next. It is a no-op outside the span.
+func (s *createLockSpan) mark(next diagnostics.CreatePhase) {
+	if s == nil || !s.entered || s.held != nil {
+		return
+	}
+	now := s.clock()
+	s.closePhase(now)
+	s.phase, s.phaseStartedAt = next, now
+}
+
+func (s *createLockSpan) closePhase(now time.Time) {
+	elapsed := now.Sub(s.phaseStartedAt)
+	if previous := s.phases[s.phase]; previous != nil {
+		elapsed += *previous
+	}
+	s.phases[s.phase] = &elapsed
+}
+
+// markSpawn stamps the first supervised child spawn inside the span.
+func (s *createLockSpan) markSpawn() {
+	if s == nil || !s.entered || s.held != nil || s.spawned {
+		return
+	}
+	s.spawned, s.spawnedAt = true, s.clock()
 }
 
 func (s *createLockSpan) leave() {
 	if s.entered {
-		held := s.clock().Sub(s.enteredAt)
+		now := s.clock()
+		held := now.Sub(s.enteredAt)
 		s.held = &held
+		s.closePhase(now)
+		if s.spawned {
+			spawnToRelease := now.Sub(s.spawnedAt)
+			s.spawnToRelease = &spawnToRelease
+		}
+	}
+}
+
+type createLockSpanKey struct{}
+
+// withCreateLockSpan hands the transaction's span to the operation it runs.
+func withCreateLockSpan(ctx context.Context, span *createLockSpan) context.Context {
+	if span == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, createLockSpanKey{}, span)
+}
+
+// markSupervisedSpawn records, once per transaction, the moment the split
+// that starts a managed Pane's supervisor returned a Pane: from then on the
+// supervised child is running and will need the Registry lock this
+// transaction still holds. Outside a create transaction it does nothing.
+func markSupervisedSpawn(ctx context.Context) {
+	if span, ok := ctx.Value(createLockSpanKey{}).(*createLockSpan); ok {
+		span.markSpawn()
 	}
 }
 
@@ -2037,6 +2109,7 @@ func (c *createCommand) transact(kind diagnostics.CreateKind, op createOperation
 		}
 		c.outcomes.Record(diagnostics.CreateOutcome{
 			Kind: kind, Result: result, Duration: clock().Sub(started), LockHeld: lock.held,
+			Phases: lock.phases, SpawnToRelease: lock.spawnToRelease,
 		})
 	}
 	return err
@@ -2058,7 +2131,9 @@ func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation,
 	if c == nil || c.store == nil || c.store.update == nil || c.runtime == nil || c.reconciler == nil {
 		return errCreateRoutesNotConfigured
 	}
-	ctx := context.Background()
+	// The span rides the context so the operation can stamp its supervised
+	// spawn without the shared createCommand carrying per-transaction state.
+	ctx := withCreateLockSpan(context.Background(), lock)
 	// Parsing and scope resolution have already succeeded before a resource
 	// handler reaches the transaction. Bind the exact app-owned route here so
 	// malformed argv keeps its stable usage failure and no environment probe can
@@ -2105,6 +2180,9 @@ func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation,
 
 	_, err = c.store.update(func(working *coremetadata.Registry) error {
 		lock.enter()
+		// Whatever the closure returns, what follows it -- normalize, validate,
+		// the durable write, the unlock -- is the store-write phase.
+		defer lock.mark(diagnostics.CreatePhaseStoreWrite)
 		preflight, err := guard(ctx, working.Clone(), c.store.mutator(), operationID)
 		if err != nil {
 			return err
@@ -2120,12 +2198,15 @@ func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation,
 			}
 			return guard(ctx, working, mutator, operationID)
 		}
+		lock.mark(diagnostics.CreatePhaseFirstReconcile)
 		if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, firstPass); err != nil {
 			return err
 		}
+		lock.mark(diagnostics.CreatePhaseOperation)
 		if err := op(ctx, working, c.store.mutator(), operationID, ledger); err != nil {
 			return err
 		}
+		lock.mark(diagnostics.CreatePhaseSecondReconcile)
 		// The lifecycle hook caused by our own tmux mutation deliberately
 		// defers while this transaction owns the registry lock. Re-run the same
 		// reconciler after all explicit mirrors are in place so the committed
@@ -2133,6 +2214,7 @@ func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation,
 		if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, guard); err != nil {
 			return err
 		}
+		lock.mark(diagnostics.CreatePhaseReprove)
 		// Any identity reused inside this transaction is proved once more
 		// before commit, so a server that drifted after the first proof rolls
 		// the whole operation back instead of committing on stale evidence.

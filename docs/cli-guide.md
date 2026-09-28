@@ -1332,7 +1332,7 @@ than a standalone Settings row.
 
 ```
 projmux diagnostics log [--tail N] [--json]
-                        [--level info|error] [--component NAME] [--path]
+                        [--level info|warn|error] [--component NAME] [--path]
 projmux diagnostics report [--output <path>]
 ```
 

@@ -22,6 +22,10 @@ func main() {
 	var lifecycle *diagnostics.LifecycleRecorder
 	if store != nil {
 		lifecycle = diagnostics.NewLifecycleRecorder(store, runID, version.String(), diagnostics.MuxBackend())
+		// Every Registry lock acquisition of this invocation that waited or
+		// held for a second or more, or timed out, is journaled under its
+		// catalog command. The observer lives as long as the process does.
+		app.ObserveRegistryLock(lifecycle, os.Args[1:])
 	}
 	code := executeCLI(
 		func() error { return app.RunWithLifecycleDiagnostics(os.Args[1:], os.Stdout, os.Stderr, lifecycle) },

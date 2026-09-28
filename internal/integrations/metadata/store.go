@@ -152,6 +152,9 @@ type Store struct {
 	rngMu     sync.Mutex
 	rng       *rand.Rand
 	hooks     storeHooks
+	// lockObserver overrides the process-wide Registry lock observer for this
+	// Store; see SetLockObserver.
+	lockObserver LockObserver
 	// migrations starts as a private copy of the production migration set and
 	// may be extended by integration tests with older fixture steps.
 	migrations coremetadata.MigrationSet
@@ -300,7 +303,7 @@ func (s *Store) load(validate bool) (coremetadata.Registry, MigrationResult, err
 	}
 	var out coremetadata.Registry
 	var migration MigrationResult
-	err := s.withLock(func() error {
+	err := s.withLock(LockOperationLoad, func() error {
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return err
@@ -420,7 +423,7 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 		return coremetadata.Registry{}, errors.New("metadata: nil registry store")
 	}
 	var out coremetadata.Registry
-	err := s.withMutationLock(func() error {
+	err := s.withMutationLock(LockOperationUpdate, func() error {
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -458,7 +461,7 @@ func (s *Store) WithAdmissionBarrier(fn func(coremetadata.Registry) error) error
 	if s == nil || fn == nil {
 		return errors.New("metadata: nil admission barrier")
 	}
-	return s.withMutationLock(func() error {
+	return s.withMutationLock(LockOperationAdmissionBarrier, func() error {
 		registry, _, _, _, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -487,7 +490,7 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 
 	var out coremetadata.Registry
 	changed := false
-	err := s.withMutationLock(func() error {
+	err := s.withMutationLock(LockOperationUpdateConvergent, func() error {
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -546,7 +549,7 @@ func (s *Store) Migrate() (MigrationResult, error) {
 		return MigrationResult{}, errors.New("metadata: nil registry store")
 	}
 	var out MigrationResult
-	err := s.withLock(func() error {
+	err := s.withLock(LockOperationMigrate, func() error {
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return err
@@ -1286,12 +1289,12 @@ func (s *Store) backupBytes(data []byte, fromVersion int) (string, error) {
 // alive and progressing is what a waiter is supposed to wait for, not a reason
 // to fail. The cost is that a genuinely degraded Registry now queues for the
 // lock before it is refused, which the deadline bounds.
-func (s *Store) withMutationLock(fn func() error) error {
+func (s *Store) withMutationLock(operation LockOperation, fn func() error) error {
 	suspected := s.refuseDegradedMutation()
 	if suspected != nil && s.hooks.afterDegradedSuspect != nil {
 		s.hooks.afterDegradedSuspect()
 	}
-	return s.withLock(func() error {
+	return s.withLock(operation, func() error {
 		if suspected != nil {
 			if confirmed := s.refuseDegradedMutation(); confirmed != nil {
 				return confirmed
@@ -1301,9 +1304,15 @@ func (s *Store) withMutationLock(fn func() error) error {
 	})
 }
 
-func (s *Store) withLock(fn func() error) error {
+// withLock runs fn under the Registry mutation lock. operation names the entry
+// point for the lock observer; with no observer installed the path is exactly
+// the unobserved one, clock reads included.
+func (s *Store) withLock(operation LockOperation, fn func() error) error {
 	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
 		return fmt.Errorf("metadata: create lock dir: %w", err)
+	}
+	if observer := s.currentLockObserver(); observer != nil {
+		return s.withObservedLock(operation, observer, fn)
 	}
 	lease, err := s.acquireLock(context.Background())
 	if err != nil {
@@ -1597,10 +1606,20 @@ func describeLockHolder(path string) string {
 	return fmt.Sprintf("pid %d (%s), running", pid, command)
 }
 
-// processCommand reads the command name Linux exposes for pid. Other platforms
-// have no /proc, and a name that would break the single-line error is refused
-// rather than escaped, so both report the command as unavailable.
+// processCommand names the command pid is running. It prefers the leading
+// command words of /proc/<pid>/cmdline -- "projmux create agent" says which
+// projmux invocation holds the lock, where comm says only "projmux" -- and
+// falls back to the kernel's process name when the argv cannot be read or
+// yields no word. Other platforms have no /proc, and a name that would break
+// the single-line error is refused rather than escaped, so both report the
+// command as unavailable.
 func processCommand(pid int) (string, bool) {
+	cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline")) // #nosec G304 -- fixed /proc path built from an integer pid
+	if err == nil {
+		if words, ok := holderCommandWords(cmdline); ok {
+			return words, true
+		}
+	}
 	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "comm")) // #nosec G304 -- fixed /proc path built from an integer pid
 	if err != nil {
 		return "", false
@@ -1610,6 +1629,66 @@ func processCommand(pid int) (string, bool) {
 		return "", false
 	}
 	return command, true
+}
+
+// maxHolderCommandWords bounds the holder name: the binary plus at most three
+// command words, which is as deep as the command catalog nests.
+const maxHolderCommandWords = 4
+
+// holderCommandWords reduces a NUL-separated argv to the words that name the
+// command and nothing after them. The first word is the basename of argv[0];
+// each following entry is kept only while it is a command word -- a lowercase
+// letter, then lowercase letters, digits, and hyphens. The first entry that is
+// anything else ends the name: a flag or the `--` separator, a uid such as
+// uid:agent-x, a path, a number, and above all a prompt, which is exactly the
+// argv a lock timeout error must never print. ok is false when argv[0] has no
+// printable basename.
+func holderCommandWords(cmdline []byte) (string, bool) {
+	args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+	if len(args) == 0 || args[0] == "" {
+		return "", false
+	}
+	binary := filepath.Base(args[0])
+	if !holderBinaryName(binary) {
+		return "", false
+	}
+	words := []string{binary}
+	for _, arg := range args[1:] {
+		if len(words) == maxHolderCommandWords || !holderCommandWord(arg) {
+			break
+		}
+		words = append(words, arg)
+	}
+	return strings.Join(words, " "), true
+}
+
+// holderBinaryName accepts a program basename of [A-Za-z0-9._-] only, and
+// never "." or "..", which filepath.Base returns for a path with no name.
+func holderBinaryName(name string) bool {
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '.' && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// holderCommandWord reports whether arg has the shape of a catalog command
+// word. A leading hyphen fails the first-letter rule, so every flag and the
+// `--` separator stop the name.
+func holderCommandWord(arg string) bool {
+	if arg == "" || arg[0] < 'a' || arg[0] > 'z' {
+		return false
+	}
+	for _, r := range arg[1:] {
+		if !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // lockMarkerState is what reading the legacy marker established. The stale

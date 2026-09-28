@@ -15,8 +15,13 @@ import (
 )
 
 // createOutcomeStep is the stepped outcome clock's tick. A transaction that
-// enters the Registry mutation reads the clock four times -- start, lock entry,
-// lock return, end -- so it records duration 3 steps and lock hold 1 step.
+// enters the Registry mutation reads the clock at its start, at lock entry
+// (which opens the guard phase), once per later phase it reaches, at the
+// Registry update's return, and at its end -- plus once at an Agent's first
+// supervised spawn. A committed Window therefore reads it nine times: lock
+// entry, the five phase marks (first-reconcile, operation, second-reconcile,
+// reprove, store-write), and the return, between the start and the end. It
+// records a 6-step lock hold of six 1-step phases and an 8-step duration.
 const createOutcomeStep = 10 * time.Millisecond
 
 func steppedCreateOutcomeClock() func() time.Time {
@@ -67,16 +72,45 @@ func assertOneCreateOutcome(t *testing.T, store *diagnostics.Store, kind diagnos
 	return event
 }
 
-func assertCreateOutcomeLockedTimings(t *testing.T, event diagnostics.Event) {
+// createOutcomePhases lists the phase fields in transaction order.
+func createOutcomePhases(event diagnostics.Event) []*int64 {
+	return []*int64{event.PhaseGuardMS, event.PhaseFirstReconcileMS, event.PhaseOperationMS,
+		event.PhaseSecondReconcileMS, event.PhaseReproveMS, event.PhaseStoreWriteMS}
+}
+
+// assertCreateOutcomeLockedTimings pins the stepped-clock arithmetic of a
+// transaction that entered the mutation: the phases it reached tile the lock
+// hold exactly, each took at least one step, the hold is the phase reads plus
+// the return, and the duration adds only the start and the end. A committed
+// transaction reached all six phases; a rolled-back one skipped the phases
+// between its failure and the store write.
+func assertCreateOutcomeLockedTimings(t *testing.T, event diagnostics.Event, committed bool) {
 	t.Helper()
 	if event.LockHeldMS == nil {
 		t.Fatalf("create.outcome has no lock_held_ms though the mutation ran: %+v", event)
 	}
-	if want := 3 * createOutcomeStep.Milliseconds(); event.DurationMS != want {
-		t.Fatalf("duration_ms = %d, want %d (start to return on the stepped clock)", event.DurationMS, want)
+	step := createOutcomeStep.Milliseconds()
+	var sum int64
+	for i, phase := range createOutcomePhases(event) {
+		if phase == nil {
+			if committed || i == 0 || i == len(createOutcomePhases(event))-1 {
+				t.Fatalf("phase %d missing from %+v", i, event)
+			}
+			continue
+		}
+		if *phase < step {
+			t.Fatalf("phase %d = %dms, want at least one %dms step: %+v", i, *phase, step, event)
+		}
+		sum += *phase
 	}
-	if want := createOutcomeStep.Milliseconds(); *event.LockHeldMS != want {
-		t.Fatalf("lock_held_ms = %d, want %d (closure entry to update return)", *event.LockHeldMS, want)
+	if sum != *event.LockHeldMS {
+		t.Fatalf("phases sum to %dms, want exactly lock_held_ms %d (they tile the hold): %+v", sum, *event.LockHeldMS, event)
+	}
+	if committed && event.SpawnToReleaseMS == nil && *event.LockHeldMS != 6*step {
+		t.Fatalf("lock_held_ms = %d, want %d (six 1-step phases)", *event.LockHeldMS, 6*step)
+	}
+	if want := *event.LockHeldMS + 2*step; event.DurationMS != want {
+		t.Fatalf("duration_ms = %d, want %d (the hold plus the start and end reads)", event.DurationMS, want)
 	}
 }
 
@@ -121,7 +155,7 @@ func TestCreateOutcomeCLIRoutesRecordOneLinePerTransaction(t *testing.T) {
 			if err != nil {
 				t.Fatalf("create %s: %v", test.kind, err)
 			}
-			assertCreateOutcomeLockedTimings(t, assertOneCreateOutcome(t, journal, test.kind, "success"))
+			assertCreateOutcomeLockedTimings(t, assertOneCreateOutcome(t, journal, test.kind, "success"), true)
 		})
 	}
 }
@@ -172,7 +206,7 @@ func TestCreateOutcomeUIIntentRoutesRecordOneLine(t *testing.T) {
 			if err := test.run(fx); err != nil {
 				t.Fatalf("%s: %v", test.name, err)
 			}
-			assertCreateOutcomeLockedTimings(t, assertOneCreateOutcome(t, journal, test.kind, "success"))
+			assertCreateOutcomeLockedTimings(t, assertOneCreateOutcome(t, journal, test.kind, "success"), true)
 		})
 	}
 }
@@ -214,7 +248,7 @@ func TestCreateOutcomeFailureRecordsOneErrorLine(t *testing.T) {
 		if event.Level != "error" || event.Kind != "runtime" {
 			t.Fatalf("error outcome = %+v, want level error kind runtime", event)
 		}
-		assertCreateOutcomeLockedTimings(t, event)
+		assertCreateOutcomeLockedTimings(t, event, false)
 	})
 	t.Run("before the lock", func(t *testing.T) {
 		t.Parallel()
@@ -385,8 +419,84 @@ func TestFormatOperationalCreateEventShowsKindAndLockHeld(t *testing.T) {
 			t.Fatalf("formatted create event = %q, want %q", got, want)
 		}
 	}
+	event.Operation = string(diagnostics.CreateKindAgent)
+	phase := func(ms int64) *int64 { return &ms }
+	event.PhaseGuardMS, event.PhaseFirstReconcileMS, event.PhaseOperationMS = phase(1), phase(2), phase(3)
+	event.PhaseSecondReconcileMS, event.PhaseReproveMS, event.PhaseStoreWriteMS = phase(1), phase(1), phase(4)
+	event.SpawnToReleaseMS = phase(7)
+	want := "lock_held_ms=12 phase_guard_ms=1 phase_first_reconcile_ms=2 phase_operation_ms=3 phase_second_reconcile_ms=1 phase_reprove_ms=1 phase_store_write_ms=4 spawn_to_release_ms=7 run_id="
+	if got := formatOperationalEvent(event); !strings.Contains(got, want) {
+		t.Fatalf("formatted create breakdown = %q, want %q", got, want)
+	}
 	event.LockHeldMS = nil
-	if got := formatOperationalEvent(event); strings.Contains(got, "lock_held_ms") {
+	event.PhaseGuardMS, event.PhaseFirstReconcileMS, event.PhaseOperationMS = nil, nil, nil
+	event.PhaseSecondReconcileMS, event.PhaseReproveMS, event.PhaseStoreWriteMS, event.SpawnToReleaseMS = nil, nil, nil, nil
+	if got := formatOperationalEvent(event); strings.Contains(got, "lock_held_ms") || strings.Contains(got, "phase_") {
 		t.Fatalf("formatted pre-lock create event = %q, want no lock_held_ms", got)
+	}
+}
+
+// TestCreateAgentOutcomeRecordsLockPhasesAndSpawnToRelease pins the lock
+// breakdown of every create that spawns a supervised child -- the CLI Agent,
+// the canonical intent Agent, and the resume -- on the stepped clock: six
+// phases that tile the hold, the spawn read inside the operation phase, and
+// spawn_to_release covering the second reconcile, the reprove, and the store
+// write that followed it.
+func TestCreateAgentOutcomeRecordsLockPhasesAndSpawnToRelease(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		kind diagnostics.CreateKind
+		run  func(t *testing.T) (*diagnostics.Store, error)
+	}{
+		{"create agent", diagnostics.CreateKindAgent, func(t *testing.T) (*diagnostics.Store, error) {
+			create, _ := newTestAgentCreateCommand(t, newFakeResourceStore(t), newFakeTmux())
+			journal := recordCreateOutcomes(t, create)
+			_, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main")
+			return journal, err
+		}},
+		{"canonical intent agent", diagnostics.CreateKindAgent, func(t *testing.T) (*diagnostics.Store, error) {
+			fx := canonicalFixture(t, false)
+			journal := recordCreateOutcomes(t, fx.create)
+			_, err := fx.create.createFromIntent(agentPaneIntent{
+				producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right", anchorPaneID: fx.originID,
+			}, ioDiscard{}, ioDiscard{})
+			return journal, err
+		}},
+		{"resume", diagnostics.CreateKindResume, func(t *testing.T) (*diagnostics.Store, error) {
+			store := newFakeResourceStore(t)
+			setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+			agent, launcher, _, _ := newTestAgentResumeCommand(t, store, newFakeTmux())
+			enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", launcher)
+			journal := recordCreateOutcomes(t, agent.rebind.create)
+			_, _, err := runRoute(t, agent, "resume", "codex", "--project", "beta")
+			return journal, err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			journal, err := test.run(t)
+			if err != nil {
+				t.Fatalf("%s: %v", test.name, err)
+			}
+			event := assertOneCreateOutcome(t, journal, test.kind, "success")
+			assertCreateOutcomeLockedTimings(t, event, true)
+			step := createOutcomeStep.Milliseconds()
+			var sum int64
+			for i, phase := range createOutcomePhases(event) {
+				want := step
+				if i == int(diagnostics.CreatePhaseOperation) {
+					want = 2 * step // the operation also reads the spawn stamp
+				}
+				if phase == nil || *phase != want {
+					t.Fatalf("phase %d = %v, want %dms: %+v", i, phase, want, event)
+				}
+				sum += *phase
+			}
+			if sum > *event.LockHeldMS || *event.LockHeldMS != 7*step {
+				t.Fatalf("phases sum %d, lock_held_ms %d, want sum <= hold = %d", sum, *event.LockHeldMS, 7*step)
+			}
+			if event.SpawnToReleaseMS == nil || *event.SpawnToReleaseMS > *event.LockHeldMS || *event.SpawnToReleaseMS != 4*step {
+				t.Fatalf("spawn_to_release_ms = %v, want %d (the rest of the operation, second reconcile, reprove, store write)", event.SpawnToReleaseMS, 4*step)
+			}
+		})
 	}
 }

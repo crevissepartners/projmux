@@ -52,7 +52,7 @@ func (r *AgentMessageRecorder) RecordForeignSource(agentUID, paneUID string) {
 func validateAgentMessageForeignSourceEvent(event Event) error {
 	if event.Component != "agent" || event.Level != "info" || event.Result != "success" || event.Kind != "" ||
 		event.Message != "" || event.Command != "" || event.Subcommand != "" || event.Operation != "" || event.Source != "" ||
-		event.Code != "" || event.LockHeldMS != nil || event.Decision != "" || event.Classification != "" || event.WindowUID != "" ||
+		event.Code != "" || event.LockHeldMS != nil || event.WaitMS != nil || event.hasCreatePhaseFields() || event.Decision != "" || event.Classification != "" || event.WindowUID != "" ||
 		event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() || event.hasResourceFields() {
 		return fmt.Errorf("invalid agent message foreign source shape")
 	}
