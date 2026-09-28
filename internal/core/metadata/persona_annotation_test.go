@@ -115,27 +115,27 @@ func TestSetAgentEffortReplacesOnlyTheEffort(t *testing.T) {
 	mutator := Mutator{Now: func() time.Time { return now }}
 	reg := personaAnnotationFixture()
 
-	if _, err := mutator.SetAgentEffort(&reg, "agent-1", "max"); err != nil {
+	if _, err := mutator.SetAgentEffort(&reg, "agent-1", "max", SettingSourceResume); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{AnnotationAgentTopic: "review the parser", AnnotationAgentEffort: "max"}
+	want := map[string]string{AnnotationAgentTopic: "review the parser", AnnotationAgentEffort: "max", AnnotationAgentEffortSource: SettingSourceResume}
 	stored, _ := reg.Agent("agent-1")
 	if !maps.Equal(stored.Metadata.Annotations, want) || !reg.UpdatedAt.Equal(now) {
 		t.Fatalf("annotations = %v updatedAt = %v, want %v at %v", stored.Metadata.Annotations, reg.UpdatedAt, want, now)
 	}
 
 	later := Mutator{Now: func() time.Time { return now.Add(time.Hour) }}
-	if _, err := later.SetAgentEffort(&reg, "agent-1", "max"); err != nil {
+	if _, err := later.SetAgentEffort(&reg, "agent-1", "max", SettingSourceResume); err != nil {
 		t.Fatal(err)
 	}
 	if !reg.UpdatedAt.Equal(now) {
 		t.Fatalf("recording the same effort moved updatedAt to %v", reg.UpdatedAt)
 	}
 
-	if _, err := mutator.SetAgentEffort(&reg, "agent-1", " "); !errors.Is(err, ErrInvalidRegistry) {
+	if _, err := mutator.SetAgentEffort(&reg, "agent-1", " ", SettingSourceResume); !errors.Is(err, ErrInvalidRegistry) {
 		t.Fatalf("empty effort = %v, want %v", err, ErrInvalidRegistry)
 	}
-	if _, err := mutator.SetAgentEffort(&reg, "agent-missing", "low"); !errors.Is(err, ErrNotFound) {
+	if _, err := mutator.SetAgentEffort(&reg, "agent-missing", "low", SettingSourceResume); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
 	}
 }
@@ -150,28 +150,132 @@ func TestSetAgentModelReplacesOnlyTheModel(t *testing.T) {
 	mutator := Mutator{Now: func() time.Time { return now }}
 	reg := personaAnnotationFixture()
 
-	if _, err := mutator.SetAgentModel(&reg, "agent-1", " haiku "); err != nil {
+	if _, err := mutator.SetAgentModel(&reg, "agent-1", " haiku ", SettingSourceRelaunch); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{AnnotationAgentTopic: "review the parser", AnnotationAgentModel: "haiku"}
+	want := map[string]string{AnnotationAgentTopic: "review the parser", AnnotationAgentModel: "haiku", AnnotationAgentModelSource: SettingSourceRelaunch}
 	stored, _ := reg.Agent("agent-1")
 	if !maps.Equal(stored.Metadata.Annotations, want) || !reg.UpdatedAt.Equal(now) {
 		t.Fatalf("annotations = %v updatedAt = %v, want %v at %v", stored.Metadata.Annotations, reg.UpdatedAt, want, now)
 	}
 
 	later := Mutator{Now: func() time.Time { return now.Add(time.Hour) }}
-	if _, err := later.SetAgentModel(&reg, "agent-1", "haiku"); err != nil {
+	if _, err := later.SetAgentModel(&reg, "agent-1", "haiku", SettingSourceRelaunch); err != nil {
 		t.Fatal(err)
 	}
 	if !reg.UpdatedAt.Equal(now) {
 		t.Fatalf("recording the same model moved updatedAt to %v", reg.UpdatedAt)
 	}
 
-	if _, err := mutator.SetAgentModel(&reg, "agent-1", " "); !errors.Is(err, ErrInvalidRegistry) {
+	if _, err := mutator.SetAgentModel(&reg, "agent-1", " ", SettingSourceRelaunch); !errors.Is(err, ErrInvalidRegistry) {
 		t.Fatalf("empty model = %v, want %v", err, ErrInvalidRegistry)
 	}
-	if _, err := mutator.SetAgentModel(&reg, "agent-missing", "sonnet"); !errors.Is(err, ErrNotFound) {
+	if _, err := mutator.SetAgentModel(&reg, "agent-missing", "sonnet", SettingSourceRelaunch); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing agent = %v, want %v", err, ErrNotFound)
+	}
+}
+
+// TestSetAgentSettingRecordsTheSourceWithTheValue pins that the model and
+// effort mutations write the value and its source together: a new source for
+// the same value is a change, an unknown or missing source is refused before
+// anything is written, and the source vocabulary is the public one.
+func TestSetAgentSettingRecordsTheSourceWithTheValue(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 28, 3, 0, 0, 0, time.UTC)
+	mutator := Mutator{Now: func() time.Time { return now }}
+	reg := personaAnnotationFixture()
+	agent := &reg.Agents[0]
+	agent.Metadata.Annotations[AnnotationAgentEffort] = "high"
+	agent.Metadata.Annotations[AnnotationAgentEffortSource] = SettingSourceProfile
+
+	if _, err := mutator.SetAgentEffort(&reg, "agent-1", "high", SettingSourceRelaunch); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := reg.Agent("agent-1")
+	if got := stored.Metadata.Annotations[AnnotationAgentEffortSource]; got != SettingSourceRelaunch || !reg.UpdatedAt.Equal(now) {
+		t.Fatalf("effort source = %q updatedAt = %v, want %q at %v", got, reg.UpdatedAt, SettingSourceRelaunch, now)
+	}
+
+	before := maps.Clone(stored.Metadata.Annotations)
+	for _, source := range []string{"", "role", "cli", " resume"} {
+		if _, err := mutator.SetAgentEffort(&reg, "agent-1", "low", source); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("effort source %q = %v, want %v", source, err, ErrInvalidRegistry)
+		}
+		if _, err := mutator.SetAgentModel(&reg, "agent-1", "haiku", source); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("model source %q = %v, want %v", source, err, ErrInvalidRegistry)
+		}
+	}
+	stored, _ = reg.Agent("agent-1")
+	if !maps.Equal(stored.Metadata.Annotations, before) {
+		t.Fatalf("a refused source changed annotations to %v, want %v", stored.Metadata.Annotations, before)
+	}
+
+	for key, want := range map[string]string{
+		AnnotationAgentProfileSource:      "projmux.io/profile-source",
+		AnnotationAgentInstructionsSource: "projmux.io/instructions-source",
+		AnnotationAgentModelSource:        "projmux.io/model-source",
+		AnnotationAgentEffortSource:       "projmux.io/effort-source",
+	} {
+		if key != want {
+			t.Fatalf("source key = %q, want %q", key, want)
+		}
+	}
+	for _, source := range []string{"profile", "flag", "resume", "relaunch", "attach", "inherited"} {
+		if !ValidSettingSource(source) {
+			t.Fatalf("ValidSettingSource(%q) = false", source)
+		}
+	}
+	if ValidSettingSource("role") || ValidSettingSource("") {
+		t.Fatal("a source outside its key's vocabulary was accepted")
+	}
+}
+
+// TestSetAgentPersonaWritesTheInstructionsSourceInTheSameMutation pins that
+// attach, detach, and their restore move the instructions source with the
+// persona, that a detach keeps the source without a persona, and that
+// SameLaunch ignores the source.
+func TestSetAgentPersonaWritesTheInstructionsSourceInTheSameMutation(t *testing.T) {
+	t.Parallel()
+	mutator := Mutator{Now: func() time.Time { return time.Date(2026, 9, 28, 3, 0, 0, 0, time.UTC) }}
+	reg := personaAnnotationFixture()
+	reg.Agents[0].Metadata.Annotations[AnnotationAgentPersona] = "lead-ship"
+	reg.Agents[0].Metadata.Annotations[AnnotationAgentPersonaDigest] = "sha256:aa"
+	reg.Agents[0].Metadata.Annotations[AnnotationAgentInstructionsSource] = SettingSourceProfile
+	stored, _ := reg.Agent("agent-1")
+	previous := PersonaAnnotationsOf(*stored)
+	if previous.InstructionsSource != SettingSourceProfile {
+		t.Fatalf("PersonaAnnotationsOf source = %q", previous.InstructionsSource)
+	}
+
+	detached := AgentPersonaAnnotations{SystemPromptSnapshot: SystemPromptSnapshotOff, InstructionsSource: SettingSourceAttach}
+	if _, err := mutator.SetAgentPersona(&reg, "agent-1", detached); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ = reg.Agent("agent-1")
+	want := map[string]string{
+		AnnotationAgentTopic:                "review the parser",
+		AnnotationAgentSystemPromptSnapshot: SystemPromptSnapshotOff,
+		AnnotationAgentInstructionsSource:   SettingSourceAttach,
+	}
+	if !maps.Equal(stored.Metadata.Annotations, want) {
+		t.Fatalf("detached annotations = %v, want %v", stored.Metadata.Annotations, want)
+	}
+
+	if _, err := mutator.SetAgentPersona(&reg, "agent-1", previous); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ = reg.Agent("agent-1")
+	if got := PersonaAnnotationsOf(*stored); got != previous {
+		t.Fatalf("restored = %+v, want %+v", got, previous)
+	}
+	if _, err := mutator.SetAgentPersona(&reg, "agent-1", AgentPersonaAnnotations{InstructionsSource: "role"}); !errors.Is(err, ErrInvalidRegistry) {
+		t.Fatalf("instructions source role = %v, want %v", err, ErrInvalidRegistry)
+	}
+
+	attach := previous
+	attach.InstructionsSource = SettingSourceAttach
+	if !previous.SameLaunch(attach) || previous.SameLaunch(detached) {
+		t.Fatal("SameLaunch must compare the launch fields and ignore the source")
 	}
 }
 

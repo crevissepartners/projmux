@@ -2135,6 +2135,33 @@ they refuse (`profile-resume-unavailable`, `profile-lane-unsupported`), and a
 profile without permissions resumes as before. An Agent without a profile
 sends exactly the request it sent before.
 
+Each of those settings records where it came from, beside its value, so
+`describe agent -o json` tells a profile item apart from an override. The
+keys are `projmux.io/profile-source`, `projmux.io/instructions-source`,
+`projmux.io/model-source`, and `projmux.io/effort-source`; the values keep
+their own keys (`projmux.io/profile`, `projmux.io/persona`, `projmux.io/model`,
+`projmux.io/effort`), whose meaning does not change.
+
+| Source | Written by |
+| --- | --- |
+| `flag` | `create agent` (and a UI create) for `--profile`, `--instructions`/`--persona`, `--model`, and `--effort` |
+| `role` | `projmux.io/profile-source` only: the profile a `role` label selected |
+| `profile` | item sources only: the item the create's profile filled in |
+| `inherited` | a resume picker selection, for the profile, instructions, and effort it inherited |
+| `resume` | `agent resume --model/--effort` |
+| `relaunch` | `agent relaunch --model/--effort` |
+| `attach` | `projmux.io/instructions-source` only: `agent instructions\|persona attach\|detach` |
+
+An item source other than `profile` means the value overrides the profile.
+After a detach the Agent records `projmux.io/instructions-source=attach`
+without `projmux.io/persona`: it was explicitly given no instructions. Every
+source is written in the same transaction as its value, so a launch that fails
+rolls back both, a restored attach or detach restores both, and a command that
+writes no value writes no source. An Agent without a source key recorded its
+value before sources were, and the source is unknown. The source keys are not
+part of the resume picker's inheritance agreement: Agents that record the same
+values with different sources still agree. Sources change no launch argument.
+
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`
 and `projmux create pane --placement right -o pane-id` each print exactly the

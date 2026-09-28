@@ -77,8 +77,9 @@ func TestCreateCodexAgentWithPersonaSendsItAsDeveloperInstructions(t *testing.T)
 			agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 			digest := persona.Digest([]byte(codexPersonaContent))
 			want := map[string]string{
-				coremetadata.AnnotationAgentPersona:       "reviewer",
-				coremetadata.AnnotationAgentPersonaDigest: digest,
+				coremetadata.AnnotationAgentPersona:            "reviewer",
+				coremetadata.AnnotationAgentPersonaDigest:      digest,
+				coremetadata.AnnotationAgentInstructionsSource: coremetadata.SettingSourceFlag,
 			}
 			if len(agent.Metadata.Annotations) != len(want) {
 				t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)

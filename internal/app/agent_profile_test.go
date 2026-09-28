@@ -230,12 +230,16 @@ func TestCreateClaudeAgentWithAProfileLaunchesItsSettingsModelEffortAndInstructi
 		t.Fatalf("settings snapshot = %q, %v", content, err)
 	}
 	wantAnnotations := map[string]string{
-		coremetadata.AnnotationAgentPersona:       "go-reviewer",
-		coremetadata.AnnotationAgentPersonaDigest: persona.Digest(instructions),
-		coremetadata.AnnotationAgentEffort:        "high",
-		coremetadata.AnnotationAgentModel:         "opus",
-		coremetadata.AnnotationAgentProfile:       "guard",
-		coremetadata.AnnotationAgentProfileDigest: digest,
+		coremetadata.AnnotationAgentPersona:            "go-reviewer",
+		coremetadata.AnnotationAgentPersonaDigest:      persona.Digest(instructions),
+		coremetadata.AnnotationAgentEffort:             "high",
+		coremetadata.AnnotationAgentModel:              "opus",
+		coremetadata.AnnotationAgentProfile:            "guard",
+		coremetadata.AnnotationAgentProfileDigest:      digest,
+		coremetadata.AnnotationAgentProfileSource:      coremetadata.SettingSourceFlag,
+		coremetadata.AnnotationAgentInstructionsSource: coremetadata.SettingSourceProfile,
+		coremetadata.AnnotationAgentModelSource:        coremetadata.SettingSourceProfile,
+		coremetadata.AnnotationAgentEffortSource:       coremetadata.SettingSourceProfile,
 	}
 	if got := f.createdAgent(t).Metadata.Annotations; !maps.Equal(got, wantAnnotations) {
 		t.Fatalf("Agent annotations = %v, want %v", got, wantAnnotations)
@@ -603,6 +607,9 @@ func TestUICreateRecordsTheProfileModelAndEffortOnTheAgent(t *testing.T) {
 		coremetadata.AnnotationAgentEffort:        "high",
 		coremetadata.AnnotationAgentProfile:       "tuned",
 		coremetadata.AnnotationAgentProfileDigest: entry.Digest,
+		coremetadata.AnnotationAgentProfileSource: coremetadata.SettingSourceFlag,
+		coremetadata.AnnotationAgentModelSource:   coremetadata.SettingSourceProfile,
+		coremetadata.AnnotationAgentEffortSource:  coremetadata.SettingSourceProfile,
 	}
 	if got := created[0].Metadata.Annotations; !maps.Equal(got, want) {
 		t.Fatalf("UI Agent annotations = %v, want %v", got, want)
@@ -810,7 +817,7 @@ func TestResumePickerInheritsTheProfileAndAppliesItsCurrentContent(t *testing.T)
 	if got := execArgvTail(t, argv, aiModeClaude); !slices.Equal(got, want) {
 		t.Fatalf("picker exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(agent.Metadata.Annotations, profileAnnotations("guard", entry.Digest)) {
+	if !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations("guard", entry.Digest), profileInherited...)) {
 		t.Fatalf("picker Agent annotations = %v, want the current digest", agent.Metadata.Annotations)
 	}
 

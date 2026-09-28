@@ -229,8 +229,9 @@ func TestCreateCodexAgentWithWhitespaceGuidanceSendsWhatItSentBefore(t *testing.
 					var wantAnnotations map[string]string
 					if withPersona {
 						wantAnnotations = map[string]string{
-							coremetadata.AnnotationAgentPersona:       "reviewer",
-							coremetadata.AnnotationAgentPersonaDigest: persona.Digest([]byte(codexPersonaContent)),
+							coremetadata.AnnotationAgentPersona:            "reviewer",
+							coremetadata.AnnotationAgentPersonaDigest:      persona.Digest([]byte(codexPersonaContent)),
+							coremetadata.AnnotationAgentInstructionsSource: coremetadata.SettingSourceFlag,
 						}
 					}
 					if !maps.Equal(annotations, wantAnnotations) || (wantAnnotations == nil) != (annotations == nil) {

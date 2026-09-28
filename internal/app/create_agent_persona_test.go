@@ -78,9 +78,11 @@ func TestCreateClaudeAgentWithPersonaLaunchesTheSnapshotAndAnnotatesTheAgent(t *
 
 	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 	want := map[string]string{
-		coremetadata.AnnotationAgentPersona:       "reviewer",
-		coremetadata.AnnotationAgentPersonaDigest: persona.Digest(snapshot),
-		coremetadata.AnnotationAgentModel:         "sonnet",
+		coremetadata.AnnotationAgentPersona:            "reviewer",
+		coremetadata.AnnotationAgentPersonaDigest:      persona.Digest(snapshot),
+		coremetadata.AnnotationAgentModel:              "sonnet",
+		coremetadata.AnnotationAgentInstructionsSource: coremetadata.SettingSourceFlag,
+		coremetadata.AnnotationAgentModelSource:        coremetadata.SettingSourceFlag,
 	}
 	if len(agent.Metadata.Annotations) != len(want) {
 		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
@@ -152,7 +154,8 @@ func TestCreateClaudeAgentWithInstructionsUsesLegacySnapshotAndAnnotations(t *te
 	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 	if agent.Metadata.Annotations[coremetadata.AnnotationAgentPersona] != "reviewer" ||
 		agent.Metadata.Annotations[coremetadata.AnnotationAgentPersonaDigest] != digest ||
-		len(agent.Metadata.Annotations) != 2 {
+		agent.Metadata.Annotations[coremetadata.AnnotationAgentInstructionsSource] != coremetadata.SettingSourceFlag ||
+		len(agent.Metadata.Annotations) != 3 {
 		t.Fatalf("legacy annotations = %v", agent.Metadata.Annotations)
 	}
 }
@@ -359,6 +362,7 @@ func TestPersonaCreateFromAnAgentPaneRecordsCreatorAndPersona(t *testing.T) {
 	want := maps.Clone(creator)
 	want[coremetadata.AnnotationAgentPersona] = "reviewer"
 	want[coremetadata.AnnotationAgentPersonaDigest] = persona.Digest(content)
+	want[coremetadata.AnnotationAgentInstructionsSource] = coremetadata.SettingSourceFlag
 	if got := agents[0].Metadata.Annotations; !maps.Equal(got, want) {
 		t.Fatalf("new Agent annotations = %v, want %v", got, want)
 	}

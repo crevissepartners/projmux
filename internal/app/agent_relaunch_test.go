@@ -85,7 +85,7 @@ func TestAgentRelaunchRestartsAnIdleRunningClaudeAgentWithTheModelAndEffortOnThe
 	if got := f.lastArgvTail(t); !slices.Equal(got, want) {
 		t.Fatalf("relaunch exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("opus", "max")) {
+	if !maps.Equal(after.Metadata.Annotations, plusSources(modelEffortAnnotations("opus", "max"), modelEffortRelaunch...)) {
 		t.Fatalf("annotations = %v, want only the new model and effort", after.Metadata.Annotations)
 	}
 }
@@ -101,7 +101,7 @@ func TestAgentRelaunchWithOnlyAModelKeepsTheRecordedEffort(t *testing.T) {
 	if got := f.lastArgvTail(t); !slices.Equal(got, want) {
 		t.Fatalf("relaunch exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("sonnet", "high")) {
+	if !maps.Equal(after.Metadata.Annotations, plusSources(modelEffortAnnotations("sonnet", "high"), coremetadata.AnnotationAgentModelSource, coremetadata.SettingSourceRelaunch)) {
 		t.Fatalf("annotations = %v, want the new model and the recorded effort kept", after.Metadata.Annotations)
 	}
 }
@@ -118,7 +118,7 @@ func TestAgentRelaunchWithOnlyAnEffortKeepsTheRecordedModelAndDoesNotPassIt(t *t
 	if got := f.lastArgvTail(t); !slices.Equal(got, want) {
 		t.Fatalf("relaunch exec argv tail = %q, want %q", got, want)
 	}
-	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("haiku", "max")) {
+	if !maps.Equal(after.Metadata.Annotations, plusSources(modelEffortAnnotations("haiku", "max"), coremetadata.AnnotationAgentEffortSource, coremetadata.SettingSourceRelaunch)) {
 		t.Fatalf("annotations = %v, want the recorded model kept", after.Metadata.Annotations)
 	}
 }
@@ -186,7 +186,7 @@ func TestAgentRelaunchOfACodexAgentPassesTheCodexModelAndEffortFlags(t *testing.
 		after.Status.SessionRef.ConversationID() != resumeFixtureConversation {
 		t.Fatalf("codex Agent after relaunch = %s on %q %+v", after.Status.Phase, after.Status.PaneRef, after.Status.SessionRef)
 	}
-	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("gpt-6", "xhigh")) {
+	if !maps.Equal(after.Metadata.Annotations, plusSources(modelEffortAnnotations("gpt-6", "xhigh"), modelEffortRelaunch...)) {
 		t.Fatalf("annotations = %v, want only the new model and effort", after.Metadata.Annotations)
 	}
 	if !strings.Contains(stdout, `"outcome":"restarted"`) || !strings.Contains(stdout, `"provider":"codex"`) {
@@ -347,7 +347,7 @@ func TestAgentRelaunchExecutedJSONOfARunningAgentReportsTheNewPane(t *testing.T)
 	if stdout != want {
 		t.Fatalf("restarted relaunch JSON =\n%s\nwant\n%s", stdout, want)
 	}
-	if !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("opus", "max")) {
+	if !maps.Equal(after.Metadata.Annotations, plusSources(modelEffortAnnotations("opus", "max"), modelEffortRelaunch...)) {
 		t.Fatalf("annotations = %v, want the new model and effort", after.Metadata.Annotations)
 	}
 }
@@ -451,7 +451,7 @@ func TestAgentRelaunchStopErrorAfterThePaneClosedWarnsAndResumes(t *testing.T) {
 		t.Fatalf("stderr = %q, want the closed-pane warning", stderr)
 	}
 	after := f.assertRestartedOnTheSameConversation(t, personaAttachPane)
-	if !maps.Equal(after.Metadata.Annotations, effortAnnotations("max")) {
+	if !maps.Equal(after.Metadata.Annotations, plusSources(effortAnnotations("max"), coremetadata.AnnotationAgentEffortSource, coremetadata.SettingSourceRelaunch)) {
 		t.Fatalf("annotations = %v, want the new effort", after.Metadata.Annotations)
 	}
 }
@@ -523,7 +523,7 @@ func TestAgentRelaunchResumeFailureLeavesTheAgentOfflineWithItsOldEffortAndAReco
 	if got := f.lastArgvTail(t); !slices.Equal(got, []string{"--model", "opus", "--effort", "max", "--resume", personaResumeConversation}) {
 		t.Fatalf("recovery exec argv tail = %q", got)
 	}
-	if after := f.agent(t); after.Status.Phase != coremetadata.PhaseRunning || !maps.Equal(after.Metadata.Annotations, modelEffortAnnotations("opus", "max")) {
+	if after := f.agent(t); after.Status.Phase != coremetadata.PhaseRunning || !maps.Equal(after.Metadata.Annotations, plusSources(modelEffortAnnotations("opus", "max"), modelEffortResume...)) {
 		t.Fatalf("recovered Agent = %s %v", after.Status.Phase, after.Metadata.Annotations)
 	}
 }

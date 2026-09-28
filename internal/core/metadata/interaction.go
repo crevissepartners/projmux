@@ -114,13 +114,23 @@ func (m Mutator) SetAgentQuestionChannel(reg *Registry, agentUID string, on bool
 }
 
 // AgentPersonaAnnotations is the persona state of one existing Agent: the
-// persona name and digest (both set or both empty) and the system prompt
-// snapshot mode ("" or SystemPromptSnapshotOff). An empty field removes its
-// annotation.
+// persona name and digest (both set or both empty), the system prompt
+// snapshot mode ("" or SystemPromptSnapshotOff), and where the instructions
+// came from (AnnotationAgentInstructionsSource: "" or a value
+// ValidSettingSource accepts). An empty field removes its annotation.
 type AgentPersonaAnnotations struct {
 	Persona              string
 	PersonaDigest        string
 	SystemPromptSnapshot string
+	InstructionsSource   string
+}
+
+// SameLaunch reports whether a and b launch a provider session the same way:
+// the same persona, digest, and snapshot mode. Where they came from does not
+// change the launch.
+func (a AgentPersonaAnnotations) SameLaunch(b AgentPersonaAnnotations) bool {
+	a.InstructionsSource, b.InstructionsSource = "", ""
+	return a == b
 }
 
 // PersonaAnnotationsOf reads the persona state an Agent records.
@@ -129,14 +139,16 @@ func PersonaAnnotationsOf(agent Agent) AgentPersonaAnnotations {
 		Persona:              agent.Metadata.Annotations[AnnotationAgentPersona],
 		PersonaDigest:        agent.Metadata.Annotations[AnnotationAgentPersonaDigest],
 		SystemPromptSnapshot: agent.Metadata.Annotations[AnnotationAgentSystemPromptSnapshot],
+		InstructionsSource:   agent.Metadata.Annotations[AnnotationAgentInstructionsSource],
 	}
 }
 
 // SetAgentPersona replaces the persona annotations of one existing Agent in a
-// single mutation: the persona name, its digest, and the system prompt snapshot
-// mode are written together or not at all, so no reader ever sees a persona
-// without its digest or a new persona without the snapshot mode that makes a
-// resume honor it. Every other annotation is left as it was.
+// single mutation: the persona name, its digest, the system prompt snapshot
+// mode, and the instructions source are written together or not at all, so no
+// reader ever sees a persona without its digest, a new persona without the
+// snapshot mode that makes a resume honor it, or a new persona with the
+// source of the old one. Every other annotation is left as it was.
 func (m Mutator) SetAgentPersona(reg *Registry, agentUID string, want AgentPersonaAnnotations) (Agent, error) {
 	const op = "set agent persona"
 	agent, ok := reg.Agent(agentUID)
@@ -146,11 +158,15 @@ func (m Mutator) SetAgentPersona(reg *Registry, agentUID string, want AgentPerso
 	name := strings.TrimSpace(want.Persona)
 	digest := strings.TrimSpace(want.PersonaDigest)
 	snapshot := strings.TrimSpace(want.SystemPromptSnapshot)
+	source := strings.TrimSpace(want.InstructionsSource)
 	if (name == "") != (digest == "") {
 		return Agent{}, inputErr(op, ErrInvalidRegistry, "persona %q and digest %q must be set or cleared together", name, digest)
 	}
 	if snapshot != "" && snapshot != SystemPromptSnapshotOff {
 		return Agent{}, inputErr(op, ErrInvalidRegistry, "unsupported system prompt snapshot mode %q", snapshot)
+	}
+	if source != "" && !ValidSettingSource(source) {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "unsupported instructions source %q", source)
 	}
 	if agent.Metadata.Annotations == nil {
 		agent.Metadata.Annotations = map[string]string{}
@@ -159,6 +175,7 @@ func (m Mutator) SetAgentPersona(reg *Registry, agentUID string, want AgentPerso
 		AnnotationAgentPersona:              name,
 		AnnotationAgentPersonaDigest:        digest,
 		AnnotationAgentSystemPromptSnapshot: snapshot,
+		AnnotationAgentInstructionsSource:   source,
 	} {
 		if value == "" {
 			delete(agent.Metadata.Annotations, key)
@@ -199,52 +216,48 @@ func (m Mutator) SetAgentProfileDigest(reg *Registry, agentUID, name, digest str
 	return agent.Clone(), nil
 }
 
-// SetAgentEffort records the effort an `agent resume --effort` is about to
-// launch one existing Agent with, replacing the one it recorded. Recording the
-// value it already records is not a change. Every other annotation is left as
+// SetAgentEffort records the effort an `agent resume --effort` or
+// `agent relaunch --effort` is about to launch one existing Agent with,
+// replacing the one it recorded, and records where it came from
+// (AnnotationAgentEffortSource) in the same mutation. Recording the value and
+// source it already records is not a change. Every other annotation is left as
 // it was.
-func (m Mutator) SetAgentEffort(reg *Registry, agentUID, effort string) (Agent, error) {
-	const op = "set agent effort"
-	agent, ok := reg.Agent(agentUID)
-	if !ok {
-		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
-	}
-	effort = strings.TrimSpace(effort)
-	if effort == "" {
-		return Agent{}, inputErr(op, ErrInvalidRegistry, "effort must be set")
-	}
-	if agent.Metadata.Annotations[AnnotationAgentEffort] == effort {
-		return agent.Clone(), nil
-	}
-	if agent.Metadata.Annotations == nil {
-		agent.Metadata.Annotations = map[string]string{}
-	}
-	agent.Metadata.Annotations[AnnotationAgentEffort] = effort
-	reg.UpdatedAt = m.clock()().UTC()
-	return agent.Clone(), nil
+func (m Mutator) SetAgentEffort(reg *Registry, agentUID, effort, source string) (Agent, error) {
+	return m.setAgentSetting(reg, "set agent effort", agentUID, "effort", AnnotationAgentEffort, AnnotationAgentEffortSource, effort, source)
 }
 
 // SetAgentModel records the model an `agent resume --model` or
 // `agent relaunch --model` is about to launch one existing Agent with,
-// replacing the one it recorded. Recording the value it already records is not
-// a change. Every other annotation is left as it was.
-func (m Mutator) SetAgentModel(reg *Registry, agentUID, model string) (Agent, error) {
-	const op = "set agent model"
+// replacing the one it recorded, and records where it came from
+// (AnnotationAgentModelSource) in the same mutation. Recording the value and
+// source it already records is not a change. Every other annotation is left as
+// it was.
+func (m Mutator) SetAgentModel(reg *Registry, agentUID, model, source string) (Agent, error) {
+	return m.setAgentSetting(reg, "set agent model", agentUID, "model", AnnotationAgentModel, AnnotationAgentModelSource, model, source)
+}
+
+// setAgentSetting writes one launch setting and its source together: both are
+// required, and the source must be one ValidSettingSource accepts.
+func (m Mutator) setAgentSetting(reg *Registry, op, agentUID, item, valueKey, sourceKey, value, source string) (Agent, error) {
 	agent, ok := reg.Agent(agentUID)
 	if !ok {
 		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
 	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return Agent{}, inputErr(op, ErrInvalidRegistry, "model must be set")
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "%s must be set", item)
 	}
-	if agent.Metadata.Annotations[AnnotationAgentModel] == model {
+	if !ValidSettingSource(source) {
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "unsupported %s source %q", item, source)
+	}
+	if agent.Metadata.Annotations[valueKey] == value && agent.Metadata.Annotations[sourceKey] == source {
 		return agent.Clone(), nil
 	}
 	if agent.Metadata.Annotations == nil {
 		agent.Metadata.Annotations = map[string]string{}
 	}
-	agent.Metadata.Annotations[AnnotationAgentModel] = model
+	agent.Metadata.Annotations[valueKey] = value
+	agent.Metadata.Annotations[sourceKey] = source
 	reg.UpdatedAt = m.clock()().UTC()
 	return agent.Clone(), nil
 }

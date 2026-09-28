@@ -290,6 +290,7 @@ func TestCreateClaudeAgentWithPersonaAndProjectLinkRulesLaunchesOneCompositeFile
 		coremetadata.AnnotationAgentPersona:                "reviewer",
 		coremetadata.AnnotationAgentPersonaDigest:          personaDigest,
 		coremetadata.AnnotationAgentProjectLinkRulesDigest: digest,
+		coremetadata.AnnotationAgentInstructionsSource:     coremetadata.SettingSourceFlag,
 	}
 	if !maps.Equal(agent.Metadata.Annotations, want) {
 		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)

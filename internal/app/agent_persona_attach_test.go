@@ -256,6 +256,7 @@ func TestAgentPersonaAttachRestartsAnIdleRunningClaudeAgentWithThePersonaOnTheSa
 		coremetadata.AnnotationAgentPersona:              "go-reviewer",
 		coremetadata.AnnotationAgentPersonaDigest:        persona.Digest([]byte(personaResumeContent)),
 		coremetadata.AnnotationAgentSystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff,
+		coremetadata.AnnotationAgentInstructionsSource:   coremetadata.SettingSourceAttach,
 	}
 	if !mapsEqual(after.Metadata.Annotations, wantAnnotations) {
 		t.Fatalf("annotations = %v, want %v", after.Metadata.Annotations, wantAnnotations)
@@ -285,7 +286,8 @@ func TestAgentInstructionsAttachAndLegacyDetachUseTheSameSnapshot(t *testing.T) 
 	if _, _, err := runRoute(t, f.command, "persona", "detach", "uid:"+personaAttachAgent); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.agent(t).Metadata.Annotations; len(got) != 1 || got[coremetadata.AnnotationAgentSystemPromptSnapshot] != coremetadata.SystemPromptSnapshotOff {
+	if got := f.agent(t).Metadata.Annotations; len(got) != 2 || got[coremetadata.AnnotationAgentSystemPromptSnapshot] != coremetadata.SystemPromptSnapshotOff ||
+		got[coremetadata.AnnotationAgentInstructionsSource] != coremetadata.SettingSourceAttach {
 		t.Fatalf("legacy detach annotations = %v", got)
 	}
 }
@@ -376,7 +378,8 @@ func TestAgentPersonaDetachClearsThePersonaKeepsSnapshotOffAndRestarts(t *testin
 		t.Fatalf("detach stdout = %q", stdout)
 	}
 	after := f.assertRestartedOnTheSameConversation(t, attachedPane)
-	want := map[string]string{coremetadata.AnnotationAgentSystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff}
+	want := map[string]string{coremetadata.AnnotationAgentSystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff,
+		coremetadata.AnnotationAgentInstructionsSource: coremetadata.SettingSourceAttach}
 	if !mapsEqual(after.Metadata.Annotations, want) {
 		t.Fatalf("annotations after detach = %v, want %v", after.Metadata.Annotations, want)
 	}
@@ -761,6 +764,7 @@ func (f *personaAttachFixture) assertNewPersonaAnnotations(t *testing.T) {
 		coremetadata.AnnotationAgentPersona:              "go-reviewer",
 		coremetadata.AnnotationAgentPersonaDigest:        persona.Digest([]byte(personaResumeContent)),
 		coremetadata.AnnotationAgentSystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff,
+		coremetadata.AnnotationAgentInstructionsSource:   coremetadata.SettingSourceAttach,
 	}
 	if got := f.agent(t).Metadata.Annotations; !mapsEqual(got, want) {
 		t.Fatalf("annotations = %v, want the new persona kept %v", got, want)

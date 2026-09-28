@@ -222,7 +222,7 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 			}
 		}
 	}
-	if err := c.resumeStoppedAgent(target.Metadata.UID, request.model, request.effort, forward, stderr); err != nil {
+	if err := c.resumeStoppedAgent(target.Metadata.UID, request.model, request.effort, coremetadata.SettingSourceRelaunch, forward, stderr); err != nil {
 		fmt.Fprintf(stderr, "projmux: agent/%s did not resume with %s: %v\n", target.Metadata.Name, describeRelaunchTarget(result), err)
 		fmt.Fprintf(stderr, "projmux: recover with: %s\n", relaunchRecoveryCommand(registry, target, request))
 		return fmt.Errorf("%s: agent/%s is %s with its previous effort and needs `agent resume`: %w",

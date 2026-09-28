@@ -323,6 +323,19 @@ type agentResumePlan struct {
 	// effort but not the model, which the conversation owns.
 	modelOverride  string
 	effortOverride string
+	// overrideSource is where the overrides came from, recorded beside them:
+	// coremetadata.SettingSourceRelaunch for `agent relaunch`, and
+	// coremetadata.SettingSourceResume (the empty value) for `agent resume`.
+	overrideSource string
+}
+
+// settingSource is the source the rebind transaction records beside the
+// model and effort overrides.
+func (p agentResumePlan) settingSource() string {
+	if p.overrideSource == "" {
+		return coremetadata.SettingSourceResume
+	}
+	return p.overrideSource
 }
 
 // launchAnnotations are the annotations the resume seam reads: the Agent's
@@ -711,17 +724,17 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err := guidance.record(working, mutator, plan.agentUID); err != nil {
 			return err
 		}
-		// The effort and model overrides are recorded in the same transaction,
-		// before any runtime object exists. A failure anywhere later rolls the
-		// whole transaction back, so a resume that does not launch records
-		// neither.
+		// The effort and model overrides are recorded with their source in the
+		// same transaction, before any runtime object exists. A failure
+		// anywhere later rolls the whole transaction back, so a resume that
+		// does not launch records neither value nor source.
 		if plan.effortOverride != "" {
-			if _, err := mutator.SetAgentEffort(working, plan.agentUID, plan.effortOverride); err != nil {
+			if _, err := mutator.SetAgentEffort(working, plan.agentUID, plan.effortOverride, plan.settingSource()); err != nil {
 				return MapMetadataError(err)
 			}
 		}
 		if plan.modelOverride != "" {
-			if _, err := mutator.SetAgentModel(working, plan.agentUID, plan.modelOverride); err != nil {
+			if _, err := mutator.SetAgentModel(working, plan.agentUID, plan.modelOverride, plan.settingSource()); err != nil {
 				return MapMetadataError(err)
 			}
 		}

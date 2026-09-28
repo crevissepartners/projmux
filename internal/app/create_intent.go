@@ -1089,9 +1089,12 @@ func (c *createCommand) openIntentAgent(
 			return intentAgentOpened{}, err
 		}
 	}
-	annotations := flags.resumeLaunchValues
+	// The values a resume-picker create inherited are recorded as inherited;
+	// the sources go on the annotations only, never into the bundle the
+	// launch was planned from.
+	annotations := withInheritedSettingSources(flags.resumeLaunchValues, flags.resumeLaunchValues)
 	if flags.profileLaunch.active() {
-		annotations = flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(annotations))))
+		annotations = withCreateSettingSources(flags, flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(annotations)))))
 	}
 	agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
 		Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,
