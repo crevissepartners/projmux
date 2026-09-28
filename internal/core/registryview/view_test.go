@@ -277,8 +277,9 @@ func TestBuildEmitsAnAgentPaneOnlyUnderItsAgent(t *testing.T) {
 }
 
 // TestBuildKeepsIdentityAndOrderWithoutATmuxServer is acceptance (1): the same
-// Registry produces the same rows in the same order with no transport at all,
-// and every row still offers the action that would bring it back.
+// Registry produces the same rows in the same order with no transport at all.
+// Those rows were not observed, so they offer neither open nor the action that
+// would create a runtime object that might already be running -- only delete.
 func TestBuildKeepsIdentityAndOrderWithoutATmuxServer(t *testing.T) {
 	t.Parallel()
 
@@ -296,15 +297,12 @@ func TestBuildKeepsIdentityAndOrderWithoutATmuxServer(t *testing.T) {
 		if row.Status != resourcegraph.StatusUnknown {
 			t.Fatalf("row %q status = %q, want unknown when the observation could not be taken", id, row.Status)
 		}
-		if !row.Allows(ActionStart) {
-			t.Fatalf("row %q actions = %v, want the offline start action", id, row.Actions)
-		}
-		if row.Allows(ActionOpen) {
-			t.Fatalf("row %q offers open with no observed runtime object: %v", id, row.Actions)
+		if !reflect.DeepEqual(row.Actions, []Action{ActionDelete}) {
+			t.Fatalf("row %q actions = %v, want only delete for an unobserved row", id, row.Actions)
 		}
 	}
-	if agent := rowByID(t, dark, "uid:agent-one"); !agent.Allows(ActionResume) {
-		t.Fatalf("agent actions = %v, want resume", agent.Actions)
+	if agent := rowByID(t, dark, "uid:agent-one"); !reflect.DeepEqual(agent.Actions, []Action{ActionDelete}) {
+		t.Fatalf("agent actions = %v, want only delete for an unobserved Agent", agent.Actions)
 	}
 }
 
@@ -533,5 +531,34 @@ func TestBuildMutatesNeitherArgument(t *testing.T) {
 
 	if !reflect.DeepEqual(registry, before) {
 		t.Fatal("Build mutated the Registry it was given")
+	}
+}
+
+// TestUnknownRowsOfferNoStartResumeOrOpen pins C-3 on the seam the CLI ACTIONS
+// column and the picker share: a row that could not be observed offers only
+// delete, a row observed with nothing mirroring it keeps the action that
+// creates a runtime object, and MissingRoot still outranks both.
+func TestUnknownRowsOfferNoStartResumeOrOpen(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		kind        RowKind
+		status      resourcegraph.Status
+		missingRoot bool
+		want        []Action
+	}{
+		{RowKindProject, resourcegraph.StatusUnknown, false, []Action{ActionDelete}},
+		{RowKindWindow, resourcegraph.StatusUnknown, false, []Action{ActionDelete}},
+		{RowKindPane, resourcegraph.StatusUnknown, false, []Action{ActionDelete}},
+		{RowKindAgent, resourcegraph.StatusUnknown, false, []Action{ActionDelete}},
+		{RowKindProject, resourcegraph.StatusOffline, false, []Action{ActionStart, ActionDelete}},
+		{RowKindWindow, resourcegraph.StatusOffline, false, []Action{ActionStart, ActionDelete}},
+		{RowKindAgent, resourcegraph.StatusOffline, false, []Action{ActionResume, ActionDelete}},
+		{RowKindWindow, resourcegraph.StatusLive, false, []Action{ActionOpen, ActionDelete}},
+		{RowKindWindow, resourcegraph.StatusUnknown, true, []Action{ActionRebind, ActionDelete}},
+	} {
+		if got := resourceActions(test.kind, test.status, test.missingRoot); !reflect.DeepEqual(got, test.want) {
+			t.Errorf("resourceActions(%s, %s, %t) = %v, want %v", test.kind, test.status, test.missingRoot, got, test.want)
+		}
 	}
 }

@@ -194,6 +194,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "sums Project usage rows for the Project view",
 	},
 	{
+		File: "internal/app/runtime_observation.go", Func: "graphRuntimeObservation",
+		Source: "Graph", Verdict: rootKindProjectOnly,
+		Why: "carries observed Project session status into the selector, which renders Project STATUS only; a ControlSession has no selector Project row",
+	},
+	{
 		File: "internal/app/sessions_registry.go", Func: "attributeSessionSummaries",
 		Source: "Graph", Verdict: rootKindBoth,
 		Why: "attributes exact session bindings through both graph root kinds while keeping Home out of Project rows",
@@ -437,14 +442,14 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 	for verdict, want := range map[rootKindVerdict]int{
 		rootKindBoth:        20,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 24,
+		rootKindProjectOnly: 25,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 46; got != want {
+	if got, want := len(rootKindProjectionSites), 47; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

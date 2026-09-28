@@ -618,17 +618,16 @@ func (b *builder) runtimeLink() {
 
 // resourceActions decides eligibility from resource state.
 //
-// There are exactly three inputs and no fourth: the kind, whether an exact
-// runtime object was observed, and whether the owning Project lost its root.
-// Everything else an operator might expect to matter -- which host answered,
-// whether tmux was reachable, whether the observation succeeded -- deliberately
-// does not, because a row's logical existence does not depend on any of them.
+// There are exactly three inputs and no fourth: the kind, the row's observed
+// status, and whether the owning Project lost its root. Which host answered and
+// how the observation was taken deliberately do not matter; only what the
+// observation concluded does.
 //
-// StatusUnknown is treated exactly like StatusOffline here. That is not a
-// conflation: unknown and offline are reported as different statuses, and a
-// caller renders them differently, but neither of them is an observed runtime
-// object, so neither may offer to move an operator to one. What they both may
-// offer is the action that creates one.
+// StatusUnknown offers neither the action that moves an operator to a runtime
+// object nor the one that creates it. An unknown row was not seen live, so
+// open has nothing to move to; and it was not seen absent either, so start or
+// resume could be asked to create a runtime object that is already running.
+// Only delete, which does not depend on runtime state, remains.
 func resourceActions(kind RowKind, status resourcegraph.Status, missingRoot bool) []Action {
 	if missingRoot || status == resourcegraph.StatusMissingRoot {
 		return []Action{ActionRebind, ActionDelete}
@@ -637,10 +636,14 @@ func resourceActions(kind RowKind, status resourcegraph.Status, missingRoot bool
 	if kind == RowKindAgent {
 		revive = ActionResume
 	}
-	if status == resourcegraph.StatusLive {
+	switch status {
+	case resourcegraph.StatusLive:
 		return []Action{ActionOpen, ActionDelete}
+	case resourcegraph.StatusUnknown:
+		return []Action{ActionDelete}
+	default:
+		return []Action{revive, ActionDelete}
 	}
-	return []Action{revive, ActionDelete}
 }
 
 // statusReason states, in one clause, why a row carries the status it does.

@@ -367,11 +367,11 @@ func TestPaneScopeIsRootScopedAcrossProjectsWindowsAndAgents(t *testing.T) {
 }
 
 // TestObservedStatusIsTheOneDerivationRule pins the single rule every kind's
-// status goes through, as a truth table over its two inputs.
+// status goes through, as a truth table over its three inputs.
 //
 // There is deliberately nothing else in the codebase that decides live vs
-// offline vs missing-root. A second rule is how the two halves of a
-// three-valued status drift apart, and MissingRoot's precedence is exactly the
+// offline vs unknown vs missing-root. A second rule is how the halves of a
+// multi-valued status drift apart, and MissingRoot's precedence is exactly the
 // kind of thing that gets re-implemented slightly differently the second time.
 func TestObservedStatusIsTheOneDerivationRule(t *testing.T) {
 	t.Parallel()
@@ -380,17 +380,21 @@ func TestObservedStatusIsTheOneDerivationRule(t *testing.T) {
 		name        string
 		missingRoot bool
 		bound       bool
+		unobserved  bool
 		want        Status
 	}{
 		{name: "observed live", bound: true, want: StatusLive},
 		{name: "observed on nothing", want: StatusOffline},
-		{name: "missing root outranks an unobserved runtime", missingRoot: true, want: StatusMissingRoot},
+		{name: "not observed at all", unobserved: true, want: StatusUnknown},
+		{name: "a live observation outranks an unobserved flag", bound: true, unobserved: true, want: StatusLive},
+		{name: "missing root outranks an unobserved runtime", missingRoot: true, unobserved: true, want: StatusMissingRoot},
+		{name: "missing root outranks an offline runtime", missingRoot: true, want: StatusMissingRoot},
 		{name: "missing root outranks a live runtime", missingRoot: true, bound: true, want: StatusMissingRoot},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if got := ObservedStatus(test.missingRoot, test.bound); got != test.want {
-				t.Fatalf("ObservedStatus(%t, %t) = %q, want %q", test.missingRoot, test.bound, got, test.want)
+			if got := ObservedStatus(test.missingRoot, test.bound, test.unobserved); got != test.want {
+				t.Fatalf("ObservedStatus(%t, %t, %t) = %q, want %q", test.missingRoot, test.bound, test.unobserved, got, test.want)
 			}
 		})
 	}
@@ -801,3 +805,112 @@ func TestNoValueTokenCanBecomeAnActiveTargetSentinel(t *testing.T) {
 }
 
 func refPtr(ref Ref) *Ref { return &ref }
+
+// TestUnobservedResourcesReportUnknownNotOffline pins C-2: a resource whose
+// observation could not be taken is unknown, a resource observed with nothing
+// mirroring it stays offline, and a Project read against an observation of its
+// session reports that observation instead of its stored session projection.
+func TestUnobservedResourcesReportUnknownNotOffline(t *testing.T) {
+	t.Parallel()
+
+	registry := standardRegistry(t)
+	observed := observing([]string{"win-alpha-review"}, []string{"pan-alpha-review-zsh"})
+	observed.SessionsObserved = true
+	observed.Sessions = map[string]bool{"prj-beta": true}
+	observed.Unobserved = map[string]bool{
+		// alpha's stored projection says live; it could not be observed.
+		"prj-alpha": true, "win-alpha-main": true, "pan-alpha-zsh": true,
+		"pan-alpha-log": true, "pan-alpha-codex": true, "agt-alpha-codex": true,
+		// MissingRoot outranks an observation that could not be taken.
+		"win-gone-main": true,
+	}
+	resolver := NewObserved(registry, observed)
+
+	want := map[string]Status{
+		"prj-alpha":            StatusUnknown,
+		"prj-beta":             StatusLive, // stored Live=false; the observation wins
+		"prj-gone":             StatusMissingRoot,
+		"win-alpha-main":       StatusUnknown,
+		"win-alpha-review":     StatusLive,
+		"win-beta-main":        StatusOffline,
+		"win-gone-main":        StatusMissingRoot,
+		"pan-alpha-zsh":        StatusUnknown,
+		"pan-alpha-log":        StatusUnknown,
+		"pan-alpha-codex":      StatusUnknown,
+		"pan-alpha-review-zsh": StatusLive,
+		"pan-beta-zsh":         StatusOffline,
+		"agt-alpha-codex":      StatusUnknown,
+	}
+	got := map[string]Status{}
+	projects, _ := resolver.ResolveProjects(Query{})
+	windows, err := resolver.ResolveWindows(Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	panes, err := resolver.ResolvePanes(Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents, err := resolver.ResolveAgents(Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resolution := range []Resolution{projects, windows, panes, agents} {
+		for _, match := range resolution.Matches {
+			got[match.UID] = match.Status
+		}
+	}
+	for uid, status := range want {
+		if got[uid] != status {
+			t.Errorf("%s status = %q, want %q", uid, got[uid], status)
+		}
+	}
+}
+
+// TestIdentityOnlyResolverIsUnchangedByUnknownStatus pins the WEB boundary of
+// C-2: New builds no observation, so its label and Project queries match the
+// same resources as before unknown existed, and it never reports unknown. A
+// Project there still reads its stored session projection.
+func TestIdentityOnlyResolverIsUnchangedByUnknownStatus(t *testing.T) {
+	t.Parallel()
+
+	resolver := New(standardRegistry(t))
+	project := mustRef(t, metadata.KindProject, "alpha")
+
+	agents, err := resolver.ResolveAgents(Query{Project: &project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := agents.UIDs(); !reflect.DeepEqual(got, []string{"agt-alpha-codex"}) {
+		t.Fatalf("Project query matched %v, want [agt-alpha-codex]", got)
+	}
+	windows, err := resolver.ResolveWindows(Query{Project: &project, Labels: []Label{mustLabel(t, "tier=primary")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := windows.UIDs(); !reflect.DeepEqual(got, []string{"win-alpha-main"}) {
+		t.Fatalf("label query matched %v, want [win-alpha-main]", got)
+	}
+	panes, err := resolver.ResolvePanes(Query{Labels: []Label{mustLabel(t, "role=shell")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := panes.UIDs(), []string{"pan-alpha-zsh", "pan-alpha-review-zsh", "pan-beta-zsh", "pan-gone-zsh"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("label query matched %v, want %v", got, want)
+	}
+	projects, _ := resolver.ResolveProjects(Query{})
+	statuses := map[string]Status{}
+	for _, match := range projects.Matches {
+		statuses[match.UID] = match.Status
+	}
+	if want := (map[string]Status{"prj-alpha": StatusLive, "prj-beta": StatusOffline, "prj-gone": StatusMissingRoot}); !reflect.DeepEqual(statuses, want) {
+		t.Fatalf("identity-only Project statuses = %v, want the stored projection %v", statuses, want)
+	}
+	for _, resolution := range []Resolution{agents, windows, panes} {
+		for _, match := range resolution.Matches {
+			if match.Status == StatusUnknown {
+				t.Fatalf("%s reports unknown from a resolver that took no observation", match.UID)
+			}
+		}
+	}
+}

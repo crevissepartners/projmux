@@ -139,7 +139,8 @@ type TraceStep struct {
 	Count int
 }
 
-// Status is the interpreted live/offline/missing-root state of a resource.
+// Status is the interpreted live/offline/unknown/missing-root state of a
+// resource.
 //
 // Status is an *observation*, never a stored field a read path trusts. Spec is
 // the opposite: stored spec is authoritative. A Window or Pane is live because
@@ -163,14 +164,19 @@ const (
 	// condition: spec.root disappeared. The resource is preserved, never
 	// deleted or re-identified, so it stays selectable.
 	StatusMissingRoot Status = "missing-root"
+	// StatusUnknown means the observation this resource would be judged against
+	// could not be taken, so its runtime object was neither seen nor seen to be
+	// absent. It is not offline: reporting offline would claim a readable
+	// machine with nothing on it. The spelling matches resourcegraph.StatusUnknown.
+	StatusUnknown Status = "unknown"
 )
 
 // ObservedStatus is the single status-derivation rule in the codebase.
 //
 // Every kind goes through it -- Project, Window, Pane, and Agent -- so the
-// precedence can never drift per kind. It takes exactly two facts and no
-// resource, which is the point: there is no third input a caller could smuggle
-// a stored liveness bool in through.
+// precedence can never drift per kind. It takes exactly three facts and no
+// resource, which is the point: there is no further input a caller could
+// smuggle a stored liveness bool in through.
 //
 //   - missingRoot outranks everything. A resource whose owning Project lost its
 //     spec.root needs an explicit rebind or prune regardless of what tmux is
@@ -180,12 +186,18 @@ const (
 //     supplied by the caller from a live-tmux snapshot; an absent observation is
 //     false, which can only downgrade a resource to offline and can never
 //     invent a live one.
-func ObservedStatus(missingRoot, bound bool) Status {
+//   - unobserved says the observation bound would have come from could not be
+//     taken. An unbound resource is then unknown rather than offline; it can
+//     never outrank a live observation or a MissingRoot condition. This is the
+//     same precedence resourcegraph applies to its rows.
+func ObservedStatus(missingRoot, bound, unobserved bool) Status {
 	switch {
 	case missingRoot:
 		return StatusMissingRoot
 	case bound:
 		return StatusLive
+	case unobserved:
+		return StatusUnknown
 	default:
 		return StatusOffline
 	}
@@ -198,7 +210,21 @@ func ObservedStatus(missingRoot, bound bool) Status {
 // Window/Pane uid observation: a session has no @projmux uid of its own, and
 // the two observed sets are the whole tmux-query budget of one invocation.
 func ProjectStatus(project metadata.Project) Status {
-	return ObservedStatus(hasMissingRoot(project), project.Status.Session != nil && project.Status.Session.Live)
+	return ObservedStatus(hasMissingRoot(project), project.Status.Session != nil && project.Status.Session.Live, false)
+}
+
+// projectStatus is ProjectStatus judged against this resolver's observation.
+//
+// When the invocation observed the Project sessions, the stored projection is
+// not read at all: the Project's status and its offered actions then come from
+// the same observation. Without a session observation -- the identity-only
+// resolver New builds -- it is exactly ProjectStatus.
+func (r *Resolver) projectStatus(project metadata.Project) Status {
+	live, observed := r.observed.BoundSession(project.Metadata.UID)
+	if !observed {
+		return ProjectStatus(project)
+	}
+	return ObservedStatus(hasMissingRoot(project), live, r.observed.IsUnobserved(project.Metadata.UID))
 }
 
 // hasMissingRoot reports whether a Project carries an active MissingRoot
@@ -563,7 +589,7 @@ func (r *Resolver) projectMatch(project metadata.Project) Match {
 		UID:     project.Metadata.UID,
 		Name:    project.Metadata.Name,
 		Context: r.contexts.For(metadata.KindProject, project.Metadata.UID),
-		Status:  ProjectStatus(project),
+		Status:  r.projectStatus(project),
 		CWD:     project.Spec.Root,
 	}
 }
@@ -588,7 +614,7 @@ func (r *Resolver) windowMatch(window metadata.Window) Match {
 		Name:    window.Metadata.Name,
 		Context: r.contexts.For(metadata.KindWindow, window.Metadata.UID),
 		Owner:   owner,
-		Status:  ObservedStatus(missingRoot, r.observed.BoundWindow(window.Metadata.UID)),
+		Status:  ObservedStatus(missingRoot, r.observed.BoundWindow(window.Metadata.UID), r.observed.IsUnobserved(window.Metadata.UID)),
 	}
 }
 
@@ -636,7 +662,7 @@ func (r *Resolver) agentMatch(agent metadata.Agent) Match {
 		Name:    agent.Metadata.Name,
 		Context: r.contexts.For(metadata.KindAgent, agent.Metadata.UID),
 		Owner:   owner,
-		Status:  ObservedStatus(missingRoot, r.agentBound(agent)),
+		Status:  ObservedStatus(missingRoot, r.agentBound(agent), r.observed.IsUnobserved(agent.Metadata.UID)),
 	}
 }
 
@@ -677,7 +703,7 @@ func (r *Resolver) paneMatch(pane metadata.Pane) Match {
 		Name:    pane.Metadata.Name,
 		Context: r.contexts.For(metadata.KindPane, pane.Metadata.UID),
 		Owner:   owner,
-		Status:  ObservedStatus(missingRoot, r.observed.BoundPane(pane.Metadata.UID)),
+		Status:  ObservedStatus(missingRoot, r.observed.BoundPane(pane.Metadata.UID), r.observed.IsUnobserved(pane.Metadata.UID)),
 		CWD:     pane.Spec.CWD,
 	}
 }
