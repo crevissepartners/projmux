@@ -1,14 +1,16 @@
 // Package mux provides the minimal command-runner boundary for mux backend
 // subprocess calls. Phase 1 keeps tmux as the only production backend and
-// intentionally passes tmux arguments through unchanged.
+// intentionally passes tmux arguments through unchanged; the default backend
+// starts the process through tmuxexec, which adds only tmux's UTF-8 client flag.
 package mux
 
 import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 )
 
 // Backend is the low-level command runner contract used by the mux boundary.
@@ -114,7 +116,7 @@ func (r Runner) runner() Backend {
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := tmuxexec.CommandContext(ctx, name, args...)
 	if name == "tmux" && len(args) > 0 && (args[0] == "attach-session" || args[0] == "switch-client") {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout

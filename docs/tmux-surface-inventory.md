@@ -10,6 +10,7 @@ Primary production sources:
 
 - `internal/integrations/mux/`
 - `internal/integrations/tmux/`
+- `internal/integrations/tmuxexec/`
 - `internal/app/`
 - generated config from `projmux config render standalone`,
   `projmux config render app`, and `projmux shell`
@@ -43,6 +44,18 @@ The boundary is intentionally pragmatic:
 - keep rich domain conversion in typed integration clients;
 - avoid spreading raw tmux invocation through app packages;
 - avoid introducing an abstraction that only renames a single local call.
+
+Every process projmux starts that may be a tmux command client is started
+through `internal/integrations/tmuxexec`. It adds tmux's `-u` client flag, so
+format output keeps its `\x1f` and `\t` separators and UTF-8 values when the
+caller has no UTF-8 locale (no `LANG`/`LC_*`, or `LC_ALL=C`); without it tmux
+rewrites those bytes to `_`. Clients that take over a terminal
+(`attach-session`, a `new-session` that is not detached) are left as they are.
+`TestTmuxSpawnSitesAreClosed` checks every package whose source holds the
+literal `"tmux"` or that imports a tmux integration package: each process spawn
+there must use that package or be on its closed list of spawns that never run
+tmux. A spawn of the literal `"tmux"` fails in any package. A package that runs
+tmux with neither the literal nor such an import is not checked.
 
 ## Semantic Command Surface
 

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -31,6 +30,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -1464,7 +1464,7 @@ func (c *statusbarCommand) displayPopupNoFallback(command string, options intmux
 type statusbarExecRunner struct{}
 
 func (statusbarExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := tmuxexec.CommandContext(ctx, name, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(out))

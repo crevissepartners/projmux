@@ -241,7 +241,7 @@ if grep -qE '(^| )(split-window|new-window|new-session|kill-pane|kill-window|set
   cat "$fake_tmux_log" >&2
   exit 1
 fi
-if grep -qvE '^display-message ' "$fake_tmux_log"; then
+if grep -qvE '^(-u )?display-message ' "$fake_tmux_log"; then
   echo "the saved-default split bridge issued something other than the read-only anchor probes:" >&2
   cat "$fake_tmux_log" >&2
   exit 1
@@ -1215,7 +1215,12 @@ mkdir -p "$lifecycle_mux_dir"
 cat >"$lifecycle_mux_dir/tmux" <<'LIFECYCLE_TMUX'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ -n "${PROJMUX_KILL_RACE_TARGET:-}" && "${1:-}" == "list-sessions" && "$*" == *"@projmux_ephemeral"* ]]; then
+# projmux puts tmux's -u client flag right before the command.
+command_word="${1:-}"
+if [[ "$command_word" == "-u" ]]; then
+  command_word="${2:-}"
+fi
+if [[ -n "${PROJMUX_KILL_RACE_TARGET:-}" && "$command_word" == "list-sessions" && "$*" == *"@projmux_ephemeral"* ]]; then
   output="$("$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" "$@")"
   "$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$PROJMUX_KILL_RACE_TARGET"
   printf '%s\n' "$output"

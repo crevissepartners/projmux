@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -90,10 +90,10 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		lookupEnv:    os.Getenv,
 		osStat:       os.Stat,
 		runCommand: func(name string, args ...string) error {
-			return exec.Command(name, args...).Run()
+			return tmuxexec.Command(name, args...).Run()
 		},
 		runOutput: func(name string, args ...string) ([]byte, error) {
-			return exec.Command(name, args...).Output()
+			return tmuxexec.Command(name, args...).Output()
 		},
 		tmuxRunner:             inttmux.ExecRunner{},
 		nativeKeyCapture:       platformkeys.CaptureModifiedChord,

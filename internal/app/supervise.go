@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 )
 
 // These process-private variables bind provider hooks to the materialization
@@ -244,11 +244,11 @@ func (c *superviseCommand) resolveServerDefaultCommand() resolvedPaneCommand {
 }
 
 func readServerPaneDefaults() (string, string, error) {
-	shell, err := exec.Command("tmux", "show-options", "-gv", "default-shell").Output()
+	shell, err := tmuxexec.Command("tmux", "show-options", "-gv", "default-shell").Output()
 	if err != nil {
 		return "", "", err
 	}
-	command, err := exec.Command("tmux", "show-options", "-gv", "default-command").Output()
+	command, err := tmuxexec.Command("tmux", "show-options", "-gv", "default-command").Output()
 	if err != nil {
 		return "", "", err
 	}

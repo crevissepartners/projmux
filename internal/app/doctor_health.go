@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -327,11 +328,11 @@ func (doctorExecBoundedRunner) RunBounded(ctx context.Context, name string, args
 	var cmd *exec.Cmd
 	switch args[4] {
 	case tmuxConfigDigestOption:
-		cmd = exec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_config_digest")
+		cmd = tmuxexec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_config_digest")
 	case tmuxopts.AppGlobal:
-		cmd = exec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_app")
+		cmd = tmuxexec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_app")
 	case runtimeMutationSocketNameOption:
-		cmd = exec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_socket_name")
+		cmd = tmuxexec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_socket_name")
 	default:
 		return nil, nil, errDoctorUnsupportedProbeCommand
 	}

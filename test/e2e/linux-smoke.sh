@@ -1172,6 +1172,9 @@ fi
 if [[ "\${create_args[0]:-}" == "-S" || "\${create_args[0]:-}" == "-L" ]] && [[ \${#create_args[@]} -ge 2 ]]; then
   create_args=("\${create_args[@]:2}")
 fi
+if [[ "\${create_args[0]:-}" == "-u" ]]; then
+  create_args=("\${create_args[@]:1}")
+fi
 if [[ "\${PROJMUX_CREATE_FAIL_SPLIT:-}" == "1" && "\${create_args[0]:-}" == "split-window" ]]; then
   echo "injected split failure" >&2
   exit 1
@@ -2840,6 +2843,9 @@ cat >"$agent_failure_shim/tmux" <<AGENT_MUTATION_SHIM
 phase6_args=("\$@")
 if [[ "\${phase6_args[0]:-}" == "-S" && \${#phase6_args[@]} -ge 2 ]]; then
   phase6_args=("\${phase6_args[@]:2}")
+fi
+if [[ "\${phase6_args[0]:-}" == "-u" ]]; then
+  phase6_args=("\${phase6_args[@]:1}")
 fi
 if [[ "\${phase6_args[0]:-}" == "set-option" ]]; then
   for phase6_arg in "\${phase6_args[@]:1}"; do
@@ -4629,7 +4635,7 @@ smoke_assert_file_contains "$delete_root/offline-agent-repeat.err" "matched no a
 delete_tmux set-option -gq @projmux_app 1
 for delete_offline_target in "$delete_offline_pane" "$delete_offline_agent_pane"; do
   for delete_forbidden_route in "-L $delete_socket" "-L $delete_product_socket" "-S $delete_socket_path"; do
-    if grep -Fq -- "$delete_forbidden_route kill-pane -t $delete_offline_target" "$delete_shim_log"; then
+    if grep -Eq -- "$delete_forbidden_route (-u )?kill-pane -t $delete_offline_target" "$delete_shim_log"; then
       echo "offline Pane/Agent canonical delete issued raw tmux cleanup: $delete_forbidden_route target=$delete_offline_target" >&2
       exit 1
     fi
@@ -4703,7 +4709,7 @@ if ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-offline" || \
   exit 1
 fi
 for delete_forbidden_route in "-L $delete_socket" "-L $delete_product_socket" "-S $delete_socket_path"; do
-  if grep -Fq -- "$delete_forbidden_route kill-window -t $delete_offline_window" "$delete_shim_log"; then
+  if grep -Eq -- "$delete_forbidden_route (-u )?kill-window -t $delete_offline_window" "$delete_shim_log"; then
     echo "offline Window canonical delete issued a tmux kill: $delete_forbidden_route target=$delete_offline_window" >&2
     exit 1
   fi
@@ -4958,14 +4964,14 @@ fi
 # physical socket. Inventory and every write are then pinned to that printable
 # exact `-S` authority; the queued self-delete embeds run-shell later on the
 # same routed tmux argv after its durable lease write.
-if ! grep -Fq -- "-L $delete_socket display-message -p -F #{socket_path}" "$delete_shim_log"; then
+if ! grep -Fq -- "-L $delete_socket -u display-message -p -F #{socket_path}" "$delete_shim_log"; then
   echo "delete Window e2e did not observe logical route discovery for -L $delete_socket" >&2
   cat "$delete_shim_log" >&2
   exit 1
 fi
 for canonical_read in \
-  "-S $delete_socket_path list-windows -a" \
-  "-S $delete_socket_path list-panes -a"; do
+  "-S $delete_socket_path -u list-windows -a" \
+  "-S $delete_socket_path -u list-panes -a"; do
   if ! grep -Fq -- "$canonical_read" "$delete_shim_log"; then
     echo "delete Window e2e did not observe physically pinned inventory: $canonical_read" >&2
     cat "$delete_shim_log" >&2
@@ -4991,6 +4997,8 @@ done
 if ! awk -v route="-L $delete_product_socket " '
   index($0, route) == 1 {
     command = substr($0, length(route) + 1)
+    # projmux puts the tmux -u client flag right before the command.
+    sub(/^-u /, "", command)
     if (command != "display-message -p -F #{socket_path}" &&
         command != "show-options -gqv @projmux_app" &&
         command != "show-options -gqv @projmux_socket_name") {
@@ -5294,6 +5302,9 @@ cat >"$rename_root/shim/tmux" <<RENAME_TMUX_SHIM
 rename_tmux_args=("\$@")
 if [[ "\${rename_tmux_args[0]:-}" == "-S" && \${#rename_tmux_args[@]} -ge 2 ]]; then
   rename_tmux_args=("\${rename_tmux_args[@]:2}")
+fi
+if [[ "\${rename_tmux_args[0]:-}" == "-u" ]]; then
+  rename_tmux_args=("\${rename_tmux_args[@]:1}")
 fi
 if [[ "\${rename_tmux_args[0]:-}" == "set-option" ]]; then
   for rename_tmux_arg in "\${rename_tmux_args[@]:1}"; do
@@ -6137,7 +6148,7 @@ fi
 if [[ "\${1:-}" == "-L" || "\${1:-}" == "-S" ]]; then
   exec $(printf %q "$startup_real_tmux") "\$@"
 fi
-if [[ "\${1:-}" == "display-message" ]]; then
+if [[ "\${1:-}" == "display-message" || ( "\${1:-}" == "-u" && "\${2:-}" == "display-message" ) ]]; then
   printf '%s\n' "\$*" >>$(printf %q "$startup_root/display-messages.log")
 fi
 exec $(printf %q "$startup_real_tmux") -L $(printf %q "$startup_socket") "\$@"
