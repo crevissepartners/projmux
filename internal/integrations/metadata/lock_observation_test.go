@@ -3,6 +3,7 @@ package metadata
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"reflect"
@@ -305,6 +306,10 @@ func TestRegistryLockTimeoutNamesTheHolderCommandWithoutItsPrompt(t *testing.T) 
 	if err != nil {
 		t.Fatalf("holder stdin: %v", err)
 	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("holder stdout: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start the holder process: %v", err)
 	}
@@ -315,6 +320,10 @@ func TestRegistryLockTimeoutNamesTheHolderCommandWithoutItsPrompt(t *testing.T) 
 			t.Errorf("holder pid %d exit: %v", pid, err)
 		}
 	})
+	// Start returns before the child's new argv shows in /proc/<pid>/cmdline, so wait for the child itself to say it runs.
+	if _, err := io.ReadFull(stdout, make([]byte, 1)); err != nil {
+		t.Fatalf("holder pid %d exited or closed stdout before signalling it runs: %v", pid, err)
+	}
 
 	store := NewStore(PathFor(t.TempDir()))
 	holdRegistryFlock(t, store)
