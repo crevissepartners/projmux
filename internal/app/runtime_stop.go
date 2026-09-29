@@ -180,7 +180,8 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 		return errors.Join(compensate(nil), recordManagedRuntimeStopSessionNotLive(stopStore, target))
 	}
 	if planErr == nil {
-		return recordManagedRuntimeStopSessionNotLive(stopStore, target)
+		return errors.Join(recordManagedRuntimeStopSessionNotLive(stopStore, target),
+			projectProjectStopInterruptions(stopStore, interruptions, operationID))
 	}
 
 	// tmux may return an error after applying kill-session. Retain the receipt
@@ -196,7 +197,50 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 			coremetadata.TerminationSourceControlAction, coremetadata.TerminationInterrupted, operationID,
 			projectStopInterruptionSummary(interruptions), observeErr))
 	}
-	return errors.Join(planErr, recordManagedRuntimeStopSessionNotLive(stopStore, target))
+	return errors.Join(planErr, recordManagedRuntimeStopSessionNotLive(stopStore, target),
+		projectProjectStopInterruptions(stopStore, interruptions, operationID))
+}
+
+// projectProjectStopInterruptions lowers the Agents this stop interrupted once
+// exact reobservation proved their Session absent. Nothing else would: the
+// window-unlinked hook deliberately projects nothing, and no pane-exit hook
+// fires for a killed Session, so without this pass an Agent stays Running on a
+// vanished Pane until an unrelated route happens to reconcile.
+//
+// The absence proof covers only the Panes that carried this operation's
+// receipt, so only those are projected, and only while that exact receipt and
+// its activation generation are still current. A Pane relaunched or re-stamped
+// in between is someone else's state and is left for the reconciler. The
+// projection itself is the reconciler's own transition, so the phase and reason
+// are the ones that pass would have written later.
+func projectProjectStopInterruptions(store *resourceStore, interruptions []projectStopInterruption, operationID string) error {
+	if len(interruptions) == 0 {
+		return nil
+	}
+	_, err := store.update(func(working *coremetadata.Registry) error {
+		mutator := store.mutator()
+		for _, interruption := range interruptions {
+			pane, ok := working.Pane(interruption.PaneUID)
+			if !ok || pane.Status.Activation.Generation != interruption.Generation ||
+				!matchingProjectStopInterruption(pane.Status.LastTermination, coremetadata.TerminationEvidence{
+					PaneUID: interruption.PaneUID, AgentUID: interruption.AgentUID,
+					Generation: interruption.Generation, OperationID: operationID,
+				}) {
+				continue
+			}
+			if _, err := mutator.ProjectTermination(working, coremetadata.TerminationProjectionInput{
+				PaneUID: interruption.PaneUID, Generation: interruption.Generation,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("project stop removed its Session but could not lower the interrupted Agents (operation=%s activations=%s) to their terminal phase: %w",
+			operationID, projectStopInterruptionSummary(interruptions), MapMetadataError(err))
+	}
+	return nil
 }
 
 // recordManagedRuntimeStopSessionNotLive lowers the stored Project session
