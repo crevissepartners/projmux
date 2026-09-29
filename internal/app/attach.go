@@ -44,6 +44,9 @@ type attachCommand struct {
 	lookupEnv func(string) string
 	// switcher owns the Project open path that `attach project` forwards to.
 	switcher rawArgvCommand
+	// store is the Registry `attach project` resolves a `uid:` or name
+	// reference against before it forwards the Project root.
+	store *resourceStore
 }
 
 func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachCommand {
@@ -58,6 +61,7 @@ func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachComman
 		workingDir:  os.Getwd,
 		now:         time.Now,
 		lookupEnv:   os.Getenv,
+		store:       newResourceStore(),
 		ensureHomeSession: func(ctx context.Context, sessionName, cwd string) error {
 			configPath, err := control.defaultConfigPath()
 			if err != nil {
@@ -102,6 +106,12 @@ func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
 // means creating the tmux session when it is missing and then attaching to it.
 // Called from inside a tmux client it refuses with exit 2 and points at `focus
 // project`, which moves the existing client and never materializes anything.
+//
+// A `uid:` or name reference resolves through resolveProjectRef, the resolver
+// `open project` uses, and the open path receives that Project's root; one that
+// resolves to nothing is refused there, before any runtime or Registry write.
+// An absolute path is forwarded as given: the open path maps a claimed root to
+// its Project and registers a root no Project claims yet as a new one.
 func (c *attachCommand) runProject(args []string, stdout, stderr io.Writer) error {
 	const spelling = "attach project"
 
@@ -122,7 +132,18 @@ func (c *attachCommand) runProject(args []string, stdout, stderr io.Writer) erro
 			"%s is the outside-tmux entry point; from inside a tmux client run `projmux focus project %s` instead",
 			spelling, fs.Arg(0)))
 	}
-	return forwardRawArgv(c.switcher, spelling, "switch", []string{"open"}, fs.Args(), stdout, stderr)
+	target := fs.Arg(0)
+	if !filepath.IsAbs(target) {
+		project, err := resolveProjectRef(c.store, spelling, target)
+		if err != nil {
+			return err
+		}
+		target = cleanOptionalPath(project.Spec.Root)
+		if target == "" {
+			return usageError(fmt.Sprintf("%s: project/%s has no spec.root to route a runtime through", spelling, project.Metadata.Name))
+		}
+	}
+	return forwardRawArgv(c.switcher, spelling, "switch", []string{"open"}, []string{target}, stdout, stderr)
 }
 
 // insideTmuxClient reports whether this invocation already runs inside a tmux

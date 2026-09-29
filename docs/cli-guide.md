@@ -1452,7 +1452,7 @@ which of them a command had touched.
 | `create project` | creates or reuses the Project, its canonical Window, and its shell | not started | not moved |
 | `start project` | unchanged | materialized when offline | not moved |
 | `open project` | unchanged | materialized when offline | moved to the Project |
-| `attach project` | unchanged | materialized when offline | the outside caller attaches |
+| `attach project` | unchanged; an absolute root no Project claims is registered as a new Project | materialized when offline | the outside caller attaches |
 | `focus project` | unchanged | never materialized | moved to the Project |
 | `stop project` | unchanged | the exact session ends | existing safe fallback |
 | `unregister project` | the Project subtree is removed | **preserved** | not moved |
@@ -1475,7 +1475,13 @@ one `compatibilityWarnings` entry in the receipt. It is not scheduled for
 removal in this release.
 
 The reference for a Project can be `uid:<uid>`, a bare `metadata.name`, or the
-absolute root path the Project claims.
+absolute root path the Project claims. `start`, `open`, `attach`, and `stop
+project` resolve these forms with one resolver, and a `uid:` or name that
+matches no Project is refused with exit 2 before anything is written or
+started. `attach project` also accepts an
+absolute path no Project claims yet: it registers that root as a new Project
+and then attaches, where `open project` refuses the same path and points at
+`projmux create project --root`.
 
 A Project registered without `--name` -- by `create project`, by opening an
 unregistered directory, or by `Clear layout and open` -- is named after its root

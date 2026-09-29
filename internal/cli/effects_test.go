@@ -442,7 +442,7 @@ func TestCorrectedHandlerEffectsKeepSourceAndTestAnchors(t *testing.T) {
 		{"create agent", "create_agent.go", "func (c *createCommand) runResourceAgent", "create_agent_test.go", "TestCreateAgentAndProviderShortcutsShareScopedEqualization"},
 		{"start project", "project_lifecycle_verbs.go", "func (c *projectLifecycleCommand) execute", "project_lifecycle_verbs_test.go", "TestStartProjectMaterializesDetachedAndReportsAlreadyLive"},
 		{"open project", "project_lifecycle_verbs.go", "func (c *projectLifecycleCommand) materialize", "project_lifecycle_verbs_test.go", "TestOpenProjectMovesTheCurrentClientAndRefusesOutsideTmux"},
-		{"stop project", "project_lifecycle_verbs.go", "func (c *projectLifecycleCommand) resolveProject", "project_lifecycle_verbs_test.go", "TestStopProjectEndsOnlyTheRuntimeAndRefusesAnOfflineTarget"},
+		{"stop project", "project_lifecycle_verbs.go", "func resolveProjectRef", "project_lifecycle_verbs_test.go", "TestStopProjectEndsOnlyTheRuntimeAndRefusesAnOfflineTarget"},
 		{"unregister project", "delete.go", "func (c *deleteCommand) runProjectUnregister", "delete_test.go", "TestUnregisterProjectAndItsDeprecatedDeleteAliasAreByteIdenticalOnStdout"},
 		{"delete project", "delete.go", "func warnDeprecatedProjectDeleteAlias", "delete_test.go", "TestDeleteProjectIsTheOnlyRegistryUnregisterAndPreservesExternalAssets"},
 		{"agent resume", "agent.go", "func (c *agentCommand) runResume", "agent_resume_test.go", "TestAgentResumeRebindsTheExistingAgentToANewManagedPane"},

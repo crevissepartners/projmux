@@ -351,7 +351,7 @@ func TestSwitchVerbCallerArgvParsesUnderItsRoute(t *testing.T) {
 	t.Run("attach project forward", func(t *testing.T) {
 		t.Parallel()
 		cmd, seams := newSwitchVerbSeamCommand(t)
-		attach := &attachCommand{lookupEnv: func(string) string { return "" }, switcher: cmd}
+		attach := &attachCommand{lookupEnv: func(string) string { return "" }, switcher: cmd, store: newFakeResourceStore(t).store()}
 		var stdout, stderr bytes.Buffer
 		err := attach.Run([]string{"project", "alpha"}, &stdout, &stderr)
 		if err == nil || IsUsageError(err) || !errors.Is(err, errSwitchVerbSeam) {
