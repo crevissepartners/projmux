@@ -19,6 +19,7 @@ import (
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 const internalClaudeReplyGuardEnv = "PMX_INTERNAL_CLAUDE_REPLY_GUARD"
@@ -277,7 +278,7 @@ func (h *claudeCoordinationHub) permitsExplicitTool(argv []string, route coremet
 		return false
 	}
 	original := message.envelope.BrokerEnvelope
-	if original.Operator() || !messageRouteAccepts(route, original.Target) || argv[4] != "uid:"+original.Source.AgentUID || !broker.Current(*original) {
+	if original.Operator() || !messageRouteAccepts(route, original.Target) || argv[4] != "uid:"+original.Source.AgentUID || !replySenderCurrent(broker, *original) {
 		return false
 	}
 	if h.qualifiedVersion != claudeFrozenFrameProviderVersion {
@@ -287,6 +288,58 @@ func (h *claudeCoordinationHub) permitsExplicitTool(argv []string, route coremet
 		}
 	}
 	return true
+}
+
+// claudeReplySenderResolver is the optional broker lookup of an original
+// sender's route as the Registry names it now. A broker without it proves the
+// original's own Source route.
+type claudeReplySenderResolver interface {
+	CurrentSender(original coremessage.Envelope) (coremessage.Route, bool)
+}
+
+// CurrentSender resolves the original sender Agent's current route. The
+// incarnation is answered in the shape the original used whenever the current
+// route accepts it, as the CLI does for a reply, so ReplyRoutes compares like
+// with like; otherwise the current value stays and a changed conversation is
+// refused there.
+func (b *liveClaudeDialogueBroker) CurrentSender(original coremessage.Envelope) (coremessage.Route, bool) {
+	if b == nil || original.Operator() {
+		return coremessage.Route{}, false
+	}
+	registry, err := intmetadata.NewStore(b.registryPath).LoadDegradedReadOnly()
+	if err != nil {
+		return coremessage.Route{}, false
+	}
+	route, reason := coremetadata.ResolveAgentRoute(registry, original.Source.AgentUID)
+	if reason != "" {
+		return coremessage.Route{}, false
+	}
+	sender := publicMessageRoute(route)
+	if route.AcceptsIncarnation(original.Source.Incarnation) {
+		sender.Incarnation = original.Source.Incarnation
+	}
+	return sender, true
+}
+
+// replySenderCurrent is the reply tool's proof of the original sender. A
+// relaunch into the same conversation replaces the sender's Pane and
+// activation generation, so the original's Source is not proved as stored:
+// the sender Agent's current route must correlate with the original by
+// coremessage.ReplyRoutes (same Agent, provider, and conversation), and the
+// original with that route in place of its Source must still be Current.
+func replySenderCurrent(broker claudeDialogueBroker, original coremessage.Envelope) bool {
+	current := original
+	if resolver, ok := broker.(claudeReplySenderResolver); ok {
+		sender, ok := resolver.CurrentSender(original)
+		if !ok {
+			return false
+		}
+		current.Source = sender
+	}
+	if coremessage.ReplyRoutes(original, coremessage.Envelope{Source: original.Target, Target: current.Source}) != nil {
+		return false
+	}
+	return broker.Current(current)
 }
 
 func (g *claudeReplyToolGate) prepare(input claudeReplyToolInput, peer coremetadata.ProcessIdentity,
