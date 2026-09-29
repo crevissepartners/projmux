@@ -483,8 +483,9 @@ func managedPaneMirrorLive(ctx context.Context, runtime *tmuxPaneDeleteRuntime, 
 // rebinder, planned from the registry as it is now, with what request asks of
 // its layers: the zero request is a plain resume, byte for byte. The model
 // and effort are `agent resume --model/--effort` overrides recorded under
-// request.source (empty means coremetadata.SettingSourceResume).
-func (c *agentCommand) resumeStoppedAgent(agentUID string, request agentSettingsRequest, stdout, stderr io.Writer) error {
+// request.source (empty means coremetadata.SettingSourceResume). stopped is
+// the managed Pane the restart closed, whose name the new Pane carries.
+func (c *agentCommand) resumeStoppedAgent(agentUID string, stopped stoppedAgentPane, request agentSettingsRequest, stdout, stderr io.Writer) error {
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
@@ -502,6 +503,7 @@ func (c *agentCommand) resumeStoppedAgent(agentUID string, request agentSettings
 	}
 	plan.modelOverride, plan.effortOverride, plan.overrideSource = request.model, request.effort, request.source
 	plan.layerChanges = agentSettingsRequest{profile: request.profile, instructions: request.instructions, reset: request.reset}
+	plan.stoppedPane = stopped
 	return c.rebind.rebind("agent resume", plan, stdout, stderr)
 }
 
