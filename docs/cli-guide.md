@@ -178,9 +178,12 @@ The contract:
   partially specified selector. The active *Project* is a separate rule and does
   apply to a reference -- see [Reference scope](#reference-scope-the-active-project-namespace)
   below.
-- **Only the singular routes and `create`.** The plural reads (`get
-  projects|windows|panes|agents`) stay 0..N inventories over their whole scope,
-  and `delete` is unchanged. `create` has its own spelling of the same rule --
+- **Only the singular routes, `delete`, and `create`.** The plural reads (`get
+  projects|windows|panes|agents`) stay 0..N inventories over their whole scope.
+  `delete window|pane|agent` with neither a selector nor `--all` targets the
+  active Window, Pane, or Agent and asks before removing it -- see
+  [Delete confirmation](#delete-confirmation); `--all` still means every one in
+  the registry. `create` has its own spelling of the same rule --
   see [Create scope](#create-scope) -- because a create resolves a scope to put
   something *into* rather than a target to act *on*.
 - **Inside tmux is decided by `$TMUX_PANE` plus `$TMUX`**, not by whether a tmux
