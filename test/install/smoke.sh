@@ -226,14 +226,18 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-doctor.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "atomically replaced $installed"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reloaded tmux server -L projmux: 1 sessions"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reconcile:"
-smoke_assert_file_contains "$HOME/.config/projmux/tmux.conf" 'internal status notify --max-width #{?#{e|<:#{client_width},40},#{e|/:#{client_width},2},#{?#{e|<:#{client_width},160},20,#{?#{e|<:#{client_width},220},#{e|-:#{client_width},140},80}}}'
-smoke_assert_file_contains "$HOME/.config/projmux/tmux.conf" 'internal status usage --max-width #{e|-:#{client_width},#{?#{e|<:#{client_width},40},#{e|/:#{client_width},2},#{?#{e|<:#{client_width},160},20,#{?#{e|<:#{client_width},220},#{e|-:#{client_width},140},80}}}}'
+# The product writes the app tmux config under XDG_CONFIG_HOME when it is an
+# absolute path, which smoke_setup_env always exports; HOME/.config is only
+# the fallback without it.
+installed_tmux_conf="${XDG_CONFIG_HOME:?}/projmux/tmux.conf"
+smoke_assert_file_contains "$installed_tmux_conf" 'internal status notify --max-width #{?#{e|<:#{client_width},40},#{e|/:#{client_width},2},#{?#{e|<:#{client_width},160},20,#{?#{e|<:#{client_width},220},#{e|-:#{client_width},140},80}}}'
+smoke_assert_file_contains "$installed_tmux_conf" 'internal status usage --max-width #{e|-:#{client_width},#{?#{e|<:#{client_width},40},#{e|/:#{client_width},2},#{?#{e|<:#{client_width},160},20,#{?#{e|<:#{client_width},220},#{e|-:#{client_width},140},80}}}}'
 # The installed config is what a live tmux server sources, so it is the one
 # place the internal-namespace relocation has to hold end to end.
-smoke_assert_file_contains "$HOME/.config/projmux/tmux.conf" "internal statusbar click"
-smoke_assert_file_lacks "$HOME/.config/projmux/tmux.conf" "'$installed' status"
-smoke_assert_file_lacks "$HOME/.config/projmux/tmux.conf" "'$installed' statusbar"
-smoke_assert_file_lacks "$HOME/.config/projmux/tmux.conf" "'$installed' tmux"
+smoke_assert_file_contains "$installed_tmux_conf" "internal statusbar click"
+smoke_assert_file_lacks "$installed_tmux_conf" "'$installed' status"
+smoke_assert_file_lacks "$installed_tmux_conf" "'$installed' statusbar"
+smoke_assert_file_lacks "$installed_tmux_conf" "'$installed' tmux"
 
 app_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_app)"
 if [[ "$app_flag" != "1" ]]; then
@@ -296,3 +300,5 @@ if [[ "$recovered_pane" != %* ]]; then
   echo "installed ordinary mutation did not return an exact pane id after recovery: $recovered_pane" >&2
   exit 1
 fi
+
+echo ">> install smoke passed config=$installed_tmux_conf"
