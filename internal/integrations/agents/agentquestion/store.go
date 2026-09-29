@@ -25,6 +25,9 @@ const (
 	storeVersion  = 1
 	storeDirName  = "agent-questions"
 	storeFileName = "questions.json"
+	// tempPrefix names the file a write fills before renaming it over the
+	// store file.
+	tempPrefix = ".questions.tmp-"
 	// maxRecords bounds the store. A waiting record is never evicted to make
 	// room; the oldest terminal ones are.
 	maxRecords    = 64
@@ -203,6 +206,9 @@ type diskState struct {
 type Store struct {
 	path string
 	now  func() time.Time
+	// removeTemp, when set by an in-package test, replaces os.Remove for the
+	// temp files a dead write left.
+	removeTemp func(path string) error
 }
 
 // NewStore opens the store under stateDir. Nothing is touched until the first
@@ -682,7 +688,10 @@ func (s *Store) writeLocked(state diskState) error {
 		return ErrCapacity
 	}
 	dir := filepath.Dir(s.path)
-	tmp, err := os.CreateTemp(dir, ".questions.tmp-*")
+	// Every write holds the store lock, which the kernel releases when its
+	// holder dies, so a temp file seen here is one a dead write left.
+	localstate.RemoveLockedTemps(dir, tempPrefix, s.removeTemp)
+	tmp, err := os.CreateTemp(dir, tempPrefix+"*")
 	if err != nil {
 		return err
 	}

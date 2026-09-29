@@ -892,20 +892,7 @@ func (s *Store) writeLockedCommit(state diskState) (committed bool, err error) {
 // belongs to no live write. Removal is best effort: a file that cannot be read
 // or removed stays for a later write and never fails this one.
 func (s *Store) removeOrphanTempsLocked(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	remove := os.Remove
-	if s.removeTemp != nil {
-		remove = s.removeTemp
-	}
-	for _, entry := range entries {
-		if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), tempPrefix) {
-			continue
-		}
-		_ = remove(filepath.Join(dir, entry.Name()))
-	}
+	localstate.RemoveLockedTemps(dir, tempPrefix, s.removeTemp)
 }
 
 // syncDir makes a renamed directory entry durable. A filesystem that refuses

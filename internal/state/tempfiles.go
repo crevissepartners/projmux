@@ -46,3 +46,29 @@ func ReclaimStaleTemps(dir, pattern string) {
 		_ = os.Remove(filepath.Join(dir, name))
 	}
 }
+
+// RemoveLockedTemps removes the temp files that writes killed before their
+// rename left in dir: every regular file whose name starts with prefix. It is
+// for writers that create those temps only while holding a lock the kernel
+// releases when its holder dies, and it must be called with that lock held, so
+// any such file belongs to no live write and needs no age guard. remove
+// replaces os.Remove when not nil. Removal is best effort: a file that cannot
+// be listed or removed stays for a later write and never fails this one.
+func RemoveLockedTemps(dir, prefix string, remove func(path string) error) {
+	if prefix == "" {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	if remove == nil {
+		remove = os.Remove
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		_ = remove(filepath.Join(dir, entry.Name()))
+	}
+}
