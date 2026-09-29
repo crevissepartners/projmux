@@ -35,7 +35,10 @@ import (
 // surfaces. Both share a single Manager so collect-once-render-twice stays
 // cheap.
 type Command struct {
-	managerFn               func([]string) (*usage.Manager, error)
+	managerFn func([]string) (*usage.Manager, error)
+	// readOnlyManagerFn, when set, replaces managerFn for the read-only
+	// manager only, so a test can tell which authority a path took.
+	readOnlyManagerFn       func([]string) (*usage.Manager, error)
 	enabledAgentsFn         func() ([]config.AIAgentProvider, error)
 	now                     func() time.Time
 	lookupEnv               func(string) string
@@ -246,6 +249,87 @@ func (c *Command) MaybeCollect(ctx context.Context) (bool, error) {
 	return mgr.MaybeCollect(ctx, statusRefreshThrottle)
 }
 
+// BackgroundRefresh performs the automatic refresh RunStatus runs on every
+// status-line redraw, without rendering and without the --force path. It is
+// for callers that refresh on a timer rather than on a user gesture, where no
+// status line may be redrawing to keep the cache moving.
+//
+// It keeps the status line's authority, not MaybeCollect's. The manager is the
+// read-only one, so the Codex adapter reads an app-server that is already
+// running and never starts one. It does not start the native watcher either:
+// only RunStatus keeps the watcher alive. A fresh batch that a running watcher
+// published still stands in for Codex's own collection, every adapter keeps
+// its own floor (statusRefreshThrottle, raised by its ThrottleHint) and its
+// persisted backoff, and a refresh that did something or failed is recorded in
+// the operations journal.
+//
+// It reports whether anything was refreshed. An empty ambient usage scope is
+// (false, nil) and touches nothing. The returned error is informational: the
+// cache keeps its previous rows, and the caller decides whether to show it.
+func (c *Command) BackgroundRefresh(ctx context.Context) (bool, error) {
+	modelScope := c.ambientModelScope()
+	if len(modelScope) == 0 {
+		return false, nil
+	}
+	stateDir := c.nativeBatchStateDir(modelScope)
+	mgr, err := c.managerForScopeReadOnly(modelScope)
+	if err != nil {
+		return false, err
+	}
+	started := time.Now()
+	refreshed, refreshErr := c.statusRefresh(ctx, mgr, stateDir)
+	if snaps, loadErr := mgr.LoadAll(); loadErr == nil {
+		c.recordStatusRefreshDiagnostics(refreshed, refreshErr, filterSnapshotsByModels(snaps, modelScope), started)
+	}
+	return refreshed, refreshErr
+}
+
+// nativeBatchStateDir returns the usage state dir whose native Codex event
+// batch a status refresh may apply, or "" when Codex is out of scope or the
+// dir does not resolve.
+func (c *Command) nativeBatchStateDir(modelScope []string) string {
+	if !modelScopeContains(modelScope, codexadapter.Name) {
+		return ""
+	}
+	stateDir, err := c.resolveStateDir()
+	if err != nil {
+		return ""
+	}
+	return stateDir
+}
+
+// statusRefresh is the throttled refresh shared by RunStatus and
+// BackgroundRefresh: apply a fresh native event batch from stateDir, then walk
+// every adapter past its floor.
+func (c *Command) statusRefresh(ctx context.Context, mgr *usage.Manager, stateDir string) (bool, error) {
+	var refreshErr error
+	accepted := false
+	if stateDir != "" {
+		accepted, refreshErr = c.applyFreshNativeEventBatch(mgr, stateDir)
+	}
+	// Accepting a batch refreshes Codex and only Codex, so it stands in
+	// for the Codex source decision on this tick — not for the adapter
+	// walk. Any other adapter past its own floor is still due and is
+	// collected here; otherwise a watcher that publishes on every tick
+	// starves the 5-minute Claude adapter indefinitely.
+	var exclude []string
+	if accepted {
+		exclude = append(exclude, codexadapter.Name)
+	}
+	collected, collectErr := mgr.MaybeCollectExcept(ctx, statusRefreshThrottle, exclude...)
+	return accepted || collected, errors.Join(refreshErr, collectErr)
+}
+
+// recordStatusRefreshDiagnostics journals a status refresh that refreshed
+// something or failed. The status segment stays silent by contract, so the
+// journal is the only place a repeated collection failure on this path
+// becomes visible.
+func (c *Command) recordStatusRefreshDiagnostics(refreshed bool, refreshErr error, snaps []usage.Snapshot, started time.Time) {
+	if refreshed || refreshErr != nil {
+		c.recordCollectDiagnostics(refreshErr, snaps, started)
+	}
+}
+
 // RunStatus implements the `projmux internal status usage` subcommand. It triggers
 // an opportunistic, throttled cache refresh (so a fresh install or a stale
 // cache self-heals on the next tmux redraw) and then reads the persisted
@@ -277,12 +361,9 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 	if len(modelScope) == 0 {
 		return nil
 	}
-	stateDir := ""
-	if modelScopeContains(modelScope, codexadapter.Name) {
-		if resolved, resolveErr := c.resolveStateDir(); resolveErr == nil {
-			stateDir = resolved
-			c.ensureNativeWatcher(stateDir)
-		}
+	stateDir := c.nativeBatchStateDir(modelScope)
+	if stateDir != "" {
+		c.ensureNativeWatcher(stateDir)
 	}
 	mgr, err := c.managerForScopeReadOnly(modelScope)
 	if err != nil {
@@ -306,33 +387,10 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 		_, refreshErr = mgr.ForceCollect(context.Background())
 		refreshed = true
 	} else {
-		accepted := false
-		if stateDir != "" {
-			accepted, refreshErr = c.applyFreshNativeEventBatch(mgr, stateDir)
-			refreshed = accepted
-		}
-		// Accepting a batch refreshes Codex and only Codex, so it stands in
-		// for the Codex source decision on this tick — not for the adapter
-		// walk. Any other adapter past its own floor is still due and is
-		// collected here; otherwise a watcher that publishes on every tick
-		// starves the 5-minute Claude adapter indefinitely.
-		var exclude []string
-		if accepted {
-			exclude = append(exclude, codexadapter.Name)
-		}
-		collected, collectErr := mgr.MaybeCollectExcept(
-			context.Background(), statusRefreshThrottle, exclude...,
-		)
-		refreshed = refreshed || collected
-		refreshErr = errors.Join(refreshErr, collectErr)
+		refreshed, refreshErr = c.statusRefresh(context.Background(), mgr, stateDir)
 	}
-	if refreshErr != nil {
-		if c.env(usageDebugEnvVar) != "" {
-			fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
-		}
-		// The status segment stays silent by contract, so the journal is the
-		// only place a repeated collection failure on this path becomes
-		// visible. Best-effort; the segment still renders from cache.
+	if refreshErr != nil && c.env(usageDebugEnvVar) != "" {
+		fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
 	}
 
 	snaps, err := mgr.LoadAll()
@@ -340,9 +398,8 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	snaps = filterSnapshotsByModels(snaps, modelScope)
-	if refreshed || refreshErr != nil {
-		c.recordCollectDiagnostics(refreshErr, snaps, started)
-	}
+	// Best-effort; the segment still renders from cache.
+	c.recordStatusRefreshDiagnostics(refreshed, refreshErr, snaps, started)
 
 	out := formatStatusUsageWithVisibility(snaps, *maxWidth, c.now(), c.loadHUDVisibilityPreferences())
 	if out == "" {
@@ -371,6 +428,9 @@ func (c *Command) managerForScope(modelScope []string) (*usage.Manager, error) {
 }
 
 func (c *Command) managerForScopeReadOnly(modelScope []string) (*usage.Manager, error) {
+	if c.readOnlyManagerFn != nil {
+		return c.readOnlyManagerFn(modelScope)
+	}
 	if c.managerFn != nil {
 		return c.managerFn(modelScope)
 	}
