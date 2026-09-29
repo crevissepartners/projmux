@@ -143,14 +143,19 @@ func TestManagedRuntimeStopUsesOnePrintedPhysicalObservationAndRegistryAuthority
 	}
 	pane, _ := store.registry.Pane("pan-alpha-codex")
 	agent, _ := store.registry.Agent("agt-alpha-codex")
-	// One interruption prewrite before the kill, one projection write after it.
-	if store.writes != 2 || pane.Status.LastTermination == nil || agent.Status.LastTermination == nil ||
+	// One interruption prewrite before the kill, then the session projection
+	// and the interrupted Agent projection after it.
+	if store.writes != 3 || pane.Status.LastTermination == nil || agent.Status.LastTermination == nil ||
 		pane.Status.LastTermination.Classification != coremetadata.TerminationInterrupted ||
 		pane.Status.LastTermination.Source != coremetadata.TerminationSourceControlAction ||
 		pane.Status.LastTermination.Generation != "gen-alpha" ||
 		pane.Status.LastTermination.OperationID != agent.Status.LastTermination.OperationID {
 		t.Fatalf("managed stop interruption evidence = writes=%d pane=%+v agent=%+v", store.writes,
 			pane.Status.LastTermination, agent.Status.LastTermination)
+	}
+	if agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" ||
+		agent.Status.Reason != coremetadata.TerminationReasonInterrupted {
+		t.Fatalf("interrupted Agent after the stop = %+v, want Offline with no paneRef and the interrupted reason", agent.Status)
 	}
 	assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: false})
 	for _, call := range runner.calls {
@@ -284,8 +289,66 @@ func TestProjectStopFailureCompensatesOnlyWhenExactSessionIsProvedLive(t *testin
 				pane.Status.LastTermination.OperationID != agent.Status.LastTermination.OperationID) {
 				t.Fatalf("retained receipts do not share operation: pane=%+v agent=%+v", pane.Status.LastTermination, agent.Status.LastTermination)
 			}
+			// Only a proved-absent Session lowers the Agent; a proved-live one
+			// keeps it Running on its Pane.
+			if test.wantLive {
+				if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != "pan-alpha-codex" {
+					t.Fatalf("Agent of a proved-live Session = %+v, want Running on pan-alpha-codex", agent.Status)
+				}
+			} else if agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
+				t.Fatalf("Agent of a proved-absent Session = %+v, want Offline with no paneRef", agent.Status)
+			}
 			assertRuntimeStopSessionProjection(t, store, "prj-alpha", &coremetadata.SessionProjection{Name: "alpha", Live: test.wantLive})
 		})
+	}
+}
+
+// TestProjectStopProjectionLowersOnlyItsCurrentReceipts pins the ordering
+// cases around the post-kill projection. A supervisor receipt that lands
+// between the kill and the projection cannot displace the sticky interruption,
+// so the Agent still goes Offline. A Pane relaunched in between no longer
+// carries this operation's receipt and keeps its new activation. A repeat pass
+// changes nothing.
+func TestProjectStopProjectionLowersOnlyItsCurrentReceipts(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	activateRuntimeStopAgent(t, store, "gen-alpha-1")
+	addSecondRuntimeStopAgent(t, store)
+	stopStore := store.store()
+	interruptions, err := recordProjectStopInterruptions(stopStore, "prj-alpha", "op-project-stop")
+	if err != nil || len(interruptions) != 2 {
+		t.Fatalf("prewrite = %v, %v", interruptions, err)
+	}
+	mutator := store.mutator()
+	late, err := mutator.RecordTermination(&store.registry, coremetadata.TerminationEvidence{
+		Source: coremetadata.TerminationSourceSupervisor, Classification: coremetadata.TerminationKilled, Signal: "HUP",
+		PaneUID: "pan-alpha-codex", AgentUID: "agt-alpha-codex", Generation: "gen-alpha-1",
+	})
+	if err != nil || !late.Duplicate {
+		t.Fatalf("late supervisor receipt = %+v, %v; want it absorbed by the sticky interruption", late, err)
+	}
+	if _, err := mutator.RecordPaneActivation(&store.registry, "pan-alpha-reviewer", coremetadata.PaneActivationOptions{
+		Generation: "gen-relaunched", RuntimeID: "%8", AgentUID: "agt-alpha-review", OperationID: "op-relaunch",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for pass := range 2 {
+		if err := projectProjectStopInterruptions(stopStore, interruptions, "op-project-stop"); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+		stopped, _ := store.registry.Agent("agt-alpha-codex")
+		if stopped.Status.Phase != coremetadata.PhaseOffline || stopped.Status.PaneRef != "" ||
+			stopped.Status.Reason != coremetadata.TerminationReasonInterrupted ||
+			stopped.Status.LastTermination == nil || stopped.Status.LastTermination.OperationID != "op-project-stop" {
+			t.Fatalf("pass %d: interrupted Agent = %+v, want Offline with this stop's receipt", pass, stopped.Status)
+		}
+		relaunched, _ := store.registry.Agent("agt-alpha-review")
+		pane, _ := store.registry.Pane("pan-alpha-reviewer")
+		if relaunched.Status.Phase != coremetadata.PhaseRunning || relaunched.Status.PaneRef != "pan-alpha-reviewer" ||
+			pane.Status.Activation.Generation != "gen-relaunched" || pane.Status.LastTermination != nil {
+			t.Fatalf("pass %d: relaunched Agent = %+v pane = %+v, want it Running on its new activation", pass, relaunched.Status, pane.Status)
+		}
 	}
 }
 

@@ -227,10 +227,17 @@ func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDeci
 	declared := strings.TrimSpace(agent.Spec.Provider)
 	ref := agent.Status.SessionRef
 	if ref.Empty() {
+		// Continue never starts a fresh conversation in place of a missing one,
+		// so the skip names the verb that does, as `agent resume` refuses.
+		provider := declared
+		if provider == "" {
+			provider = "<provider>"
+		}
 		return topologyAgentResumeDecision{
 			provider: declared,
 			code:     diagnostics.TopologyAgentSessionRefMissing,
-			reason:   "no provider session ref is recorded; projmux records one the first time that Agent's provider hook fires",
+			reason: "no provider session ref is recorded; projmux records one the first time that Agent's provider hook fires. " +
+				"To start a new conversation instead, run `projmux create agent --provider " + provider + "`, which mints a new Agent",
 		}
 	}
 	provider := strings.TrimSpace(ref.Provider)
