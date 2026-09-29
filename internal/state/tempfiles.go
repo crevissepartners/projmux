@@ -26,24 +26,39 @@ func ReclaimStaleTemps(dir, pattern string) {
 	if !ok {
 		return
 	}
+	ReclaimStaleTempsMatching(dir, func(name string) bool {
+		return len(name) > len(prefix)+len(suffix) && strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix)
+	}, nil)
+}
+
+// ReclaimStaleTempsMatching is ReclaimStaleTemps for a writer whose temp names
+// one CreateTemp pattern cannot describe, such as a store that stages several
+// files whose names carry a variable stamp. match decides from the name alone
+// whether a writer could have created it; the age guard, the regular-file
+// check, and the best-effort contract are the same. remove replaces os.Remove
+// when not nil.
+func ReclaimStaleTempsMatching(dir string, match func(name string) bool, remove func(path string) error) {
+	if match == nil {
+		return
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
+	if remove == nil {
+		remove = os.Remove
+	}
 	cutoff := time.Now().Add(-StaleTempAge)
 	for _, entry := range entries {
 		name := entry.Name()
-		if len(name) <= len(prefix)+len(suffix) || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
-			continue
-		}
-		if !entry.Type().IsRegular() {
+		if !match(name) || !entry.Type().IsRegular() {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil || !info.Mode().IsRegular() || info.ModTime().After(cutoff) {
 			continue
 		}
-		_ = os.Remove(filepath.Join(dir, name))
+		_ = remove(filepath.Join(dir, name))
 	}
 }
 

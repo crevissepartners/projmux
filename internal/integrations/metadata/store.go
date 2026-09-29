@@ -133,6 +133,9 @@ type storeHooks struct {
 	// They never replace lock, deadline, or transaction behavior.
 	afterDegradedSuspect func()
 	afterContendedFlock  func()
+	// removeStaleTemp replaces os.Remove when reclaimStaleTemps deletes an
+	// abandoned staged file, so tests can observe and fail each removal.
+	removeStaleTemp func(path string) error
 }
 
 // Store persists one resource registry file behind a cross-process lock.
@@ -330,6 +333,9 @@ func (s *Store) load(validate bool) (coremetadata.Registry, MigrationResult, err
 	if err != nil {
 		return coremetadata.Registry{}, MigrationResult{}, err
 	}
+	if migration.Migrated {
+		s.reclaimStaleTemps()
+	}
 	return out, migration, nil
 }
 
@@ -449,6 +455,7 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 	if err != nil {
 		return coremetadata.Registry{}, err
 	}
+	s.reclaimStaleTemps()
 	return out, nil
 }
 
@@ -521,6 +528,9 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 	if err != nil {
 		return coremetadata.Registry{}, false, err
 	}
+	if changed {
+		s.reclaimStaleTemps()
+	}
 	return out, changed, nil
 }
 
@@ -575,6 +585,9 @@ func (s *Store) Migrate() (MigrationResult, error) {
 	})
 	if err != nil {
 		return MigrationResult{}, err
+	}
+	if out.Migrated {
+		s.reclaimStaleTemps()
 	}
 	return out, nil
 }

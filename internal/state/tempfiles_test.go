@@ -192,3 +192,52 @@ func TestRemoveLockedTempsIsBestEffort(t *testing.T) {
 	RemoveLockedTemps(dir, ".store.tmp-", nil)
 	assertExists(t, first, false)
 }
+
+func TestReclaimStaleTempsMatchingRemovesOnlyStaleRegularMatches(t *testing.T) {
+	t.Parallel()
+
+	ReclaimStaleTempsMatching(filepath.Join(t.TempDir(), "missing"), func(string) bool { return true }, nil)
+
+	dir := t.TempDir()
+	first := filepath.Join(dir, ".a.tmp-111")
+	second := filepath.Join(dir, ".b.tmp-222")
+	fresh := filepath.Join(dir, ".a.tmp-333")
+	unmatched := filepath.Join(dir, ".c.tmp-444")
+	plantTemp(t, first, 2*time.Minute)
+	plantTemp(t, second, 2*time.Minute)
+	plantTemp(t, fresh, 10*time.Second)
+	plantTemp(t, unmatched, 2*time.Minute)
+	matchDir := filepath.Join(dir, ".a.tmp-dir")
+	if err := os.Mkdir(matchDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(matchDir, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	match := func(name string) bool { return name != filepath.Base(unmatched) }
+
+	ReclaimStaleTempsMatching(dir, nil, nil)
+	assertExists(t, first, true)
+
+	// A failed removal leaves that file and does not stop the others.
+	var tried []string
+	ReclaimStaleTempsMatching(dir, match, func(path string) error {
+		tried = append(tried, path)
+		if path == first {
+			return os.ErrPermission
+		}
+		return os.Remove(path)
+	})
+	if want := []string{first, second}; !reflect.DeepEqual(tried, want) {
+		t.Fatalf("tried = %v, want %v", tried, want)
+	}
+	assertExists(t, first, true)
+	assertExists(t, second, false)
+	assertExists(t, fresh, true)
+	assertExists(t, unmatched, true)
+	assertExists(t, matchDir, true)
+
+	ReclaimStaleTempsMatching(dir, match, nil)
+	assertExists(t, first, false)
+}
