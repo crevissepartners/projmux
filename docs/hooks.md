@@ -595,9 +595,12 @@ Pane matching follows the shared AI ingest order: inherited `$TMUX_PANE`, then
 payload `cwd`, then cached session id pane options. A matched pane is marked
 with `@projmux_ai_hook_active=1`, so `projmux internal agent-hook watch-title` skips the pane
 after a minimal hook-active gate instead of polling pane title/capture output;
-hook payloads become the primary signal. The tmux bell fallback does not mark
-panes hook-active, so title/capture fallback remains available for panes that
-only emit bells.
+hook payloads become the primary signal. The hook reads the pane's current
+markers once and writes only the ones that differ, so a hook on an already
+marked pane sends tmux no `set-option`: every option write redraws all clients,
+and the first redraw of a second re-runs the status line's `#()` jobs. The tmux
+bell fallback does not mark panes hook-active, so title/capture fallback
+remains available for panes that only emit bells.
 
 The Claude hook payload is intentionally accepted directly at the ingest
 boundary. Core identity fields accept `hook_event_name`/`event_name`,

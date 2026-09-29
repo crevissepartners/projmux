@@ -217,8 +217,10 @@ func TestAntigravityQuietHookMarksThePaneOnce(t *testing.T) {
 		forbidden []string
 		// wantTmux is every recorded tmux command of the one ingest call: the
 		// marker set-options and nothing else, because a quiet event writes no
-		// status. The route probe and the Pane uid read are reads, not
-		// commands.
+		// status. The route probe, the Pane uid read and the marker read are
+		// reads, not commands. The fixture's Pane carries no markers yet, so
+		// this is the first marking; a marked Pane is owned by
+		// TestAntigravityHookOnAMarkedPaneWritesNoMarker.
 		//   owned:   10 marker options = 10.
 		//   unbound: 10 minus managed and agent = 8.
 		wantTmux int

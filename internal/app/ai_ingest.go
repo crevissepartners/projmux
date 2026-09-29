@@ -589,7 +589,12 @@ func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, tran
 // Agent without a second Registry read. ok is false unless the Pane is bound
 // to a Running Agent of this provider.
 func (c *aiCommand) markAIHookPaneBinding(paneID, agent, cwd, threadID, sessionID, transcriptPath string) (managedAgentBinding, bool) {
-	c.recordAIPaneOption(paneID, aiPaneHookActiveOption, "1")
+	// Every set-option makes tmux redraw every client, and the first redraw of a
+	// second forks each `#()` job of the status line. Most hooks arrive on a Pane
+	// that already carries these exact markers, so read them once and write only
+	// what differs.
+	current := c.readAIHookPaneMarkers(paneID)
+	current.record(c, paneID, aiPaneHookActiveOption, "1")
 	// A hook is observation, not launch authorship. Only an exact current
 	// Agent->Pane Registry binding may receive the managed/provider projection;
 	// an unbound Window shell remains a transient hook observation and can never
@@ -597,23 +602,23 @@ func (c *aiCommand) markAIHookPaneBinding(paneID, agent, cwd, threadID, sessionI
 	binding, owned, bindingErr := c.managedAgentBindingForPane(paneID)
 	exactOwnedProvider := bindingErr == nil && owned && coremetadata.NormalizeProvider(agent) == binding.agent.Spec.Provider
 	if exactOwnedProvider {
-		c.recordAIPaneOption(paneID, aiPaneManagedOption, "1")
+		current.record(c, paneID, aiPaneManagedOption, "1")
 		if agent != "" {
-			c.recordAIPaneOption(paneID, aiPaneAgentOption, agent)
+			current.record(c, paneID, aiPaneAgentOption, agent)
 		}
 	}
 	if cwd != "" {
-		c.recordAIPaneOption(paneID, aiPaneContextOption, cwd)
+		current.record(c, paneID, aiPaneContextOption, cwd)
 	}
 	if threadID != "" {
-		c.recordAIPaneOption(paneID, aiPaneThreadIDOption, threadID)
+		current.record(c, paneID, aiPaneThreadIDOption, threadID)
 	}
 	if sessionID != "" {
-		c.recordAIPaneOption(paneID, aiPaneSessionIDOption, sessionID)
-		c.writeAIHookResumeMetadata(paneID, sessionID)
+		current.record(c, paneID, aiPaneSessionIDOption, sessionID)
+		c.writeAIHookResumeMetadata(paneID, sessionID, current)
 	}
 	if transcriptPath = strings.TrimSpace(transcriptPath); transcriptPath != "" {
-		c.recordAIPaneOption(paneID, aiPaneTranscriptPathOption, transcriptPath)
+		current.record(c, paneID, aiPaneTranscriptPathOption, transcriptPath)
 	}
 	// The pane options above are the live routing index and stay exactly as
 	// they were. This is the second, additive home: the durable conversation
@@ -631,14 +636,96 @@ func (c *aiCommand) markAIHookPaneBinding(paneID, agent, cwd, threadID, sessionI
 	return managedAgentBinding{}, false
 }
 
-func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {
+// writeAIHookResumeMetadata writes the resume pointer as one unit: its id, its
+// source and the time it last changed. A Pane that already points at this
+// resume id from a hook keeps all three, so the timestamp records when the
+// pointer changed rather than when the last hook ran.
+func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string, current aiHookPaneMarkers) {
 	resumeID = strings.TrimSpace(resumeID)
 	if resumeID == "" {
+		return
+	}
+	if current.holds(aiPaneResumeIDOption, resumeID) && current.holds(aiPaneResumeSourceOption, "hook") {
 		return
 	}
 	c.recordAIPaneOption(paneID, aiPaneResumeIDOption, resumeID)
 	c.recordAIPaneOption(paneID, aiPaneResumeSourceOption, "hook")
 	c.recordAIPaneOption(paneID, aiPaneResumeUpdatedAtOption, c.now().UTC().Format(time.RFC3339))
+}
+
+// aiHookPaneMarkerSeparator joins the marker snapshot fields. It is printable
+// so the read does not depend on how the tmux client's locale renders control
+// bytes.
+const aiHookPaneMarkerSeparator = "__PROJMUX_TMUX_AI_MARK_SEP__"
+
+// aiHookPaneMarkerOptions are the markers a hook compares before it writes.
+// The resume timestamp is not among them: it follows the resume id and source.
+var aiHookPaneMarkerOptions = []string{
+	aiPaneHookActiveOption,
+	aiPaneManagedOption,
+	aiPaneAgentOption,
+	aiPaneContextOption,
+	aiPaneThreadIDOption,
+	aiPaneSessionIDOption,
+	aiPaneTranscriptPathOption,
+	aiPaneResumeIDOption,
+	aiPaneResumeSourceOption,
+}
+
+var aiHookPaneMarkerFormat = func() string {
+	fields := []string{"#{pane_id}"}
+	for _, option := range aiHookPaneMarkerOptions {
+		fields = append(fields, "#{"+option+"}")
+	}
+	return strings.Join(fields, aiHookPaneMarkerSeparator)
+}()
+
+// aiHookPaneMarkers is what one read found on a hook's Pane. The zero value
+// knows nothing, so every marker is written exactly as it was before the read
+// existed.
+type aiHookPaneMarkers struct {
+	values map[string]string
+}
+
+// readAIHookPaneMarkers reads the markers from the server the writes go to.
+// A route refusal, a failed read, a malformed answer or an answer for another
+// Pane all return the zero value.
+func (c *aiCommand) readAIHookPaneMarkers(paneID string) aiHookPaneMarkers {
+	route, refusal := c.aiPaneOptionRoute(paneID)
+	if refusal != nil {
+		return aiHookPaneMarkers{}
+	}
+	runner := explicitTmuxRunner{
+		runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand},
+		target: route.transport,
+	}
+	out, err := runner.Run(context.Background(), "tmux", "display-message", "-p", "-t", paneID, aiHookPaneMarkerFormat)
+	if err != nil {
+		return aiHookPaneMarkers{}
+	}
+	fields := strings.Split(strings.TrimRight(string(out), "\r\n"), aiHookPaneMarkerSeparator)
+	if len(fields) != len(aiHookPaneMarkerOptions)+1 || fields[0] != paneID {
+		return aiHookPaneMarkers{}
+	}
+	values := make(map[string]string, len(aiHookPaneMarkerOptions))
+	for i, option := range aiHookPaneMarkerOptions {
+		values[option] = fields[i+1]
+	}
+	return aiHookPaneMarkers{values: values}
+}
+
+// holds reports whether the read found option already set to value.
+func (m aiHookPaneMarkers) holds(option, value string) bool {
+	current, ok := m.values[option]
+	return ok && current == value
+}
+
+// record writes one marker unless the Pane already holds that value.
+func (m aiHookPaneMarkers) record(c *aiCommand, paneID, option, value string) {
+	if m.holds(option, value) {
+		return
+	}
+	c.recordAIPaneOption(paneID, option, value)
 }
 
 // matchAIPane resolves the Pane a hook event belongs to and, when it cannot,
