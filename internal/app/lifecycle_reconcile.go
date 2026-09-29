@@ -852,7 +852,8 @@ func lifecycleInventory(runner tmuxCommandRunner, target tmuxTransport) livePane
 // A Pane qualifies when all of the following hold, and the order matters only
 // for cost:
 //
-//   - the event does not narrow it away, by uid or by activation generation;
+//   - the event does not narrow it away, by uid, by activation generation, or,
+//     for window-unlinked, by the one exact Window that is gone;
 //   - no live tmux pane mirrors its uid in this observation;
 //   - the projection has work left, which is either evidence that has not been
 //     recorded or an Agent still bound to the dead Pane.
@@ -860,12 +861,27 @@ func lifecycleInventory(runner tmuxCommandRunner, target tmuxTransport) livePane
 // The last check is what makes a repeat pass free. Without it every offline Pane
 // in the registry would re-enter a write transaction on every pane exit in every
 // session, forever, and change nothing each time.
-func lifecycleProjectionTargets(registry coremetadata.Registry, live map[string]bool, event lifecycleDirtyEvent) []coremetadata.TerminationProjectionInput {
-	// A typed window-unlinked event can consume only its exact stored pane-exit
-	// evidence. It must never widen into a whole-host absence projection: that
-	// would turn an unknown/foreign/empty inventory into replacement authority.
+//
+// liveWindows is the same observation's mirrored Window uids. Only a typed
+// window-unlinked event reads it; every other caller passes nil.
+func lifecycleProjectionTargets(registry coremetadata.Registry, live, liveWindows map[string]bool, event lifecycleDirtyEvent) []coremetadata.TerminationProjectionInput {
+	windowUID := ""
 	if event.teardownKind == coremetadata.TeardownEventWindowUnlinked {
-		return nil
+		// A typed window-unlinked event must never widen into a whole-host
+		// absence projection: that would turn an unknown/foreign/empty
+		// inventory into replacement authority. It projects only the Panes of
+		// the one Registry Window its exact `$N/@N` handles name, and only once
+		// the same observation proves that Window gone from the hook server.
+		// A Window that is still live -- moved to another session, or unlinked
+		// from one of several -- projects nothing, and its Panes are live anyway.
+		if event.target.Flag() == "" || event.target.Value == "" || len(live) == 0 || liveWindows == nil {
+			return nil
+		}
+		window, ok := lifecycleWindowUnlinkedWindow(registry, event)
+		if !ok || liveWindows[window.Metadata.UID] {
+			return nil
+		}
+		windowUID = window.Metadata.UID
 	}
 	narrowed := strings.TrimSpace(event.paneUID)
 	runtimePane := strings.TrimSpace(event.runtimePaneID)
@@ -880,6 +896,11 @@ func lifecycleProjectionTargets(registry coremetadata.Registry, live map[string]
 		}
 		if narrowed != "" && paneUID != narrowed {
 			continue
+		}
+		if windowUID != "" {
+			if owner, ok := paneWindowUID(registry, registry.Panes[i]); !ok || owner != windowUID {
+				continue
+			}
 		}
 		if runtimePane != "" && registry.Panes[i].Status.Activation.RuntimeID != runtimePane {
 			continue
@@ -1037,7 +1058,7 @@ func reconcileLifecycle(
 		result.skipped = "exhausted clean-exit event did not produce the exact Pane/Agent cascade: " + event.describe()
 		return result, nil
 	}
-	if !cascade.Changed && len(lifecycleProjectionTargets(registry, lifecycleEffectiveLivePanes(live, dead.uids), candidateEvent)) == 0 &&
+	if !cascade.Changed && len(lifecycleProjectionTargets(registry, lifecycleEffectiveLivePanes(live, dead.uids), liveWindows, candidateEvent)) == 0 &&
 		!terminationReceiptsNeedAbsorption(registry, store.mutator(), event.receipts) {
 		event.journalTeardown(cascade.teardownRecord())
 		result.awaitingPaneExit = cascade.awaiting
@@ -1149,7 +1170,7 @@ func reconcileLifecycle(
 				result.cascaded = append(result.cascaded, cascade.paneAgent)
 			}
 		}
-		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead.uids), lockedEvent))
+		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead.uids), freshWindows, lockedEvent))
 		return nil
 	})
 	lock.End()

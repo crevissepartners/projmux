@@ -106,7 +106,7 @@ func livenessTestMutator() coremetadata.Mutator {
 func projectLifecycle(registry *coremetadata.Registry, mutator coremetadata.Mutator, live map[string]bool) int {
 	changed := 0
 	for _, projection := range projectTerminations(registry, mutator,
-		lifecycleProjectionTargets(*registry, live, lifecycleDirtyEvent{})) {
+		lifecycleProjectionTargets(*registry, live, nil, lifecycleDirtyEvent{})) {
 		if projection.Changed {
 			changed++
 		}
@@ -233,7 +233,7 @@ func TestTheProjectionNeverForcesATransitionTheTableForbids(t *testing.T) {
 
 			// The dead Pane is always selected: unrecorded evidence is itself
 			// outstanding work, whatever the Agent's phase allows.
-			selected := lifecycleProjectionTargets(registry, nil, lifecycleDirtyEvent{})
+			selected := lifecycleProjectionTargets(registry, nil, nil, lifecycleDirtyEvent{})
 			if len(selected) != 1 || selected[0].PaneUID != "pan-managed" {
 				t.Fatalf("selected %+v, want exactly the dead managed Pane", selected)
 			}
@@ -255,7 +255,7 @@ func TestTheProjectionNeverForcesATransitionTheTableForbids(t *testing.T) {
 				}
 				// A second pass has nothing left: the evidence is stored and the
 				// transition is still forbidden.
-				if remaining := lifecycleProjectionTargets(registry, nil, lifecycleDirtyEvent{}); len(remaining) != 0 {
+				if remaining := lifecycleProjectionTargets(registry, nil, nil, lifecycleDirtyEvent{}); len(remaining) != 0 {
 					t.Fatalf("remaining = %+v, want a forbidden transition to stop being re-projected", remaining)
 				}
 				return
@@ -277,7 +277,7 @@ func TestAnAgentWithNoManagedPaneIsNotSwept(t *testing.T) {
 	registry.Agents[0].Status.PaneRef = "   "
 	registry.Panes = nil
 
-	if inputs := lifecycleProjectionTargets(registry, nil, lifecycleDirtyEvent{}); len(inputs) != 0 {
+	if inputs := lifecycleProjectionTargets(registry, nil, nil, lifecycleDirtyEvent{}); len(inputs) != 0 {
 		t.Fatalf("targets = %+v, want none: an Agent without a managed Pane has no Pane to project", inputs)
 	}
 	if released := projectLifecycle(&registry, livenessTestMutator(), nil); released != 0 {
