@@ -39,6 +39,14 @@ const (
 	// claudeQuestionPickerNotice is how long the picker shows why its answer
 	// was not taken before the popup closes.
 	claudeQuestionPickerNotice = 2 * time.Second
+	// claudeQuestionPopupFailWithin and claudeQuestionPopupFailLimit bound
+	// how often the Claude hook opens a popup again: one that ends within
+	// claudeQuestionPopupFailWithin of opening, with its record still
+	// waiting, failed, and the claudeQuestionPopupFailLimit-th failure in a
+	// row gives the question back. A popup that stayed up longer, one whose
+	// client left, say, is not a failure.
+	claudeQuestionPopupFailWithin = 2 * time.Second
+	claudeQuestionPopupFailLimit  = 3
 )
 
 // errClaudeQuestionPopupPanic stands for a popup goroutine that panicked: the
@@ -336,10 +344,11 @@ func buildClaudeQuestionPopupArgs(binaryPath, title, shown string, target claude
 }
 
 // claudeQuestionPopupDriver keeps at most one popup open for one waiting
-// record, and never a second one after the first has shown and ended. A popup
-// tmux never drew does not count: the driver looks for a client again after
-// its interval, so questions of several Agents on one client show one at a
-// time, each once the popup before it closes.
+// record. Once a popup has shown and ended, markEnded never opens another,
+// while markEndedToReopen opens one again on a later look. A popup tmux never
+// drew does not count: the driver looks for a client again after its
+// interval, so questions of several Agents on one client show one at a time,
+// each once the popup before it closes.
 type claudeQuestionPopupDriver struct {
 	popup    claudeQuestionPopup
 	interval time.Duration
@@ -350,6 +359,12 @@ type claudeQuestionPopupDriver struct {
 	open     bool
 	finished bool
 	cancel   context.CancelFunc
+	// now times how long each popup stayed open; nil is the wall clock.
+	// openedAt is when the open popup opened, and failures counts the
+	// popups in a row that markEndedToReopen read as failed.
+	now      func() time.Time
+	openedAt time.Time
+	failures int
 }
 
 func newClaudeQuestionPopupDriver(popup claudeQuestionPopup, interval time.Duration, paneID string, asker claudeQuestionAsker, store *agentquestion.Store, record agentquestion.Record) *claudeQuestionPopupDriver {
@@ -389,6 +404,7 @@ func (d *claudeQuestionPopupDriver) maybeOpen(ctx context.Context) {
 	openCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	ended := make(chan error, 1)
 	d.ended, d.open, d.cancel = ended, true, cancel
+	d.openedAt = d.clock()()
 	go func() {
 		defer func() {
 			if recover() != nil {
@@ -405,6 +421,35 @@ func (d *claudeQuestionPopupDriver) markEnded() {
 	if d.cancel != nil {
 		d.cancel()
 	}
+}
+
+// markEndedToReopen records that the open popup, which showed, ended on its
+// own, and lets the next look open it again on the client the operator used
+// last. A popup that ended within claudeQuestionPopupFailWithin of opening
+// failed; a failed open ends that soon too. The claudeQuestionPopupFailLimit-th
+// failure in a row ends the driver as markEnded does, which it reports. A
+// popup that stayed open longer starts the count again, so a client that
+// leaves never runs it out.
+func (d *claudeQuestionPopupDriver) markEndedToReopen() (finished bool) {
+	if d.clock()().Sub(d.openedAt) < claudeQuestionPopupFailWithin {
+		d.failures++
+	} else {
+		d.failures = 0
+	}
+	if d.failures >= claudeQuestionPopupFailLimit {
+		d.markEnded()
+		return true
+	}
+	d.markNotShown()
+	return false
+}
+
+// clock is the driver's injected clock, or the wall clock when none is set.
+func (d *claudeQuestionPopupDriver) clock() func() time.Time {
+	if d.now != nil {
+		return d.now
+	}
+	return time.Now
 }
 
 // markNotShown records that tmux never drew the popup, so none is open and

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -562,7 +563,9 @@ func TestAgentQuestionAnswerFollowsTheAnsweringSetting(t *testing.T) {
 
 // TestClaudeQuestionHookFailurePathsGiveTheQuestionBack runs each failure a
 // way-2 question can meet. Every one prints nothing and returns, which Claude
-// Code reads as no decision, and a record that was created is left closed.
+// Code reads as no decision, and a record that was created is left closed. A
+// popup that fails at once is opened again until the third failure in a row;
+// the picker's own Esc and error give the question back the first time.
 func TestClaudeQuestionHookFailurePathsGiveTheQuestionBack(t *testing.T) {
 	t.Parallel()
 
@@ -573,6 +576,8 @@ func TestClaudeQuestionHookFailurePathsGiveTheQuestionBack(t *testing.T) {
 		recorded bool
 		// reason is the close reason a recorded question ends with.
 		reason agentquestion.CloseReason
+		// opens is how many popups opened before the question was given back.
+		opens int
 	}{
 		{name: "hook failure: no question id", setup: func(_ *questionFixture, hook *claudeQuestionHook, _ *fakeQuestionPopup) {
 			hook.newID = func() (string, error) { return "", errors.New("no entropy") }
@@ -580,24 +585,24 @@ func TestClaudeQuestionHookFailurePathsGiveTheQuestionBack(t *testing.T) {
 		{name: "store failure", setup: func(_ *questionFixture, hook *claudeQuestionHook, _ *fakeQuestionPopup) {
 			hook.store = func() (*agentquestion.Store, error) { return nil, errors.New("no state dir") }
 		}},
-		{name: "popup open failure", recorded: true, reason: agentquestion.CloseReasonPopupFailed, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "popup open failure", recorded: true, reason: agentquestion.CloseReasonPopupFailed, opens: claudeQuestionPopupFailLimit, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error {
 				return errors.New("display-popup: no current client")
 			}
 		}},
-		{name: "picker crash", recorded: true, reason: agentquestion.CloseReasonPopupFailed, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "picker crash", recorded: true, reason: agentquestion.CloseReasonPopupFailed, opens: claudeQuestionPopupFailLimit, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			// The popup's process ends without touching the record.
 			popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error {
 				return errors.New("exit status 2")
 			}
 		}},
-		{name: "popup goroutine panic", recorded: true, reason: agentquestion.CloseReasonPopupFailed, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "popup goroutine panic", recorded: true, reason: agentquestion.CloseReasonPopupFailed, opens: claudeQuestionPopupFailLimit, setup: func(_ *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error { panic("popup bug") }
 		}},
-		{name: "Esc in the popup", recorded: true, reason: agentquestion.CloseReasonPopupDismissed, setup: func(fixture *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "Esc in the popup", recorded: true, reason: agentquestion.CloseReasonPopupDismissed, opens: 1, setup: func(fixture *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			fixture.runPickerInPopup(popup, pickRow("make"), pressEsc)
 		}},
-		{name: "picker error in the popup", recorded: true, reason: agentquestion.CloseReasonPopupFailed, setup: func(fixture *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
+		{name: "picker error in the popup", recorded: true, reason: agentquestion.CloseReasonPopupFailed, opens: 1, setup: func(fixture *questionFixture, _ *claudeQuestionHook, popup *fakeQuestionPopup) {
 			fixture.runPickerInPopup(popup, func(intpicker.Options) (intpicker.Result, error) { return intpicker.Result{}, errors.New("no tty") })
 		}},
 	} {
@@ -633,9 +638,9 @@ func TestClaudeQuestionHookFailurePathsGiveTheQuestionBack(t *testing.T) {
 			if len(records) != 1 || records[0].State != agentquestion.StateClosed || records[0].Disposition != string(test.reason) {
 				t.Fatalf("records = %#v, want one closed with %s", records, test.reason)
 			}
-			// A popup that showed and ended is never opened again.
-			if _, opens, _ := popup.counts(); opens != 1 {
-				t.Fatalf("popup opened %d times, want 1", opens)
+			// Once the question is given back no popup opens again.
+			if _, opens, _ := popup.counts(); opens != test.opens {
+				t.Fatalf("popup opened %d times, want %d", opens, test.opens)
 			}
 		})
 	}
@@ -670,8 +675,8 @@ func TestClaudeQuestionPickerClosesWithItsOwnReason(t *testing.T) {
 }
 
 // TestClaudeQuestionHookRetriesAFailedCloseAsPopupFailed is repro R2: the
-// popup ends while the store cannot be written, so the record keeps waiting
-// until a later look closes it, still as popup-failed.
+// last popup the hook opens ends while the store cannot be written, so the
+// record keeps waiting until a later look closes it, still as popup-failed.
 func TestClaudeQuestionHookRetriesAFailedCloseAsPopupFailed(t *testing.T) {
 	t.Parallel()
 
@@ -679,7 +684,11 @@ func TestClaudeQuestionHookRetriesAFailedCloseAsPopupFailed(t *testing.T) {
 	fixture.answering = config.AgentQuestionAnsweringProjmux
 	popup := newFakeQuestionPopup("client-1")
 	released := make(chan time.Time, 1)
+	opens := 0
 	popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error {
+		if opens++; opens < claudeQuestionPopupFailLimit {
+			return errors.New("client detached")
+		}
 		// Hold the store lock past one close's lock wait, then end the popup.
 		lock, err := os.OpenFile(fixture.store.Path()+".flock", os.O_CREATE|os.O_RDWR, 0o600)
 		if err != nil {
@@ -715,6 +724,152 @@ func TestClaudeQuestionHookRetriesAFailedCloseAsPopupFailed(t *testing.T) {
 	}
 	if at := <-released; records[0].UpdatedAt.Before(at.Add(-time.Millisecond)) {
 		t.Fatalf("record closed at %s, before the lock was released at %s", records[0].UpdatedAt, at)
+	}
+}
+
+// runQuestionHook runs hook on the fixture's payload and returns what it
+// printed once it returns.
+func runQuestionHook(t *testing.T, hook claudeQuestionHook) string {
+	t.Helper()
+	var stdout bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hook.run(context.Background(), []string{"--pane=" + questionTestPane}, strings.NewReader(questionTestPayload("PreToolUse", "AskUserQuestion")), &stdout, &bytes.Buffer{})
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the hook did not return")
+	}
+	return stdout.String()
+}
+
+// questionPopupEnd is how one fake popup ends: after how long by the hook's
+// clock, and with what error.
+type questionPopupEnd struct {
+	after time.Duration
+	err   error
+}
+
+// endPopupsThen makes the fake popup end its first opens as ends says, moving
+// the hook's clock, which clock reads, forward by each one's after, and run
+// then from there on. Every popup it ends checks the record still waits.
+func (f *questionFixture) endPopupsThen(t *testing.T, popup *fakeQuestionPopup, ends []questionPopupEnd, then func(ctx context.Context, target claudeQuestionPopupTarget, closed <-chan struct{}) error) (clock func() time.Time) {
+	t.Helper()
+	var offset atomic.Int64
+	opens := 0
+	popup.open = func(ctx context.Context, target claudeQuestionPopupTarget, closed <-chan struct{}) error {
+		if record, _, _ := f.store.Get(target.QuestionID); record.State != agentquestion.StateWaiting {
+			return errors.New("a popup opened for a record that stopped waiting: " + string(record.State))
+		}
+		if opens++; opens > len(ends) {
+			if then == nil {
+				return errors.New("no more popups expected")
+			}
+			return then(ctx, target, closed)
+		}
+		end := ends[opens-1]
+		offset.Add(int64(end.after))
+		return end.err
+	}
+	return func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }
+}
+
+// errQuestionClientDetached is what tmux ends display-popup with when its
+// client detaches: exit status 129, measured on tmux 3.6.
+var errQuestionClientDetached = errors.New("exit status 129")
+
+// TestClaudeQuestionHookReopensAPopupWhoseClientLeft is repro R6 turned
+// around: the popup stays up, then its client detaches. The record keeps
+// waiting, the popup opens again on the client the operator used last, and
+// the answer given there is the hook's decision.
+func TestClaudeQuestionHookReopensAPopupWhoseClientLeft(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, false)
+	fixture.answering = config.AgentQuestionAnsweringProjmux
+	popup := newFakeQuestionPopup("client-1", "client-2")
+	fixture.popup = popup
+	hook := fixture.hook(time.Minute)
+	hook.now = fixture.endPopupsThen(t, popup, []questionPopupEnd{{after: 10 * time.Second, err: errQuestionClientDetached}}, func(_ context.Context, target claudeQuestionPopupTarget, _ <-chan struct{}) error {
+		picker, _ := fixture.picker(pickRow("make"), pickRow("Done"), pickRow("dev"))
+		return picker.run(target.QuestionID, target.AgentUID)
+	})
+	if got := runQuestionHook(t, hook); !strings.Contains(got, `"answers":{"Which branch?":"dev","Which build tool?":"make"}`) {
+		t.Fatalf("decision = %q, want the answer from the popup that opened again", got)
+	}
+	if _, opens, closes := popup.counts(); opens != 2 || closes != 0 || popup.targets[0].Client != "client-1" || popup.targets[1].Client != "client-2" {
+		t.Fatalf("opens=%d closes=%d targets=%#v, want client-1 then client-2 and no Close", opens, closes, popup.targets)
+	}
+	records, _ := fixture.store.List(questionTestAgent)
+	if len(records) != 1 || records[0].State != agentquestion.StateAnswered {
+		t.Fatalf("records = %#v, want one answered", records)
+	}
+}
+
+// TestClaudeQuestionHookGivesBackOnlyAfterQuickPopupsInARow is the reopen
+// bound: popups that end within claudeQuestionPopupFailWithin of opening
+// count, one that stayed up longer starts the count again, and the
+// claudeQuestionPopupFailLimit-th quick end in a row gives the question back
+// as popup-failed, after which no popup opens.
+func TestClaudeQuestionHookGivesBackOnlyAfterQuickPopupsInARow(t *testing.T) {
+	t.Parallel()
+
+	fixture := newQuestionFixture(t, false)
+	fixture.answering = config.AgentQuestionAnsweringProjmux
+	popup := newFakeQuestionPopup("client-1")
+	popup.opened = make(chan claudeQuestionPopupTarget, 16)
+	fixture.popup = popup
+	hook := fixture.hook(time.Minute)
+	quick := questionPopupEnd{err: errors.New("display-popup: can't find client")}
+	stayed := questionPopupEnd{after: claudeQuestionPopupFailWithin, err: errQuestionClientDetached}
+	ends := []questionPopupEnd{quick, quick, stayed, quick, quick, quick}
+	hook.now = fixture.endPopupsThen(t, popup, ends, nil)
+	if got := runQuestionHook(t, hook); got != "" {
+		t.Fatalf("stdout = %q, want no decision", got)
+	}
+	if _, opens, closes := popup.counts(); opens != len(ends) || closes != 0 {
+		t.Fatalf("opens=%d closes=%d, want %d popups and no Close", opens, closes, len(ends))
+	}
+	records, _ := fixture.store.List(questionTestAgent)
+	if len(records) != 1 || records[0].State != agentquestion.StateClosed || records[0].Disposition != string(agentquestion.CloseReasonPopupFailed) {
+		t.Fatalf("records = %#v, want one closed as popup-failed", records)
+	}
+}
+
+// TestClaudeQuestionPopupDriverCountsQuickEndsInARow holds the bound on the
+// driver's own clock: an end before claudeQuestionPopupFailWithin fails, one
+// at it or later clears the count, and only the limit-th failure in a row
+// finishes the driver, which then opens nothing.
+func TestClaudeQuestionPopupDriverCountsQuickEndsInARow(t *testing.T) {
+	t.Parallel()
+
+	clock := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
+	popup := newFakeQuestionPopup("client-1")
+	driver := &claudeQuestionPopupDriver{popup: popup, interval: time.Millisecond, target: claudeQuestionPopupTarget{PaneID: "%7"}, now: func() time.Time { return clock }}
+	end := func(after time.Duration) bool {
+		driver.open, driver.ended, driver.openedAt = true, make(chan error, 1), clock
+		clock = clock.Add(after)
+		return driver.markEndedToReopen()
+	}
+	just := claudeQuestionPopupFailWithin - time.Nanosecond
+	for index, step := range []struct {
+		after    time.Duration
+		finished bool
+	}{
+		{after: just}, {after: just}, {after: claudeQuestionPopupFailWithin},
+		{after: 0}, {after: just}, {after: time.Hour},
+		{after: 0}, {after: 0}, {after: 0, finished: true},
+	} {
+		if got := end(step.after); got != step.finished || driver.finished != step.finished || driver.open {
+			t.Fatalf("end %d after %s: finished=%v driver.finished=%v open=%v, want finished=%v", index, step.after, got, driver.finished, driver.open, step.finished)
+		}
+	}
+	driver.nextLook = time.Time{}
+	driver.maybeOpen(context.Background())
+	if _, opens, _ := popup.counts(); opens != 0 || driver.open {
+		t.Fatal("a finished driver opened a popup")
 	}
 }
 
