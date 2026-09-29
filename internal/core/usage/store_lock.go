@@ -37,10 +37,24 @@ func (s *Store) LockPath() string {
 	return filepath.Join(s.baseDir, stateLockFileName)
 }
 
+// stateLockRetryInterval is the pause between non-blocking attempts while
+// another holder keeps the state lock. It bounds how late a waiter notices a
+// release; a healthy holder is done within one or two intervals.
+const stateLockRetryInterval = 5 * time.Millisecond
+
 // lockState takes the exclusive state lock, waiting at most the store's
 // limit, and returns the function that releases it. The lock only covers a
 // load-modify-save of snapshots.json; callers must release it before any
 // adapter call.
+//
+// The wait retries LOCK_EX|LOCK_NB on the calling goroutine instead of
+// parking a helper in a blocking flock: a blocking wait cannot be cancelled,
+// so every timed-out call would leave a goroutine, the descriptor, and an OS
+// thread behind until the holder let go, and Go never returns the thread. A
+// long-lived caller refreshing on a timer against a stuck holder would pile
+// them up. With retries, a timed-out call has closed its descriptor before it
+// returns and can never be granted the lock later. Waiters are not served in
+// arrival order.
 func (s *Store) lockState() (func(), error) {
 	if err := localstate.EnsurePrivateDir(s.baseDir); err != nil {
 		return nil, fmt.Errorf("usage: create cache dir %s: %w", s.baseDir, err)
@@ -51,50 +65,31 @@ func (s *Store) lockState() (func(), error) {
 		return nil, fmt.Errorf("usage: open state lock %s: %w", lockPath, err)
 	}
 	localstate.RepairPrivateFile(lockPath)
-	release := func() {
-		_ = unix.Flock(int(held.Fd()), unix.LOCK_UN)
-		_ = held.Close()
-	}
-
-	fd := int(held.Fd())
-	switch err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); {
-	case err == nil:
-		return release, nil
-	case !errors.Is(err, unix.EWOULDBLOCK):
-		_ = held.Close()
-		return nil, fmt.Errorf("usage: acquire state lock %s: %w", lockPath, err)
-	}
 
 	limit := s.lockWaitLimit
 	if limit <= 0 {
 		limit = StateLockWaitLimit
 	}
-	timer := time.NewTimer(limit)
-	defer timer.Stop()
-
-	granted := make(chan error, 1)
-	go func() { granted <- unix.Flock(fd, unix.LOCK_EX) }()
-
-	select {
-	case err := <-granted:
-		if err != nil {
+	deadline := time.Now().Add(limit)
+	fd := int(held.Fd())
+	for {
+		err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			return func() {
+				_ = unix.Flock(fd, unix.LOCK_UN)
+				_ = held.Close()
+			}, nil
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EINTR) {
 			_ = held.Close()
 			return nil, fmt.Errorf("usage: acquire state lock %s: %w", lockPath, err)
 		}
-		return release, nil
-	case <-timer.C:
-		// The kernel wait outlives the limit, so the descriptor goes to a
-		// releaser instead of being abandoned: a grant that arrives after we
-		// gave up must not leave the file locked by a caller that is no
-		// longer running. The close happens only after the blocking call
-		// returned.
-		go func() {
-			if err := <-granted; err == nil {
-				_ = unix.Flock(fd, unix.LOCK_UN)
-			}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
 			_ = held.Close()
-		}()
-		return nil, fmt.Errorf("%w: %s after %s", ErrStateLockTimeout, lockPath, limit)
+			return nil, fmt.Errorf("%w: %s after %s", ErrStateLockTimeout, lockPath, limit)
+		}
+		time.Sleep(min(stateLockRetryInterval, remaining))
 	}
 }
 
