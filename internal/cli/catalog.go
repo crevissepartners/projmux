@@ -1559,7 +1559,11 @@ var routes = []Route{
 				CanonicalSummary: "Delete a Pane resource and its live binding",
 				Aliases:          []string{"panes"},
 				Usage:            []string{"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
-				Canonical:        []string{"delete pane"},
+				// The rule is internal/app's (deletePlan).needsConfirmation: a
+				// named exact-one leaf Pane is the only delete that skips the
+				// prompt, and a Pane delete never ends its Window or session.
+				Notes:     []string{"A selector that resolves to exactly one Pane deletes it without confirmation. No selector (the active Pane), --all, or several Panes need --yes, or a yes at the terminal prompt; without a terminal the delete is refused with exit 2. --dry-run only prints the plan."},
+				Canonical: []string{"delete pane"},
 			},
 			{
 				Effects:          deleteChildEffects(),

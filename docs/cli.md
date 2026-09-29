@@ -1931,6 +1931,8 @@ projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w
 
 Aliases: `panes`
 
+A selector that resolves to exactly one Pane deletes it without confirmation. No selector (the active Pane), --all, or several Panes need --yes, or a yes at the terminal prompt; without a terminal the delete is refused with exit 2. --dry-run only prints the plan.
+
 ### `projmux delete agent`
 
 Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry
