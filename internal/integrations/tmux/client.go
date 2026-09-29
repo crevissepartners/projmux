@@ -1178,15 +1178,18 @@ func isExitCode(err error, code int) bool {
 	return exitErr.ExitCode() == code
 }
 
+// parseEphemeralSessions reads tab-separated list-sessions rows. Rows are
+// split before any trimming: the row separator and the field separator are
+// both whitespace, so trimming the whole output would drop the empty trailing
+// fields of the last row (a never-attached session without the ephemeral
+// option ends in "\t\t").
 func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error) {
-	trimmed := strings.TrimSpace(string(output))
-	if trimmed == "" {
-		return nil, nil
-	}
-
-	lines := strings.Split(trimmed, "\n")
-	sessions := make([]lifecycle.SessionInventory, 0, len(lines))
-	for _, line := range lines {
+	var sessions []lifecycle.SessionInventory
+	for line := range strings.SplitSeq(string(output), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" {
+			continue
+		}
 		fields := strings.Split(line, "\t")
 		if len(fields) == 3 {
 			fields = append(fields, "")
@@ -1204,9 +1207,9 @@ func parseEphemeralSessions(output []byte) ([]lifecycle.SessionInventory, error)
 		if err != nil {
 			return nil, err
 		}
-		lastAttached, err := strconv.ParseInt(strings.TrimSpace(fields[2]), 10, 64)
+		lastAttached, err := parseLastAttached(fields[2])
 		if err != nil {
-			return nil, errSessionActivityInvalid
+			return nil, err
 		}
 		ephemeral, err := parseOptionalBinaryFlag(fields[3], errSessionEphemeralInvalid)
 		if err != nil {
@@ -1243,6 +1246,20 @@ func parseAttachedFlag(value string) (bool, error) {
 	}
 
 	return count > 0, nil
+}
+
+// parseLastAttached reads session_last_attached. tmux prints it empty for a
+// session no client has attached to; that reads as 0, never attached.
+func parseLastAttached(value string) (int64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, nil
+	}
+	lastAttached, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return 0, errSessionActivityInvalid
+	}
+	return lastAttached, nil
 }
 
 func parseOptionalBinaryFlag(value string, invalid error) (bool, error) {
