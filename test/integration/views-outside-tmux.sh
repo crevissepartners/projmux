@@ -107,17 +107,10 @@ run_outside() {
   env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE "$bin" "$@"
 }
 
-# The AGE column ticks between two calls; every other cell must match.
-without_age() {
-  awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "AGE") age = i }
-    { line = ""; for (i = 1; i <= NF; i++) if (i != age) line = line (line == "" ? "" : " ") $i; print line }'
-}
-
-# row prints the row whose NAME cell is $2 out of the table in $1.
-row() {
-  awk -v name="$2" 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "NAME") col = i; next }
-    col && $col == name { print; exit }' <<<"$1"
-}
+# Tables are cut at the header's column offsets: a blank cell (AGENT,
+# TERMINATION) is only padding, so whitespace fields would shift past it.
+# shellcheck source=test/lib/table.sh
+source "$repo/test/lib/table.sh"
 
 project_uid="$(run_outside create project --root "$project_root" -o uid)"
 [[ "$project_uid" =~ ^proj-[a-z0-9]+$ ]] || fail "create project returned no uid: $project_uid"
@@ -153,13 +146,13 @@ run_inside() {
 # (1) Outside tmux, `get windows -o wide` renders the live row it renders inside.
 outside_windows="$(run_outside get windows -p "uid:$project_uid" -o wide)"
 inside_windows="$(run_inside get windows -p "uid:$project_uid" -o wide)"
-[[ "$(without_age <<<"$outside_windows")" == "$(without_age <<<"$inside_windows")" ]] ||
+[[ "$(table_without_age <<<"$outside_windows")" == "$(table_without_age <<<"$inside_windows")" ]] ||
   fail "outside-tmux get windows differs from inside:
 --- outside
 $outside_windows
 --- inside
 $inside_windows"
-window_row="$(row "$outside_windows" "$window_name")"
+window_row="$(table_row "$outside_windows" "$window_name")"
 for want in " live " "open,delete" "live-window-name" "true"; do
   grep -qF -- "$want" <<<" $window_row " || fail "outside-tmux live Window row lacks '$want': $window_row"
 done
@@ -176,7 +169,7 @@ $inside_describe"
 grep -qw live <<<"$outside_describe" || fail "outside-tmux describe window reports no live status: $outside_describe"
 outside_panes="$(run_outside get panes -p "uid:$project_uid" -o wide)"
 inside_panes="$(run_inside get panes -p "uid:$project_uid" -o wide)"
-[[ "$(without_age <<<"$outside_panes")" == "$(without_age <<<"$inside_panes")" ]] ||
+[[ "$(table_without_age <<<"$outside_panes")" == "$(table_without_age <<<"$inside_panes")" ]] ||
   fail "outside-tmux get panes differs from inside:
 --- outside
 $outside_panes
@@ -202,13 +195,13 @@ unmarked_windows="$(run_outside get windows -p "uid:$project_uid" -o wide)"
 unmarked_panes="$(run_outside get panes -p "uid:$project_uid" -o wide)"
 unmarked_describe="$(run_outside describe window "uid:$window_uid")"
 iso_tmux set-option -g @projmux_app 1
-[[ "$(without_age <<<"$unmarked_windows")" == "$(without_age <<<"$owned_windows")" ]] ||
+[[ "$(table_without_age <<<"$unmarked_windows")" == "$(table_without_age <<<"$owned_windows")" ]] ||
   fail "outside-tmux get windows on an unmarked app socket server differs from the app-owned server:
 --- unmarked
 $unmarked_windows
 --- app-owned
 $owned_windows"
-[[ "$(without_age <<<"$unmarked_panes")" == "$(without_age <<<"$owned_panes")" ]] ||
+[[ "$(table_without_age <<<"$unmarked_panes")" == "$(table_without_age <<<"$owned_panes")" ]] ||
   fail "outside-tmux get panes on an unmarked app socket server differs from the app-owned server:
 --- unmarked
 $unmarked_panes
@@ -220,7 +213,7 @@ $owned_panes"
 $unmarked_describe
 --- app-owned
 $owned_describe"
-unmarked_row="$(row "$unmarked_windows" "$window_name")"
+unmarked_row="$(table_row "$unmarked_windows" "$window_name")"
 [[ " $(tr -s ' ' <<<"$unmarked_row") " == *" live open,delete "* ]] || fail "Window row on an unmarked app socket server is not live with open: $unmarked_row"
 echo "PASS: outside-tmux views on an app socket server without @projmux_app match the app-owned rows"
 
@@ -235,7 +228,7 @@ esac
 other_pid="$(iso_tmux_by_name "$other_socket" display-message -p '#{pid}')"
 other_windows="$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE \
   TMUX="$other_path,$other_pid,0" "$bin" get windows -p "uid:$project_uid" -o wide)"
-other_row="$(row "$other_windows" "$window_name")"
+other_row="$(table_row "$other_windows" "$window_name")"
 grep -qF " offline " <<<" $other_row " || fail "a view inside another tmux did not keep that server: $other_row"
 end_server "$other_socket"
 echo "PASS: a view inside another tmux keeps observing the inherited server"
@@ -250,8 +243,8 @@ unread_windows="$(run_outside get windows -p "uid:$project_uid" -o wide)"
 unread_projects="$(run_outside get projects -o wide)"
 unread_describe="$(run_outside describe window "uid:$window_uid")"
 chmod "$socket_mode" "$socket_path"
-unread_row="$(row "$unread_windows" "$window_name")"
-unread_project_row="$(row "$unread_projects" "$(basename "$project_root")")"
+unread_row="$(table_row "$unread_windows" "$window_name")"
+unread_project_row="$(table_row "$unread_projects" "$(basename "$project_root")")"
 for checked in "$unread_row" "$unread_project_row"; do
   [[ " $(tr -s ' ' <<<"$checked") " == *" unknown delete "* ]] || fail "unreadable app server row is not unknown with delete only: $checked"
 done
@@ -265,7 +258,7 @@ if iso_tmux_by_name "$app_socket" display-message -p '#{socket_path}' >/dev/null
   fail "the app server survived its cleanup"
 fi
 absent_windows="$(run_outside get windows -p "uid:$project_uid" -o wide)"
-absent_row="$(row "$absent_windows" "$window_name")"
+absent_row="$(table_row "$absent_windows" "$window_name")"
 grep -qF " offline start,delete " <<<" $(tr -s ' ' <<<"$absent_row") " || fail "outside-tmux view without an app server is not offline with start: $absent_row"
 if iso_tmux_by_name "$app_socket" display-message -p '#{socket_path}' >/dev/null 2>&1; then
   fail "an outside-tmux view started an app server"
@@ -315,10 +308,10 @@ foreign_panes="$(run_outside get panes -p "uid:$project_uid" -o wide)"
 foreign_describe="$(run_outside describe window "uid:$window_uid")"
 while IFS= read -r name; do
   [[ -n "$name" ]] || continue
-  foreign_row="$(row "$foreign_windows" "$name")"
+  foreign_row="$(table_row "$foreign_windows" "$name")"
   [[ " $(tr -s ' ' <<<"$foreign_row") " == *" offline start,delete "* ]] || fail "Window row on a foreign app socket server is not offline with start: $foreign_row"
   [[ " $foreign_row " == *" false "* ]] || fail "Window row on a foreign app socket server is observed: $foreign_row"
-done < <(awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "NAME") col = i; next } col { print $col }' <<<"$foreign_windows")
+done < <(table_column "$foreign_windows" NAME)
 live_rows="$({ awk 'NR > 1' <<<"$foreign_windows"; awk 'NR > 1' <<<"$foreign_panes"; } |
   awk '{ for (i = 1; i <= NF; i++) if ($i == "live") n++ } END { print n + 0 }')"
 if [[ "$live_rows" != 0 ]]; then
