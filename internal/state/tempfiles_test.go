@@ -118,3 +118,77 @@ func TestReclaimStaleTempsIgnoresMissingDirAndPatternWithoutWildcard(t *testing.
 	ReclaimStaleTemps(dir, ".preview-state.tmp-111")
 	assertExists(t, orphan, true)
 }
+
+func TestRemoveLockedTempsRemovesOnlyRegularFilesWithThePrefix(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	orphans := []string{filepath.Join(dir, ".store.tmp-111"), filepath.Join(dir, ".store.tmp-222")}
+	for _, path := range orphans {
+		// Fresh on purpose: the caller's lock, not an age, proves no live write
+		// owns them.
+		plantTemp(t, path, 0)
+	}
+	kept := []string{
+		filepath.Join(dir, "store.json"),
+		filepath.Join(dir, "store.json.flock"),
+		filepath.Join(dir, ".other.tmp-111"),
+		filepath.Join(dir, "x.store.tmp-111"),
+	}
+	for _, path := range kept {
+		plantTemp(t, path, 0)
+	}
+	prefixDir := filepath.Join(dir, ".store.tmp-dir")
+	if err := os.Mkdir(prefixDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prefixLink := filepath.Join(dir, ".store.tmp-link")
+	if err := os.Symlink(kept[0], prefixLink); err != nil {
+		t.Fatal(err)
+	}
+
+	var removed []string
+	RemoveLockedTemps(dir, ".store.tmp-", func(path string) error {
+		removed = append(removed, path)
+		return os.Remove(path)
+	})
+
+	if !reflect.DeepEqual(removed, orphans) {
+		t.Fatalf("removed = %v, want %v", removed, orphans)
+	}
+	for _, path := range orphans {
+		assertExists(t, path, false)
+	}
+	for _, path := range append(kept, prefixDir, prefixLink) {
+		assertExists(t, path, true)
+	}
+}
+
+func TestRemoveLockedTempsIsBestEffort(t *testing.T) {
+	t.Parallel()
+
+	RemoveLockedTemps(filepath.Join(t.TempDir(), "missing"), ".store.tmp-", nil)
+
+	dir := t.TempDir()
+	first := filepath.Join(dir, ".store.tmp-111")
+	second := filepath.Join(dir, ".store.tmp-222")
+	plantTemp(t, first, 0)
+	plantTemp(t, second, 0)
+
+	RemoveLockedTemps(dir, "", nil)
+	assertExists(t, first, true)
+	assertExists(t, second, true)
+
+	// A failed removal leaves that file and does not stop the others.
+	RemoveLockedTemps(dir, ".store.tmp-", func(path string) error {
+		if path == first {
+			return os.ErrPermission
+		}
+		return os.Remove(path)
+	})
+	assertExists(t, first, true)
+	assertExists(t, second, false)
+
+	RemoveLockedTemps(dir, ".store.tmp-", nil)
+	assertExists(t, first, false)
+}

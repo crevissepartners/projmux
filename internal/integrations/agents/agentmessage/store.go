@@ -33,9 +33,12 @@ const (
 	legacyStoreVersion = 1
 	storeDirName       = "agent-messages"
 	storeFileName      = "messages.json"
-	maxRecords         = 256
-	maxStoreBytes      = 2 << 20
-	terminalRetention  = 24 * time.Hour
+	// tempPrefix names the file a write fills before renaming it over the
+	// store file.
+	tempPrefix        = ".messages.tmp-"
+	maxRecords        = 256
+	maxStoreBytes     = 2 << 20
+	terminalRetention = 24 * time.Hour
 	// defaultLockWait bounds how long the broker view queues behind another
 	// holder. A holder keeps the lock for a couple of fsyncs, and message
 	// deadlines are minutes, so this absorbs contention without blocking.
@@ -106,6 +109,8 @@ type storeHooks struct {
 	beforeHistoryAppend func() error
 	beforeRename        func() error
 	afterLock           func()
+	// removeTemp replaces os.Remove for the temp files a dead write left.
+	removeTemp func(path string) error
 }
 
 type Store struct {
@@ -745,7 +750,10 @@ func (s *Store) writeLocked(state diskState, history []historyRecord) error {
 		return ErrCapacity
 	}
 	dir := filepath.Dir(s.path)
-	tmp, err := os.CreateTemp(dir, ".messages.tmp-*")
+	// Every write holds the store lock, which the kernel releases when its
+	// holder dies, so a temp file seen here is one a dead write left.
+	localstate.RemoveLockedTemps(dir, tempPrefix, s.hooks.removeTemp)
+	tmp, err := os.CreateTemp(dir, tempPrefix+"*")
 	if err != nil {
 		return err
 	}
