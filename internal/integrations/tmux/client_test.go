@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	"github.com/crevissepartners/projmux/internal/core/resources"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
@@ -456,6 +457,64 @@ func TestClientListEphemeralSessionsTreatsMissingEphemeralFlagAsFalse(t *testing
 	}
 	if got[0].Ephemeral {
 		t.Fatalf("session = %#v, want non-ephemeral when flag is unset", got[0])
+	}
+}
+
+// TestClientListEphemeralSessionsReadsNeverAttachedSessions feeds the bytes
+// tmux 3.6 prints for two sessions no client has attached to: an empty
+// session_last_attached, and on the last row an unset ephemeral option too, so
+// that row ends in two empty fields.
+func TestClientListEphemeralSessionsReadsNeverAttachedSessions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		output string
+		want   []lifecycle.SessionInventory
+	}{
+		{
+			name:   "middle and last rows",
+			output: "never-a\t0\t\t1\nnever-b\t0\t\t\n",
+			want: []lifecycle.SessionInventory{
+				{Name: "never-a", Ephemeral: true},
+				{Name: "never-b"},
+			},
+		},
+		{
+			name:   "between attached sessions",
+			output: "home\t1\t99\t0\nnever-c\t0\t\t1\nwork\t0\t42\t\n",
+			want: []lifecycle.SessionInventory{
+				{Name: "home", Attached: true, LastAttached: 99},
+				{Name: "never-c", Ephemeral: true},
+				{Name: "work", LastAttached: 42},
+			},
+		},
+		{
+			name:   "last row without a final newline",
+			output: "home\t0\t42\t1\nnever-d\t0\t\t",
+			want: []lifecycle.SessionInventory{
+				{Name: "home", LastAttached: 42, Ephemeral: true},
+				{Name: "never-d"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
+				return []byte(tt.output), nil
+			}))
+
+			got, err := client.ListEphemeralSessions(context.Background())
+			if err != nil {
+				t.Fatalf("ListEphemeralSessions() error = %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("ListEphemeralSessions() = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
 
