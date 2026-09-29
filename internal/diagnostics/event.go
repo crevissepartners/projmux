@@ -248,6 +248,7 @@ var (
 	)
 	allowedUsageProviders = stringSet(
 		string(ProviderClaude), string(ProviderCodex), string(ProviderAntigravity), string(ProviderOther),
+		string(ProviderProjmux),
 	)
 	allowedUsageFailures = stringSet(
 		string(UsageFailureCollect), string(UsageFailureRowsSkipped),
@@ -257,6 +258,7 @@ var (
 		string(UsageFailureCredentialsUnavailable), string(UsageFailureCredentialsTokenEmpty),
 		string(UsageFailureAuthRejected), string(UsageFailureRateLimited),
 		string(UsageFailureHTTPStatus), string(UsageFailureNetwork), string(UsageFailureResponseInvalid),
+		string(UsageFailureStateLockTimeout),
 	)
 	allowedUsageSources = stringSet(
 		string(UsageSourceAppServer), string(UsageSourceRollout), string(UsageSourceLastKnownGood),

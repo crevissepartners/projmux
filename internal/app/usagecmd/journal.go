@@ -23,6 +23,8 @@ import (
 
 // recordCollectDiagnostics attributes a Manager collect result to the
 // adapters that failed and appends one row per (provider, failure) tuple.
+// A result that timed out on the usage state lock also appends one projmux
+// row, whether or not adapter failures came joined with it.
 // A nil error records nothing: a successful collection produces zero rows.
 //
 // Journal writes are best-effort and intentionally have no return value —
@@ -32,6 +34,7 @@ func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.S
 		return
 	}
 	adapterErrs := usage.AdapterErrors(collectErr)
+	lockTimeout := errors.Is(collectErr, usage.ErrStateLockTimeout)
 	hasFallback := false
 	for _, snapshot := range snapshots {
 		if snapshot.FallbackReason != "" {
@@ -39,12 +42,15 @@ func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.S
 			break
 		}
 	}
-	if len(adapterErrs) == 0 && !hasFallback {
+	if len(adapterErrs) == 0 && !hasFallback && !lockTimeout {
 		return
 	}
 	journal := c.usageJournal()
 	if journal == nil {
 		return
+	}
+	if lockTimeout {
+		journal.RecordCollectOutcome(diagnostics.ProviderProjmux, "", diagnostics.UsageFailureStateLockTimeout, started)
 	}
 	for _, adapterErr := range adapterErrs {
 		provider := usageDiagnosticsProvider(adapterErr.Model)

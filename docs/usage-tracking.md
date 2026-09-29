@@ -153,7 +153,10 @@ during an adapter call. Instead, a throttled refresh records `last_collect`
 for the adapters it is about to walk before it calls them, so concurrent
 refreshes collect each adapter once per throttle window. A refresh that cannot
 take the lock within one second walks nothing and fails with a lock-timeout
-error. The lock does not coordinate machines that share a synced directory.
+error, which the operations journal records as `failure=state-lock-timeout`
+(see [Collection failures](#collection-failures)). A healthy wait takes milliseconds,
+so repeated rows point at a stuck lock holder. The lock does not coordinate
+machines that share a synced directory.
 
 Adapter failures merge over the prior slice rather than replacing it,
 so a 429 keeps the last known good rows visible. A *partial* collect — some
@@ -342,7 +345,11 @@ When a collection fails, the failure is visible in three places:
    Codex failure. Status codes, paths, upstream bodies, and
    credentials never reach the row. Codex rollout fallback records
    `source=rollout` plus its closed fallback reason; retained data records
-   `source=last-known-good` plus its closed stale reason. A healthy native
+   `source=last-known-good` plus its closed stale reason. A refresh that timed
+   out on the snapshot state lock records one `provider=projmux`
+   `failure=state-lock-timeout` row at `level=error`, without a source: no
+   adapter ran, so no provider owns it, and adapter failures that came with
+   the timeout keep their own rows. A healthy native
    collection writes no row at all. Identical `(provider, source, failure)`
    tuples are recorded at most once per
    process run — the same suppression the notify/focus recorder uses — so a

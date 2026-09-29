@@ -46,6 +46,11 @@ const (
 	UsageFailureNetwork UsageFailure = "network-error"
 	// UsageFailureResponseInvalid is a 200 usage response that did not parse.
 	UsageFailureResponseInvalid UsageFailure = "response-invalid"
+
+	// UsageFailureStateLockTimeout is a refresh that could not take the usage
+	// snapshot state lock in time and walked nothing. No adapter ran, so it is
+	// always recorded for ProviderProjmux, without a source, at level=error.
+	UsageFailureStateLockTimeout UsageFailure = "state-lock-timeout"
 )
 
 // usageWholeCollectFailure reports whether failure means the adapter refreshed
@@ -138,7 +143,7 @@ func (r *UsageRecorder) RecordCollectOutcome(provider Provider, source UsageSour
 		Result: "success", DurationMS: max(now.Sub(started).Milliseconds(), 0), RunID: r.runID, Version: r.version,
 		MuxBackend: r.muxBackend, Provider: string(provider), Source: string(source), Failure: string(failure),
 	}
-	if usageWholeCollectFailure(failure) || source == UsageSourceLastKnownGood {
+	if usageWholeCollectFailure(failure) || failure == UsageFailureStateLockTimeout || source == UsageSourceLastKnownGood {
 		event.Level, event.Result, event.Kind = "error", "error", "runtime"
 	}
 	if r.writer != nil {
@@ -147,7 +152,15 @@ func (r *UsageRecorder) RecordCollectOutcome(provider Provider, source UsageSour
 }
 
 func usageTupleMatches(event Event) bool {
+	// projmux itself owns only the state lock timeout; every other failure
+	// belongs to an adapter's provider.
+	if (event.Provider == string(ProviderProjmux)) != (UsageFailure(event.Failure) == UsageFailureStateLockTimeout) {
+		return false
+	}
 	switch UsageFailure(event.Failure) {
+	case UsageFailureStateLockTimeout:
+		// The lock wait gave up before any adapter ran: nothing refreshed.
+		return event.Source == "" && event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
 	case UsageFailureCollect:
 		// A dropped collection is a runtime error: nothing refreshed.
 		return event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
