@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -421,6 +422,69 @@ func TestAttachProjectIsTheOnlyOutsideTmuxMaterializingEntry(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestAttachProjectResolvesUIDNameAndClaimedRootToOneProject pins the three
+// Project reference forms the lifecycle guide documents: `uid:<uid>`, a bare
+// name, and the claimed absolute root all reach the open path as the same
+// Project root, and resolving them writes nothing.
+func TestAttachProjectResolvesUIDNameAndClaimedRootToOneProject(t *testing.T) {
+	t.Parallel()
+
+	for _, ref := range []string{"uid:prj-alpha", "alpha", "/srv/alpha"} {
+		t.Run(ref, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			switcher := &recordingRawArgv{}
+			cmd := &attachCommand{lookupEnv: func(string) string { return "" }, switcher: switcher, store: store.store()}
+			if _, stderr, err := runRoute(t, cmd, "project", ref); err != nil {
+				t.Fatalf("attach project %s error = %v (stderr=%s)", ref, err, stderr)
+			}
+			if len(switcher.calls) != 1 || strings.Join(switcher.calls[0], " ") != "open /srv/alpha" {
+				t.Fatalf("attach project %s forwarded %#v, want [open /srv/alpha]", ref, switcher.calls)
+			}
+			if store.transactions != 0 || store.writes != 0 {
+				t.Fatalf("attach project %s opened %d Registry transactions (%d writes), want 0", ref, store.transactions, store.writes)
+			}
+		})
+	}
+}
+
+// TestAttachProjectRefusesAnUnknownReferenceBeforeAnyWrite pins the failure
+// half: a `uid:` or name no Project answers to is the resolver's exit-2 error,
+// raised before the open path can materialize a runtime or register the
+// reference as a root.
+func TestAttachProjectRefusesAnUnknownReferenceBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+
+	for _, ref := range []string{"uid:prj-missing", "missing"} {
+		t.Run(ref, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			before := store.registry.Clone()
+			switcher := &recordingRawArgv{}
+			cmd := &attachCommand{lookupEnv: func(string) string { return "" }, switcher: switcher, store: store.store()}
+			stdout, _, err := runRoute(t, cmd, "project", ref)
+			if err == nil {
+				t.Fatalf("attach project %s succeeded, want the resolver refusal", ref)
+			}
+			if exitCodeOf(err) != 2 {
+				t.Fatalf("attach project %s exit = %d (%v), want 2", ref, exitCodeOf(err), err)
+			}
+			if strings.Contains(err.Error(), "must be absolute") {
+				t.Fatalf("attach project %s was treated as a root: %v", ref, err)
+			}
+			if len(switcher.calls) != 0 {
+				t.Fatalf("attach project %s reached the open path: %#v", ref, switcher.calls)
+			}
+			if store.transactions != 0 || store.writes != 0 || !reflect.DeepEqual(store.registry, before) {
+				t.Fatalf("attach project %s changed the Registry: transactions=%d writes=%d", ref, store.transactions, store.writes)
+			}
+			if stdout != "" {
+				t.Fatalf("stdout = %q, want 0 bytes", stdout)
+			}
+		})
+	}
 }
 
 // TestRuntimeDomainForwardsRawArgvToTheCurrentHandlers is the runtime-domain

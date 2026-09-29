@@ -114,7 +114,7 @@ func (c *projectLifecycleCommand) runProject(args []string, stdout, stderr io.Wr
 		return err
 	}
 
-	project, err := c.resolveProject(spelling, refs[0])
+	project, err := resolveProjectRef(c.store, spelling, refs[0])
 	if err != nil {
 		return err
 	}
@@ -283,22 +283,26 @@ func (c *projectLifecycleCommand) materialize(ctx context.Context, root, session
 	})
 }
 
-// resolveProject resolves the one Project this invocation addresses.
+// resolveProjectRef resolves the one Project a lifecycle reference addresses:
+// `uid:<uid>`, a bare metadata.name, or the absolute root a Project claims. It
+// is the one resolver behind `start|open|stop project` and `attach project`, so
+// the reference forms the Project runtime lifecycle documents mean the same
+// Project on every verb.
 //
 // An absolute path is accepted beside the `uid:`/name grammar because a Project
 // root is the identity an operator types outside projmux -- it is what `cd`
 // takes and what the shell prompt shows -- and refusing it here would make the
 // lifecycle verbs the only Project routes that cannot be reached the way the
 // sidebar reaches them.
-func (c *projectLifecycleCommand) resolveProject(spelling, ref string) (coremetadata.Project, error) {
+func resolveProjectRef(store *resourceStore, spelling, ref string) (coremetadata.Project, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return coremetadata.Project{}, usageError(spelling + " requires a non-empty Project reference")
 	}
-	if c.store == nil || c.store.load == nil {
+	if store == nil || store.load == nil {
 		return coremetadata.Project{}, fmt.Errorf("%s: the resource registry is not configured", spelling)
 	}
-	registry, err := c.store.load()
+	registry, err := store.load()
 	if err != nil {
 		return coremetadata.Project{}, MapMetadataError(err)
 	}

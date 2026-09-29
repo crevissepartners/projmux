@@ -97,7 +97,7 @@ var publicReasonExceptions = map[string]publicReasonException{
 	`internal/app/persona.go (*personaCommand).runSet c.spelling()`:                               {routes: []string{"persona set", "instructions set"}, reason: "the noun is the persona or instructions spelling the handler was built for"},
 	`internal/app/persona.go personaNameOperand spelling`:                                         {routes: []string{"persona show", "persona edit", "instructions show", "instructions edit"}, reason: "personaNameOperand is handed the `<noun> <verb>` spelling of its caller"},
 	`internal/app/project_lifecycle_verbs.go (*projectLifecycleCommand).Run verb`:                 {routes: []string{"open", "start", "stop"}, reason: "the verb is the lifecycle root the handler was built for"},
-	`internal/app/project_lifecycle_verbs.go (*projectLifecycleCommand).resolveProject spelling`:  {routes: []string{"open project", "start project", "stop project"}, reason: publicReasonDynamicReason},
+	`internal/app/project_lifecycle_verbs.go resolveProjectRef spelling`:                          {routes: []string{"open project", "start project", "stop project", "attach project"}, reason: publicReasonDynamicReason},
 
 	// Hidden plumbing.
 	`internal/app/agent_message_hold.go "internal agent-message-release"`: {reason: publicReasonHiddenReason},
