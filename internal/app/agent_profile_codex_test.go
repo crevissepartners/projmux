@@ -106,6 +106,7 @@ func TestCodexNativeCreateSendsTheProfileSandboxAndApprovalOnThreadStart(t *test
 		name, content string
 		want          codexappserver.ThreadPolicy
 	}{
+		// The docs readonly.toml example, stored as a user file.
 		{"readonly", "", readonlyThreadPolicy},
 		{"wide", "[permissions]\nsandbox = \"full-access\"\napproval = \"on-request\"\n",
 			codexappserver.ThreadPolicy{Sandbox: codexappserver.SandboxDangerFullAccess, ApprovalPolicy: codexappserver.ApprovalOnRequest}},
@@ -115,9 +116,11 @@ func TestCodexNativeCreateSendsTheProfileSandboxAndApprovalOnThreadStart(t *test
 			t.Parallel()
 			create, store, _, native, _ := newCodexPersonaCreate(t)
 			profiles := codexProfileHome(t, create)
-			if test.content != "" {
-				writeCodexProfile(t, profiles, test.name, test.content)
+			content := test.content
+			if content == "" {
+				content = docsReadonlyProfile(t)
 			}
+			writeCodexProfile(t, profiles, test.name, content)
 			loaded, err := profiles.Load(test.name)
 			if err != nil {
 				t.Fatal(err)
@@ -199,7 +202,7 @@ func TestCodexNativeCreateWithoutAProfileSendsAZeroPolicy(t *testing.T) {
 func TestOtherProviderRefusesCodexProfilePermissions(t *testing.T) {
 	t.Parallel()
 	create, store, tmux, native, _ := newCodexPersonaCreate(t)
-	codexProfileHome(t, create)
+	writeCodexProfile(t, codexProfileHome(t, create), "readonly", docsReadonlyProfile(t))
 	before, panes := store.snapshot(), tmux.paneCount()
 	stdout, _, err := runRoute(t, create, "agent", "--provider", "antigravity", "--profile", "readonly", "--project", "alpha", "--window", "main", "--", "review this")
 	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), profileReasonPermissionsUnsupported) ||
@@ -282,7 +285,7 @@ func TestCodexCreateResultsDiscloseAllowDenyModelAndEffortButNotSandboxOrApprova
 func TestCodexNativeCreateRefusesAThreadWhosePolicyDiffers(t *testing.T) {
 	t.Parallel()
 	create, store, tmux, native, _ := newCodexPersonaCreate(t)
-	codexProfileHome(t, create)
+	writeCodexProfile(t, codexProfileHome(t, create), "readonly", docsReadonlyProfile(t))
 	native.createErr = &codexappserver.PolicyMismatchError{
 		Method: "thread/start", Requested: readonlyThreadPolicy,
 		Effective: codexappserver.ThreadPolicy{Sandbox: "workspaceWrite", ApprovalPolicy: codexappserver.ApprovalNever},
@@ -302,6 +305,7 @@ func TestCodexNativeCreateRefusesAThreadWhosePolicyDiffers(t *testing.T) {
 func TestCodexPlainProfileLaunchKeepsModelEffortAndPersonaLaneRules(t *testing.T) {
 	t.Parallel()
 	f := newProfileFixture(t)
+	f.writeProfile(t, "readonly", docsReadonlyProfile(t))
 	f.writeProfile(t, "sandboxed", "[permissions]\nsandbox = \"read-only\"\n")
 	f.writeProfile(t, "approving", "[permissions]\napproval = \"never\"\n")
 	f.writeProfile(t, "allowing", "[permissions]\nallow = [\"Read\"]\n")
@@ -466,11 +470,13 @@ func TestCodexAgentResumeResendsTheCurrentProfilePolicyAndRecordsItsDigest(t *te
 // TestCodexAgentResumeRefusesAGoneOrInvalidProfileWithZeroWrites is C-3's
 // preflight: a profile that is gone, invalid, or now role-claimed refuses the
 // resume with profile-resume-unavailable before any provider call, Registry
-// write, or Pane.
+// write, or Pane. A recorded readonly without a file is gone like any other
+// name, and a gone profile's refusal names the file to create.
 func TestCodexAgentResumeRefusesAGoneOrInvalidProfileWithZeroWrites(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct{ name, reason string }{
 		{"gone", profile.ReasonNotFound},
+		{"readonly", profile.ReasonNotFound},
 		{"broken", profile.ReasonValueInvalid},
 		{"claimed", profile.ReasonRoleClaimed},
 	} {
@@ -485,6 +491,9 @@ func TestCodexAgentResumeRefusesAGoneOrInvalidProfileWithZeroWrites(t *testing.T
 			if err == nil || !strings.Contains(err.Error(), profileReasonResumeUnavailable) || !strings.Contains(err.Error(), test.reason) {
 				t.Fatalf("resume = %v, want %s (%s)", err, profileReasonResumeUnavailable, test.reason)
 			}
+			if path, _ := profiles.Path(test.name); test.reason == profile.ReasonNotFound && !strings.Contains(err.Error(), "does not exist at "+path) {
+				t.Fatalf("resume = %v, want the missing file %s", err, path)
+			}
 			if len(native.resumes) != 0 || store.writes != 0 || store.snapshot() != before || len(splitWindowCalls(tmux)) != 0 {
 				t.Fatalf("refused resume acted: resumes=%+v writes=%d splits=%v", native.resumes, store.writes, splitWindowCalls(tmux))
 			}
@@ -498,7 +507,8 @@ func TestCodexAgentResumeRefusesAGoneOrInvalidProfileWithZeroWrites(t *testing.T
 // back: no Pane, and the recorded digest is unchanged.
 func TestCodexAgentResumeRefusesAThreadWhosePolicyDiffers(t *testing.T) {
 	t.Parallel()
-	command, store, tmux, native, _ := codexProfileResume(t, profileAnnotations("readonly", "sha256:old"))
+	command, store, tmux, native, profiles := codexProfileResume(t, profileAnnotations("readonly", "sha256:old"))
+	writeCodexProfile(t, profiles, "readonly", docsReadonlyProfile(t))
 	native.resumeErr = &codexappserver.PolicyMismatchError{
 		Method: "thread/resume", Requested: readonlyThreadPolicy,
 		Effective: codexappserver.ThreadPolicy{Sandbox: "dangerFullAccess", ApprovalPolicy: codexappserver.ApprovalNever},

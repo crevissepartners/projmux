@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 )
 
 // mustAIConfigFile is the AI split default file of c, which a test that set
@@ -95,10 +96,14 @@ func TestMissingHomeRefusesWritesAndKeepsReadsAtDefaults(t *testing.T) {
 		}
 		var listed bytes.Buffer
 		if err := (&profileCommand{homeDir: homeDir, lookupEnv: noXDG}).Run([]string{"list"}, &listed, &bytes.Buffer{}); err != nil {
-			t.Fatalf("profile list error = %v, want the builtins", err)
+			t.Fatalf("profile list error = %v, want no profile", err)
 		}
-		if !strings.Contains(listed.String(), "readonly") {
-			t.Fatalf("profile list = %q, want the builtin readonly", listed.String())
+		if lines := strings.Split(strings.TrimRight(listed.String(), "\n"), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "NAME") {
+			t.Fatalf("profile list = %q, want the header only", listed.String())
+		}
+		err = (&profileCommand{homeDir: homeDir, lookupEnv: noXDG}).Run([]string{"show", "readonly"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if profile.ReasonOf(err) != profile.ReasonNotFound || exitCodeOf(err) != 1 {
+			t.Fatalf("profile show readonly = %v, want %s with exit 1", err, profile.ReasonNotFound)
 		}
 
 		// Writes refuse with the reason and write nothing.

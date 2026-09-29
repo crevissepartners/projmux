@@ -40,11 +40,11 @@ func (c *profileCommand) store() (profile.Store, error) {
 
 // readStore is the profile store a read goes through: without HOME or an
 // absolute XDG home there are no user profiles to read, so it is the
-// builtin-only store and touches no file.
+// unavailable store: it lists no profile and touches no file.
 func (c *profileCommand) readStore() (profile.Store, error) {
 	store, err := c.store()
 	if isMissingHome(err) {
-		return profile.NewBuiltinStore(err), nil
+		return profile.NewUnavailableStore(err), nil
 	}
 	return store, err
 }
@@ -74,7 +74,7 @@ func (c *profileCommand) Run(args []string, stdout, stderr io.Writer) error {
 // profileRefusal maps a profile refusal onto the CLI's exit codes. A missing
 // profile keeps its text and exits 1, as a missing persona does; every other
 // refusal -- a bad or reserved name, oversized or invalid content, a claimed
-// role, a builtin delete -- is invalid input and exits 2. The reason token is
+// role -- is invalid input and exits 2. The reason token is
 // in the text either way.
 func profileRefusal(spelling string, err error) error {
 	switch profile.ReasonOf(err) {

@@ -203,7 +203,7 @@ func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreat
 	if err != nil {
 		if flags.profile == "" && isMissingHome(err) {
 			// A role mapping is a read of saved profiles; without a config
-			// home there are none, and no builtin claims a role.
+			// home there are none, so no profile claims a role.
 			return selectedCreateProfile{}, nil
 		}
 		return selectedCreateProfile{}, fmt.Errorf("%s --profile: %w; nothing was created", spelling, err)

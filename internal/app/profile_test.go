@@ -177,57 +177,74 @@ func TestProfileSetRejectionsExitTwoWithTheReasonAndWriteNothing(t *testing.T) {
 	}
 }
 
-func TestProfileEmptyConfigListsBuiltinReadonlyRefusesItsDeleteAndAUserReadonlyWins(t *testing.T) {
+// docsReadonlyProfile returns the readonly.toml example of
+// docs/configuration.md, the file a user stores to get a read-only profile.
+func docsReadonlyProfile(t *testing.T) string {
+	t.Helper()
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "configuration.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, block, ok := strings.Cut(string(doc), "```toml\n# readonly.toml\n")
+	if !ok {
+		t.Fatal("docs/configuration.md has no readonly.toml example")
+	}
+	block, _, ok = strings.Cut(block, "```")
+	if !ok {
+		t.Fatal("the readonly.toml example is not closed")
+	}
+	return "# readonly.toml\n" + block
+}
+
+// TestProfileEmptyConfigListsNothingAndReadonlyIsOnlyAUserFile pins that no
+// profile is compiled in: an empty config lists only the header, readonly
+// without a file is profile-not-found (exit 1) for show and delete, and the
+// docs example stored as readonly is an ordinary user profile.
+func TestProfileEmptyConfigListsNothingAndReadonlyIsOnlyAUserFile(t *testing.T) {
 	t.Parallel()
 	cmd, dir := newProfileTestCommand(t, "")
 	stdout, _, err := runProfile(cmd, "list")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows := profileListRows(t, stdout)
-	readonly := rows["readonly"]
-	if len(rows) != 1 || len(readonly) != 9 || !slices.Equal(readonly[:7], []string{"readonly", "builtin", "-", "-", "-", "-", "-"}) ||
-		!strings.HasPrefix(readonly[7], "sha256:") || readonly[8] != "yes" {
-		t.Fatalf("empty-config list = %q", stdout)
+	if rows := profileListRows(t, stdout); len(rows) != 0 || strings.Count(stdout, "\n") != 1 {
+		t.Fatalf("empty-config list = %q; want the header only", stdout)
 	}
-	builtin, _, err := runProfile(cmd, "show", "readonly")
-	if err != nil || !strings.Contains(builtin, "sandbox = \"read-only\"") {
-		t.Fatalf("show builtin readonly = %q, %v", builtin, err)
-	}
-	if profile.Digest([]byte(builtin)) != readonly[7] {
-		t.Fatalf("builtin digest %s does not hash the shown bytes", readonly[7])
+	path := filepath.Join(dir, "readonly.toml")
+	for _, args := range [][]string{{"show", "readonly"}, {"delete", "readonly", "--yes"}} {
+		_, _, err := runProfile(cmd, args...)
+		if profile.ReasonOf(err) != profile.ReasonNotFound || exitCodeOf(err) != 1 || !strings.HasSuffix(err.Error(), "does not exist at "+path) {
+			t.Fatalf("profile %q without a file = %v, want %s at %s with exit 1", args, err, profile.ReasonNotFound, path)
+		}
 	}
 
-	_, _, err = runProfile(cmd, "delete", "readonly", "--yes")
-	if err == nil || !strings.Contains(err.Error(), profile.ReasonBuiltin) || exitCodeOf(err) != 2 {
-		t.Fatalf("delete builtin readonly = %v", err)
-	}
-
-	cmd.stdin = strings.NewReader("effort = \"low\"\n")
+	example := docsReadonlyProfile(t)
+	cmd.stdin = strings.NewReader(example)
 	if _, _, err := runProfile(cmd, "set", "readonly"); err != nil {
 		t.Fatal(err)
 	}
-	if stdout, _, err := runProfile(cmd, "show", "readonly"); err != nil || stdout != "effort = \"low\"\n" {
+	if stdout, _, err := runProfile(cmd, "show", "readonly"); err != nil || stdout != example {
 		t.Fatalf("show user readonly = %q, %v", stdout, err)
 	}
 	stdout, _, err = runProfile(cmd, "list")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows = profileListRows(t, stdout)
-	if len(rows) != 1 || rows["readonly"][1] != "user" {
+	rows := profileListRows(t, stdout)
+	readonly := rows["readonly"]
+	if len(rows) != 1 || len(readonly) != 9 || !slices.Equal(readonly[:7], []string{"readonly", "user", "-", "-", "-", "-", "-"}) ||
+		readonly[7] != profile.Digest([]byte(example)) || readonly[8] != "yes" {
 		t.Fatalf("list with a user readonly = %q", stdout)
 	}
 
-	// Deleting the user file reveals the builtin again.
 	if _, _, err := runProfile(cmd, "delete", "readonly", "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "readonly.toml")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("delete left readonly.toml: %v", err)
 	}
-	if stdout, _, err := runProfile(cmd, "show", "readonly"); err != nil || stdout != builtin {
-		t.Fatalf("show after delete = %q, %v", stdout, err)
+	if _, _, err := runProfile(cmd, "show", "readonly"); profile.ReasonOf(err) != profile.ReasonNotFound {
+		t.Fatalf("show after delete = %v, want %s", err, profile.ReasonNotFound)
 	}
 }
 
@@ -245,8 +262,8 @@ func TestProfileListShowsAHandPlacedInvalidFileWithoutBlockingOthers(t *testing.
 		t.Fatal(err)
 	}
 	rows := profileListRows(t, stdout)
-	if len(rows) != 3 {
-		t.Fatalf("list = %q; want bad, good, and readonly", stdout)
+	if len(rows) != 2 {
+		t.Fatalf("list = %q; want bad and good", stdout)
 	}
 	if bad := strings.Join(rows["bad"], " "); !strings.HasPrefix(bad, "bad user - - - - - sha256:") || !strings.HasSuffix(bad, "no ("+profile.ReasonValueInvalid+")") {
 		t.Fatalf("bad row = %q", bad)

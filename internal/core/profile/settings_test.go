@@ -125,8 +125,8 @@ func TestStoreResolveRefusesExactlyWhatListMarksInvalid(t *testing.T) {
 	if _, _, err := store.Resolve("gone"); ReasonOf(err) != ReasonNotFound {
 		t.Fatalf("Resolve(gone) = %v, want %s", err, ReasonNotFound)
 	}
-	if _, spec, err := store.Resolve("readonly"); err != nil || spec.Permissions.Sandbox != "read-only" || !spec.Permissions.HasPermissions() {
-		t.Fatalf("Resolve(readonly) = %+v, %v", spec, err)
+	if _, _, err := store.Resolve("readonly"); ReasonOf(err) != ReasonNotFound {
+		t.Fatalf("Resolve(readonly) without a file = %v, want %s", err, ReasonNotFound)
 	}
 }
 

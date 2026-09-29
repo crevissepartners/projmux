@@ -236,8 +236,9 @@ func TestProfileListShowsTheCombinationEachProfileNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, content := range map[string]string{
-		"orphan": "provider = \"claude\"\ninstructions = \"gone\"\nroles = [\"qa\"]\n",
-		"broken": "roles = [\"ops\"]\nbogus = \"x\"\n",
+		"orphan":   "provider = \"claude\"\ninstructions = \"gone\"\nroles = [\"qa\"]\n",
+		"broken":   "roles = [\"ops\"]\nbogus = \"x\"\n",
+		"readonly": "[permissions]\nsandbox = \"read-only\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
@@ -252,7 +253,7 @@ func TestProfileListShowsTheCombinationEachProfileNames(t *testing.T) {
 		"codexer":  {"codexer", "user", "codex", "reviewer", "gpt-5", "high", "review"},
 		"orphan":   {"orphan", "user", "claude", "gone", "-", "-", "qa"},
 		"broken":   {"broken", "user", "-", "-", "-", "-", "-"},
-		"readonly": {"readonly", "builtin", "-", "-", "-", "-", "-"},
+		"readonly": {"readonly", "user", "-", "-", "-", "-", "-"},
 	} {
 		if row := rows[name]; len(row) < 9 || !slices.Equal(row[:7], want) || !strings.HasPrefix(row[7], "sha256:") {
 			t.Errorf("%s row = %q, want %q then a digest", name, row, want)
