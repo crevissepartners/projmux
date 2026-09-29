@@ -28,12 +28,6 @@ func (f resourceCollectorFunc) CollectResourceSnapshot(ctx context.Context, prev
 	return f(ctx, previous)
 }
 
-type resourceRunnerFunc func(context.Context, string, ...string) ([]byte, error)
-
-func (f resourceRunnerFunc) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return f(ctx, name, args...)
-}
-
 type resourceEventWriter struct {
 	events []diagnostics.Event
 	err    error

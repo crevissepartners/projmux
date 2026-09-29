@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+// resourceRunnerFunc adapts a function to the tmux command runner. It lives in
+// an untagged file because tests on every supported GOOS build with it.
+type resourceRunnerFunc func(context.Context, string, ...string) ([]byte, error)
+
+func (f resourceRunnerFunc) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return f(ctx, name, args...)
+}
+
 // unreadableAppServer answers every app-socket query with a failure that is not
 // the server-absent signature, so the inventory marks its scopes unavailable
 // instead of reading an empty machine.

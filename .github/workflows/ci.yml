@@ -352,6 +352,14 @@ jobs:
           go test ./internal/platformkeys
           go build ./cmd/projmux
 
+      # Builds and links every test binary, including darwin && cgo files, but
+      # runs none of them: this gate is darwin test compilation, not darwin
+      # test results.
+      - name: Compile every test package without running it
+        env:
+          CGO_ENABLED: "1"
+        run: go test -exec /usr/bin/true -count=1 -run '^$' ./...
+
   npm-pack:
     name: NPM Packages
     runs-on: macos-15
