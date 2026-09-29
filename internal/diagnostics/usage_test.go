@@ -175,6 +175,63 @@ func TestUsageRecorderClaudeWholeCollectFailureClasses(t *testing.T) {
 	}
 }
 
+// TestUsageRecorderStateLockTimeoutIsAProjmuxRuntimeError pins the one tuple a
+// usage state lock timeout may take: projmux, no source, a runtime error. The
+// timeout happens before any adapter runs, so no provider owns it, and the
+// token is accepted with no other provider, source, or severity.
+func TestUsageRecorderStateLockTimeoutIsAProjmuxRuntimeError(t *testing.T) {
+	t.Parallel()
+
+	const token = "state-lock-timeout"
+	if _, ok := allowedUsageFailures[token]; !ok {
+		t.Fatalf("%q missing from allowedUsageFailures", token)
+	}
+
+	writer := &recordingEventWriter{}
+	recorder := NewUsageRecorder(writer, "usage-state-lock", "0.10.0", MuxBackend())
+	recorder.RecordCollectOutcome(ProviderProjmux, "", UsageFailure(token), time.Now())
+	events := writer.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one", events)
+	}
+	event := events[0]
+	if event.Provider != string(ProviderProjmux) || event.Failure != token || event.Source != "" ||
+		event.Level != "error" || event.Result != "error" || event.Kind != "runtime" {
+		t.Fatalf("state lock event = %#v, want projmux/%s error/error/runtime without source", event, token)
+	}
+	if _, err := sanitizeEvent(event, "/private/home"); err != nil {
+		t.Fatalf("sanitizeEvent() error = %v", err)
+	}
+	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
+	if err := store.Append(event); err != nil {
+		t.Fatalf("store append: %v", err)
+	}
+	if stored, err := store.Read(); err != nil || len(stored) != 1 || stored[0].Provider != string(ProviderProjmux) || stored[0].Failure != token {
+		t.Fatalf("store round trip = %#v, %v", stored, err)
+	}
+
+	for name, mutate := range map[string]func(*Event){
+		"claude provider":        func(e *Event) { e.Provider = string(ProviderClaude) },
+		"other provider":         func(e *Event) { e.Provider = string(ProviderOther) },
+		"projmux collect-failed": func(e *Event) { e.Failure = string(UsageFailureCollect) },
+		"projmux rows-skipped": func(e *Event) {
+			e.Failure = string(UsageFailureRowsSkipped)
+			e.Level, e.Result, e.Kind = "info", "success", ""
+		},
+		"projmux claude class":   func(e *Event) { e.Failure = string(UsageFailureAuthRejected) },
+		"rollout source":         func(e *Event) { e.Source = string(UsageSourceRollout) },
+		"last-known-good source": func(e *Event) { e.Source = string(UsageSourceLastKnownGood) },
+		"informational severity": func(e *Event) { e.Level, e.Result, e.Kind = "info", "success", "" },
+		"free-form message":      func(e *Event) { e.Message = "usage: timed out waiting for the snapshot state lock" },
+	} {
+		variant := event
+		mutate(&variant)
+		if _, err := sanitizeEvent(variant, ""); err == nil {
+			t.Fatalf("%s: sanitizeEvent accepted %#v", name, variant)
+		}
+	}
+}
+
 // TestUsageEventShapeRejectsUnsafeVariants pins the closed schema: anything
 // outside the (provider, failure) tuple, or a severity that does not match the
 // failure class, is refused before it can be written.
