@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -102,7 +103,12 @@ func viewAppServer(socketPath string) *fakeTmux {
 // way app.go does, with TMUX answered by env.
 func viewReadCommands(t *testing.T, runner tmuxCommandRunner, env func(string) string) (*getCommand, *describeCommand) {
 	t.Helper()
-	store := newFakeResourceStore(t)
+	return viewReadCommandsOver(t, newFakeResourceStore(t), runner, env)
+}
+
+// viewReadCommandsOver is viewReadCommands over a Registry the test arranged.
+func viewReadCommandsOver(t *testing.T, store *fakeResourceStore, runner tmuxCommandRunner, env func(string) string) (*getCommand, *describeCommand) {
+	t.Helper()
 	prepareDisplayFirstTableFixture(t, store)
 	reader := &runtimeDiagnosticsReader{runner: runner, lookupEnv: env, loadRegistry: store.store().load}
 	reader.observe = func(ctx context.Context, transport resourcegraph.Transport) resourcegraph.Inventory {
@@ -226,6 +232,191 @@ func TestRegistryViewsOutsideTmuxWithNoAppServerReadOffline(t *testing.T) {
 	}
 	if len(calls) == 0 {
 		t.Fatal("outside-tmux view did not ask the app socket")
+	}
+}
+
+// unsetAppMarkerRunner answers a read of an unset @projmux_app the way real
+// tmux does -- a non-zero "invalid option" -- for every routed server whose
+// marker is empty. The shared fake answers an empty value instead, which lands
+// on the same host mode by another branch; this pins the branch a real
+// unmarked server takes.
+type unsetAppMarkerRunner struct {
+	*routedTmuxRunner
+	unsetReads int
+}
+
+func (r *unsetAppMarkerRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name == "tmux" && len(args) == 5 && slices.Equal(args[2:], []string{"show-options", "-gv", tmuxopts.AppGlobal}) {
+		if server := r.servers[args[0]+"\x00"+args[1]]; server != nil && server.appMarker == "" {
+			r.calls = append(r.calls, routedTmuxCall{flag: args[0], value: args[1], args: slices.Clone(args[2:])})
+			r.unsetReads++
+			return nil, errors.New("exit status 1: invalid option: " + tmuxopts.AppGlobal)
+		}
+	}
+	return r.routedTmuxRunner.Run(ctx, name, args...)
+}
+
+// appSocketViewRunner routes `-L projmux` to server alone.
+func appSocketViewRunner(server *fakeTmux) *unsetAppMarkerRunner {
+	return &unsetAppMarkerRunner{routedTmuxRunner: &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00" + defaultAppSocket: server}}}
+}
+
+// requireOnlyAppSocket fails unless a view asked tmux at least once and only
+// ever through `-L projmux`.
+func requireOnlyAppSocket(t *testing.T, calls []routedTmuxCall) {
+	t.Helper()
+	if len(calls) == 0 {
+		t.Fatal("outside-tmux view observed no server")
+	}
+	for _, call := range calls {
+		if call.flag != "-L" || call.value != defaultAppSocket {
+			t.Fatalf("outside-tmux view reached tmux %s %s, want only -L %s", call.flag, call.value, defaultAppSocket)
+		}
+	}
+}
+
+// TestRegistryViewsOutsideTmuxOnAnUnmarkedAppSocketServerMatchTheAppOwnedRows
+// is C-2's Guarantee ①: a server behind the app socket with no @projmux_app
+// but with the managed uid markers is a standalone host, where managed
+// resources live exactly as they do on an app-owned server. Outside tmux every
+// view renders byte for byte what it renders for the app-owned server, and
+// asks only `-L projmux`.
+func TestRegistryViewsOutsideTmuxOnAnUnmarkedAppSocketServerMatchTheAppOwnedRows(t *testing.T) {
+	t.Parallel()
+	const socketPath = "/tmp/view-fixture/projmux"
+	owned := appSocketViewRunner(viewAppServer(socketPath))
+	server := viewAppServer(socketPath)
+	server.appMarker = ""
+	unmarked := appSocketViewRunner(server)
+	ownedGet, ownedDescribe := viewReadCommands(t, owned, viewTMUXEnv("", false))
+	unmarkedGet, unmarkedDescribe := viewReadCommands(t, unmarked, viewTMUXEnv("", false))
+
+	for _, args := range [][]string{
+		{"windows", "-A", "-o", "wide"},
+		{"panes", "-A", "-o", "wide"},
+		{"windows", "-A", "-o", "json"},
+		{"panes", "-A", "-o", "json"},
+	} {
+		want := viewRun(t, ownedGet, args...)
+		if got := viewRun(t, unmarkedGet, args...); got != want {
+			t.Errorf("get %v on an unmarked app socket server differs from the app-owned server:\n--- unmarked\n%s--- app-owned\n%s", args, got, want)
+		}
+	}
+	for _, args := range [][]string{
+		{"window", "uid:win-alpha-main"},
+		{"pane", "uid:pan-alpha-zsh"},
+	} {
+		want := viewRun(t, ownedDescribe, args...)
+		if got := viewRun(t, unmarkedDescribe, args...); got != want {
+			t.Errorf("describe %v on an unmarked app socket server differs from the app-owned server:\n--- unmarked\n%s--- app-owned\n%s", args, got, want)
+		}
+	}
+
+	wide := viewRun(t, unmarkedGet, "windows", "-p", "uid:prj-alpha", "-o", "wide")
+	row := strings.Join(viewRow(t, wide, "main"), " ")
+	for _, want := range []string{" live ", " open,delete ", " live-window-name ", " true "} {
+		if !strings.Contains(" "+row+" ", want) {
+			t.Errorf("Window row on an unmarked app socket server %q lacks %q", row, want)
+		}
+	}
+	if unmarked.unsetReads == 0 {
+		t.Fatal("no view read the unset @projmux_app; the test no longer reaches the standalone branch")
+	}
+	if owned.unsetReads != 0 {
+		t.Fatalf("the app-owned control read an unset marker %d times", owned.unsetReads)
+	}
+	requireOnlyAppSocket(t, unmarked.calls)
+}
+
+// TestRegistryViewsOutsideTmuxOnAForeignAppSocketServerReadOffline is C-2's
+// Guarantee ② and ③: a server behind the app socket that projmux did not
+// start and that carries no managed marker holds none of the Registry's
+// runtime. Outside tmux its Windows and Panes read offline with start, even
+// when a session there has the Project's session name and holds exactly the
+// $N/@N/%N the Registry still records -- runtime ids are per-server counters,
+// not identity. The view asks only `-L projmux`.
+func TestRegistryViewsOutsideTmuxOnAForeignAppSocketServerReadOffline(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		session string
+	}{
+		{name: "foreign session", session: "foreign"},
+		{name: "same session name over the recorded runtime ids", session: "alpha"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := newFakeTmux()
+			server.appMarker = ""
+			server.socketPath = "/tmp/view-fixture/projmux"
+			first := server.addSession(test.session)
+			first.windows[0].name = "main"
+			server.addSession("scratch")
+			runner := appSocketViewRunner(server)
+
+			// The Registry still records the first session's ids from a run of
+			// the app server that is gone.
+			store := newFakeResourceStore(t)
+			for i := range store.registry.Windows {
+				if store.registry.Windows[i].Metadata.UID == "win-alpha-main" {
+					store.registry.Windows[i].Status.RuntimeSessionID = first.id
+					store.registry.Windows[i].Status.RuntimeID = first.windows[0].id
+				}
+			}
+			for i := range store.registry.Panes {
+				if store.registry.Panes[i].Metadata.UID == "pan-alpha-zsh" {
+					store.registry.Panes[i].Status.Activation = coremetadata.PaneActivation{Generation: "gen-stale", RuntimeID: first.windows[0].panes[0].id}
+				}
+			}
+			get, describe := viewReadCommandsOver(t, store, runner, viewTMUXEnv("", false))
+
+			windows := viewRun(t, get, "windows", "-p", "uid:prj-alpha", "-o", "wide")
+			panes := viewRun(t, get, "panes", "-p", "uid:prj-alpha", "-o", "wide")
+			for _, check := range []struct {
+				table, name string
+				want        []string
+			}{
+				{windows, "main", []string{" offline ", " start,delete ", " false "}},
+				{windows, "review", []string{" offline ", " start,delete ", " false "}},
+				{panes, "zsh", []string{" offline ", " false "}},
+				{panes, "log", []string{" offline ", " false "}},
+				{panes, "codex-pane", []string{" offline ", " false "}},
+			} {
+				row := " " + strings.Join(viewRow(t, check.table, check.name), " ") + " "
+				if strings.Contains(row, " live-") {
+					t.Errorf("%q row on a foreign app socket server %q takes its context from live runtime", check.name, row)
+				}
+				for _, want := range check.want {
+					if !strings.Contains(row, want) {
+						t.Errorf("%q row on a foreign app socket server %q lacks %q", check.name, row, want)
+					}
+				}
+			}
+			for _, args := range [][]string{
+				{"windows", "-A", "-o", "wide"},
+				{"panes", "-A", "-o", "wide"},
+			} {
+				table := viewRun(t, get, args...)
+				for line := range strings.SplitSeq(table, "\n") {
+					if slices.Contains(strings.Fields(line), "live") {
+						t.Errorf("get %v on a foreign app socket server reports a live row: %q", args, line)
+					}
+				}
+			}
+			for _, args := range [][]string{
+				{"window", "uid:win-alpha-main"},
+				{"pane", "uid:pan-alpha-zsh"},
+			} {
+				out := viewRun(t, describe, args...)
+				if !strings.Contains(out, "offline") || strings.Contains(out, "live") {
+					t.Errorf("describe %v on a foreign app socket server is not offline:\n%s", args, out)
+				}
+			}
+			if runner.unsetReads == 0 {
+				t.Fatal("no view read the unset @projmux_app on the foreign server")
+			}
+			requireOnlyAppSocket(t, runner.calls)
+		})
 	}
 }
 
