@@ -50,7 +50,7 @@ and humans run the same entrypoints.
   `make test-integration` already runs it.
 - `make test-e2e` prepares one attempt-local immutable product binary, then
   runs four isolated Linux real-tmux fixtures plus the Codex lifecycle and npm
-  staging fixtures. The required inventory is `L01`-`L19`, `C01`, and `N01`;
+  staging fixtures. The required inventory is `L01`-`L20`, `C01`, and `N01`;
   every fixture has its own HOME/XDG/tmux/socket/evidence roots and every
   consumer records the same binary SHA. `E2E_SCENARIO=<ID>` selects one exact
   stable scenario for replay.
@@ -88,7 +88,7 @@ and humans run the same entrypoints.
   the full product matrix. The shard target also pins the CI job list to the
   manifest. A deterministic fake-runner start/release barrier proves local
   default overlap is one and explicit parallel overlap is four while both use
-  one immutable binary, the exact 21-scenario inventory, and the same result
+  one immutable binary, the exact 22-scenario inventory, and the same result
   hash. The target also pins one non-fail-fast CI job per shard and per suite,
   each with its own runner, timeout, and uniquely named evidence artifacts, all
   of them required children of the aggregate `Test` gate. It also pins the thin
@@ -101,14 +101,22 @@ and humans run the same entrypoints.
   runs `make test-e2e-shards`, so the required Unit Tests job fails on shard
   contract drift. The live dialogue canary's own contract is
   `test/agent_dialogue_canary_test.py`, not this target.
+- `make test` also runs the evidence contract (`make e2e-evidence-contract`),
+  `make test-e2e-reliability`, and `make test-e2e-residual-policy`, so the
+  required Unit Tests job fails when any of them does. `make test-e2e-contract`
+  is a local entry point for the admission and evidence halves, both of which
+  `make test` already runs. The reliability contract removes the artifact
+  directory it creates on every exit, and keeps one the caller passes in
+  `PROJMUX_E2E_ARTIFACTS`.
 - `make test-e2e-coverage` validates
   `test/e2e/ags-oedr-manifest.json`: executable scenario markers and shard
-  assignments must match all 21 rows with orphan count zero. A matrix may move
+  assignments must match all 22 rows with orphan count zero. A matrix may move
   out of real-tmux E2E only when its checked-in entry names executable lower
   positive, negative, and fixed-point evidence and retains a real-boundary
   sentinel. The manifest/orphan half is a prerequisite of `make test-e2e`,
   while the referenced lower test runs in both this coverage target and the
-  required unit-test job.
+  required unit-test job, so `make test-e2e-coverage` is a local entry point
+  whose two halves are already enforced.
 - `make security` runs the exact three Security groups in parallel locally:
   Go vulnerability/security, Go static quality, and repository policy.
   `make security-serial` is the parity control and `make security-contract`
@@ -188,7 +196,7 @@ remains inside L17. Its row links creator-Registry admission, journal-path and
 CLOEXEC handshake tests to the immediate-exit integration/E2E markers, and
 also closes the focused fresh-root repeat harness plus the read-only
 owner/queue observation and product-terminal controller marker. These rows add
-no scenario ID: the audit still requires exactly 21 stable scenarios and fails
+no scenario ID: the audit still requires exactly 22 stable scenarios and fails
 closed if either source commit, guarantee set, lower selector, supporting
 marker, or marker-before-pass edge drifts.
 

@@ -4,7 +4,25 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$root/test/lib/smoke.sh"
 
-artifacts="${PROJMUX_E2E_ARTIFACTS:-$(mktemp -d)}"
+# A caller-supplied PROJMUX_E2E_ARTIFACTS belongs to the caller and is kept.
+# The directory made here, and a smoke root a failed F01 left before its own
+# cleanup ran, are removed on every exit so `make test` leaves nothing behind.
+owned_artifacts=""
+if [[ -n "${PROJMUX_E2E_ARTIFACTS:-}" ]]; then
+  artifacts="$PROJMUX_E2E_ARTIFACTS"
+else
+  owned_artifacts="$(mktemp -d)"
+  artifacts="$owned_artifacts"
+fi
+reliability_cleanup() {
+  if [[ -n "${PROJMUX_SMOKE_WORKDIR:-}" && -d "$PROJMUX_SMOKE_WORKDIR" ]]; then
+    smoke_cleanup_env || true
+  fi
+  if [[ -n "$owned_artifacts" ]]; then
+    rm -rf "$owned_artifacts"
+  fi
+}
+trap reliability_cleanup EXIT
 mkdir -p "$artifacts"
 
 # F01: an exact owned child is reaped only after the exact run-local socket
