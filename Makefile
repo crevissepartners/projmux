@@ -35,7 +35,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security-pin-refresh security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security-pin-refresh security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -130,7 +130,7 @@ deadcode-contract:
 vet:
 	$(GO) vet ./...
 
-test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-shards
+test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards
 	$(GO) test ./...
 
 smoke-assert-contract:
@@ -172,12 +172,14 @@ test-install-smoke:
 test-e2e: test-e2e-manifest
 	scripts/test-e2e-admission.sh scripts/test-e2e-docker.sh
 
-test-e2e-contract:
-	test/e2e/admission-contract.sh
-	test/e2e/evidence-contract.sh
+# A local entry point: `make test` already runs both halves.
+test-e2e-contract: e2e-admission-contract e2e-evidence-contract
 
 e2e-admission-contract:
 	test/e2e/admission-contract.sh
+
+e2e-evidence-contract:
+	test/e2e/evidence-contract.sh
 
 e2e-pipe-contract:
 	test/e2e/pipe-consumer-contract.sh
