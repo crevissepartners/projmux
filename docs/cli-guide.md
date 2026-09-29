@@ -2050,7 +2050,10 @@ they are what the Agent runs already. It is the restart
 Pane is closed through `delete pane`, and the Agent is brought back through the
 `agent resume` rebind with the overrides (outcome `restarted`, with the new
 Pane in `newPaneUID`); an Offline or Failed Agent is only resumed (outcome
-`resumed`). The settings are recorded by the rebind transaction -- the profile,
+`resumed`). The new Pane carries the closed Pane's name unless that name was
+its own uid; when the name cannot be carried (another Pane took it), the new
+Pane keeps its automatic name and stderr says why in one `projmux: agent/<name>
+new Pane keeps an automatic name: <reason>` line. The settings are recorded by the rebind transaction -- the profile,
 `projmux.io/model`, `projmux.io/effort`, the instructions, and their sources --
 so a failed launch records none of them; later plain resumes pass the effort
 again but not the model. Nothing is written before the stop. On a Codex Agent the model and effort ride the

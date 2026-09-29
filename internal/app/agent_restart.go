@@ -39,12 +39,16 @@ const relaunchReasonCodexPermissionsKept = "relaunch-codex-permissions-kept"
 // instructions before it (agentRestartSteps.beforeStop), so a resume that
 // fails leaves them for a plain `agent resume` to finish.
 type agentRestart struct {
-	spelling    string
-	registry    coremetadata.Registry
-	target      coremetadata.Agent
-	provider    string
-	running     bool
-	paneUID     string
+	spelling string
+	registry coremetadata.Registry
+	target   coremetadata.Agent
+	provider string
+	running  bool
+	paneUID  string
+	// paneName is the stopped managed Pane's non-automatic name, "" when it
+	// is named by its own UID. The stop drops that Pane's row and with it the
+	// name, so the resume could not find it among the Agent's old rows.
+	paneName    string
 	interaction coremetadata.AgentInteractionKind
 	// settings are the layered settings the restart launches with.
 	settings agentSettingsLaunch
@@ -95,8 +99,12 @@ func (r *agentRestart) checkTarget() error {
 	}
 	if r.running {
 		r.paneUID = strings.TrimSpace(target.Status.PaneRef)
-		if _, ok := r.registry.Pane(r.paneUID); !ok {
+		pane, ok := r.registry.Pane(r.paneUID)
+		if !ok {
 			return r.refuse(r.tokens.noConversation, fmt.Sprintf("is %s but its managed pane %q is not in the registry", target.Status.Phase, r.paneUID))
+		}
+		if agentPaneNameCandidate(*pane, target.Metadata.UID) {
+			r.paneName = pane.Metadata.Name
 		}
 	}
 	return nil
@@ -268,7 +276,8 @@ func (c *agentCommand) run(r *agentRestart, steps agentRestartSteps, stdout, std
 			}
 		}
 	}
-	if err := c.resumeStoppedAgent(r.target.Metadata.UID, steps.resume, forward, stderr); err != nil {
+	stopped := stoppedAgentPane{uid: r.paneUID, name: r.paneName}
+	if err := c.resumeStoppedAgent(r.target.Metadata.UID, stopped, steps.resume, forward, stderr); err != nil {
 		return "", steps.resumeFailed(err)
 	}
 	if after, err := c.loadRegistry(); err == nil {

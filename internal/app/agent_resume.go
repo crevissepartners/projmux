@@ -337,6 +337,9 @@ type agentResumePlan struct {
 	// themselves: --profile, --instructions and --reset. Empty on every other
 	// rebind.
 	layerChanges agentSettingsRequest
+	// stoppedPane is the managed Pane a restart closed right before this
+	// rebind. Empty on every other rebind.
+	stoppedPane stoppedAgentPane
 }
 
 // settingsRequest is what this rebind asks of the Agent's layers.
@@ -951,8 +954,18 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	return err
 }
 
+// stoppedAgentPane is the managed Pane a restart closed: its uid and its
+// non-automatic name, "" when it was named by its own UID.
+type stoppedAgentPane struct {
+	uid  string
+	name string
+}
+
 // handOffResumedPaneName chooses the name the resumed Agent's new Pane carries
 // and releases the old Pane row that held it.
+//
+// A restart's stopped Pane comes first: its name is carried once the stop has
+// dropped its row.
 //
 // Resume keeps an Offline Agent's old Pane rows as evidence, and each row still
 // holds its name reservation. The candidates are the rows proven live nowhere
@@ -967,6 +980,14 @@ func (r *agentRebinder) handOffResumedPaneName(
 	agent coremetadata.Agent,
 	plan agentResumePlan,
 ) (string, string) {
+	if stopped := plan.stoppedPane; stopped.name != "" {
+		if _, ok := working.Pane(stopped.uid); !ok {
+			// The restart's stop dropped the row and released its name, so
+			// no old row holds it. A holder that took it since is disclosed
+			// by attachAgentPaneWithName.
+			return stopped.name, ""
+		}
+	}
 	var owned []coremetadata.Pane
 	named := false
 	for _, pane := range working.PanesOf(agent.Metadata.UID) {
