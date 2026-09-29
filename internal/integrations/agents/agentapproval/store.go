@@ -40,6 +40,9 @@ const (
 	storeVersion  = 1
 	storeDirName  = "agent-approvals"
 	storeFileName = "requests.json"
+	// tempPrefix names the file a write fills before renaming it over the
+	// store file.
+	tempPrefix = ".requests.tmp-"
 	// maxRecords bounds the store. A waiting record is never evicted to make
 	// room; the oldest terminal ones are.
 	maxRecords    = 64
@@ -185,6 +188,9 @@ type Store struct {
 	// dirSync makes a renamed store file durable in its directory; nil is
 	// syncDir.
 	dirSync func(dir string) error
+	// removeTemp, when set by an in-package test, replaces os.Remove for the
+	// temp files a dead write left.
+	removeTemp func(path string) error
 }
 
 // NewStore opens the store under stateDir. Nothing is touched until the first
@@ -840,7 +846,8 @@ func (s *Store) writeLockedCommit(state diskState) (committed bool, err error) {
 		return false, ErrCapacity
 	}
 	dir := filepath.Dir(s.path)
-	tmp, err := os.CreateTemp(dir, ".requests.tmp-*")
+	s.removeOrphanTempsLocked(dir)
+	tmp, err := os.CreateTemp(dir, tempPrefix+"*")
 	if err != nil {
 		return false, err
 	}
@@ -877,6 +884,28 @@ func (s *Store) writeLockedCommit(state diskState) (committed bool, err error) {
 		return true, s.dirSync(dir)
 	}
 	return true, syncDir(dir)
+}
+
+// removeOrphanTempsLocked removes the temp files of writes that died before
+// their rename. Every write runs under the store lock, which the kernel releases
+// when its holder dies, so a temp file present while this writer holds the lock
+// belongs to no live write. Removal is best effort: a file that cannot be read
+// or removed stays for a later write and never fails this one.
+func (s *Store) removeOrphanTempsLocked(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	remove := os.Remove
+	if s.removeTemp != nil {
+		remove = s.removeTemp
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), tempPrefix) {
+			continue
+		}
+		_ = remove(filepath.Join(dir, entry.Name()))
+	}
 }
 
 // syncDir makes a renamed directory entry durable. A filesystem that refuses
