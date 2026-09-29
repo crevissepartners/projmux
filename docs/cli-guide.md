@@ -201,6 +201,28 @@ and `@projmux_window_uid` on its window — and derives every ancestor from
 registry `ownerRef`. The session-scoped `@projmux_project_uid` is deliberately
 not consulted.
 
+### Delete confirmation
+
+`delete window|pane|agent` and `unregister project` ask before they remove
+anything, with one exception: a `delete pane` whose selector resolves to
+exactly one Pane deletes it without asking. The selector is anything the
+operator typed -- a positional `<ref>`, a `--project`/`-p`,
+`--window`/`-w`, or `--pane` scope, or a `--selector` label. The argv already
+names the one resource that goes away, and a Pane is a leaf: it cascades to
+nothing, an Agent that owned it stays as an Offline resource, and deleting a
+Window's last Pane starts a replacement shell first, so the Window and its
+session stay.
+
+Everything else asks: `delete pane` with no selector (the active Pane inside
+tmux), `--all`, a selector that matches several Panes, and every `delete
+window`, `delete agent`, and `unregister project`. Asking means `--yes`
+proceeds; without it, a terminal prompts and a declined answer exits `2`, and
+a caller with no terminal is refused with exit `2` and a `needs confirmation`
+message. Either way the answer is settled before anything is deleted.
+`--dry-run` prints the full target and cascade plan and deletes nothing, with
+or without `--yes`. To preview a single named Pane, pass `--dry-run`: without
+it the Pane is already gone.
+
 ### Plural read scope: the active managed root
 
 Inside tmux, selector-omitted `get windows|panes|agents` derives one exact
@@ -1459,9 +1481,9 @@ which of them a command had touched.
 
 `open project` and `attach project` are the same operation seen from the two
 sides of a tmux client. Inside tmux, `open` moves the client you are in and
-`attach` refuses with a pointer at `open`; outside tmux, `attach` attaches the
-caller and `open` refuses with a pointer at `attach`. Both refusals happen
-before anything is materialized.
+`attach` refuses with a pointer at `focus project`; outside tmux, `attach`
+attaches the caller and `open` refuses with a pointer at `attach`. Both
+refusals happen before anything is materialized.
 
 `stop project` refuses an offline target rather than succeeding silently: it
 declares exactly one runtime outcome, and reporting `runtime=stopped` for a

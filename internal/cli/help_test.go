@@ -121,6 +121,38 @@ func TestAttentionMutationHelpUsesOptionalPaneCatalogUsage(t *testing.T) {
 	}
 }
 
+// TestDeletePaneHelpStatesWhenConfirmationIsSkipped pins the one delete that
+// can run without --yes. internal/app's (deletePlan).needsConfirmation skips
+// the prompt only for a named selector that resolves to exactly one Pane, so
+// help and the generated reference have to say that, and say what still asks.
+func TestDeletePaneHelpStatesWhenConfirmationIsSkipped(t *testing.T) {
+	t.Parallel()
+
+	path, route, ok := Resolve([]string{"delete", "pane"})
+	if !ok {
+		t.Fatal("delete pane did not resolve")
+	}
+	var help, reference bytes.Buffer
+	if err := RenderRouteHelp(&help, path, route); err != nil {
+		t.Fatalf("RenderRouteHelp(delete pane) error = %v", err)
+	}
+	if err := RenderReference(&reference); err != nil {
+		t.Fatalf("RenderReference() error = %v", err)
+	}
+	for name, text := range map[string]string{"help": help.String(), "reference": reference.String()} {
+		for _, want := range []string{
+			"A selector that resolves to exactly one Pane deletes it without confirmation.",
+			"No selector (the active Pane), --all, or several Panes need --yes, or a yes at the terminal prompt;",
+			"without a terminal the delete is refused with exit 2.",
+			"--dry-run only prints the plan.",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("delete pane %s lacks %q", name, want)
+			}
+		}
+	}
+}
+
 // helpFlagSpellings enumerates every argv spelling the shared boundary must
 // intercept: both dash prefixes of both names, bare and with any `=value`.
 func helpFlagSpellings() []string {
