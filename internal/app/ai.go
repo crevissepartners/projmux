@@ -37,6 +37,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -4271,7 +4272,7 @@ func normalizeAIMode(mode string) string {
 }
 
 func runExternalCommand(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := tmuxexec.CommandContext(ctx, name, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -4305,7 +4306,7 @@ func readExternalCommand(ctx context.Context, name string, args ...string) ([]by
 		}
 		return []byte(path + "\n"), nil
 	}
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	return tmuxexec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func shellQuote(value string) string {

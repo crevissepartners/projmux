@@ -24,6 +24,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -1068,7 +1069,7 @@ func defaultCommandVersion(name string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).Output()
+	out, err := tmuxexec.CommandContext(ctx, name, args...).Output()
 	if err != nil {
 		return ""
 	}

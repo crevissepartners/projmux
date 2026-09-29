@@ -21,6 +21,7 @@ import (
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -1096,7 +1097,7 @@ func (e *shellTmuxCommandError) CommandFailure() inttmux.CommandFailure { return
 func (e *shellTmuxCommandError) Unwrap() error { return e.cause }
 
 func (r shellTmuxExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := tmuxexec.CommandContext(ctx, name, args...)
 	cmd.Env = shellDetachedEnvironment(r.environ())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1338,7 +1339,7 @@ func (c *shellCommand) shouldStartNativeKeyBroker() bool {
 }
 
 func runForegroundCommand(ctx context.Context, env []string, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := tmuxexec.CommandContext(ctx, name, args...)
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -1347,7 +1348,7 @@ func runForegroundCommand(ctx context.Context, env []string, name string, args .
 }
 
 func startBackgroundCommand(ctx context.Context, env []string, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := tmuxexec.CommandContext(ctx, name, args...)
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

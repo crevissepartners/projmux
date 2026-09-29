@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -106,7 +107,7 @@ func (e *commandError) CommandFailure() CommandFailure { return e.failure }
 
 // Run executes a command and returns its combined output.
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := tmuxexec.CommandContext(ctx, name, args...)
 	if name == "tmux" && tmuxInteractiveHandoff(args) {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
