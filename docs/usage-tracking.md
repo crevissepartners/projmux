@@ -147,6 +147,14 @@ JSON document keyed by adapter, recording:
 - per-adapter `last_collect` timestamp (drives the throttle)
 - per-adapter `Backoff{Until, Consecutive}` (drives the cooldown)
 
+A persistent `.snapshots.json.lock` next to the file serializes every
+read-modify-write across the processes on one machine. The lock is never held
+during an adapter call. Instead, a throttled refresh records `last_collect`
+for the adapters it is about to walk before it calls them, so concurrent
+refreshes collect each adapter once per throttle window. A refresh that cannot
+take the lock within one second walks nothing and fails with a lock-timeout
+error. The lock does not coordinate machines that share a synced directory.
+
 Adapter failures merge over the prior slice rather than replacing it,
 so a 429 keeps the last known good rows visible. A *partial* collect — some
 rows dropped, some kept — still counts as a successful refresh for the models

@@ -59,7 +59,8 @@ func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 	// Throttle of 0 → unconditional: every adapter runs (subject to
 	// adapter-internal backoff). Used by `projmux agent usage` where the user
 	// explicitly asked for fresh data.
-	return m.collect(ctx, 0, false, nil)
+	_, snaps, err := m.collect(ctx, 0, false, nil, false)
+	return snaps, err
 }
 
 // ForceCollect runs every registered adapter unconditionally, bypassing
@@ -73,7 +74,8 @@ func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 // `projmux internal status usage --force`) when the user wants the latest
 // numbers right now and accepts that they may re-trigger 429.
 func (m *Manager) ForceCollect(ctx context.Context) ([]Snapshot, error) {
-	return m.collect(ctx, 0, true, nil)
+	_, snaps, err := m.collect(ctx, 0, true, nil, false)
+	return snaps, err
 }
 
 // ApplySnapshots commits one already-normalized adapter event through the
@@ -104,23 +106,27 @@ func (m *Manager) ApplySnapshots(model string, snapshots []Snapshot) ([]Snapshot
 		}
 		fresh[i] = snapshot
 	}
-	state, err := m.store.LoadState()
-	if err != nil {
-		return nil, err
-	}
-	if state.LastCollect == nil {
-		state.LastCollect = map[string]time.Time{}
-	}
-	merged := make([]Snapshot, 0, len(state.Snapshots)+len(fresh))
-	merged = append(merged, fresh...)
-	for _, snapshot := range state.Snapshots {
-		if strings.ToLower(strings.TrimSpace(snapshot.Model)) != model {
-			merged = append(merged, snapshot)
+	var merged []Snapshot
+	err := m.store.withStateLock(func() error {
+		state, err := m.store.LoadState()
+		if err != nil {
+			return err
 		}
-	}
-	state.Snapshots = merged
-	state.LastCollect[model] = now
-	if err := m.store.SaveState(state); err != nil {
+		if state.LastCollect == nil {
+			state.LastCollect = map[string]time.Time{}
+		}
+		merged = make([]Snapshot, 0, len(state.Snapshots)+len(fresh))
+		merged = append(merged, fresh...)
+		for _, snapshot := range state.Snapshots {
+			if strings.ToLower(strings.TrimSpace(snapshot.Model)) != model {
+				merged = append(merged, snapshot)
+			}
+		}
+		state.Snapshots = merged
+		state.LastCollect[model] = now
+		return m.store.SaveState(state)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return SortedSnapshots(merged), nil
@@ -140,15 +146,32 @@ func (m *Manager) ApplySnapshots(model string, snapshots []Snapshot) ([]Snapshot
 //
 // Adapters named in `skip` are not walked at all; their prior rows survive
 // through the same merge step that preserves a throttled adapter's rows.
-func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, force bool, skip map[string]bool) ([]Snapshot, error) {
+//
+// requireDue=true makes the walk conditional: when no adapter is due (see
+// dueIn) nothing is walked or written and walked=false.
+//
+// Concurrency: other projmux processes sharing the state dir run the same
+// flow, so the state is only ever read-modified-written under the store's
+// state lock, and the lock is never held across an adapter call.
+//
+//  1. Claim, under the lock: re-read the state, decide what is due, record
+//     `last_collect` for every adapter about to be walked, and save. A
+//     concurrent caller that takes the lock next sees the claim and treats
+//     those adapters as not due, so each adapter is collected once per
+//     throttle window.
+//  2. Walk the claimed adapters with the lock released.
+//  3. Commit, under the lock: re-read the state and merge only this walk's
+//     results (rows, backoff, last_collect) into it, so a commit another
+//     process made meanwhile (ApplySnapshots, another walk) survives.
+func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, force bool, skip map[string]bool, requireDue bool) (bool, []Snapshot, error) {
 	if m == nil {
-		return nil, errors.New("usage: nil manager")
+		return false, nil, errors.New("usage: nil manager")
 	}
 	if m.registry == nil {
-		return nil, errors.New("usage: nil registry")
+		return false, nil, errors.New("usage: nil registry")
 	}
 	if m.store == nil {
-		return nil, errors.New("usage: nil store")
+		return false, nil, errors.New("usage: nil store")
 	}
 
 	now := m.now().UTC()
@@ -158,126 +181,216 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 	// artifacts.
 	m.store.CleanupLegacyArtifacts()
 
-	priorState, _ := m.store.LoadState()
-	if priorState.LastCollect == nil {
-		priorState.LastCollect = map[string]time.Time{}
-	}
-	if priorState.Backoff == nil {
-		priorState.Backoff = map[string]BackoffState{}
-	}
-
-	// Bucket prior snapshots by model so per-adapter merge is O(n).
-	priorByModel := map[string][]Snapshot{}
-	for _, s := range priorState.Snapshots {
-		priorByModel[s.Model] = append(priorByModel[s.Model], s)
-	}
-
-	merged := make([]Snapshot, 0, len(priorState.Snapshots))
-	freshModels := map[string]bool{}
-	staleByModel := map[string]SnapshotReason{}
-	var errs []error
-
-	adapters := m.registry.All()
-	for _, adapter := range adapters {
-		name := adapter.Name()
-
-		// A caller that already committed this adapter from a fresher
-		// source in the same refresh excludes it here.
-		if skip[name] {
-			continue
+	var (
+		due       bool
+		claimed   []Adapter
+		backoffIn map[string]BackoffState
+		claimView State
+	)
+	err := m.store.withStateLock(func() error {
+		state := loadStateForMerge(m.store)
+		if requireDue && !m.dueIn(state, now, perAdapterFloor, skip) {
+			return nil
 		}
+		due = true
+		backoffIn = map[string]BackoffState{}
+		for _, adapter := range m.registry.All() {
+			name := adapter.Name()
 
-		// Per-adapter throttle gate. Skip adapters whose effective
-		// interval has not elapsed; their prior rows survive via the
-		// merge step below. Floor=0 disables the gate. force=true
-		// also disables the gate so `--force` always attempts every
-		// adapter.
-		if !force && perAdapterFloor > 0 {
-			interval := adapterInterval(adapter, perAdapterFloor)
-			if last, ok := priorState.LastCollect[name]; ok && !last.IsZero() && now.Sub(last) < interval {
+			// A caller that already committed this adapter from a fresher
+			// source in the same refresh excludes it here.
+			if skip[name] {
 				continue
 			}
-		}
 
-		// Install persisted backoff state before Collect so the adapter
-		// can early-return without making the network call. Under
-		// force=true we drop both the on-disk view AND the in-memory
-		// view via ResetBackoff so this Collect attempts the network
-		// call regardless of prior 429 streak.
-		if bs, ok := adapter.(BackoffStater); ok {
-			if force {
-				bs.LoadBackoff(BackoffState{})
-				priorState.Backoff[name] = BackoffState{}
-			} else {
-				bs.LoadBackoff(priorState.Backoff[name])
-			}
-		}
-		if force {
-			if br, ok := adapter.(BackoffResetter); ok {
-				br.ResetBackoff()
-			}
-		}
-		snaps, err := adapter.Collect(ctx)
-		if err != nil {
-			errs = append(errs, &AdapterError{Model: name, Err: err})
-			if len(snaps) == 0 {
-				if reason := SnapshotStaleReason(err); reason != "" {
-					staleByModel[name] = reason
+			// Per-adapter throttle gate. Skip adapters whose effective
+			// interval has not elapsed; their prior rows survive via the
+			// merge step. Floor=0 disables the gate. force=true also
+			// disables the gate so `--force` always attempts every
+			// adapter.
+			if !force && perAdapterFloor > 0 {
+				interval := adapterInterval(adapter, perAdapterFloor)
+				if last, ok := state.LastCollect[name]; ok && !last.IsZero() && now.Sub(last) < interval {
+					continue
 				}
 			}
+			claimed = append(claimed, adapter)
+			backoffIn[name] = state.Backoff[name]
+			// The claim: last_collect[name] advances on every adapter walk
+			// — failures and empty results included — and it advances
+			// before the network call so no other process walks this
+			// adapter while this one is in flight. The throttle is about
+			// not hammering the upstream; backoff (BackoffStater) handles
+			// the longer 429-induced cooldown separately.
+			state.LastCollect[name] = now
 		}
-		// Stamp UpdatedAt so the renderer can show "as of" without callers
-		// having to thread the clock through every adapter.
-		for i := range snaps {
-			if snaps[i].UpdatedAt.IsZero() {
-				snaps[i].UpdatedAt = now
+		claimView = state
+		if len(claimed) == 0 {
+			return nil
+		}
+		return m.store.SaveState(state)
+	})
+	if err != nil {
+		return false, nil, err
+	}
+	if !due {
+		return false, nil, nil
+	}
+
+	results := make([]adapterWalk, 0, len(claimed))
+	for _, adapter := range claimed {
+		results = append(results, m.walkAdapter(ctx, adapter, backoffIn[adapter.Name()], force, now))
+	}
+
+	var errs []error
+	for _, result := range results {
+		if result.err != nil {
+			errs = append(errs, &AdapterError{Model: result.name, Err: result.err})
+		}
+	}
+	var merged []Snapshot
+	commitErr := m.store.withStateLock(func() error {
+		state := loadStateForMerge(m.store)
+		merged = mergeWalk(&state, results, now)
+		if err := m.store.SaveState(state); err != nil {
+			return fmt.Errorf("save snapshots: %w", err)
+		}
+		return nil
+	})
+	if commitErr != nil {
+		errs = append(errs, commitErr)
+		if merged == nil {
+			// The commit never read the state, so answer the caller from the
+			// view the claim read. Nothing of this walk was persisted.
+			merged = mergeWalk(&claimView, results, now)
+		}
+	}
+	if len(errs) > 0 {
+		return true, merged, errors.Join(errs...)
+	}
+	return true, merged, nil
+}
+
+// adapterWalk is one adapter's outcome from a collect walk, held until it is
+// merged into the state read at commit time.
+type adapterWalk struct {
+	name       string
+	snaps      []Snapshot
+	err        error
+	backoff    BackoffState
+	hasBackoff bool
+}
+
+// walkAdapter runs one claimed adapter. It must be called without the state
+// lock held: the adapter may make a network call.
+func (m *Manager) walkAdapter(ctx context.Context, adapter Adapter, backoff BackoffState, force bool, now time.Time) adapterWalk {
+	result := adapterWalk{name: adapter.Name()}
+	// Install persisted backoff state before Collect so the adapter
+	// can early-return without making the network call. Under
+	// force=true we drop both the on-disk view AND the in-memory
+	// view via ResetBackoff so this Collect attempts the network
+	// call regardless of prior 429 streak.
+	if bs, ok := adapter.(BackoffStater); ok {
+		if force {
+			bs.LoadBackoff(BackoffState{})
+		} else {
+			bs.LoadBackoff(backoff)
+		}
+	}
+	if force {
+		if br, ok := adapter.(BackoffResetter); ok {
+			br.ResetBackoff()
+		}
+	}
+	snaps, err := adapter.Collect(ctx)
+	// Stamp UpdatedAt so the renderer can show "as of" without callers
+	// having to thread the clock through every adapter.
+	for i := range snaps {
+		if snaps[i].UpdatedAt.IsZero() {
+			snaps[i].UpdatedAt = now
+		}
+	}
+	result.snaps = snaps
+	result.err = err
+	// Persist backoff regardless of success/failure: a 429 sets
+	// `until`; a clean success resets `consecutive` to 0.
+	if bs, ok := adapter.(BackoffStater); ok {
+		result.backoff = bs.SaveBackoff()
+		result.hasBackoff = true
+	}
+	return result
+}
+
+// mergeWalk folds one walk's results into state and returns the merged
+// snapshot rows, which it also stores in state.Snapshots.
+//
+// Merge semantics, evaluated per adapter of this walk:
+//   - Adapter returned a non-empty snapshot slice → REPLACE all rows for
+//     the models it touched.
+//   - Adapter errored or returned zero snapshots → PRESERVE the rows for
+//     that model, marked with the error's stale reason when it has one.
+//
+// Rows, backoff and last_collect of adapters outside this walk are left
+// exactly as state holds them.
+func mergeWalk(state *State, results []adapterWalk, now time.Time) []Snapshot {
+	if state.LastCollect == nil {
+		state.LastCollect = map[string]time.Time{}
+	}
+	if state.Backoff == nil {
+		state.Backoff = map[string]BackoffState{}
+	}
+	merged := make([]Snapshot, 0, len(state.Snapshots))
+	freshModels := map[string]bool{}
+	staleByModel := map[string]SnapshotReason{}
+	for _, result := range results {
+		state.LastCollect[result.name] = now
+		if result.hasBackoff {
+			state.Backoff[result.name] = result.backoff
+		}
+		if result.err != nil && len(result.snaps) == 0 {
+			if reason := SnapshotStaleReason(result.err); reason != "" {
+				staleByModel[result.name] = reason
 			}
 		}
-		// last_collect[name] advances on every adapter walk — failures
-		// and empty results included. The throttle is about not
-		// hammering the upstream; backoff (BackoffStater) handles the
-		// longer 429-induced cooldown separately. Only the merged
-		// snapshot rows distinguish success from failure.
-		priorState.LastCollect[name] = now
-		if len(snaps) > 0 {
+		if len(result.snaps) > 0 {
 			// Successful collect: replace all prior rows for the models
 			// the adapter touched. We trust the adapter to emit one row
 			// per (model, window, bucket) identity it owns.
-			for _, s := range snaps {
+			for _, s := range result.snaps {
 				freshModels[s.Model] = true
 			}
-			merged = append(merged, snaps...)
-		}
-		// Persist backoff regardless of success/failure: a 429 sets
-		// `until`; a clean success resets `consecutive` to 0.
-		if bs, ok := adapter.(BackoffStater); ok {
-			priorState.Backoff[name] = bs.SaveBackoff()
+			merged = append(merged, result.snaps...)
 		}
 	}
 
-	// Preserve prior rows for any model the current cycle did NOT
-	// successfully refresh. This is the load-bearing fix for the 429
-	// regression: a Claude failure must not erase the Claude rows.
-	for model, rows := range priorByModel {
-		if freshModels[model] {
+	// Preserve rows for any model this walk did NOT successfully refresh.
+	// This is the load-bearing fix for the 429 regression: a Claude failure
+	// must not erase the Claude rows.
+	for _, row := range state.Snapshots {
+		if freshModels[row.Model] {
 			continue
 		}
-		if reason := staleByModel[model]; reason != "" {
-			for i := range rows {
-				rows[i].StaleReason = reason
-			}
+		if reason := staleByModel[row.Model]; reason != "" {
+			row.StaleReason = reason
 		}
-		merged = append(merged, rows...)
+		merged = append(merged, row)
 	}
+	state.Snapshots = merged
+	return merged
+}
 
-	priorState.Snapshots = merged
-	if err := m.store.SaveState(priorState); err != nil {
-		errs = append(errs, fmt.Errorf("save snapshots: %w", err))
+// loadStateForMerge reads the state for a read-modify-write. An unreadable or
+// corrupt file reads as empty, as it always has for collect: the next save
+// replaces it.
+func loadStateForMerge(store *Store) State {
+	state, _ := store.LoadState()
+	if state.LastCollect == nil {
+		state.LastCollect = map[string]time.Time{}
 	}
-	if len(errs) > 0 {
-		return merged, errors.Join(errs...)
+	if state.Backoff == nil {
+		state.Backoff = map[string]BackoffState{}
 	}
-	return merged, nil
+	return state
 }
 
 // MaybeCollect opportunistically refreshes the snapshot file if the
@@ -301,6 +414,12 @@ func (m *Manager) MaybeCollect(ctx context.Context, throttle time.Duration) (boo
 // pass. Every OTHER registered adapter is still walked when it is due, so
 // accepting a batch for one model never starves an unrelated adapter that
 // has passed its own floor.
+//
+// Concurrent calls from any number of processes sharing the state dir
+// collect each adapter at most once per throttle window: the due decision
+// and the claim happen under the state lock (see collect). A call that
+// cannot take the lock within StateLockWaitLimit walks nothing and returns
+// an error wrapping ErrStateLockTimeout.
 func (m *Manager) MaybeCollectExcept(ctx context.Context, throttle time.Duration, exclude ...string) (bool, error) {
 	if m == nil {
 		return false, errors.New("usage: nil manager")
@@ -309,12 +428,14 @@ func (m *Manager) MaybeCollectExcept(ctx context.Context, throttle time.Duration
 		return false, errors.New("usage: nil store")
 	}
 	skip := adapterNameSet(exclude)
-	now := m.now().UTC()
-	if !m.shouldCollect(now, throttle, skip) {
-		return false, nil
+	if throttle <= 0 || m.registry == nil {
+		// No floor always collects; a nil registry surfaces its error
+		// from collect exactly as before.
+		_, _, collectErr := m.collect(ctx, throttle, false, skip, false)
+		return true, collectErr
 	}
-	_, collectErr := m.collect(ctx, throttle, false, skip)
-	return true, collectErr
+	walked, _, collectErr := m.collect(ctx, throttle, false, skip, true)
+	return walked, collectErr
 }
 
 // adapterNameSet normalizes adapter names into a lookup set. Adapter names
@@ -333,23 +454,13 @@ func adapterNameSet(names []string) map[string]bool {
 	return set
 }
 
-// shouldCollect reports whether MaybeCollect should run adapters. It
+// dueIn reports whether MaybeCollect should run adapters given state. It
 // consults per-adapter timestamps so a slow adapter (Claude OAuth,
 // 5min) does not block a fast one (Codex, 30s). The Manager runs the
-// full adapter walk if ANY adapter is due, then Collect's own merge
-// preserves the not-yet-due adapters' prior rows. Adapters in `skip` are
-// ignored here exactly as they are ignored by the walk itself.
-func (m *Manager) shouldCollect(now time.Time, defaultThrottle time.Duration, skip map[string]bool) bool {
-	if defaultThrottle <= 0 {
-		return true
-	}
-	state, err := m.store.LoadState()
-	if err != nil {
-		return true
-	}
-	if m.registry == nil {
-		return true
-	}
+// full adapter walk if ANY adapter is due, then the merge preserves the
+// not-yet-due adapters' rows. Adapters in `skip` are ignored here exactly
+// as they are ignored by the walk itself.
+func (m *Manager) dueIn(state State, now time.Time, defaultThrottle time.Duration, skip map[string]bool) bool {
 	for _, adapter := range m.registry.All() {
 		name := adapter.Name()
 		if skip[name] {

@@ -54,6 +54,8 @@ type snapshotFileWire struct {
 // registered adapters under <baseDir>/snapshots.json.
 type Store struct {
 	baseDir string
+	// lockWaitLimit overrides StateLockWaitLimit when positive.
+	lockWaitLimit time.Duration
 }
 
 // NewStore returns a Store rooted at baseDir. Callers typically pass
