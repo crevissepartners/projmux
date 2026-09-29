@@ -211,7 +211,9 @@ test-e2e-update:
 
 e2e: test-e2e
 
-verify: fmt-check test test-integration test-install-smoke test-e2e
+# test-integration already runs test/install/smoke.sh, so verify does not
+# repeat test-install-smoke.
+verify: fmt-check test test-integration test-e2e
 
 # Go-based security tools are pinned to the versions used to produce the
 # checked-in baselines, and ShellCheck to the release asset digests in

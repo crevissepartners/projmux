@@ -37,13 +37,17 @@ and humans run the same entrypoints.
 - `make test-integration` builds `test/docker/Dockerfile` and runs
   `test/integration/linux-smoke.sh` in Docker. It validates Linux dependency
   discovery, tmux config generation/install, app config reload against a real
-  `tmux` server, and notify queue CRUD.
-- `make test-install-smoke` builds the same Docker image and runs
-  `test/install/smoke.sh`. It validates `make install`, atomic binary
-  replacement into an isolated install dir, pre-publication marker convergence,
-  concurrent legacy/candidate/installed shell and attach consumers, exact
-  server-generation/session preservation, `tmux apply`, and post-install notify
-  reconcile initialization with a fresh HOME/XDG state tree.
+  `tmux` server, and notify queue CRUD. It also runs `test/install/smoke.sh`,
+  so the required `Integration Tests` job covers the install smoke.
+- `make test-install-smoke` builds the same Docker image and runs only
+  `test/install/smoke.sh`, as a local entrypoint. It validates `make install`,
+  atomic binary replacement into an isolated install dir, pre-publication
+  marker convergence, concurrent legacy/candidate/installed shell and attach
+  consumers, exact server-generation/session preservation, `tmux apply` into
+  the resolved `$XDG_CONFIG_HOME/projmux/tmux.conf`, and post-install notify
+  reconcile initialization with a fresh HOME/XDG state tree. It ends with a
+  `>> install smoke passed` line. `make verify` does not repeat it, because
+  `make test-integration` already runs it.
 - `make test-e2e` prepares one attempt-local immutable product binary, then
   runs four isolated Linux real-tmux fixtures plus the Codex lifecycle and npm
   staging fixtures. The required inventory is `L01`-`L19`, `C01`, and `N01`;
@@ -335,8 +339,9 @@ Observe:
 ```markdown
 Host-only smoke validation:
 
-- Docker-covered checks: `make test-integration`, `make test-install-smoke`,
-  and `make test-e2e` cover portable Linux tmux/config/notify behavior only.
+- Docker-covered checks: `make test-integration` (which includes the install
+  smoke) and `make test-e2e` cover portable Linux tmux/config/notify behavior
+  only.
 - Terminal key delivery: not run / run on <terminal>; `projmux setup --timeout
   10s` showed <result>; `Alt-1..5` app popup smoke <passed/failed/not run>.
 - WSL toast: not run / run on <Windows + WSL distro>; detached-focus smoke
