@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -270,15 +271,11 @@ func (h *claudeCoordinationHub) permitsExplicitTool(argv []string, route coremet
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.expireQualificationLocked(h.now())
-	message := h.messages[argv[6]]
-	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil || message.delivery.State != agentdelivery.StateDelivered || message.replyReserved || !message.envelope.Deadline.After(h.now()) {
+	if h.closed || broker == nil {
 		return false
 	}
-	if message.replyRef != "" && !knownZeroExplicitReply(broker, message.envelope.MessageRef) {
-		return false
-	}
-	original := message.envelope.BrokerEnvelope
-	if original.Operator() || !messageRouteAccepts(route, original.Target) || argv[4] != "uid:"+original.Source.AgentUID || !replySenderCurrent(broker, *original) {
+	original, ok := h.explicitToolOriginalLocked(argv[6], route, broker)
+	if !ok || original.Operator() || argv[4] != "uid:"+original.Source.AgentUID || !replySenderCurrent(broker, *original) {
 		return false
 	}
 	if h.qualifiedVersion != claudeFrozenFrameProviderVersion {
@@ -288,6 +285,64 @@ func (h *claudeCoordinationHub) permitsExplicitTool(argv []string, route coremet
 		}
 	}
 	return true
+}
+
+// explicitToolOriginalLocked is the original a reply tool call may answer: the
+// message this helper pushed or, when it pushed none by that ref, the durable
+// record a previous activation of this Agent was delivered, read through the
+// commit path's Registry-current fence (StoredOriginal). Either must be
+// delivered, unexpired, and neither reserved nor answered. A pushed original
+// targets this helper's route exactly. A relaunch into the same conversation
+// replaces the Pane and activation generation, so a stored original's Target is
+// correlated the way the commit path correlates the reply: same Agent,
+// provider, and conversation (coremessage.ReplyRoutes), and is returned as
+// this helper's current route.
+func (h *claudeCoordinationHub) explicitToolOriginalLocked(ref string, route coremetadata.AgentRouteRef,
+	broker claudeDialogueBroker,
+) (*coremessage.Envelope, bool) {
+	if message := h.messages[ref]; message != nil {
+		original := message.envelope.BrokerEnvelope
+		if original == nil || message.delivery.State != agentdelivery.StateDelivered || message.replyReserved ||
+			!message.envelope.Deadline.After(h.now()) ||
+			message.replyRef != "" && !knownZeroExplicitReply(broker, message.envelope.MessageRef) ||
+			!messageRouteAccepts(route, original.Target) {
+			return nil, false
+		}
+		return original, true
+	}
+	lookup, ok := broker.(claudeStoredOriginalReader)
+	if !ok {
+		return nil, false
+	}
+	record, found, err := lookup.StoredOriginal(ref, route)
+	if err != nil || !found || record.Delivery.State != coremessage.StateDelivered || !record.Envelope.Deadline.After(h.now()) {
+		return nil, false
+	}
+	if reservation := h.storeReplies[ref]; reservation != nil && reservation.replyReserved {
+		return nil, false
+	}
+	// A predecessor's reply is in the store only; the lane stays open after a
+	// known-zero attempt, as it does for a pushed original.
+	lookupReply, ok := broker.(interface {
+		ReplyStatus(string) (messagestore.Record, bool, error)
+	})
+	if !ok {
+		return nil, false
+	}
+	if previous, answered, err := lookupReply.ReplyStatus(ref); err != nil || answered && !messagestore.KnownZeroReply(previous) {
+		return nil, false
+	}
+	original := record.Envelope
+	replier := publicMessageRoute(route)
+	if route.AcceptsIncarnation(original.Target.Incarnation) {
+		replier.Incarnation = original.Target.Incarnation
+	}
+	if coremessage.ReplyRoutes(original, coremessage.Envelope{Source: replier, Target: original.Source}) != nil {
+		return nil, false
+	}
+	// The sender proof then reads the replier where it runs now.
+	original.Target = replier
+	return &original, true
 }
 
 // claudeReplySenderResolver is the optional broker lookup of an original
