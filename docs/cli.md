@@ -3352,16 +3352,16 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux profile list`](#projmux-profile-list) | List every built-in and stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity |
-| [`projmux profile show`](#projmux-profile-show) | Print one profile's content exactly as stored or built in |
+| [`projmux profile list`](#projmux-profile-list) | List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity |
+| [`projmux profile show`](#projmux-profile-show) | Print one profile's content exactly as stored |
 | [`projmux profile set`](#projmux-profile-set) | Validate one profile from a file or stdin and write it only when valid |
-| [`projmux profile delete`](#projmux-profile-delete) | Delete one stored profile file; built-in profiles cannot be deleted |
+| [`projmux profile delete`](#projmux-profile-delete) | Delete one stored profile file |
 
 Canonical spelling: `projmux profile list`, `projmux profile show`, `projmux profile set`, `projmux profile delete`
 
 ### `projmux profile list`
 
-List every built-in and stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity
+List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
@@ -3382,7 +3382,7 @@ projmux profile list
 
 ### `projmux profile show`
 
-Print one profile's content exactly as stored or built in
+Print one profile's content exactly as stored
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -3424,7 +3424,7 @@ projmux profile set <name> [--file <path> | -]
 
 ### `projmux profile delete`
 
-Delete one stored profile file; built-in profiles cannot be deleted
+Delete one stored profile file
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 

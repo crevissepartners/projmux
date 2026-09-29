@@ -42,15 +42,15 @@ func TestParseAcceptsExactlyTheRegisteredProviders(t *testing.T) {
 }
 
 // TestAProfileWithoutProviderParsesAndDigestsAsBefore holds a file without
-// the key to what it was before `provider` existed: the builtin readonly keeps
+// the key to what it was before `provider` existed: a read-only profile keeps
 // its digest and spec, and adding the key changes Provider and nothing else.
 func TestAProfileWithoutProviderParsesAndDigestsAsBefore(t *testing.T) {
 	t.Parallel()
 	const readonlyDigest = "sha256:bca5e1424e9d43d92ac9f66b0ab3c0540452b2acb369091ff6ea3ba8523240a1"
-	if got := Digest([]byte(builtins["readonly"])); got != readonlyDigest {
-		t.Fatalf("builtin readonly digest = %s, want %s", got, readonlyDigest)
+	if got := Digest([]byte(readonlyProfile)); got != readonlyDigest {
+		t.Fatalf("readonly digest = %s, want %s", got, readonlyDigest)
 	}
-	spec, err := Parse([]byte(builtins["readonly"]))
+	spec, err := Parse([]byte(readonlyProfile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +96,7 @@ func TestStoreListKeepsTheItemsOfAnInvalidProfileThatParses(t *testing.T) {
 	}
 	writeHandPlaced(t, dir, "orphan", "provider = \"claude\"\ninstructions = \"gone\"\nmodel = \"opus\"\neffort = \"low\"\nroles = [\"qa\"]\n")
 	writeHandPlaced(t, dir, "broken", "roles = [\"ops\"]\nbogus = \"x\"\n")
+	writeHandPlaced(t, dir, "readonly", readonlyProfile)
 	entries, err := store.List()
 	if err != nil {
 		t.Fatal(err)

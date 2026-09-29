@@ -1447,11 +1447,21 @@ creating the Agent without a profile. A valid profile that shares a role with
 an invalid one is marked `profile-role-claimed`; the invalid one keeps its own
 reason. Pass `--profile none` to create without a profile.
 
-Profile names follow the instructions name rule, and `none` is reserved. One
-profile is built in: `readonly` sets `sandbox = "read-only"`, `approval =
-"never"`, and denies `Edit`, `Write`, and `NotebookEdit`; it lists no roles. A
-user file named `readonly.toml` replaces it, and deleting that file brings the
-built-in back. The built-in itself cannot be deleted.
+Profile names follow the instructions name rule, and `none` is reserved.
+No profile is compiled into projmux: every profile is a file in
+`<config dir>/profiles/`, and a name without a file is `profile-not-found`.
+A profile that lets an Agent read and never write lists no roles and sets
+only its permissions:
+
+```toml
+# readonly.toml
+[permissions]
+sandbox = "read-only"
+approval = "never"
+deny = ["Edit", "Write", "NotebookEdit"]
+```
+
+Store it with `projmux profile set readonly --file readonly.toml`.
 
 When a profile with `allow` or `deny` rules is applied to a Claude Agent, its
 rules are written as a Claude settings file,

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -145,27 +146,51 @@ func TestParseRefusesEverythingOutsideTheSubsetWithItsReason(t *testing.T) {
 	}
 }
 
-func TestBuiltinReadonlyPassesTheValidatorAndClaimsNoRole(t *testing.T) {
-	t.Parallel()
-	raw, ok := builtins["readonly"]
-	if !ok {
-		t.Fatal("builtin readonly is missing")
-	}
-	for name, content := range builtins {
-		if _, err := Parse([]byte(content)); err != nil {
-			t.Errorf("builtin %s does not parse: %v", name, err)
-		}
-		if err := ValidateName(name); err != nil {
-			t.Errorf("builtin name %s: %v", name, err)
-		}
-	}
-	spec, err := Parse([]byte(raw))
+// readonlyProfile is a read-only profile file with the exact bytes of the
+// profile projmux used to compile in, so its digest is the one Agents
+// recorded for it.
+const readonlyProfile = `[permissions]
+sandbox = "read-only"
+approval = "never"
+deny = ["Edit", "Write", "NotebookEdit"]
+`
+
+// docsReadonlyProfile returns the readonly.toml example of
+// docs/configuration.md, the file a user stores in place of the profile
+// projmux no longer compiles in.
+func docsReadonlyProfile(t *testing.T) []byte {
+	t.Helper()
+	doc, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "configuration.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Roles) != 0 || spec.Permissions.Sandbox != "read-only" || spec.Permissions.Approval != "never" ||
-		!slices.Equal(spec.Permissions.Deny, []string{"Edit", "Write", "NotebookEdit"}) {
-		t.Fatalf("builtin readonly = %+v", spec)
+	_, block, ok := strings.Cut(string(doc), "```toml\n# readonly.toml\n")
+	if !ok {
+		t.Fatal("docs/configuration.md has no readonly.toml example")
+	}
+	block, _, ok = strings.Cut(block, "```")
+	if !ok {
+		t.Fatal("the readonly.toml example is not closed")
+	}
+	return []byte("# readonly.toml\n" + block)
+}
+
+// TestDocsReadonlyExampleGrantsWhatTheCompiledInProfileDid holds the docs
+// example to the permissions of the profile it replaces: read-only, never
+// ask, deny the three writing tools, and claim no role.
+func TestDocsReadonlyExampleGrantsWhatTheCompiledInProfileDid(t *testing.T) {
+	t.Parallel()
+	want, err := Parse([]byte(readonlyProfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := Parse(docsReadonlyProfile(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(spec, want) || len(spec.Roles) != 0 || spec.Permissions.Sandbox != "read-only" ||
+		spec.Permissions.Approval != "never" || !slices.Equal(spec.Permissions.Deny, []string{"Edit", "Write", "NotebookEdit"}) {
+		t.Fatalf("docs readonly = %+v, want %+v", spec, want)
 	}
 }
 
@@ -268,16 +293,12 @@ func TestStoreWriteRefusesARoleAnotherValidProfileClaims(t *testing.T) {
 	}
 }
 
-func TestStoreListShowsBuiltinsUserFilesAndInvalidFilesWithoutStopping(t *testing.T) {
+func TestStoreListShowsOnlyUserFilesAndInvalidFilesWithoutStopping(t *testing.T) {
 	t.Parallel()
 	store, dir := newTestStore(t)
 	entries, err := store.List()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 || entries[0].Name != "readonly" || entries[0].Source != SourceBuiltin || !entries[0].Valid ||
-		entries[0].Digest != Digest([]byte(builtins["readonly"])) || len(entries[0].Roles) != 0 {
-		t.Fatalf("empty-config list = %+v", entries)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("empty-config list = %+v, %v; want no profile", entries, err)
 	}
 	if _, err := store.Write("alpha", []byte("roles = [\"review\"]\n")); err != nil {
 		t.Fatal(err)
@@ -303,7 +324,7 @@ func TestStoreListShowsBuiltinsUserFilesAndInvalidFilesWithoutStopping(t *testin
 		got[entry.Name] = entry
 		names = append(names, entry.Name)
 	}
-	if !slices.Equal(names, []string{"alpha", "broken", "huge", "readonly"}) {
+	if !slices.Equal(names, []string{"alpha", "broken", "huge"}) {
 		t.Fatalf("names = %v", names)
 	}
 	if !got["alpha"].Valid || got["alpha"].Source != SourceUser || !slices.Equal(got["alpha"].Roles, []string{"review"}) {
@@ -333,18 +354,26 @@ func TestStoreListMarksEveryProfileSharingARoleInvalid(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		wantValid := entry.Name == "c" || entry.Name == "readonly"
+		wantValid := entry.Name == "c"
 		if entry.Valid != wantValid || (!wantValid && entry.Reason != ReasonRoleClaimed) {
 			t.Errorf("%s = %+v, want valid=%v", entry.Name, entry, wantValid)
 		}
 	}
 }
 
-func TestUserReadonlyShadowsTheBuiltinAndDeletingItRevealsTheBuiltin(t *testing.T) {
+// TestReadonlyExistsOnlyAsAUserFile pins that no name is compiled in:
+// readonly without a file is profile-not-found for Load and Delete, the docs
+// example stored as readonly.toml is a user profile, and deleting it leaves
+// the name missing again.
+func TestReadonlyExistsOnlyAsAUserFile(t *testing.T) {
 	t.Parallel()
-	store, _ := newTestStore(t)
-	if err := store.Delete("readonly"); ReasonOf(err) != ReasonBuiltin {
-		t.Fatalf("Delete builtin-only = %v", err)
+	store, dir := newTestStore(t)
+	path := filepath.Join(dir, "readonly"+FileExt)
+	if err := store.Delete("readonly"); ReasonOf(err) != ReasonNotFound || !strings.Contains(err.Error(), path) {
+		t.Fatalf("Delete readonly without a file = %v", err)
+	}
+	if _, err := store.Load("readonly"); ReasonOf(err) != ReasonNotFound || !strings.Contains(err.Error(), path) {
+		t.Fatalf("Load readonly without a file = %v", err)
 	}
 	if err := store.Delete("absent"); ReasonOf(err) != ReasonNotFound {
 		t.Fatalf("Delete absent = %v", err)
@@ -355,45 +384,46 @@ func TestUserReadonlyShadowsTheBuiltinAndDeletingItRevealsTheBuiltin(t *testing.
 	if _, err := store.Load("none"); ReasonOf(err) != ReasonNameReserved {
 		t.Fatalf("Load none = %v", err)
 	}
-	user := []byte("effort = \"low\"\n")
+	user := docsReadonlyProfile(t)
 	if _, err := store.Write("readonly", user); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := store.Load("readonly")
 	if err != nil || string(loaded.Content) != string(user) || loaded.Source != SourceUser {
-		t.Fatalf("Load shadowed readonly = %+v, %v", loaded, err)
+		t.Fatalf("Load user readonly = %+v, %v", loaded, err)
 	}
 	entries, err := store.List()
-	if err != nil || len(entries) != 1 || entries[0].Source != SourceUser || entries[0].Digest != Digest(user) {
+	if err != nil || len(entries) != 1 || entries[0].Source != SourceUser || entries[0].Digest != Digest(user) || !entries[0].Valid {
 		t.Fatalf("list with a user readonly = %+v, %v", entries, err)
 	}
 	if err := store.Delete("readonly"); err != nil {
 		t.Fatalf("Delete user readonly = %v", err)
 	}
-	loaded, err = store.Load("readonly")
-	if err != nil || loaded.Source != SourceBuiltin || string(loaded.Content) != builtins["readonly"] {
-		t.Fatalf("Load after deleting the user readonly = %+v, %v", loaded, err)
+	if _, err := store.Load("readonly"); ReasonOf(err) != ReasonNotFound {
+		t.Fatalf("Load after deleting the user readonly = %v", err)
+	}
+	if entries, err := store.List(); err != nil || len(entries) != 0 {
+		t.Fatalf("list after deleting the user readonly = %+v, %v", entries, err)
 	}
 }
 
-// TestBuiltinStoreReadsOnlyBuiltinsAndRefusesWrites pins the store a read
-// uses without a config directory: it lists and loads the builtins, reports
-// any other name missing with its reason, and refuses writes with it.
-func TestBuiltinStoreReadsOnlyBuiltinsAndRefusesWrites(t *testing.T) {
+// TestUnavailableStoreListsNothingAndRefusesWrites pins the store a read
+// uses without a config directory: it lists no profile, reports every name
+// missing with its reason, and refuses writes with it.
+func TestUnavailableStoreListsNothingAndRefusesWrites(t *testing.T) {
 	cwd := t.TempDir()
 	t.Chdir(cwd)
 	reason := errors.New("HOME or an absolute XDG_CONFIG_HOME is required")
-	store := NewBuiltinStore(reason)
+	store := NewUnavailableStore(reason)
 
 	entries, err := store.List()
-	if err != nil || len(entries) != len(builtins) {
-		t.Fatalf("List() = %+v, %v; want only the builtins", entries, err)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("List() = %+v, %v; want no profile", entries, err)
 	}
-	if loaded, err := store.Load("readonly"); err != nil || loaded.Source != SourceBuiltin {
-		t.Fatalf("Load(readonly) = %+v, %v; want the builtin", loaded, err)
-	}
-	if _, err := store.Load("mine"); ReasonOf(err) != ReasonNotFound || !strings.Contains(err.Error(), reason.Error()) {
-		t.Fatalf("Load(mine) error = %v, want profile-not-found with the reason", err)
+	for _, name := range []string{"readonly", "mine"} {
+		if _, err := store.Load(name); ReasonOf(err) != ReasonNotFound || !strings.Contains(err.Error(), reason.Error()) {
+			t.Fatalf("Load(%s) error = %v, want profile-not-found with the reason", name, err)
+		}
 	}
 	if _, err := store.Write("mine", []byte("model = \"m\"\n")); !errors.Is(err, reason) {
 		t.Fatalf("Write() error = %v, want the reason", err)

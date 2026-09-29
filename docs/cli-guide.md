@@ -2778,13 +2778,13 @@ validate profiles; `create agent --profile <name>` applies one (see
 [Agent profiles at create](#agent-profiles-at-create)).
 
 - `list` prints `NAME SOURCE PROVIDER INSTRUCTIONS MODEL EFFORT ROLES DIGEST
-  VALID` for every profile. `SOURCE` is `builtin` or `user`, and `DIGEST` is
+  VALID` for every profile. `SOURCE` is `user`, and `DIGEST` is
   `sha256:<hex>` over the file bytes. An item the profile does not name is
   `-`; so is `PROVIDER` for a provider-neutral profile. A file that fails
   validation stays listed as `no (<reason>)` and does not hide the others;
   when it still parses, it shows what it names, roles included, and a file
   that does not parse shows `-` for each item.
-- `show` prints the stored bytes exactly, or the built-in text.
+- `show` prints the stored bytes exactly.
 - `set` validates the whole file first and writes it atomically (0600) only
   when it is valid; `-` or no `--file` reads stdin. A refusal exits 2, prints
   one stable reason (`profile-syntax-invalid`, `profile-key-unknown`,
@@ -2793,8 +2793,7 @@ validate profiles; `create agent --profile <name>` applies one (see
   `profile-role-claimed`, `profile-name-invalid`, `profile-name-reserved`, or
   `profile-too-large`), and leaves any existing file unchanged.
 - `delete` removes a user file. A missing profile is `profile-not-found` (exit
-  1); the built-in `readonly` cannot be deleted (`profile-builtin`, exit 2), but
-  a user `readonly.toml` that replaces it can.
+  1).
 
 ## config
 

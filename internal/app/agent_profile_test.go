@@ -371,7 +371,8 @@ func TestCreateAgentRefusesARoleSeveralProfilesClaim(t *testing.T) {
 
 // TestCreateAgentRefusesAMissingOrInvalidExplicitProfile pins that an
 // explicit --profile that cannot be applied is a usage refusal (exit 2)
-// carrying the profile reason token, with nothing created.
+// carrying the profile reason token, with nothing created. readonly without a
+// file is missing like any other name.
 func TestCreateAgentRefusesAMissingOrInvalidExplicitProfile(t *testing.T) {
 	t.Parallel()
 	f := newProfileFixture(t)
@@ -379,6 +380,7 @@ func TestCreateAgentRefusesAMissingOrInvalidExplicitProfile(t *testing.T) {
 	f.writeProfileFile(t, "orphan", "instructions = \"gone\"\n")
 	for _, test := range []struct{ name, reason string }{
 		{"missing", profile.ReasonNotFound},
+		{"readonly", profile.ReasonNotFound},
 		{"broken", profile.ReasonSyntax},
 		{"orphan", profile.ReasonInstructionsNotFound},
 		{".hidden", profile.ReasonNameInvalid},

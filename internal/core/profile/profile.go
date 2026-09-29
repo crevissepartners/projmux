@@ -4,9 +4,9 @@
 // provider it is for, which stored instructions it gets, its model and
 // effort, the roles it serves, and its permissions. This package is the only owner of where profile files live
 // (<ConfigDir>/profiles/<name>.toml), what a profile may be named and contain,
-// how its content is identified (the digest), and which built-in profiles are
-// compiled into the binary. It stores and validates profiles only; nothing
-// here applies one to an Agent.
+// and how its content is identified (the digest). Every profile is a user
+// file; none is compiled into the binary. It stores and validates profiles
+// only; nothing here applies one to an Agent.
 package profile
 
 import (
@@ -38,11 +38,8 @@ const FileExt = ".toml"
 // kept free to spell "no profile".
 const ReservedName = "none"
 
-// Sources of a listed profile.
-const (
-	SourceBuiltin = "builtin"
-	SourceUser    = "user"
-)
+// SourceUser is the source of every listed profile: a user file.
+const SourceUser = "user"
 
 // Refusal reason tokens. They are stable strings: every refusal this package
 // reports carries exactly one of them in its error text.
@@ -71,8 +68,6 @@ const (
 	// ReasonInstructionsInUse is a delete of stored instructions that a user
 	// profile names.
 	ReasonInstructionsInUse = "profile-instructions-in-use"
-	// ReasonBuiltin is a delete of a profile that exists only as a builtin.
-	ReasonBuiltin = "profile-builtin"
 )
 
 // Error is a profile refusal. Reason is one of the Reason* tokens.
@@ -129,17 +124,6 @@ func ValidateName(name string) error {
 // raw bytes, the same spelling persona digests use.
 func Digest(content []byte) string { return persona.Digest(content) }
 
-// builtins are the profiles compiled into the binary, by name. A user file of
-// the same name shadows one. Each must pass Parse (a test holds that).
-var builtins = map[string]string{
-	// readonly lets an Agent read and never write. It claims no role.
-	"readonly": `[permissions]
-sandbox = "read-only"
-approval = "never"
-deny = ["Edit", "Write", "NotebookEdit"]
-`,
-}
-
 // Profile is one profile's name, where it came from, and its exact content.
 type Profile struct {
 	Name    string
@@ -177,12 +161,13 @@ func (e Entry) withSpec(spec Spec) Entry {
 // Store reads and writes profile files below <ConfigDir>/profiles and checks
 // `instructions` against the persona store.
 //
-// A builtin-only store (NewBuiltinStore) has no directory: it lists and loads
-// only the builtins, touches no file, and refuses every write with its reason.
+// An unavailable store (NewUnavailableStore) has no directory: it lists no
+// profile, loads none, touches no file, and refuses every write with its
+// reason.
 type Store struct {
 	dir      string
 	personas persona.Store
-	// unavailable is why a builtin-only store has no directory.
+	// unavailable is why an unavailable store has no directory.
 	unavailable error
 }
 
@@ -197,17 +182,17 @@ func NewDefaultStore(paths config.Paths) Store {
 	return NewStore(paths.ConfigDir, paths.StateDir)
 }
 
-// NewBuiltinStore builds the builtin-only store a read uses when the config
+// NewUnavailableStore builds the empty store a read uses when the config
 // directory cannot be resolved; reason, such as a config.MissingHomeError,
 // says why and is what its writes return.
-func NewBuiltinStore(reason error) Store {
+func NewUnavailableStore(reason error) Store {
 	if reason == nil {
 		reason = config.ErrHomeDirRequired
 	}
 	return Store{unavailable: reason}
 }
 
-// Path returns the file path of the user profile named name. A builtin-only
+// Path returns the file path of the user profile named name. An unavailable
 // store has none and returns its reason.
 func (s Store) Path(name string) (string, error) {
 	if err := ValidateName(name); err != nil {
@@ -219,28 +204,23 @@ func (s Store) Path(name string) (string, error) {
 	return filepath.Join(s.dir, name+FileExt), nil
 }
 
-// Load returns one profile exactly as stored: the user file when there is
-// one, else the builtin of that name. Neither is profile-not-found.
+// Load returns the user file of one profile exactly as stored. A name with no
+// file is profile-not-found.
 func (s Store) Load(name string) (Profile, error) {
 	if err := ValidateName(name); err != nil {
 		return Profile{}, err
 	}
-	if s.dir != "" {
-		content, found, err := readUserFile(s.dir, name)
-		if err != nil {
-			return Profile{}, named(err, name)
-		}
-		if found {
-			return Profile{Name: name, Source: SourceUser, Content: content, Digest: Digest(content)}, nil
-		}
-	}
-	if raw, ok := builtins[name]; ok {
-		return Profile{Name: name, Source: SourceBuiltin, Content: []byte(raw), Digest: Digest([]byte(raw))}, nil
-	}
 	if s.dir == "" {
-		return Profile{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "is not a builtin, and no user profile can be read: " + s.unavailable.Error()}
+		return Profile{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "cannot be read: " + s.unavailable.Error()}
 	}
-	return Profile{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + filepath.Join(s.dir, name+FileExt) + " and is not a builtin"}
+	content, found, err := readUserFile(s.dir, name)
+	if err != nil {
+		return Profile{}, named(err, name)
+	}
+	if !found {
+		return Profile{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + filepath.Join(s.dir, name+FileExt)}
+	}
+	return Profile{Name: name, Source: SourceUser, Content: content, Digest: Digest(content)}, nil
 }
 
 // ReadLimited reads r to the end, refusing content larger than MaxSize with
@@ -293,8 +273,7 @@ func (s Store) checkInstructions(spec Spec) error {
 // refusal writes nothing and leaves an existing file as it was. A role that
 // another profile already lists is refused, whether that profile is valid or
 // not: an invalid profile that parses still holds its roles, the way List and
-// RoleProfile count them. The profile being replaced, and the builtin a user
-// file of this name would shadow, do not count.
+// RoleProfile count them. The profile being replaced does not count.
 func (s Store) Write(name string, content []byte) (Entry, error) {
 	path, err := s.Path(name)
 	if err != nil {
@@ -332,18 +311,14 @@ func (s Store) Write(name string, content []byte) (Entry, error) {
 	return Entry{Name: name, Source: SourceUser, Path: path, Digest: Digest(content), Valid: true}.withSpec(spec), nil
 }
 
-// Delete removes the user profile named name. A name that is only a builtin
-// is refused with profile-builtin; deleting a user file that shadows a builtin
-// makes the builtin visible again.
+// Delete removes the user profile named name. A name with no file is
+// profile-not-found.
 func (s Store) Delete(name string) error {
 	path, err := s.Path(name)
 	if err != nil {
 		return err
 	}
 	missing := func() error {
-		if _, ok := builtins[name]; ok {
-			return &Error{Reason: ReasonBuiltin, Name: name, Detail: "is built in and cannot be deleted; only a user file of the same name can"}
-		}
 		return &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + path}
 	}
 	root, err := os.OpenRoot(s.dir)
@@ -371,8 +346,7 @@ func (s Store) Delete(name string) error {
 	return nil
 }
 
-// List returns every profile sorted by name: the builtins and the user files,
-// a user file winning over a builtin of the same name. Each entry is checked
+// List returns every user profile file sorted by name. Each entry is checked
 // on its own (Parse and the instructions lookup), and then a role listed by
 // more than one profile that parses -- valid or not -- marks each of them
 // that is otherwise valid invalid with profile-role-claimed; one already
@@ -410,9 +384,6 @@ func (s Store) List() ([]Entry, error) {
 // cross-profile role check.
 func (s Store) collect() ([]Entry, error) {
 	byName := map[string]Entry{}
-	for name, raw := range builtins {
-		byName[name] = s.describe(Entry{Name: name, Source: SourceBuiltin}, []byte(raw))
-	}
 	var dirEntries []os.DirEntry
 	if s.dir != "" {
 		var err error
@@ -508,7 +479,7 @@ func (s Store) RoleProfile(role string) (string, error) {
 // ProfilesUsingInstructions returns, sorted, the names of the user profiles
 // whose `instructions` name the stored instructions called name. Every user
 // file that parses counts, valid or not; a file that does not parse names
-// nothing. Builtins name no instructions.
+// nothing.
 func (s Store) ProfilesUsingInstructions(name string) ([]string, error) {
 	entries, err := s.collect()
 	if err != nil {
@@ -516,7 +487,7 @@ func (s Store) ProfilesUsingInstructions(name string) ([]string, error) {
 	}
 	var users []string
 	for _, entry := range entries {
-		if entry.Source == SourceUser && entry.Instructions == name {
+		if entry.Instructions == name {
 			users = append(users, entry.Name)
 		}
 	}
