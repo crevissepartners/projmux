@@ -15,7 +15,10 @@ refused as `invalid-explicit-reply-correlation`. When one of the original's
 Agents is now in another provider conversation (another Claude session), the
 reply is refused with `explicit-reply-conversation-changed` and stores
 nothing; the original cannot be answered there, so send a new message without
-`--reply-to`. Source metadata remains an unverified routing
+`--reply-to`. A `--dialogue-reply-only` Agent's reply tool follows the same
+rule for the original's sender: it still permits a reply to a sender
+relaunched into the same conversation, and denies one to a sender now in
+another conversation. Source metadata remains an unverified routing
 claim; an explicit reply also requires the registered provider's descendant
 caller and any existing qualification and execution guard.
 
