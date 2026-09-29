@@ -391,7 +391,7 @@ func TestBothTriggerPathsClassifyTheSameDeathIdentically(t *testing.T) {
 	fileReceipt(t, viaReconciler)
 	projectTerminations(&viaReconciler.registry, viaReconciler.mutator(),
 		lifecycleProjectionTargets(viaReconciler.registry,
-			exitReconcileFixtureLiveExcept("pan-alpha-codex"), lifecycleDirtyEvent{}))
+			exitReconcileFixtureLiveExcept("pan-alpha-codex"), nil, lifecycleDirtyEvent{}))
 
 	oneShot, _ := viaOneShot.registry.Agent("agt-alpha-codex")
 	reconciled, _ := viaReconciler.registry.Agent("agt-alpha-codex")

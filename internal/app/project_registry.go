@@ -495,7 +495,7 @@ func (r *registryReconciler) observeRuntime(ctx context.Context, working *coreme
 	}
 	panes, paneErr := inventory.LivePaneUIDs(ctx)
 	if paneErr == nil {
-		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, lifecycleDirtyEvent{}))
+		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, nil, lifecycleDirtyEvent{}))
 	}
 	windows, windowErr := inventory.LiveWindowUIDs(ctx)
 	if paneErr != nil || windowErr != nil {
