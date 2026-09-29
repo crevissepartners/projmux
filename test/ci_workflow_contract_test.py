@@ -288,6 +288,37 @@ def assert_artifact_uploads_run_only_on_github_com(workflow: str) -> int:
     return len(uploads)
 
 
+DARWIN_TEST_COMPILE_STEP = "Compile every test package without running it"
+DARWIN_TEST_COMPILE_COMMAND = "go test -exec /usr/bin/true -count=1 -run '^$' ./..."
+
+
+def assert_darwin_native_compiles_every_test_package(workflow: str) -> None:
+    """Fail unless the native macOS job builds every test binary behind `Test`."""
+    darwin = workflow_job(workflow, "darwin-native")
+    if "    runs-on: macos-15\n" not in darwin + "\n":
+        raise AssertionError("darwin-native must run on macos-15")
+    if "continue-on-error:" in darwin or re.search(r"(?m)^    if:", darwin):
+        raise AssertionError("darwin-native must not be skippable or soft-failing")
+    step = workflow_step(darwin, DARWIN_TEST_COMPILE_STEP)
+    if "continue-on-error:" in step or step_field(step, "if") is not None:
+        raise AssertionError("darwin test compilation step must always gate the job")
+    # cgo on is what compiles the darwin && cgo test files a Linux
+    # cross-compile skips.
+    if '          CGO_ENABLED: "1"' not in step.splitlines():
+        raise AssertionError('darwin test compilation step must set CGO_ENABLED: "1"')
+    script = step_script(step).strip()
+    if script != DARWIN_TEST_COMPILE_COMMAND:
+        raise AssertionError(
+            f"darwin test compilation must run {DARWIN_TEST_COMPILE_COMMAND!r}, "
+            f"got {script!r}"
+        )
+    aggregate = workflow_job(workflow, "test")
+    if "      - darwin-native\n" not in aggregate:
+        raise AssertionError("aggregate Test must need darwin-native")
+    if "--required darwin-native " not in aggregate:
+        raise AssertionError("aggregate Test must require darwin-native to succeed")
+
+
 class CIWorkflowContractTest(unittest.TestCase):
     def test_required_unit_job_runs_pinned_deadcode_without_bypass(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -979,6 +1010,66 @@ class CIWorkflowContractTest(unittest.TestCase):
                     )
                     with self.assertRaises(AssertionError):
                         assert_artifact_uploads_run_only_on_github_com(mutated)
+
+    def test_darwin_native_compiles_every_test_package_behind_the_aggregate(
+        self,
+    ) -> None:
+        # Linux jobs never build darwin test files, so a Linux-only test helper
+        # used from an untagged test broke darwin compilation unnoticed.
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        assert_darwin_native_compiles_every_test_package(workflow)
+
+        # The job stays an aggregate child, not a required check of its own.
+        self.assertIn(
+            "    name: Darwin Native Key Adapter\n", workflow_job(workflow, "darwin-native")
+        )
+        for job, name in {
+            "fmt": "Format",
+            "unit": "Unit Tests",
+            "npm-pack": "NPM Packages",
+            "integration": "Integration Tests",
+            "e2e-tests": "E2E Tests",
+        }.items():
+            self.assertIn(f"    name: {name}\n", workflow_job(workflow, job))
+
+    def test_darwin_native_contract_rejects_a_missing_test_compile_step(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        darwin = workflow_job(workflow, "darwin-native")
+        step = workflow_step(darwin, DARWIN_TEST_COMPILE_STEP)
+        marker = f"      - name: {DARWIN_TEST_COMPILE_STEP}\n"
+        block = marker + step + "\n"
+        self.assertEqual(workflow.count(block), 1)
+        command = f"        run: {DARWIN_TEST_COMPILE_COMMAND}"
+        cgo = '          CGO_ENABLED: "1"'
+        mutations = {
+            "step removed": workflow.replace(block, ""),
+            "step renamed": workflow.replace(
+                marker, "      - name: Compile darwin tests\n"
+            ),
+            "package only": workflow.replace(
+                command, "        run: go test -exec /usr/bin/true ./internal/platformkeys"
+            ),
+            "tests executed": workflow.replace(
+                command, "        run: go test -count=1 ./..."
+            ),
+            "cgo off": workflow.replace(
+                block, block.replace(cgo, '          CGO_ENABLED: "0"')
+            ),
+            "soft failure": workflow.replace(
+                block, block.replace(marker, marker + "        continue-on-error: true\n")
+            ),
+            "dropped from aggregate needs": workflow.replace(
+                "      - darwin-native\n", ""
+            ),
+            "dropped from aggregate gate": workflow.replace(
+                "--required darwin-native ", ""
+            ),
+        }
+        for name, mutated in mutations.items():
+            with self.subTest(mutation=name):
+                self.assertNotEqual(mutated, workflow)
+                with self.assertRaises(AssertionError):
+                    assert_darwin_native_compiles_every_test_package(mutated)
 
 
 DOCKER_INVOCATION_END = "--projmux-fake-docker-invocation-end--"
