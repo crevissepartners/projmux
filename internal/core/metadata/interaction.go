@@ -113,6 +113,32 @@ func (m Mutator) SetAgentQuestionChannel(reg *Registry, agentUID string, on bool
 	return agent.Clone(), nil
 }
 
+// RecordsDialogueReplyOnly reports whether an Agent's annotations record the
+// reply-only activation.
+func RecordsDialogueReplyOnly(annotations map[string]string) bool {
+	return annotations[AnnotationAgentDialogueReplyOnly] == DialogueReplyOnlyOn
+}
+
+// SetAgentDialogueReplyOnly records the reply-only activation on one existing
+// Agent. There is no way back: nothing clears the key. Every other annotation
+// is left as it was, and an Agent that records it already is not touched.
+func (m Mutator) SetAgentDialogueReplyOnly(reg *Registry, agentUID string) (Agent, error) {
+	const op = "set agent dialogue reply-only"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	if RecordsDialogueReplyOnly(agent.Metadata.Annotations) {
+		return agent.Clone(), nil
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	agent.Metadata.Annotations[AnnotationAgentDialogueReplyOnly] = DialogueReplyOnlyOn
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // AgentPersonaAnnotations is the persona state of one existing Agent: the
 // persona name and digest (both set or both empty), the system prompt
 // snapshot mode ("" or SystemPromptSnapshotOff), and where the instructions

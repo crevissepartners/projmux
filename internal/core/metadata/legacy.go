@@ -697,3 +697,19 @@ const AnnotationAgentQuestionChannel = "projmux.io/question-channel"
 
 // QuestionChannelOn is the one value AnnotationAgentQuestionChannel carries.
 const QuestionChannelOn = "on"
+
+// AnnotationAgentDialogueReplyOnly records that one Claude Agent runs the
+// reply-only activation (`--dialogue-reply-only`). The only value is
+// DialogueReplyOnlyOn; the key is absent otherwise, and an Agent recorded
+// before the key existed is an ordinary Agent. It is written by the create
+// transaction that launched the Agent reply-only, and by the rebind
+// transaction of an `agent resume --dialogue-reply-only`. Every later resume
+// of the Agent -- `agent resume` without the flag, `agent relaunch`, and the
+// restart of `agent instructions attach|detach` -- reads it and launches the
+// reply-only activation again, with or without a managed Pane. Nothing
+// removes it: widening the Agent's launch takes a new Agent.
+const AnnotationAgentDialogueReplyOnly = "projmux.io/dialogue-reply-only"
+
+// DialogueReplyOnlyOn is the one value AnnotationAgentDialogueReplyOnly
+// carries.
+const DialogueReplyOnlyOn = "on"

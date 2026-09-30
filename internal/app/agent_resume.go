@@ -776,6 +776,14 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err := guidance.record(working, mutator, plan.agentUID); err != nil {
 			return err
 		}
+		// The reply-only activation is recorded, so every later resume of
+		// the Agent launches it again. An Agent that records it already is
+		// left as it was.
+		if plan.dialogueReplyOnly {
+			if _, err := mutator.SetAgentDialogueReplyOnly(working, plan.agentUID); err != nil {
+				return MapMetadataError(err)
+			}
+		}
 		// An unlayered launch records only its overrides, as before.
 		if plan.effortOverride != "" && !settings.layered {
 			if _, err := mutator.SetAgentEffort(working, plan.agentUID, plan.effortOverride, plan.settingSource()); err != nil {

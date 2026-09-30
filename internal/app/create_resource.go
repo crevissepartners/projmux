@@ -456,7 +456,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			"surface the Window's first Pane opens with: shell|"+strings.Join(cli.AgentProviders(), "|")+"; omitted means shell")
 	}
 	if shape.provider {
-		fs.BoolVar(&out.dialogueReplyOnly, claudeDialogueReplyOnlyFlag, false, "claude only: one headless activation with an isolated explicit reply tool; qualification required")
+		fs.BoolVar(&out.dialogueReplyOnly, claudeDialogueReplyOnlyFlag, false, "claude only: a headless activation with an isolated explicit reply tool, recorded so every resume of the Agent stays reply-only; qualification required")
 		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
 		fs.StringVar(&out.cwd, "cwd", "", "effective Agent working directory (defaults to Project root)")
 		fs.Var(&out.addDirs, "add-dir", "repeatable additional writable root")

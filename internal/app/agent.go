@@ -277,6 +277,11 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 // inside the session. Both are validated here with create's rules, and only
 // for a Claude or Codex Agent.
 //
+// --dialogue-reply-only resumes a Claude Agent into the reply-only activation
+// and records that on the Agent in the rebind transaction. An Agent that
+// records it is resumed into it without the flag too (prepareResume), and a
+// --model or --effort, which that fixed launch cannot carry, is refused.
+//
 // Every refusal below happens against a read-only registry snapshot, so a failed
 // resume opens no transaction, creates no tmux object, and starts no
 // conversation of any kind.
@@ -288,7 +293,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: coremetadata.KindAgent}
 	flags.register(fs)
-	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "claude only: resume this UID into one isolated reply-only activation; qualification required")
+	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "claude only: resume this UID into the isolated reply-only activation and record it, so every later resume stays reply-only; qualification required")
 	model := fs.String("model", "", "claude or codex: model name this resume runs; recorded on the Agent")
 	effort := fs.String("effort", "", "claude or codex: effort level, recorded on the Agent: "+strings.Join(claudeEffortLevels, "|"))
 	refs, err := parseWithPositionals(fs, args)
@@ -332,11 +337,16 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if err := requireClaudeDialogueMode(agent.Spec.Provider, *dialogueReplyOnly, nil); err != nil {
 		return err
 	}
+	if *model != "" || *effort != "" {
+		if refusal := replyOnlyRefusalOf(agent.Metadata.Annotations, agentSettingsRequest{model: *model, effort: *effort}); refusal.reason != "" {
+			return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", spelling, agent.Metadata.Name, refusal.detail(), refusal.reason))
+		}
+	}
 	plan, err := c.prepareResume(spelling, registry, agent)
 	if err != nil {
 		return err
 	}
-	plan.dialogueReplyOnly = *dialogueReplyOnly
+	plan.dialogueReplyOnly = plan.dialogueReplyOnly || *dialogueReplyOnly
 	plan.modelOverride, plan.effortOverride = *model, *effort
 	return c.rebind.rebind(spelling, plan, stdout, stderr)
 }
@@ -362,6 +372,9 @@ func (c *agentCommand) prepareResume(spelling string, registry coremetadata.Regi
 	if err != nil {
 		return agentResumePlan{}, err
 	}
+	// An Agent that records the reply-only activation is resumed into it
+	// again, whichever command resumes it and whether or not it has a Pane.
+	plan.dialogueReplyOnly = coremetadata.RecordsDialogueReplyOnly(agent.Metadata.Annotations)
 	return plan, nil
 }
 
