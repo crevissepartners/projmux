@@ -3,9 +3,11 @@ package app
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -60,7 +62,13 @@ func TestCreateCodexAgentWithPersonaSendsItAsDeveloperInstructions(t *testing.T)
 			argv := append(append([]string(nil), test.args...),
 				"--project", "alpha", "--window", "main", "--", "review this")
 			stdout, stderr, err := runRoute(t, create, argv...)
-			if err != nil || stderr != "" || strings.TrimSpace(stdout) == "" {
+			// The deprecated spelling adds its one notice line to stderr and
+			// changes nothing else.
+			wantStderr := ""
+			if slices.Contains(test.args, "--persona") {
+				wantStderr = cli.DeprecatedPersonaFlagNotice + "\n"
+			}
+			if err != nil || stderr != wantStderr || strings.TrimSpace(stdout) == "" {
 				t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
 			}
 

@@ -55,8 +55,8 @@ func helpBoundaryArgv() [][]string {
 // TestAppRunHelpBoundaryReachesNoHandler is the app-level no-side-effect negative
 // test. The App has no command handlers wired at all, so any attempt to dispatch
 // a handler would panic on a nil receiver. Every public, nested, and hidden
-// internal help invocation must instead exit 0 with help on stdout, no stderr,
-// and zero runtime access.
+// internal help invocation must instead exit 0 with help on stdout, no stderr
+// but the one notice line of a deprecated spelling, and zero runtime access.
 func TestAppRunHelpBoundaryReachesNoHandler(t *testing.T) {
 	t.Parallel()
 
@@ -69,8 +69,12 @@ func TestAppRunHelpBoundaryReachesNoHandler(t *testing.T) {
 		if stdout.Len() == 0 {
 			t.Fatalf("Run(%q) wrote no help to stdout", argv)
 		}
-		if stderr.Len() != 0 {
-			t.Fatalf("Run(%q) stderr = %q, want help on stdout only", argv, stderr.String())
+		wantStderr := ""
+		if notice, ok := cli.DeprecationNotice(argv); ok {
+			wantStderr = notice + "\n"
+		}
+		if stderr.String() != wantStderr {
+			t.Fatalf("Run(%q) stderr = %q, want %q", argv, stderr.String(), wantStderr)
 		}
 	}
 }

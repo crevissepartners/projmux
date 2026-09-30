@@ -1908,11 +1908,13 @@ stored content to the new session's system prompt through Claude's
 `--append-system-prompt-file`; it never replaces the system prompt, so Claude
 Code's own tool instructions stay. Manage the files with `projmux instructions
 list|show|edit|set|delete` (`edit` opens `$EDITOR`, then `$VISUAL`; `set
-<name> --file <path>` or `-` writes without an editor). The former `projmux
-persona` commands and `--persona <name>` remain aliases for the same files.
-Both names read and write `<config dir>/personas/<name>.md` (by default
+<name> --file <path>` or `-` writes without an editor). The files are
+`<config dir>/personas/<name>.md` (by default
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/personas/`), with a 64 KiB limit.
-They do not create an `instructions/` directory. `delete` refuses, with exit 2
+The directory keeps its older name; no `instructions/` directory is created.
+The older command and flag names are listed under
+[Deprecated instruction spellings](#deprecated-instruction-spellings).
+`delete` refuses, with exit 2
 and `profile-instructions-in-use`, instructions that a stored
 [profile](configuration.md#agent-profiles) names -- valid or not -- lists
 each such profile, and deletes nothing; change or delete those profiles
@@ -1921,8 +1923,8 @@ first. Instructions no profile names delete as before.
 The content is copied when an Agent starts: create copies it to the existing
 content-addressed snapshot `<state dir>/personas/sha256-<hex>.md`, passes only
 that path on the Claude command line, and records the existing
-`projmux.io/persona` and `projmux.io/persona-digest` keys on the Agent. The
-new and old CLI names use the same digest and keys. `agent resume`,
+`projmux.io/persona` and `projmux.io/persona-digest` keys on the Agent; the
+keys, too, keep their older name. `agent resume`,
 `agent relaunch`, Continue/topology replay, and a resume-picker create compare
 the current content of the instructions the Agent's
 [settings layers](#settings-layers) name with the recorded digest: when the
@@ -1958,13 +1960,13 @@ A conversation opened from the resume picker inherits the two stored
 instruction keys from Agents that already record it, so the new Agent reports
 the instructions its thread is running; it inherits no other launch value. A
 Codex Agent's instructions cannot be changed afterwards: the instructions are fixed when the
-thread starts. `agent instructions|persona attach|detach` refuses with
+thread starts. `agent relaunch` refuses a change of them with
 `codex-instructions-immutable` before writing a snapshot or Registry state or
 stopping a Pane. Codex resume replays the original developer message, even
 when a new instruction is supplied to its CLI or app server. Start a new Agent
 with a prompt to use different instructions.
 
-Every other `--instructions` or `--persona` create refuses with
+Every other `--instructions` create refuses with
 `persona-provider-unsupported` and zero Registry, tmux, and snapshot writes:
 a Codex create with no prompt or with `--interactive-only` (its plain lane
 cannot carry private developer instructions without exposing their body in
@@ -1972,64 +1974,25 @@ the process arguments), `--dialogue-reply-only`, and any other provider. The
 refusal tells the operator to create a new Agent with `-- <prompt>` and omit
 `--interactive-only`.
 
-An existing Claude Agent can attach named instructions later, or detach them:
-`projmux agent instructions attach <agent-ref> <name>` and
-`projmux agent instructions detach <agent-ref>` (both with `[--project <ref>]
-[--window <ref>] [--yes] [--dry-run] [-o json]`). The old
-`agent persona attach|detach` spellings remain aliases. Both names operate on
-the same Agent keys, snapshot, and digest. An attach is
-`agent relaunch <agent-ref> --instructions <name>` and a detach is
-`agent relaunch <agent-ref> --instructions none`, recorded with the source
-`attach` and printed in the attach's own output: the same restart, the same
-[settings layers](#settings-layers), and the same launch. The Agent keeps its
-uid and provider conversation. A Running Agent's managed Pane is closed through
-`delete pane`, which leaves it Offline, and the Agent is resumed through the
-same rebind `agent resume` uses, on a new managed Pane; an Offline or Failed
-Agent is only resumed. Before that the command writes the snapshot and records
-`projmux.io/persona`, `projmux.io/persona-digest`, and
-`projmux.io/system-prompt-snapshot=off` in one Registry change (detach removes
-the first two). The last key is sticky and makes every later resume of that
-Agent pass `--system-prompt-snapshot off`: Claude records the system prompt of
-a conversation's first request and replays that record on resume, so without
-it instructions attached after the conversation started would be ignored on the
-next resume. In steady state that costs little: each resume re-creates a
+An existing Claude Agent's named instructions are changed with
+`projmux agent relaunch <agent-ref> --instructions <name>` and removed with
+`--instructions none`, both described below. A change of instructions after the
+conversation started records `projmux.io/system-prompt-snapshot=off`. The key
+is sticky and makes every later resume of that Agent pass
+`--system-prompt-snapshot off`: Claude records the system prompt of a
+conversation's first request and replays that record on resume, so without it
+instructions given after the conversation started would be ignored on the next
+resume. In steady state that costs little: each resume re-creates a
 byte-identical system prompt, so the prompt cache still hits and the extra cost
 is a few dozen cache-creation tokens per resume (measured +4 to +45); after the
 environment context in the system prompt changes (date, git state, CLAUDE.md),
-the first resume can re-cache the prompt prefix once. A Running Agent whose
-interaction is not `idle` or
-`response_complete` -- `unknown` included -- is refused with
-`persona-agent-busy` unless `--yes` confirms cutting its turn, and `--dry-run`
-(`-o json` for scripts) reports the target, its interaction, the current and
-new instructions, and whether that confirmation is required without changing
-anything. The Agent whose managed Pane the command runs in is refused with
-`persona-self-target`: an environment inherited from that Pane is not enough on
-its own, the command must be one of that Pane's processes, and when that cannot
-be determined the refusal says so. An Agent with no stored conversation is
-refused with `persona-no-conversation`. Attaching the instructions an Agent already runs with,
-same name and same content digest, with the snapshot mode off, reports
-`unchanged` and restarts nothing, unless the Agent's other settings resolve to
-something else (a profile edit, for example); after the instructions file is
-edited the digest differs and the attach restarts with the new snapshot. Unlike
-`agent relaunch`, which writes nothing before the stop, an attach records the
-instructions before it, so a plain `agent resume` finishes an attach whose
-resume failed. Outside tmux the stop needs `--socket <name>` or
-`--socket-path <absolute>`, exactly as `delete pane` does. Refusals leave no
-snapshot, Registry, or Pane change. If the resume fails after the stop, the
-Agent stays Offline with its new annotations and stderr prints the
-`projmux agent resume uid:<agent> --project uid:<project> --window uid:<window>`
-command that finishes the job with the instructions. If closing the managed Pane
-reports an error, the command checks whether that Pane is still alive: if it
-is, the previous annotations are restored; if it is already closed, the new
-annotations are kept and the resume proceeds with a warning on stderr (a failed
-resume prints the recovery command above); if it cannot tell, the previous
-annotations are restored and stderr prints the command to re-run.
+the first resume can re-cache the prompt prefix once.
 
 A Claude Agent created with `--effort <level>` records it as `projmux.io/effort`
 on the Agent, because Claude does not restore a conversation's effort on
 resume. Every resume passes it again as `--effort <level>`: `agent resume`,
-Continue/topology replay, and the restart of `agent instructions
-attach|detach`. A recorded value that is not one of `low`, `medium`, `high`, `xhigh`, or `max` is
+Continue/topology replay, and the restart of `agent relaunch`. A recorded
+value that is not one of `low`, `medium`, `high`, `xhigh`, or `max` is
 skipped, the resume still proceeds, and one `effort-invalid` line is disclosed
 where a `persona-unavailable` line would be. The model given with `--model`
 (or filled in by a profile) is recorded as `projmux.io/model`, exactly as it
@@ -2078,8 +2041,7 @@ all in one restart. It is the one way to change an Agent's
 
 Without any of them it restarts the Agent with the settings its layers resolve
 to now -- after a profile edit, for example -- and reports `unchanged` when
-they are what the Agent runs already. It is the restart
-`agent instructions attach` runs: a Running Agent's managed
+they are what the Agent runs already. A Running Agent's managed
 Pane is closed through `delete pane`, and the Agent is brought back through the
 `agent resume` rebind with the overrides (outcome `restarted`, with the new
 Pane in `newPaneUID`); an Offline or Failed Agent is only resumed (outcome
@@ -2092,8 +2054,7 @@ so a failed launch records none of them; later plain resumes pass the effort
 again but not the model. Nothing is written before the stop. On a Codex Agent the model and effort ride the
 native resume as `-m <model>` and `-c model_reasoning_effort=<level>`.
 
-The refusals are those of `agent instructions attach`, with their own reason
-tokens, and all happen before any Registry, tmux, or Pane change, ending with
+The refusals all happen before any Registry, tmux, or Pane change, ending with
 `nothing was changed`: a provider other than Claude or Codex
 (`relaunch-provider-unsupported`); an invalid model or effort (create's
 refusal); an Agent with no stored conversation, one that is not Running,
@@ -2182,6 +2143,73 @@ instruction keys under the same agreement rule and nothing else -- the snapshot 
 are Claude launch options -- and it changes no argv, because the thread
 already carries the instructions. Antigravity picker selections inherit nothing.
 
+### Deprecated instruction spellings
+
+These spellings are no longer in `projmux help`, in any route's help listing or
+synopsis, or in the [CLI reference](cli.md). Each still runs with the stdout,
+`-o json`, exit code, and reason tokens it had and still answers `--help`; it
+adds one line on stderr that names its replacement:
+
+```text
+projmux: persona list is deprecated; use `projmux instructions list` instead.
+```
+
+None is scheduled for removal in this release.
+
+| Deprecated | Use |
+| --- | --- |
+| `projmux persona list\|show\|edit\|set\|delete` | `projmux instructions list\|show\|edit\|set\|delete` |
+| `--persona <name>` on `create agent`, `create claude`, and `create codex` | `--instructions <name>` |
+| `projmux agent instructions attach <agent-ref> <name>`, `projmux agent persona attach <agent-ref> <persona>` | `projmux agent relaunch <agent-ref> --instructions <name>` |
+| `projmux agent instructions detach <agent-ref>`, `projmux agent persona detach <agent-ref>` | `projmux agent relaunch <agent-ref> --instructions none` |
+
+`projmux persona` and `--persona` read and write the same files and record
+the same keys as `projmux instructions` and `--instructions`; their output says
+`persona` where the replacement says `instructions`. A create given both
+`--instructions` and `--persona` is refused.
+
+An attach (`projmux agent instructions attach <agent-ref> <name>`) or a detach
+(`projmux agent instructions detach <agent-ref>`, both with `[--project <ref>]
+[--window <ref>] [--yes] [--dry-run] [-o json]`) is the relaunch in the table
+above, recorded with the source `attach` and printed in the attach's own output: the same
+restart, the same [settings layers](#settings-layers), and the same launch.
+`agent persona attach|detach` is the same command and says `persona` where
+`agent instructions attach|detach` says `instructions`. Both names operate on
+the same Agent keys, snapshot, and digest. The Agent keeps its uid and provider
+conversation. A Running Agent's managed Pane is closed through
+`delete pane`, which leaves it Offline, and the Agent is resumed through the
+same rebind `agent resume` uses, on a new managed Pane; an Offline or Failed
+Agent is only resumed. Before that the command writes the snapshot and records
+`projmux.io/persona`, `projmux.io/persona-digest`, and
+`projmux.io/system-prompt-snapshot=off` in one Registry change (detach removes
+the first two). A Running Agent whose interaction is not `idle` or
+`response_complete` -- `unknown` included -- is refused with
+`persona-agent-busy` unless `--yes` confirms cutting its turn, and `--dry-run`
+(`-o json` for scripts) reports the target, its interaction, the current and
+new instructions, and whether that confirmation is required without changing
+anything. The Agent whose managed Pane the command runs in is refused with
+`persona-self-target`: an environment inherited from that Pane is not enough on
+its own, the command must be one of that Pane's processes, and when that cannot
+be determined the refusal says so. An Agent with no stored conversation is
+refused with `persona-no-conversation`. Attaching the instructions an Agent already runs with,
+same name and same content digest, with the snapshot mode off, reports
+`unchanged` and restarts nothing, unless the Agent's other settings resolve to
+something else (a profile edit, for example); after the instructions file is
+edited the digest differs and the attach restarts with the new snapshot. Unlike
+`agent relaunch`, which writes nothing before the stop, an attach records the
+instructions before it, so a plain `agent resume` finishes an attach whose
+resume failed. Outside tmux the stop needs `--socket <name>` or
+`--socket-path <absolute>`, exactly as `delete pane` does. Refusals leave no
+snapshot, Registry, or Pane change. If the resume fails after the stop, the
+Agent stays Offline with its new annotations and stderr prints the
+`projmux agent resume uid:<agent> --project uid:<project> --window uid:<window>`
+command that finishes the job with the instructions. If closing the managed Pane
+reports an error, the command checks whether that Pane is still alive: if it
+is, the previous annotations are restored; if it is already closed, the new
+annotations are kept and the resume proceeds with a warning on stderr (a failed
+resume prints the recovery command above); if it cannot tell, the previous
+annotations are restored and stderr prints the command to re-run.
+
 ### Agent profiles at create
 
 `create agent --profile <name>` (and the provider shortcuts) starts the Agent
@@ -2219,9 +2247,8 @@ the profile's. A profile that cannot be resolved refuses with its own reason.
 Without a profile, with `--profile none`, or with a profile that names no
 provider, `create agent` still requires `--provider`.
 
-An explicit flag wins over the profile item it overlaps: `--instructions` or
-`--persona` over `instructions`, `--model` over `model`, `--effort` over
-`effort`. The profile's instructions go through the same path as
+An explicit flag wins over the profile item it overlaps: `--instructions` over
+`instructions`, `--model` over `model`, `--effort` over `effort`. The profile's instructions go through the same path as
 `--instructions` (snapshot and `projmux.io/persona*` annotations, and the same
 Codex lane rule), its effort is recorded as `projmux.io/effort`, and its model
 as `projmux.io/model`. On
@@ -2288,13 +2315,13 @@ their own keys (`projmux.io/profile`, `projmux.io/persona`, `projmux.io/model`,
 
 | Source | Written by |
 | --- | --- |
-| `flag` | `create agent` (and a UI create) for `--profile`, `--instructions`/`--persona`, `--model`, and `--effort` |
+| `flag` | `create agent` (and a UI create) for `--profile`, `--instructions`, `--model`, and `--effort` |
 | `role` | `projmux.io/profile-source` only: the profile a `role` label selected |
 | `profile` | item sources only: the item the create's profile filled in, or that a resume, a relaunch `--reset`, or a relaunch `--profile` switch put in the profile layer |
 | `inherited` | a resume picker selection, for the profile, instructions, and effort it inherited |
 | `resume` | `agent resume --model/--effort` |
 | `relaunch` | `agent relaunch`: `--profile` (for `projmux.io/profile-source`), `--instructions`, `--model`, and `--effort` |
-| `attach` | `projmux.io/instructions-source` only: `agent instructions\|persona attach\|detach` |
+| `attach` | `projmux.io/instructions-source` only: the deprecated attach and detach ([Deprecated instruction spellings](#deprecated-instruction-spellings)) |
 
 An item source other than `profile` means the value overrides the profile.
 After a detach the Agent records `projmux.io/instructions-source=attach`
@@ -2347,8 +2374,8 @@ snapshot of the new content with the system prompt snapshot off, exactly as
 `agent resume` of the new Agent would. No model is inherited, so none is
 passed. Which values are inherited, and when holders disagree, is unchanged.
 
-The layers change only through `agent relaunch` (and its
-`agent instructions attach|detach` spellings): `--profile` switches the profile
+The layers change only through `agent relaunch` (and the deprecated attach and
+detach, which run the same restart): `--profile` switches the profile
 layer and clears the overrides, `--instructions`, `--model`, and `--effort`
 add overrides, and `--reset` removes them. An item with neither a profile nor
 an override has no value and no source.

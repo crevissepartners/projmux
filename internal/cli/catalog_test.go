@@ -8,9 +8,9 @@ import (
 )
 
 // TestRouteCoverageHasExactlyOneDispositionAndNoOrphans audits the final tree:
-// 31 public canonical/shortcut roots and the hidden internal namespace. Retired
-// compatibility roots are absent rather than represented as dispatchable
-// tombstones.
+// 37 public canonical/shortcut roots, the hidden internal namespace, and the
+// hidden deprecated `persona` root. Retired compatibility roots are absent
+// rather than represented as dispatchable tombstones.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
@@ -47,16 +47,15 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 38 {
-		t.Fatalf("public route count = %d, want 38", public)
+	if public != 37 {
+		t.Fatalf("public route count = %d, want 37", public)
 	}
-	if hidden != 1 {
-		t.Fatalf("hidden route count = %d, want 1", hidden)
+	if hidden != 2 {
+		t.Fatalf("hidden route count = %d, want 2", hidden)
 	}
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical:     30,
-		DispositionShortcut:      7,
-		DispositionCompatibility: 1,
+		DispositionCanonical: 30,
+		DispositionShortcut:  7,
 	}
 	if !reflect.DeepEqual(publicTally, wantPublicTally) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)

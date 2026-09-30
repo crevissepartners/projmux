@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
@@ -351,7 +352,7 @@ func TestPersonaCreateFromAnAgentPaneRecordsCreatorAndPersona(t *testing.T) {
 	stdout, stderr, err := runRoute(t, fx.command,
 		"agent", "--provider", "claude", "--persona", "reviewer",
 		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "-o", "pane-id")
-	if err != nil || stderr != "" || stdout == "" {
+	if err != nil || stderr != cli.DeprecatedPersonaFlagNotice+"\n" || stdout == "" {
 		t.Fatalf("create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 	agents, panes := fx.newAgentsSince(t, before)

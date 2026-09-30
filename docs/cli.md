@@ -76,7 +76,6 @@ projmux <command> [args...]
 | [`projmux notification`](#projmux-notification) | canonical | Manage pending notification workflow state |
 | [`projmux open`](#projmux-open) | canonical | Open a Project runtime and move the current client to it |
 | [`projmux instructions`](#projmux-instructions) | canonical | List, show, edit, set, and delete Agent instruction files |
-| [`projmux persona`](#projmux-persona) | compatibility | List, show, edit, set, and delete Agent persona files |
 | [`projmux profile`](#projmux-profile) | canonical | List, show, set, and delete named Agent profiles |
 | [`projmux pin`](#projmux-pin) | canonical | Manage pinned project directories |
 | [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects and Agents |
@@ -122,10 +121,6 @@ projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref> [--via <client>]
 projmux agent approval review <agent-ref> [--request <normalized-id>]
@@ -158,8 +153,6 @@ Subcommands:
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor |
 | [`projmux agent relaunch`](#projmux-agent-relaunch) | Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort |
-| [`projmux agent instructions`](#projmux-agent-instructions) | Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation |
-| [`projmux agent persona`](#projmux-agent-persona) | Attach or detach a persona on one exact Claude Agent and resume it on the same conversation |
 | [`projmux agent turn`](#projmux-agent-turn) | Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn |
 | [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval, or list and answer Claude and Codex permission requests |
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
@@ -172,7 +165,7 @@ Subcommands:
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude or Codex Agent's questions from the command line |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent instructions attach`, `projmux agent instructions detach`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
 
 ### `projmux agent status`
 
@@ -276,168 +269,6 @@ A Codex Agent refuses a change of its instructions (codex-instructions-immutable
 Without flags it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
 
 Output modes (`-o`): `json`
-
-### `projmux agent instructions`
-
-Attach or detach an instruction on one exact Claude Agent and resume it on the same conversation
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=exact-one`
-- `domain-effect=null`
-
-```
-projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-```
-
-Codex refuses instruction changes (codex-instructions-immutable): its thread replays the developer message recorded when it started.
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux agent instructions attach`](#projmux-agent-instructions-attach) | Give one exact Claude Agent an instruction and restart it on the same conversation |
-| [`projmux agent instructions detach`](#projmux-agent-instructions-detach) | Take the instructions off one exact Claude Agent and restart it on the same conversation |
-
-Canonical spelling: `projmux agent instructions attach`, `projmux agent instructions detach`
-
-#### `projmux agent instructions attach`
-
-Give one exact Claude Agent an instruction and restart it on the same conversation
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged|reused`
-- `address=unchanged`
-- `topology=unchanged|replaced`
-- `desired-state=unchanged|replaced`
-- `runtime=unchanged|materialized`
-- `focus=unchanged`
-- `cardinality=exact-one`
-- `domain-effect=null`
-
-```
-projmux agent instructions attach <agent-ref> <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-```
-
-Output modes (`-o`): `json`
-
-#### `projmux agent instructions detach`
-
-Take the instructions off one exact Claude Agent and restart it on the same conversation
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged|reused`
-- `address=unchanged`
-- `topology=unchanged|replaced`
-- `desired-state=unchanged|replaced`
-- `runtime=unchanged|materialized`
-- `focus=unchanged`
-- `cardinality=exact-one`
-- `domain-effect=null`
-
-```
-projmux agent instructions detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-```
-
-Output modes (`-o`): `json`
-
-### `projmux agent persona`
-
-Attach or detach a persona on one exact Claude Agent and resume it on the same conversation
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=exact-one`
-- `domain-effect=null`
-
-```
-projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-```
-
-Codex refuses persona changes (codex-instructions-immutable): its thread replays the developer message recorded when it started.
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux agent persona attach`](#projmux-agent-persona-attach) | Give one exact Claude Agent a persona and restart it on the same conversation |
-| [`projmux agent persona detach`](#projmux-agent-persona-detach) | Take the persona off one exact Claude Agent and restart it on the same conversation |
-
-Canonical spelling: `projmux agent instructions attach`, `projmux agent instructions detach`
-
-#### `projmux agent persona attach`
-
-Give one exact Claude Agent a persona and restart it on the same conversation
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged|reused`
-- `address=unchanged`
-- `topology=unchanged|replaced`
-- `desired-state=unchanged|replaced`
-- `runtime=unchanged|materialized`
-- `focus=unchanged`
-- `cardinality=exact-one`
-- `domain-effect=null`
-
-```
-projmux agent persona attach <agent-ref> <persona> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-```
-
-Output modes (`-o`): `json`
-
-Canonical spelling: `projmux agent instructions attach`
-
-#### `projmux agent persona detach`
-
-Take the persona off one exact Claude Agent and restart it on the same conversation
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged|reused`
-- `address=unchanged`
-- `topology=unchanged|replaced`
-- `desired-state=unchanged|replaced`
-- `runtime=unchanged|materialized`
-- `focus=unchanged`
-- `cardinality=exact-one`
-- `domain-effect=null`
-
-```
-projmux agent persona detach <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
-```
-
-Output modes (`-o`): `json`
-
-Canonical spelling: `projmux agent instructions detach`
 
 ### `projmux agent turn`
 
@@ -1596,9 +1427,9 @@ Allowed effects:
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create agent [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>] [--severity info|warn|critical] [--source <source>] [--ttl <seconds>] [--id <id>] [--json]
 ```
@@ -1716,14 +1547,14 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create agent [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
 
 An explicit `--provider` wins, and a profile that names another provider is refused. Without `--provider`, the provider is the one named by the profile that `--profile <name>` or a `role` creation label selects.
 
 When neither decides it -- no profile, `--profile none`, or a profile without `provider` -- the create is refused as requiring `--provider`.
 
-Codex applies --instructions or --persona only when a new Agent starts with a prompt through its native thread. A promptless or --interactive-only Codex create with instructions is refused before creation.
+Codex applies --instructions only when a new Agent starts with a prompt through its native thread. A promptless or --interactive-only Codex create with instructions is refused before creation.
 
 `--creator uid:<agent>` declares the Agent that created this one. It is recorded as `projmux.io/creator-basis=explicit` with `projmux.io/creator-agent` only when no pane chain is observed; an observed pane chain always wins, and a different declaration is reported on stderr. A value that names no Agent refuses the create before anything changes. The record is provenance, never authentication.
 
@@ -1768,12 +1599,12 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
 
 Profile sandbox and approval apply on native and plain CLI creates. A plain CLI create with approval=untrusted is refused before creating an Agent.
 
-Instructions from --instructions, --persona, or a Profile apply when the create includes a prompt and opens a native thread. Promptless and --interactive-only creates with instructions are refused.
+Instructions from --instructions or a Profile apply when the create includes a prompt and opens a native thread. Promptless and --interactive-only creates with instructions are refused.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
@@ -1795,7 +1626,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name> | --persona <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
@@ -3169,158 +3000,6 @@ Allowed effects:
 ```
 projmux instructions delete <name> --yes
 ```
-
-## `projmux persona`
-
-List, show, edit, set, and delete Agent persona files
-
-Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux persona list
-projmux persona show <name>
-projmux persona edit <name>
-projmux persona set <name> [--file <path> | -]
-projmux persona delete <name> --yes
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux persona list`](#projmux-persona-list) | List every stored persona with its digest, size, and modification time |
-| [`projmux persona show`](#projmux-persona-show) | Print one persona's content exactly as stored |
-| [`projmux persona edit`](#projmux-persona-edit) | Edit one persona in $EDITOR or $VISUAL, creating it when missing |
-| [`projmux persona set`](#projmux-persona-set) | Write one persona from a file or stdin without an editor |
-| [`projmux persona delete`](#projmux-persona-delete) | Delete one persona file no profile names; Agents already started with it keep their snapshot |
-
-Canonical spelling: `projmux instructions list`, `projmux instructions show`, `projmux instructions edit`, `projmux instructions set`, `projmux instructions delete`
-
-### `projmux persona list`
-
-List every stored persona with its digest, size, and modification time
-
-Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux persona list
-```
-
-Canonical spelling: `projmux instructions list`
-
-### `projmux persona show`
-
-Print one persona's content exactly as stored
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux persona show <name>
-```
-
-Canonical spelling: `projmux instructions show`
-
-### `projmux persona edit`
-
-Edit one persona in $EDITOR or $VISUAL, creating it when missing
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux persona edit <name>
-```
-
-Canonical spelling: `projmux instructions edit`
-
-### `projmux persona set`
-
-Write one persona from a file or stdin without an editor
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux persona set <name> [--file <path> | -]
-```
-
-Canonical spelling: `projmux instructions set`
-
-### `projmux persona delete`
-
-Delete one persona file no profile names; Agents already started with it keep their snapshot
-
-Selectorless authority: `explicit-target` — the route or caller must name the exact target.
-
-Allowed effects:
-
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
-- `focus=unchanged`
-- `cardinality=unchanged`
-- `domain-effect=null`
-
-```
-projmux persona delete <name> --yes
-```
-
-Canonical spelling: `projmux instructions delete`
 
 ## `projmux profile`
 

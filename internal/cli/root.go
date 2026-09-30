@@ -195,7 +195,14 @@ func helpRouteSummary() string {
 // Execute runs one invocation. Help is answered by the shared boundary before
 // Cobra sees argv, so no handler, tmux access, or lifecycle migration runs for
 // a help request and every help invocation exits 0.
+//
+// A deprecated spelling prints its one-line notice on stderr first, whether it
+// then answers help or reaches its handler, so every way of calling it names
+// the replacement and its stdout stays what it was.
 func (r *Root) Execute(args []string) error {
+	if notice, ok := DeprecationNotice(args); ok {
+		fmt.Fprintln(r.stderr, notice)
+	}
 	if target, ok := RequestedHelp(args); ok {
 		return RenderHelp(r.stdout, target)
 	}

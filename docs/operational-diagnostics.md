@@ -126,7 +126,7 @@ and the UI new Window, including one whose answer is an Agent), `pane`
 (`create pane`, the split UI's shell Pane, and the pane-menu split), `agent`
 (`create agent` and the split UI's Agent Pane, including a resume-picker
 pick, which creates a new Agent), or `resume` (`agent resume`, including the
-resume `agent persona` runs). A successful transaction is `info`/`success`;
+resume `agent relaunch` runs). A successful transaction is `info`/`success`;
 a failed one, including one that was rolled back, is `error`/`error` with
 `kind=runtime`, so the support report's existing error-only projection
 carries it. The record adds two timings and, inside the lock hold, their

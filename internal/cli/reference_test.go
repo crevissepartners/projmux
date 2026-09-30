@@ -40,6 +40,9 @@ func manifestRoutePaths() [][]string {
 	var walk func(prefix []string, nodes []Route)
 	walk = func(prefix []string, nodes []Route) {
 		for _, node := range nodes {
+			if node.Hidden {
+				continue
+			}
 			path := append(append([]string{}, prefix...), node.Name)
 			out = append(out, path)
 			walk(path, node.Children)
@@ -226,17 +229,16 @@ func TestGeneratedReferenceExcludesEveryHiddenRoute(t *testing.T) {
 	}
 
 	var hidden int
-	for _, route := range routes {
-		if !route.Hidden {
-			continue
+	walkRoutes(Routes(), func(path []string, _ Route) {
+		spelling := strings.Join(path, " ")
+		if !unlisted(spelling) {
+			return
 		}
 		hidden++
-		walkRoutes([]Route{route}, func(path []string, _ Route) {
-			if documented[strings.Join(path, " ")] {
-				t.Errorf("hidden route %q has a section in the public reference", strings.Join(path, " "))
-			}
-		})
-	}
+		if documented[spelling] {
+			t.Errorf("hidden route %q has a section in the public reference", spelling)
+		}
+	})
 	if hidden == 0 {
 		t.Fatal("no hidden route exists; this assertion would be vacuous")
 	}
@@ -249,12 +251,11 @@ func TestGeneratedReferenceExcludesEveryHiddenRoute(t *testing.T) {
 			if len(tokens) == 0 {
 				t.Fatalf("unparseable canonical spelling line: %q", match[0])
 			}
-			top, ok := LookupRoute(tokens[0])
-			if !ok {
+			if _, ok := LookupRoute(tokens[0]); !ok {
 				t.Errorf("the reference advertises canonical spelling %q, which is not a route", spelling)
 				continue
 			}
-			if top.Hidden {
+			if unlisted(spelling) {
 				t.Errorf("the reference advertises canonical spelling %q, which lives under a hidden route", spelling)
 			}
 			resolved, _, resolvedOK := Resolve(tokens)

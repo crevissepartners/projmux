@@ -179,6 +179,7 @@ func TestEveryManifestRouteDispatchesToItsHandler(t *testing.T) {
 // TestHelpInvocationsInvokeNoHandler is the no-side-effect negative test. Public,
 // nested, and hidden internal help must exit 0, write only to stdout, and reach
 // no handler at all, so there is no tmux or runtime access and no parser error.
+// The help of a deprecated spelling adds its one notice line on stderr.
 func TestHelpInvocationsInvokeNoHandler(t *testing.T) {
 	t.Parallel()
 
@@ -208,8 +209,12 @@ func TestHelpInvocationsInvokeNoHandler(t *testing.T) {
 		if stdout.Len() == 0 {
 			t.Fatalf("Execute(%q) wrote no help to stdout", argv)
 		}
-		if stderr.Len() != 0 {
-			t.Fatalf("Execute(%q) wrote stderr %q, want help on stdout only", argv, stderr.String())
+		wantStderr := ""
+		if notice, ok := DeprecationNotice(argv); ok {
+			wantStderr = notice + "\n"
+		}
+		if stderr.String() != wantStderr {
+			t.Fatalf("Execute(%q) wrote stderr %q, want %q", argv, stderr.String(), wantStderr)
 		}
 	}
 }
