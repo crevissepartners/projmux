@@ -123,6 +123,11 @@ func (r *agentRestart) checkTarget() error {
 // socket is the command's --socket or --socket-path: the server the stop
 // closes the managed Pane on, which is where the self target is judged.
 func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest, socket deleteSocketFlags) error {
+	// A reply-only Agent resumes into its fixed launch again, so a change it
+	// cannot carry is refused before anything else is read.
+	if refusal := replyOnlyRefusalOf(r.target.Metadata.Annotations, request); refusal.reason != "" {
+		return r.refuse(refusal.reason, refusal.detail())
+	}
 	resumePlan, err := c.predictStoppedAgentResume(r.registry, r.target, r.paneUID)
 	if err != nil {
 		return r.refuse(r.tokens.noConversation, "cannot be resumed: "+err.Error())

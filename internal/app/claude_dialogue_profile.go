@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,9 +17,26 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 )
 
-// This mode belongs to one public create/resume invocation, never AgentSpec or
-// the inherited environment. Every new generation needs another explicit opt-in.
+// This mode is opted into by one public create/resume invocation, never by
+// AgentSpec or the inherited environment. That invocation records it on the
+// Agent (coremetadata.AnnotationAgentDialogueReplyOnly), and every later
+// generation of the same Agent is launched reply-only from that record.
 const claudeDialogueReplyOnlyFlag = "dialogue-reply-only"
+
+// withDialogueReplyOnlyAnnotation adds the reply-only record to base, the
+// Agent annotations a create already records. Without the mode it returns
+// base itself (nil included), so an ordinary create records nothing new.
+func withDialogueReplyOnlyAnnotation(enabled bool, base map[string]string) map[string]string {
+	if !enabled {
+		return base
+	}
+	out := maps.Clone(base)
+	if out == nil {
+		out = make(map[string]string, 1)
+	}
+	out[coremetadata.AnnotationAgentDialogueReplyOnly] = coremetadata.DialogueReplyOnlyOn
+	return out
+}
 
 type claudeDialogueLauncher interface {
 	PlanClaudeDialogueLaunch(coremetadata.AgentWorkspace, string) (string, []string, error)

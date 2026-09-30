@@ -2013,6 +2013,25 @@ neither. A resume without `--model` leaves a recorded model as it was. Both flag
 other provider, an invalid model or effort, and `--dialogue-reply-only` are
 refused before anything changes (`nothing was changed`).
 
+`--dialogue-reply-only` on `create agent` or `agent resume` launches a Claude
+Agent into the reply-only activation and records that on the Agent as
+`projmux.io/dialogue-reply-only=on`, in the transaction of that launch. From
+then on every resume of the Agent is the reply-only activation again:
+`agent resume` without the flag, `agent relaunch`, and the restart of
+`agent instructions attach|detach`, whether the Agent is Running or Offline
+with no managed Pane left. Nothing removes the record; an Agent that should
+run without it is a new Agent. Because that launch is fixed, a request it
+cannot carry is refused before anything changes (`nothing was changed`):
+`--profile`, `none` included (`profile-lane-unsupported`); `--instructions`,
+a `--reset` of the instructions, and `agent instructions attach|detach`
+(`persona-provider-unsupported`); and `--model`, `--effort`, or any other
+`--reset` (`reply-only-launch-fixed`), on `agent resume` too. A plain
+`agent relaunch` of a Running reply-only Agent compares only what that launch
+carries -- not the agent guidance or the Project's label link rules -- so it
+reports `unchanged`. An Agent made reply-only before the record existed
+carries none and is resumed as an ordinary Agent unless the flag is given
+again.
+
 `projmux agent relaunch <agent-ref> [--profile <name>|none] [--instructions
 <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all]
 [--project <ref>] [--window <ref>] [--yes] [--dry-run] [--socket <name> |
@@ -2071,7 +2090,9 @@ environment inherited from that Pane is not enough on its own, the command must
 be one of that Pane's processes, and when that cannot be determined the refusal
 says so; and a Running Agent whose interaction is not `idle` or
 `response_complete` -- `unknown` included -- without `--yes`
-(`relaunch-agent-busy`). A change to the layers
+(`relaunch-agent-busy`). An Agent that records the reply-only activation
+refuses every `--profile`, `--instructions`, `--model`, `--effort`, and
+`--reset` with the reasons given for it above. A change to the layers
 adds its own: a profile that does not exist or that `profile list` marks
 invalid (the store's reason, such as `profile-not-found`) or that names another
 provider (`profile-provider-mismatch`); instructions that cannot be read
