@@ -162,7 +162,7 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 	// The instructions this command gives are an override recorded with the
 	// source attach, `none` for a detach.
 	instructions := loaded.Name
-	if err := c.plan(restart, agentSettingsRequest{instructions: &instructions, source: coremetadata.SettingSourceAttach}); err != nil {
+	if err := c.plan(restart, agentSettingsRequest{instructions: &instructions, source: coremetadata.SettingSourceAttach}, request.socket); err != nil {
 		return err
 	}
 
@@ -358,20 +358,6 @@ func (c *agentCommand) predictStoppedAgentResume(registry coremetadata.Registry,
 		return agentResumePlan{}, fmt.Errorf("agent %q disappeared", agent.Metadata.UID)
 	}
 	return c.prepareResume("agent resume", predicted, stopped)
-}
-
-// invokedFromAgentPane reports whether this process runs in the managed Pane
-// of agentUID. The caller's Pane is found runtime-first, the way create finds
-// its creator: the ambient tmux Pane id, the one Registry Pane whose activation
-// carries that runtime id, and the Agent that Pane belongs to. Outside tmux
-// there is no caller Pane, so nothing is a self target.
-func (c *agentCommand) invokedFromAgentPane(registry coremetadata.Registry, agentUID string) bool {
-	paneID, err := resolveRuntimeMutationAnchorPane(c.lookupEnv, "")
-	if err != nil || paneID == "" {
-		return false
-	}
-	owner, _, skip := registryCreatorPane(&registry, paneID)
-	return skip == "" && owner == agentUID
 }
 
 // setAgentPersona writes want onto the Agent in one Registry mutation, and

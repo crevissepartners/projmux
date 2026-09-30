@@ -1,16 +1,21 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/agentsettings"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // relaunchReasonCodexPermissionsKept refuses a Codex profile switch whose new
@@ -114,7 +119,10 @@ func (r *agentRestart) checkTarget() error {
 // stop will leave behind, and resolves the settings it launches with for
 // request, so a resume `agent resume` would refuse, and a change to the
 // layers that cannot be made, are refused here while nothing has changed.
-func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest) error {
+//
+// socket is the command's --socket or --socket-path: the server the stop
+// closes the managed Pane on, which is where the self target is judged.
+func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest, socket deleteSocketFlags) error {
 	resumePlan, err := c.predictStoppedAgentResume(r.registry, r.target, r.paneUID)
 	if err != nil {
 		return r.refuse(r.tokens.noConversation, "cannot be resumed: "+err.Error())
@@ -146,10 +154,133 @@ func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest) error
 			}
 		}
 	}
-	if r.running && c.invokedFromAgentPane(r.registry, r.target.Metadata.UID) {
-		return r.refuse(r.tokens.selfTarget, "owns the Pane this command runs in; closing that Pane would end the command before the resume. Run it from another Pane")
+	if r.running {
+		switch self, cause := c.invokedFromAgentPane(r.registry, r.target.Metadata.UID, socket); self {
+		case selfTargetInside:
+			return r.refuse(r.tokens.selfTarget, "owns the Pane this command runs in; closing that Pane would end the command before the resume. Run it from another Pane")
+		case selfTargetUnobserved:
+			return r.refuse(r.tokens.selfTarget, "owns the Pane this command's environment names, and whether the command runs inside that Pane could not be determined: "+
+				cause+"; closing that Pane would end a command inside it before the resume. Run it from another Pane")
+		}
 	}
 	return nil
+}
+
+// selfTarget is what the self target judgment of a restart observed.
+type selfTarget int
+
+const (
+	// selfTargetNone: no ambient Pane, one that is not the Agent's managed
+	// Pane, or a caller observed outside that Pane's process tree.
+	selfTargetNone selfTarget = iota
+	// selfTargetInside: the caller descends from the Pane's process, so
+	// closing the Pane ends the caller.
+	selfTargetInside
+	// selfTargetUnobserved: the ambient Pane is the Agent's managed Pane, and
+	// whether the caller descends from it could not be observed. The restart
+	// is refused: a wrong refusal costs a re-run from another Pane, a wrong
+	// pass leaves the Agent Offline with no one to resume it.
+	selfTargetUnobserved
+)
+
+// invokedFromAgentPane judges whether this process runs in the managed Pane of
+// agentUID, the one Pane a restart of that Agent closes. The inherited
+// environment alone does not say so: a process that left the Pane, or was
+// started from it and detached, still carries the Pane's id.
+//
+// It is the pane-chain judgment create and delete record their actor with
+// (observePaneChainActor): the ambient tmux Pane id, the one Registry Pane
+// whose activation carries that runtime id and the Agent it belongs to, that
+// Pane's process on the server the restart addresses (restartAnchorConfirm),
+// and this process's parent chain. Only an ambient Pane that is agentUID's is
+// looked at on the server; with no ambient Pane, or another Agent's, nothing
+// is a self target.
+//
+// The second result says why a selfTargetUnobserved judgment could not be made.
+func (c *agentCommand) invokedFromAgentPane(registry coremetadata.Registry, agentUID string, socket deleteSocketFlags) (selfTarget, string) {
+	lookupEnv, ancestors, runner := c.lookupEnv, c.processAncestors, c.selfTargetRunner
+	if lookupEnv == nil {
+		lookupEnv = os.Getenv
+	}
+	if ancestors == nil {
+		ancestors = processAncestry
+	}
+	if runner == nil {
+		runner = inttmux.ExecRunner{}
+	}
+	confirm := restartAnchorConfirm(runner, lenientDeletionRoute(socket, lookupEnv))
+	ambientIsTarget := false
+	observed := observePaneChainActor(context.Background(), lookupEnv, ancestors, &registry,
+		func(ctx context.Context, paneID, paneUID string) (int, string) {
+			pane, ok := registry.Pane(paneUID)
+			if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.UID != agentUID {
+				return 0, creatorSkipAnchorPaneMismatch
+			}
+			ambientIsTarget = true
+			return confirm(ctx, paneID, paneUID)
+		})
+	switch {
+	case !ambientIsTarget:
+		return selfTargetNone, ""
+	case observed.recorded():
+		return selfTargetInside, ""
+	case observed.skip == creatorSkipNotPaneDescendant:
+		return selfTargetNone, ""
+	default:
+		return selfTargetUnobserved, selfTargetUnobservedCause(observed.skip)
+	}
+}
+
+// restartAnchorConfirm proves the ambient `%N` on the server a restart
+// addresses, which is the server its stop closes the managed Pane on: --socket
+// or --socket-path, else the inherited $TMUX.
+//
+// Unlike the create and delete confirmations it does not need $TMUX. A caller
+// outside tmux that names the server with --socket is judged too, because it
+// can carry an Agent Pane's id in its environment all the same. One
+// `display-message -t %N` through the route answers with the Pane's id, its
+// process id, and its mirrored Pane uid; the Pane is confirmed when the id
+// round-trips and the mirrored uid is the Registry Pane the in-memory step
+// matched.
+func restartAnchorConfirm(runner tmuxCommandRunner, route tmuxTransport) paneChainAnchorConfirm {
+	return func(ctx context.Context, paneID, paneUID string) (int, string) {
+		if runner == nil || !route.Present() {
+			return 0, creatorSkipServerUnproven
+		}
+		out, err := (explicitTmuxRunner{runner: runner, target: route}).Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
+			tmuxRowFormat("#{pane_id}", "#{pane_pid}", "#{"+tmuxopts.PaneUID+"}"))
+		if err != nil {
+			return 0, creatorSkipAnchorQueryFailed
+		}
+		rows := splitTmuxRows(string(out), 3)
+		if len(rows) != 1 {
+			return 0, creatorSkipAnchorQueryFailed
+		}
+		row := rows[0]
+		if row[0] != paneID || strings.TrimSpace(row[2]) != paneUID {
+			return 0, creatorSkipAnchorPaneMismatch
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(row[1]))
+		if err != nil || pid <= 1 {
+			return 0, creatorSkipAnchorQueryFailed
+		}
+		return pid, ""
+	}
+}
+
+// selfTargetUnobservedCause words the step of the pane-chain judgment that
+// stopped a self target judgment short, for the refusal it ends in.
+func selfTargetUnobservedCause(skip string) string {
+	switch skip {
+	case creatorSkipServerUnproven:
+		return "no tmux server is named by --socket, --socket-path, or $TMUX"
+	case creatorSkipAnchorPaneMismatch:
+		return "the tmux server this command addresses does not hold that Pane"
+	case creatorSkipProcessUnobservable:
+		return "this command's parent processes could not be read"
+	default:
+		return "that Pane could not be read on the tmux server this command addresses"
+	}
 }
 
 // asksInstructions reports a request that decides the Agent's instructions:

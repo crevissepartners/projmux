@@ -39,6 +39,9 @@ type personaAttachFixture struct {
 	deletes  *fakePaneDeleteRuntime
 	delete   *deleteCommand
 	env      map[string]string
+	// self is what the self target judgment observes: the caller's parent
+	// chain and the fixture server's answer for the ambient Pane.
+	self *selfTargetProbe
 }
 
 func newPersonaAttachFixture(t *testing.T) *personaAttachFixture {
@@ -68,6 +71,8 @@ func newPersonaAttachFixture(t *testing.T) *personaAttachFixture {
 	command.personaStore = func() (persona.Store, error) { return personaStoreFor(t, planner), nil }
 	env := map[string]string{"TMUX": testDeleteEnvironment["TMUX"]}
 	command.lookupEnv = func(name string) string { return env[name] }
+	self := newSelfTargetProbe(personaAttachPane)
+	command.processAncestors, command.selfTargetRunner = self.ancestors, self
 	// The live half of the fixture is the fake delete runtime, so a managed
 	// Pane is alive until that runtime has killed it.
 	command.managedPaneLive = func(_ tmuxTransport, paneUID string) (bool, error) {
@@ -75,7 +80,7 @@ func newPersonaAttachFixture(t *testing.T) *personaAttachFixture {
 	}
 	return &personaAttachFixture{
 		store: store, tmux: tmux, command: command, planner: planner,
-		launcher: launcher, deletes: deletes, delete: deleteCmd, env: env,
+		launcher: launcher, deletes: deletes, delete: deleteCmd, env: env, self: self,
 	}
 }
 
@@ -488,6 +493,7 @@ func TestAgentPersonaRefusalsCarryTheirReasonTokenAndLeaveNoTrace(t *testing.T) 
 			pane, _ := f.store.registry.Pane(personaAttachPane)
 			pane.Status.Activation.RuntimeID = "%77"
 			f.env["TMUX_PANE"] = "%77"
+			f.self.inside()
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

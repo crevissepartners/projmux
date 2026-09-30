@@ -2002,9 +2002,11 @@ interaction is not `idle` or
 `persona-agent-busy` unless `--yes` confirms cutting its turn, and `--dry-run`
 (`-o json` for scripts) reports the target, its interaction, the current and
 new instructions, and whether that confirmation is required without changing
-anything. The Agent owning the Pane the command runs in is refused with
-`persona-self-target`; an Agent with no stored conversation is refused with
-`persona-no-conversation`. Attaching the instructions an Agent already runs with,
+anything. The Agent whose managed Pane the command runs in is refused with
+`persona-self-target`: an environment inherited from that Pane is not enough on
+its own, the command must be one of that Pane's processes, and when that cannot
+be determined the refusal says so. An Agent with no stored conversation is
+refused with `persona-no-conversation`. Attaching the instructions an Agent already runs with,
 same name and same content digest, with the snapshot mode off, reports
 `unchanged` and restarts nothing, unless the Agent's other settings resolve to
 something else (a profile edit, for example); after the instructions file is
@@ -2097,9 +2099,12 @@ tokens, and all happen before any Registry, tmux, or Pane change, ending with
 refusal); an Agent with no stored conversation, one that is not Running,
 Offline, or Failed, or one whose final resume would be refused (a Codex thread
 with no durable endpoint included) (`relaunch-no-conversation`); the Agent
-owning the Pane the command runs in (`relaunch-self-target`); and a Running
-Agent whose interaction is not `idle` or `response_complete` -- `unknown`
-included -- without `--yes` (`relaunch-agent-busy`). A change to the layers
+whose managed Pane the command runs in (`relaunch-self-target`) -- an
+environment inherited from that Pane is not enough on its own, the command must
+be one of that Pane's processes, and when that cannot be determined the refusal
+says so; and a Running Agent whose interaction is not `idle` or
+`response_complete` -- `unknown` included -- without `--yes`
+(`relaunch-agent-busy`). A change to the layers
 adds its own: a profile that does not exist or that `profile list` marks
 invalid (the store's reason, such as `profile-not-found`) or that names another
 provider (`profile-provider-mismatch`); instructions that cannot be read

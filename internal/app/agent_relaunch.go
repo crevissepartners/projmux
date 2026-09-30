@@ -178,7 +178,7 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 	if err := restart.checkTarget(); err != nil {
 		return err
 	}
-	if err := c.plan(restart, request.settings()); err != nil {
+	if err := c.plan(restart, request.settings(), request.socket); err != nil {
 		return err
 	}
 	settings := restart.settings.resolution
