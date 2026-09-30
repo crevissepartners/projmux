@@ -464,28 +464,28 @@ func TestRepairDoesNotReuseOrdinaryWriteLockOrValidation(t *testing.T) {
 		return errors.New("ordinary staged validation must not run")
 	}
 
-	type restoreOutcome struct {
-		result RestoreResult
-		err    error
+	// How long the repair itself takes says nothing about the ordinary lock, so
+	// the wait is observed instead of timed: the observer sees every ordinary
+	// acquisition, and the stepping clock spends the lock budget in simulated
+	// time, so an acquisition that meets the held marker gives up on its first
+	// deadline check rather than sleep out the budget.
+	store.SetClock(steppingClock(fixedNow, time.Minute))
+	var ordinaryLocks []LockObservation
+	store.SetLockObserver(func(observation LockObservation) {
+		ordinaryLocks = append(ordinaryLocks, observation)
+	})
+	result, err := store.RestoreFrom(RestoreRequest{
+		SourcePath:           source.Path,
+		ExpectSourceChecksum: source.Checksum,
+	})
+	if errors.Is(err, ErrLockTimeout) || len(ordinaryLocks) != 0 {
+		t.Fatalf("repair waited for the ordinary registry write lock: err=%v acquisitions=%+v", err, ordinaryLocks)
 	}
-	done := make(chan restoreOutcome, 1)
-	go func() {
-		result, err := store.RestoreFrom(RestoreRequest{
-			SourcePath:           source.Path,
-			ExpectSourceChecksum: source.Checksum,
-		})
-		done <- restoreOutcome{result: result, err: err}
-	}()
-	select {
-	case outcome := <-done:
-		if outcome.err != nil {
-			t.Fatalf("repair while ordinary lock held: %v", outcome.err)
-		}
-		if !outcome.result.Changed {
-			t.Fatal("repair reported no change over the invalid Registry")
-		}
-	case <-time.After(750 * time.Millisecond):
-		t.Fatal("repair waited for the ordinary registry write lock")
+	if err != nil {
+		t.Fatalf("repair while ordinary lock held: %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("repair reported no change over the invalid Registry")
 	}
 	if ordinaryValidationCalled {
 		t.Fatal("repair reused the ordinary staged-validation hook")

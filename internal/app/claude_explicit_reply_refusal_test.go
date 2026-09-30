@@ -163,7 +163,11 @@ func TestClaudeExplicitReplyJudgementConditionsHaveDistinctTokens(t *testing.T) 
 func TestLiveClaudeBrokerCommitReplyKeepsEachCause(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
-	original := dialogueEnvelope("message-live-commit", now.Add(time.Minute)).BrokerEnvelope
+	// CommitReply reads the real clock, and the subtests resume only when the
+	// package frees a parallel slot, which can be minutes after this line. The
+	// live original's deadline is therefore one no run reaches, so whether it
+	// is still live never depends on how long that took.
+	original := dialogueEnvelope("message-live-commit", now.Add(100*365*24*time.Hour)).BrokerEnvelope
 	store := messagestore.NewNonblockingStore(t.TempDir())
 	live := &liveClaudeDialogueBroker{registryPath: filepath.Join(t.TempDir(), "registry.json"), store: store}
 	expired := *original
