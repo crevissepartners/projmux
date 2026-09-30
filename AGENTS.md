@@ -57,6 +57,7 @@ make install
 | `internal/state` | Simple file-backed state helpers. |
 | `internal/i18n`, `internal/theme` | Message catalog and locales; built-in palette and theme resolution. |
 | `internal/tools/gendocs` | Build-time generator for `docs/cli.md` (`make docs`). |
+| `internal/tools/gennotices` | Build-time generator for `THIRD_PARTY_NOTICES` (`make notices`). |
 | `test/` | `integration/`, `e2e/`, and `install/` suites, Docker images, fixtures, and workflow contract tests. |
 | `scripts/` | Development, CI, and security tooling only; no product logic. |
 | `npm/` | npm launcher and per-platform packages. |
@@ -151,4 +152,5 @@ Release:
 - release-please owns version bumps, `CHANGELOG.md`, and release notes. The squash subject is its input.
 - Release candidates are cut only by manually dispatching `.github/workflows/release-rc.yml`. npm publishes cannot be recalled.
 - Do not add `prerelease` or `prerelease-type` to `release-please-config.json`.
+- The release archives and the npm platform packages ship `THIRD_PARTY_NOTICES`, the license notices of what the binary links. If you change a module the binary links or the toolchain in `go.mod`, run `make notices` and commit the diff; `make test` fails until you do and names the section that is missing, extra, or stale.
 - Details: [docs/release.md](docs/release.md).

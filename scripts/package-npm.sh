@@ -130,6 +130,37 @@ for (const name of platformPackages) {
 NODE
 }
 
+# A package with the binary in it carries the notices of what that binary
+# links, and lists them in `files` so npm packs them. The root package has no
+# binary and no notices.
+assert_staged_notices() {
+  node - "$out" "${platform_packages[@]}" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const [out, ...platformPackages] = process.argv.slice(2);
+const notices = "THIRD_PARTY_NOTICES";
+
+function fail(message) {
+  console.error(message);
+  process.exitCode = 1;
+}
+
+for (const name of platformPackages) {
+  const dir = path.join(out, name);
+  const files = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).files || [];
+  if (!files.includes(notices)) {
+    fail(`expected ${name} files to list ${notices}`);
+  }
+  if (!fs.existsSync(path.join(dir, notices))) {
+    fail(`expected ${name} to stage ${notices}`);
+  }
+}
+if (fs.existsSync(path.join(out, "projmux", notices))) {
+  fail(`expected the root package to stage no ${notices}; it has no binary`);
+}
+NODE
+}
+
 stage_main() {
   local dir="$out/projmux"
   mkdir -p "$dir/npm"
@@ -155,7 +186,7 @@ stage_platform() {
 
   mkdir -p "$dir/bin"
   cp "$root/npm/platform/${goos}-${npm_arch}/package.json" "$dir/package.json"
-  cp "$root/README.md" "$root/LICENSE" "$dir/"
+  cp "$root/README.md" "$root/LICENSE" "$root/THIRD_PARTY_NOTICES" "$dir/"
 
   if [[ -n "$release_dir" ]]; then
     local archive_name="projmux_${version}_${goos}_${goarch}"
@@ -217,6 +248,7 @@ if [[ "$stage_status" -ne 0 ]]; then
 fi
 
 assert_staged_versions
+assert_staged_notices
 
 if [[ "$pack" -eq 1 ]]; then
   for dir in \

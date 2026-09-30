@@ -21,6 +21,7 @@ projmux/
     state/
     tools/
       gendocs/
+      gennotices/
     ui/
       picker/
       pickercompat/
@@ -40,6 +41,8 @@ projmux/
 - `internal/core` contains product behavior that should be testable without tmux.
 - `internal/tools/gendocs` is a build-time `main` package, not part of the shipped
   binary. `make docs` runs it to regenerate `docs/cli.md` from the command manifest.
+- `internal/tools/gennotices` is a build-time `main` package too. `make notices` runs it
+  to regenerate `THIRD_PARTY_NOTICES` from the modules `./cmd/projmux` links.
 - `internal/integrations/tmux` should be the only place that knows tmux command strings and output formats.
 - `internal/ui/picker` and `internal/ui/projmuxpicker` own native picker behavior.
 - `internal/ui/pickercompat` is an internal compatibility option/result shape for older app call sites. It is not a runtime backend; product code should route through the native picker.

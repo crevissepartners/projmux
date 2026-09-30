@@ -35,7 +35,9 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs test smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security-pin-refresh security security-serial security-go security-static security-policy security-contract security-tools
+NOTICES_BINARY ?= THIRD_PARTY_NOTICES
+
+.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs notices test smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security-pin-refresh security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -83,6 +85,17 @@ docs:
 	@$(GO) run ./internal/tools/gendocs > $(DOCS_REFERENCE).tmp
 	@mv $(DOCS_REFERENCE).tmp $(DOCS_REFERENCE)
 	@echo ">> regenerated $(DOCS_REFERENCE)"
+
+# notices regenerates the licence notices of what the binary is made of
+# (projmux, the Go runtime and standard library, the Go modules it links) into
+# $(NOTICES_BINARY), which is committed: the release archives and the npm
+# platform packages ship it next to the binary. Run it whenever go.mod changes
+# a module the binary links or the toolchain; the gennotices tests fail until
+# it is.
+notices:
+	@$(GO) run ./internal/tools/gennotices > $(NOTICES_BINARY).tmp
+	@mv $(NOTICES_BINARY).tmp $(NOTICES_BINARY)
+	@echo ">> regenerated $(NOTICES_BINARY)"
 
 fmt:
 	@$(GO_FILES_FIND) -print0 | $(call GOFMT_EACH,-w)
