@@ -344,7 +344,7 @@ func TestResumePickerInheritsNothingWhenTheHoldersDisagree(t *testing.T) {
 		// No `projmux: ` prefix: the split funnel adds it to the client line.
 		want := "claude conversation " + personaResumeConversation +
 			" opened without inherited launch values (launch-values-ambiguous): " +
-			"agent/codex (uid:agt-alpha-codex), agent/codex (uid:agt-beta-codex) record different persona, system prompt snapshot or effort values\n"
+			"agent/codex (uid:agt-alpha-codex), agent/codex (uid:agt-beta-codex) record different instructions, system prompt snapshot or effort values\n"
 		if stderr != want {
 			t.Fatalf("%s: stderr = %q, want exactly %q", test.name, stderr, want)
 		}
@@ -387,7 +387,7 @@ func TestResumePickerDisclosesInheritedValuesItCannotRepass(t *testing.T) {
 	}
 	// The seam's lines lose their `projmux: ` prefix on this path: the split
 	// funnel prefixes the one client line it shows.
-	personaLine := "agent/" + agent.Metadata.Name + " resumed without its persona go-reviewer (" + persona.ReasonUnavailable + "): "
+	personaLine := "agent/" + agent.Metadata.Name + " resumed without its instructions go-reviewer (" + persona.ReasonUnavailable + "): "
 	effortLine := strings.TrimPrefix(wantEffortInvalidNotice(agent.Metadata.Name, effortInvalidFixture), "projmux: ") + "\n"
 	if strings.Count(stderr, "\n") != 2 || !strings.HasPrefix(stderr, personaLine) || !strings.HasSuffix(stderr, effortLine) ||
 		strings.Contains(stderr, "projmux: ") {

@@ -18,6 +18,7 @@ package persona
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -72,13 +73,30 @@ type Error struct {
 	Reason string
 	Name   string
 	Detail string
+	// Noun is what the text calls the named file. Empty is instructions,
+	// the public name; the deprecated persona spellings set DeprecatedNoun
+	// through SpelledAs so their output reads as it did.
+	Noun string
 }
+
+// DeprecatedNoun is the noun the deprecated `persona` spellings print.
+const DeprecatedNoun = "persona"
 
 func (e *Error) Error() string {
 	if e.Name == "" {
 		return fmt.Sprintf("%s: %s", e.Reason, e.Detail)
 	}
-	return fmt.Sprintf("%s: persona %q %s", e.Reason, e.Name, e.Detail)
+	return fmt.Sprintf("%s: %s %q %s", e.Reason, cmp.Or(e.Noun, "instructions"), e.Name, e.Detail)
+}
+
+// SpelledAs makes the refusal carried by err, if any, call the named file
+// noun, and returns err. A deprecated spelling passes DeprecatedNoun.
+func SpelledAs(err error, noun string) error {
+	var refusal *Error
+	if errors.As(err, &refusal) {
+		refusal.Noun = noun
+	}
+	return err
 }
 
 // ReasonOf returns the refusal token carried by err, or "" when err is not a
@@ -177,12 +195,12 @@ func (s Store) Load(name string) (Persona, error) {
 		return Persona{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + path}
 	}
 	if err != nil {
-		return Persona{}, fmt.Errorf("read persona %q: %w", name, err)
+		return Persona{}, fmt.Errorf("read instructions %q: %w", name, err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Persona{}, fmt.Errorf("read persona %q: %w", name, err)
+		return Persona{}, fmt.Errorf("read instructions %q: %w", name, err)
 	}
 	if !info.Mode().IsRegular() {
 		return Persona{}, &Error{Reason: ReasonNotFound, Name: name, Detail: "is not a regular file at " + path}
@@ -194,7 +212,7 @@ func (s Store) Load(name string) (Persona, error) {
 			refusal.Name = name
 			return Persona{}, refusal
 		}
-		return Persona{}, fmt.Errorf("read persona %q: %w", name, err)
+		return Persona{}, fmt.Errorf("read instructions %q: %w", name, err)
 	}
 	return Persona{Name: name, Content: content, Digest: Digest(content)}, nil
 }
@@ -236,7 +254,7 @@ func (s Store) Write(name string, content []byte) (Entry, error) {
 		return Entry{}, tooLarge(name, len(content), false)
 	}
 	if err := writeAtomic(path, content); err != nil {
-		return Entry{}, fmt.Errorf("write persona %q: %w", name, err)
+		return Entry{}, fmt.Errorf("write instructions %q: %w", name, err)
 	}
 	entry := Entry{Name: name, Path: path, Digest: Digest(content), Size: int64(len(content))}
 	if info, err := os.Stat(path); err == nil {
@@ -257,7 +275,7 @@ func (s Store) Delete(name string) error {
 		return &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + path}
 	}
 	if err != nil {
-		return fmt.Errorf("delete persona %q: %w", name, err)
+		return fmt.Errorf("delete instructions %q: %w", name, err)
 	}
 	defer root.Close()
 	fileName := name + FileExt
@@ -266,13 +284,13 @@ func (s Store) Delete(name string) error {
 		return &Error{Reason: ReasonNotFound, Name: name, Detail: "does not exist at " + path}
 	}
 	if err != nil {
-		return fmt.Errorf("delete persona %q: %w", name, err)
+		return fmt.Errorf("delete instructions %q: %w", name, err)
 	}
 	if info.IsDir() {
 		return &Error{Reason: ReasonNotFound, Name: name, Detail: "is not a regular file at " + path}
 	}
 	if err := root.Remove(fileName); err != nil {
-		return fmt.Errorf("delete persona %q: %w", name, err)
+		return fmt.Errorf("delete instructions %q: %w", name, err)
 	}
 	return nil
 }
@@ -287,7 +305,7 @@ func (s Store) List() ([]Entry, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("list personas: %w", err)
+		return nil, fmt.Errorf("list instructions: %w", err)
 	}
 	entries := make([]Entry, 0, len(dirEntries))
 	for _, dirEntry := range dirEntries {
@@ -317,12 +335,12 @@ func describe(dir, name string) (Entry, bool, error) {
 		return Entry{}, false, nil
 	}
 	if err != nil {
-		return Entry{}, false, fmt.Errorf("list personas: %w", err)
+		return Entry{}, false, fmt.Errorf("list instructions: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Entry{}, false, fmt.Errorf("list personas: %w", err)
+		return Entry{}, false, fmt.Errorf("list instructions: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return Entry{}, false, nil
@@ -330,7 +348,7 @@ func describe(dir, name string) (Entry, bool, error) {
 	hash := sha256.New()
 	size, err := io.Copy(hash, file)
 	if err != nil {
-		return Entry{}, false, fmt.Errorf("list personas: %w", err)
+		return Entry{}, false, fmt.Errorf("list instructions: %w", err)
 	}
 	return Entry{
 		Name:    name,
@@ -349,10 +367,10 @@ func describe(dir, name string) (Entry, bool, error) {
 func (s Store) SnapshotPath(digest string) (string, error) {
 	hexDigest, ok := strings.CutPrefix(digest, DigestPrefix)
 	if !ok || len(hexDigest) != sha256.Size*2 || strings.ToLower(hexDigest) != hexDigest {
-		return "", fmt.Errorf("persona digest %q is not %s<64 lowercase hex>", digest, DigestPrefix)
+		return "", fmt.Errorf("instructions digest %q is not %s<64 lowercase hex>", digest, DigestPrefix)
 	}
 	if _, err := hex.DecodeString(hexDigest); err != nil {
-		return "", fmt.Errorf("persona digest %q is not %s<64 lowercase hex>", digest, DigestPrefix)
+		return "", fmt.Errorf("instructions digest %q is not %s<64 lowercase hex>", digest, DigestPrefix)
 	}
 	return filepath.Join(s.snapshotDir, snapshotPrefix+hexDigest+FileExt), nil
 }
@@ -413,7 +431,7 @@ func (s Store) WriteSnapshot(content []byte) (Snapshot, error) {
 		return Snapshot{Digest: digest, Path: path}, nil
 	}
 	if err := writeAtomic(path, content); err != nil {
-		return Snapshot{}, fmt.Errorf("write persona snapshot: %w", err)
+		return Snapshot{}, fmt.Errorf("write instructions snapshot: %w", err)
 	}
 	return Snapshot{Digest: digest, Path: path}, nil
 }

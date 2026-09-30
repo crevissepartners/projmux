@@ -265,7 +265,7 @@ func (c *aiCommand) resumeSystemPromptFile(mode string, annotations map[string]s
 func readPersonaSnapshot(path string) ([]byte, error) {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no persona snapshot at %s", path)
+		return nil, fmt.Errorf("no instructions snapshot at %s", path)
 	}
 	if err != nil {
 		return nil, err
@@ -273,7 +273,7 @@ func readPersonaSnapshot(path string) ([]byte, error) {
 	defer root.Close()
 	file, err := root.Open(filepath.Base(path))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no persona snapshot at %s", path)
+		return nil, fmt.Errorf("no instructions snapshot at %s", path)
 	}
 	if err != nil {
 		return nil, err

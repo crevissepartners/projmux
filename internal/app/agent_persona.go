@@ -154,7 +154,7 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		loaded, err = store.Load(request.persona)
 		if err != nil {
 			if persona.ReasonOf(err) != "" {
-				return usageError(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, err))
+				return usageError(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, personaRefusalNoun(err, noun)))
 			}
 			return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
 		}
@@ -258,6 +258,15 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 	return writeAgentPersonaResult(stdout, request, result)
 }
 
+// personaRefusalNoun keeps the old noun in a persona refusal reached through
+// `agent persona`, the way the rest of that spelling's text does.
+func personaRefusalNoun(err error, noun string) error {
+	if noun == persona.DeprecatedNoun {
+		return persona.SpelledAs(err, persona.DeprecatedNoun)
+	}
+	return err
+}
+
 // personaTokens are the refusal tokens of `agent instructions|persona
 // attach|detach`.
 func personaTokens(noun string) agentRestartTokens {
@@ -321,7 +330,7 @@ func parseAgentPersonaArgs(args []string, noun string, stderr io.Writer) (agentP
 	if request.action == "attach" {
 		request.persona = positionals[1]
 		if err := persona.ValidateName(request.persona); err != nil {
-			return agentPersonaRequest{}, usageError(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, err))
+			return agentPersonaRequest{}, usageError(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, personaRefusalNoun(err, noun)))
 		}
 	}
 	return request, nil

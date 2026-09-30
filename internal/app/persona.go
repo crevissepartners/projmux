@@ -125,8 +125,12 @@ func personaFlagToken(fs *flag.FlagSet, arg string) bool {
 // personaRefusal maps a persona package refusal onto the CLI's exit codes: a
 // bad name or oversized content is invalid input (exit 2). Every other error,
 // including persona-not-found, keeps its text and exits 1. The reason token is
-// in the text either way.
+// in the text either way. The refusal calls the file instructions, except on
+// the deprecated `persona` spelling, which keeps its old noun.
 func personaRefusal(spelling string, err error) error {
+	if strings.HasPrefix(spelling, persona.DeprecatedNoun+" ") {
+		err = persona.SpelledAs(err, persona.DeprecatedNoun)
+	}
 	switch persona.ReasonOf(err) {
 	case persona.ReasonNameInvalid, persona.ReasonTooLarge:
 		return usageError(spelling + ": " + err.Error())
@@ -358,7 +362,7 @@ func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error 
 		return personaRefusal(c.spelling()+" edit", err)
 	}
 
-	tempDir, err := os.MkdirTemp("", "projmux-persona-*")
+	tempDir, err := os.MkdirTemp("", "projmux-instructions-*")
 	if err != nil {
 		return fmt.Errorf(c.spelling()+" edit: %w", err)
 	}
@@ -390,6 +394,9 @@ func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error 
 		var refusal *persona.Error
 		if errors.As(err, &refusal) {
 			refusal.Name = name
+			if c.spelling() == persona.DeprecatedNoun {
+				refusal.Noun = persona.DeprecatedNoun
+			}
 			// Keep the edit so the work is not lost; the stored persona
 			// is unchanged.
 			keepTemp = true

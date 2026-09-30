@@ -180,7 +180,7 @@ func TestAgentResumeRepassesThePersonaSnapshot(t *testing.T) {
 	if !slices.Equal(argv, plain) {
 		t.Fatalf("resume with its snapshot gone argv = %q, want the persona-free argv %q", argv, plain)
 	}
-	wantNotice := "projmux: agent/" + name + " resumed without its persona go-reviewer (" + persona.ReasonUnavailable + "): "
+	wantNotice := "projmux: agent/" + name + " resumed without its instructions go-reviewer (" + persona.ReasonUnavailable + "): "
 	if !strings.Contains(stderr, wantNotice) || strings.Count(stderr, persona.ReasonUnavailable) != 1 {
 		t.Fatalf("resume with its snapshot gone stderr = %q, want one notice starting %q", stderr, wantNotice)
 	}
@@ -224,7 +224,7 @@ func TestTopologyReplayRepassesThePersonaSnapshot(t *testing.T) {
 	if !slices.Equal(work.argv, plain.argv) {
 		t.Fatalf("replay with its snapshot gone argv = %q, want the persona-free argv %q", work.argv, plain.argv)
 	}
-	wantNotice := "projmux: agent/main/reviewer resumed without its persona go-reviewer (" + persona.ReasonUnavailable + "): "
+	wantNotice := "projmux: agent/main/reviewer resumed without its instructions go-reviewer (" + persona.ReasonUnavailable + "): "
 	if len(plan.notices) != 1 || !strings.HasPrefix(plan.notices[0], wantNotice) {
 		t.Fatalf("replay with its snapshot gone notices = %v, want one starting %q", plan.notices, wantNotice)
 	}

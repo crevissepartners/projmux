@@ -150,7 +150,7 @@ func PersonaAnnotationsOf(agent Agent) AgentPersonaAnnotations {
 // snapshot mode that makes a resume honor it, or a new persona with the
 // source of the old one. Every other annotation is left as it was.
 func (m Mutator) SetAgentPersona(reg *Registry, agentUID string, want AgentPersonaAnnotations) (Agent, error) {
-	const op = "set agent persona"
+	const op = "set agent instructions"
 	agent, ok := reg.Agent(agentUID)
 	if !ok {
 		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
@@ -160,7 +160,7 @@ func (m Mutator) SetAgentPersona(reg *Registry, agentUID string, want AgentPerso
 	snapshot := strings.TrimSpace(want.SystemPromptSnapshot)
 	source := strings.TrimSpace(want.InstructionsSource)
 	if (name == "") != (digest == "") {
-		return Agent{}, inputErr(op, ErrInvalidRegistry, "persona %q and digest %q must be set or cleared together", name, digest)
+		return Agent{}, inputErr(op, ErrInvalidRegistry, "instructions %q and digest %q must be set or cleared together", name, digest)
 	}
 	if snapshot != "" && snapshot != SystemPromptSnapshotOff {
 		return Agent{}, inputErr(op, ErrInvalidRegistry, "unsupported system prompt snapshot mode %q", snapshot)

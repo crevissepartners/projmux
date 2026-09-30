@@ -476,3 +476,20 @@ func TestClearAgentSettingRemovesTheValueAndItsSource(t *testing.T) {
 		t.Fatalf("clearing nothing moved updatedAt to %v", reg.UpdatedAt)
 	}
 }
+
+// TestSetAgentPersonaRefusalsSayInstructions pins the text of the refusals: the
+// mutation and the half pair are named instructions, the public name.
+func TestSetAgentPersonaRefusalsSayInstructions(t *testing.T) {
+	t.Parallel()
+	mutator := Mutator{Now: func() time.Time { return time.Date(2026, 10, 1, 7, 0, 0, 0, time.UTC) }}
+	reg := personaAnnotationFixture()
+	for uid, want := range map[string]string{
+		"agent-1": `set agent instructions: instructions "go-reviewer" and digest "" must be set or cleared together`,
+		"agent-9": `set agent instructions: agent "agent-9" does not exist`,
+	} {
+		_, err := mutator.SetAgentPersona(&reg, uid, AgentPersonaAnnotations{Persona: "go-reviewer"})
+		if err == nil || err.Error() != want {
+			t.Errorf("SetAgentPersona(%s) = %v, want %q", uid, err, want)
+		}
+	}
+}
