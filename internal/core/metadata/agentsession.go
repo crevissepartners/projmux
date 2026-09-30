@@ -47,10 +47,11 @@ type AgentSessionRef struct {
 
 // ClaudeSessionRef is Claude's conversation identity as its hook reports it.
 //
-// TranscriptPath is stored as a path only. Nothing in projmux reads the
-// transcript contents to populate this ref, and nothing may start: parsing
-// another tool's conversation store is permanently out of scope. Only what the
-// hook hands over is recorded.
+// TranscriptPath is stored as a path only, and only what the hook hands over
+// is recorded: nothing reads the transcript contents to populate this ref. The
+// held message release and the pane supervisor open this path to read a
+// bounded tail, and the Stop hook reads the tail of the path its own payload
+// reports; docs/hooks.md lists these readers and what each one keeps.
 type ClaudeSessionRef struct {
 	SessionID      string `json:"sessionId"`
 	TranscriptPath string `json:"transcriptPath,omitempty"`

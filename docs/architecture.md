@@ -743,12 +743,21 @@ Agent provider session ref:
 - Codex's turn id is deliberately **not** stored. A turn addresses one turn
   inside the conversation and changes on every hook event, so it is not a
   pointer to the conversation.
-- Transcript **paths** are recorded as the hook reported them. The Registry,
-  hook ingest, and resume paths never read provider config files or transcript
-  **contents**; that is permanently out of scope for them. The one exception is
-  the explicit, user-run `agent sessions backfill` (see "Agent session history
-  (Claude)" below), which reads Claude transcript contents read-only and only
-  to attribute past sessions from delivered coordination frames.
+- Transcript **paths** are recorded as the hook reported them, and no
+  transcript content is read to fill the ref. The Registry, hook ingest, and
+  Agent resume paths (`agent resume`, `agent relaunch`, and the topology replay
+  below) never read provider config files, and they read transcript
+  **contents** only in these documented places:
+  - The three bounded tail readers that
+    [hooks.md](hooks.md#claude-code-hook-ingest) lists and scopes: `Stop` hook
+    ingest, the held coordination message release, and the Agent's pane
+    supervisor. Each reads at most the last 256 KiB of one Claude transcript,
+    and none writes what it read to the Registry. `Stop` keeps the last
+    assistant text as its notification row's text; hooks.md says where that
+    text goes.
+  - The explicit, user-run `agent sessions backfill` (see "Agent session
+    history (Claude)" below), which reads Claude transcript contents read-only
+    and only to attribute past sessions from delivered coordination frames.
 - The field is additive inside `schemaVersion: 1`. It is an optional pointer
   with `omitempty`, so a registry written before it existed decodes with a nil
   ref, validates, and re-encodes byte-identically. Bumping the envelope would
@@ -873,8 +882,11 @@ Agent session history (Claude and Codex):
     non-zero `corruptLines`, `unattributed`, and `ambiguous` count.
 - `projmux agent sessions backfill [--dry-run] [-o json]` recovers a subset of
   the conversations from before this history existed. It is the one explicit,
-  user-run reader of transcript contents; the Registry, hook ingest, resume,
-  and `agent sessions list` still never read a transcript.
+  user-run reader of transcript contents. Apart from the bounded tail readers
+  that [hooks.md](hooks.md#claude-code-hook-ingest) lists (`Stop` hook ingest,
+  the held coordination message release, and the pane supervisor), the
+  Registry, hook ingest, Agent resume, and `agent sessions list` never read a
+  transcript, and none of those tail readers adds a row to this history.
   - Input: the top-level Claude transcripts
     `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/<project>/<session>.jsonl`
     (a blank `CLAUDE_CONFIG_DIR` is unset). Only regular files exactly one
