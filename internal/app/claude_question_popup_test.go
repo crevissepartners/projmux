@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -895,23 +896,27 @@ func TestClaudeQuestionHookWaitsForAViewingClient(t *testing.T) {
 
 // TestClaudeQuestionHookWithNoClientExpiresToTheWidget is the window running
 // out with nobody viewing the Pane: no popup, no decision, an expired record.
+// It runs in a synctest bubble, so the repeated looks are counted against the
+// virtual window and not against how many polls the machine fits in real time.
 func TestClaudeQuestionHookWithNoClientExpiresToTheWidget(t *testing.T) {
 	t.Parallel()
 
-	fixture := newQuestionFixture(t, false)
-	fixture.answering = config.AgentQuestionAnsweringProjmux
-	popup := newFakeQuestionPopup("")
-	fixture.popup = popup
-	id, done := fixture.startHook(t, context.Background(), 200*time.Millisecond)
-	if got := waitHookOutput(t, done); got != "" {
-		t.Fatalf("expired hook printed %q", got)
-	}
-	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateExpired {
-		t.Fatalf("state = %s, want expired", record.State)
-	}
-	if views, opens, _ := popup.counts(); views < 2 || opens != 0 {
-		t.Fatalf("views=%d opens=%d, want repeated looks and no popup", views, opens)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newQuestionFixture(t, false)
+		fixture.answering = config.AgentQuestionAnsweringProjmux
+		popup := newFakeQuestionPopup("")
+		fixture.popup = popup
+		id, done := fixture.startHook(t, t.Context(), 200*time.Millisecond)
+		if got := waitHookOutput(t, done); got != "" {
+			t.Fatalf("expired hook printed %q", got)
+		}
+		if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateExpired {
+			t.Fatalf("state = %s, want expired", record.State)
+		}
+		if views, opens, _ := popup.counts(); views < 2 || opens != 0 {
+			t.Fatalf("views=%d opens=%d, want repeated looks and no popup", views, opens)
+		}
+	})
 }
 
 // notShownThen makes the fake popup report a popup tmux never drew for its
