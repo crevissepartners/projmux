@@ -790,8 +790,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 
 		// Name handoff. The new managed Pane carries the non-automatic name of
 		// the Agent's old Pane row that selectAgentPaneNameHandoff picks, and
-		// that row is released first so the name has exactly one holder. A name
-		// that cannot be carried is disclosed and never refuses the resume.
+		// that row is released first so the name has exactly one holder; with no
+		// such row and no restart, it gets the `<agent>-pane` name `create agent`
+		// gives. A name that cannot be carried is disclosed and never refuses
+		// the resume.
 		paneName, reason := r.handOffResumedPaneName(ctx, working, mutator, *agent, plan)
 		nameReason = reason
 		if agent, ok = working.Agent(plan.agentUID); !ok {
@@ -973,6 +975,11 @@ type stoppedAgentPane struct {
 // selected source row is released, and only when releasing it leaves the
 // Window's stored anchor where it is. Every outcome that
 // carries no non-automatic name comes back as a reason instead of an error.
+//
+// When there is neither a stopped Pane nor any candidate row -- a resume after
+// `delete pane` dropped the old row -- the name is derivedAgentPaneName's
+// `<agent>-pane`, the one `create agent` gives. A candidate row that cannot be
+// carried keeps its reason and the automatic name.
 func (r *agentRebinder) handOffResumedPaneName(
 	ctx context.Context,
 	working *coremetadata.Registry,
@@ -998,7 +1005,13 @@ func (r *agentRebinder) handOffResumedPaneName(
 		named = named || agentPaneNameCandidate(pane, agent.Metadata.UID)
 	}
 	if !named {
-		// Nothing could be carried, so no runtime inventory is taken.
+		// Nothing could be carried, so no runtime inventory is taken. With no
+		// restart behind it either, the new Pane gets the name `create agent`
+		// gives an Agent's Pane; attachAgentPaneWithName discloses a holder
+		// or an invalid name and falls back to the automatic one.
+		if plan.stoppedPane.uid == "" {
+			return derivedAgentPaneName(agent.Metadata.Name), ""
+		}
 		return "", ""
 	}
 	guard, err := newTopologyOwnerGuard(ctx, r.create.runtime)

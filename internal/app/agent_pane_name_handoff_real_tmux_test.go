@@ -213,8 +213,10 @@ func addRealTmuxNameHandoffAgent(t *testing.T, store *fakeResourceStore, project
 
 // assertRealTmuxNameHandoff checks one Agent after its new Pane exists: a new
 // UID, the carried (or automatic) Registry name held by that Pane alone, and
-// the same name in the live Pane's @projmux_pane_label.
-func assertRealTmuxNameHandoff(t *testing.T, store *fakeResourceStore, labels map[string][]string, test realTmuxNameHandoffCase, oldRowReleased bool) {
+// the same name in the live Pane's @projmux_pane_label. derived says the
+// automatic-name control gets the `<agent>-pane` name `agent resume` derives
+// when no candidate row is left, instead of its new UID.
+func assertRealTmuxNameHandoff(t *testing.T, store *fakeResourceStore, labels map[string][]string, test realTmuxNameHandoffCase, oldRowReleased, derived bool) {
 	t.Helper()
 	agent, ok := store.registry.Agent(test.agentUID)
 	if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef == "" || agent.Status.PaneRef == test.oldUID {
@@ -227,6 +229,9 @@ func assertRealTmuxNameHandoff(t *testing.T, store *fakeResourceStore, labels ma
 	want := test.oldName
 	if test.paneName == "" {
 		want = pane.Metadata.UID
+		if derived {
+			want = test.agentName + "-pane"
+		}
 	}
 	if pane.Metadata.Name != want {
 		t.Fatalf("agent/%s new pane/%s (uid:%s), want name %q", test.agentName, pane.Metadata.Name, pane.Metadata.UID, want)
@@ -296,7 +301,7 @@ func TestContinueReplayCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 	}
 	labels := server.livePaneLabels(t)
 	for _, test := range cases {
-		assertRealTmuxNameHandoff(t, store, labels, test, true)
+		assertRealTmuxNameHandoff(t, store, labels, test, true, false)
 	}
 }
 
@@ -305,7 +310,8 @@ func TestContinueReplayCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 // the old-row release, and the split into the live Window -- on an isolated
 // tmux server. The named old rows are released and their names land on the new
 // Panes in the Registry and in @projmux_pane_label; the automatic-name control
-// keeps its old row as evidence and names its new Pane by the new UID.
+// keeps its old row as evidence and, with no candidate row to carry, names
+// its new Pane `automatic-pane` as `create agent` would.
 func TestAgentResumeCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -411,6 +417,6 @@ func TestAgentResumeCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 	}
 	labels := server.livePaneLabels(t)
 	for _, test := range cases {
-		assertRealTmuxNameHandoff(t, store, labels, test, test.paneName != "")
+		assertRealTmuxNameHandoff(t, store, labels, test, test.paneName != "", true)
 	}
 }

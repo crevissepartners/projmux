@@ -239,6 +239,8 @@ Codex keeps the developer instructions its thread started with; resume cannot re
 
 Items the Agent does not override take its profile's current instructions, model, and effort; the model is passed only when it changed.
 
+The new Pane carries the name of the Agent's old Pane row; when delete pane left no such row, it is named <agent-name>-pane as create agent names it. A name that cannot be used leaves the automatic one, and a held name is disclosed in one stderr line.
+
 ### `projmux agent relaunch`
 
 Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort
