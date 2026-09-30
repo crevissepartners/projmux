@@ -132,6 +132,11 @@ type agentCommand struct {
 	// lookupEnv reads the ambient tmux Pane that `agent persona` refuses to
 	// restart from, and the inherited $TMUX its stop routes through.
 	lookupEnv func(string) string
+	// processAncestors walks this process's parent chain, and selfTargetRunner
+	// issues the one tmux read, for the self target judgment of a restart
+	// (invokedFromAgentPane). Nil means processAncestry and the tmux binary.
+	processAncestors func() ([]int, error)
+	selfTargetRunner tmuxCommandRunner
 	// claudeProjectsDir is the Claude transcript root `agent sessions
 	// backfill` scans; nil resolves ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects.
 	claudeProjectsDir func() (string, error)

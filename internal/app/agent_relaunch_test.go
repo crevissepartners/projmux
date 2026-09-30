@@ -234,6 +234,7 @@ func TestAgentRelaunchRefusalsCarryTheirReasonAndLeaveNoTrace(t *testing.T) {
 			pane, _ := f.store.registry.Pane(personaAttachPane)
 			pane.Status.Activation.RuntimeID = "%77"
 			f.env["TMUX_PANE"] = "%77"
+			f.self.inside()
 		}},
 		{name: "outside tmux without a socket", flags: []string{"--effort", "max"}, want: "requires --socket <name> or --socket-path <absolute> outside tmux", arrange: func(f *personaAttachFixture) {
 			delete(f.env, "TMUX")
