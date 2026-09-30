@@ -114,7 +114,7 @@ func (l agentResumeLaunch) personaNotice(label string) string {
 	if l.personaUnavailable == nil {
 		return ""
 	}
-	return fmt.Sprintf("projmux: agent/%s resumed without its persona %s (%s): %s",
+	return fmt.Sprintf("projmux: agent/%s resumed without its instructions %s (%s): %s",
 		label, l.personaUnavailable.Name, l.personaUnavailable.Reason, l.personaUnavailable.Detail)
 }
 
@@ -257,7 +257,7 @@ func (c *aiCommand) resumePersonaSnapshot(mode string, annotations map[string]st
 	}
 	if mode != aiModeClaude {
 		return "", &persona.Error{Reason: persona.ReasonUnavailable, Name: name,
-			Detail: "is not re-passed: a persona applies only to --provider " + aiModeClaude}
+			Detail: "is not re-passed: instructions apply only to --provider " + aiModeClaude}
 	}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {

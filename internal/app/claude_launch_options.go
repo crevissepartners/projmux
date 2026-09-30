@@ -219,7 +219,7 @@ func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) er
 	}
 	option := flags.personaOption
 	if option == "" {
-		option = "persona"
+		option = "instructions"
 	}
 	if flags.dialogueReplyOnly {
 		return usageError(fmt.Sprintf("%s --%s cannot be combined with --%s (%s); nothing was created",
@@ -252,7 +252,7 @@ func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) er
 // that cannot be written refuses the same way. A later failure can leave the
 // snapshot behind, which is harmless: it is content addressed.
 func (c *createCommand) preparePersonaLaunch(spelling, name string, optionNames ...string) (personaLaunch, error) {
-	option := "persona"
+	option := "instructions"
 	if len(optionNames) > 0 && optionNames[0] != "" {
 		option = optionNames[0]
 	}
@@ -264,7 +264,8 @@ func (c *createCommand) preparePersonaLaunch(spelling, name string, optionNames 
 	loaded, err := store.Load(name)
 	if err != nil {
 		if persona.ReasonOf(err) != "" {
-			return personaLaunch{}, usageError(fmt.Sprintf("%s --%s: %v; nothing was created", spelling, option, err))
+			// The deprecated --persona keeps its old noun.
+			return personaLaunch{}, usageError(fmt.Sprintf("%s --%s: %v; nothing was created", spelling, option, personaRefusalNoun(err, option)))
 		}
 		return personaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
 	}

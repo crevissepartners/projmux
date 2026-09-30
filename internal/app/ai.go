@@ -2321,10 +2321,10 @@ func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coreme
 func (c *aiCommand) PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error) {
 	mode := normalizeAIMode(provider)
 	if mode != aiModeClaude && mode != aiModeCodex {
-		return "", nil, fmt.Errorf("provider %q does not accept --model, --effort, or --persona", provider)
+		return "", nil, fmt.Errorf("provider %q does not accept --model, --effort, or --instructions", provider)
 	}
 	if mode == aiModeCodex && (personaFile != "" || settingsFile != "") {
-		return "", nil, fmt.Errorf("provider %q does not accept Claude persona or settings options", provider)
+		return "", nil, fmt.Errorf("provider %q does not accept Claude instructions or settings options", provider)
 	}
 	extra, err := providerLaunchArgs(provider, workspace, payload)
 	if err != nil {

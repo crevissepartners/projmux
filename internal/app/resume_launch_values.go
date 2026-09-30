@@ -132,9 +132,9 @@ func inheritedResumeLaunchValues(registry *coremetadata.Registry, provider, conv
 // disagreed about, which is exactly the bundle that provider inherits.
 func ambiguousLaunchValueSubject(provider string) string {
 	if provider == aiModeCodex {
-		return "persona values"
+		return "instructions values"
 	}
-	return "persona, system prompt snapshot or effort values"
+	return "instructions, system prompt snapshot or effort values"
 }
 
 // writeIntentAgentNotices discloses what a committed UI Agent create could not
