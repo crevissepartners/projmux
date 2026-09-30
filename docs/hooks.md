@@ -561,6 +561,15 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | `CwdChanged` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `FileChanged` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 
+`Stop` is the first transcript tail reader. It opens the `transcript_path` its
+own payload reports, reads at most the last 256 KiB, and keeps one string: the
+text of the last assistant line in that tail. That text becomes the completion
+row's text, so it goes wherever the row goes: the notify queue, the desktop
+notification (whose duplicate check keeps a normalized copy in a tmux pane
+option), and the `send-noti` payload. It is not written to the Registry or to
+the Agent session history, and nothing else the read saw is kept. With no
+readable path or no assistant text, the row text is `Ready`.
+
 Current Claude Code (2.1.277) sends no hook when the operator denies a
 permission dialog, so neither `PermissionDenied` nor `Stop` closes it and the
 Agent keeps its `approval_required` observation. The held coordination message
