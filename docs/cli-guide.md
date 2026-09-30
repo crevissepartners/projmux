@@ -2048,7 +2048,13 @@ Pane in `newPaneUID`); an Offline or Failed Agent is only resumed (outcome
 `resumed`). The new Pane carries the closed Pane's name unless that name was
 its own uid; when the name cannot be carried (another Pane took it), the new
 Pane keeps its automatic name and stderr says why in one `projmux: agent/<name>
-new Pane keeps an automatic name: <reason>` line. The settings are recorded by the rebind transaction -- the profile,
+new Pane keeps an automatic name: <reason>` line. An Offline or Failed Agent,
+here and on `agent resume`, carries the name of its old Pane row instead; when
+no such row is left -- `delete pane` removed it -- the new Pane is named
+`<agent-name>-pane`, as `create agent` names it. That name falls back to the
+automatic one the same way: with the same stderr line when another resource
+holds it, and silently when it is too long to be a name. A name given with
+`rename pane` is not remembered once its row is gone. The settings are recorded by the rebind transaction -- the profile,
 `projmux.io/model`, `projmux.io/effort`, the instructions, and their sources --
 so a failed launch records none of them; later plain resumes pass the effort
 again but not the model. Nothing is written before the stop. On a Codex Agent the model and effort ride the

@@ -46,7 +46,8 @@ func releaseResumeFixturePane(t *testing.T, store *fakeResourceStore, name strin
 // explicit `agent resume` gives the new Pane the old non-automatic name --
 // explicit, the `create agent` default, or flag-shaped -- in the Registry and
 // the tmux stable-name mirror, and releases the old row that held it. An
-// automatic old name is not carried: the new Pane is named by its own UID.
+// automatic old name is not carried: with no candidate row left, the new Pane
+// gets the `<agent>-pane` name `create agent` gives.
 func TestAgentResumeCarriesOldAgentPaneName(t *testing.T) {
 	for _, test := range []struct{ name, paneName string }{
 		{name: "explicit name", paneName: "reviewer"},
@@ -69,7 +70,7 @@ func TestAgentResumeCarriesOldAgentPaneName(t *testing.T) {
 			}
 			want := old.Metadata.Name
 			if test.paneName == "" {
-				want = newPane.Metadata.UID
+				want = "codex-pane"
 				// The automatic old row stays as evidence and is the only holder
 				// of its own UID name; nothing else carries it.
 				if retained, ok := store.registry.Pane(old.Metadata.UID); !ok || retained.Metadata.Name != old.Metadata.UID {
@@ -167,4 +168,96 @@ func TestAgentResumeKeepsAutomaticNameWhenOldPaneIsNotProvenNonLive(t *testing.T
 	if retained, ok := store.registry.Pane(old.Metadata.UID); !ok || retained.Metadata.Name != "reviewer" {
 		t.Fatalf("live-claimed old row = %+v (ok=%t), want retained with its name", retained, ok)
 	}
+}
+
+// TestAgentResumeWithNoOldPaneRowDerivesTheCreateAgentPaneName is C-2: when
+// `delete pane` left the Offline Agent no old Pane row and no restart stopped
+// one, `agent resume` names the new Pane `<agent>-pane` exactly as `create
+// agent` does, in the Registry and the tmux stable-name mirror, and says
+// nothing.
+func TestAgentResumeWithNoOldPaneRowDerivesTheCreateAgentPaneName(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(t *testing.T, store *fakeResourceStore)
+	}{
+		{name: "never had a Pane row", setup: func(*testing.T, *fakeResourceStore) {}},
+		{name: "old Pane row deleted", setup: func(t *testing.T, store *fakeResourceStore) {
+			old := releaseResumeFixturePane(t, store, "reviewer")
+			if err := store.mutator().DeletePane(&store.registry, old.Metadata.UID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+			test.setup(t, store)
+			tmux := newFakeTmux()
+
+			newPane, stderr, launcher := runPaneNameResume(t, store, tmux)
+			if stderr != "" {
+				t.Fatalf("stderr = %q, want no disclosure", stderr)
+			}
+			if newPane.Metadata.Name != "codex-pane" {
+				t.Fatalf("new pane/%s (uid:%s), want name %q", newPane.Metadata.Name, newPane.Metadata.UID, "codex-pane")
+			}
+			if holders := paneNameReservationHolders(store.registry, "prj-beta", "codex-pane"); !slices.Equal(holders, []string{newPane.Metadata.UID}) {
+				t.Fatalf("name %q holders = %v, want only the new Pane %s", "codex-pane", holders, newPane.Metadata.UID)
+			}
+			if len(launcher.bound) != 1 {
+				t.Fatalf("bound panes = %+v, want one", launcher.bound)
+			}
+			_, _, live := tmux.pane(launcher.bound[0].paneID)
+			if live == nil || live.opts[tmuxopts.PaneUID] != newPane.Metadata.UID || live.opts[tmuxopts.PaneName] != "codex-pane" {
+				t.Fatalf("tmux mirror = %+v, want %s=%q on %s", live, tmuxopts.PaneName, "codex-pane", newPane.Metadata.UID)
+			}
+		})
+	}
+}
+
+// TestAgentResumeWhoseDerivedPaneNameCannotBeUsedKeepsAnAutomaticName is C-2's
+// fallback: a derived `<agent>-pane` another resource holds is disclosed in
+// exactly one stderr line, and one too long to be a name falls back silently
+// as `create agent` does; either way the resume succeeds with an automatic
+// name.
+func TestAgentResumeWhoseDerivedPaneNameCannotBeUsedKeepsAnAutomaticName(t *testing.T) {
+	t.Run("another resource holds the derived name", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+		if _, err := store.mutator().RenamePane(&store.registry, "pan-beta-zsh", "codex-pane"); err != nil {
+			t.Fatal(err)
+		}
+
+		newPane, stderr, _ := runPaneNameResume(t, store, newFakeTmux())
+		if !strings.HasPrefix(stderr, "projmux: agent/codex new Pane keeps an automatic name: ") ||
+			!strings.Contains(stderr, "codex-pane") || strings.Count(stderr, "\n") != 1 {
+			t.Fatalf("stderr = %q, want one line naming the held derived name", stderr)
+		}
+		if newPane.Metadata.Name != newPane.Metadata.UID {
+			t.Fatalf("new pane/%s (uid:%s), want an automatic name", newPane.Metadata.Name, newPane.Metadata.UID)
+		}
+		if holders := paneNameReservationHolders(store.registry, "prj-beta", "codex-pane"); !slices.Equal(holders, []string{"pan-beta-zsh"}) {
+			t.Fatalf("name %q holders = %v, want only its holder pan-beta-zsh", "codex-pane", holders)
+		}
+	})
+	t.Run("the derived name is too long", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+		long := strings.Repeat("a", 128)
+		if _, err := store.mutator().RenameAgent(&store.registry, "agt-beta-codex", long); err != nil {
+			t.Fatal(err)
+		}
+
+		command, launcher, _, _ := newTestAgentResumeCommand(t, store, newFakeTmux())
+		enablePinnedNativeResumeFixture(t, command, store, "agt-beta-codex", launcher)
+		stdout, stderr, err := runRoute(t, command, "resume", "uid:agt-beta-codex")
+		if err != nil || stdout != "agent/"+long+" resumed\n" || stderr != "" {
+			t.Fatalf("agent resume stdout=%q stderr=%q err=%v, want success and no disclosure", stdout, stderr, err)
+		}
+		agent, _ := store.registry.Agent("agt-beta-codex")
+		pane, ok := store.registry.Pane(agent.Status.PaneRef)
+		if !ok || pane.Metadata.Name != pane.Metadata.UID {
+			t.Fatalf("new pane = %+v (ok=%t), want an automatic name", pane, ok)
+		}
+	})
 }
