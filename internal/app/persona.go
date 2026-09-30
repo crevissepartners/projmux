@@ -129,7 +129,7 @@ func personaFlagToken(fs *flag.FlagSet, arg string) bool {
 // the deprecated `persona` spelling, which keeps its old noun.
 func personaRefusal(spelling string, err error) error {
 	if strings.HasPrefix(spelling, persona.DeprecatedNoun+" ") {
-		persona.SpelledAs(err, persona.DeprecatedNoun)
+		err = persona.SpelledAs(err, persona.DeprecatedNoun)
 	}
 	switch persona.ReasonOf(err) {
 	case persona.ReasonNameInvalid, persona.ReasonTooLarge:
