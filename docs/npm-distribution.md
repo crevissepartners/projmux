@@ -14,6 +14,10 @@ this package layout:
 | `@projmux/darwin-x64` | `darwin/amd64` `bin/projmux` |
 | `@projmux/darwin-arm64` | `darwin/arm64` `bin/projmux` |
 
+Each platform package also carries `THIRD_PARTY_NOTICES`, the license notices
+of the Go runtime and the Go modules its binary links. The root package has no
+binary and no notices.
+
 The shim sets `PROJMUX_INSTALLER=npm` before executing the real binary so
 `projmux update status` and the Settings About screen can present
 npm-specific guidance. npm is only an update/install source label here; the
