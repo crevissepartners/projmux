@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,17 +117,31 @@ func TestNativeWatcherLeaseAllowsExactlyOneOwnerAndCanBeReacquired(t *testing.T)
 	releaseThird()
 }
 
+// TestNativeWatcherLifecycleStopsAtDemandExpiryAndCleansHeartbeat moves the
+// watcher's clock by hand, so the demand stays fresh until the watch has
+// started and expires only when the test says so: no step has to finish inside
+// a real-time window. It cannot use a synctest bubble instead, because
+// runNativeWatcher installs signal handlers and a bubble cannot host them.
 func TestNativeWatcherLifecycleStopsAtDemandExpiryAndCleansHeartbeat(t *testing.T) {
+	const (
+		demandTTL = 25 * time.Millisecond
+		// hang only bounds a watcher that never gets there.
+		hang = 30 * time.Second
+	)
+	started := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	var elapsed atomic.Int64
+	now := func() time.Time { return started.Add(time.Duration(elapsed.Load())) }
+
 	stateDir := t.TempDir()
 	if err := touchNativeWatcherMarker(
-		nativeWatcherPath(stateDir, nativeWatcherDemandName), time.Now().UTC(),
+		nativeWatcherPath(stateDir, nativeWatcherDemandName), now(),
 	); err != nil {
 		t.Fatal(err)
 	}
 
 	watchStarted := make(chan struct{})
 	watchStopped := make(chan error, 1)
-	command := New(time.Now)
+	command := New(now)
 	command.lookupEnv = func(name string) string {
 		if name == StateDirEnvVar {
 			return stateDir
@@ -136,7 +151,7 @@ func TestNativeWatcherLifecycleStopsAtDemandExpiryAndCleansHeartbeat(t *testing.
 	command.watcherTimings = nativeWatcherTimings{
 		heartbeatEvery: 5 * time.Millisecond,
 		heartbeatFresh: 50 * time.Millisecond,
-		demandTTL:      25 * time.Millisecond,
+		demandTTL:      demandTTL,
 		batchMaxAge:    time.Second,
 		failureBackoff: time.Second,
 	}
@@ -151,15 +166,19 @@ func TestNativeWatcherLifecycleStopsAtDemandExpiryAndCleansHeartbeat(t *testing.
 	go func() { runDone <- command.runNativeWatcher() }()
 	select {
 	case <-watchStarted:
-	case <-time.After(time.Second):
+	case err := <-runDone:
+		t.Fatalf("watcher did not start: runNativeWatcher returned %v while the demand was fresh", err)
+	case <-time.After(hang):
 		t.Fatal("watcher did not start")
 	}
+	// The demand is now twice as old as its TTL.
+	elapsed.Store(int64(2 * demandTTL))
 	select {
 	case err := <-runDone:
 		if err != nil {
 			t.Fatalf("runNativeWatcher = %v, want clean demand-expiry stop", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(hang):
 		t.Fatal("watcher did not stop after demand expired")
 	}
 	if err := <-watchStopped; !errors.Is(err, context.Canceled) {

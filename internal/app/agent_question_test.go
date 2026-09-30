@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -174,44 +175,52 @@ func TestClaudeQuestionHookExpiresSilentlyAndRefusesALateAnswer(t *testing.T) {
 // TestClaudeQuestionHookDeadlineIsExactlyTheConfiguredWindow holds the
 // expiry boundary: the record's deadline is the resolved window after its
 // creation, an answer inside the window wins, and a question left past it
-// expires with nothing printed.
+// expires with nothing printed. Each case runs in a synctest bubble, where the
+// hook, the store, and the test read one virtual clock, so the window is
+// measured in that clock and not in how fast the machine runs the steps. The
+// hook runs under the bubble's test context, so a failed assertion ends it
+// instead of leaving it blocked in a bubble whose clock has stopped.
 func TestClaudeQuestionHookDeadlineIsExactlyTheConfiguredWindow(t *testing.T) {
 	t.Parallel()
 
 	const window = 400 * time.Millisecond
 	t.Run("answered before the deadline", func(t *testing.T) {
 		t.Parallel()
-		fixture := newQuestionFixture(t, true)
-		id, done := fixture.startHook(t, context.Background(), window)
-		record, _, _ := fixture.store.Get(id)
-		if got := record.Deadline.Sub(record.CreatedAt); got != window {
-			t.Fatalf("deadline - created = %s, want %s", got, window)
-		}
-		if _, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, id, "--option", "1=make", "--option", "2=main"); err != nil {
-			t.Fatalf("answer inside the window: %v", err)
-		}
-		if got := waitHookOutput(t, done); !strings.Contains(got, `"permissionDecision":"allow"`) {
-			t.Fatalf("answered hook printed %q", got)
-		}
-		if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
-			t.Fatalf("state = %s, want answered", record.State)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newQuestionFixture(t, true)
+			id, done := fixture.startHook(t, t.Context(), window)
+			record, _, _ := fixture.store.Get(id)
+			if got := record.Deadline.Sub(record.CreatedAt); got != window {
+				t.Fatalf("deadline - created = %s, want %s", got, window)
+			}
+			if _, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, id, "--option", "1=make", "--option", "2=main"); err != nil {
+				t.Fatalf("answer inside the window: %v", err)
+			}
+			if got := waitHookOutput(t, done); !strings.Contains(got, `"permissionDecision":"allow"`) {
+				t.Fatalf("answered hook printed %q", got)
+			}
+			if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateAnswered {
+				t.Fatalf("state = %s, want answered", record.State)
+			}
+		})
 	})
 	t.Run("unanswered past the deadline", func(t *testing.T) {
 		t.Parallel()
-		fixture := newQuestionFixture(t, true)
-		started := time.Now()
-		id, done := fixture.startHook(t, context.Background(), window)
-		if got := waitHookOutput(t, done); got != "" {
-			t.Fatalf("expired hook printed %q", got)
-		}
-		if elapsed := time.Since(started); elapsed < window {
-			t.Fatalf("hook gave the question back after %s, before the %s window", elapsed, window)
-		}
-		record, _, _ := fixture.store.Get(id)
-		if record.State != agentquestion.StateExpired || record.Deadline.Sub(record.CreatedAt) != window {
-			t.Fatalf("record = %s deadline-created=%s, want expired after %s", record.State, record.Deadline.Sub(record.CreatedAt), window)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newQuestionFixture(t, true)
+			started := time.Now()
+			id, done := fixture.startHook(t, t.Context(), window)
+			if got := waitHookOutput(t, done); got != "" {
+				t.Fatalf("expired hook printed %q", got)
+			}
+			if elapsed := time.Since(started); elapsed < window {
+				t.Fatalf("hook gave the question back after %s, before the %s window", elapsed, window)
+			}
+			record, _, _ := fixture.store.Get(id)
+			if record.State != agentquestion.StateExpired || record.Deadline.Sub(record.CreatedAt) != window {
+				t.Fatalf("record = %s deadline-created=%s, want expired after %s", record.State, record.Deadline.Sub(record.CreatedAt), window)
+			}
+		})
 	})
 }
 
