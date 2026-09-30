@@ -16,10 +16,14 @@ const AgentQuestionWindowSecondsFileName = "agent-question-window-seconds"
 // The question window bounds. A value outside them, like a file that does not
 // hold one integer, reads as the default rather than as an error: every
 // Claude session runs the hook, and a broken setting may not fail it.
+//
+// The maximum is one day. A projmux binary from before it was raised from one
+// hour reads a saved value above 3600 as the 900 second default: downgrading
+// never breaks the hook, it only shortens the wait.
 const (
 	DefaultAgentQuestionWindowSeconds = 900
 	MinAgentQuestionWindowSeconds     = 60
-	MaxAgentQuestionWindowSeconds     = 3600
+	MaxAgentQuestionWindowSeconds     = 24 * 60 * 60
 )
 
 // AgentQuestionWindowUnlimitedWord is the file word for a window that lasts
@@ -40,7 +44,7 @@ const AgentQuestionWindowUnlimitedWord = "unlimited"
 // re-running `projmux agent integrate claude`.
 //
 // The ceiling is the safety net for a stuck hook, and this hook has no
-// recover. Seven days is 168 times the longest bounded window (3600 seconds),
+// recover. Seven days is 7 times the longest bounded window (86400 seconds),
 // so it never cuts a normal window, while a broken hook is reclaimed within a
 // week. 604800000 ms still fits a signed 32-bit millisecond timer.
 //

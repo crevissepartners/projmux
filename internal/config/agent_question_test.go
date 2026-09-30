@@ -20,10 +20,13 @@ func TestLoadAgentQuestionWindowSecondsFile(t *testing.T) {
 		{name: "missing", missing: true, want: 900},
 		{name: "default", content: "900", want: 900},
 		{name: "minimum", content: "60", want: 60},
-		{name: "maximum", content: "3600", want: 3600},
+		{name: "one hour", content: "3600", want: 3600},
+		{name: "four hours", content: "14400", want: 14400},
+		{name: "maximum", content: "86400", want: 86400},
 		{name: "surrounding whitespace", content: "  120\n", want: 120},
 		{name: "below the minimum", content: "59", want: 900},
-		{name: "above the maximum", content: "3601", want: 900},
+		{name: "above the maximum", content: "86401", want: 900},
+		{name: "just below unlimited as seconds is out of range", content: "604784", want: 900},
 		{name: "zero", content: "0", want: 900},
 		{name: "negative", content: "-5", want: 900},
 		{name: "not a number", content: "abc", want: 900},
@@ -164,6 +167,8 @@ func TestSaveAgentQuestionWindowSecondsFileRoundTripsAndRefusesOutOfRange(t *tes
 	}{
 		{seconds: 60, content: "60\n"},
 		{seconds: 3600, content: "3600\n"},
+		{seconds: 14400, content: "14400\n"},
+		{seconds: 86400, content: "86400\n"},
 		{seconds: 900, content: "900\n"},
 		{seconds: UnlimitedAgentQuestionWindowSeconds, content: "unlimited\n"},
 	} {
@@ -183,7 +188,7 @@ func TestSaveAgentQuestionWindowSecondsFileRoundTripsAndRefusesOutOfRange(t *tes
 		}
 	}
 
-	for _, seconds := range []int{0, -1, 59, 3601, UnlimitedAgentQuestionWindowSeconds - 1, AgentQuestionHookTimeoutSeconds} {
+	for _, seconds := range []int{0, -1, 59, 86401, UnlimitedAgentQuestionWindowSeconds - 1, AgentQuestionHookTimeoutSeconds} {
 		if err := SaveAgentQuestionWindowSecondsFile(path, seconds); err == nil {
 			t.Fatalf("save %d succeeded, want a refusal", seconds)
 		}

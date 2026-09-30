@@ -756,7 +756,7 @@ catalog `install` field for installed hook events.
 `projmux internal claude-question-hook` (marker
 `projmux-managed:claude-question:v1`, `"timeout"` the fixed ceiling `604800`
 seconds (7 days), which outlasts every answer window including `unlimited`;
-it is the safety net for a stuck hook, which has no recover, and is 168 times
+it is the safety net for a stuck hook, which has no recover, and is 7 times
 the longest bounded window, so it never cuts a normal one). Unlike the
 ingest command its stdout is not discarded, because that is where an answer is
 handed to Claude Code. Re-running the integration keeps exactly one such entry,
@@ -790,7 +790,7 @@ subagent's question, are always way 1 and never read it.
 
 In way 2 the hook holds the tool call open for the answer window: 900 seconds
 unless `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds`
-holds another value in 60–3600 (see
+holds another value in 60–86400 (see
 [configuration.md](configuration.md#agent-question-window)). The window binds
 only in way 2; way 1 never waits. While it waits, Claude Code shows the hook's
 status message instead of the question prompt.

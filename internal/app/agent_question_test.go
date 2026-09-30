@@ -238,7 +238,10 @@ func TestClaudeQuestionWindowReadsTheSettingAndFallsBackToTheDefault(t *testing.
 		{name: "no file", want: 900 * time.Second},
 		{name: "in range", content: "120\n", want: 120 * time.Second},
 		{name: "below the minimum", content: "59", want: 900 * time.Second},
-		{name: "above the maximum", content: "3601", want: 900 * time.Second},
+		{name: "four hours", content: "14400\n", want: 14400 * time.Second},
+		{name: "maximum", content: "86400\n", want: 86400 * time.Second},
+		{name: "above the maximum", content: "86401", want: 900 * time.Second},
+		{name: "unlimited as seconds", content: "604785", want: 900 * time.Second},
 		{name: "garbage", content: "fifteen minutes", want: 900 * time.Second},
 	} {
 		t.Run(test.name, func(t *testing.T) {

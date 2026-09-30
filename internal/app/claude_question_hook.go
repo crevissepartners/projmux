@@ -54,7 +54,7 @@ const (
 
 // claudeQuestionWindow is how long the hook holds one question open for a
 // command-line answer before it gives the question back to Claude Code's own
-// prompt. It is the central agent-question-window-seconds setting (60..3600,
+// prompt. It is the central agent-question-window-seconds setting (60..86400,
 // or the unlimited word, default 900); an out-of-range or broken value, and a
 // config directory that cannot be resolved, read as the default.
 //
