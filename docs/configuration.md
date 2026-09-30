@@ -1572,8 +1572,8 @@ under. Only Claude Agents get the rules; Codex Agents and the Claude
 reply-only lane do not.
 
 - Create passes the rules and records their digest on the Agent
-  (`projmux.io/project-link-rules-digest`). With a persona too, Claude is
-  given one file holding the persona, a `---` separator, and the rules,
+  (`projmux.io/project-link-rules-digest`). With instructions too, Claude is
+  given one file holding the instructions, a `---` separator, and the rules,
   because Claude keeps only the last `--append-system-prompt-file`. A
   resume-picker create also runs with the system prompt snapshot off, since
   the picked conversation recorded a prompt without the rules.
@@ -1589,7 +1589,7 @@ reply-only lane do not.
   the rules, one `project-link-rules-unavailable` line on stderr says so, and
   its recorded digest is left as it was.
 
-The rendered rules and the persona-and-rules files are content-addressed
+The rendered rules and the instructions-and-rules files are content-addressed
 below the state directory, in `project-links/`.
 
 ## Agent Guidance
@@ -1615,7 +1615,7 @@ To turn the guidance off, leave the file empty (`: > agent-guidance.md`). To
 use your own text, write it to the file. To go back to the default, delete
 the file. The file is at most 64 KiB.
 
-- The guidance, the persona and the Project's label link rules reach Claude
+- The guidance, the instructions and the Project's label link rules reach Claude
   as one `--append-system-prompt-file`, in that order, each present only when
   the Agent has it and separated by a `---` line, because Claude keeps only
   the last file it is given.
@@ -1635,7 +1635,7 @@ the file. The file is at most 64 KiB.
   `agent-guidance-unavailable` line on stderr says so, and nothing is
   recorded.
 - A Codex Agent receives the guidance on a fresh create that starts its own
-  thread (a create with a prompt): the guidance and the persona go to that
+  thread (a create with a prompt): the guidance and the instructions go to that
   thread as its developer instructions, in that order, each present only when
   the Agent has it and separated by the same `---` line, and the Agent records
   the guidance digest. A Codex resume, and a Codex create without a prompt or
