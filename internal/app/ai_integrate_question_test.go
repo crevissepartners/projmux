@@ -116,7 +116,8 @@ func TestAIIntegrateClaudeQuestionTimeoutIsTheFixedCeiling(t *testing.T) {
 		{name: "setting 60", content: "60\n"},
 		{name: "setting 3600", content: "3600\n"},
 		{name: "setting unlimited", content: "unlimited\n"},
-		{name: "setting out of range", content: "3601\n"},
+		{name: "setting 86400", content: "86400\n"},
+		{name: "setting out of range", content: "86401\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

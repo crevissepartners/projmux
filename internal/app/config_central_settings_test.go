@@ -95,6 +95,17 @@ func TestConfigAgentQuestionsSetThenShowMatchesHookLoaders(t *testing.T) {
 	if seconds, _ := config.LoadAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile()); seconds != 120 {
 		t.Fatalf("hook window = %d, want 120", seconds)
 	}
+
+	// Four hours and one day, the longest bounded window, are stored as the
+	// integer the hook reads back.
+	for _, window := range []string{"14400", "86400"} {
+		if got, want := runConfigRoute(t, cmd, "agent-questions", "--window", window), "answering claude window "+window+"\n"; got != want {
+			t.Fatalf("agent-questions --window %s = %q, want %q", window, got, want)
+		}
+		if raw, err := os.ReadFile(paths.AgentQuestionWindowSecondsFile()); err != nil || string(raw) != window+"\n" {
+			t.Fatalf("window file after --window %s = %q (%v)", window, raw, err)
+		}
+	}
 }
 
 // TestConfigAgentQuestionsWindowReachesTheNextQuestionWithoutIntegrate is the
@@ -111,6 +122,8 @@ func TestConfigAgentQuestionsWindowReachesTheNextQuestionWithoutIntegrate(t *tes
 	}{
 		{window: "120", want: 120 * time.Second},
 		{window: "3600", want: time.Hour},
+		{window: "14400", want: 4 * time.Hour},
+		{window: "86400", want: 24 * time.Hour},
 		{window: config.AgentQuestionWindowUnlimitedWord, want: 604785 * time.Second},
 	} {
 		t.Run(test.window, func(t *testing.T) {
@@ -211,9 +224,10 @@ func TestConfigCentralSettingsRejectInvalidWithoutWriting(t *testing.T) {
 		{name: "locale positional", args: []string{"locale", "ko-KR"}, usage: true, want: "config locale does not accept positional arguments: ko-KR"},
 		{name: "unknown answering way", args: []string{"agent-questions", "--answering", "codex"}, usage: true, want: `config agent-questions --answering: unknown way "codex"; known ways: claude, projmux`},
 		{name: "empty answering way", args: []string{"agent-questions", "--answering="}, usage: true, want: "config agent-questions --answering requires a way: claude, projmux"},
-		{name: "window below range", args: []string{"agent-questions", "--window", "59"}, usage: true, want: `config agent-questions --window: invalid window "59"; want 60..3600 seconds or unlimited`},
-		{name: "window above range", args: []string{"agent-questions", "--window", "3601"}, usage: true, want: `invalid window "3601"`},
-		{name: "window unlimited seconds", args: []string{"agent-questions", "--window", "604785"}, usage: true, want: `invalid window "604785"`},
+		{name: "window below range", args: []string{"agent-questions", "--window", "59"}, usage: true, want: `config agent-questions --window: invalid window "59"; want 60..86400 seconds or unlimited`},
+		{name: "window above range", args: []string{"agent-questions", "--window", "86401"}, usage: true, want: `config agent-questions --window: invalid window "86401"; want 60..86400 seconds or unlimited`},
+		{name: "window just below unlimited seconds", args: []string{"agent-questions", "--window", "604784"}, usage: true, want: `config agent-questions --window: invalid window "604784"; want 60..86400 seconds or unlimited`},
+		{name: "window unlimited seconds", args: []string{"agent-questions", "--window", "604785"}, usage: true, want: `config agent-questions --window: invalid window "604785"; want 60..86400 seconds or unlimited`},
 		{name: "window not numeric", args: []string{"agent-questions", "--window", "10m"}, usage: true, want: `invalid window "10m"`},
 		{name: "bad window with good answering", args: []string{"agent-questions", "--answering", "projmux", "--window", "0"}, usage: true, want: `invalid window "0"`},
 		{name: "good window with bad answering", args: []string{"agent-questions", "--window", "unlimited", "--answering", "native"}, usage: true, want: `unknown way "native"`},

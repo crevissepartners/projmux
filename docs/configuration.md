@@ -835,14 +835,16 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-window-seconds
 ```
 
 Set it with `projmux config agent-questions --window <seconds|unlimited>`, or
-write the file. The value is integer seconds, default `900`, in `60`–`3600`, or the
+write the file. The value is integer seconds, default `900`, in `60`–`86400`, or the
 word `unlimited` (case-insensitive), which holds the question until it is
 answered. Claude Code has no "no timeout" hook value, so `unlimited` is
 effectively capped at `604785` seconds (about 7 days): the installed hook
 timeout ceiling less the 15 second margin that lets the hook, not Claude Code,
 end the wait. A value outside the range, or a file that holds neither one
 integer nor `unlimited`, reads as `900`; a projmux older than the word also
-reads `unlimited` as `900`. It applies only in way 2 (see
+reads `unlimited` as `900`, and a projmux from before the maximum was raised
+from `3600` reads a value above `3600` as `900`, so downgrading only shortens
+the wait. It applies only in way 2 (see
 [Agent Question Answering](#agent-question-answering)); way 1 never waits.
 For Codex, an expired or disabled held request is closed in the question list.
 The same question remains visible and answerable in Codex's own input surface;
@@ -854,9 +856,9 @@ reason. A resolution after the command-line deadline remains `expired`.
 
 The installed Claude Code hook `timeout` is the fixed ceiling `604800` seconds
 (7 days) and does not depend on this file. The ceiling is the safety net for a
-stuck hook, and this hook has no recover: 7 days is 168 times the longest
-window (3600 seconds), so it never cuts a normal window, while a broken hook is
-reclaimed within a week. The hook rereads the window for every
+stuck hook, and this hook has no recover: 7 days is 7 times the longest
+bounded window (86400 seconds), so it never cuts a normal window, while a
+broken hook is reclaimed within a week. The hook rereads the window for every
 question, so a changed window applies to the next question without re-running
 `projmux agent integrate claude`.
 
