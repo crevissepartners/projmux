@@ -405,6 +405,37 @@ func splitPayload(spelling string, args []string) ([]string, []string, error) {
 	return args, nil, nil
 }
 
+// deprecatedPersonaFlagGiven reports whether args spell the deprecated
+// `--persona` flag on a route whose parser registers it. It reads args the way
+// the flag package does -- one or two dashes, `=value` or the next token as
+// the value of a non-boolean flag -- so the value of another flag is never
+// taken for the spelling, and it keeps reading past a token the parse will
+// reject.
+func deprecatedPersonaFlagGiven(fs *flag.FlagSet, args []string) bool {
+	if fs.Lookup("persona") == nil {
+		return false
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if len(arg) < 2 || arg[0] != '-' {
+			continue
+		}
+		name, _, inline := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-"), "=")
+		if name == "persona" {
+			return true
+		}
+		registered := fs.Lookup(name)
+		if registered == nil || inline {
+			continue
+		}
+		if boolean, ok := registered.Value.(interface{ IsBoolFlag() bool }); ok && boolean.IsBoolFlag() {
+			continue
+		}
+		i++
+	}
+	return false
+}
+
 // parseResourceCreateFlags parses one resource-backed create argv.
 func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, shape resourceCreateShape) (resourceCreateFlags, error) {
 	head, payload, err := splitPayload(spelling, args)
@@ -434,20 +465,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.StringVar(&out.model, "model", "", "claude or codex: model name the new session runs")
 		fs.StringVar(&out.effort, "effort", "", "claude or codex: effort level: "+strings.Join(claudeEffortLevels, "|"))
 		fs.StringVar(&out.persona, "instructions", "", "stored instructions the new session starts with; claude always, codex only with a prompt; manage with projmux instructions")
-		// The deprecated spelling prints its notice once, when the parse meets
-		// it, whatever the parse or the create then decides. stderr rather
-		// than stdout, like warnDeprecatedProjectDeleteAlias: a create given
-		// `--persona` keeps the stdout, the projection, and the exit code it
-		// always had.
-		legacyPersonaSeen := false
-		fs.Func("persona", "deprecated alias of --instructions", func(value string) error {
-			if !legacyPersonaSeen && stderr != nil {
-				fmt.Fprintln(stderr, cli.DeprecatedPersonaFlagNotice)
-			}
-			legacyPersonaSeen = true
-			legacyPersona = value
-			return nil
-		})
+		fs.StringVar(&legacyPersona, "persona", "", "deprecated alias of --instructions")
 		fs.StringVar(&out.profile, "profile", "", "named Agent profile the new session starts with; none turns off role mapping; manage with projmux profile")
 	}
 	if pane {
@@ -472,6 +490,15 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	fs.StringVar(&out.output, "output", "", "result projection")
 	fs.StringVar(&out.output, "o", "", "result projection (alias of --output)")
 
+	// The deprecated spelling prints its notice once, before the parse, so a
+	// create that is then refused -- even by another flag -- names the
+	// replacement too. stderr rather than stdout, like
+	// warnDeprecatedProjectDeleteAlias: a create given `--persona` keeps the
+	// stdout, the projection, and the exit code it always had.
+	personaFlagGiven := deprecatedPersonaFlagGiven(fs, head)
+	if personaFlagGiven && stderr != nil {
+		fmt.Fprintln(stderr, cli.DeprecatedPersonaFlagNotice)
+	}
 	if err := fs.Parse(head); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return resourceCreateFlags{}, err

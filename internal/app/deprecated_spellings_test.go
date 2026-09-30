@@ -127,6 +127,10 @@ func TestDeprecatedSpellingsRunAsBeforeWithOneNotice(t *testing.T) {
 			notice: cli.DeprecatedPersonaFlagNotice, errText: "create agent accepts only one of --instructions and --persona", usage: true},
 		{name: "create agent --persona then a rejected flag", argv: []string{"create", "agent", "--persona", "reviewer", "--bogus"},
 			notice: cli.DeprecatedPersonaFlagNotice, errText: "flag provided but not defined: -bogus", usage: true, restStderr: "Usage:\n  projmux create agent "},
+		{name: "create agent a rejected flag then --persona", argv: []string{"create", "agent", "--bogus", "--persona", "reviewer"},
+			notice: cli.DeprecatedPersonaFlagNotice, errText: "flag provided but not defined: -bogus", usage: true, restStderr: "Usage:\n  projmux create agent "},
+		{name: "create agent -persona single dash", argv: []string{"create", "agent", "--provider", "claude", "-persona", "reviewer", "-p", "no-such-project"},
+			notice: cli.DeprecatedPersonaFlagNotice, errText: noRuntime},
 		{name: "create antigravity --persona", argv: []string{"create", "antigravity", "--persona", "reviewer", "-p", "no-such-project"},
 			notice: cli.DeprecatedPersonaFlagNotice, errText: "--persona", usage: true},
 	} {
@@ -179,6 +183,12 @@ func TestDeprecatedSpellingsRunAsBeforeWithOneNotice(t *testing.T) {
 		{"create", "agent", "--provider", "claude", "--instructions", "reviewer", "-p", "no-such-project"},
 		{"create", "claude", "--instructions=reviewer", "-p", "no-such-project"},
 		{"create", "pane", "-p", "no-such-project"},
+		// The spelling as another flag's value, and on a route that does not
+		// register the flag, is not the deprecated flag.
+		{"create", "agent", "--provider", "claude", "--name", "--persona", "-p", "no-such-project"},
+		{"create", "agent", "--provider", "claude", "--name=--persona", "-p", "no-such-project"},
+		{"create", "pane", "--persona", "reviewer"},
+		{"create", "agent", "--provider", "claude", "-p", "no-such-project", "--", "--persona", "reviewer"},
 	} {
 		if stdout, stderr, _ := run(argv...); strings.Contains(stderr+stdout, "deprecated") {
 			t.Errorf("%q printed a deprecation notice: stdout=%q stderr=%q", argv, stdout, stderr)
