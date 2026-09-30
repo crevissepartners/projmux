@@ -1421,19 +1421,18 @@ exit 2 (`profile-provider-unknown`, listing the accepted providers) and writes
 nothing. `model` is checked only for its shape, whatever the provider, and
 `effort` takes the one vocabulary above.
 
-`instructions` names the same stored files as `projmux instructions` and its
-older alias `projmux persona`: one store, `<config dir>/personas/<name>.md`,
-and one profile key. What the instructions do depends on the lane, exactly as
-for `create --instructions`: Claude appends them to the system prompt, and
+`instructions` names the stored files `projmux instructions` manages: one
+store, `<config dir>/personas/<name>.md`, and one profile key. What the
+instructions do depends on the lane, exactly as for `create --instructions`:
+Claude appends them to the system prompt, and
 Codex takes them only on a prompted create that opens its own thread (see
 [CLI guide](cli-guide.md#agent-profiles-at-create)); a promptless Codex create
 with Profile instructions is refused before creating anything. Codex keeps
-the developer instructions recorded when the thread started; attach, detach,
-and resume cannot replace them (`codex-instructions-immutable`). A profile
-keeps the instructions it names: `instructions delete <name>` and
-`persona delete <name>` refuse with exit 2
-(`profile-instructions-in-use`) while any stored profile that parses names
-them, valid or not, and name each such profile. Change the profile with
+the developer instructions recorded when the thread started; a relaunch and a
+resume cannot replace them (`codex-instructions-immutable`). A profile
+keeps the instructions it names: `instructions delete <name>` refuses with
+exit 2 (`profile-instructions-in-use`) while any stored profile that parses
+names them, valid or not, and names each such profile. Change the profile with
 `projmux profile set <name>` or remove it with `projmux profile delete <name>
 --yes` first. Instructions removed by hand still make the profile invalid
 (`profile-instructions-not-found`), and Agents that record it then refuse to
@@ -1661,7 +1660,7 @@ Central files live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/`, except
 `projdir` and `workdirs`, which always live under `$HOME/.config/projmux/` and
 do not follow `XDG_CONFIG_HOME`.
 
-Named Agent instructions continue to use the central `personas/` directory. The `projmux instructions` and legacy `projmux persona` commands read and write the same files.
+Named Agent instructions continue to use the central `personas/` directory, which keeps its older name. The `projmux instructions` commands read and write its files.
 
 TUI is the front layer: only the front entry points (`settings`, `shell`,
 `switch`, `config render|apply|edit` and the internal namespace) read it. Every

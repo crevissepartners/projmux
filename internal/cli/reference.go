@@ -10,8 +10,8 @@ import (
 //
 // The command graph is the common source of runtime help, canonical audit, and
 // the published reference. This renderer projects the graph's public help view:
-// hidden nodes stay hidden and Summary wins over an explicit CanonicalSummary
-// contract override.
+// hidden nodes stay hidden at every depth and Summary wins over an explicit
+// CanonicalSummary contract override.
 //
 // Every byte this renderer emits is a pure function of the graph: no
 // timestamp, no version string, no host path, no map iteration. Regenerating on
@@ -100,17 +100,14 @@ func executableCanonicalSpellings(path []string, route Route) []string {
 // reaches a real node a user is meant to type.
 //
 // The hidden half of the test matters as much as the resolvable half: an
-// internal route can resolve perfectly well while remaining plumbing.
-// Publishing it as a canonical spelling would put an internal route back into
-// the public reference through the side door the internal isolation Phase
-// closed in the primary listing.
+// internal route can resolve perfectly well while remaining plumbing, and a
+// deprecated spelling resolves while being out of every listing. Publishing
+// either as a canonical spelling would put a hidden route back into the public
+// reference through the side door the internal isolation Phase closed in the
+// primary listing.
 func isExecutableSpelling(spelling string) bool {
 	tokens := strings.Fields(spelling)
-	if len(tokens) == 0 {
-		return false
-	}
-	top, ok := LookupRoute(tokens[0])
-	if !ok || top.Hidden {
+	if len(tokens) == 0 || unlisted(spelling) {
 		return false
 	}
 	resolved, _, ok := Resolve(tokens)
@@ -263,9 +260,10 @@ func writeReferenceRoute(b *strings.Builder, path []string, route Route) {
 		b.WriteString("\n\n")
 	}
 
-	if len(route.Children) > 0 {
-		writeReferenceChildGroup(b, path, "Subcommands", route.Children, false)
-		writeReferenceChildGroup(b, path, "Provider shortcuts", route.Children, true)
+	children := listedChildren(route)
+	if len(children) > 0 {
+		writeReferenceChildGroup(b, path, "Subcommands", children, false)
+		writeReferenceChildGroup(b, path, "Provider shortcuts", children, true)
 	}
 
 	if len(route.Outputs) > 0 {
@@ -300,7 +298,7 @@ func writeReferenceRoute(b *strings.Builder, path []string, route Route) {
 		b.WriteString("\n\n")
 	}
 
-	for _, child := range route.Children {
+	for _, child := range children {
 		writeReferenceRoute(b, append(append([]string{}, path...), child.Name), child)
 	}
 }

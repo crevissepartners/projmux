@@ -34,6 +34,10 @@ var synopsisFlagSiteExceptions = map[string]synopsisSiteException{}
 // Two categories exist:
 //
 //   - (a) an ignored compatibility no-op flag: refusedBy is empty.
+//   - (b) a deprecated flag spelling the synopsis leaves out on purpose while
+//     the parser still accepts it: refusedBy is empty, and
+//     TestDeprecatedPersonaFlagRowsAreTheClosedList holds the rows to the
+//     routes that print the flag's deprecation notice.
 //   - (c) a flag the route's shared parser registers but the route refuses
 //     with a usage error: refusedBy names the refusing function as
 //     "file:symbol", and probe is the argv after `projmux` that runs the
@@ -51,10 +55,18 @@ type synopsisFlagException struct {
 // provider shortcuts: `create <provider>` shares the Agent create parser.
 const synopsisProviderShortcutReason = "registered by the shared Agent create parser but refused on this provider shortcut before anything is read or written"
 
+// synopsisDeprecatedPersonaReason explains the category (b) rows of the
+// deprecated `--persona`: the Agent creates still accept it, with a notice on
+// stderr, and their Usage names only `--instructions`.
+const synopsisDeprecatedPersonaReason = "deprecated spelling of --instructions: still parsed, answered with a stderr notice, and left out of the synopsis"
+
 // synopsisFlagExceptions is keyed "<route> <flag name>" (the flag name
 // without dashes). A row whose flag is no longer registered on that route, is
 // already in its Usage, or (category c) is no longer refused, is stale.
 var synopsisFlagExceptions = map[string]synopsisFlagException{
+	"create agent persona":                   {reason: synopsisDeprecatedPersonaReason},
+	"create codex persona":                   {reason: synopsisDeprecatedPersonaReason},
+	"create claude persona":                  {reason: synopsisDeprecatedPersonaReason},
 	"create codex provider":                  {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/create_agent.go:(*createCommand).resolveCreateProvider", probe: []string{"create", "codex", "--provider", "codex"}},
 	"create codex dialogue-reply-only":       {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/claude_dialogue_profile.go:requireClaudeDialogueMode", probe: []string{"create", "codex", "--dialogue-reply-only"}},
 	"create claude provider":                 {reason: synopsisProviderShortcutReason, refusedBy: "internal/app/create_agent.go:(*createCommand).resolveCreateProvider", probe: []string{"create", "claude", "--provider", "claude"}},

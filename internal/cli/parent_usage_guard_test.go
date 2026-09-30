@@ -720,7 +720,7 @@ func TestParentCoverageGuardReportsAnUncoveredChild(t *testing.T) {
 	}{
 		{"attention", "attention toggle", func(line string) bool { return strings.HasPrefix(line, "projmux attention toggle ") }},
 		{"get", "get notifications", func(line string) bool { return strings.HasPrefix(line, "projmux get notifications ") }},
-		{"agent", "agent instructions", func(line string) bool { return strings.HasPrefix(line, "projmux agent instructions ") }},
+		{"agent", "agent relaunch", func(line string) bool { return strings.HasPrefix(line, "projmux agent relaunch ") }},
 	} {
 		routes := withTopLevelUsage(t, tc.parent, func(usage []string) []string {
 			before := len(usage)

@@ -263,7 +263,7 @@ func TestSettingsLayerGuardCoversEveryPublicRoute(t *testing.T) {
 	}
 	known := map[string]bool{}
 	for _, route := range cli.Routes() {
-		if route.Hidden && !isSettingsFrontEntryRoute(route.Name) {
+		if route.Hidden && !isSettingsFrontEntryRoute(route.Name) && !covered(route.Name) {
 			t.Errorf("hidden top-level route %q is neither a front entry point nor covered; decide its layer rule", route.Name)
 		}
 		known[route.Name] = true

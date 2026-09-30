@@ -109,11 +109,12 @@ const helpVerb = "help"
 
 // requestedHelpVerb matches `<parent path> help ...`: among the tokens before
 // the first bare `--`, a `help` comes right after a path that resolves, by name
-// or alias, to a public route that has children. Whatever follows that `help`
-// is ignored. A parent only dispatches to its children, so `help` there can
-// never be an operand; a public parent with a child spelled `help` would break
-// that, and a guard in internal/app keeps the catalog free of one. A leaf's
-// `help`, and every token after it, stays with the leaf.
+// or alias, to a public route that has children; a deprecated spelling answers
+// like the public route it was. Whatever follows that `help` is ignored. A
+// parent only dispatches to its children, so `help` there can never be an
+// operand; a public parent with a child spelled `help` would break that, and a
+// guard in internal/app keeps the catalog free of one. A leaf's `help`, and
+// every token after it, stays with the leaf.
 func requestedHelpVerb(args []string) (HelpTarget, bool) {
 	lead := args
 	if i := slices.Index(args, argumentTerminator); i >= 0 {
@@ -123,7 +124,7 @@ func requestedHelpVerb(args []string) (HelpTarget, bool) {
 		return HelpTarget{}, false
 	}
 	current, ok := LookupRoute(lead[0])
-	if !ok || current.Hidden {
+	if !ok || plumbing(current) {
 		return HelpTarget{}, false
 	}
 	path := []string{current.Name}
@@ -135,7 +136,7 @@ func requestedHelpVerb(args []string) (HelpTarget, bool) {
 			return HelpTarget{Path: path, Route: current}, true
 		}
 		child, found := findChild(current, token)
-		if !found || child.Hidden {
+		if !found || plumbing(child) {
 			return HelpTarget{}, false
 		}
 		current = child
@@ -229,9 +230,9 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 		b.WriteString(note)
 		b.WriteString("\n")
 	}
-	if len(route.Children) > 0 {
+	if children := listedChildren(route); len(children) > 0 {
 		width := nameColumnWidth
-		for _, child := range route.Children {
+		for _, child := range children {
 			if len(childListingName(child))+2 > width {
 				width = len(childListingName(child)) + 2
 			}
@@ -240,8 +241,8 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 		// resource kinds, so they get their own group rather than sitting in the
 		// kind listing. Both groups share one column width so the two blocks line
 		// up as a single table.
-		writeChildGroup(&b, "Subcommands", route.Children, width, false)
-		writeChildGroup(&b, "Provider shortcuts", route.Children, width, true)
+		writeChildGroup(&b, "Subcommands", children, width, false)
+		writeChildGroup(&b, "Provider shortcuts", children, width, true)
 	}
 	if len(route.Outputs) > 0 {
 		b.WriteString("\nOutput modes:\n")
@@ -310,6 +311,18 @@ func joinEffectValues[T ~string](values []T) string {
 		parts[i] = string(value)
 	}
 	return strings.Join(parts, "|")
+}
+
+// listedChildren returns the children a listing shows: every one that is not
+// hidden.
+func listedChildren(route Route) []Route {
+	var out []Route
+	for _, child := range route.Children {
+		if !child.Hidden {
+			out = append(out, child)
+		}
+	}
+	return out
 }
 
 // writeChildGroup writes one titled child listing, skipping the group entirely
@@ -385,9 +398,11 @@ func WriteRouteUsage(w io.Writer, route string) {
 // must be the exact canonical route; help flags never reach a public FlagSet,
 // because the shared help boundary answers them first.
 //
-// A FlagSet named after a hidden route (a leaf shared with `projmux internal
-// ...` plumbing, such as the one `config apply` and `internal tmux apply`
-// reach) keeps the flag package default, so hidden output never changes.
+// A FlagSet named after a plumbing route (a leaf shared with `projmux internal
+// ...`, such as the one `config apply` and `internal tmux apply` reach) keeps
+// the flag package default, so plumbing output never changes. A deprecated
+// spelling is hidden too, and keeps the catalog Usage it printed while it was
+// listed.
 func SetRouteUsage(fs *flag.FlagSet) {
 	if !publicRoute(fs.Name()) {
 		return
@@ -396,19 +411,19 @@ func SetRouteUsage(fs *flag.FlagSet) {
 }
 
 // publicRoute reports whether route is the exact canonical path of a catalog
-// route with no hidden node on its path.
+// route with no plumbing node on its path.
 func publicRoute(route string) bool {
 	tokens := strings.Fields(route)
 	if len(tokens) == 0 {
 		return false
 	}
 	current, ok := LookupRoute(tokens[0])
-	if !ok || current.Hidden || current.Name != tokens[0] {
+	if !ok || plumbing(current) || current.Name != tokens[0] {
 		return false
 	}
 	for _, token := range tokens[1:] {
 		child, found := findChild(current, token)
-		if !found || child.Hidden || child.Name != token {
+		if !found || plumbing(child) || child.Name != token {
 			return false
 		}
 		current = child
