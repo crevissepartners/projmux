@@ -633,6 +633,9 @@ self-claims that envelope. Message lifecycle updates neither Agent interaction
 state nor tmux badges.
 
 `--source` names the source Agent; it does not prove the caller is that Agent.
+A Codex Agent's shell commands run under the shared Codex app server, outside
+the Agent's Pane, so they have no current Agent and must pass `--source
+uid:<agent>`; see [Codex app-server health](configuration.md#codex-app-server-health).
 When the source is a Claude Agent with a registered Claude process and the
 sending process does not descend from that process, the send still proceeds
 exactly as before (same receipt, delivery, and exit status), but it prints one

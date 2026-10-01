@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -313,6 +315,7 @@ func runDaemonStart(ctx context.Context, timeout time.Duration, lookPath func(st
 	startCtx, cancel := context.WithTimeout(ctx, positiveDuration(timeout, DefaultStartTimeout))
 	defer cancel()
 	cmd := command(startCtx, path, "app-server", "daemon", "start")
+	cmd.Env = daemonStartEnvironment(cmd.Env)
 	// Only a bounded prefix of stderr is consumed in-memory for the closed known
 	// error classifier. The bytes are discarded when this function returns and
 	// never enter Health, operational diagnostics, or support reports.
@@ -339,6 +342,34 @@ func runDaemonStart(ctx context.Context, timeout time.Duration, lookPath func(st
 		return startManagedPayloadMissing
 	}
 	return startNonzero
+}
+
+// daemonStartWithheldEnvironment names the caller variables the daemon start
+// command does not pass on. The daemon is shared by every native Codex Agent
+// and outlives the projmux invocation that started it, and every Codex shell
+// command runs as its child. A caller's TMUX_PANE or private runtime anchor
+// (internal/app runtimeMutationAnchorPaneEnv) would make each of those shells
+// resolve selectorless commands and --source-less messages to the Pane and
+// Agent of whoever happened to start the daemon. TMUX goes too: without
+// TMUX_PANE it names no Pane, and a daemon that outlives that tmux server would
+// keep a stale server generation that refuses inherited-route mutations.
+var daemonStartWithheldEnvironment = []string{"TMUX", "TMUX_PANE", "__PROJMUX_RUNTIME_ANCHOR_PANE"}
+
+// daemonStartEnvironment returns env, or the process environment when env is
+// nil, without the variables in daemonStartWithheldEnvironment.
+func daemonStartEnvironment(env []string) []string {
+	if env == nil {
+		env = os.Environ()
+	}
+	clean := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if slices.Contains(daemonStartWithheldEnvironment, key) {
+			continue
+		}
+		clean = append(clean, entry)
+	}
+	return clean
 }
 
 const maxStartStderrBytes = 32 * 1024
