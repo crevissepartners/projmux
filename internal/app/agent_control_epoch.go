@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
@@ -95,6 +96,9 @@ type codexControlEpoch struct {
 	pending     map[string]codexappserver.ApprovalEnvelope
 	ambiguous   map[string]struct{}
 	retryWait   func(context.Context) error
+	// recordRefusal journals each typed broker refusal a wire call returns,
+	// including the one a delivery absorbs by waiting out the retry window.
+	recordRefusal func(diagnostics.CodexBrokerOperation, error)
 }
 
 func newCodexControlEpoch(wire agentControlWire, identity codexLifecycleIdentity, epoch string, snapshot codexappserver.LifecycleSnapshot, current func(codexLifecycleIdentity) bool) *codexControlEpoch {
@@ -102,8 +106,22 @@ func newCodexControlEpoch(wire agentControlWire, identity codexLifecycleIdentity
 		wire: wire, identity: identity, epoch: strings.TrimSpace(epoch), current: current, active: true,
 		threadState: snapshot.ThreadState, turnID: strings.TrimSpace(snapshot.TurnID), turnState: snapshot.TurnState,
 		pending: map[string]codexappserver.ApprovalEnvelope{}, ambiguous: map[string]struct{}{},
-		retryWait: waitCodexLifecycleRetry,
+		retryWait: waitCodexLifecycleRetry, recordRefusal: recordObserverCodexBrokerRefusal,
 	}
+}
+
+// recordObserverCodexBrokerRefusal journals a refusal the observer's control
+// plane received.
+func recordObserverCodexBrokerRefusal(operation diagnostics.CodexBrokerOperation, err error) {
+	recordCodexBrokerRefusal(diagnostics.CodexBrokerRoleObserver, operation, err)
+}
+
+// refused hands a wire call's error to the journal and returns it unchanged.
+func (e *codexControlEpoch) refused(operation diagnostics.CodexBrokerOperation, err error) error {
+	if err != nil && e.recordRefusal != nil {
+		e.recordRefusal(operation, err)
+	}
+	return err
 }
 
 func waitCodexLifecycleRetry(ctx context.Context) error {
@@ -191,7 +209,7 @@ func (s freshTurnState) reconcile(e *codexControlEpoch) {
 // the result. write names that write in any refusal line.
 func (e *codexControlEpoch) readTurnState(ctx context.Context, write string) freshTurnState {
 	snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
-	return e.classifyTurnState(snapshot, err, write)
+	return e.classifyTurnState(snapshot, e.refused(diagnostics.CodexBrokerOperationLifecycleRead, err), write)
 }
 
 func (e *codexControlEpoch) classifyTurnState(snapshot codexappserver.LifecycleSnapshot, err error, write string) freshTurnState {
@@ -357,7 +375,7 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 			return refusedControl("turn-in-progress", "exact thread already has a turn in progress")
 		}
 		result, err := e.wire.StartExactTurn(ctx, e.identity.ThreadID, request.Text)
-		if err != nil {
+		if e.refused(diagnostics.CodexBrokerOperationTurnStart, err) != nil {
 			return controlWireFailure("turn-start-failed", err)
 		}
 		if result.ThreadID != e.identity.ThreadID || result.TurnID == "" {
@@ -400,7 +418,7 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 			return refusedControl("no-active-turn", "no exact active turn is available to steer")
 		}
 		result, err := e.wire.SteerExactTurn(ctx, e.identity.ThreadID, expectedTurnID, request.Text)
-		if err != nil {
+		if e.refused(diagnostics.CodexBrokerOperationTurnSteer, err) != nil {
 			return controlWireFailure("stale-turn", err)
 		}
 		if result.ThreadID != e.identity.ThreadID || result.TurnID != expectedTurnID {
@@ -418,7 +436,7 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 			return refusedControl("stale-turn", "no exact active turn is available to interrupt")
 		}
 		result, err := e.wire.InterruptExactTurn(ctx, e.identity.ThreadID, e.turnID)
-		if err != nil {
+		if e.refused(diagnostics.CodexBrokerOperationTurnInterrupt, err) != nil {
 			return controlWireFailure("turn-interrupt-failed", err)
 		}
 		if result.ThreadID != e.identity.ThreadID || result.TurnID != e.turnID {
@@ -438,11 +456,12 @@ func (e *codexControlEpoch) deliver(ctx context.Context, request agentControlReq
 		return refusedControl("stale-turn", "input is empty; turn write refused")
 	}
 	snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
-	if codexbroker.RefusalOf(err) == codexbroker.RefusalLifecycleRetry {
+	if codexbroker.RefusalOf(e.refused(diagnostics.CodexBrokerOperationLifecycleRead, err)) == codexbroker.RefusalLifecycleRetry {
 		if e.retryWait == nil || e.retryWait(ctx) != nil {
 			return refusedControl(string(codexbroker.RefusalLifecycleRetry), "fresh exact turn state retry window did not pass; turn write refused")
 		}
 		snapshot, err = e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
+		e.refused(diagnostics.CodexBrokerOperationLifecycleRead, err)
 	}
 	state := e.classifyTurnState(snapshot, err, agentControlWriteDeliver)
 	if state.refusal != nil {
@@ -454,7 +473,7 @@ func (e *codexControlEpoch) deliver(ctx context.Context, request agentControlReq
 	state.reconcile(e)
 	if e.canStart() {
 		result, writeErr := e.wire.StartExactTurn(ctx, e.identity.ThreadID, request.Text)
-		if writeErr != nil {
+		if e.refused(diagnostics.CodexBrokerOperationTurnStart, writeErr) != nil {
 			return controlWireFailure("turn-start-failed", writeErr)
 		}
 		if result.ThreadID != e.identity.ThreadID || result.TurnID == "" {
@@ -473,7 +492,7 @@ func (e *codexControlEpoch) deliver(ctx context.Context, request agentControlReq
 	}
 	expectedTurnID := e.turnID
 	result, writeErr := e.wire.SteerExactTurn(ctx, e.identity.ThreadID, expectedTurnID, request.Text)
-	if writeErr != nil {
+	if e.refused(diagnostics.CodexBrokerOperationTurnSteer, writeErr) != nil {
 		return controlWireFailure("stale-turn", writeErr)
 	}
 	if result.ThreadID != e.identity.ThreadID || result.TurnID != expectedTurnID {
@@ -508,7 +527,7 @@ func (e *codexControlEpoch) review(ctx context.Context, request agentControlRequ
 	if decision == codexappserver.DecisionCancel {
 		e.turnState = codexappserver.TurnStateInterrupted
 	}
-	if err := e.wire.RespondServerRequest(ctx, envelope.RawRequestID, result); err != nil {
+	if err := e.refused(diagnostics.CodexBrokerOperationApprovalAnswer, e.wire.RespondServerRequest(ctx, envelope.RawRequestID, result)); err != nil {
 		return controlWireFailure("response-indeterminate", err)
 	}
 	return agentControlResponse{OK: true, ThreadID: envelope.ThreadID, TurnID: envelope.TurnID}

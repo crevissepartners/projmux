@@ -9,6 +9,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
@@ -291,6 +292,7 @@ func (s *codexBrokerObserverSession) ensure(ctx context.Context) (*codexbroker.R
 			StartupTimeout: codexBrokerObserverStartupTimeout,
 		})
 		if err != nil {
+			recordCodexBrokerRefusal(diagnostics.CodexBrokerRoleObserver, diagnostics.CodexBrokerOperationEnsure, err)
 			return nil, nil, err
 		}
 		conn = opened
@@ -301,6 +303,7 @@ func (s *codexBrokerObserverSession) ensure(ctx context.Context) (*codexbroker.R
 	}
 	binding, err := conn.Bind(ctx, s.identity.ThreadID, s.cwd, s.roots)
 	if err != nil {
+		recordCodexBrokerRefusal(diagnostics.CodexBrokerRoleObserver, diagnostics.CodexBrokerOperationBind, err)
 		_ = conn.Close()
 		return nil, nil, err
 	}

@@ -353,6 +353,49 @@ Both routes are classified as the internal-only commands
 Neither is state-changing and both always return nil, so neither writes a
 `command.outcome`.
 
+Every typed refusal a projmux process receives from the Codex endpoint broker
+writes one `component=codex-broker`, `event=codex.broker.refusal`
+`info`/`success` record, under that process's `run_id`. A refusal is recorded
+each time it is received, including one the caller absorbs by retrying: an
+exact-turn delivery that waits out the one-second `lifecycle-retry` window
+records the refused read and, if it is refused again, the second one. The
+record states that a refusal was received, not that the command failed --
+the command keeps its own outcome record -- so it never enters Doctor's
+recent errors or the support report's error tail. It carries only:
+
+- `source`: the receiving process, `observer` (the managed Codex lifecycle
+  observer, `internal agent-hook ingest codex-broker-watch`) or `probe`
+  (`internal codex-broker probe`).
+- `operation`: the refused broker operation, `ensure` (reach the runtime:
+  discovery, dial, handshake, and starting one when allowed) or `bind` for
+  either source; `lifecycle-read`, `turn-start`, `turn-steer`,
+  `turn-interrupt`, or `approval-answer` for the observer alone.
+- `code`: the broker's own closed refusal token, unprefixed and spelled as
+  the CLI prints it, for example `host-unavailable`, `drain-required`, or
+  `lifecycle-retry`. A token the broker does not declare drops the record.
+- `dial_stage`: `discovery`, `dial`, or `handshake`, only on an `ensure`
+  refused while dialing; absent when the refusal came from anywhere else.
+
+Only a typed broker refusal is recorded: a context deadline, a local
+identity or fence check, or a revocation read off a closed binding's stream
+records nothing. The thread id, Agent and Pane, the state domain and socket
+paths, the runtime id, and the wrapped transport cause are never recorded.
+Doctor, the support report, and `install-replace` (which keeps its own
+`install-replacement.json`) write no such record, and the broker process
+never writes one for the refusals it sends. Appends are best effort: a
+failing journal never changes the refused operation, the response, the
+printed error, or the exit code. Every other event family rejects the
+`codex-broker` component and `dial_stage`.
+
+Count refusals by reason:
+
+```sh
+jq -rR 'fromjson? | select(.event == "codex.broker.refusal") | .code' "$(projmux diagnostics log --path)" | sort | uniq -c
+```
+
+Replace `.code` with `"\(.source) \(.operation) \(.code)"` to split the
+counts by receiving process and operation.
+
 projmux no longer emits `session-state.outcome` records. Project snapshots
 were removed, and the retained `internal tmux autosave-session-state` route is
 a no-op that writes nothing. Records written by older versions keep their

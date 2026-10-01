@@ -14,7 +14,8 @@ func TestEventSchemaHasNoGenericOrSensitiveEscapeHatch(t *testing.T) {
 		"StepKeymapMigrationMS", "StepHookFileMigrationMS", "StepRetiredFileReclaimMS", "StepRouteBindMS", "StepBellHookMigrationMS",
 		"StepConfigWriteMS", "StepKeySequenceRetireMS", "StepSourceFileMS", "StepRouteMarkerMS", "StepExhaustedReplayMS", "StepConvergeMS",
 		"LockAcquisitionCount", "LockWaitTotalMS", "LockHeldTotalMS", "LongestLockKind", "LongestLockStep", "LongestLockWaitMS",
-		"LongestLockHeldMS", "LongestLockObserveMS", "LongestLockPlanMS", "LongestLockCommitMS", "LongestLockStoreWriteMS"}
+		"LongestLockHeldMS", "LongestLockObserveMS", "LongestLockPlanMS", "LongestLockCommitMS", "LongestLockStoreWriteMS",
+		"DialStage"}
 	if typeOf.NumField() != len(want) {
 		t.Fatalf("Event fields = %d, want %d", typeOf.NumField(), len(want))
 	}

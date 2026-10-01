@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -245,6 +246,7 @@ func (c *codexBrokerCommand) runProbe(args []string, stdout, stderr io.Writer) e
 	}
 	conn, err := codexbroker.Ensure(ctx, discovery, cfg)
 	if err != nil {
+		recordCodexBrokerRefusal(diagnostics.CodexBrokerRoleProbe, diagnostics.CodexBrokerOperationEnsure, err)
 		return fmt.Errorf("reach codex broker runtime: %s", codexbroker.RefusalOf(err))
 	}
 	defer conn.Close()
@@ -254,6 +256,7 @@ func (c *codexBrokerCommand) runProbe(args []string, stdout, stderr io.Writer) e
 	}
 	binding, err := conn.Bind(ctx, *thread, "", nil)
 	if err != nil {
+		recordCodexBrokerRefusal(diagnostics.CodexBrokerRoleProbe, diagnostics.CodexBrokerOperationBind, err)
 		return fmt.Errorf("bind codex broker thread: %s", codexbroker.RefusalOf(err))
 	}
 	defer binding.Close()
