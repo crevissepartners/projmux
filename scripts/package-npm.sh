@@ -169,6 +169,8 @@ stage_main() {
   cp "$root/npm/projmux.js" "$dir/npm/projmux.js"
   cp "$root/README.md" "$root/README-ko.md" "$root/LICENSE" "$dir/"
   cp "$root"/docs/*.md "$dir/docs/"
+  mkdir -p "$dir/docs/design"
+  cp "$root"/docs/design/*.md "$dir/docs/design/"
   if [[ -d "$root/docs/assets" ]]; then
     mkdir -p "$dir/docs/assets"
     cp "$root"/docs/assets/* "$dir/docs/assets/"

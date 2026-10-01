@@ -148,7 +148,7 @@ func TestSessionHistoryObservedRowWritersCarryAffiliation(t *testing.T) {
 			"A new writer must build its row inside the Registry transaction with sessionhistory.ObservedRecordFor "+
 			"(or claudeSessionHistoryRecord), passing that transaction's working Registry, append it after the commit "+
 			"with one of %v, and then update sessionHistoryObservedRowWriters in this test and the writer list in "+
-			"agent_session_history.go and docs/architecture.md.", builders, want, sessionHistoryAppendHelpers)
+			"agent_session_history.go and docs/design/resource-metadata-model.md.", builders, want, sessionHistoryAppendHelpers)
 	}
 	for _, key := range want {
 		fn := funcs[key]
