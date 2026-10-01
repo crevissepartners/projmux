@@ -8,6 +8,10 @@ below them. It is not a full package list.
 fails when a top-level `internal/` directory is missing from this tree or from
 the `AGENTS.md` repo map, or when a path in this tree does not exist.
 
+A derived tree can list the top-level directories it adds in an optional
+`docs/repo-layout.local.md` table instead of editing these maps. The test
+counts that table toward both maps, and every path it lists must exist.
+
 ```text
 projmux/
   cmd/
