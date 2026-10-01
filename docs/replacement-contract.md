@@ -442,7 +442,28 @@ On an unreachable result, stderr retains the count and refusal and adds the
 remaining drain targets' role, pid, and mapped executable revision, followed by
 the impact and next action. Targets are rechecked after the refusal; a vanished
 or unreadable target is not invented, and an unavailable build revision is
-`unknown`. These identities are transient terminal output only:
+`unknown`. Each target line then says whose process it is:
+
+```text
+role=broker-runtime pid=4180294 revision=unknown domain=other stateDomain=/tmp/probe/.local/state/projmux home=/tmp/probe
+```
+
+`stateDomain` is the state domain the target serves: its own absolute
+`--state-domain` argument when it has one (a managed broker always does), else
+its `HOME` and `XDG_STATE_HOME` resolved by the same rule every projmux process
+uses. `home` is the target's `HOME`. `domain` compares `stateDomain` with the
+state domain this install serves: `this` when they are the same path, `other`
+when they differ, `unknown` when either is unavailable. A missing path is
+`unknown`, and a path with spaces, quotes, or control characters is quoted.
+A target in another domain (an isolated probe started from the same binary
+under another `HOME`, say) is never reachable from this domain's discovery, so
+`domain=other` means its own operator, not this install, decides when it ends.
+From the target's environment the recheck keeps only `HOME` and
+`XDG_STATE_HOME` and discards every other entry; it also answers `unknown` when
+the executable link no longer names the image the census saw. The verdict
+changes neither target selection nor the exit code.
+
+These identities are transient terminal output only:
 `install-replacement.json` and the residue ledger retain counts and tokens.
 The replacement record adds `failureStage` on an unsuccessful request:
 `discovery` means target selection, record, or socket validation failed;
