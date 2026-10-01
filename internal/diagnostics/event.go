@@ -96,6 +96,9 @@ type Event struct {
 	LongestLockPlanMS        *int64 `json:"longest_lock_plan_ms,omitempty"`
 	LongestLockCommitMS      *int64 `json:"longest_lock_commit_ms,omitempty"`
 	LongestLockStoreWriteMS  *int64 `json:"longest_lock_store_write_ms,omitempty"`
+	// DialStage is the closed stage at which reaching the Codex broker was
+	// refused; only a codex.broker.refusal of operation ensure carries it.
+	DialStage string `json:"dial_stage,omitempty"`
 }
 
 // NewRunID creates one opaque correlation ID for a process invocation.
@@ -154,8 +157,8 @@ var (
 	// registry.lock.acquisition may carry it; validateEventShape refuses it on
 	// every other family.
 	allowedLevels     = stringSet("info", "warn", "error")
-	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, registryLockAcquisitionEvent)
+	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry", codexBrokerComponent)
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -326,6 +329,12 @@ func validateEventShape(event Event) error {
 	// the tmux.apply lifecycle.outcome refuses the apply breakdown fields.
 	if err := validateApplyBreakdown(event); err != nil {
 		return err
+	}
+	if event.Event == codexBrokerRefusalEvent {
+		return validateCodexBrokerRefusalEvent(event)
+	}
+	if event.Component == codexBrokerComponent || event.DialStage != "" {
+		return fmt.Errorf("codex broker refusal fields on unrelated event")
 	}
 	if event.Event == registryLockAcquisitionEvent {
 		return validateRegistryLockEvent(event)

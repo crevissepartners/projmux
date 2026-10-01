@@ -64,6 +64,9 @@ func RunWithLifecycleDiagnostics(args []string, stdout, stderr io.Writer, record
 	if recorder == nil {
 		return New().Run(args, stdout, stderr)
 	}
+	// Every typed Codex broker refusal this process receives is journaled as
+	// codex.broker.refusal for as long as the invocation runs.
+	defer observeCodexBrokerRefusals(recorder, args)()
 	return NewWithLifecycleDiagnostics(recorder).Run(args, stdout, stderr)
 }
 

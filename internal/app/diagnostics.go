@@ -144,6 +144,7 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"agent_uid", event.AgentUID},
 		{"longest_lock_kind", event.LongestLockKind},
 		{"longest_lock_step", event.LongestLockStep},
+		{"dial_stage", event.DialStage},
 	} {
 		if field.value != "" {
 			parts = append(parts, field.name+"="+field.value)
