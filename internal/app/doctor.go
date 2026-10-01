@@ -87,6 +87,9 @@ type doctorCommand struct {
 	// keeps the rendered section byte-identical while giving the L2 row the
 	// evidence its verdict rests on.
 	projmuxProcessVintageTimed func() projmuxProcessVintage
+	// residualDomains splits the residual processes of the fleet census by the
+	// state domain each one serves, against the domain this diagnosis reads.
+	residualDomains func() doctorResidualDomainCensus
 	// installReplacement reads the last install replacement pass's outcome.
 	installReplacement func() (installReplacementOutcome, bool)
 	// processAlive answers whether one recorded provider process handle still
@@ -130,20 +133,27 @@ func newDoctorCommand() *doctorCommand {
 	}
 	readVintage := defaultProcessVintageReader()
 	c.controlPlaneVintage = func() codexControlPlaneVintage {
-		controlPlane, _, _, _ := readVintage()
-		return controlPlane
+		return readVintage().controlPlane
 	}
 	c.projmuxProcessVintage = func() projmuxProcessVintage {
-		_, fleet, _, _ := readVintage()
-		return fleet
+		return readVintage().fleet
 	}
 	c.installedImage = func() doctorInstalledImage {
-		_, _, image, _ := readVintage()
-		return image
+		return readVintage().image
 	}
 	c.projmuxProcessVintageTimed = func() projmuxProcessVintage {
-		_, _, _, timed := readVintage()
-		return timed
+		return readVintage().timed
+	}
+	// The residual processes come from the same read as the census that
+	// counts them, so the domain split always sums to `processes.residual`.
+	// Their environments are read only here, when the replacement table asks.
+	c.residualDomains = func() doctorResidualDomainCensus {
+		executorDomain, err := codexBrokerStateDomain(c.getenv, os.UserHomeDir)
+		if err != nil {
+			executorDomain = ""
+		}
+		return censusDoctorResidualDomains(readVintage().residual,
+			installReplacementTargetOriginReader(executorDomain, readInstallReplacementEnviron))
 	}
 	c.installReplacement = func() (installReplacementOutcome, bool) {
 		paths, err := configPaths(os.UserHomeDir, c.getenv)
@@ -437,6 +447,9 @@ func (c *doctorCommand) evaluateReplacement(broker *codexBrokerDiagnostic) docto
 		in.Processes = c.projmuxProcessVintageTimed()
 	} else if c.projmuxProcessVintage != nil {
 		in.Processes = c.projmuxProcessVintage()
+	}
+	if c.residualDomains != nil {
+		in.ResidualDomains = c.residualDomains()
 	}
 	if c.installResidue != nil {
 		in.Residue, in.ResidueRecords, in.ResidueOK = c.installResidue()
@@ -1139,35 +1152,41 @@ func doctorControlPlaneVintage(read func() codexControlPlaneVintage) codexContro
 // from a separate readlink because the replacement table prints it beside the
 // fleet census, and an image read after the census could name a publication the
 // census never saw.
-func defaultProcessVintageReader() func() (codexControlPlaneVintage, projmuxProcessVintage, doctorInstalledImage, projmuxProcessVintage) {
-	var once sync.Once
-	var controlPlane codexControlPlaneVintage
-	var fleet projmuxProcessVintage
-	var image doctorInstalledImage
-	var timed projmuxProcessVintage
-	return func() (codexControlPlaneVintage, projmuxProcessVintage, doctorInstalledImage, projmuxProcessVintage) {
-		once.Do(func() {
-			images, supported := defaultCodexProcessImages()
-			image.Supported = supported
-			executable, err := os.Executable()
-			if err != nil {
-				return
-			}
-			resolved, err := filepath.EvalSymlinks(executable)
-			if err != nil {
-				resolved = executable
-			}
-			controlPlane = projectCodexControlPlaneVintage(resolved, os.Getpid(), images, supported)
-			fleet = projectProjmuxProcessVintage(resolved, os.Getpid(), images, supported)
-			image = projectDoctorInstalledImage(resolved, os.Getpid(), images, supported)
-			// The fourth projection, taken from the same images and the same
-			// instant as the other three. A second process-table read would
-			// let one report pair a census with a cutoff verdict taken a
-			// process start apart.
-			timed = projectProjmuxProcessVintageAt(resolved, os.Getpid(), images, supported, time.Now())
-		})
-		return controlPlane, fleet, image, timed
-	}
+func defaultProcessVintageReader() func() doctorProcessReading {
+	return sync.OnceValue(func() doctorProcessReading {
+		var reading doctorProcessReading
+		images, supported := defaultCodexProcessImages()
+		reading.image.Supported = supported
+		executable, err := os.Executable()
+		if err != nil {
+			return reading
+		}
+		resolved, err := filepath.EvalSymlinks(executable)
+		if err != nil {
+			resolved = executable
+		}
+		reading.controlPlane = projectCodexControlPlaneVintage(resolved, os.Getpid(), images, supported)
+		reading.fleet = projectProjmuxProcessVintage(resolved, os.Getpid(), images, supported)
+		reading.image = projectDoctorInstalledImage(resolved, os.Getpid(), images, supported)
+		// The fourth projection, taken from the same images and the same
+		// instant as the other three. A second process-table read would
+		// let one report pair a census with a cutoff verdict taken a
+		// process start apart.
+		reading.timed = projectProjmuxProcessVintageAt(resolved, os.Getpid(), images, supported, time.Now())
+		reading.residual = doctorResidualProcessImages(resolved, os.Getpid(), images, supported)
+		return reading
+	})
+}
+
+// doctorProcessReading is every projection of one process-table read.
+type doctorProcessReading struct {
+	controlPlane codexControlPlaneVintage
+	fleet        projmuxProcessVintage
+	image        doctorInstalledImage
+	timed        projmuxProcessVintage
+	// residual is the processes the fleet census counts as residual. It
+	// never reaches a report: only the domain census taken from it does.
+	residual []codexProcessImage
 }
 
 // projectDoctorInstalledImage reads this process's own entry out of the same

@@ -868,3 +868,215 @@ func TestDoctorReplacementProcessRowCarriesTheCutoffAndThePassAccount(t *testing
 		t.Fatalf("clean row signals = %+v", clean.Signals)
 	}
 }
+
+// replacementDomainFleet is one process table holding residual processes of
+// two state domains beside processes the fleet census does not count as
+// residual. The executor's domain is the operator's; the probe's is an
+// isolated HOME that started a broker from the same binary.
+const (
+	replacementDomainSelf     = "/test/bin/projmux"
+	replacementDomainExecutor = "/home/operator/.local/state/projmux"
+	replacementDomainProbe    = "/tmp/probe/.local/state/projmux"
+)
+
+func replacementDomainFleet() []codexProcessImage {
+	deleted := replacementDomainSelf + procDeletedSuffix
+	return []codexProcessImage{
+		// The reader itself, never counted.
+		{PID: 2, Exe: replacementDomainSelf, Cmdline: []string{replacementDomainSelf, "doctor"}},
+		// Residual, this domain by its argv.
+		{PID: 10, Exe: deleted, Cmdline: []string{replacementDomainSelf, "internal", "codex-broker", "serve", "--state-domain", replacementDomainExecutor}},
+		// Residual, this domain by its HOME.
+		{PID: 11, Exe: deleted, Cmdline: []string{replacementDomainSelf, "supervise"}},
+		// Residual, another domain by its argv.
+		{PID: 12, Exe: deleted, Cmdline: []string{replacementDomainSelf, "internal", "codex-broker", "serve", "--state-domain", replacementDomainProbe}},
+		// Residual, with an unreadable environment and no argv domain.
+		{PID: 13, Exe: deleted, Cmdline: []string{replacementDomainSelf, "shell"}},
+		// Not residual: current image, another executable, and an unreadable link.
+		{PID: 20, Exe: replacementDomainSelf, Cmdline: []string{replacementDomainSelf, "supervise"}},
+		{PID: 21, Exe: "/usr/bin/other" + procDeletedSuffix, Cmdline: []string{"/usr/bin/other", "supervise"}},
+		{PID: 22, Exe: "", Cmdline: []string{replacementDomainSelf, "supervise"}},
+	}
+}
+
+func replacementDomainEnviron(image codexProcessImage) (installReplacementEnviron, bool) {
+	switch image.PID {
+	case 13:
+		return installReplacementEnviron{}, false
+	case 12:
+		return installReplacementEnviron{home: "/tmp/probe"}, true
+	default:
+		return installReplacementEnviron{home: "/home/operator"}, true
+	}
+}
+
+func replacementSignalMap(row doctorReplacementRow) map[string]string {
+	got := map[string]string{}
+	for _, signal := range row.Signals {
+		got[signal.Key] = signal.Value
+	}
+	return got
+}
+
+// TestDoctorResidualDomainCensusSplitsExactlyTheResidualProcesses holds the
+// census to the fleet census it qualifies: the domain split is taken over the
+// same processes `processes.residual` counts, resolved the way the install
+// failure line resolves them, so the three counts always sum to that total.
+func TestDoctorResidualDomainCensusSplitsExactlyTheResidualProcesses(t *testing.T) {
+	t.Parallel()
+
+	images := replacementDomainFleet()
+	residual := doctorResidualProcessImages(replacementDomainSelf, 2, images, true)
+	census := censusDoctorResidualDomains(residual,
+		installReplacementTargetOriginReader(replacementDomainExecutor, replacementDomainEnviron))
+	want := doctorResidualDomainCensus{This: 2, Other: 1, Unknown: 1}
+	if census != want {
+		t.Fatalf("domain census = %+v, want %+v", census, want)
+	}
+	fleet := projectProjmuxProcessVintage(replacementDomainSelf, 2, images, true)
+	if sum := census.This + census.Other + census.Unknown; sum != fleet.Replaced() {
+		t.Fatalf("domain census sums to %d, fleet census counts %d residual processes", sum, fleet.Replaced())
+	}
+
+	// An executor domain that could not be resolved decides nothing.
+	if got := censusDoctorResidualDomains(residual, installReplacementTargetOriginReader("", replacementDomainEnviron)); got != (doctorResidualDomainCensus{Unknown: 4}) {
+		t.Fatalf("unresolved executor domain census = %+v, want every process unknown", got)
+	}
+	if got := censusDoctorResidualDomains(residual, nil); got != (doctorResidualDomainCensus{Unknown: 4}) {
+		t.Fatalf("census without an origin reader = %+v, want every process unknown", got)
+	}
+	if got := doctorResidualProcessImages(replacementDomainSelf, 2, images, false); len(got) != 0 {
+		t.Fatalf("unsupported platform selected %d residual processes, want 0", len(got))
+	}
+}
+
+// TestDoctorReplacementProcessRowCountsResidualProcessesByStateDomain is the
+// row an operator reads after an isolated probe left a broker of its own
+// domain running the binary this install replaced: the row says the residual
+// process is somebody else's, and says nothing about it being this domain's.
+func TestDoctorReplacementProcessRowCountsResidualProcessesByStateDomain(t *testing.T) {
+	t.Parallel()
+
+	broker := projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+		{Role: codexControlPlaneRoleBroker, Processes: 1, Replaced: 1, ReplacedAgeSeconds: []int{412}},
+	}}
+	other := replacementSignalMap(replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+		Processes:       broker,
+		ResidualDomains: doctorResidualDomainCensus{Other: 1},
+	}), doctorReplacementLayerProcesses))
+	if other[doctorReplacementSignalResidualDomainOther] != "1" {
+		t.Fatalf("another domain's broker: signals %v, want %s=1", other, doctorReplacementSignalResidualDomainOther)
+	}
+	for _, key := range []string{doctorReplacementSignalResidualDomainThis, doctorReplacementSignalResidualDomainUnknown} {
+		if value, ok := other[key]; ok {
+			t.Fatalf("another domain's broker emitted %s=%s, want the key omitted", key, value)
+		}
+	}
+
+	same := replacementSignalMap(replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+		Processes:       replacementResidualVintage(),
+		ResidualDomains: doctorResidualDomainCensus{This: 12},
+	}), doctorReplacementLayerProcesses))
+	if same[doctorReplacementSignalResidualDomainThis] != "12" {
+		t.Fatalf("this domain's residue: signals %v, want %s=12", same, doctorReplacementSignalResidualDomainThis)
+	}
+	for _, key := range []string{doctorReplacementSignalResidualDomainOther, doctorReplacementSignalResidualDomainUnknown} {
+		if value, ok := same[key]; ok {
+			t.Fatalf("this domain's residue emitted %s=%s, want the key omitted", key, value)
+		}
+	}
+
+	// A fleet with no residue carries no domain key at all.
+	clean := replacementSignalMap(replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+		Processes: projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+			{Role: projmuxProcessRoleSupervisor, Processes: 2, Current: 2},
+		}},
+	}), doctorReplacementLayerProcesses))
+	for key, value := range clean {
+		if strings.HasPrefix(key, "residual.domain.") {
+			t.Fatalf("clean fleet emitted %s=%s, want no domain key", key, value)
+		}
+	}
+}
+
+// TestDoctorReplacementResidualDomainsLeaveEveryVerdictUnchanged holds the
+// split to evidence: for every reachable input combination, adding a domain
+// census changes neither axis nor the reason, and adds nothing to the row but
+// its own keys.
+func TestDoctorReplacementResidualDomainsLeaveEveryVerdictUnchanged(t *testing.T) {
+	t.Parallel()
+
+	domainKeys := []string{
+		doctorReplacementSignalResidualDomainThis,
+		doctorReplacementSignalResidualDomainOther,
+		doctorReplacementSignalResidualDomainUnknown,
+	}
+	for _, tc := range replacementCases() {
+		for _, census := range []doctorResidualDomainCensus{{This: 3}, {Other: 1}, {This: 1, Other: 2, Unknown: 4}} {
+			with := tc.inputs
+			with.ResidualDomains = census
+			before := projectDoctorReplacement(tc.inputs)
+			after := projectDoctorReplacement(with)
+			for i := range before.Rows {
+				b, a := before.Rows[i], after.Rows[i]
+				if a.Layer != b.Layer || a.Replacement != b.Replacement || a.Restoration != b.Restoration || a.Reason != b.Reason {
+					t.Fatalf("%s with %+v: row %s/%s/%s/%s, want %s/%s/%s/%s", tc.name, census,
+						a.Layer, a.Replacement, a.Restoration, a.Reason, b.Layer, b.Replacement, b.Restoration, b.Reason)
+				}
+				kept := slices.DeleteFunc(slices.Clone(a.Signals), func(s doctorReplacementSignal) bool {
+					return slices.Contains(domainKeys, s.Key)
+				})
+				if !slices.Equal(kept, b.Signals) {
+					t.Fatalf("%s with %+v: %s signals %v, want %v plus domain keys only", tc.name, census, a.Layer, a.Signals, b.Signals)
+				}
+			}
+		}
+	}
+}
+
+// TestDoctorReplacementJSONCarriesResidualDomainCountsWithoutPaths runs the
+// command with a residual broker of another domain and holds what reaches
+// `--json`: the counter, and none of the paths or pids it was decided from.
+func TestDoctorReplacementJSONCarriesResidualDomainCountsWithoutPaths(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true})
+	images := replacementDomainFleet()
+	cmd.projmuxProcessVintage = func() projmuxProcessVintage {
+		return projectProjmuxProcessVintage(replacementDomainSelf, 2, images, true)
+	}
+	cmd.residualDomains = func() doctorResidualDomainCensus {
+		return censusDoctorResidualDomains(doctorResidualProcessImages(replacementDomainSelf, 2, images, true),
+			installReplacementTargetOriginReader(replacementDomainExecutor, replacementDomainEnviron))
+	}
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"--section", "replacement", "--json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run(--json) error = %v", err)
+	}
+	var decoded struct {
+		Replacement *doctorReplacementReport `json:"replacement"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode doctor JSON: %v", err)
+	}
+	if decoded.Replacement == nil {
+		t.Fatalf("doctor JSON has no replacement table: %s", stdout.String())
+	}
+	signals := replacementSignalMap(replacementRow(t, *decoded.Replacement, doctorReplacementLayerProcesses))
+	for key, want := range map[string]string{
+		doctorReplacementSignalProcessesResidual:     "4",
+		doctorReplacementSignalResidualDomainThis:    "2",
+		doctorReplacementSignalResidualDomainOther:   "1",
+		doctorReplacementSignalResidualDomainUnknown: "1",
+	} {
+		if signals[key] != want {
+			t.Fatalf("L2 %s = %q, want %q (signals %v)", key, signals[key], want, signals)
+		}
+	}
+	out := stdout.String()
+	for _, leaked := range []string{"/tmp/probe", "/home/operator", replacementDomainSelf, `"pid"`} {
+		if strings.Contains(out, leaked) {
+			t.Fatalf("doctor JSON carries %q:\n%s", leaked, out)
+		}
+	}
+}

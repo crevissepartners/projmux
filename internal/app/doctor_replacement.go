@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -188,6 +189,19 @@ func doctorReplacementSignalRoleResidual(role string) string {
 	return doctorReplacementSignalRoleResidualPrefix + role
 }
 
+// The residual-domain keys split the L2 residual count by whose process each
+// one is: one serving the state domain this diagnosis reads (`this`), one
+// serving another domain -- an isolated probe started from the same binary
+// under another HOME, say -- (`other`), or one whose domain could not be read
+// (`unknown`). They are counters, never the paths they were decided from: the
+// install failure line names the paths, and this row stays shareable. Like the
+// role keys, a zero is omitted.
+const (
+	doctorReplacementSignalResidualDomainThis    = "residual.domain.this"
+	doctorReplacementSignalResidualDomainOther   = "residual.domain.other"
+	doctorReplacementSignalResidualDomainUnknown = "residual.domain.unknown"
+)
+
 // doctorReplacementSignalInventory is every key this section can emit.
 //
 // The per-role L2 keys are expanded from the census role order rather than
@@ -211,6 +225,9 @@ var doctorReplacementFixedSignalInventory = []string{
 	doctorReplacementSignalProcessesObserved,
 	doctorReplacementSignalProcessesResidual,
 	doctorReplacementSignalResidualOldest,
+	doctorReplacementSignalResidualDomainThis,
+	doctorReplacementSignalResidualDomainOther,
+	doctorReplacementSignalResidualDomainUnknown,
 	doctorReplacementSignalLedgerRecords,
 	doctorReplacementSignalLedgerInstaller,
 	doctorReplacementSignalLedgerObserved,
@@ -413,6 +430,62 @@ func classifyDoctorProviderSession(registry coremetadata.Registry, agent coremet
 	}
 }
 
+// doctorResidualDomainCensus counts the L2 residual processes by the state
+// domain each one serves, measured against the domain this diagnosis reads.
+//
+// It is count-only for the reason every census here is: the paths the verdict
+// is reached from are what make it decidable and also what would make the
+// report unshareable, so they are compared and dropped.
+type doctorResidualDomainCensus struct {
+	This    int `json:"this"`
+	Other   int `json:"other"`
+	Unknown int `json:"unknown"`
+}
+
+// doctorResidualProcessImages selects, from one process-table read, exactly the
+// processes the fleet census counts as residual: a child of this executable,
+// in a role the census names, whose image was replaced under it.
+func doctorResidualProcessImages(self string, selfPID int, images []codexProcessImage, supported bool) []codexProcessImage {
+	self = strings.TrimSpace(self)
+	if !supported || self == "" {
+		return nil
+	}
+	var residual []codexProcessImage
+	for _, image := range images {
+		if image.PID == selfPID {
+			continue
+		}
+		path, replaced := codexProcessImagePath(image.Exe)
+		if path != self || !replaced || !slices.Contains(projmuxProcessRoleOrder, projmuxProcessRole(image.Cmdline)) {
+			continue
+		}
+		residual = append(residual, image)
+	}
+	return residual
+}
+
+// censusDoctorResidualDomains resolves each residual process's domain the way
+// the install failure line does and keeps only the verdict. A missing origin
+// reader makes every process unknown rather than this.
+func censusDoctorResidualDomains(residual []codexProcessImage, origin func(codexProcessImage) installReplacementTargetOrigin) doctorResidualDomainCensus {
+	var census doctorResidualDomainCensus
+	for _, image := range residual {
+		domain := installReplacementDomainUnknown
+		if origin != nil {
+			domain = origin(image).domain
+		}
+		switch domain {
+		case installReplacementDomainThis:
+			census.This++
+		case installReplacementDomainOther:
+			census.Other++
+		default:
+			census.Unknown++
+		}
+	}
+	return census
+}
+
 // doctorReplacementInputs is everything the table is projected from. Every
 // field is a value another section already produced.
 type doctorReplacementInputs struct {
@@ -420,6 +493,9 @@ type doctorReplacementInputs struct {
 	// Processes is the whole-fleet vintage census, read through the seam the
 	// runtime section already renders.
 	Processes projmuxProcessVintage
+	// ResidualDomains splits the residual processes of that census by the
+	// state domain each one serves, taken from the same process-table read.
+	ResidualDomains doctorResidualDomainCensus
 	// Residue is the newest install-residue ledger record whose own census
 	// observed something, and how many records the ledger holds. It answers
 	// the L2 question on a machine where the live census observes nothing -- a
@@ -565,6 +641,21 @@ func projectDoctorReplacementProcessRow(in doctorReplacementInputs) doctorReplac
 	}
 	if oldest, ok := projmuxProcessRolesOldestResidualAge(vintage.Roles); ok {
 		signals = append(signals, doctorReplacementSignalResidualOldest, strconv.Itoa(oldest))
+	}
+	// Whose residual processes they are. Evidence only: a residual process of
+	// another domain still counts toward the verdict below, because whether it
+	// should is a product decision this row does not make.
+	for _, domain := range []struct {
+		key   string
+		count int
+	}{
+		{doctorReplacementSignalResidualDomainThis, in.ResidualDomains.This},
+		{doctorReplacementSignalResidualDomainOther, in.ResidualDomains.Other},
+		{doctorReplacementSignalResidualDomainUnknown, in.ResidualDomains.Unknown},
+	} {
+		if domain.count > 0 {
+			signals = append(signals, domain.key, strconv.Itoa(domain.count))
+		}
 	}
 	if records > 0 {
 		signals = append(signals, doctorReplacementSignalLedgerRecords, strconv.Itoa(records))
