@@ -1,4 +1,4 @@
-package app
+package updatecmd
 
 import (
 	"errors"

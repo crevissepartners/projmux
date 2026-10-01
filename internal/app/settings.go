@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -83,7 +84,7 @@ type settingsFeedback struct {
 
 var errSettingsClosed = errors.New("settings closed")
 
-func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCommand, quit *quitCommand) *settingsCommand {
+func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updatecmd.Command, quit *quitCommand) *settingsCommand {
 	c := &settingsCommand{
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		homeDir:      os.UserHomeDir,

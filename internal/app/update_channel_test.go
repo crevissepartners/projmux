@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -16,11 +17,11 @@ import (
 // deliberately unnormalized (an empty answer means "nothing here, keep
 // falling back"); normalization belongs to the judgment.
 func judgedReleaseChannel(lookupEnv func(string) string, homeDir func() (string, error)) string {
-	cmd := &updateCommand{
-		getenv:               lookupEnv,
-		releaseChannelSource: updateReleaseChannelSource(lookupEnv, homeDir),
+	cmd := &updatecmd.Command{
+		Getenv:               lookupEnv,
+		ReleaseChannelSource: updatecmd.NewReleaseChannelSource(lookupEnv, homeDir),
 	}
-	return cmd.releaseChannel()
+	return cmd.ReleaseChannel()
 }
 
 // TestAboutUpdatesTogglesTheReleaseChannelOptIn is the round trip the user
@@ -53,8 +54,8 @@ func TestAboutUpdatesTogglesTheReleaseChannelOptIn(t *testing.T) {
 		runner:       runner,
 		nativePicker: native,
 	}
-	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updateReleaseChannelStable {
-		t.Fatalf("release channel before the toggle = %q, want %q", got, updateReleaseChannelStable)
+	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updatecmd.ReleaseChannelStable {
+		t.Fatalf("release channel before the toggle = %q, want %q", got, updatecmd.ReleaseChannelStable)
 	}
 	if err := cmd.runAboutUpdatesSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runAboutUpdatesSection() error = %v", err)
@@ -69,8 +70,8 @@ func TestAboutUpdatesTogglesTheReleaseChannelOptIn(t *testing.T) {
 	if !hasEntryLabelContainingAll(afterOptOut.Entries, "Release channel", "stable", "never offered") {
 		t.Fatalf("entries after opt-out = %#v, want the release channel row back on stable", afterOptOut.Entries)
 	}
-	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updateReleaseChannelStable {
-		t.Fatalf("release channel after opting back out = %q, want %q", got, updateReleaseChannelStable)
+	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updatecmd.ReleaseChannelStable {
+		t.Fatalf("release channel after opting back out = %q, want %q", got, updatecmd.ReleaseChannelStable)
 	}
 	configToml := readFile(t, filepath.Join(home, ".config", "projmux", "config.toml"))
 	if !strings.Contains(configToml, "[update]\nrelease_channel = \"stable\"") {
@@ -90,26 +91,26 @@ func TestReleaseChannelOptInIsVisibleToTheNextJudgment(t *testing.T) {
 	homeDir := func() (string, error) { return home, nil }
 	cmd := &settingsCommand{homeDir: homeDir, lookupEnv: lookupEnv}
 
-	if err := cmd.setReleaseChannelSetting(updateReleaseChannelRC); err != nil {
+	if err := cmd.setReleaseChannelSetting(updatecmd.ReleaseChannelRC); err != nil {
 		t.Fatalf("setReleaseChannelSetting(rc) error = %v", err)
 	}
-	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updateReleaseChannelRC {
-		t.Fatalf("resolved release channel = %q, want %q", got, updateReleaseChannelRC)
+	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updatecmd.ReleaseChannelRC {
+		t.Fatalf("resolved release channel = %q, want %q", got, updatecmd.ReleaseChannelRC)
 	}
 
-	update := &updateCommand{
-		getenv:               lookupEnv,
-		releaseChannelSource: updateReleaseChannelSource(lookupEnv, homeDir),
+	update := &updatecmd.Command{
+		Getenv:               lookupEnv,
+		ReleaseChannelSource: updatecmd.NewReleaseChannelSource(lookupEnv, homeDir),
 	}
-	if got := update.releaseChannel(); got != updateReleaseChannelRC {
-		t.Fatalf("updateCommand.releaseChannel() = %q, want %q", got, updateReleaseChannelRC)
+	if got := update.ReleaseChannel(); got != updatecmd.ReleaseChannelRC {
+		t.Fatalf("Command.ReleaseChannel() = %q, want %q", got, updatecmd.ReleaseChannelRC)
 	}
 
-	if err := cmd.setReleaseChannelSetting(updateReleaseChannelStable); err != nil {
+	if err := cmd.setReleaseChannelSetting(updatecmd.ReleaseChannelStable); err != nil {
 		t.Fatalf("setReleaseChannelSetting(stable) error = %v", err)
 	}
-	if got := update.releaseChannel(); got != updateReleaseChannelStable {
-		t.Fatalf("updateCommand.releaseChannel() after opt-out = %q, want %q", got, updateReleaseChannelStable)
+	if got := update.ReleaseChannel(); got != updatecmd.ReleaseChannelStable {
+		t.Fatalf("Command.ReleaseChannel() after opt-out = %q, want %q", got, updatecmd.ReleaseChannelStable)
 	}
 }
 
@@ -124,11 +125,11 @@ func TestReleaseChannelDefaultsToOffOnAnInstallThatNeverConfiguredIt(t *testing.
 	lookupEnv := func(string) string { return "" }
 	homeDir := func() (string, error) { return home, nil }
 
-	if _, stored := storedUpdateReleaseChannel(lookupEnv, homeDir); stored {
-		t.Fatal("storedUpdateReleaseChannel() reported a stored setting on an untouched home")
+	if _, stored := updatecmd.StoredReleaseChannel(lookupEnv, homeDir); stored {
+		t.Fatal("updatecmd.StoredReleaseChannel() reported a stored setting on an untouched home")
 	}
-	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updateReleaseChannelStable {
-		t.Fatalf("resolved release channel = %q, want %q", got, updateReleaseChannelStable)
+	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updatecmd.ReleaseChannelStable {
+		t.Fatalf("resolved release channel = %q, want %q", got, updatecmd.ReleaseChannelStable)
 	}
 
 	// Reading the row must not be a write. If merely rendering Settings
@@ -154,30 +155,30 @@ func TestReleaseChannelSettingOutranksTheEnvironmentOnlyOnceStored(t *testing.T)
 
 	home := t.TempDir()
 	lookupEnv := func(name string) string {
-		if name == updateReleaseChannelEnv {
-			return updateReleaseChannelRC
+		if name == updatecmd.ReleaseChannelEnv {
+			return updatecmd.ReleaseChannelRC
 		}
 		return ""
 	}
 	homeDir := func() (string, error) { return home, nil }
-	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updateReleaseChannelRC {
-		t.Fatalf("resolved release channel = %q, want the %s fallback", got, updateReleaseChannelEnv)
+	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updatecmd.ReleaseChannelRC {
+		t.Fatalf("resolved release channel = %q, want the %s fallback", got, updatecmd.ReleaseChannelEnv)
 	}
 
 	cmd := &settingsCommand{homeDir: homeDir, lookupEnv: lookupEnv}
-	if err := cmd.setReleaseChannelSetting(updateReleaseChannelStable); err != nil {
+	if err := cmd.setReleaseChannelSetting(updatecmd.ReleaseChannelStable); err != nil {
 		t.Fatalf("setReleaseChannelSetting(stable) error = %v", err)
 	}
-	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updateReleaseChannelStable {
-		t.Fatalf("resolved release channel = %q, want the stored opt-out to beat %s", got, updateReleaseChannelEnv)
+	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updatecmd.ReleaseChannelStable {
+		t.Fatalf("resolved release channel = %q, want the stored opt-out to beat %s", got, updatecmd.ReleaseChannelEnv)
 	}
 
 	channel, stored, err := cmd.currentReleaseChannelSetting()
 	if err != nil {
 		t.Fatalf("currentReleaseChannelSetting() error = %v", err)
 	}
-	if channel != updateReleaseChannelStable || !stored {
-		t.Fatalf("currentReleaseChannelSetting() = %q, %t; want %q, true", channel, stored, updateReleaseChannelStable)
+	if channel != updatecmd.ReleaseChannelStable || !stored {
+		t.Fatalf("currentReleaseChannelSetting() = %q, %t; want %q, true", channel, stored, updatecmd.ReleaseChannelStable)
 	}
 }
 
@@ -191,19 +192,19 @@ func TestStoredReleaseChannelIsFailClosedForUnknownValues(t *testing.T) {
 	home := t.TempDir()
 	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), "[update]\nrelease_channel = \"beta\"\n")
 	lookupEnv := func(name string) string {
-		if name == updateReleaseChannelEnv {
-			return updateReleaseChannelRC
+		if name == updatecmd.ReleaseChannelEnv {
+			return updatecmd.ReleaseChannelRC
 		}
 		return ""
 	}
 	homeDir := func() (string, error) { return home, nil }
 
-	raw, stored := storedUpdateReleaseChannel(lookupEnv, homeDir)
+	raw, stored := updatecmd.StoredReleaseChannel(lookupEnv, homeDir)
 	if raw != "beta" || !stored {
-		t.Fatalf("storedUpdateReleaseChannel() = %q, %t; want %q, true", raw, stored, "beta")
+		t.Fatalf("updatecmd.StoredReleaseChannel() = %q, %t; want %q, true", raw, stored, "beta")
 	}
-	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updateReleaseChannelStable {
-		t.Fatalf("resolved release channel = %q, want the unknown value judged as %q", got, updateReleaseChannelStable)
+	if got := judgedReleaseChannel(lookupEnv, homeDir); got != updatecmd.ReleaseChannelStable {
+		t.Fatalf("resolved release channel = %q, want the unknown value judged as %q", got, updatecmd.ReleaseChannelStable)
 	}
 
 	cmd := &settingsCommand{homeDir: homeDir, lookupEnv: lookupEnv}
@@ -276,7 +277,7 @@ func TestReleaseChannelToggleDoesNotReportItselfAsAnUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("currentReleaseChannelSetting() error = %v", err)
 	}
-	if channel != updateReleaseChannelRC || !stored {
-		t.Fatalf("currentReleaseChannelSetting() = %q, %t; want %q, true", channel, stored, updateReleaseChannelRC)
+	if channel != updatecmd.ReleaseChannelRC || !stored {
+		t.Fatalf("currentReleaseChannelSetting() = %q, %t; want %q, true", channel, stored, updatecmd.ReleaseChannelRC)
 	}
 }

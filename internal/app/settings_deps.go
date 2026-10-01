@@ -3,6 +3,7 @@ package app
 import (
 	"io"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -79,11 +80,11 @@ type settingsAI interface {
 }
 
 // updateRunner runs update actions and reports cached release status
-// (implemented by *updateCommand; consumed by settings.go and
+// (implemented by *updatecmd.Command; consumed by settings.go and
 // settings_about.go).
 type updateRunner interface {
 	Run(args []string, stdout, stderr io.Writer) error
-	status() (updateStatus, error)
+	Status() (updatecmd.Status, error)
 }
 
 // quitRunner opens the quit actions picker (implemented by *quitCommand;
@@ -97,6 +98,6 @@ type quitRunner interface {
 var (
 	_ settingsSwitcher = (*switchCommand)(nil)
 	_ settingsAI       = (*aiCommand)(nil)
-	_ updateRunner     = (*updateCommand)(nil)
+	_ updateRunner     = (*updatecmd.Command)(nil)
 	_ quitRunner       = (*quitCommand)(nil)
 )

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	"github.com/crevissepartners/projmux/internal/core/pins"
@@ -5524,13 +5525,13 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	latest := testVersionTag(t, 1)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "go"
 		}
 		return ""
 	}
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
 		Version:   1,
 		CheckedAt: now.Add(-time.Hour),
 		TagName:   latest,
@@ -5754,14 +5755,14 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	update, _ := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	var ran []string
-	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+	update.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
 		return nil
 	}
@@ -5815,13 +5816,13 @@ func TestSettingsHubUpdateFailureStaysOpenWithPassiveFeedback(t *testing.T) {
 
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	update, _ := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
-	update.runExternal = func(string, []string, io.Writer, io.Writer) error {
+	update.RunExternal = func(string, []string, io.Writer, io.Writer) error {
 		return errors.New("installer offline")
 	}
 
@@ -6006,7 +6007,7 @@ func TestSettingsHubRunsUpdateCheckAction(t *testing.T) {
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	update, _ := testUpdateCommand(t, now)
 	latest := testVersionTag(t, 2)
-	update.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	update.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		body := fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-05-06T10:00:00Z"}`, latest, latest, latest)
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -7564,16 +7565,16 @@ func TestSettingsAboutRefreshRowNamesTheAvailabilitySource(t *testing.T) {
 			t.Parallel()
 
 			update, cacheDir := testUpdateCommand(t, now)
-			update.getenv = func(name string) string {
+			update.Getenv = func(name string) string {
 				if name == "PROJMUX_INSTALLER" {
 					return tc.installer
 				}
 				return ""
 			}
-			writeUpdateCacheFixture(t, cacheDir, updateCache{
+			writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
 				Version:   1,
 				CheckedAt: now.Add(-time.Hour),
-				Source:    availabilitySourceForInstaller(tc.installer),
+				Source:    updatecmd.AvailabilitySourceForInstaller(tc.installer),
 				TagName:   testVersionTag(t, 1),
 			})
 

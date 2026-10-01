@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
@@ -176,7 +177,7 @@ type App struct {
 	switcher     *switchCommand
 	tag          *tagCommand
 	tmux         *tmuxCommand
-	update       *updateCommand
+	update       *updatecmd.Command
 	usage        *usagecmd.Command
 	welcome      *welcomeCommand
 	window       *windowCommand
@@ -236,7 +237,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	attach := newAttachCommand(recorder)
 	kill := newKillCommand(recorder)
 	sessions := newSessionsCommand(recorder)
-	update := newUpdateCommand()
+	update := updatecmd.New(resolveExecutablePath, defaultAppSocket)
 	quit := newQuitCommand()
 	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
 	notifyCmd.diagnostics = notifyFocusDiagnostics

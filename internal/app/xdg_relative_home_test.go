@@ -3,6 +3,8 @@ package app
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 )
 
 // TestRelativeXDGHomesCountAsUnsetAtEverySite pins the sites that resolved an
@@ -48,7 +50,7 @@ func TestRelativeXDGHomesCountAsUnsetAtEverySite(t *testing.T) {
 
 		t.Setenv("HOME", home)
 		t.Setenv("XDG_CACHE_HOME", value)
-		cache, err := defaultUpdateCacheDir()
+		cache, err := updatecmd.DefaultCacheDir()
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -676,7 +676,7 @@ class CIWorkflowContractTest(unittest.TestCase):
                 '"scripts/test-e2e-update-docker.sh"',
                 '"scripts/test-docker-run.sh"',
                 '"test/docker/Dockerfile.node"',
-                '"internal/app/update.go"',
+                '"internal/app/updatecmd/**"',
                 '"internal/app/update_channel.go"',
                 '"internal/app/tmux.go"',
                 '"internal/app/runtime_mutation_route.go"',

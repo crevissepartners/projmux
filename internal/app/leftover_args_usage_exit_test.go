@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 )
 
@@ -21,7 +22,7 @@ func leftoverArgsTestApp() *App {
 	}
 	app.diagnostics = &diagnosticsCommand{ai: &aiCommand{}}
 	app.pin = &pinCommand{}
-	app.update = &updateCommand{}
+	app.update = &updatecmd.Command{}
 	app.settings = &settingsCommand{}
 	return app
 }

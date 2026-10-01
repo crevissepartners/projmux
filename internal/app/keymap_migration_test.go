@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 )
 
 // keymapBackupFiles lists the pre-v1 backups sitting next to a keymap.
@@ -1023,7 +1025,7 @@ func TestReadOnlyRoutesNeverRewriteTheKeymap(t *testing.T) {
 func TestUpdateDryRunPreviewsTheMigrationStageWithoutPromisingADiff(t *testing.T) {
 	t.Parallel()
 
-	line := keymapMigrationStagePreviewLine("/usr/local/bin/projmux")
+	line := updatecmd.KeymapMigrationStagePreviewLine("/usr/local/bin/projmux")
 	if !strings.Contains(line, "would migrate: keymap schema via /usr/local/bin/projmux") {
 		t.Fatalf("preview = %q, want the migration stage named", line)
 	}
@@ -1034,20 +1036,6 @@ func TestUpdateDryRunPreviewsTheMigrationStageWithoutPromisingADiff(t *testing.T
 		if strings.Contains(line, canonical) {
 			t.Fatalf("preview leaks a canonical id %q; a dry run cannot know the candidate binary's table", canonical)
 		}
-	}
-}
-
-// TestPostUpdateApplyArgsAlwaysReachTheNewBinary pins the install-path ordering:
-// replace, then migrate through the new binary, then apply.
-func TestPostUpdateApplyArgsAlwaysReachTheNewBinary(t *testing.T) {
-	t.Parallel()
-
-	if got := postUpdateApplyArgs(false); !slices.Equal(got, []string{"config", "apply"}) {
-		t.Fatalf("apply args = %v, want [config apply]", got)
-	}
-	// --no-apply must still reach the binary; it only suppresses the reload.
-	if got := postUpdateApplyArgs(true); !slices.Equal(got, []string{"config", "apply", "--no-reload"}) {
-		t.Fatalf("no-apply args = %v, want [config apply --no-reload]", got)
 	}
 }
 

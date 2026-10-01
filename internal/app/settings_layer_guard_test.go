@@ -585,7 +585,7 @@ func (e *settingsLayerGuardEnv) run(recorder *frontReadRecorder, argv []string) 
 			done <- result
 		}()
 		app := New()
-		app.update.client = &http.Client{Transport: refusingTransport{}}
+		app.update.Client = &http.Client{Transport: refusingTransport{}}
 		var stdout, stderr bytes.Buffer
 		result.err = app.Run(e.expand(argv), &stdout, &stderr)
 	}()

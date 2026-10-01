@@ -15,7 +15,7 @@
     },
     {
       "rule": "G110",
-      "scope": "internal/app/update.go release extraction",
+      "scope": "internal/app/updatecmd/update.go release extraction",
       "reason": "archive entry and total expanded bytes are bounded before io.Copy"
     },
     {
@@ -145,7 +145,7 @@
     },
     {
       "rule": "G110",
-      "path": "internal/app/update.go",
+      "path": "internal/app/updatecmd/update.go",
       "message": "Potential DoS vulnerability via decompression bomb",
       "source": "if _, err := io.Copy(out, tr); err != nil {",
       "max_count": 1
@@ -278,7 +278,7 @@
     },
     {
       "rule": "G204",
-      "path": "internal/app/update.go",
+      "path": "internal/app/updatecmd/update.go",
       "message": "Subprocess launched with variable",
       "source": "cmd := exec.Command(name, args...)",
       "max_count": 1
@@ -397,7 +397,7 @@
     },
     {
       "rule": "G301",
-      "path": "internal/app/update.go",
+      "path": "internal/app/updatecmd/update.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
       "max_count": 1
@@ -474,14 +474,14 @@
     },
     {
       "rule": "G302",
-      "path": "internal/app/update.go",
+      "path": "internal/app/updatecmd/update.go",
       "message": "Expect file permissions to be 0600 or less",
       "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
       "max_count": 1
     },
     {
       "rule": "G302",
-      "path": "internal/app/update.go",
+      "path": "internal/app/updatecmd/update.go",
       "message": "Expect file permissions to be 0600 or less",
       "source": "out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)",
       "max_count": 1
@@ -649,14 +649,14 @@
     },
     {
       "rule": "G304",
-      "path": "internal/app/update.go",
+      "path": "internal/app/updatecmd/update.go",
       "message": "Potential file inclusion via variable",
       "source": "data, err := os.ReadFile(path)",
       "max_count": 1
     },
     {
       "rule": "G304",
-      "path": "internal/app/update.go",
+      "path": "internal/app/updatecmd/update.go",
       "message": "Potential file inclusion via variable",
       "source": "out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)",
       "max_count": 1

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -895,15 +896,15 @@ func TestShellWelcomeLegacyLastWelcomedVersionIsNotSkip(t *testing.T) {
 func TestShellWelcomeSkipInputStoresLatestUpdateTag(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	latest := testVersionTag(t, 1)
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1019,20 +1020,20 @@ func TestShellWelcomeCorruptStateDoesNotBlockStartup(t *testing.T) {
 func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	var updateCommands []string
-	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
-		updateCommands = append(updateCommands, updateApplyCommand{Name: name, Args: args}.String())
+	update.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		updateCommands = append(updateCommands, strings.Join(append([]string{name}, args...), " "))
 		return nil
 	}
 	latest := testVersionTag(t, 1)
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1080,18 +1081,18 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 func TestShellWelcomeUnknownActionContinuesWithoutUpdating(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
-	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+	update.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		t.Fatalf("unexpected update command: %s %#v", name, args)
 		return nil
 	}
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     testVersionTag(t, 1),
@@ -1125,15 +1126,15 @@ func TestShellWelcomeUnknownActionContinuesWithoutUpdating(t *testing.T) {
 func TestShellWelcomeSkipUntilNextWritesUpdateSkipState(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	latest := testVersionTag(t, 1)
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1174,14 +1175,14 @@ func TestShellWelcomeSkipUntilNextWritesUpdateSkipState(t *testing.T) {
 func TestShellWelcomeSkipsStaleUpdateRow(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now.Add(-25 * time.Hour),
 		TagName:     testVersionTag(t, 1),
@@ -1210,20 +1211,20 @@ func TestShellWelcomeSkipsStaleUpdateRow(t *testing.T) {
 func TestShellDoesNotRunSeparateUpdatePicker(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	var updateCommands []string
-	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
-		updateCommands = append(updateCommands, updateApplyCommand{Name: name, Args: args}.String())
+	update.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		updateCommands = append(updateCommands, strings.Join(append([]string{name}, args...), " "))
 		return nil
 	}
 	latest := testVersionTag(t, 1)
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1266,17 +1267,17 @@ func TestShellDoesNotRunSeparateUpdatePicker(t *testing.T) {
 func TestShellWelcomeUnsupportedInstallerShowsGuidanceAndContinues(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "source"
 		}
 		return ""
 	}
-	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+	update.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		t.Fatalf("unexpected update command: %s %#v", name, args)
 		return nil
 	}
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     testVersionTag(t, 1),
@@ -1317,17 +1318,17 @@ func TestShellWelcomeUnsupportedInstallerShowsGuidanceAndContinues(t *testing.T)
 func TestShellWelcomeSurfacesUpdateFailureAndContinues(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
-	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+	update.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("npm registry unreachable")
 	}
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     testVersionTag(t, 1),
@@ -1366,15 +1367,15 @@ func TestShellWelcomeSurfacesUpdateFailureAndContinues(t *testing.T) {
 func TestShellWelcomeSkippedUpdateTagSuppressesActionsUntilNextTag(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	latest := testVersionTag(t, 1)
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1429,7 +1430,7 @@ func TestShellWelcomeSkippedUpdateTagSuppressesActionsUntilNextTag(t *testing.T)
 func TestShellWelcomeRefreshesStaleUpdateCacheBestEffort(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
+	update.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
@@ -1438,9 +1439,9 @@ func TestShellWelcomeRefreshesStaleUpdateCacheBestEffort(t *testing.T) {
 	latest := testVersionTag(t, 2)
 	// This install is npm, so the stale-cache refresh must reach the registry
 	// and read its unprefixed dist-tag, not the GitHub release API.
-	update.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if got := req.URL.String(); got != update.npmRegistryAPIURL() {
-			t.Fatalf("refresh URL = %q, want %q", got, update.npmRegistryAPIURL())
+	update.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.URL.String(); got != update.NPMURL {
+			t.Fatalf("refresh URL = %q, want %q", got, update.NPMURL)
 		}
 		body := fmt.Sprintf(`{"dist-tags":{"latest":%q}}`, strings.TrimPrefix(latest, "v"))
 		return &http.Response{
@@ -1449,8 +1450,8 @@ func TestShellWelcomeRefreshesStaleUpdateCacheBestEffort(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})}
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Source:      updateSourceNPMRegistry,
+	writeUpdateCacheFixture(t, cacheDir, updatecmd.Cache{
+		Source:      updatecmd.SourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now.Add(-25 * time.Hour),
 		TagName:     testVersionTag(t, 1),

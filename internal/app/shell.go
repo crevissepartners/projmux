@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
@@ -43,7 +44,7 @@ type shellCommand struct {
 	runCommand   func(ctx context.Context, env []string, name string, args ...string) error
 	startCommand func(ctx context.Context, env []string, name string, args ...string) error
 	tmuxRunner   tmuxRunner
-	update       *updateCommand
+	update       *updatecmd.Command
 	nativePicker intpicker.Runner
 	getwd        func() (string, error)
 	goos         func() string
@@ -76,7 +77,7 @@ type shellUpdateSkipState struct {
 	SkippedAt time.Time `json:"skipped_at"`
 }
 
-func newShellCommand(update *updateCommand, recorders ...*diagnostics.LifecycleRecorder) *shellCommand {
+func newShellCommand(update *updatecmd.Command, recorders ...*diagnostics.LifecycleRecorder) *shellCommand {
 	var recorder *diagnostics.LifecycleRecorder
 	if len(recorders) > 0 {
 		recorder = recorders[0]
@@ -1133,17 +1134,7 @@ func shellDetachedEnvironment(env []string) []string {
 	return withoutEnv(withoutEnv(env, "TMUX"), "TMUX_PANE")
 }
 
-func shouldPromptShellUpdate(status updateStatus) bool {
-	if status.UpdateState != "update_available" {
-		return false
-	}
-	if status.CacheState != "fresh" {
-		return false
-	}
-	return strings.TrimSpace(status.LatestVersion) != ""
-}
-
-func shellUpdateCanUpgrade(status updateStatus) bool {
+func shellUpdateCanUpgrade(status updatecmd.Status) bool {
 	switch status.Installer.Source {
 	case "npm", "go", "github-release":
 		return true
@@ -1152,7 +1143,7 @@ func shellUpdateCanUpgrade(status updateStatus) bool {
 	}
 }
 
-func (c *shellCommand) updatePromptSkipped(status updateStatus) bool {
+func (c *shellCommand) updatePromptSkipped(status updatecmd.Status) bool {
 	path, err := c.updateSkipPath()
 	if err != nil {
 		return false
@@ -1168,7 +1159,7 @@ func (c *shellCommand) updatePromptSkipped(status updateStatus) bool {
 	return strings.TrimSpace(skip.TagName) == strings.TrimSpace(status.LatestVersion)
 }
 
-func (c *shellCommand) writeUpdateSkip(status updateStatus) error {
+func (c *shellCommand) writeUpdateSkip(status updatecmd.Status) error {
 	path, err := c.updateSkipPath()
 	if err != nil {
 		return err
@@ -1179,7 +1170,7 @@ func (c *shellCommand) writeUpdateSkip(status updateStatus) error {
 	skip := shellUpdateSkipState{
 		Version:   1,
 		TagName:   strings.TrimSpace(status.LatestVersion),
-		SkippedAt: c.update.clock().UTC(),
+		SkippedAt: c.update.Clock().UTC(),
 	}
 	data, err := json.MarshalIndent(skip, "", "  ")
 	if err != nil {
@@ -1195,7 +1186,7 @@ func (c *shellCommand) updateSkipPath() (string, error) {
 	if c.update == nil {
 		return "", errors.New("shell update prompt is not configured")
 	}
-	cachePath, err := c.update.cachePath()
+	cachePath, err := c.update.CachePath()
 	if err != nil {
 		return "", err
 	}

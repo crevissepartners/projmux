@@ -56,7 +56,7 @@ var routeVerbDispatchers = map[string]routeVerbDispatcher{
 	"pin project": {file: "internal/app/pin.go", fn: "(*pinCommand).runLevel", tag: "fs.Arg(0)", passThrough: []string{"project"}},
 	"runtime tag": {file: "internal/app/tag.go", fn: "(*tagCommand).Run", tag: "fs.Arg(0)", passThrough: []string{"project"}},
 	"switch":      {file: "internal/app/switch.go", fn: "(*switchCommand).Run", tag: "args[0]"},
-	"update":      {file: "internal/app/update.go", fn: "(*updateCommand).Run", tag: "args[0]"},
+	"update":      {file: "internal/app/updatecmd/update.go", fn: "(*Command).Run", tag: "args[0]"},
 	"window":      {file: "internal/app/recent_window.go", fn: "(*windowCommand).Run", tag: "fs.Arg(0)"},
 }
 

@@ -1,4 +1,4 @@
-package app
+package updatecmd
 
 import (
 	"archive/tar"
@@ -94,8 +94,8 @@ func TestDetectInstallerAutodetection(t *testing.T) {
 
 			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
 			env := tc.env
-			cmd.getenv = func(name string) string { return env[name] }
-			cmd.executable = func() (string, error) { return tc.exe, nil }
+			cmd.Getenv = func(name string) string { return env[name] }
+			cmd.Executable = func() (string, error) { return tc.exe, nil }
 			cmd.buildInfo = tc.buildInfo
 			cmd.userHomeDir = func() (string, error) { return homeDir, nil }
 
@@ -114,14 +114,14 @@ func TestUpdateApplyNpmUsesInstallLatest(t *testing.T) {
 	t.Parallel()
 
 	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	var ran []string
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+	cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		ran = append(ran, updateApplyCommand{Name: name, Args: args}.String())
 		return nil
 	}
@@ -156,23 +156,24 @@ func (f updateRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error
 	return f(req)
 }
 
-func testUpdateCommand(t *testing.T, now time.Time) (*updateCommand, string) {
+func testUpdateCommand(t *testing.T, now time.Time) (*Command, string) {
 	t.Helper()
 	cacheDir := t.TempDir()
-	cmd := &updateCommand{
-		now:      func() time.Time { return now },
-		getenv:   func(string) string { return "" },
-		cacheDir: func() (string, error) { return cacheDir, nil },
-		client: &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	cmd := &Command{
+		Now:       func() time.Time { return now },
+		Getenv:    func(string) string { return "" },
+		CacheDir:  func() (string, error) { return cacheDir, nil },
+		AppSocket: "projmux",
+		Client: &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return nil, fmt.Errorf("unexpected update request to %s", req.URL.String())
 		})},
-		apiURL:     "https://example.invalid/latest",
-		npmURL:     "https://example.invalid/npm/projmux",
-		executable: func() (string, error) { return "/tmp/projmux", nil },
+		APIURL:     "https://example.invalid/latest",
+		NPMURL:     "https://example.invalid/npm/projmux",
+		Executable: func() (string, error) { return "/tmp/projmux", nil },
 		// Every pre-existing apply test describes an ordinary landed upgrade, so
 		// the default probe reports a higher version after publication.
-		probeVersion: stubUpdateVersionProbe("0.13.0", "0.13.1"),
-		lookPath: func(name string) (string, error) {
+		ProbeVersion: stubUpdateVersionProbe("0.13.0", "0.13.1"),
+		LookPath: func(name string) (string, error) {
 			if name != "projmux" {
 				return "", fmt.Errorf("unexpected executable lookup %q", name)
 			}
@@ -205,7 +206,7 @@ func TestUpdateStatusUnknownWithoutCache(t *testing.T) {
 		"latest:    unknown (unknown)",
 		"state:     unknown",
 		"installer: unknown - Could not detect the installer. Set PROJMUX_INSTALLER=npm|go|github-release",
-		filepath.Join(cacheDir, updateCacheFileName),
+		filepath.Join(cacheDir, CacheFileName),
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -218,13 +219,13 @@ func TestUpdateStatusReadsFreshCacheAndInstaller(t *testing.T) {
 
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	cmd, cacheDir := testUpdateCommand(t, now)
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "go"
 		}
 		return ""
 	}
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
+	writeUpdateCacheFixture(t, cacheDir, Cache{
 		Version:   1,
 		CheckedAt: now.Add(-time.Hour),
 		TagName:   testVersionTag(t, 1),
@@ -251,7 +252,7 @@ func TestUpdateStatusJSONMarksStaleCache(t *testing.T) {
 
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	cmd, cacheDir := testUpdateCommand(t, now)
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
+	writeUpdateCacheFixture(t, cacheDir, Cache{
 		Version:   1,
 		CheckedAt: now.Add(-25 * time.Hour),
 		TagName:   testVersionTag(t, 0),
@@ -261,7 +262,7 @@ func TestUpdateStatusJSONMarksStaleCache(t *testing.T) {
 	if err := cmd.Run([]string{"status", "--json"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	var st updateStatus
+	var st Status
 	if err := json.Unmarshal(stdout.Bytes(), &st); err != nil {
 		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
 	}
@@ -282,9 +283,9 @@ func TestUpdateCheckFetchesAndWritesCache(t *testing.T) {
 	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	cmd, cacheDir := testUpdateCommand(t, now)
 	latest := testVersionTag(t, 2)
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.String() != cmd.apiURL {
-			t.Fatalf("request URL = %q, want %q", req.URL.String(), cmd.apiURL)
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != cmd.APIURL {
+			t.Fatalf("request URL = %q, want %q", req.URL.String(), cmd.APIURL)
 		}
 		if got := req.Header.Get("User-Agent"); !strings.Contains(got, "projmux/") {
 			t.Fatalf("User-Agent = %q, want projmux prefix", got)
@@ -325,7 +326,7 @@ func TestUpdateApplyDryRunForNPM(t *testing.T) {
 	t.Parallel()
 
 	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
@@ -352,14 +353,14 @@ func TestUpdateApplyRunsNPMCommands(t *testing.T) {
 	t.Parallel()
 
 	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	var ran []string
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+	cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
 		return nil
 	}
@@ -372,7 +373,7 @@ func TestUpdateApplyRunsNPMCommands(t *testing.T) {
 		"npm install -g projmux@latest",
 		"projmux config apply",
 	}
-	if !equalStrings(ran, want) {
+	if !slices.Equal(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}
 }
@@ -395,14 +396,14 @@ func TestUpdateApplyPublicationFailureContract(t *testing.T) {
 			t.Parallel()
 
 			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-			cmd.getenv = func(name string) string {
+			cmd.Getenv = func(name string) string {
 				if name == "PROJMUX_INSTALLER" {
 					return "npm"
 				}
 				return ""
 			}
 			var ran []string
-			cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+			cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 				ran = append(ran, strings.Join(append([]string{name}, args...), " "))
 				if len(ran)-1 == tc.failAt {
 					return errors.New("injected stage failure")
@@ -426,14 +427,14 @@ func TestUpdateApplyNoApplySkipsLiveConvergenceAndRequiresExplicitApply(t *testi
 	t.Parallel()
 
 	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "npm"
 		}
 		return ""
 	}
 	var ran []string
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+	cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
 		return nil
 	}
@@ -466,7 +467,7 @@ func TestUpdateApplyRunsGoUpgradeNoApply(t *testing.T) {
 		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
 		target + " config apply --no-reload",
 	}
-	if !equalStrings(*ran, want) {
+	if !slices.Equal(*ran, want) {
 		t.Fatalf("ran = %#v, want %#v", *ran, want)
 	}
 }
@@ -485,7 +486,7 @@ func TestUpdateApplyRunsGoUpgradeInPublicationOrder(t *testing.T) {
 		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
 		target + " config apply",
 	}
-	if !equalStrings(*ran, want) {
+	if !slices.Equal(*ran, want) {
 		t.Fatalf("ran = %#v, want exact pre-converge/publication/post-verify order %#v", *ran, want)
 	}
 }
@@ -656,13 +657,13 @@ func TestUpdateApplyGoCleansScratchAndLeavesAUsableBinaryOnEveryFailure(t *testi
 
 	tests := []struct {
 		name        string
-		arrange     func(cmd *updateCommand)
+		arrange     func(cmd *Command)
 		want        string
 		wantContent string
 	}{
 		{
 			name: "go toolchain is missing",
-			arrange: func(cmd *updateCommand) {
+			arrange: func(cmd *Command) {
 				cmd.runExternalEnv = func(string, []string, []string, io.Writer, io.Writer) error {
 					return errors.New(`exec: "go": executable file not found in $PATH`)
 				}
@@ -672,7 +673,7 @@ func TestUpdateApplyGoCleansScratchAndLeavesAUsableBinaryOnEveryFailure(t *testi
 		},
 		{
 			name: "go install fails",
-			arrange: func(cmd *updateCommand) {
+			arrange: func(cmd *Command) {
 				cmd.runExternalEnv = func(string, []string, []string, io.Writer, io.Writer) error {
 					return errors.New("exit status 1")
 				}
@@ -682,7 +683,7 @@ func TestUpdateApplyGoCleansScratchAndLeavesAUsableBinaryOnEveryFailure(t *testi
 		},
 		{
 			name: "the replacement itself fails",
-			arrange: func(cmd *updateCommand) {
+			arrange: func(cmd *Command) {
 				cmd.rename = func(string, string) error { return errors.New("read-only file system") }
 				cmd.copyFile = func(string, string) error { return errors.New("read-only file system") }
 			},
@@ -691,9 +692,9 @@ func TestUpdateApplyGoCleansScratchAndLeavesAUsableBinaryOnEveryFailure(t *testi
 		},
 		{
 			name: "the post-publication convergence fails",
-			arrange: func(cmd *updateCommand) {
-				runner := cmd.runExternal
-				cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+			arrange: func(cmd *Command) {
+				runner := cmd.RunExternal
+				cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 					if err := runner(name, args, stdout, stderr); err != nil {
 						return err
 					}
@@ -818,14 +819,14 @@ func TestUpdateApplyDryRunForGitHubRelease(t *testing.T) {
 	t.Parallel()
 
 	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "github-release"
 		}
 		return ""
 	}
-	cmd.executable = func() (string, error) { return "/home/me/bin/projmux", nil }
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	cmd.Executable = func() (string, error) { return "/home/me/bin/projmux", nil }
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		t.Fatalf("dry-run unexpectedly requested %s", req.URL.String())
 		return nil, nil
 	})}
@@ -881,7 +882,7 @@ func TestUpdateApplyRunsGitHubReleaseReplacement(t *testing.T) {
 			t.Parallel()
 
 			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-			cmd.getenv = func(name string) string {
+			cmd.Getenv = func(name string) string {
 				if name == "PROJMUX_INSTALLER" {
 					return "github-release"
 				}
@@ -891,12 +892,12 @@ func TestUpdateApplyRunsGitHubReleaseReplacement(t *testing.T) {
 			if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
 				t.Fatalf("WriteFile() error = %v", err)
 			}
-			cmd.executable = func() (string, error) { return target, nil }
+			cmd.Executable = func() (string, error) { return target, nil }
 			assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.4.2/projmux_0.4.2_linux_amd64.tar.gz"
 			archive := testReleaseArchive(t, "new\n")
-			cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 				switch req.URL.String() {
-				case cmd.apiURL:
+				case cmd.APIURL:
 					body := `{"tag_name":"v0.4.2","assets":[{"name":"projmux_0.4.2_linux_amd64.tar.gz","browser_download_url":"` + assetURL + `","digest":"` + testReleaseDigest(archive) + `"}]}`
 					return &http.Response{
 						StatusCode: http.StatusOK,
@@ -915,7 +916,7 @@ func TestUpdateApplyRunsGitHubReleaseReplacement(t *testing.T) {
 				}
 			})}
 			var ran []string
-			cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+			cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 				ran = append(ran, strings.Join(append([]string{name}, args...), " "))
 				return nil
 			}
@@ -932,7 +933,7 @@ func TestUpdateApplyRunsGitHubReleaseReplacement(t *testing.T) {
 				t.Fatalf("target content = %q, want new binary", got)
 			}
 			want := tc.wantCommands(target)
-			if !equalStrings(ran, want) {
+			if !slices.Equal(ran, want) {
 				t.Fatalf("ran = %#v, want %#v", ran, want)
 			}
 			gotExplicitApply := strings.Contains(stdout.String(),
@@ -1047,7 +1048,7 @@ func TestUpdateApplyRejectsUnsafeReleaseArtifactsWithoutReplacement(t *testing.T
 			t.Parallel()
 
 			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-			cmd.getenv = func(name string) string {
+			cmd.Getenv = func(name string) string {
 				if name == "PROJMUX_INSTALLER" {
 					return "github-release"
 				}
@@ -1058,11 +1059,11 @@ func TestUpdateApplyRejectsUnsafeReleaseArtifactsWithoutReplacement(t *testing.T
 			if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
 				t.Fatalf("WriteFile() error = %v", err)
 			}
-			cmd.executable = func() (string, error) { return target, nil }
+			cmd.Executable = func() (string, error) { return target, nil }
 			cmd.limits = tc.limits
 			assetRequested := false
-			cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-				if req.URL.String() == cmd.apiURL {
+			cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.String() == cmd.APIURL {
 					body := `{"tag_name":"v0.4.2","assets":[{"name":"projmux_0.4.2_linux_amd64.tar.gz","browser_download_url":"` + tc.assetURL + `","digest":"` + tc.digest + `"}]}`
 					return &http.Response{
 						StatusCode: http.StatusOK,
@@ -1119,7 +1120,7 @@ func TestUpdateApplyRejectsDisallowedRedirect(t *testing.T) {
 	t.Parallel()
 
 	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return "github-release"
 		}
@@ -1130,13 +1131,13 @@ func TestUpdateApplyRejectsDisallowedRedirect(t *testing.T) {
 	if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	cmd.executable = func() (string, error) { return target, nil }
+	cmd.Executable = func() (string, error) { return target, nil }
 	assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.4.2/projmux_0.4.2_linux_amd64.tar.gz"
 	disallowedURL := "https://example.invalid/download"
 	disallowedRequested := false
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.String() {
-		case cmd.apiURL:
+		case cmd.APIURL:
 			body := `{"tag_name":"v0.4.2","assets":[{"name":"projmux_0.4.2_linux_amd64.tar.gz","browser_download_url":"` + assetURL + `","digest":"sha256:` + strings.Repeat("0", 64) + `"}]}`
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -1190,8 +1191,8 @@ func TestReleaseAssetRequestPreservesExistingRedirectPolicy(t *testing.T) {
 		redirectURL = "https://release-assets.githubusercontent.com/download"
 	)
 	redirectRequested := false
-	cmd := &updateCommand{
-		client: &http.Client{
+	cmd := &Command{
+		Client: &http.Client{
 			Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 				switch req.URL.String() {
 				case assetURL:
@@ -1358,7 +1359,7 @@ func TestUpdateApplyRejectsUnsupportedInstallers(t *testing.T) {
 			t.Parallel()
 
 			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-			cmd.getenv = func(name string) string {
+			cmd.Getenv = func(name string) string {
 				if name == "PROJMUX_INSTALLER" {
 					return tc.installer
 				}
@@ -1403,7 +1404,7 @@ func TestUpdateRejectsInvalidUsage(t *testing.T) {
 	}
 }
 
-func writeUpdateCacheFixture(t *testing.T, cacheDir string, cache updateCache) {
+func writeUpdateCacheFixture(t *testing.T, cacheDir string, cache Cache) {
 	t.Helper()
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -1412,18 +1413,18 @@ func writeUpdateCacheFixture(t *testing.T, cacheDir string, cache updateCache) {
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(cacheDir, updateCacheFileName), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cacheDir, CacheFileName), data, 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 }
 
-func readUpdateCacheFixture(t *testing.T, cacheDir string) updateCache {
+func readUpdateCacheFixture(t *testing.T, cacheDir string) Cache {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(cacheDir, updateCacheFileName))
+	data, err := os.ReadFile(filepath.Join(cacheDir, CacheFileName))
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	var cache updateCache
+	var cache Cache
 	if err := json.Unmarshal(data, &cache); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
@@ -1475,7 +1476,7 @@ func testReleaseDigest(archive []byte) string {
 
 func testVersionTag(t *testing.T, patchDelta int) string {
 	t.Helper()
-	parts, ok := parseUpdateVersion(version.String())
+	parts, ok := ParseVersion(version.String())
 	if !ok {
 		t.Fatalf("cannot parse current version %q", version.String())
 	}
@@ -1494,10 +1495,10 @@ func testCurrentVersionTag(t *testing.T) string {
 // updateApplyVerificationCommand builds an apply command whose installer is
 // fixed and whose staged commands all succeed, so the only thing under test is
 // the post-publication version verification.
-func updateApplyVerificationCommand(t *testing.T, installer string) (*updateCommand, string, *[]string) {
+func updateApplyVerificationCommand(t *testing.T, installer string) (*Command, string, *[]string) {
 	t.Helper()
 	cmd, cacheDir := testUpdateCommand(t, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return installer
 		}
@@ -1506,9 +1507,9 @@ func updateApplyVerificationCommand(t *testing.T, installer string) (*updateComm
 	// The active executable is a real file so the go backend, which replaces
 	// that exact path, can run against the same fixture the other installers
 	// use. Its directory is where the scratch GOBIN is staged.
-	cmd.executable = executableFixture(t)
+	cmd.Executable = executableFixture(t)
 	ran := &[]string{}
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+	cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		*ran = append(*ran, strings.Join(append([]string{name}, args...), " "))
 		return nil
 	}
@@ -1551,9 +1552,9 @@ func envEntryValue(env []string, key string) string {
 	return ""
 }
 
-func mustExecutable(t *testing.T, cmd *updateCommand) string {
+func mustExecutable(t *testing.T, cmd *Command) string {
 	t.Helper()
-	exe, err := cmd.executable()
+	exe, err := cmd.Executable()
 	if err != nil {
 		t.Fatalf("executable() error = %v", err)
 	}
@@ -1644,13 +1645,13 @@ func TestUpdateApplyFailsWhenTheInstalledVersionDidNotChange(t *testing.T) {
 			t.Parallel()
 
 			cmd, cacheDir, ran := updateApplyVerificationCommand(t, tc.installer)
-			writeUpdateCacheFixture(t, cacheDir, updateCache{
+			writeUpdateCacheFixture(t, cacheDir, Cache{
 				Version:   1,
 				CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
-				Source:    availabilitySourceForInstaller(tc.installer),
+				Source:    AvailabilitySourceForInstaller(tc.installer),
 				TagName:   "v0.13.2",
 			})
-			cmd.probeVersion = stubUpdateVersionProbe(tc.before, tc.after)
+			cmd.ProbeVersion = stubUpdateVersionProbe(tc.before, tc.after)
 
 			err := cmd.Run(tc.args, &bytes.Buffer{}, &bytes.Buffer{})
 			if err == nil {
@@ -1673,7 +1674,7 @@ func TestUpdateApplyWithoutACachedCheckStillNamesTheMissingExpectedVersion(t *te
 	t.Parallel()
 
 	cmd, _, _ := updateApplyVerificationCommand(t, "npm")
-	cmd.probeVersion = stubUpdateVersionProbe("0.13.1", "0.13.1")
+	cmd.ProbeVersion = stubUpdateVersionProbe("0.13.1", "0.13.1")
 
 	err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
@@ -1696,13 +1697,13 @@ func TestUpdateApplySucceedsWhenTheInstalledVersionRose(t *testing.T) {
 	t.Parallel()
 
 	cmd, cacheDir, _ := updateApplyVerificationCommand(t, "npm")
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
+	writeUpdateCacheFixture(t, cacheDir, Cache{
 		Version:   1,
 		CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
-		Source:    updateSourceNPMRegistry,
+		Source:    SourceNPMRegistry,
 		TagName:   "v0.13.2",
 	})
-	cmd.probeVersion = stubUpdateVersionProbe("0.13.1", "0.13.2")
+	cmd.ProbeVersion = stubUpdateVersionProbe("0.13.1", "0.13.2")
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1748,7 +1749,7 @@ func TestUpdateApplyRefusesToReportSuccessWhenTheVersionCannotBeRead(t *testing.
 			t.Parallel()
 
 			cmd, _, _ := updateApplyVerificationCommand(t, "npm")
-			cmd.probeVersion = tc.probe
+			cmd.ProbeVersion = tc.probe
 
 			var stdout bytes.Buffer
 			err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{})
@@ -1779,14 +1780,14 @@ func TestUpdateApplyVerifiesThePathResolvedExecutable(t *testing.T) {
 	t.Parallel()
 
 	cmd, cacheDir, ran := updateApplyVerificationCommand(t, "npm")
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
+	writeUpdateCacheFixture(t, cacheDir, Cache{
 		Version:   1,
 		CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
-		Source:    updateSourceNPMRegistry,
+		Source:    SourceNPMRegistry,
 		TagName:   "v0.13.2",
 	})
 	var probed []string
-	cmd.probeVersion = func(exe string) (string, error) {
+	cmd.ProbeVersion = func(exe string) (string, error) {
 		probed = append(probed, exe)
 		// npm exited 0 and published 0.13.2 under a prefix PATH does not
 		// resolve, so the executable a user runs is still the old one.
@@ -1801,7 +1802,7 @@ func TestUpdateApplyVerifiesThePathResolvedExecutable(t *testing.T) {
 		t.Fatalf("error %q does not name the misplaced-install cause", err.Error())
 	}
 	want := []string{"/npm/bin/projmux", "/npm/bin/projmux"}
-	if !equalStrings(probed, want) {
+	if !slices.Equal(probed, want) {
 		t.Fatalf("probed = %#v, want the PATH-resolved executable twice %#v", probed, want)
 	}
 	for _, command := range *ran {
@@ -1818,9 +1819,9 @@ func TestUpdateApplyFallsBackToTheRunningExecutableWhenPathHasNoProjmux(t *testi
 
 	cmd, _, _ := updateApplyVerificationCommand(t, "go")
 	target := mustExecutable(t, cmd)
-	cmd.lookPath = func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
+	cmd.LookPath = func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
 	var probed []string
-	cmd.probeVersion = func(exe string) (string, error) {
+	cmd.ProbeVersion = func(exe string) (string, error) {
 		probed = append(probed, exe)
 		if len(probed) == 1 {
 			return "projmux 0.13.1\n", nil
@@ -1833,7 +1834,7 @@ func TestUpdateApplyFallsBackToTheRunningExecutableWhenPathHasNoProjmux(t *testi
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []string{target, target}
-	if !equalStrings(probed, want) {
+	if !slices.Equal(probed, want) {
 		t.Fatalf("probed = %#v, want the running executable %#v", probed, want)
 	}
 	if !strings.Contains(stdout.String(), ">> verified: projmux 0.13.2 is now the active executable at "+target) {
@@ -1907,13 +1908,13 @@ func TestUpdateApplyStageOrderIsUnchangedByVersionVerification(t *testing.T) {
 
 			cmd, _, ran := updateApplyVerificationCommand(t, tc.installer)
 			target := mustExecutable(t, cmd)
-			cmd.probeVersion = stubUpdateVersionProbe("0.13.1", "0.13.2")
+			cmd.ProbeVersion = stubUpdateVersionProbe("0.13.1", "0.13.2")
 
 			if err := cmd.Run(tc.args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
 			want := tc.want(target)
-			if !equalStrings(*ran, want) {
+			if !slices.Equal(*ran, want) {
 				t.Fatalf("ran = %#v, want the unchanged stage order %#v", *ran, want)
 			}
 		})
@@ -1931,7 +1932,7 @@ func TestUpdateApplyDryRunPreviewsVerificationWithoutProbing(t *testing.T) {
 
 			cmd, _, _ := updateApplyVerificationCommand(t, installer)
 			probes := 0
-			cmd.probeVersion = func(string) (string, error) {
+			cmd.ProbeVersion = func(string) (string, error) {
 				probes++
 				return "projmux 0.13.1\n", nil
 			}
@@ -1998,7 +1999,7 @@ func failingUpdateVersionProbeAfter(okReads int, cause error) func(string) (stri
 // Both channels are served by a single client so the request timeout and the
 // redirect ceiling the shell gate budgets for stay identical across them; a
 // second client here would hide a divergence the gate would pay for.
-func updateAvailabilityResponder(t *testing.T, cmd *updateCommand, githubTag, npmVersion string) *http.Client {
+func updateAvailabilityResponder(t *testing.T, cmd *Command, githubTag, npmVersion string) *http.Client {
 	t.Helper()
 	return &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		body := ""
@@ -2024,10 +2025,10 @@ func updateAvailabilityResponder(t *testing.T, cmd *updateCommand, githubTag, np
 	})}
 }
 
-func updateCommandForInstaller(t *testing.T, now time.Time, installer string) (*updateCommand, string) {
+func updateCommandForInstaller(t *testing.T, now time.Time, installer string) (*Command, string) {
 	t.Helper()
 	cmd, cacheDir := testUpdateCommand(t, now)
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return installer
 		}
@@ -2048,11 +2049,11 @@ func TestUpdateCheckPicksTheAvailabilitySourceFromTheInstallChannel(t *testing.T
 		installer  string
 		wantSource string
 	}{
-		{name: "npm asks the registry", installer: "npm", wantSource: updateSourceNPMRegistry},
-		{name: "go keeps the GitHub release", installer: "go", wantSource: updateSourceGitHubRelease},
-		{name: "github-release keeps the GitHub release", installer: "github-release", wantSource: updateSourceGitHubRelease},
-		{name: "source builds keep the GitHub release", installer: "source", wantSource: updateSourceGitHubRelease},
-		{name: "an undetected channel keeps the GitHub release", installer: "", wantSource: updateSourceGitHubRelease},
+		{name: "npm asks the registry", installer: "npm", wantSource: SourceNPMRegistry},
+		{name: "go keeps the GitHub release", installer: "go", wantSource: SourceGitHubRelease},
+		{name: "github-release keeps the GitHub release", installer: "github-release", wantSource: SourceGitHubRelease},
+		{name: "source builds keep the GitHub release", installer: "source", wantSource: SourceGitHubRelease},
+		{name: "an undetected channel keeps the GitHub release", installer: "", wantSource: SourceGitHubRelease},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2060,10 +2061,10 @@ func TestUpdateCheckPicksTheAvailabilitySourceFromTheInstallChannel(t *testing.T
 
 			cmd, cacheDir := updateCommandForInstaller(t, now, tc.installer)
 			githubTag, npmVersion := testVersionTag(t, 1), ""
-			if tc.wantSource == updateSourceNPMRegistry {
+			if tc.wantSource == SourceNPMRegistry {
 				githubTag, npmVersion = "", strings.TrimPrefix(testVersionTag(t, 1), "v")
 			}
-			cmd.client = updateAvailabilityResponder(t, cmd, githubTag, npmVersion)
+			cmd.Client = updateAvailabilityResponder(t, cmd, githubTag, npmVersion)
 
 			if err := cmd.Run([]string{"check"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run() error = %v", err)
@@ -2081,7 +2082,7 @@ func TestUpdateCheckPicksTheAvailabilitySourceFromTheInstallChannel(t *testing.T
 			if want := testVersionTag(t, 1); cache.TagName != want {
 				t.Fatalf("cache TagName = %q, want %q", cache.TagName, want)
 			}
-			raw, err := os.ReadFile(filepath.Join(cacheDir, updateCacheFileName))
+			raw, err := os.ReadFile(filepath.Join(cacheDir, CacheFileName))
 			if err != nil {
 				t.Fatalf("ReadFile() error = %v", err)
 			}
@@ -2129,12 +2130,12 @@ func TestShellGateWaitsForTheNPMRegistryToPublish(t *testing.T) {
 			t.Parallel()
 
 			cmd, _ := updateCommandForInstaller(t, now, "npm")
-			cmd.client = updateAvailabilityResponder(t, cmd, "", tc.npmVersion)
+			cmd.Client = updateAvailabilityResponder(t, cmd, "", tc.npmVersion)
 
-			if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+			if err := cmd.RefreshCacheIfNeeded(context.Background()); err != nil {
 				t.Fatalf("refreshCacheIfNeeded() error = %v", err)
 			}
-			st, err := cmd.status()
+			st, err := cmd.Status()
 			if err != nil {
 				t.Fatalf("status() error = %v", err)
 			}
@@ -2144,11 +2145,11 @@ func TestShellGateWaitsForTheNPMRegistryToPublish(t *testing.T) {
 			if st.UpdateState != tc.wantState {
 				t.Fatalf("UpdateState = %q, want %q", st.UpdateState, tc.wantState)
 			}
-			if st.SourceName != updateSourceNPMRegistry {
-				t.Fatalf("SourceName = %q, want %q", st.SourceName, updateSourceNPMRegistry)
+			if st.SourceName != SourceNPMRegistry {
+				t.Fatalf("SourceName = %q, want %q", st.SourceName, SourceNPMRegistry)
 			}
-			if got := shouldPromptShellUpdate(st); got != tc.wantPrompt {
-				t.Fatalf("shouldPromptShellUpdate() = %v, want %v", got, tc.wantPrompt)
+			if got := ShouldPromptShellUpdate(st); got != tc.wantPrompt {
+				t.Fatalf("ShouldPromptShellUpdate() = %v, want %v", got, tc.wantPrompt)
 			}
 		})
 	}
@@ -2166,31 +2167,31 @@ func TestUpdateJudgmentIsUnchangedForNonNPMChannels(t *testing.T) {
 			t.Parallel()
 
 			cmd, cacheDir := updateCommandForInstaller(t, now, installer)
-			cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 				t.Fatalf("a fresh pre-existing cache must not trigger a refetch, got %s", req.URL.String())
 				return nil, nil
 			})}
-			writeUpdateCacheFixture(t, cacheDir, updateCache{
+			writeUpdateCacheFixture(t, cacheDir, Cache{
 				Version:   1,
 				CheckedAt: now.Add(-time.Hour),
 				TagName:   testVersionTag(t, 1),
 			})
 
-			if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+			if err := cmd.RefreshCacheIfNeeded(context.Background()); err != nil {
 				t.Fatalf("refreshCacheIfNeeded() error = %v", err)
 			}
-			st, err := cmd.status()
+			st, err := cmd.Status()
 			if err != nil {
 				t.Fatalf("status() error = %v", err)
 			}
 			if st.CacheState != "fresh" || st.UpdateState != "update_available" {
 				t.Fatalf("status = %q/%q, want fresh/update_available", st.CacheState, st.UpdateState)
 			}
-			if st.SourceName != updateSourceGitHubRelease {
-				t.Fatalf("SourceName = %q, want %q", st.SourceName, updateSourceGitHubRelease)
+			if st.SourceName != SourceGitHubRelease {
+				t.Fatalf("SourceName = %q, want %q", st.SourceName, SourceGitHubRelease)
 			}
-			if !shouldPromptShellUpdate(st) {
-				t.Fatalf("shouldPromptShellUpdate() = false, want the unchanged offer")
+			if !ShouldPromptShellUpdate(st) {
+				t.Fatalf("ShouldPromptShellUpdate() = false, want the unchanged offer")
 			}
 		})
 	}
@@ -2206,29 +2207,29 @@ func TestUpdateCacheRecordsItsAvailabilitySourceAndDropsAForeignOne(t *testing.T
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	cmd, cacheDir := testUpdateCommand(t, now)
 	installer := "npm"
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
 			return installer
 		}
 		return ""
 	}
-	cmd.client = updateAvailabilityResponder(t, cmd, testVersionTag(t, 2), "0.99.0")
+	cmd.Client = updateAvailabilityResponder(t, cmd, testVersionTag(t, 2), "0.99.0")
 
-	if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+	if err := cmd.RefreshCacheIfNeeded(context.Background()); err != nil {
 		t.Fatalf("refreshCacheIfNeeded() error = %v", err)
 	}
 	cache, _, err := cmd.loadCache()
 	if err != nil {
 		t.Fatalf("loadCache() error = %v", err)
 	}
-	if cache.Source != updateSourceNPMRegistry || cache.TagName != "v0.99.0" {
+	if cache.Source != SourceNPMRegistry || cache.TagName != "v0.99.0" {
 		t.Fatalf("cache = %+v, want the npm registry answer", cache)
 	}
 
 	// Same cache file, different channel: the recorded answer is about a
 	// question this install no longer asks.
 	installer = "go"
-	st, err := cmd.status()
+	st, err := cmd.Status()
 	if err != nil {
 		t.Fatalf("status() error = %v", err)
 	}
@@ -2238,21 +2239,21 @@ func TestUpdateCacheRecordsItsAvailabilitySourceAndDropsAForeignOne(t *testing.T
 	if got := cmd.cachedLatestVersion(); got != "" {
 		t.Fatalf("cachedLatestVersion() = %q, want no expected version from a foreign source", got)
 	}
-	if shouldPromptShellUpdate(st) {
-		t.Fatalf("shouldPromptShellUpdate() = true, want no offer from a discarded cache")
+	if ShouldPromptShellUpdate(st) {
+		t.Fatalf("ShouldPromptShellUpdate() = true, want no offer from a discarded cache")
 	}
 
-	if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+	if err := cmd.RefreshCacheIfNeeded(context.Background()); err != nil {
 		t.Fatalf("second refreshCacheIfNeeded() error = %v", err)
 	}
 	cache, _, err = cmd.loadCache()
 	if err != nil {
 		t.Fatalf("second loadCache() error = %v", err)
 	}
-	if cache.Source != updateSourceGitHubRelease || cache.TagName != testVersionTag(t, 2) {
+	if cache.Source != SourceGitHubRelease || cache.TagName != testVersionTag(t, 2) {
 		t.Fatalf("cache = %+v, want the GitHub release answer after the switch", cache)
 	}
-	if _, err := os.Stat(filepath.Join(cacheDir, updateCacheFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(cacheDir, CacheFileName)); err != nil {
 		t.Fatalf("cache file name changed: %v", err)
 	}
 }
@@ -2310,9 +2311,9 @@ func TestShellGateStaysSilentWhenTheAvailabilitySourceFails(t *testing.T) {
 			t.Parallel()
 
 			cmd, _ := updateCommandForInstaller(t, now, "npm")
-			cmd.client = &http.Client{Transport: tc.transport}
+			cmd.Client = &http.Client{Transport: tc.transport}
 
-			if err := cmd.refreshCacheIfNeeded(context.Background()); err == nil {
+			if err := cmd.RefreshCacheIfNeeded(context.Background()); err == nil {
 				t.Fatalf("refreshCacheIfNeeded() error = nil, want the failure reported")
 			}
 
@@ -2326,12 +2327,12 @@ func TestShellGateStaysSilentWhenTheAvailabilitySourceFails(t *testing.T) {
 				}
 			}
 
-			st, err := cmd.status()
+			st, err := cmd.Status()
 			if err != nil {
 				t.Fatalf("status() error = %v", err)
 			}
-			if shouldPromptShellUpdate(st) {
-				t.Fatalf("shouldPromptShellUpdate() = true, want no offer when the source did not answer")
+			if ShouldPromptShellUpdate(st) {
+				t.Fatalf("ShouldPromptShellUpdate() = true, want no offer when the source did not answer")
 			}
 		})
 	}
@@ -2340,11 +2341,11 @@ func TestShellGateStaysSilentWhenTheAvailabilitySourceFails(t *testing.T) {
 // updateCommandForChannel builds a command on one exact (install path, release
 // channel) pair. The channel is set through the resolver seam rather than the
 // environment so the fixture states the axis it is testing.
-func updateCommandForChannel(t *testing.T, now time.Time, installer, channel string) (*updateCommand, string) {
+func updateCommandForChannel(t *testing.T, now time.Time, installer, channel string) (*Command, string) {
 	t.Helper()
 	cmd, cacheDir := updateCommandForInstaller(t, now, installer)
 	cmd.releasesURL = "https://example.invalid/releases"
-	cmd.releaseChannelSource = func() string { return channel }
+	cmd.ReleaseChannelSource = func() string { return channel }
 	return cmd, cacheDir
 }
 
@@ -2353,7 +2354,7 @@ func updateCommandForChannel(t *testing.T, now time.Time, installer, channel str
 // Every endpoint left empty is a trap rather than an empty answer: a channel
 // that asks an authority it is not entitled to fails the test at the request,
 // which is what pins "the default channel never even looks at a prerelease".
-func updateChannelResponder(t *testing.T, cmd *updateCommand, latestTag string, distTags map[string]string, releases []string) *http.Client {
+func updateChannelResponder(t *testing.T, cmd *Command, latestTag string, distTags map[string]string, releases []string) *http.Client {
 	t.Helper()
 	return &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		body := ""
@@ -2411,15 +2412,15 @@ func TestDefaultReleaseChannelNeverSeesAPrerelease(t *testing.T) {
 	t.Run("npm", func(t *testing.T) {
 		t.Parallel()
 
-		cmd, _ := updateCommandForChannel(t, now, "npm", updateReleaseChannelStable)
-		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{
+		cmd, _ := updateCommandForChannel(t, now, "npm", ReleaseChannelStable)
+		cmd.Client = updateChannelResponder(t, cmd, "", map[string]string{
 			"latest": strings.TrimPrefix(stable, "v"),
 			"rc":     strings.TrimPrefix(rc, "v"),
 		}, nil)
 
 		st := refreshedUpdateStatus(t, cmd)
-		if st.ReleaseChannel != updateReleaseChannelStable {
-			t.Fatalf("ReleaseChannel = %q, want %q", st.ReleaseChannel, updateReleaseChannelStable)
+		if st.ReleaseChannel != ReleaseChannelStable {
+			t.Fatalf("ReleaseChannel = %q, want %q", st.ReleaseChannel, ReleaseChannelStable)
 		}
 		if st.LatestVersion != stable {
 			t.Fatalf("LatestVersion = %q, want the stable dist-tag %q", st.LatestVersion, stable)
@@ -2427,17 +2428,17 @@ func TestDefaultReleaseChannelNeverSeesAPrerelease(t *testing.T) {
 		if strings.Contains(st.LatestVersion, "-") {
 			t.Fatalf("LatestVersion = %q, want no prerelease on the default channel", st.LatestVersion)
 		}
-		if shouldPromptShellUpdate(st) {
-			t.Fatalf("shouldPromptShellUpdate() = true, want no offer while only an rc is newer")
+		if ShouldPromptShellUpdate(st) {
+			t.Fatalf("ShouldPromptShellUpdate() = true, want no offer while only an rc is newer")
 		}
 	})
 
 	t.Run("github-release", func(t *testing.T) {
 		t.Parallel()
 
-		cmd, _ := updateCommandForChannel(t, now, "github-release", updateReleaseChannelStable)
+		cmd, _ := updateCommandForChannel(t, now, "github-release", ReleaseChannelStable)
 		// releases is left empty on purpose: asking it is the failure.
-		cmd.client = updateChannelResponder(t, cmd, stable, nil, nil)
+		cmd.Client = updateChannelResponder(t, cmd, stable, nil, nil)
 
 		st := refreshedUpdateStatus(t, cmd)
 		if st.LatestVersion != stable {
@@ -2446,8 +2447,8 @@ func TestDefaultReleaseChannelNeverSeesAPrerelease(t *testing.T) {
 		if strings.Contains(st.LatestVersion, "-") {
 			t.Fatalf("LatestVersion = %q, want no prerelease on the default channel", st.LatestVersion)
 		}
-		if shouldPromptShellUpdate(st) {
-			t.Fatalf("shouldPromptShellUpdate() = true, want no offer on the default channel")
+		if ShouldPromptShellUpdate(st) {
+			t.Fatalf("ShouldPromptShellUpdate() = true, want no offer on the default channel")
 		}
 	})
 }
@@ -2544,24 +2545,24 @@ func TestRCChannelAnswersWithTheNewerOfStableAndRC(t *testing.T) {
 				t.Run(installer, func(t *testing.T) {
 					t.Parallel()
 
-					cmd, _ := updateCommandForChannel(t, now, installer, updateReleaseChannelRC)
+					cmd, _ := updateCommandForChannel(t, now, installer, ReleaseChannelRC)
 					distTags, releases := tc.distTags, tc.releases
 					if installer == "npm" {
 						releases = nil
 					} else {
 						distTags = nil
 					}
-					cmd.client = updateChannelResponder(t, cmd, "", distTags, releases)
+					cmd.Client = updateChannelResponder(t, cmd, "", distTags, releases)
 
 					st := refreshedUpdateStatus(t, cmd)
-					if st.ReleaseChannel != updateReleaseChannelRC {
-						t.Fatalf("ReleaseChannel = %q, want %q", st.ReleaseChannel, updateReleaseChannelRC)
+					if st.ReleaseChannel != ReleaseChannelRC {
+						t.Fatalf("ReleaseChannel = %q, want %q", st.ReleaseChannel, ReleaseChannelRC)
 					}
 					if st.LatestVersion != tc.want {
 						t.Fatalf("LatestVersion = %q, want %q", st.LatestVersion, tc.want)
 					}
-					if st.UpdateState != "update_available" || !shouldPromptShellUpdate(st) {
-						t.Fatalf("state = %q, prompt = %v, want an offer on the rc channel", st.UpdateState, shouldPromptShellUpdate(st))
+					if st.UpdateState != "update_available" || !ShouldPromptShellUpdate(st) {
+						t.Fatalf("state = %q, prompt = %v, want an offer on the rc channel", st.UpdateState, ShouldPromptShellUpdate(st))
 					}
 				})
 			}
@@ -2577,9 +2578,9 @@ func TestRCChannelReadsBothNPMDistTagsInOneRequest(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
-	cmd, _ := updateCommandForChannel(t, now, "npm", updateReleaseChannelRC)
+	cmd, _ := updateCommandForChannel(t, now, "npm", ReleaseChannelRC)
 	requests := 0
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != cmd.npmRegistryAPIURL() {
 			t.Fatalf("unexpected availability request to %s", req.URL.String())
 		}
@@ -2614,14 +2615,14 @@ func TestUpdateCacheIsKeyedByInstallPathAndReleaseChannel(t *testing.T) {
 	t.Run("an rc install does not reuse a fresh stable answer", func(t *testing.T) {
 		t.Parallel()
 
-		cmd, cacheDir := updateCommandForChannel(t, now, "npm", updateReleaseChannelRC)
-		writeUpdateCacheFixture(t, cacheDir, updateCache{
+		cmd, cacheDir := updateCommandForChannel(t, now, "npm", ReleaseChannelRC)
+		writeUpdateCacheFixture(t, cacheDir, Cache{
 			Version:   1,
 			CheckedAt: now.Add(-time.Minute),
-			Source:    updateSourceNPMRegistry,
+			Source:    SourceNPMRegistry,
 			TagName:   "v0.14.2",
 		})
-		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{
+		cmd.Client = updateChannelResponder(t, cmd, "", map[string]string{
 			"latest": "0.14.2",
 			"rc":     "0.99.0-rc.1",
 		}, nil)
@@ -2631,23 +2632,23 @@ func TestUpdateCacheIsKeyedByInstallPathAndReleaseChannel(t *testing.T) {
 			t.Fatalf("LatestVersion = %q, want the refetched rc answer", st.LatestVersion)
 		}
 		cache := readUpdateCacheFixture(t, cacheDir)
-		if cache.Channel != updateReleaseChannelRC {
-			t.Fatalf("cache Channel = %q, want %q", cache.Channel, updateReleaseChannelRC)
+		if cache.Channel != ReleaseChannelRC {
+			t.Fatalf("cache Channel = %q, want %q", cache.Channel, ReleaseChannelRC)
 		}
 	})
 
 	t.Run("a default install does not reuse a fresh rc answer", func(t *testing.T) {
 		t.Parallel()
 
-		cmd, cacheDir := updateCommandForChannel(t, now, "npm", updateReleaseChannelStable)
-		writeUpdateCacheFixture(t, cacheDir, updateCache{
+		cmd, cacheDir := updateCommandForChannel(t, now, "npm", ReleaseChannelStable)
+		writeUpdateCacheFixture(t, cacheDir, Cache{
 			Version:   1,
 			CheckedAt: now.Add(-time.Minute),
-			Source:    updateSourceNPMRegistry,
-			Channel:   updateReleaseChannelRC,
+			Source:    SourceNPMRegistry,
+			Channel:   ReleaseChannelRC,
 			TagName:   "v0.99.0-rc.1",
 		})
-		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{
+		cmd.Client = updateChannelResponder(t, cmd, "", map[string]string{
 			"latest": "0.14.2",
 			"rc":     "0.99.0-rc.1",
 		}, nil)
@@ -2656,21 +2657,21 @@ func TestUpdateCacheIsKeyedByInstallPathAndReleaseChannel(t *testing.T) {
 		if st.LatestVersion != "v0.14.2" {
 			t.Fatalf("LatestVersion = %q, want the refetched stable answer", st.LatestVersion)
 		}
-		if shouldPromptShellUpdate(st) {
-			t.Fatalf("shouldPromptShellUpdate() = true, want the rc answer discarded outright")
+		if ShouldPromptShellUpdate(st) {
+			t.Fatalf("ShouldPromptShellUpdate() = true, want the rc answer discarded outright")
 		}
 	})
 
 	t.Run("a default install writes no channel field", func(t *testing.T) {
 		t.Parallel()
 
-		cmd, cacheDir := updateCommandForChannel(t, now, "npm", updateReleaseChannelStable)
-		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{"latest": "0.14.2"}, nil)
+		cmd, cacheDir := updateCommandForChannel(t, now, "npm", ReleaseChannelStable)
+		cmd.Client = updateChannelResponder(t, cmd, "", map[string]string{"latest": "0.14.2"}, nil)
 
-		if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+		if err := cmd.RefreshCacheIfNeeded(context.Background()); err != nil {
 			t.Fatalf("refreshCacheIfNeeded() error = %v", err)
 		}
-		raw, err := os.ReadFile(filepath.Join(cacheDir, updateCacheFileName))
+		raw, err := os.ReadFile(filepath.Join(cacheDir, CacheFileName))
 		if err != nil {
 			t.Fatalf("ReadFile() error = %v", err)
 		}
@@ -2682,26 +2683,26 @@ func TestUpdateCacheIsKeyedByInstallPathAndReleaseChannel(t *testing.T) {
 	t.Run("a cache written before the axis existed reads as the default channel", func(t *testing.T) {
 		t.Parallel()
 
-		cmd, cacheDir := updateCommandForChannel(t, now, "npm", updateReleaseChannelStable)
-		cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		cmd, cacheDir := updateCommandForChannel(t, now, "npm", ReleaseChannelStable)
+		cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 			t.Fatalf("a fresh pre-axis cache must not trigger a refetch, got %s", req.URL.String())
 			return nil, nil
 		})}
-		writeUpdateCacheFixture(t, cacheDir, updateCache{
+		writeUpdateCacheFixture(t, cacheDir, Cache{
 			Version:   1,
 			CheckedAt: now.Add(-time.Minute),
-			Source:    updateSourceNPMRegistry,
+			Source:    SourceNPMRegistry,
 			TagName:   "v0.14.2",
 		})
 
-		if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+		if err := cmd.RefreshCacheIfNeeded(context.Background()); err != nil {
 			t.Fatalf("refreshCacheIfNeeded() error = %v", err)
 		}
-		st, err := cmd.status()
+		st, err := cmd.Status()
 		if err != nil {
 			t.Fatalf("status() error = %v", err)
 		}
-		if st.ReleaseChannel != updateReleaseChannelStable || st.CacheState != "fresh" {
+		if st.ReleaseChannel != ReleaseChannelStable || st.CacheState != "fresh" {
 			t.Fatalf("channel/cache = %q/%q, want stable/fresh", st.ReleaseChannel, st.CacheState)
 		}
 	})
@@ -2721,24 +2722,24 @@ func TestUpdateStatusJSONRevealsTheReleaseChannel(t *testing.T) {
 		wantChannel string
 	}{
 		{
-			channel:     updateReleaseChannelStable,
+			channel:     ReleaseChannelStable,
 			distTags:    map[string]string{"latest": "0.14.2", "rc": "0.99.0-rc.1"},
 			wantLatest:  "v0.14.2",
-			wantChannel: updateReleaseChannelStable,
+			wantChannel: ReleaseChannelStable,
 		},
 		{
-			channel:     updateReleaseChannelRC,
+			channel:     ReleaseChannelRC,
 			distTags:    map[string]string{"latest": "0.14.2", "rc": "0.99.0-rc.1"},
 			wantLatest:  "v0.99.0-rc.1",
-			wantChannel: updateReleaseChannelRC,
+			wantChannel: ReleaseChannelRC,
 		},
 	} {
 		t.Run(tc.channel, func(t *testing.T) {
 			t.Parallel()
 
 			cmd, _ := updateCommandForChannel(t, now, "npm", tc.channel)
-			cmd.client = updateChannelResponder(t, cmd, "", tc.distTags, nil)
-			if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+			cmd.Client = updateChannelResponder(t, cmd, "", tc.distTags, nil)
+			if err := cmd.RefreshCacheIfNeeded(context.Background()); err != nil {
 				t.Fatalf("refreshCacheIfNeeded() error = %v", err)
 			}
 
@@ -2746,7 +2747,7 @@ func TestUpdateStatusJSONRevealsTheReleaseChannel(t *testing.T) {
 			if err := cmd.Run([]string{"status", "--json"}, &stdout, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
-			var st updateStatus
+			var st Status
 			if err := json.Unmarshal(stdout.Bytes(), &st); err != nil {
 				t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
 			}
@@ -2756,7 +2757,7 @@ func TestUpdateStatusJSONRevealsTheReleaseChannel(t *testing.T) {
 			if st.LatestVersion != tc.wantLatest {
 				t.Fatalf("latest_version = %q, want %q", st.LatestVersion, tc.wantLatest)
 			}
-			if tc.wantChannel == updateReleaseChannelStable && strings.Contains(st.LatestVersion, "-") {
+			if tc.wantChannel == ReleaseChannelStable && strings.Contains(st.LatestVersion, "-") {
 				t.Fatalf("latest_version = %q, want no prerelease on the default channel", st.LatestVersion)
 			}
 		})
@@ -2769,13 +2770,13 @@ func TestReleaseChannelDefaultsToStableForEveryUnrecognisedValue(t *testing.T) {
 	t.Parallel()
 
 	for _, raw := range []string{"", "   ", "stable", "STABLE", "beta", "rc.1", "true", "1"} {
-		if got := normalizeUpdateReleaseChannel(raw); got != updateReleaseChannelStable {
-			t.Fatalf("normalizeUpdateReleaseChannel(%q) = %q, want %q", raw, got, updateReleaseChannelStable)
+		if got := NormalizeReleaseChannel(raw); got != ReleaseChannelStable {
+			t.Fatalf("NormalizeReleaseChannel(%q) = %q, want %q", raw, got, ReleaseChannelStable)
 		}
 	}
 	for _, raw := range []string{"rc", "RC", "  rc  "} {
-		if got := normalizeUpdateReleaseChannel(raw); got != updateReleaseChannelRC {
-			t.Fatalf("normalizeUpdateReleaseChannel(%q) = %q, want %q", raw, got, updateReleaseChannelRC)
+		if got := NormalizeReleaseChannel(raw); got != ReleaseChannelRC {
+			t.Fatalf("NormalizeReleaseChannel(%q) = %q, want %q", raw, got, ReleaseChannelRC)
 		}
 	}
 }
@@ -2786,20 +2787,20 @@ func TestReleaseChannelEnvOptsIn(t *testing.T) {
 	t.Parallel()
 
 	cmd, _ := testUpdateCommand(t, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC))
-	if got := cmd.releaseChannel(); got != updateReleaseChannelStable {
-		t.Fatalf("releaseChannel() = %q, want %q with nothing set", got, updateReleaseChannelStable)
+	if got := cmd.ReleaseChannel(); got != ReleaseChannelStable {
+		t.Fatalf("releaseChannel() = %q, want %q with nothing set", got, ReleaseChannelStable)
 	}
-	cmd.getenv = func(name string) string {
-		if name == updateReleaseChannelEnv {
+	cmd.Getenv = func(name string) string {
+		if name == ReleaseChannelEnv {
 			return "rc"
 		}
 		return ""
 	}
-	if got := cmd.releaseChannel(); got != updateReleaseChannelRC {
-		t.Fatalf("releaseChannel() = %q, want %q from %s", got, updateReleaseChannelRC, updateReleaseChannelEnv)
+	if got := cmd.ReleaseChannel(); got != ReleaseChannelRC {
+		t.Fatalf("releaseChannel() = %q, want %q from %s", got, ReleaseChannelRC, ReleaseChannelEnv)
 	}
-	cmd.releaseChannelSource = func() string { return updateReleaseChannelStable }
-	if got := cmd.releaseChannel(); got != updateReleaseChannelStable {
+	cmd.ReleaseChannelSource = func() string { return ReleaseChannelStable }
+	if got := cmd.ReleaseChannel(); got != ReleaseChannelStable {
 		t.Fatalf("releaseChannel() = %q, want the resolver to win over the environment", got)
 	}
 }
@@ -2810,19 +2811,19 @@ func TestReleaseChannelEnvOptsIn(t *testing.T) {
 func TestUpdateStatusTextNamesOnlyANonDefaultChannel(t *testing.T) {
 	t.Parallel()
 
-	base := updateStatus{
+	base := Status{
 		CurrentVersion: "0.14.2",
 		LatestVersion:  "v0.14.2",
 		CacheState:     "fresh",
-		SourceName:     updateSourceNPMRegistry,
+		SourceName:     SourceNPMRegistry,
 		UpdateState:    "current",
-		Installer:      updateInstaller{Source: "npm", Note: "npm shim"},
+		Installer:      Installer{Source: "npm", Note: "npm shim"},
 		CachePath:      "/cache/update.json",
 	}
 
 	var stable bytes.Buffer
 	stableStatus := base
-	stableStatus.ReleaseChannel = updateReleaseChannelStable
+	stableStatus.ReleaseChannel = ReleaseChannelStable
 	if err := writeUpdateStatusText(&stable, stableStatus); err != nil {
 		t.Fatalf("writeUpdateStatusText() error = %v", err)
 	}
@@ -2832,7 +2833,7 @@ func TestUpdateStatusTextNamesOnlyANonDefaultChannel(t *testing.T) {
 
 	var rc bytes.Buffer
 	rcStatus := base
-	rcStatus.ReleaseChannel = updateReleaseChannelRC
+	rcStatus.ReleaseChannel = ReleaseChannelRC
 	if err := writeUpdateStatusText(&rc, rcStatus); err != nil {
 		t.Fatalf("writeUpdateStatusText() error = %v", err)
 	}
@@ -2843,12 +2844,12 @@ func TestUpdateStatusTextNamesOnlyANonDefaultChannel(t *testing.T) {
 
 // refreshedUpdateStatus runs the check the shell gate runs and returns the
 // judgment it produced.
-func refreshedUpdateStatus(t *testing.T, cmd *updateCommand) updateStatus {
+func refreshedUpdateStatus(t *testing.T, cmd *Command) Status {
 	t.Helper()
-	if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+	if err := cmd.RefreshCacheIfNeeded(context.Background()); err != nil {
 		t.Fatalf("refreshCacheIfNeeded() error = %v", err)
 	}
-	st, err := cmd.status()
+	st, err := cmd.Status()
 	if err != nil {
 		t.Fatalf("status() error = %v", err)
 	}
@@ -2892,8 +2893,8 @@ func TestRCChannelAppliesTheDistTagItsJudgmentRead(t *testing.T) {
 			t.Parallel()
 
 			cmd, _, ran := updateApplyVerificationCommand(t, "npm")
-			cmd.releaseChannelSource = func() string { return updateReleaseChannelRC }
-			cmd.client = updateChannelResponder(t, cmd, "", tc.distTags, nil)
+			cmd.ReleaseChannelSource = func() string { return ReleaseChannelRC }
+			cmd.Client = updateChannelResponder(t, cmd, "", tc.distTags, nil)
 
 			var stdout bytes.Buffer
 			if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -2915,7 +2916,7 @@ func TestDefaultChannelNpmApplyIsUnchangedAndAsksNoRegistry(t *testing.T) {
 
 	cmd, _, ran := updateApplyVerificationCommand(t, "npm")
 	target := mustExecutable(t, cmd)
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		t.Fatalf("default-channel apply unexpectedly requested %s", req.URL.String())
 		return nil, nil
 	})}
@@ -2929,7 +2930,7 @@ func TestDefaultChannelNpmApplyIsUnchangedAndAsksNoRegistry(t *testing.T) {
 		"npm install -g projmux@latest",
 		"projmux config apply",
 	}
-	if !equalStrings(*ran, want) {
+	if !slices.Equal(*ran, want) {
 		t.Fatalf("ran = %#v, want %#v", *ran, want)
 	}
 }
@@ -2943,16 +2944,16 @@ func TestDefaultChannelNpmApplyIsUnchangedAndAsksNoRegistry(t *testing.T) {
 func TestRCChannelGitHubReleaseApplyDownloadsThePrerelease(t *testing.T) {
 	t.Parallel()
 
-	cmd, _ := updateCommandForChannel(t, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC), "github-release", updateReleaseChannelRC)
+	cmd, _ := updateCommandForChannel(t, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC), "github-release", ReleaseChannelRC)
 	target := filepath.Join(t.TempDir(), "projmux")
 	if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	cmd.executable = func() (string, error) { return target, nil }
-	cmd.probeVersion = stubUpdateVersionProbe("0.14.2", "0.15.0-rc.1")
+	cmd.Executable = func() (string, error) { return target, nil }
+	cmd.ProbeVersion = stubUpdateVersionProbe("0.14.2", "0.15.0-rc.1")
 	archive := testReleaseArchive(t, "rc\n")
 	assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.15.0-rc.1/projmux_0.15.0-rc.1_linux_amd64.tar.gz"
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.String() {
 		case cmd.releaseAPIURL():
 			t.Fatalf("rc apply asked releases/latest, which by definition never carries a prerelease")
@@ -2976,7 +2977,7 @@ func TestRCChannelGitHubReleaseApplyDownloadsThePrerelease(t *testing.T) {
 			return nil, nil
 		}
 	})}
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error { return nil }
+	cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error { return nil }
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -3001,15 +3002,15 @@ func TestRCChannelGitHubReleaseApplyDownloadsThePrerelease(t *testing.T) {
 func TestDefaultChannelGitHubReleaseApplyNeverAsksTheReleaseList(t *testing.T) {
 	t.Parallel()
 
-	cmd, _ := updateCommandForChannel(t, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC), "github-release", updateReleaseChannelStable)
+	cmd, _ := updateCommandForChannel(t, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC), "github-release", ReleaseChannelStable)
 	target := filepath.Join(t.TempDir(), "projmux")
 	if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	cmd.executable = func() (string, error) { return target, nil }
+	cmd.Executable = func() (string, error) { return target, nil }
 	archive := testReleaseArchive(t, "stable\n")
 	assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.14.2/projmux_0.14.2_linux_amd64.tar.gz"
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.String() {
 		case cmd.releaseListAPIURL():
 			t.Fatalf("default-channel apply asked the release list, which carries prereleases")
@@ -3032,7 +3033,7 @@ func TestDefaultChannelGitHubReleaseApplyNeverAsksTheReleaseList(t *testing.T) {
 			return nil, nil
 		}
 	})}
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error { return nil }
+	cmd.RunExternal = func(name string, args []string, stdout, stderr io.Writer) error { return nil }
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -3059,8 +3060,8 @@ func TestUpdateApplyDryRunNamesTheAuthorityItsChannelWillRead(t *testing.T) {
 	t.Run("github-release rc names the release list", func(t *testing.T) {
 		t.Parallel()
 
-		cmd, _ := updateCommandForChannel(t, now, "github-release", updateReleaseChannelRC)
-		cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		cmd, _ := updateCommandForChannel(t, now, "github-release", ReleaseChannelRC)
+		cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 			t.Fatalf("dry-run unexpectedly requested %s", req.URL.String())
 			return nil, nil
 		})}
@@ -3077,8 +3078,8 @@ func TestUpdateApplyDryRunNamesTheAuthorityItsChannelWillRead(t *testing.T) {
 	t.Run("npm rc names the dist-tag it resolved", func(t *testing.T) {
 		t.Parallel()
 
-		cmd, _ := updateCommandForChannel(t, now, "npm", updateReleaseChannelRC)
-		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{
+		cmd, _ := updateCommandForChannel(t, now, "npm", ReleaseChannelRC)
+		cmd.Client = updateChannelResponder(t, cmd, "", map[string]string{
 			"latest": "0.14.2",
 			"rc":     "0.15.0-rc.1",
 		}, nil)
@@ -3128,13 +3129,13 @@ func TestUpdateApplyVerifiesPrereleaseUpgradesByPrecedence(t *testing.T) {
 			t.Parallel()
 
 			cmd, cacheDir, _ := updateApplyVerificationCommand(t, "npm")
-			writeUpdateCacheFixture(t, cacheDir, updateCache{
+			writeUpdateCacheFixture(t, cacheDir, Cache{
 				Version:   1,
 				CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
-				Source:    updateSourceNPMRegistry,
+				Source:    SourceNPMRegistry,
 				TagName:   tc.expected,
 			})
-			cmd.probeVersion = stubUpdateVersionProbe(tc.before, tc.after)
+			cmd.ProbeVersion = stubUpdateVersionProbe(tc.before, tc.after)
 
 			var stdout bytes.Buffer
 			err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{})
@@ -3158,5 +3159,19 @@ func TestUpdateApplyVerifiesPrereleaseUpgradesByPrecedence(t *testing.T) {
 				t.Fatalf("stdout = %q, want no verified line", stdout.String())
 			}
 		})
+	}
+}
+
+// TestPostUpdateApplyArgsAlwaysReachTheNewBinary pins the install-path ordering:
+// replace, then migrate through the new binary, then apply.
+func TestPostUpdateApplyArgsAlwaysReachTheNewBinary(t *testing.T) {
+	t.Parallel()
+
+	if got := postUpdateApplyArgs(false); !slices.Equal(got, []string{"config", "apply"}) {
+		t.Fatalf("apply args = %v, want [config apply]", got)
+	}
+	// --no-apply must still reach the binary; it only suppresses the reload.
+	if got := postUpdateApplyArgs(true); !slices.Equal(got, []string{"config", "apply", "--no-reload"}) {
+		t.Fatalf("no-apply args = %v, want [config apply --no-reload]", got)
 	}
 }

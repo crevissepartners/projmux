@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -45,7 +46,7 @@ func (c *settingsCommand) aboutUpdatesSummary() string {
 	if c.update == nil {
 		return "status unavailable"
 	}
-	status, err := c.update.status()
+	status, err := c.update.Status()
 	if err != nil {
 		return "status unavailable"
 	}
@@ -63,9 +64,9 @@ func (c *settingsCommand) aboutUpdatesSummary() string {
 // first, then the two observable actions.
 func (c *settingsCommand) aboutUpdateEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
-	status, statusErr := updateStatus{}, errors.New("update status is not configured")
+	status, statusErr := updatecmd.Status{}, errors.New("update status is not configured")
 	if c.update != nil {
-		status, statusErr = c.update.status()
+		status, statusErr = c.update.Status()
 	}
 	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
 	entries = append(entries, intpickercompat.Entry{
@@ -105,7 +106,7 @@ func (c *settingsCommand) aboutUpdateEntries() []intpickercompat.Entry {
 	}
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.check", settingsGlyphAdd, settingsColorAdd, updateAvailabilityRefreshDescription(status.SourceName)),
+			Label: settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.check", settingsGlyphAdd, settingsColorAdd, updatecmd.AvailabilityRefreshDescription(status.SourceName)),
 			Value: settingsUpdateCheck,
 		},
 		intpickercompat.Entry{
@@ -131,10 +132,10 @@ func (c *settingsCommand) releaseChannelEntry(locale i18n.Locale) intpickercompa
 			SearchKey: "release channel rc prerelease stable opt-in",
 		}
 	}
-	if channel == updateReleaseChannelRC {
+	if channel == updatecmd.ReleaseChannelRC {
 		note := "rc - prereleases included"
 		if !stored {
-			note = "rc - " + updateReleaseChannelEnv + " override"
+			note = "rc - " + updatecmd.ReleaseChannelEnv + " override"
 		}
 		return intpickercompat.Entry{
 			Label:     settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.channel", settingsGlyphToggle, settingsColorAdd, note),

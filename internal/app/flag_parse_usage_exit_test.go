@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 )
 
@@ -38,30 +39,30 @@ func flagParseDiagnosticsRoute(name string, argv ...string) flagParseRoute {
 
 // flagParseUpdateCommand fails the test on any installer detection, network,
 // cache, or external command reach, proving the parse error returns first.
-func flagParseUpdateCommand(t *testing.T) *updateCommand {
+func flagParseUpdateCommand(t *testing.T) *updatecmd.Command {
 	t.Helper()
 	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
+	cmd.Getenv = func(name string) string {
 		t.Errorf("update reached getenv(%q) after a flag parse error", name)
 		return ""
 	}
-	cmd.executable = func() (string, error) {
+	cmd.Executable = func() (string, error) {
 		t.Error("update reached executable() after a flag parse error")
 		return "", errors.New("unexpected")
 	}
-	cmd.lookPath = func(name string) (string, error) {
+	cmd.LookPath = func(name string) (string, error) {
 		t.Errorf("update reached lookPath(%q) after a flag parse error", name)
 		return "", errors.New("unexpected")
 	}
-	cmd.cacheDir = func() (string, error) {
+	cmd.CacheDir = func() (string, error) {
 		t.Error("update reached cacheDir() after a flag parse error")
 		return "", errors.New("unexpected")
 	}
-	cmd.runExternal = func(name string, _ []string, _, _ io.Writer) error {
+	cmd.RunExternal = func(name string, _ []string, _, _ io.Writer) error {
 		t.Errorf("update ran external command %q after a flag parse error", name)
 		return errors.New("unexpected")
 	}
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		t.Errorf("update sent a request to %s after a flag parse error", req.URL)
 		return nil, errors.New("unexpected")
 	})}
