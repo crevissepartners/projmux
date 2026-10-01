@@ -55,13 +55,13 @@ func topLevelInternalDirs(t *testing.T, root string) []string {
 	return dirs
 }
 
-// repoMapPaths returns the backticked paths in the first column of the
-// AGENTS.md "## Repo map" table, with any trailing slash removed.
-func repoMapPaths(t *testing.T, agents string) []string {
+// sectionTablePaths returns the backticked paths in one column of every table
+// row in a doc's "## <heading>" section, with any trailing slash removed.
+func sectionTablePaths(t *testing.T, file, doc, heading string, column int) []string {
 	t.Helper()
-	_, section, found := strings.Cut(agents, "\n## Repo map\n")
+	_, section, found := strings.Cut(doc, "\n## "+heading+"\n")
 	if !found {
-		t.Fatal(`AGENTS.md has no "## Repo map" section`)
+		t.Fatalf("%s has no %q section", file, "## "+heading)
 	}
 	if next := strings.Index(section, "\n## "); next >= 0 {
 		section = section[:next]
@@ -69,17 +69,31 @@ func repoMapPaths(t *testing.T, agents string) []string {
 	var paths []string
 	for line := range strings.SplitSeq(section, "\n") {
 		cells := strings.Split(line, "|")
-		if len(cells) < 3 {
+		if len(cells) < column+2 {
 			continue
 		}
-		for _, match := range repoMapPathPattern.FindAllStringSubmatch(cells[1], -1) {
+		for _, match := range repoMapPathPattern.FindAllStringSubmatch(cells[column], -1) {
 			paths = append(paths, strings.TrimSuffix(match[1], "/"))
 		}
 	}
 	if len(paths) == 0 {
-		t.Fatal("AGENTS.md repo map table lists no paths")
+		t.Fatalf("%s %s table lists no paths", file, heading)
 	}
 	return paths
+}
+
+// repoMapPaths returns the backticked paths in the first column of the
+// AGENTS.md "## Repo map" table.
+func repoMapPaths(t *testing.T, agents string) []string {
+	t.Helper()
+	return sectionTablePaths(t, "AGENTS.md", agents, "Repo map", 1)
+}
+
+// layersPaths returns the backticked paths in the second column of the
+// docs/architecture.md "## Layers" table, the column after the layer name.
+func layersPaths(t *testing.T, architecture string) []string {
+	t.Helper()
+	return sectionTablePaths(t, "docs/architecture.md", architecture, "Layers", 2)
 }
 
 // layoutTreePaths returns every path in the first text block of the
@@ -129,8 +143,8 @@ func covers(listed []string, dir string) bool {
 }
 
 // extraMapPath is the optional map a derived tree keeps for top-level
-// directories it adds, so it never has to edit the two shared maps. Neither
-// map lists what it lists; the guard counts it toward both.
+// directories it adds, so it never has to edit the shared maps. No shared map
+// lists what it lists; the guard counts it toward every one.
 const extraMapPath = "docs/repo-layout.local.md"
 
 // extraMapPaths returns the backticked paths in the first column of every
@@ -157,32 +171,42 @@ func extraMapPaths(t *testing.T, root string) []string {
 	return paths
 }
 
+// layersEntrypoint is the binary package the architecture layer map places
+// above internal/app; the other maps list it too, but only the layer map must.
+const layersEntrypoint = "cmd/projmux"
+
 // repoMapProblems returns one message per map that misses a top-level
-// internal/ directory or lists a path that does not exist under root.
+// internal/ directory, or the layer map's entrypoint, or lists a path that
+// does not exist under root.
 func repoMapProblems(t *testing.T, root string) []string {
 	t.Helper()
 	dirs := topLevelInternalDirs(t, root)
 	extra := extraMapPaths(t, root)
-	maps := []struct {
+	type repoMap struct {
 		file  string
 		paths []string
-	}{
-		{"AGENTS.md", repoMapPaths(t, readRepoFile(t, root, "AGENTS.md"))},
-		{"docs/repo-layout.md", layoutTreePaths(t, readRepoFile(t, root, "docs/repo-layout.md"))},
+		also  []string // required beyond the top-level internal/ directories
+	}
+	maps := []repoMap{
+		{file: "AGENTS.md", paths: repoMapPaths(t, readRepoFile(t, root, "AGENTS.md"))},
+		{file: "docs/repo-layout.md", paths: layoutTreePaths(t, readRepoFile(t, root, "docs/repo-layout.md"))},
+		{file: "docs/architecture.md", paths: layersPaths(t, readRepoFile(t, root, "docs/architecture.md")), also: []string{layersEntrypoint}},
 	}
 	if extra != nil {
-		maps = append(maps, struct {
-			file  string
-			paths []string
-		}{extraMapPath, extra})
+		maps = append(maps, repoMap{file: extraMapPath, paths: extra})
 	}
 	var problems []string
 	for _, m := range maps {
-		var missing, absent []string
+		var missing, unplaced, absent []string
 		if m.file != extraMapPath {
 			for _, dir := range dirs {
 				if !covers(m.paths, dir) && !covers(extra, dir) {
 					missing = append(missing, dir)
+				}
+			}
+			for _, path := range m.also {
+				if !slices.Contains(m.paths, path) {
+					unplaced = append(unplaced, path)
 				}
 			}
 		}
@@ -194,6 +218,9 @@ func repoMapProblems(t *testing.T, root string) []string {
 		if len(missing) > 0 {
 			problems = append(problems, m.file+" does not list these top-level internal/ directories; add each one: "+strings.Join(missing, ", "))
 		}
+		if len(unplaced) > 0 {
+			problems = append(problems, m.file+" does not list these required paths; add each one: "+strings.Join(unplaced, ", "))
+		}
 		if len(absent) > 0 {
 			problems = append(problems, m.file+" lists paths that do not exist; remove or correct them: "+strings.Join(absent, ", "))
 		}
@@ -201,9 +228,10 @@ func repoMapProblems(t *testing.T, root string) []string {
 	return problems
 }
 
-// TestRepoMapsListEveryTopLevelInternalDirectory holds the AGENTS.md repo map
-// and the docs/repo-layout.md tree to the tree on disk: each must name every
-// top-level internal/ directory, directly or through the optional extra map,
+// TestRepoMapsListEveryTopLevelInternalDirectory holds the AGENTS.md repo map,
+// the docs/repo-layout.md tree, and the docs/architecture.md layer table to the
+// tree on disk: each must name every top-level internal/ directory, directly or
+// through the optional extra map, the layer table must also place cmd/projmux,
 // and every path any of them lists must exist.
 func TestRepoMapsListEveryTopLevelInternalDirectory(t *testing.T) {
 	t.Parallel()
@@ -214,17 +242,19 @@ func TestRepoMapsListEveryTopLevelInternalDirectory(t *testing.T) {
 
 // TestRepoMapsCountTheOptionalExtraMap runs the guard over a small fixture
 // tree: without the extra map nothing changes, a directory the extra map lists
-// needs no row in the shared maps, and a path it lists must exist.
+// needs no row in the shared maps, a path it lists must exist, and the layer
+// table must place the entrypoint and name only existing paths.
 func TestRepoMapsCountTheOptionalExtraMap(t *testing.T) {
 	t.Parallel()
 	const (
 		agents = "# Agent Guide\n\n## Repo map\n| Path | Purpose |\n| --- | --- |\n| `internal/app` | App. |\n\n## Workflow\n"
 		layout = "# Repository Layout\n\n## Current layout\n\n```text\nprojmux/\n  internal/\n    app/\n```\n"
+		layers = "# Architecture\n\n## Layers\n\n| Layer | Path | Responsibility |\n| --- | --- | --- |\n| Entry | `cmd/projmux` | Entry. |\n| Application | `internal/app` | App. |\n\n## Non-goals\n"
 	)
-	fixture := func(t *testing.T, extraDir, extraMap string) string {
+	fixture := func(t *testing.T, extraDir, extraMap, architecture string) string {
 		t.Helper()
 		root := t.TempDir()
-		for _, dir := range []string{"docs", "internal/app", extraDir} {
+		for _, dir := range []string{"cmd/projmux", "docs", "internal/app", extraDir} {
 			if dir == "" {
 				continue
 			}
@@ -232,7 +262,10 @@ func TestRepoMapsCountTheOptionalExtraMap(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		files := map[string]string{"AGENTS.md": agents, "docs/repo-layout.md": layout}
+		if architecture == "" {
+			architecture = layers
+		}
+		files := map[string]string{"AGENTS.md": agents, "docs/repo-layout.md": layout, "docs/architecture.md": architecture}
 		if extraMap != "" {
 			files[extraMapPath] = extraMap
 		}
@@ -244,10 +277,11 @@ func TestRepoMapsCountTheOptionalExtraMap(t *testing.T) {
 		return root
 	}
 	cases := []struct {
-		name     string
-		extraDir string
-		extraMap string
-		want     []string
+		name         string
+		extraDir     string
+		extraMap     string
+		architecture string
+		want         []string
 	}{
 		{name: "no extra map, shared maps complete"},
 		{
@@ -256,6 +290,7 @@ func TestRepoMapsCountTheOptionalExtraMap(t *testing.T) {
 			want: []string{
 				"AGENTS.md does not list these top-level internal/ directories; add each one: internal/extra",
 				"docs/repo-layout.md does not list these top-level internal/ directories; add each one: internal/extra",
+				"docs/architecture.md does not list these top-level internal/ directories; add each one: internal/extra",
 			},
 		},
 		{
@@ -268,11 +303,21 @@ func TestRepoMapsCountTheOptionalExtraMap(t *testing.T) {
 			extraMap: "| Path | Purpose |\n| --- | --- |\n| `internal/gone` | Gone. |\n",
 			want:     []string{extraMapPath + " lists paths that do not exist; remove or correct them: internal/gone"},
 		},
+		{
+			name:         "layer table without the entrypoint",
+			architecture: strings.Replace(layers, "| Entry | `cmd/projmux` | Entry. |\n", "", 1),
+			want:         []string{"docs/architecture.md does not list these required paths; add each one: cmd/projmux"},
+		},
+		{
+			name:         "layer table names a missing path",
+			architecture: strings.Replace(layers, "`internal/app` | App. |", "`internal/app` | App. |\n| Core | `internal/gone` | Gone. |", 1),
+			want:         []string{"docs/architecture.md lists paths that do not exist; remove or correct them: internal/gone"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := repoMapProblems(t, fixture(t, tc.extraDir, tc.extraMap))
+			got := repoMapProblems(t, fixture(t, tc.extraDir, tc.extraMap, tc.architecture))
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("problems = %q, want %q", got, tc.want)
 			}

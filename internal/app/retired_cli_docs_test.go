@@ -28,35 +28,43 @@ func TestMaintainedDocsDoNotAdvertiseRetiredCLI(t *testing.T) {
 	retiredTemplate := regexp.MustCompile(`(?:<projmux>|#\{q:projmux\})[\x22\x27} ]+(?:key-broker|popup-wait-key|preview|session-popup|status|statusbar|tmux)(?:[ \t]|$)`)
 	legacyProducer := regexp.MustCompile(`(?:^|[^[:alnum:]_-])ai ingest (?:codex-hook|claude-hook|antigravity-hook|bell)(?:[ \t]|[\x60]|$)`)
 
-	entries, err := os.ReadDir(docsRoot)
-	if err != nil {
-		t.Fatalf("read docs: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(docsRoot, entry.Name()))
+	// Design notes moved out of architecture.md into docs/design/ stay
+	// maintained documentation, so the guard reads that directory too.
+	var names []string
+	for _, dir := range []string{"", "design"} {
+		entries, err := os.ReadDir(filepath.Join(docsRoot, dir))
 		if err != nil {
-			t.Fatalf("read %s: %v", entry.Name(), err)
+			t.Fatalf("read docs/%s: %v", dir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+				continue
+			}
+			names = append(names, filepath.ToSlash(filepath.Join(dir, entry.Name())))
+		}
+	}
+	for _, name := range names {
+		raw, err := os.ReadFile(filepath.Join(docsRoot, filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
 		}
 		text := string(raw)
-		if entry.Name() != "legacy-cli-retirement.md" && entry.Name() != "upgrading.md" {
+		if name != "legacy-cli-retirement.md" && name != "upgrading.md" {
 			if match := legacyProducer.FindString(text); match != "" {
-				t.Errorf("%s repeats the exact legacy producer spelling %q outside the retirement ledger", entry.Name(), strings.TrimSpace(match))
+				t.Errorf("%s repeats the exact legacy producer spelling %q outside the retirement ledger", name, strings.TrimSpace(match))
 			}
 		}
-		if marker, ok := allowed[entry.Name()]; ok {
+		if marker, ok := allowed[name]; ok {
 			if !strings.Contains(text, marker) {
-				t.Errorf("%s lost required retirement/historical marker %q", entry.Name(), marker)
+				t.Errorf("%s lost required retirement/historical marker %q", name, marker)
 			}
 			continue
 		}
 		if match := retiredCommand.FindString(text); match != "" {
-			t.Errorf("%s advertises retired executable argv %q", entry.Name(), strings.TrimSpace(match))
+			t.Errorf("%s advertises retired executable argv %q", name, strings.TrimSpace(match))
 		}
 		if match := retiredTemplate.FindString(text); match != "" {
-			t.Errorf("%s advertises retired generated argv %q", entry.Name(), strings.TrimSpace(match))
+			t.Errorf("%s advertises retired generated argv %q", name, strings.TrimSpace(match))
 		}
 	}
 }

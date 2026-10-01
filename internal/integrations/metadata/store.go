@@ -8,7 +8,7 @@
 // Registry file: <StateDir>/projmux/metadata/registry.json, written 0600 below
 // a 0700 directory. Field spelling follows the resource-model contract
 // (camelCase) rather than the snake_case used by the older projmux state
-// files; see docs/architecture.md.
+// files; see docs/design/resource-metadata-model.md.
 //
 // The registry is the source of truth for managed identity and desired
 // topology, so the file format is a durable envelope rather than a bare JSON

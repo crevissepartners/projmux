@@ -821,8 +821,8 @@ func (a AgentActivation) IsZero() bool {
 // hard downgrade break bought for nothing.
 //
 // One conversation may be pointed at by more than one Agent. That is NOT
-// prevented, and the registry treats it as legal state; see the "Resource
-// metadata model" section of docs/architecture.md for the reasoning.
+// prevented, and the registry treats it as legal state; see
+// docs/design/resource-metadata-model.md for the reasoning.
 type AgentStatus struct {
 	Phase       AgentPhase       `json:"phase"`
 	PaneRef     string           `json:"paneRef,omitempty"`
