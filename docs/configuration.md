@@ -457,6 +457,18 @@ in-flight process decision, then retries proxy initialization with a bounded
 backoff. Projmux never automatically stops, kills, restarts, adopts, or enables
 remote control on the shared app server.
 
+The start command does not pass on the caller's tmux identity: `TMUX`,
+`TMUX_PANE`, and Projmux's private Pane anchor are removed from its
+environment. The daemon is shared by every Codex Agent and outlives the command
+that started it, and a Codex Agent's shell commands run as its children, not
+inside the Agent's Pane. Those commands therefore run outside tmux:
+selectorless Pane or Agent commands resolve no current Pane, `agent message
+send` needs `--source uid:<agent>`, and a runtime change such as `delete pane`
+needs `--socket` like any other caller outside tmux. A daemon that is already
+running keeps the environment it was started with until it is restarted with
+`codex app-server daemon restart`; until then its shell commands may still see
+the Pane of whoever started it, so name the target explicitly.
+
 The `Codex` row in the provider picker launches immediately through the
 canonical create route. It does not start or probe the app-server, call
 `model/list`, or add `--model` or `model_reasoning_effort`; the Codex process

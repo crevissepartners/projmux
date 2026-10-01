@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -671,6 +672,67 @@ func TestRunDaemonStartReturnsWhenDaemonKeepsOutputPipesOpen(t *testing.T) {
 			}
 			if elapsed >= tc.maxElapsed {
 				t.Fatalf("runDaemonStart took %s, want < %s", elapsed, tc.maxElapsed)
+			}
+		})
+	}
+}
+
+// The shared daemon and every Codex shell command it runs must not inherit the
+// Pane identity of whoever started it. The start command here is a shell that
+// records its environment: a test-binary helper would not do, because its own
+// TestMain live guard unsets the very variables under test.
+func TestRunDaemonStartWithholdsCallerPaneIdentity(t *testing.T) {
+	callerIdentity := []string{
+		"TMUX=/tmp/tmux-1000/projmux,4242,0",
+		"TMUX_PANE=%7",
+		"__PROJMUX_RUNTIME_ANCHOR_PANE=%7",
+	}
+	kept := []string{"CODEX_HOME=/codex-home", "TMUX_TMPDIR=/tmux-tmpdir", "PROJMUX_KEEP=1"}
+	tests := []struct {
+		name string
+		// fromProcess leaves the command's Env nil so the start inherits the
+		// process environment, which is how production builds the command.
+		fromProcess bool
+	}{
+		{name: "command environment"},
+		{name: "process environment", fromProcess: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			envFile := filepath.Join(t.TempDir(), "env")
+			if tc.fromProcess {
+				for _, entry := range slices.Concat(callerIdentity, kept) {
+					key, value, _ := strings.Cut(entry, "=")
+					t.Setenv(key, value)
+				}
+			}
+			got := runDaemonStart(context.Background(), 5*time.Second,
+				func(string) (string, error) { return "codex", nil },
+				func(commandCtx context.Context, _ string, _ ...string) *exec.Cmd {
+					cmd := exec.CommandContext(commandCtx, "/bin/sh", "-c", `env > "$1"`, "sh", envFile)
+					if !tc.fromProcess {
+						cmd.Env = slices.Concat(os.Environ(), callerIdentity, kept)
+					}
+					return cmd
+				})
+			if got != startSucceeded {
+				t.Fatalf("start result = %d, want %d", got, startSucceeded)
+			}
+			data, err := os.ReadFile(envFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			env := strings.Split(strings.TrimSpace(string(data)), "\n")
+			for _, entry := range env {
+				key, _, _ := strings.Cut(entry, "=")
+				if key == "TMUX" || key == "TMUX_PANE" || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" {
+					t.Errorf("daemon start environment kept caller identity %q", entry)
+				}
+			}
+			for _, want := range kept {
+				if !slices.Contains(env, want) {
+					t.Errorf("daemon start environment dropped %q", want)
+				}
 			}
 		})
 	}
