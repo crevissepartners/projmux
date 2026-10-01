@@ -235,6 +235,8 @@ A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. C
 
 Codex keeps the developer instructions its thread started with; resume cannot replace them.
 
+A native Codex resume applies the model and effort it launches with, and the Profile sandbox and approval, to its thread's later turns, the ones the TUI starts included.
+
 --model and --effort are recorded on the Agent with the source resume (projmux.io/model-source, projmux.io/effort-source).
 
 Items the Agent does not override take its profile's current instructions, model, and effort; the model is passed only when it changed.
@@ -266,7 +268,7 @@ The model and effort are recorded on the Agent (projmux.io/model, projmux.io/eff
 
 --profile switches the Agent's profile (none: no profile) and clears every override but the ones given with it; naming the profile it has keeps its overrides. --instructions overrides the instructions (none: no instructions), and --reset removes the overrides of instructions, model, or effort (all: every one) so they follow the profile again. It is all one restart.
 
-A Codex Agent refuses a change of its instructions (codex-instructions-immutable) and a profile switch that would keep the old sandbox or approval (relaunch-codex-permissions-kept).
+A Codex Agent applies the new model, effort, sandbox, and approval to its thread's later turns. It refuses a change of its instructions (codex-instructions-immutable), a profile switch that would keep the old sandbox or approval (relaunch-codex-permissions-kept), and, while Running, a restart whose Codex app server does not take thread/settings/update (relaunch-codex-settings-unsupported).
 
 Without flags it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
 

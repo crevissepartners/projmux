@@ -1252,7 +1252,7 @@ func (c *createCommand) openIntentAgent(
 		}
 	} else if plan.nativeCatalogResume {
 		nativeCtx, cancel := prepareNativeContext(ctx)
-		prepared, nativeErr := c.codexNative.Resume(nativeCtx, plan.nativeRoute, workspace, flags.resumeConversation, nativePolicy)
+		prepared, nativeErr := c.codexNative.Resume(nativeCtx, plan.nativeRoute, workspace, flags.resumeConversation, codexappserver.ThreadSettings{Policy: nativePolicy})
 		cancel()
 		switch {
 		case nativeErr == nil:

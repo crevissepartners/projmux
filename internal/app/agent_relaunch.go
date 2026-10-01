@@ -214,8 +214,13 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		}
 		return writeAgentRelaunchResult(stdout, request, result)
 	}
+	var beforeStop func() error
+	if running && provider == aiModeCodex {
+		beforeStop = func() error { return c.refuseCodexSettingsUnsupported(restart) }
+	}
 	newPane, err := c.run(restart, agentRestartSteps{
 		yes: request.yes, socket: request.socket, json: request.json,
+		beforeStop: beforeStop,
 		stopFailed: func(err error, liveness personaPaneLiveness, observeErr error) error {
 			// Nothing was written before the stop, so there is nothing to
 			// restore either way.
@@ -237,6 +242,13 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		resume: request.settings(),
 		resumeFailed: func(err error) error {
 			fmt.Fprintf(stderr, "projmux: agent/%s did not resume with %s: %v\n", target.Metadata.Name, describeRelaunchTarget(result), err)
+			if codexThreadSettingsNotApplied(err) {
+				// The same settings would fail the same way, so the recovery
+				// is a resume with the previous ones.
+				fmt.Fprintf(stderr, "projmux: recover with: %s\n", personaRecoveryCommand(registry, target))
+				return fmt.Errorf("%s: agent/%s is %s with its previous settings because its Codex thread did not take the new ones, and needs `agent resume`: %w",
+					spelling, target.Metadata.Name, coremetadata.PhaseOffline, err)
+			}
 			fmt.Fprintf(stderr, "projmux: recover with: %s\n", relaunchRecoveryCommand(registry, target, request))
 			if request.changesLayers() {
 				return fmt.Errorf("%s: agent/%s is %s with its previous settings and needs `agent relaunch`: %w",

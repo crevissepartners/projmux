@@ -26,10 +26,15 @@ type codexNativeThreadController interface {
 	CatalogRoutes(context.Context) ([]codexNativeEndpointRoute, error)
 	Resolve(context.Context, coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error)
 	Create(context.Context, codexNativeEndpointRoute, codexNativeCreateInput) (codexappserver.ThreadBinding, error)
-	// Resume loads one stored thread with the thread policy the Agent's
-	// profile holds now. A zero policy sends the request every resume sent
-	// before a profile could carry one.
-	Resume(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error)
+	// Resume loads one stored thread and makes its later turns run with the
+	// launch's settings: the model and effort the launch argv carries and the
+	// thread policy the Agent's profile holds now. Zero settings send the
+	// request every resume sent before a profile could carry a policy.
+	Resume(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error)
+	// ProbeThreadSettings sends one thread/settings/update that changes
+	// nothing, so a restart learns whether the endpoint can change the
+	// thread's settings before it stops anything.
+	ProbeThreadSettings(context.Context, codexNativeEndpointRoute, string) error
 	CanFallback(error) bool
 }
 
@@ -452,7 +457,7 @@ func (controller defaultCodexNativeThreadController) openRoute(ctx context.Conte
 	return openCodexNativeRoute(ctx, route, experimental)
 }
 
-func (defaultCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string, policy codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error) {
+func (defaultCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string, settings codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error) {
 	if !route.valid() {
 		return codexappserver.ThreadBinding{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
@@ -461,7 +466,19 @@ func (defaultCodexNativeThreadController) Resume(ctx context.Context, route code
 		return codexappserver.ThreadBinding{}, err
 	}
 	defer client.Close()
-	return client.ResumeThread(ctx, threadID, workspace.CWD, workspace.AdditionalWritableRoots, policy)
+	return client.ResumeThreadWithSettings(ctx, threadID, workspace.CWD, workspace.AdditionalWritableRoots, settings)
+}
+
+func (defaultCodexNativeThreadController) ProbeThreadSettings(ctx context.Context, route codexNativeEndpointRoute, threadID string) error {
+	if !route.valid() {
+		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	client, err := openCodexNativeRoute(ctx, route, true)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return client.UpdateThreadSettings(ctx, threadID, codexappserver.ThreadSettings{})
 }
 
 func openCodexNativeRoute(ctx context.Context, route codexNativeEndpointRoute, experimental bool) (*codexappserver.Client, error) {
@@ -632,7 +649,7 @@ func nativeLaunchError(spelling string, err error) error {
 	// Provider identity is already indeterminate here, so this refusal must not
 	// offer any second lane -- `--interactive-only` included. Starting another
 	// Codex process now could submit the same prompt twice.
-	return errors.New(spelling + ": native Codex thread preparation failed after provider identity became indeterminate; refusing a second CLI lane: " + err.Error())
+	return fmt.Errorf("%s: native Codex thread preparation failed after provider identity became indeterminate; refusing a second CLI lane: %w", spelling, err)
 }
 
 // interactiveOnlyFlag is the one public spelling that asks for a plain-CLI

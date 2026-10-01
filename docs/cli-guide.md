@@ -2009,7 +2009,11 @@ as `projmux.io/model`; the provider's conversation keeps the model on later
 resumes, which do not pass it again. `--effort` is recorded as
 `projmux.io/effort`, so later plain resumes pass it again. Both are recorded in
 the resume's own transaction, so a resume that fails rolls back and records
-neither. A resume without `--model` leaves a recorded model as it was. Both flags take create's values and refusals: any
+neither. A resume without `--model` leaves a recorded model as it was. On a
+Codex Agent the native resume also applies the model and effort it launches
+with to the thread, together with the profile's sandbox and approval, so the
+thread's next turns -- started by projmux or typed in the TUI -- run with them
+(see `agent relaunch` below). Both flags take create's values and refusals: any
 other provider, an invalid model or effort, and `--dialogue-reply-only` are
 refused before anything changes (`nothing was changed`).
 
@@ -2077,7 +2081,16 @@ holds it, and silently when it is too long to be a name. A name given with
 `projmux.io/model`, `projmux.io/effort`, the instructions, and their sources --
 so a failed launch records none of them; later plain resumes pass the effort
 again but not the model. Nothing is written before the stop. On a Codex Agent the model and effort ride the
-native resume as `-m <model>` and `-c model_reasoning_effort=<level>`.
+native resume as `-m <model>` and `-c model_reasoning_effort=<level>`, and the
+native resume applies them, with the profile's sandbox and approval, to the
+thread itself: the TUI flags alone change nothing, because the shared Codex
+app server keeps the thread loaded and the thread keeps the settings it runs
+with on `thread/resume`. When the thread's answer differs from what the launch
+runs with, the resume sends the experimental `thread/settings/update` request
+on the same connection and reads the thread again, so its next turns --
+started by projmux or typed in the TUI -- run with the new model, effort,
+sandbox, and approval. A thread that still reports others fails the resume,
+which rolls back.
 
 The refusals all happen before any Registry, tmux, or Pane change, ending with
 `nothing was changed`: a provider other than Claude or Codex
@@ -2104,7 +2117,12 @@ would leave the thread on the old profile's sandbox or approval, because the
 new profile sets none where the old one set one or cannot be read
 (`relaunch-codex-permissions-kept`: a Codex resume can set a sandbox or an
 approval but not remove one). A Codex switch to a profile with the same
-instructions and both permissions, and any model or effort, is allowed.
+instructions and both permissions, and any model or effort, is allowed, and
+the new sandbox and approval apply to the thread. Before it stops a Running
+Codex Agent, the relaunch sends its thread a `thread/settings/update` that
+changes nothing, and refuses when the Codex app server does not take it
+(`relaunch-codex-settings-unsupported`): the resume after the stop could not
+apply the new settings.
 Outside tmux the stop needs `--socket <name>` or `--socket-path <absolute>`,
 exactly as `delete pane` does. A Running Agent without `--model` whose
 settings, `--effort` included, resolve to exactly what it was launched with,
@@ -2153,6 +2171,10 @@ uid:<window> --model <model> --effort <level>` command, with the flags that
 were given, that finishes the job; after `--profile`, `--instructions`, or
 `--reset`, which `agent resume` cannot carry, it prints the same
 `projmux agent relaunch` command instead, which only resumes the Offline Agent.
+When the resume failed because a Codex thread did not take the new settings,
+the same flags would fail the same way, so it prints a plain
+`projmux agent resume uid:<agent> --project uid:<project> --window
+uid:<window>`, which resumes the Agent with its previous settings.
 
 A Claude conversation opened from the resume picker creates a new Agent, and
 when Agents in the Registry already record that conversation (in any Project or

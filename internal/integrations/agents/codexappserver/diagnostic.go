@@ -23,7 +23,7 @@ func safeDiagnosticMethod(method string) string {
 	switch method {
 	case methodInitialize, methodInitialized, methodModelList, methodReviewStart,
 		methodThreadList, methodThreadLoadedList, methodThreadRead, methodThreadStart,
-		methodThreadResume, methodTurnStart, methodTurnSteer, methodTurnInterrupt,
+		methodThreadResume, methodThreadSettingsUpdate, methodTurnStart, methodTurnSteer, methodTurnInterrupt,
 		methodRemoteControlStatusRead:
 		return method
 	default:

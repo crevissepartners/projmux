@@ -39,6 +39,8 @@ type fakeNativeThreadController struct {
 	resolveContinue chan struct{}
 	currentCalls    int
 	resolveCalls    int
+	probeErr        error
+	probes          []string
 }
 
 type fakeNativeCreate struct {
@@ -57,6 +59,8 @@ type fakeNativeResume struct {
 	workspace coremetadata.AgentWorkspace
 	threadID  string
 	policy    codexappserver.ThreadPolicy
+	model     string
+	effort    string
 }
 
 type orderedNativeThreadClient struct {
@@ -139,9 +143,16 @@ func (f *fakeNativeThreadController) Create(_ context.Context, route codexNative
 	return binding, f.createErr
 }
 
-func (f *fakeNativeThreadController) Resume(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string, policy codexappserver.ThreadPolicy) (codexappserver.ThreadBinding, error) {
-	f.resumes = append(f.resumes, fakeNativeResume{route: route, workspace: workspace, threadID: threadID, policy: policy})
+func (f *fakeNativeThreadController) Resume(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string, settings codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error) {
+	f.resumes = append(f.resumes, fakeNativeResume{
+		route: route, workspace: workspace, threadID: threadID, policy: settings.Policy, model: settings.Model, effort: settings.Effort,
+	})
 	return f.resumeBinding, f.resumeErr
+}
+
+func (f *fakeNativeThreadController) ProbeThreadSettings(_ context.Context, _ codexNativeEndpointRoute, threadID string) error {
+	f.probes = append(f.probes, threadID)
+	return f.probeErr
 }
 
 func (f *fakeNativeThreadController) CanFallback(error) bool { return f.fallback }
