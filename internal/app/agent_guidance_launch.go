@@ -47,8 +47,8 @@ var _ codexAgentGuidancePlanner = (*aiCommand)(nil)
 // Claude launch passes: guidance, then the persona, then the Project's label
 // link rules, each part present only when the launch has it and the parts
 // joined by projectlinks.CompositeSeparator. A Codex fresh create sends it
-// the same way, ahead of the persona, as the thread's developer instructions
-// (developerInstructions).
+// the same way, ahead of the persona and the rules, as the thread's developer
+// instructions (developerInstructions).
 type agentGuidanceLaunch struct {
 	active bool
 	store  agentguidance.Store
@@ -146,8 +146,9 @@ func (l agentGuidanceLaunch) withCreateFile(base string) agentGuidanceLaunch {
 }
 
 // developerInstructions are the developer instructions a Codex fresh create
-// starts its thread with, given persona, the persona content ("" for none):
-// the guidance, then projectlinks.CompositeSeparator and persona, each part
+// starts its thread with, given persona, what it would send without guidance
+// (the persona content and the Project's label link rules, "" for none): the
+// guidance, then projectlinks.CompositeSeparator and persona, each part
 // present only when the create has it. Without guidance it is persona itself,
 // so a create with the guidance off sends exactly what it sent before.
 func (l agentGuidanceLaunch) developerInstructions(persona string) string {

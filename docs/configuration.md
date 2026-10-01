@@ -1568,8 +1568,8 @@ named URLs, the Project variables with their current values, and each rule
 with an example link resolved for that Project, as text appended with
 `--append-system-prompt-file`. The Project is the one that owns
 the Agent's Window in the Registry, never the one its working directory is
-under. Only Claude Agents get the rules; Codex Agents and the Claude
-reply-only lane do not.
+under. A Codex Agent gets them only on a fresh create with a prompt (see
+below); the Claude reply-only lane does not get them.
 
 - Create passes the rules and records their digest on the Agent
   (`projmux.io/project-link-rules-digest`). With instructions too, Claude is
@@ -1587,6 +1587,17 @@ reply-only lane do not.
   Rules equal to the recorded digest change nothing.
 - A rule file that cannot be read does not stop the Agent: it starts without
   the rules, one `project-link-rules-unavailable` line on stderr says so, and
+  its recorded digest is left as it was.
+- A Codex Agent receives the rules on a fresh create that starts its own
+  thread (a create with a prompt): they go to that thread as the last part of
+  its developer instructions, after the agent guidance and the instructions,
+  each present only when the Agent has it and separated by the same `---`
+  line, and the Agent records the digest. A rule file that cannot be read
+  does not stop that create either: one `project-link-rules-unavailable` line
+  says so and nothing is recorded. A Codex create without a prompt or with
+  `--interactive-only`, a Codex resume and a Codex relaunch never send or
+  record the rules. A thread keeps the developer instructions it was started
+  with, so a rules change never reaches a running or resumed Codex Agent, and
   its recorded digest is left as it was.
 
 The rendered rules and the instructions-and-rules files are content-addressed
@@ -1635,13 +1646,13 @@ the file. The file is at most 64 KiB.
   `agent-guidance-unavailable` line on stderr says so, and nothing is
   recorded.
 - A Codex Agent receives the guidance on a fresh create that starts its own
-  thread (a create with a prompt): the guidance and the instructions go to that
-  thread as its developer instructions, in that order, each present only when
-  the Agent has it and separated by the same `---` line, and the Agent records
-  the guidance digest. A Codex resume, and a Codex create without a prompt or
-  with `--interactive-only`, do not receive it. A thread keeps the developer
-  instructions it was started with, so a changed guidance reaches a Codex
-  Agent only through a new create.
+  thread (a create with a prompt): the guidance, the instructions and the
+  Project's label link rules go to that thread as its developer instructions,
+  in that order, each present only when the Agent has it and separated by the
+  same `---` line, and the Agent records the guidance digest. A Codex resume,
+  and a Codex create without a prompt or with `--interactive-only`, do not
+  receive it. A thread keeps the developer instructions it was started with,
+  so a changed guidance reaches a Codex Agent only through a new create.
 - The Claude reply-only lane does not receive the guidance.
 
 The guidance and the files composed from it are content-addressed below the
