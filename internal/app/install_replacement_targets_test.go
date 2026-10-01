@@ -186,7 +186,7 @@ func TestInstallReplacementTargetOriginUnknownKeepsTheRestOfTheLine(t *testing.T
 // neither the terminal line nor the persisted record carries it.
 func TestInstallReplacementTargetEnvironKeepsOnlyHomeAndStateHome(t *testing.T) {
 	t.Parallel()
-	const secret = "ghp_installReplacementFakeToken0123456789"
+	const secret = "environ-sentinel-must-not-leak"
 	block := "PATH=/usr/bin\x00GH_TOKEN=" + secret + "\x00HOME=/tmp/probe\x00XDG_STATE_HOME=/tmp/probe/state\x00LANG=C"
 	env, err := scanInstallReplacementEnviron(strings.NewReader(block))
 	if err != nil {
