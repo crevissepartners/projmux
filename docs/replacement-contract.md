@@ -169,6 +169,18 @@ reading was live or from the ledger. A `residual.role.*` key is emitted only
 for a role that has at least one residual process, so the row states what an
 install did not replace and never carries a zero.
 
+The `residual.domain.*` keys split the same residual processes by whose they
+are: `this` when a process serves the state domain the diagnosis reads,
+`other` when it serves another one (an isolated probe started from the same
+binary under another `HOME`, say), and `unknown` when its domain could not be
+read. The domain is resolved the way the install failure line resolves it: an
+explicit `--state-domain` on the process argv first, else its `HOME` and
+`XDG_STATE_HOME`. Only the verdict is kept. The paths stay on the install
+failure line, and this row carries counters only. Like a role key, a domain
+key with no process is omitted, and the three sum to `processes.residual`. The
+split is evidence only: a residual process of another domain still counts
+toward the row's reason and both axes.
+
 **Where the discriminant is published, and why.** The signals are serialized in
 `--json`, unlike `doctorFinding.Details`, which is `json:"-"` in every format.
 That difference is deliberate and rests on one fact: a stored Registry refusal
@@ -598,6 +610,9 @@ reconstruction.
 | `residual.role.usage-watcher` | `L2` | counter |
 | `residual.role.other` | `L2` | counter |
 | `residual.oldest-seconds` | `L2` | counter |
+| `residual.domain.this` | `L2` | counter |
+| `residual.domain.other` | `L2` | counter |
+| `residual.domain.unknown` | `L2` | counter |
 | `ledger.records` | `L2` | counter |
 | `ledger.latest.installer` | `L2` | install path token, or `unclassified` |
 | `ledger.latest.observed` | `L2` | counter |
