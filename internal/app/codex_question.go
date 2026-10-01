@@ -27,6 +27,11 @@ type codexQuestionChannel struct {
 	window       func() time.Duration
 	newID        func() (string, error)
 	poll         time.Duration
+	// clientPoll is how often the popup looks for a client; zero is
+	// claudeQuestionClientPoll. now times how long each popup stayed open;
+	// nil is the wall clock.
+	clientPoll time.Duration
+	now        func() time.Time
 	// beforeCanceledClose, when set, runs on a waiter whose context ended,
 	// just before its store write. Tests use it to hold that write.
 	beforeCanceledClose func()
@@ -174,6 +179,16 @@ func codexQuestionWaitingFor(record agentquestion.Record, identity codexLifecycl
 	return record.Provider == "codex" && record.State == agentquestion.StateWaiting && record.AgentUID == identity.AgentUID && record.PaneUID == identity.PaneUID && record.SessionID == identity.ThreadID && record.Generation == identity.Generation && record.RuntimeID == identity.RuntimeID
 }
 
+// waitAndAnswer waits for the record to be answered and sends that answer to
+// Codex through responder. Its popup follows the Claude question hook's rules:
+// one popup at a time on the client the operator used last, and a popup tmux
+// never drew is tried again on the next look. The picker's Esc and its errors
+// close the record themselves. A popup that did show and ends while the record
+// still waits, because its client detached, it failed to open, or its picker
+// crashed, leaves the question held, and the next look opens it again. Only
+// claudeQuestionPopupFailLimit popups in a row that each ended within
+// claudeQuestionPopupFailWithin of opening close the record as popup-failed,
+// and then no popup opens again.
 func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentquestion.Store, record agentquestion.Record, rawID json.RawMessage, responder codexQuestionResponder, questionPopup claudeQuestionPopup, paneID string, asker claudeQuestionAsker) {
 	poll := c.poll
 	if poll <= 0 {
@@ -183,7 +198,8 @@ func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentqu
 	defer ticker.Stop()
 	deadline := time.NewTimer(time.Until(record.Deadline))
 	defer deadline.Stop()
-	popup := newClaudeQuestionPopupDriver(questionPopup, claudeQuestionClientPoll, paneID, asker, store, record)
+	popup := newClaudeQuestionPopupDriver(questionPopup, c.clientPoll, paneID, asker, store, record)
+	popup.now = c.now
 	answered := false
 	defer func() { popup.stop(answered) }()
 	popup.maybeOpen(ctx)
@@ -207,7 +223,14 @@ func (c *codexQuestionChannel) waitAndAnswer(ctx context.Context, store *agentqu
 				popup.markNotShown()
 				continue
 			}
-			popup.markEnded()
+			// The picker answers or closes the record itself (Esc, a picker
+			// error), and the next read returns that. A popup that ended with
+			// the record still waiting opens again on the next look, until too
+			// many in a row fail; that one is given back here. Close returns
+			// the record as it stands, so a picker answer is kept.
+			if !popup.markEndedToReopen() {
+				continue
+			}
 			_, _ = store.Close(record.ID, agentquestion.CloseReasonPopupFailed)
 		case <-ticker.C:
 			current, found, err := store.Get(record.ID)
