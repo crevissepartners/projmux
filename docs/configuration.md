@@ -1658,10 +1658,16 @@ the file. The file is at most 64 KiB.
   `agent-guidance-unavailable` line on stderr says so, and nothing is
   recorded.
 - A Codex Agent receives the guidance on a fresh create that starts its own
-  thread (a create with a prompt): the guidance, the instructions and the
-  Project's label link rules go to that thread as its developer instructions,
-  in that order, each present only when the Agent has it and separated by the
-  same `---` line, and the Agent records the guidance digest. A Codex resume,
+  thread (a create with a prompt): the guidance, a short paragraph projmux
+  writes for that Agent, the instructions and the Project's label link rules
+  go to that thread as its developer instructions, in that order, each
+  present only when the Agent has it and separated by the same `---` line,
+  and the Agent records the guidance digest. The paragraph gives the Agent
+  its own Agent UID, to pass as `--creator uid:<agent>` to
+  `projmux create agent` and `--source uid:<agent>` to
+  `projmux agent message send`, and tells it to name the target of its shell
+  commands and add `--socket projmux` to a command that changes the runtime;
+  it is left out when the guidance is off. A Codex resume,
   and a Codex create without a prompt or with `--interactive-only`, do not
   receive it. A thread keeps the developer instructions it was started with,
   so a changed guidance reaches a Codex Agent only through a new create.

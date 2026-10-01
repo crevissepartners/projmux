@@ -131,7 +131,8 @@ func onlyNativeInstructions(t *testing.T, result codexGuidanceResult) string {
 // TestCreateCodexAgentWithoutAGuidanceFileSendsTheDefaultAsDeveloperInstructions
 // is Codex acceptance 1: with no guidance file a Codex fresh create starts its
 // thread with the default text, ahead of the persona and separated from it by
-// the separator a Claude composite uses, and the Agent records its digest.
+// the separator a Claude composite uses, with the Agent's identity paragraph
+// between them, and the Agent records its digest.
 // The text reaches the app-server and nothing else (A2).
 func TestCreateCodexAgentWithoutAGuidanceFileSendsTheDefaultAsDeveloperInstructions(t *testing.T) {
 	for _, route := range codexGuidanceRoutes {
@@ -146,9 +147,10 @@ func TestCreateCodexAgentWithoutAGuidanceFileSendsTheDefaultAsDeveloperInstructi
 						writeCodexGuidancePersona(t, personas)
 					}
 				}, withPersona)
-				want := string(agentguidance.Default())
+				identity := []byte(codexAgentIdentity(result.agent.Metadata.UID))
+				want := string(joinSystemPrompt(agentguidance.Default(), identity))
 				if withPersona {
-					want = string(joinSystemPrompt(agentguidance.Default(), []byte(codexPersonaContent)))
+					want = string(joinSystemPrompt(agentguidance.Default(), identity, []byte(codexPersonaContent)))
 				}
 				if got := onlyNativeInstructions(t, result); got != want {
 					t.Fatalf("developer instructions = %q, want %q", got, want)
@@ -181,7 +183,8 @@ func TestCreateCodexAgentWithAGuidanceFileSendsItsContentAndRecordsItsDigest(t *
 				writeAgentGuidance(t, paths, []byte(codexGuidanceContent))
 				writeCodexGuidancePersona(t, personas)
 			}, true)
-			want := codexGuidanceContent + projectlinks.CompositeSeparator + codexPersonaContent
+			want := codexGuidanceContent + projectlinks.CompositeSeparator + codexAgentIdentity(result.agent.Metadata.UID) +
+				projectlinks.CompositeSeparator + codexPersonaContent
 			if got := onlyNativeInstructions(t, result); got != want {
 				t.Fatalf("developer instructions = %q, want %q", got, want)
 			}
