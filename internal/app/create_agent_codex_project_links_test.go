@@ -144,11 +144,12 @@ var codexLinkRulesCases = []codexLinkRulesCase{
 }
 
 // codexInstructionsWithout is the developer instructions a create of test
-// sends without rules: the guidance, then the instructions.
-func codexInstructionsWithout(test codexLinkRulesCase) [][]byte {
+// sends without rules: the guidance and the identity of agentUID, then the
+// instructions.
+func codexInstructionsWithout(test codexLinkRulesCase, agentUID string) [][]byte {
 	var parts [][]byte
 	if test.guidance {
-		parts = append(parts, agentguidance.Default())
+		parts = append(parts, agentguidance.Default(), []byte(codexAgentIdentity(agentUID)))
 	}
 	if test.withPersona {
 		parts = append(parts, []byte(codexPersonaContent))
@@ -186,7 +187,7 @@ func TestCreateCodexAgentInAProjectWithLinkRulesSendsThemLastInTheDeveloperInstr
 				if err != nil || len(rules) == 0 || !bytes.Contains(rules, []byte(codexLinkRulesMarker)) {
 					t.Fatalf("rules snapshot %s = %q, %v", snapshotPath, rules, err)
 				}
-				want := string(joinSystemPrompt(append(codexInstructionsWithout(test), rules)...))
+				want := string(joinSystemPrompt(append(codexInstructionsWithout(test, result.agent.Metadata.UID), rules)...))
 				if got := onlyNativeInstructions(t, result); got != want {
 					t.Fatalf("developer instructions = %q, want %q", got, want)
 				}
@@ -219,7 +220,7 @@ func TestCreateCodexAgentInAProjectWithoutLinkRulesSendsWhatItSentBefore(t *test
 				result := route.run(t, func(setup codexLinkRulesSetup) {
 					prepareCodexLinkRulesCase(t, test, setup)
 				}, test.withPersona)
-				want := string(joinSystemPrompt(codexInstructionsWithout(test)...))
+				want := string(joinSystemPrompt(codexInstructionsWithout(test, result.agent.Metadata.UID)...))
 				if got := onlyNativeInstructions(t, result); got != want {
 					t.Fatalf("developer instructions = %q, want %q", got, want)
 				}
@@ -289,7 +290,7 @@ func TestUnreadableCodexProjectLinkRulesCreateWithoutThemWithOneNoticeAndRecordN
 						prepareCodexLinkRulesCase(t, test, setup)
 						breakFile(t, setup.paths, setup.alpha)
 					}, test.withPersona)
-					want := string(joinSystemPrompt(codexInstructionsWithout(test)...))
+					want := string(joinSystemPrompt(codexInstructionsWithout(test, result.agent.Metadata.UID)...))
 					if got := onlyNativeInstructions(t, result); got != want {
 						t.Fatalf("developer instructions = %q, want %q", got, want)
 					}

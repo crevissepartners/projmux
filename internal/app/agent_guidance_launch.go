@@ -47,8 +47,10 @@ var _ codexAgentGuidancePlanner = (*aiCommand)(nil)
 // Claude launch passes: guidance, then the persona, then the Project's label
 // link rules, each part present only when the launch has it and the parts
 // joined by projectlinks.CompositeSeparator. A Codex fresh create sends it
-// the same way, ahead of the persona and the rules, as the thread's developer
-// instructions (developerInstructions).
+// the same way as the thread's developer instructions
+// (codexDeveloperInstructions): guidance, then the Agent's identity paragraph
+// (codexAgentIdentity), then the persona and the rules. The identity goes
+// only with the guidance.
 type agentGuidanceLaunch struct {
 	active bool
 	store  agentguidance.Store
@@ -117,6 +119,12 @@ func (c *aiCommand) loadAgentGuidance() agentGuidanceLaunch {
 	return launch
 }
 
+// on reports that the launch sends the current guidance: active, readable
+// and not off.
+func (l agentGuidanceLaunch) on() bool {
+	return l.active && l.unavailable == nil && l.digest != ""
+}
+
 // changed reports that the Agent's recorded digest is not the current one:
 // guidance added, changed or turned off.
 func (l agentGuidanceLaunch) changed() bool {
@@ -129,7 +137,7 @@ func (l agentGuidanceLaunch) changed() bool {
 // written makes the guidance unavailable, so the create still launches, with
 // base alone.
 func (l agentGuidanceLaunch) withCreateFile(base string) agentGuidanceLaunch {
-	if !l.active || l.unavailable != nil || l.digest == "" {
+	if !l.on() {
 		return l
 	}
 	if base == "" {
@@ -152,7 +160,7 @@ func (l agentGuidanceLaunch) withCreateFile(base string) agentGuidanceLaunch {
 // present only when the create has it. Without guidance it is persona itself,
 // so a create with the guidance off sends exactly what it sent before.
 func (l agentGuidanceLaunch) developerInstructions(persona string) string {
-	if !l.active || l.unavailable != nil || l.digest == "" {
+	if !l.on() {
 		return persona
 	}
 	if persona == "" {
@@ -161,11 +169,44 @@ func (l agentGuidanceLaunch) developerInstructions(persona string) string {
 	return string(l.text) + projectlinks.CompositeSeparator + persona
 }
 
+// codexDeveloperInstructions are the developer instructions a Codex fresh
+// create of agentUID starts its thread with, given rest, what it would send
+// without guidance (the persona content and the Project's label link rules,
+// "" for none): the guidance, the Agent's identity paragraph, then rest, each
+// part joined by projectlinks.CompositeSeparator. Without guidance it is rest
+// itself, identity left out, so a create with the guidance off sends exactly
+// what it sent before.
+func (l agentGuidanceLaunch) codexDeveloperInstructions(agentUID, rest string) string {
+	if !l.on() {
+		return rest
+	}
+	identity := codexAgentIdentity(agentUID)
+	if rest != "" {
+		identity += projectlinks.CompositeSeparator + rest
+	}
+	return l.developerInstructions(identity)
+}
+
+// codexAgentIdentity is the paragraph that tells a Codex Agent its own Agent
+// UID and how to name itself and its targets: a Codex shell command runs in
+// the shared app server, not in the Agent's pane, so projmux cannot infer
+// either from the environment.
+func codexAgentIdentity(agentUID string) string {
+	return fmt.Sprintf(`# Your projmux identity
+
+Your projmux Agent UID is `+"`%[1]s`"+`.
+
+- When you create an agent with `+"`projmux create agent`"+`, add `+"`--creator uid:%[1]s`"+` so projmux records you as its creator.
+- When you send a message with `+"`projmux agent message send`"+`, add `+"`--source uid:%[1]s`"+` so the message is sent from you.
+- Your shell commands run outside your own pane, in an app server shared with other agents, so projmux cannot tell your pane or agent from the environment: name the pane or agent a command acts on, and add `+"`--socket projmux`"+` to a command that changes the runtime, such as `+"`projmux delete pane`"+` or `+"`projmux agent relaunch`"+`.
+`, agentUID)
+}
+
 // withCreateAnnotation adds the digest a fresh create launched with to base.
 // Without guidance it returns base itself, so a create with the guidance off
 // stores exactly what it stored before -- nil included.
 func (l agentGuidanceLaunch) withCreateAnnotation(base map[string]string) map[string]string {
-	if !l.active || l.unavailable != nil || l.digest == "" || base[coremetadata.AnnotationAgentGuidanceDigest] == l.digest {
+	if !l.on() || base[coremetadata.AnnotationAgentGuidanceDigest] == l.digest {
 		return base
 	}
 	out := maps.Clone(base)
@@ -264,10 +305,11 @@ func planCodexAgentGuidanceWith(launcher any) agentGuidanceLaunch {
 // file that prepared. A resume-picker create joins a conversation whose
 // recorded system prompt lacks the guidance, so it launches (and records) the
 // digest with the snapshot mode off; a fresh create records only the digest.
-// A Codex fresh create (nativeCodexFreshCreateRequired) sends the guidance as
-// its thread's developer instructions and records the digest; it passes no
-// file. The reply-only lane, every other Codex lane and every other provider
-// are left exactly as they were.
+// A Codex fresh create (nativeCodexFreshCreateRequired) sends the guidance,
+// followed by the Agent's identity paragraph, as its thread's developer
+// instructions and records the digest; it passes no file. The reply-only
+// lane, every other Codex lane and every other provider are left exactly as
+// they were.
 func (c *createCommand) prepareAgentGuidance(provider string, flags *resourceCreateFlags) {
 	flags.agentGuidance = agentGuidanceLaunch{}
 	if provider == aiModeCodex && nativeCodexFreshCreateRequired(provider, *flags) {
