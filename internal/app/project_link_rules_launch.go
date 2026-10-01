@@ -32,19 +32,37 @@ type projectLinksPlanner interface {
 
 var _ projectLinksPlanner = (*aiCommand)(nil)
 
-// projectLinksLaunch is what one Claude launch does with its Project's label
-// link rules. The zero value is "not applicable" (another provider, the
+// codexProjectLinksPlanner is the optional launcher seam that reads one
+// Project's current label link rules for a Codex fresh create, the one Codex
+// lane that starts a thread of its own. A launcher that does not implement it
+// gives a Codex create no rules, exactly as before the rules reached Codex.
+// The Project comes from Registry ownership, as for projectLinksPlanner.
+type codexProjectLinksPlanner interface {
+	PlanCodexProjectLinks(project coremetadata.Project) projectLinksLaunch
+}
+
+var _ codexProjectLinksPlanner = (*aiCommand)(nil)
+
+// projectLinksLaunch is what one launch does with its Project's label link
+// rules. The zero value is "not applicable" (another provider or lane, the
 // reply-only lane, no Project, or a launcher without the seam) and changes no
-// argv and no annotation.
+// argv, no developer instructions and no annotation.
+//
+// A Claude launch passes the rules last in its one
+// --append-system-prompt-file. A Codex fresh create sends them the same way,
+// after the persona, as the thread's developer instructions
+// (developerInstructions).
 type projectLinksLaunch struct {
 	active bool
 	store  projectlinks.SnapshotStore
 	// recorded is the digest the Agent records, "" when it records none.
 	recorded string
-	// digest and snapshotPath are the Project's current rendered rules, both
-	// empty when the Project has no rules.
+	// digest, snapshotPath and text are the Project's current rendered rules,
+	// all empty when the Project has no rules. text is sent only to a Codex
+	// thread and is never put in an argv or the Registry.
 	digest       string
 	snapshotPath string
+	text         []byte
 	// systemPromptFile is the one file a fresh create hands Claude: the rules
 	// snapshot, or the composite of the persona and the rules. Resumes find
 	// theirs in the seam from the digest they launch with.
@@ -59,18 +77,37 @@ type projectLinksLaunch struct {
 // are the Agent annotations the launch compares against (nil on a fresh
 // create).
 func (c *aiCommand) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
-	projectUID := project.Metadata.UID
-	if normalizeAIMode(provider) != aiModeClaude || !coremetadata.IsProjectUIDShaped(projectUID) {
+	if normalizeAIMode(provider) != aiModeClaude || !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
 		return projectLinksLaunch{}
 	}
-	launch := projectLinksLaunch{active: true, recorded: recorded[coremetadata.AnnotationAgentProjectLinkRulesDigest]}
+	launch := c.loadProjectLinks(project)
+	launch.recorded = recorded[coremetadata.AnnotationAgentProjectLinkRulesDigest]
+	return launch
+}
+
+// PlanCodexProjectLinks reads project's current rules for a Codex fresh
+// create and writes their snapshot, exactly as PlanProjectLinks does for a
+// Claude create. A Codex resume never asks: a thread keeps the developer
+// instructions it was started with.
+func (c *aiCommand) PlanCodexProjectLinks(project coremetadata.Project) projectLinksLaunch {
+	if !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
+		return projectLinksLaunch{}
+	}
+	return c.loadProjectLinks(project)
+}
+
+// loadProjectLinks is the active launch of project's current rules: their
+// rendered text, digest and content-addressed snapshot, or why they could not
+// be read.
+func (c *aiCommand) loadProjectLinks(project coremetadata.Project) projectLinksLaunch {
+	launch := projectLinksLaunch{active: true}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		launch.unavailable = err
 		return launch
 	}
 	launch.store = projectlinks.NewDefaultSnapshotStore(paths)
-	rules, err := projectlinks.NewDefaultStore(paths).Load(projectUID)
+	rules, err := projectlinks.NewDefaultStore(paths).Load(project.Metadata.UID)
 	if err != nil {
 		launch.unavailable = err
 		return launch
@@ -84,7 +121,7 @@ func (c *aiCommand) PlanProjectLinks(provider string, project coremetadata.Proje
 		launch.unavailable = err
 		return launch
 	}
-	launch.digest, launch.snapshotPath = snapshot.Digest, snapshot.Path
+	launch.digest, launch.snapshotPath, launch.text = snapshot.Digest, snapshot.Path, rendered
 	return launch
 }
 
@@ -112,6 +149,22 @@ func (l projectLinksLaunch) withCreateFile(p personaLaunch) projectLinksLaunch {
 	}
 	l.systemPromptFile = composite.Path
 	return l
+}
+
+// developerInstructions are the developer instructions a Codex fresh create
+// starts its thread with, given persona, what it would send without rules
+// ("" for none): persona, then projectlinks.CompositeSeparator and the rules,
+// each part present only when the create has it. Without rules it is persona
+// itself, so a create in a Project without rules sends exactly what it sent
+// before.
+func (l projectLinksLaunch) developerInstructions(persona string) string {
+	if !l.active || l.unavailable != nil || l.digest == "" {
+		return persona
+	}
+	if persona == "" {
+		return string(l.text)
+	}
+	return persona + projectlinks.CompositeSeparator + string(l.text)
 }
 
 // withCreateAnnotation adds the digest a fresh create launched with to base.
@@ -201,14 +254,31 @@ func planProjectLinksWith(launcher any, provider string, project coremetadata.Pr
 	return planner.PlanProjectLinks(provider, project, recorded)
 }
 
-// prepareProjectLinks resolves the rules one Claude create launches with,
-// from the create's resolved Project, into flags.projectLinks; its notice is
-// disclosed once the Agent has a name. A resume-picker create joins a conversation whose recorded
+// planCodexProjectLinksWith asks launcher for a Codex fresh create's rules
+// when it has the seam, and returns the zero launch otherwise.
+func planCodexProjectLinksWith(launcher any, project coremetadata.Project) projectLinksLaunch {
+	planner, ok := launcher.(codexProjectLinksPlanner)
+	if !ok {
+		return projectLinksLaunch{}
+	}
+	return planner.PlanCodexProjectLinks(project)
+}
+
+// prepareProjectLinks resolves the rules one create launches with, from the
+// create's resolved Project, into flags.projectLinks; its notice is disclosed
+// once the Agent has a name. A resume-picker create joins a conversation whose recorded
 // system prompt lacks the rules, so it launches (and records) the digest with
-// the snapshot mode off; a fresh create records only the digest. The
-// reply-only lane and every other provider are left exactly as they were.
+// the snapshot mode off; a fresh create records only the digest. A Codex
+// fresh create (nativeCodexFreshCreateRequired) sends the rules as part of
+// its thread's developer instructions and records the digest; it passes no
+// file. The reply-only lane, every other Codex lane and every other provider
+// are left exactly as they were.
 func (c *createCommand) prepareProjectLinks(provider string, project coremetadata.Project, flags *resourceCreateFlags) {
 	flags.projectLinks = projectLinksLaunch{}
+	if provider == aiModeCodex && nativeCodexFreshCreateRequired(provider, *flags) {
+		flags.projectLinks = planCodexProjectLinksWith(c.agents, project)
+		return
+	}
 	if provider != aiModeClaude || flags.dialogueReplyOnly {
 		return
 	}

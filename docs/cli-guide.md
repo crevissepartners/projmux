@@ -2133,8 +2133,9 @@ Agent recorded, in this order: `profile-changed`, `instructions-changed`,
 recorded `projmux.io/agent-guidance-digest`: guidance added, edited, or turned
 off), `link-rules-changed` (the Project's current label link rules digest
 differs from the recorded `projmux.io/project-link-rules-digest`); empty when
-it would not. The last two are Claude only, like the guidance and the rules
-themselves, and change no setting); the empty string fields before
+it would not. The last two are Claude only, since only a Claude resume
+passes the current guidance and rules -- a Codex thread keeps the ones it
+was created with -- and change no setting); the empty string fields before
 `currentSettings` are omitted. A switched profile, overridden or reset items,
 and their sources show on the `newSettings` side. Without `-o json` the output
 of the stop and the resume is followed by one result line, which also names
