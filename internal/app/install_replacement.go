@@ -381,11 +381,11 @@ func renderInstallReplacementNotice(outcome installReplacementOutcome) string {
 	switch outcome.Outcome {
 	case installReplacementOutcomeComplete:
 		return fmt.Sprintf(">> replaced %d long-lived %s running the image this install superseded\n",
-			outcome.Drained, pluralizeInstallResidueProcesses(outcome.Drained))
+			outcome.Drained, pluralizeInstallReplacementProcesses(outcome.Drained))
 	case installReplacementOutcomePending:
 		return fmt.Sprintf(">> asked %d long-lived %s to stand down; %s still carrying work\n"+
 			"   The runtime accepts no new work and goes when that work ends.\n",
-			outcome.Attempted, pluralizeInstallResidueProcesses(outcome.Attempted),
+			outcome.Attempted, pluralizeInstallReplacementProcesses(outcome.Attempted),
 			pluralizeInstallReplacementSubject(outcome.Attempted))
 	case installReplacementOutcomeUnreachable:
 		refusal := strings.TrimSpace(outcome.Refusal)
@@ -393,10 +393,20 @@ func renderInstallReplacementNotice(outcome installReplacementOutcome) string {
 			refusal = "unknown"
 		}
 		return fmt.Sprintf(">> could not reach %d long-lived %s to replace: %s\n",
-			outcome.Attempted, pluralizeInstallResidueProcesses(outcome.Attempted), refusal)
+			outcome.Attempted, pluralizeInstallReplacementProcesses(outcome.Attempted), refusal)
 	default:
 		return ""
 	}
+}
+
+// pluralizeInstallReplacementProcesses is the bare noun. The residue census's
+// pluralizer carries its own verb ("process is"), which these sentences already
+// supply.
+func pluralizeInstallReplacementProcesses(count int) string {
+	if count == 1 {
+		return "process"
+	}
+	return "processes"
 }
 
 func pluralizeInstallReplacementSubject(count int) string {
@@ -410,7 +420,7 @@ func pluralizeInstallReplacementSubject(count int) string {
 // endpoints already published in this state domain. The legacy default key is
 // a directory locator, not the key a managed Agent's broker publishes.
 func defaultInstallReplacementDrainRequest(ctx context.Context) installReplacementDrainResult {
-	residual := readInstallReplacementTargets(nil)
+	residual := readInstallReplacementTargets(nil, nil)
 	if len(residual) == 0 {
 		return installReplacementDrainResult{}
 	}

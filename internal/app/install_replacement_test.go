@@ -277,15 +277,27 @@ func TestInstallReplacementNoticeSpeaksOnlyWhenAnActionFollows(t *testing.T) {
 		{outcome: installReplacementOutcome{Outcome: installReplacementOutcomeUnsupported}},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomeComplete, Drained: 1},
-			want:    ">> replaced 1 long-lived process is running the image this install superseded\n",
+			want:    ">> replaced 1 long-lived process running the image this install superseded\n",
 		},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomePending, Attempted: 2},
-			want:    ">> asked 2 long-lived processes are to stand down; they are still carrying work\n   The runtime accepts no new work and goes when that work ends.\n",
+			want:    ">> asked 2 long-lived processes to stand down; they are still carrying work\n   The runtime accepts no new work and goes when that work ends.\n",
+		},
+		{
+			outcome: installReplacementOutcome{Outcome: installReplacementOutcomePending, Attempted: 1},
+			want:    ">> asked 1 long-lived process to stand down; it is still carrying work\n   The runtime accepts no new work and goes when that work ends.\n",
+		},
+		{
+			outcome: installReplacementOutcome{Outcome: installReplacementOutcomeComplete, Drained: 2},
+			want:    ">> replaced 2 long-lived processes running the image this install superseded\n",
+		},
+		{
+			outcome: installReplacementOutcome{Outcome: installReplacementOutcomeUnreachable, Attempted: 2, Refusal: "host-unavailable"},
+			want:    ">> could not reach 2 long-lived processes to replace: host-unavailable\n",
 		},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomeUnreachable, Attempted: 1, Refusal: "host-unavailable"},
-			want:    ">> could not reach 1 long-lived process is to replace: host-unavailable\n",
+			want:    ">> could not reach 1 long-lived process to replace: host-unavailable\n",
 		},
 	} {
 		got := renderInstallReplacementNotice(tc.outcome)
