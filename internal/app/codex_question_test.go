@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 type codexQuestionReply struct {
@@ -120,13 +121,16 @@ func TestCodexQuestionPopupAnswersThroughExistingResponder(t *testing.T) {
 	}
 }
 
-// TestCodexQuestionPopupEndClosesAsPopupFailed is a Codex popup that ended
-// without an answer: the record closes as popup-failed, at once or, when the
-// store cannot be written then, on a later look, and Codex is sent nothing.
+// TestCodexQuestionPopupEndClosesAsPopupFailed is a Codex popup that keeps
+// ending at once without an answer: it opens again until the
+// claudeQuestionPopupFailLimit-th quick end in a row, and then the record
+// closes as popup-failed, at once or, when the store cannot be written then, on
+// a later look. Codex is sent nothing.
 func TestCodexQuestionPopupEndClosesAsPopupFailed(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		// holdLock keeps the store lock past one close's lock wait.
+		// holdLock keeps the store lock past one close's lock wait when the
+		// last popup ends.
 		holdLock bool
 	}{
 		{name: "popup ended"},
@@ -134,11 +138,10 @@ func TestCodexQuestionPopupEndClosesAsPopupFailed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newQuestionFixture(t, false)
-			agent, _ := fixture.resources.registry.Agent(questionTestAgent)
-			agent.Spec.Provider = aiModeCodex
 			popup := newFakeQuestionPopup("client-1")
+			opens := 0
 			popup.open = func(context.Context, claudeQuestionPopupTarget, <-chan struct{}) error {
-				if tc.holdLock {
+				if opens++; tc.holdLock && opens == claudeQuestionPopupFailLimit {
 					lock, err := os.OpenFile(fixture.store.Path()+".flock", os.O_CREATE|os.O_RDWR, 0o600)
 					if err != nil {
 						return err
@@ -151,38 +154,130 @@ func TestCodexQuestionPopupEndClosesAsPopupFailed(t *testing.T) {
 				}
 				return errors.New("client detached")
 			}
-			channel := codexQuestionChannel{
-				loadRegistry: fixture.resources.store().load,
-				store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
-				popup:        popup,
-				answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux },
-				window:       func() time.Duration { return time.Minute },
-				newID:        agentquestion.NewID,
-				poll:         time.Millisecond,
-			}
-			t.Cleanup(channel.Wait)
+			channel := codexTurnEndChannel(t, fixture, popup, config.AgentQuestionAnsweringProjmux)
+			channel.clientPoll = 5 * time.Millisecond
 			responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			channel.Handle(ctx, codexLifecycleIdentity{AgentUID: questionTestAgent, PaneUID: questionTestPane, RuntimeID: "%7", Generation: "gen-1", ThreadID: "thread-1"}, codexappserver.Notification{
-				Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`),
-				Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","options":[{"label":"A"}]}]}`),
-			}, responder)
-			popup.waitOpened(t)
-			deadline := time.After(15 * time.Second)
-			for {
-				records, err := fixture.store.List(questionTestAgent)
-				if err == nil && len(records) == 1 && records[0].State != agentquestion.StateWaiting {
-					if records[0].State != agentquestion.StateClosed || records[0].Disposition != string(agentquestion.CloseReasonPopupFailed) {
-						t.Fatalf("record = %s/%q, want closed/popup-failed", records[0].State, records[0].Disposition)
-					}
-					break
-				}
-				select {
-				case <-deadline:
-					t.Fatalf("record still waiting: %+v, %v", records, err)
-				case <-time.After(5 * time.Millisecond):
-				}
+			record := handleCodexTurnEndQuestion(t, fixture, channel, responder)
+			waitCodexQuestionWaiter(t, channel)
+			got, _, err := fixture.store.Get(record.ID)
+			if err != nil || got.State != agentquestion.StateClosed || got.Disposition != string(agentquestion.CloseReasonPopupFailed) {
+				t.Fatalf("record = %s/%q, %v, want closed/popup-failed", got.State, got.Disposition, err)
+			}
+			if _, opens, closes := popup.counts(); opens != claudeQuestionPopupFailLimit || closes != 0 {
+				t.Fatalf("opens=%d closes=%d, want %d popups and no Close", opens, closes, claudeQuestionPopupFailLimit)
+			}
+			if len(responder.replies) != 0 {
+				t.Fatal("a closed question answered the Codex request")
+			}
+		})
+	}
+}
+
+// waitCodexQuestionWaiter waits until every waiter of channel has returned.
+func waitCodexQuestionWaiter(t *testing.T, channel *codexQuestionChannel) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		channel.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the Codex question waiter did not return")
+	}
+}
+
+// TestCodexQuestionPopupReopensAPopupWhoseClientLeft is the Claude reopen rule
+// on a Codex question: the popup stays up, then its client detaches. The record
+// keeps waiting, the popup opens again on the client the operator used last,
+// and the answer given there reaches Codex through the existing responder.
+func TestCodexQuestionPopupReopensAPopupWhoseClientLeft(t *testing.T) {
+	fixture := newQuestionFixture(t, false)
+	popup := newFakeQuestionPopup("client-1", "client-2")
+	channel := codexTurnEndChannel(t, fixture, popup, config.AgentQuestionAnsweringProjmux)
+	channel.clientPoll = 5 * time.Millisecond
+	channel.now = fixture.endPopupsThen(t, popup, []questionPopupEnd{{after: 10 * time.Second, err: errQuestionClientDetached}}, func(_ context.Context, target claudeQuestionPopupTarget, _ <-chan struct{}) error {
+		picker, _ := fixture.picker(pickRow("A"))
+		return picker.run(target.QuestionID, target.AgentUID)
+	})
+	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+	record := handleCodexTurnEndQuestion(t, fixture, channel, responder)
+	select {
+	case reply := <-responder.replies:
+		if reply.id != "17" || len(reply.result.Answers) != 1 || len(reply.result.Answers["q1"].Answers) != 1 || reply.result.Answers["q1"].Answers[0] != "A" {
+			t.Fatalf("reopened popup answer = %+v", reply)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the answer from the popup that opened again did not reach the Codex binding")
+	}
+	waitCodexQuestionWaiter(t, channel)
+	if _, opens, closes := popup.counts(); opens != 2 || closes != 0 || popup.targets[0].Client != "client-1" || popup.targets[1].Client != "client-2" {
+		t.Fatalf("opens=%d closes=%d targets=%#v, want client-1 then client-2 and no Close", opens, closes, popup.targets)
+	}
+	if got, _, err := fixture.store.Get(record.ID); err != nil || got.State != agentquestion.StateAnswered {
+		t.Fatalf("record = %s, %v, want answered", got.State, err)
+	}
+}
+
+// TestCodexQuestionGivesBackOnlyAfterQuickPopupsInARow is the Claude reopen
+// bound on a Codex question: popups that end within
+// claudeQuestionPopupFailWithin of opening count, one that stayed up longer
+// starts the count again, and the claudeQuestionPopupFailLimit-th quick end in
+// a row closes the record as popup-failed, after which no popup opens.
+func TestCodexQuestionGivesBackOnlyAfterQuickPopupsInARow(t *testing.T) {
+	fixture := newQuestionFixture(t, false)
+	popup := newFakeQuestionPopup("client-1")
+	popup.opened = make(chan claudeQuestionPopupTarget, 16)
+	channel := codexTurnEndChannel(t, fixture, popup, config.AgentQuestionAnsweringProjmux)
+	channel.clientPoll = 5 * time.Millisecond
+	quick := questionPopupEnd{err: errors.New("display-popup: can't find client")}
+	stayed := questionPopupEnd{after: claudeQuestionPopupFailWithin, err: errQuestionClientDetached}
+	ends := []questionPopupEnd{quick, quick, stayed, quick, quick, quick}
+	channel.now = fixture.endPopupsThen(t, popup, ends, nil)
+	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+	record := handleCodexTurnEndQuestion(t, fixture, channel, responder)
+	waitCodexQuestionWaiter(t, channel)
+	if _, opens, closes := popup.counts(); opens != len(ends) || closes != 0 {
+		t.Fatalf("opens=%d closes=%d, want %d popups and no Close", opens, closes, len(ends))
+	}
+	got, _, err := fixture.store.Get(record.ID)
+	if err != nil || got.State != agentquestion.StateClosed || got.Disposition != string(agentquestion.CloseReasonPopupFailed) {
+		t.Fatalf("record = %s/%q, %v, want closed/popup-failed", got.State, got.Disposition, err)
+	}
+	if len(responder.replies) != 0 {
+		t.Fatal("a closed question answered the Codex request")
+	}
+}
+
+// TestCodexQuestionPickerEscAndErrorCloseAtOnce holds that the reopen rule
+// leaves the picker's own closes alone: Esc gives the Codex question back as
+// popup-dismissed and a picker error as popup-failed, the first time, and no
+// popup opens again.
+func TestCodexQuestionPickerEscAndErrorCloseAtOnce(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		steps  []func(intpicker.Options) (intpicker.Result, error)
+		reason agentquestion.CloseReason
+	}{
+		{name: "Esc", steps: steps(pressEsc), reason: agentquestion.CloseReasonPopupDismissed},
+		{name: "picker error", steps: steps(func(intpicker.Options) (intpicker.Result, error) { return intpicker.Result{}, errors.New("no tty") }), reason: agentquestion.CloseReasonPopupFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newQuestionFixture(t, false)
+			popup := newFakeQuestionPopup("client-1")
+			fixture.runPickerInPopup(popup, test.steps...)
+			channel := codexTurnEndChannel(t, fixture, popup, config.AgentQuestionAnsweringProjmux)
+			channel.clientPoll = 5 * time.Millisecond
+			responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+			record := handleCodexTurnEndQuestion(t, fixture, channel, responder)
+			waitCodexQuestionWaiter(t, channel)
+			got, _, err := fixture.store.Get(record.ID)
+			if err != nil || got.State != agentquestion.StateClosed || got.Disposition != string(test.reason) {
+				t.Fatalf("record = %s/%q, %v, want closed/%s", got.State, got.Disposition, err, test.reason)
+			}
+			if _, opens, _ := popup.counts(); opens != 1 {
+				t.Fatalf("popup opened %d times, want 1", opens)
 			}
 			if len(responder.replies) != 0 {
 				t.Fatal("a closed question answered the Codex request")

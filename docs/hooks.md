@@ -839,7 +839,8 @@ left. Only a popup that keeps failing gives the question back: three popups in
 a row that each ended within 2 seconds of opening, a popup that failed to open
 among them. A popup that stayed up longer starts that count again, so leaving
 clients never runs it out. Pressing Esc in Claude Code itself cancels the wait
-and declines the question.
+and declines the question. A native Codex question's popup follows the same
+rules; a Codex question that is given back stays in Codex's own input surface.
 
 A question is given back only once its record is written `closed`. While the
 question store cannot be written (the disk is full, or its lock is held), Esc
@@ -857,7 +858,7 @@ tells whether the provider still asks the question in its own prompt:
 | Disposition | Written when | Provider still asks |
 | --- | --- | --- |
 | `popup-dismissed` | Esc in the popup | yes |
-| `popup-failed` | the picker failed; for a Claude question, three popups in a row failed to open or ended within 2 seconds of opening; for a Codex question, the popup failed to open or ended without an answer (its client detached) | yes |
+| `popup-failed` | the picker failed, or three popups in a row failed to open or ended within 2 seconds of opening | yes |
 | `hook-canceled` | Claude Code canceled the hook (Esc in Claude Code, or its hook timeout), which declines the question | no |
 | `hook-failed` | the hook crashed after it recorded the question | yes |
 | `channel-off` | `agent question disable` | yes |
