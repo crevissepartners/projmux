@@ -15,6 +15,7 @@ const (
 	methodThreadRead              = "thread/read"
 	methodThreadStart             = "thread/start"
 	methodThreadResume            = "thread/resume"
+	methodThreadSettingsUpdate    = "thread/settings/update"
 	methodTurnStart               = "turn/start"
 	methodTurnSteer               = "turn/steer"
 	methodTurnInterrupt           = "turn/interrupt"
@@ -131,10 +132,35 @@ type threadResumeParams struct {
 // raw: they are read only when a policy was requested, so an answer that
 // lacks them, or spells them in a shape projmux does not know, still decodes
 // for every caller that asked for none.
+//
+// Model and ReasoningEffort are the model and effort the thread's next turn
+// runs with. They are read only by a resume that applies settings
+// (ResumeThreadWithSettings); a null effort decodes as "".
 type threadResult struct {
-	Thread         wireThread      `json:"thread"`
-	Sandbox        json.RawMessage `json:"sandbox"`
-	ApprovalPolicy json.RawMessage `json:"approvalPolicy"`
+	Thread          wireThread      `json:"thread"`
+	Sandbox         json.RawMessage `json:"sandbox"`
+	ApprovalPolicy  json.RawMessage `json:"approvalPolicy"`
+	Model           string          `json:"model"`
+	ReasoningEffort string          `json:"reasoningEffort"`
+}
+
+// threadSettingsUpdateParams is the experimental thread/settings/update
+// request: each field set overrides the thread's setting for its later turns,
+// and each field left empty stays off the wire and keeps the thread's value.
+// With only threadId it changes nothing.
+type threadSettingsUpdateParams struct {
+	ThreadID       string             `json:"threadId"`
+	Model          string             `json:"model,omitempty"`
+	Effort         string             `json:"effort,omitempty"`
+	ApprovalPolicy string             `json:"approvalPolicy,omitempty"`
+	SandboxPolicy  *wireSandboxPolicy `json:"sandboxPolicy,omitempty"`
+}
+
+// wireSandboxPolicy is a sandbox in the settings vocabulary, which names the
+// mode the way an answer does (sandboxResponseTypes) and leaves every other
+// field to its upstream default.
+type wireSandboxPolicy struct {
+	Type string `json:"type"`
 }
 
 type threadListParams struct {

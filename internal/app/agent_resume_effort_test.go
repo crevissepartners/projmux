@@ -612,7 +612,7 @@ func TestResumeSeamPassesTheModelOverrideBeforeTheWorkspace(t *testing.T) {
 // TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites pins the
 // override on the native Codex lane: the preflight plan and the plan after
 // thread/resume both carry -m and the effort, the launched argv spells them,
-// and both are recorded.
+// the thread is asked for them, and both are recorded.
 func TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites(t *testing.T) {
 	store := newFakeResourceStore(t)
 	route := nativeTestRoute("generation-override", coremetadata.CodexGenerationCurrent)
@@ -623,11 +623,15 @@ func TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites(t *testing.
 	command, legacy, _, _ := newTestAgentResumeCommand(t, store, tmux)
 	panes := &fakeNativePaneLauncher{}
 	command.rebind.launcher = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
-	command.rebind.create.codexNative = &fakeNativeThreadController{resolvedRoute: route, resumeBinding: codexappserver.ThreadBinding{ThreadID: resumeFixtureConversation}}
+	controller := &fakeNativeThreadController{resolvedRoute: route, resumeBinding: codexappserver.ThreadBinding{ThreadID: resumeFixtureConversation}}
+	command.rebind.create.codexNative = controller
 
 	stdout, stderr, err := runRoute(t, command, "resume", "uid:agt-beta-codex", "--model", "gpt-6", "--effort", "high")
 	if err != nil || stdout != "agent/codex resumed\n" {
 		t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if len(controller.resumes) != 1 || controller.resumes[0].model != "gpt-6" || controller.resumes[0].effort != "high" {
+		t.Fatalf("thread resumes = %+v, want one asking for model gpt-6 effort high", controller.resumes)
 	}
 	if len(panes.plans) != 2 {
 		t.Fatalf("native pane plans = %+v, want the preflight and the post-resume plan", panes.plans)

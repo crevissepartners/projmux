@@ -852,15 +852,21 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 				return nativeResumePreparationRefusal(spelling, bindCodexResumeAgentRef(routeErr, "uid:"+plan.agentUID))
 			}
 			nativeCtx, cancel := prepareNativeContext(ctx)
-			// A thread that answers with another policy than the profile's is
-			// a *PolicyMismatchError, never a safe fallback: it lands in the
+			// The thread runs its later turns with what the launch argv
+			// carries, the model and the effort, and with the profile's
+			// policy: a thread another client still holds keeps its own
+			// settings on resume, so they are applied to it as well. A thread
+			// that still answers with others is a *PolicyMismatchError or a
+			// *SettingsMismatchError, never a safe fallback: it lands in the
 			// default arm and the whole transaction rolls back.
-			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID, nativePolicy)
+			model := settings.model(plan.modelOverride)
+			effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
+			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID,
+				codexappserver.ThreadSettings{Model: model, Effort: effort, Policy: nativePolicy})
 			cancel()
 			switch {
 			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) == strings.TrimSpace(plan.conversationID):
-				effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
-				workTitle, workLaunchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, prepared.ThreadID, settings.model(plan.modelOverride), effort)
+				workTitle, workLaunchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, prepared.ThreadID, model, effort)
 				if err != nil {
 					return nativeLaunchError(spelling, err)
 				}

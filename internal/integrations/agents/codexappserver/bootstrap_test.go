@@ -19,14 +19,26 @@ import (
 // capability, and the handshake frames are excluded from the ledger.
 func scriptedEndpoint(t *testing.T, replies map[string]string) (*Client, func() ([]string, []json.RawMessage)) {
 	t.Helper()
+	sequences := make(map[string][]string, len(replies))
+	for method, reply := range replies {
+		sequences[method] = []string{reply}
+	}
+	return sequencedEndpoint(t, sequences)
+}
+
+// sequencedEndpoint is scriptedEndpoint with an ordered list of replies per
+// method: each request of a method takes the next one, and the last one
+// answers every request after it.
+func sequencedEndpoint(t *testing.T, sequences map[string][]string) (*Client, func() ([]string, []json.RawMessage)) {
+	t.Helper()
 	clientConn, serverConn := net.Pipe()
 	client := NewClient(clientConn)
 	t.Cleanup(func() { _ = client.Close(); _ = serverConn.Close() })
-	replies = maps.Clone(replies)
+	replies := maps.Clone(sequences)
 	if replies == nil {
-		replies = map[string]string{}
+		replies = map[string][]string{}
 	}
-	replies[methodInitialize] = `{"userAgent":"codex-cli/0.150.1","platformFamily":"unix","platformOs":"linux"}`
+	replies[methodInitialize] = []string{`{"userAgent":"codex-cli/0.150.1","platformFamily":"unix","platformOs":"linux"}`}
 
 	methods := make(chan string, 8)
 	params := make(chan json.RawMessage, 8)
@@ -54,10 +66,14 @@ func scriptedEndpoint(t *testing.T, replies map[string]string) (*Client, func() 
 				// answered.
 				continue
 			}
-			reply, ok := replies[request.Method]
-			if !ok {
+			queue, ok := replies[request.Method]
+			if !ok || len(queue) == 0 {
 				_, _ = serverConn.Write([]byte(`{"id":` + string(request.ID) + `,"error":{"code":-32601,"message":"unscripted"}}` + "\n"))
 				continue
+			}
+			reply := queue[0]
+			if len(queue) > 1 {
+				replies[request.Method] = queue[1:]
 			}
 			_, _ = serverConn.Write([]byte(`{"id":` + string(request.ID) + `,"result":` + reply + `}` + "\n"))
 		}

@@ -226,35 +226,154 @@ func (c *Client) StartThreadWithModel(ctx context.Context, cwd string, roots []s
 // barrier, the bootstrap subscription, and the default resume all pass a zero
 // policy, so their requests stay byte-identical.
 func (c *Client) ResumeThread(ctx context.Context, threadID, cwd string, roots []string, policy ThreadPolicy) (ThreadBinding, error) {
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return ThreadBinding{}, fmt.Errorf("%w: resume thread is empty", ErrProtocol)
-	}
-	if err := policy.validate(); err != nil {
+	binding, result, err := c.resumeThread(ctx, threadID, cwd, roots, policy)
+	if err != nil {
 		return ThreadBinding{}, err
 	}
+	if err := checkThreadPolicy(methodThreadResume, policy, result); err != nil {
+		return ThreadBinding{}, err
+	}
+	return binding, nil
+}
+
+// resumeThread sends one thread/resume and returns the answer of the exact
+// requested thread, unchecked against policy.
+func (c *Client) resumeThread(ctx context.Context, threadID, cwd string, roots []string, policy ThreadPolicy) (ThreadBinding, threadResult, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return ThreadBinding{}, threadResult{}, fmt.Errorf("%w: resume thread is empty", ErrProtocol)
+	}
+	if err := policy.validate(); err != nil {
+		return ThreadBinding{}, threadResult{}, err
+	}
 	if !c.ExperimentalAPI() {
-		return ThreadBinding{}, fmt.Errorf("%w: %w: thread/resume excludeTurns", ErrUnsupported, ErrExperimentalRequired)
+		return ThreadBinding{}, threadResult{}, fmt.Errorf("%w: %w: thread/resume excludeTurns", ErrUnsupported, ErrExperimentalRequired)
 	}
 	workspaceRoots, err := c.negotiatedRoots(roots)
 	if err != nil {
-		return ThreadBinding{}, err
+		return ThreadBinding{}, threadResult{}, err
 	}
 	var result threadResult
 	if err := c.Request(ctx, methodThreadResume, threadResumeParams{
 		ThreadID: threadID, CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots, ExcludeTurns: true,
 		Sandbox: policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy,
 	}, &result); err != nil {
-		return ThreadBinding{}, err
+		return ThreadBinding{}, threadResult{}, err
 	}
 	returned := strings.TrimSpace(result.Thread.ID)
 	if returned == "" || returned != threadID {
-		return ThreadBinding{}, fmt.Errorf("%w: thread/resume returned a different thread", ErrProtocol)
+		return ThreadBinding{}, threadResult{}, fmt.Errorf("%w: thread/resume returned a different thread", ErrProtocol)
 	}
-	if err := checkThreadPolicy(methodThreadResume, policy, result); err != nil {
+	return ThreadBinding{ThreadID: returned}, result, nil
+}
+
+// ThreadSettings are what one native resume runs the thread's later turns
+// with: the model, the effort, and the sandbox and approval policy. An empty
+// field is not requested and the thread keeps its own value. The zero value
+// requests nothing.
+type ThreadSettings struct {
+	Model  string
+	Effort string
+	Policy ThreadPolicy
+}
+
+// IsZero reports settings that request nothing.
+func (s ThreadSettings) IsZero() bool { return s.Model == "" && s.Effort == "" && s.Policy.IsZero() }
+
+// ReasonSettingsMismatch is the stable reason token of a thread whose model or
+// effort is not the one a resume applied.
+const ReasonSettingsMismatch = "codex-thread-settings-mismatch"
+
+// ErrSettingsNotApplied is the sentinel of a resume that could not make the
+// thread's later turns run with the settings it was asked for: the update was
+// refused, or the thread still reports another model or effort after it. A
+// policy the thread does not take is ErrPolicyMismatch instead.
+var ErrSettingsNotApplied = errors.New("codex app-server thread settings were not applied")
+
+// SettingsMismatchError is a thread that still reports another model or
+// effort after thread/settings/update. It names only the requested values,
+// never the effective ones the provider reported.
+type SettingsMismatchError struct {
+	Field     string
+	Requested string
+}
+
+func (e *SettingsMismatchError) Error() string {
+	return fmt.Sprintf("%s: the thread did not take %s %s", ReasonSettingsMismatch, e.Field, e.Requested)
+}
+
+func (e *SettingsMismatchError) Unwrap() error { return ErrSettingsNotApplied }
+
+// UpdateThreadSettings performs the experimental thread/settings/update
+// request, which changes the settings of a thread's later turns without
+// starting one, whether or not another client holds the thread. It is the
+// one way to change a thread that stays loaded: thread/resume ignores its
+// overrides then. Empty settings send only the thread id, which changes
+// nothing and so tells whether the endpoint takes the request at all.
+func (c *Client) UpdateThreadSettings(ctx context.Context, threadID string, settings ThreadSettings) error {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return fmt.Errorf("%w: settings thread is empty", ErrProtocol)
+	}
+	if err := settings.Policy.validate(); err != nil {
+		return err
+	}
+	if !c.ExperimentalAPI() {
+		return fmt.Errorf("%w: %w: thread/settings/update", ErrUnsupported, ErrExperimentalRequired)
+	}
+	params := threadSettingsUpdateParams{
+		ThreadID: threadID, Model: settings.Model, Effort: settings.Effort, ApprovalPolicy: settings.Policy.ApprovalPolicy,
+	}
+	if settings.Policy.Sandbox != "" {
+		params.SandboxPolicy = &wireSandboxPolicy{Type: sandboxResponseTypes[settings.Policy.Sandbox]}
+	}
+	return c.Request(ctx, methodThreadSettingsUpdate, params, nil)
+}
+
+// ResumeThreadWithSettings resumes a thread and makes its later turns run with
+// settings. The resume carries the policy, which a thread no client holds
+// takes on load. When the answer still differs from any requested field, the
+// thread is updated with every requested field on the same connection and
+// read again, and a field it still does not report is a *PolicyMismatchError
+// or a *SettingsMismatchError. Zero settings send exactly the request
+// ResumeThread sends with a zero policy.
+func (c *Client) ResumeThreadWithSettings(ctx context.Context, threadID, cwd string, roots []string, settings ThreadSettings) (ThreadBinding, error) {
+	if err := settings.Policy.validate(); err != nil {
 		return ThreadBinding{}, err
 	}
-	return ThreadBinding{ThreadID: returned}, nil
+	binding, result, err := c.resumeThread(ctx, threadID, cwd, roots, settings.Policy)
+	if err != nil {
+		return ThreadBinding{}, err
+	}
+	if checkThreadSettings(methodThreadResume, settings, result) == nil {
+		return binding, nil
+	}
+	if err := c.UpdateThreadSettings(ctx, binding.ThreadID, settings); err != nil {
+		return ThreadBinding{}, fmt.Errorf("%w: %w", ErrSettingsNotApplied, err)
+	}
+	if _, result, err = c.resumeThread(ctx, binding.ThreadID, cwd, roots, ThreadPolicy{}); err != nil {
+		return ThreadBinding{}, err
+	}
+	if err := checkThreadSettings(methodThreadSettingsUpdate, settings, result); err != nil {
+		return ThreadBinding{}, err
+	}
+	return binding, nil
+}
+
+// checkThreadSettings holds every requested field of settings against the
+// answer: the policy as checkThreadPolicy does, the model and the effort by
+// exact string.
+func checkThreadSettings(method string, settings ThreadSettings, result threadResult) error {
+	if err := checkThreadPolicy(method, settings.Policy, result); err != nil {
+		return err
+	}
+	if settings.Model != "" && strings.TrimSpace(result.Model) != settings.Model {
+		return &SettingsMismatchError{Field: "model", Requested: settings.Model}
+	}
+	if settings.Effort != "" && strings.TrimSpace(result.ReasoningEffort) != settings.Effort {
+		return &SettingsMismatchError{Field: "effort", Requested: settings.Effort}
+	}
+	return nil
 }
 
 // StartTurn submits one text input and returns the exact turn id. The prompt is

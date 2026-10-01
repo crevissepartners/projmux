@@ -25,6 +25,14 @@ import (
 // on running with the old profile's.
 const relaunchReasonCodexPermissionsKept = "relaunch-codex-permissions-kept"
 
+// relaunchReasonCodexSettingsUnsupported refuses the restart of a Running
+// Codex Agent whose endpoint does not take thread/settings/update. The resume
+// applies the model, effort, sandbox and approval to the thread with that
+// request, because a thread another client still holds keeps its own settings
+// on resume; a stop that the resume could not follow with it would leave the
+// Agent Offline.
+const relaunchReasonCodexSettingsUnsupported = "relaunch-codex-settings-unsupported"
+
 // agentRestart is one restart of an existing Claude or Codex Agent on its
 // provider conversation: the one implementation `agent relaunch` and `agent
 // instructions|persona attach|detach` share.
@@ -357,6 +365,33 @@ func (c *agentCommand) refuseCodexPermissionsKept(r *agentRestart) error {
 	}
 	return r.refuse(relaunchReasonCodexPermissionsKept, fmt.Sprintf("cannot drop the %s %s may have given its Codex thread: %s sets none, and a Codex resume can set a sandbox or an approval but not remove one; switch to a profile that sets them",
 		strings.Join(kept, " and "), from, to))
+}
+
+// refuseCodexSettingsUnsupported sends the thread of a Running Codex Agent one
+// thread/settings/update that changes nothing, and refuses the restart when
+// the endpoint does not take it, while nothing has been stopped.
+func (c *agentCommand) refuseCodexSettingsUnsupported(r *agentRestart) error {
+	ref := r.target.Status.SessionRef
+	if c.rebind == nil || c.rebind.create == nil || c.rebind.create.codexNative == nil || ref == nil || ref.Codex == nil {
+		return r.refuse(relaunchReasonCodexSettingsUnsupported, "cannot have its Codex thread's settings changed: the native Codex thread seam is not configured")
+	}
+	ctx, cancel := prepareNativeContext(context.Background())
+	defer cancel()
+	native := c.rebind.create.codexNative
+	route, err := resolveCodexNativeResumeRoute(ctx, native, ref, "uid:"+r.target.Metadata.UID)
+	if err == nil {
+		err = native.ProbeThreadSettings(ctx, route, ref.Codex.ThreadID)
+	}
+	if err != nil {
+		return r.refuse(relaunchReasonCodexSettingsUnsupported, "cannot have its Codex thread's model, effort, sandbox and approval changed: the Codex app server did not take thread/settings/update: "+err.Error())
+	}
+	return nil
+}
+
+// codexThreadSettingsNotApplied reports a native Codex resume that failed
+// because the thread did not take the settings it was asked for.
+func codexThreadSettingsNotApplied(err error) bool {
+	return errors.Is(err, codexappserver.ErrSettingsNotApplied) || errors.Is(err, codexappserver.ErrPolicyMismatch)
 }
 
 // agentRestartSteps are the parts of one restart its command owns.
