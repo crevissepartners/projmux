@@ -461,7 +461,7 @@ func (e *codexControlEpoch) deliver(ctx context.Context, request agentControlReq
 			return refusedControl(string(codexbroker.RefusalLifecycleRetry), "fresh exact turn state retry window did not pass; turn write refused")
 		}
 		snapshot, err = e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
-		e.refused(diagnostics.CodexBrokerOperationLifecycleRead, err)
+		err = e.refused(diagnostics.CodexBrokerOperationLifecycleRead, err)
 	}
 	state := e.classifyTurnState(snapshot, err, agentControlWriteDeliver)
 	if state.refusal != nil {
