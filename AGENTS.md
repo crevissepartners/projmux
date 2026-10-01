@@ -56,6 +56,12 @@ make install
 | `internal/ui` | Native picker and rendering. |
 | `internal/state` | Simple file-backed state helpers. |
 | `internal/i18n`, `internal/theme` | Message catalog and locales; built-in palette and theme resolution. |
+| `internal/aiprovider` | AI provider registry: IDs, names, binaries, and capability flags. |
+| `internal/diagnostics` | Bounded operational event journal read by `projmux diagnostics`. |
+| `internal/platformkeys` | Physical key-chord capture for native keybindings; macOS only, a stub elsewhere. |
+| `internal/systemstatus` | Host CPU and memory sampling for the status bar. |
+| `internal/version` | Release version string that release-please bumps. |
+| `internal/testutil` | Test-only support packages; product code never imports them. |
 | `internal/tools/gendocs` | Build-time generator for `docs/cli.md` (`make docs`). |
 | `internal/tools/gennotices` | Build-time generator for `THIRD_PARTY_NOTICES` (`make notices`). |
 | `test/` | `integration/`, `e2e/`, and `install/` suites, Docker images, fixtures, and workflow contract tests. |
