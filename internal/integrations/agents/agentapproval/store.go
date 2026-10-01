@@ -53,7 +53,13 @@ const (
 	// terminalRetention keeps settled records listable for a day.
 	terminalRetention = 24 * time.Hour
 	// lockWait bounds how long a writer queues behind another holder.
-	lockWait          = 2 * time.Second
+	lockWait = 2 * time.Second
+	// patientLockWait bounds the queue for Answer and Create. Their callers,
+	// an operator's answer and a hook recording a new request, have time to
+	// spare, and a holder on a slow disk can spend most of lockWait in its
+	// fsyncs. The other writes keep lockWait: a hook's settle loop retries them
+	// on its next tick, inside the margin its timeout leaves.
+	patientLockWait   = 10 * time.Second
 	lockRetryInterval = 2 * time.Millisecond
 )
 
@@ -191,6 +197,12 @@ type Store struct {
 	// removeTemp, when set by an in-package test, replaces os.Remove for the
 	// temp files a dead write left.
 	removeTemp func(path string) error
+	// lockWaitFor, when set by an in-package test, maps the bound a write
+	// asked for, lockWait or patientLockWait, to the one withLock waits.
+	lockWaitFor func(bound time.Duration) time.Duration
+	// lockWaiting, when set by an in-package test, sees each retry of a
+	// write queued behind another holder, with the time it has waited.
+	lockWaiting func(waited time.Duration)
 }
 
 // NewStore opens the store under stateDir. Nothing is touched until the first
@@ -272,7 +284,7 @@ func (s *Store) Create(record Record) (Record, error) {
 	if !validRecord(record) || !record.Deadline.After(record.CreatedAt) {
 		return Record{}, ErrInvalidRecord
 	}
-	err := s.withLock(func() error {
+	err := s.withLock(patientLockWait, func() error {
 		state, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -369,7 +381,7 @@ func (s *Store) List(agentUID string) ([]Record, error) {
 // under-report one.
 func (s *Store) Answer(id, agentUID string, allow bool, via string) (Record, error) {
 	var out Record
-	err := s.withLock(func() error {
+	err := s.withLock(patientLockWait, func() error {
 		state, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -440,7 +452,7 @@ func (s *Store) AppendAnswerAudit(line AuditLine) error {
 	now := s.clock()
 	line = boundAnswerLine(line)
 	line.DecidedAt, line.At = now, now
-	if err := s.withLock(func() error { return s.appendAuditLocked(line) }); err != nil {
+	if err := s.withLock(lockWait, func() error { return s.appendAuditLocked(line) }); err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrAudit, s.auditPath, err)
 	}
 	return nil
@@ -462,7 +474,7 @@ func (s *Store) AppendUncommittedAudit(line AuditLine, reason string) error {
 		return fmt.Errorf("%w: agent approval store path is empty", ErrUncommittedAudit)
 	}
 	line = uncommittedLine(boundAnswerLine(line), boundedLine(reason, 64), s.clock())
-	if err := s.withLock(func() error { return s.appendAuditLocked(line) }); err != nil {
+	if err := s.withLock(lockWait, func() error { return s.appendAuditLocked(line) }); err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrUncommittedAudit, s.auditPath, err)
 	}
 	return nil
@@ -527,7 +539,7 @@ func (s *Store) Close(id, reason string) (Record, error) {
 
 func (s *Store) transition(id, reason string, next func(Record, time.Time) (State, bool)) (Record, error) {
 	var out Record
-	err := s.withLock(func() error {
+	err := s.withLock(lockWait, func() error {
 		state, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -604,7 +616,7 @@ func (s *Store) CloseAnsweredInTerminal(sessionID, toolName string, toolInput js
 		return false, nil
 	}
 	closed := false
-	err = s.withLock(func() error {
+	err = s.withLock(lockWait, func() error {
 		state, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -744,7 +756,7 @@ func (s *Store) read() (diskState, error) {
 	return s.loadLocked()
 }
 
-func (s *Store) withLock(fn func() error) error {
+func (s *Store) withLock(wait time.Duration, fn func() error) error {
 	if s == nil || s.path == "" {
 		return errors.New("agent approval store path is empty")
 	}
@@ -758,9 +770,16 @@ func (s *Store) withLock(fn func() error) error {
 	}
 	defer lock.Close()
 	fd := int(lock.Fd())
+	if s.lockWaitFor != nil {
+		wait = s.lockWaitFor(wait)
+	}
 	err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
-	deadline := time.Now().Add(lockWait)
+	start := time.Now()
+	deadline := start.Add(wait)
 	for lockBusy(err) && time.Now().Before(deadline) {
+		if s.lockWaiting != nil {
+			s.lockWaiting(time.Since(start))
+		}
 		time.Sleep(lockRetryInterval)
 		err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
 	}
