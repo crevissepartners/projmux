@@ -23,7 +23,7 @@ func newHookCommand(homeDir func() (string, error), lookupEnv func(string) strin
 	return hookcmd.New(homeDir, lookupEnv, getwd, stdin, editorRunner, hookcmd.Deps{
 		ConfigPaths:     configPaths,
 		Locale:          appLocale,
-		LocalizeText:    localizeText,
+		LocalizeText:    LocalizeText,
 		IsMissingHome:   isMissingHome,
 		PathOrReason:    pathOrReason,
 		SplitOperands:   splitOperands,

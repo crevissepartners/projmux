@@ -2806,7 +2806,7 @@ func (c *settingsCommand) probeLabKeybindingContext(ctx context.Context, key set
 func (c *settingsCommand) writeTmuxAppConfig() (string, error) {
 	home := ""
 	if c.homeDir != nil {
-		got, err := c.homeDir()
+		got, err := c.HomeDir()
 		if err != nil {
 			return "", fmt.Errorf("resolve home directory: %w", err)
 		}
