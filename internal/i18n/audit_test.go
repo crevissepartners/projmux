@@ -101,3 +101,22 @@ func TestRuntimeGoFilesHaveNoUnapprovedKoreanStringCandidates(t *testing.T) {
 		t.Fatalf("unapproved Korean string candidates: %+v", findings)
 	}
 }
+
+func TestRuntimeKoreanAuditAllowsEveryCatalogDataFileAndNothingElse(t *testing.T) {
+	t.Parallel()
+
+	filter := RuntimeKoreanStringAuditOptions().PathFilter
+	for path, scanned := range map[string]bool{
+		"internal/i18n/default_catalog.go":   false,
+		"internal/i18n/extra_catalog.go":     false,
+		"internal/i18n/formatter.go":         false,
+		"internal/i18n/catalog.go":           true,
+		"internal/i18n/catalog_fragments.go": true,
+		"internal/i18n/sub/extra_catalog.go": true,
+		"internal/app/extra_catalog.go":      true,
+	} {
+		if got := filter(path); got != scanned {
+			t.Errorf("PathFilter(%q) = %v, want %v", path, got, scanned)
+		}
+	}
+}

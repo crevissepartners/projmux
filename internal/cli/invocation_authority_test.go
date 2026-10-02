@@ -46,9 +46,10 @@ func TestInvocationAuthorityCensusIsACompleteBijection(t *testing.T) {
 	}
 
 	var graphRows int
-	// Inspect the authoring graph directly. A projection must never be able to
-	// fill a newly added child's omitted classification and hide the gap.
-	walkInvocationGraph(routes, nil, func(path []string, route Route) {
+	// Inspect the authoring graph directly, route extensions included. A
+	// projection must never be able to fill a newly added child's omitted
+	// classification and hide the gap.
+	walkInvocationGraph(manifestRoutes(), nil, func(path []string, route Route) {
 		graphRows++
 		spelling := strings.Join(path, " ")
 		row, ok := seen[spelling]

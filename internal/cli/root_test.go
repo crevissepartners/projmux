@@ -23,9 +23,15 @@ type recordedInvocation struct {
 // bridge behavior can be asserted without touching tmux or the filesystem.
 func newTestRoot(t *testing.T, stdout, stderr io.Writer) (*Root, *[]recordedInvocation) {
 	t.Helper()
+	return newTestRootOver(t, Routes(), stdout, stderr)
+}
+
+// newTestRootOver builds a recording root over nodes, the top-level routes.
+func newTestRootOver(t *testing.T, nodes []Route, stdout, stderr io.Writer) (*Root, *[]recordedInvocation) {
+	t.Helper()
 	var recorded []recordedInvocation
 	handlers := map[string]Handler{}
-	for _, route := range Routes() {
+	for _, route := range nodes {
 		if policyOwnedRoutes[route.Name] {
 			continue
 		}
@@ -35,9 +41,9 @@ func newTestRoot(t *testing.T, stdout, stderr io.Writer) (*Root, *[]recordedInvo
 			return nil
 		}
 	}
-	root, err := NewRoot(RootOptions{Stdout: stdout, Stderr: stderr, Version: "9.9.9", Handlers: handlers})
+	root, err := newRoot(RootOptions{Stdout: stdout, Stderr: stderr, Version: "9.9.9", Handlers: handlers}, nodes)
 	if err != nil {
-		t.Fatalf("NewRoot returned error: %v", err)
+		t.Fatalf("newRoot returned error: %v", err)
 	}
 	return root, &recorded
 }
@@ -72,11 +78,12 @@ func TestNewRootRequiresEveryManifestHandler(t *testing.T) {
 // TestCommandTreeMatchesGolden is the command-tree golden. It freezes the Cobra
 // surface: exactly the manifest routes, no injected commands, hidden flags
 // preserved, flag parsing off on every bridge, and arbitrary args everywhere so
-// raw argv survives.
+// raw argv survives. It builds the built-in route table alone, so a route
+// extension never changes the fixture.
 func TestCommandTreeMatchesGolden(t *testing.T) {
 	t.Parallel()
 
-	root, _ := newTestRoot(t, &bytes.Buffer{}, &bytes.Buffer{})
+	root, _ := newTestRootOver(t, cloneRoutes(routes), &bytes.Buffer{}, &bytes.Buffer{})
 	// Execute a trivial invocation first so Cobra performs the same lazy
 	// initialization (help command, completion policy) it does in production.
 	if err := root.Execute([]string{"version"}); err != nil {

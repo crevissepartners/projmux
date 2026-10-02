@@ -233,9 +233,10 @@ func NewCatalog(locales map[Locale]map[Key]Entry) Catalog {
 	return Catalog{locales: copied}
 }
 
-// DefaultCatalog returns the embedded projmux Phase 1 catalog.
+// DefaultCatalog returns the embedded projmux Phase 1 catalog with every
+// registered catalog fragment merged in.
 func DefaultCatalog() Catalog {
-	return NewCatalog(defaultCatalogData)
+	return NewCatalog(defaultCatalogLocales())
 }
 
 // MissingFallbackKeys reports required keys absent from the fallback locale.

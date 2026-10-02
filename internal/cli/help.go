@@ -172,11 +172,15 @@ func RenderHelp(w io.Writer, target HelpTarget) error {
 // bytes are pinned by a golden fixture so moving the source of truth into the
 // manifest cannot change the historical output.
 func RenderRootHelp(w io.Writer) error {
+	return renderRootHelp(w, manifestRoutes())
+}
+
+func renderRootHelp(w io.Writer, nodes []Route) error {
 	var b strings.Builder
 	b.WriteString("projmux\n")
 	b.WriteString("\n")
 	b.WriteString("Commands:\n")
-	for _, route := range routes {
+	for _, route := range nodes {
 		if route.Hidden {
 			continue
 		}

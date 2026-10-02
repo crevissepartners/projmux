@@ -10,11 +10,17 @@ import (
 // TestRouteCoverageHasExactlyOneDispositionAndNoOrphans audits the final tree:
 // 37 public canonical/shortcut roots, the hidden internal namespace, and the
 // hidden deprecated `persona` root. Retired compatibility roots are absent
-// rather than represented as dispatchable tombstones.
+// rather than represented as dispatchable tombstones. The tallies count the
+// built-in route table; every top-level route, extensions included, must still
+// pass the per-route checks.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
 	all := Routes()
+	builtin := map[string]bool{}
+	for _, route := range routes {
+		builtin[route.Name] = true
+	}
 	closed := map[Disposition]bool{}
 	for _, disposition := range Dispositions() {
 		closed[disposition] = true
@@ -35,15 +41,18 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		if !closed[route.Disposition] {
 			t.Fatalf("route %q disposition %q is outside the closed set %v", route.Name, route.Disposition, Dispositions())
 		}
+		if route.Summary == "" {
+			t.Fatalf("route %q has no summary", route.Name)
+		}
+		if !builtin[route.Name] {
+			continue
+		}
 		tally[route.Disposition]++
 		if route.Hidden {
 			hidden++
 		} else {
 			public++
 			publicTally[route.Disposition]++
-		}
-		if route.Summary == "" {
-			t.Fatalf("route %q has no summary", route.Name)
 		}
 	}
 
