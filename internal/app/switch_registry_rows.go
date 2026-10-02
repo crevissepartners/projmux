@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
@@ -102,7 +103,7 @@ func (c *switchCommand) switchManagedRows(
 	view registryview.View,
 	ui string,
 	mode switchRowRenderMode,
-	selection pinSelection,
+	selection pincmd.Selection,
 	attentionRanks map[string]int,
 	aiBadgeKinds map[string]string,
 	aiBadgeStyle string,
@@ -155,7 +156,7 @@ func (c *switchCommand) switchManagedRows(
 			AttentionRank: attentionRanks[sessionName],
 			AIBadgeKind:   aiBadgeKinds[sessionName],
 			AIBadgeStyle:  aiBadgeStyle,
-			Pinned:        selection.pinnedProject(row.UID),
+			Pinned:        selection.PinnedProject(row.UID),
 		})
 	}
 	return rows, sessionNames, nil
@@ -194,9 +195,9 @@ const (
 // still pinned: the preference is about the resource, and a rebind, a rename or a
 // vanished directory does not change which resource the operator asked to keep on
 // top.
-func switchManagedProjectTierOf(project registryview.Row, selection pinSelection) switchManagedProjectTier {
+func switchManagedProjectTierOf(project registryview.Row, selection pincmd.Selection) switchManagedProjectTier {
 	switch {
-	case selection.pinnedProject(project.UID):
+	case selection.PinnedProject(project.UID):
 		return switchManagedTierPinned
 	case project.IsLive():
 		return switchManagedTierLive
@@ -212,7 +213,7 @@ func switchManagedProjectTierOf(project registryview.Row, selection pinSelection
 // difference, so two Projects in the same tier keep the order the Registry gave
 // them. That is what makes a refresh deterministic: only a tier change can move
 // a row past a sibling, and a tier change is an observation the operator caused.
-func sortManagedProjectRows(projects []registryview.Row, selection pinSelection) {
+func sortManagedProjectRows(projects []registryview.Row, selection pincmd.Selection) {
 	slices.SortStableFunc(projects, func(a, b registryview.Row) int {
 		return int(switchManagedProjectTierOf(a, selection)) - int(switchManagedProjectTierOf(b, selection))
 	})

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
@@ -1408,7 +1409,7 @@ func (c *settingsCommand) addCurrentProjectEntryLocale(locale i18n.Locale) intpi
 			Value: settingsNoopValue,
 		}
 	}
-	if selection.pinnedPath(currentTarget) {
+	if selection.PinnedPath(currentTarget) {
 		return intpickercompat.Entry{
 			Label: settingsLabelDimLocale(locale, "Add Current Project", "already pinned  "+intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 			Value: settingsNoopValue,
@@ -1494,7 +1495,7 @@ func (c *settingsCommand) settingsProjectRegistry() coremetadata.Registry {
 // The projection is the point: the pin holds a uid, so the name and the root are
 // re-read on every render and a rebind or a rename shows up here instead of
 // stranding the pin under its old spelling.
-func settingsPinnedProjectName(registry coremetadata.Registry, row pinRow, homeDir, repoRoot string) string {
+func settingsPinnedProjectName(registry coremetadata.Registry, row pincmd.Row, homeDir, repoRoot string) string {
 	if project, ok := registry.Project(row.Pin.Value); ok {
 		if context := registryview.NewContextProjector(registry).For(coremetadata.KindProject, project.Metadata.UID); !context.Empty() {
 			return context.Value
@@ -1509,7 +1510,7 @@ func settingsPinnedProjectName(registry coremetadata.Registry, row pinRow, homeD
 	return row.Reference
 }
 
-func settingsPinnedProjectSummary(registry coremetadata.Registry, row pinRow) string {
+func settingsPinnedProjectSummary(registry coremetadata.Registry, row pincmd.Row) string {
 	project, ok := registry.Project(row.Pin.Value)
 	if !ok {
 		return row.Reference + " - no Registry Project"

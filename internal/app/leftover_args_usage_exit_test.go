@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 )
@@ -21,7 +22,7 @@ func leftoverArgsTestApp() *App {
 		usage: usagecmd.New(func() time.Time { return time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC) }),
 	}
 	app.diagnostics = &diagnosticsCommand{ai: &aiCommand{}}
-	app.pin = &pinCommand{}
+	app.pin = &pincmd.Command{}
 	app.update = &updatecmd.Command{}
 	app.settings = &settingsCommand{}
 	return app
