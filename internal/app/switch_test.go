@@ -3637,19 +3637,6 @@ func newCandidateStubPinStore(paths ...string) *stubSwitchPinStore {
 	return &stubSwitchPinStore{set: set}
 }
 
-// newLegacyStubPinStore seeds the pre-v2 shape: bare paths with no statement about
-// which of them a Project claims.
-func newLegacyStubPinStore(paths ...string) *stubSwitchPinStore {
-	set := pins.Set{Format: pins.FormatLegacy}
-	for _, path := range paths {
-		set.Pins = append(set.Pins, pins.Pin{Kind: pins.KindCandidate, Value: path})
-	}
-	if len(set.Pins) == 0 {
-		set.Format = pins.FormatAbsent
-	}
-	return &stubSwitchPinStore{set: set}
-}
-
 func (s *stubSwitchPinStore) Path() string { return "/fixture/pins" }
 
 func (s *stubSwitchPinStore) Load() (pins.Set, error) {
