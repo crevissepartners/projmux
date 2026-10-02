@@ -165,9 +165,12 @@ func TestSupervisorReceiptPrewriteDoesNotWaitForRegistryLock(t *testing.T) {
 		cmd.recordOutcome(superviseSpec{PaneUID: "pan-alpha-log", Generation: "gen-lock-free"}, processOutcome{Signal: "HUP"}, nil)
 		close(done)
 	}()
+	// The injected update path never returns, so a prewrite that enters it
+	// signals registryEntered and never closes done. Whichever comes first is
+	// the verdict, however long the journal append and its fsync take.
 	select {
 	case <-done:
-	case <-time.After(500 * time.Millisecond):
+	case <-registryEntered:
 		t.Fatal("supervisor prewrite waited for the injected Registry lock path")
 	}
 	select {
