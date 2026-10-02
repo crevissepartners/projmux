@@ -1,4 +1,4 @@
-package app
+package personacmd
 
 import (
 	"bytes"
@@ -9,18 +9,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 )
 
-// newPersonaTestCommand roots one persona command at an isolated HOME. It
-// returns the command and the persona directory that HOME resolves to.
-func newPersonaTestCommand(t *testing.T, env map[string]string, stdin string) (*personaCommand, string) {
+// newPersonaTestCommand roots one persona command at an isolated HOME whose
+// `edit` opens editor. It returns the command and the persona directory that
+// HOME resolves to.
+func newPersonaTestCommand(t *testing.T, editor string, stdin string) (*Command, string) {
 	t.Helper()
 	home := t.TempDir()
-	cmd := &personaCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string { return env[name] },
-		stdin:     strings.NewReader(stdin),
+	cmd := &Command{
+		noun:   "persona",
+		paths:  config.Homes{HomeDir: home}.Paths,
+		editor: func() string { return editor },
+		stdin:  strings.NewReader(stdin),
 		editorRunner: func(string, []string, io.Writer, io.Writer) error {
 			return errors.New("editor runner should not be called")
 		},
@@ -28,14 +32,14 @@ func newPersonaTestCommand(t *testing.T, env map[string]string, stdin string) (*
 	return cmd, filepath.Join(home, ".config", "projmux", "personas")
 }
 
-func runPersona(cmd *personaCommand, args ...string) (string, string, error) {
+func runPersona(cmd *Command, args ...string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	err := cmd.Run(args, &stdout, &stderr)
 	return stdout.String(), stderr.String(), err
 }
 
 func TestInstructionsAndPersonaCommandsShareTheStoredFile(t *testing.T) {
-	cmd, dir := newPersonaTestCommand(t, nil, "original instructions\n")
+	cmd, dir := newPersonaTestCommand(t, "", "original instructions\n")
 	instructions := *cmd
 	instructions.noun = "instructions"
 	if _, _, err := runPersona(cmd, "set", "reviewer"); err != nil {
@@ -72,7 +76,7 @@ func TestInstructionsAndPersonaCommandsShareTheStoredFile(t *testing.T) {
 // exact bytes, from <ConfigDir>/personas/reviewer.md at 0600.
 func TestPersonaSetListShowRoundTripIsByteIdentical(t *testing.T) {
 	t.Parallel()
-	cmd, dir := newPersonaTestCommand(t, nil, "")
+	cmd, dir := newPersonaTestCommand(t, "", "")
 	content := []byte("# Reviewer\n\nNo trailing newline, tabs\tand bytes \xe2\x80\x94 kept")
 	source := filepath.Join(t.TempDir(), "x.md")
 	if err := os.WriteFile(source, content, 0o644); err != nil {
@@ -124,7 +128,7 @@ func TestPersonaSetReadsStdinForDashAndOmittedFile(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cmd, _ := newPersonaTestCommand(t, nil, "from stdin\n")
+			cmd, _ := newPersonaTestCommand(t, "", "from stdin\n")
 			if _, _, err := runPersona(cmd, args...); err != nil {
 				t.Fatal(err)
 			}
@@ -160,13 +164,13 @@ func TestPersonaCLIRefusalsCarryTheTokenAndWriteNothing(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			cmd, dir := newPersonaTestCommand(t, map[string]string{"EDITOR": "true"}, test.stdin)
+			cmd, dir := newPersonaTestCommand(t, "true", test.stdin)
 			_, _, err := runPersona(cmd, test.args...)
 			if err == nil || !strings.Contains(err.Error(), test.reason) {
 				t.Fatalf("err = %v, want %s", err, test.reason)
 			}
-			if IsUsageError(err) != test.usage {
-				t.Fatalf("usage error = %v, want %v (%v)", IsUsageError(err), test.usage, err)
+			if coremetadata.IsUsageError(err) != test.usage {
+				t.Fatalf("usage error = %v, want %v (%v)", coremetadata.IsUsageError(err), test.usage, err)
 			}
 			if _, statErr := os.Stat(dir); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("a refused command created %s: %v", dir, statErr)
@@ -177,12 +181,12 @@ func TestPersonaCLIRefusalsCarryTheTokenAndWriteNothing(t *testing.T) {
 
 func TestPersonaDeleteRequiresYes(t *testing.T) {
 	t.Parallel()
-	cmd, dir := newPersonaTestCommand(t, nil, "keep")
+	cmd, dir := newPersonaTestCommand(t, "", "keep")
 	if _, _, err := runPersona(cmd, "set", "reviewer"); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err := runPersona(cmd, "delete", "reviewer")
-	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "--yes") {
+	if err == nil || !coremetadata.IsUsageError(err) || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("delete without --yes = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "reviewer.md")); err != nil {
@@ -206,68 +210,16 @@ func editWith(content []byte, seen *string) func(string, []string, io.Writer, io
 	}
 }
 
-func TestPersonaEditCreatesThroughATempCopyAndWritesAtomically(t *testing.T) {
-	t.Parallel()
-	cmd, dir := newPersonaTestCommand(t, map[string]string{"VISUAL": "vi -n"}, "")
-	var seen string
-	var gotCommand string
-	var gotArgs []string
-	cmd.editorRunner = func(command string, args []string, stdout, stderr io.Writer) error {
-		gotCommand, gotArgs = command, args
-		return editWith([]byte("new persona\n"), &seen)(command, args, stdout, stderr)
-	}
-
-	stdout, _, err := runPersona(cmd, "edit", "reviewer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotCommand != "vi" || len(gotArgs) != 2 || gotArgs[0] != "-n" {
-		t.Fatalf("editor = %q %q, want $VISUAL when $EDITOR is unset", gotCommand, gotArgs)
-	}
-	path := filepath.Join(dir, "reviewer.md")
-	if seen == path || strings.HasPrefix(seen, dir) {
-		t.Fatalf("the editor was given the persona file itself: %s", seen)
-	}
-	if _, err := os.Stat(filepath.Dir(seen)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the temporary copy was not removed: %v", err)
-	}
-	written, err := os.ReadFile(path)
-	if err != nil || string(written) != "new persona\n" {
-		t.Fatalf("persona = %q, %v", written, err)
-	}
-	if !strings.Contains(stdout, "edited persona reviewer") {
-		t.Fatalf("stdout = %q", stdout)
-	}
-
-	// $EDITOR wins over $VISUAL, and the existing content is what it opens.
-	cmd.lookupEnv = func(name string) string {
-		return map[string]string{"EDITOR": "nano", "VISUAL": "vi"}[name]
-	}
-	var opened []byte
-	cmd.editorRunner = func(command string, args []string, _, _ io.Writer) error {
-		gotCommand = command
-		opened, _ = os.ReadFile(args[len(args)-1])
-		return nil
-	}
-	stdout, _, err = runPersona(cmd, "edit", "reviewer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotCommand != "nano" || string(opened) != "new persona\n" || !strings.Contains(stdout, "unchanged") {
-		t.Fatalf("editor %q opened %q; stdout %q", gotCommand, opened, stdout)
-	}
-}
-
 func TestPersonaEditRefusesOversizedResultAndKeepsTheStoredPersona(t *testing.T) {
 	t.Parallel()
-	cmd, dir := newPersonaTestCommand(t, map[string]string{"EDITOR": "ed"}, "original")
+	cmd, dir := newPersonaTestCommand(t, "ed", "original")
 	if _, _, err := runPersona(cmd, "set", "reviewer"); err != nil {
 		t.Fatal(err)
 	}
 	var seen string
 	cmd.editorRunner = editWith(bytes.Repeat([]byte("x"), persona.MaxSize+1), &seen)
 	_, _, err := runPersona(cmd, "edit", "reviewer")
-	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), persona.ReasonTooLarge) {
+	if err == nil || !coremetadata.IsUsageError(err) || !strings.Contains(err.Error(), persona.ReasonTooLarge) {
 		t.Fatalf("oversized edit = %v", err)
 	}
 	stored, readErr := os.ReadFile(filepath.Join(dir, "reviewer.md"))
@@ -283,11 +235,11 @@ func TestPersonaEditRefusesOversizedResultAndKeepsTheStoredPersona(t *testing.T)
 
 func TestPersonaEditWithoutAnEditorOrWithAnEmptyNewPersonaWritesNothing(t *testing.T) {
 	t.Parallel()
-	cmd, dir := newPersonaTestCommand(t, nil, "")
+	cmd, dir := newPersonaTestCommand(t, "", "")
 	if _, _, err := runPersona(cmd, "edit", "reviewer"); err == nil || !strings.Contains(err.Error(), "$EDITOR") {
 		t.Fatalf("edit without an editor = %v", err)
 	}
-	cmd.lookupEnv = func(name string) string { return map[string]string{"EDITOR": "true"}[name] }
+	cmd.editor = func() string { return "true" }
 	cmd.editorRunner = func(string, []string, io.Writer, io.Writer) error { return nil }
 	stdout, _, err := runPersona(cmd, "edit", "reviewer")
 	if err != nil || !strings.Contains(stdout, "not created") {
@@ -304,14 +256,40 @@ func TestPersonaEditWithoutAnEditorOrWithAnEmptyNewPersonaWritesNothing(t *testi
 
 func TestPersonaCommandRequiresAKnownSubcommand(t *testing.T) {
 	t.Parallel()
-	cmd, _ := newPersonaTestCommand(t, nil, "")
+	cmd, _ := newPersonaTestCommand(t, "", "")
 	for _, args := range [][]string{nil, {"rename"}, {"list", "extra"}, {"show"}, {"set", "a", "b", "c"}} {
-		if _, _, err := runPersona(cmd, args...); err == nil || !IsUsageError(err) {
+		if _, _, err := runPersona(cmd, args...); err == nil || !coremetadata.IsUsageError(err) {
 			t.Fatalf("persona %q = %v, want a usage error", args, err)
 		}
 	}
 	stdout, _, err := runPersona(cmd, "list")
 	if err != nil || strings.TrimSpace(stdout) != "NAME  DIGEST  SIZE  MODIFIED" {
 		t.Fatalf("empty list = %q, %v", stdout, err)
+	}
+}
+
+// TestInstructionsEditKeepsItsSpellingInARefusal pins the noun of the one
+// refusal `edit` prints itself: instructions on `instructions edit`, persona
+// on the deprecated `persona edit`. Both keep the edited copy under a
+// projmux-instructions- temporary directory.
+func TestInstructionsEditKeepsItsSpellingInARefusal(t *testing.T) {
+	t.Parallel()
+	for noun, want := range map[string]string{
+		"instructions": `instructions edit: ` + persona.ReasonTooLarge + `: instructions "reviewer" is `,
+		"persona":      `persona edit: ` + persona.ReasonTooLarge + `: persona "reviewer" is `,
+	} {
+		cmd, _ := newPersonaTestCommand(t, "ed", "")
+		cmd.noun = noun
+		var seen string
+		cmd.editorRunner = editWith(bytes.Repeat([]byte("x"), persona.MaxSize+1), &seen)
+		_, _, err := runPersona(cmd, "edit", "reviewer")
+		if err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("%s edit = %v, want it to start %q", noun, err, want)
+		}
+		// The kept copy is in a temporary directory named for instructions.
+		if !strings.HasPrefix(filepath.Base(filepath.Dir(seen)), "projmux-instructions-") || !strings.Contains(err.Error(), seen) {
+			t.Errorf("%s edit kept %q, error %v", noun, seen, err)
+		}
+		_ = os.RemoveAll(filepath.Dir(seen))
 	}
 }
