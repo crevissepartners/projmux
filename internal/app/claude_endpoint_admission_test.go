@@ -7,6 +7,9 @@ import (
 	"errors"
 	"io"
 	"os"
+	"reflect"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -48,6 +51,33 @@ func (a *observedClaudeAck) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// These tests judge by the order of events, never by how much real time passes
+// between them: a loaded runner can starve any step for seconds. A wait for an
+// event that must happen therefore has no window of its own. It gives up only
+// just before the test binary's -test.timeout would end the run anyway, so the
+// failure names the missing event instead of a goroutine dump, and a run that
+// slow fails either way.
+func claudeAdmissionGiveUp(t *testing.T) <-chan time.Time {
+	deadline, ok := t.Deadline()
+	if !ok {
+		return nil
+	}
+	remaining := time.Until(deadline)
+	return time.After(remaining - remaining/10)
+}
+
+// receiveClaudeAdmission waits for ch and reports false if the test gave up.
+func receiveClaudeAdmission[T any](t *testing.T, ch <-chan T) (T, bool) {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value, true
+	case <-claudeAdmissionGiveUp(t):
+		var zero T
+		return zero, false
+	}
+}
+
 // serveClaudeAdmissionHelper runs one helper in-process the way the detached
 // helper runs it, with the caller's acknowledgement writer. The helper keeps
 // running after the caller stops reading, as a released helper does.
@@ -64,13 +94,55 @@ func serveClaudeAdmissionHelper(t *testing.T, bootstrap claudeEndpointBootstrap,
 	}()
 	t.Cleanup(func() {
 		cancel()
-		select {
-		case <-done:
-		case <-time.After(4 * time.Second):
+		if _, ok := receiveClaudeAdmission(t, done); !ok {
 			t.Error("helper did not exit")
 		}
 	})
 	return cancel, done
+}
+
+// startClaudeAdmissionCurrent is the fixture's start without its readiness and
+// exit windows: it serves bootstrap and waits for the helper's acknowledgement.
+func startClaudeAdmissionCurrent(t *testing.T, bootstrap claudeEndpointBootstrap) {
+	t.Helper()
+	readAck, writeAck := io.Pipe()
+	defer readAck.Close()
+	serveClaudeAdmissionHelper(t, bootstrap, writeAck)
+	acked := make(chan bool, 1)
+	go func() {
+		var ack [1]byte
+		_, err := io.ReadFull(readAck, ack[:])
+		acked <- err == nil && ack[0] == 1
+	}()
+	if ok, received := receiveClaudeAdmission(t, acked); !received {
+		t.Fatal("helper readiness deadline")
+	} else if !ok {
+		t.Fatal("helper failed before readiness")
+	}
+}
+
+// claudeRegistrationLeaseServes reports whether route's lease answers ready. A
+// probe that ran out of one of its fixed client bounds (claudeProbeUnanswered)
+// shows a slow helper, not a lost registration, so it is probed again; a stale
+// answer -- no lease socket, a dead or foreign peer, a helper that closed or
+// answered not current -- is final.
+func claudeRegistrationLeaseServes(t *testing.T, registryPath string, route coremetadata.AgentRouteRef) bool {
+	t.Helper()
+	giveUp := claudeAdmissionGiveUp(t)
+	for {
+		switch classifyClaudeRegistrationLease(registryPath, route) {
+		case claudeProbeReady:
+			return true
+		case claudeProbeUnanswered:
+			select {
+			case <-giveUp:
+				return false
+			default:
+			}
+		default:
+			return false
+		}
+	}
 }
 
 // cleanupClaudeAdmissionLeaseDir removes the fixed /tmp activation lease dir
@@ -156,9 +228,7 @@ func holdClaudeRegistryLock(t *testing.T, store *intmetadata.Store, mutate func(
 		})
 		finished <- err
 	}()
-	select {
-	case <-held:
-	case <-time.After(4 * time.Second):
+	if _, ok := receiveClaudeAdmission(t, held); !ok {
 		t.Fatal("registry lock was not taken")
 	}
 	var once sync.Once
@@ -176,12 +246,13 @@ func holdClaudeRegistryLock(t *testing.T, store *intmetadata.Store, mutate func(
 
 func waitClaudeAdmission(t *testing.T, what string, ready func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(4 * time.Second)
+	giveUp := claudeAdmissionGiveUp(t)
 	for !ready() {
-		if time.Now().After(deadline) {
+		select {
+		case <-giveUp:
 			t.Fatalf("timed out waiting for %s", what)
+		case <-time.After(10 * time.Millisecond):
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -251,7 +322,9 @@ func TestClaudeHelperAdmissionReleasesOnAck(t *testing.T) {
 		t.Fatal(err)
 	}
 	helper := &fakeClaudeHelperProcess{}
-	if err := awaitClaudeHelperAdmission(readAck, time.Now().Add(2*time.Second), helper); err != nil {
+	// The byte is already in the pipe; a deadline no run reaches keeps a
+	// starved read from expiring before it looks.
+	if err := awaitClaudeHelperAdmission(readAck, time.Now().Add(24*time.Hour), helper); err != nil {
 		t.Fatalf("acknowledged admission failed: %v", err)
 	}
 	helper.assertReleased(t)
@@ -267,13 +340,10 @@ func TestClaudeEndpointAdmissionAckFailureAfterRecordKeepsServing(t *testing.T) 
 	_ = readAck.Close()
 	ack := &observedClaudeAck{w: writeAck, written: make(chan error, 1)}
 	cancel, done := serveClaudeAdmissionHelper(t, f.bootstrap, ack)
-	select {
-	case err := <-ack.written:
-		if err == nil {
-			t.Fatal("closed acknowledgement accepted the byte")
-		}
-	case <-time.After(4 * time.Second):
+	if err, ok := receiveClaudeAdmission(t, ack.written); !ok {
 		t.Fatal("helper never acknowledged")
+	} else if err == nil {
+		t.Fatal("closed acknowledgement accepted the byte")
 	}
 	select {
 	case err := <-done:
@@ -281,13 +351,11 @@ func TestClaudeEndpointAdmissionAckFailureAfterRecordKeepsServing(t *testing.T) 
 	case <-time.After(3 * claudeEndpointPollInterval):
 	}
 	route, reason := f.route(t)
-	if reason != "" || !probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
+	if reason != "" || !claudeRegistrationLeaseServes(t, f.bootstrap.RegistryPath, route) {
 		t.Fatalf("registration lost after a failed acknowledgement: %q", reason)
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(4 * time.Second):
+	if _, ok := receiveClaudeAdmission(t, done); !ok {
 		t.Fatal("helper did not exit")
 	}
 	assertClaudeAdmissionResidue(t, claudeAdmissionResidue(t, f.bootstrap), false)
@@ -305,13 +373,10 @@ func TestClaudeEndpointAdmissionReleasedHelperExitsCleanWhenRecordFails(t *testi
 	helper, _, done := startReleasedClaudeHelper(t, f.bootstrap)
 	release()
 	helper.assertReleased(t)
-	select {
-	case err := <-done:
-		if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationClaimRefusedNewer {
-			t.Fatalf("superseded helper exit = %v, want %q", err, diagnostics.ClaudeRegistrationClaimRefusedNewer)
-		}
-	case <-time.After(4 * time.Second):
+	if err, ok := receiveClaudeAdmission(t, done); !ok {
 		t.Fatal("released helper did not exit after Record failed")
+	} else if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationClaimRefusedNewer {
+		t.Fatalf("superseded helper exit = %v, want %q", err, diagnostics.ClaudeRegistrationClaimRefusedNewer)
 	}
 	assertClaudeAdmissionResidue(t, claudeAdmissionResidue(t, f.bootstrap), false)
 	assertClaudeAdmissionDirGone(t, dir)
@@ -335,25 +400,20 @@ func TestClaudeEndpointAdmissionStaleReleasedHelperKeepsNewerRegistration(t *tes
 	if _, _, err := f.store.UpdateConvergent(func(reg *coremetadata.Registry) error { return beginClaudeAdmission(reg, newer) }); err != nil {
 		t.Fatal(err)
 	}
-	current := *f
-	current.bootstrap = newer
-	current.start(t)
+	startClaudeAdmissionCurrent(t, newer)
 	release := holdClaudeRegistryLock(t, f.store, nil)
 	helper, _, done := startReleasedClaudeHelper(t, f.bootstrap)
 	release()
 	helper.assertReleased(t)
-	select {
-	case err := <-done:
-		if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationClaimRefusedNewer {
-			t.Fatalf("stale helper exit = %v, want %q", err, diagnostics.ClaudeRegistrationClaimRefusedNewer)
-		}
-	case <-time.After(4 * time.Second):
+	if err, ok := receiveClaudeAdmission(t, done); !ok {
 		t.Fatal("stale released helper did not exit")
+	} else if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationClaimRefusedNewer {
+		t.Fatalf("stale helper exit = %v, want %q", err, diagnostics.ClaudeRegistrationClaimRefusedNewer)
 	}
 	route, reason := f.route(t)
 	authority, _ := route.Authority().(coremetadata.ClaudeAuthorityRef)
 	if reason != "" || authority.RegistrationGeneration != newer.Registration.Authority.RegistrationGeneration ||
-		!probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
+		!claudeRegistrationLeaseServes(t, f.bootstrap.RegistryPath, route) {
 		t.Fatalf("stale helper disturbed the newer registration: %q", reason)
 	}
 	assertClaudeAdmissionResidue(t, claudeAdmissionResidue(t, f.bootstrap), false)
@@ -383,9 +443,11 @@ func TestClaudeEndpointAdmissionReleasedHelperWaitingOnLockBecomesReady(t *testi
 			t.Fatalf("dead-lease reaper removed the live released helper's %s", path)
 		}
 	}
+	// A helper that exits instead of serving also ends the wait: its exit is
+	// still pending in done, which the check below reports.
 	waitClaudeAdmission(t, "the released helper to record Ready", func() bool {
 		_, reason := f.route(t)
-		return reason == ""
+		return reason == "" || len(done) > 0
 	})
 	select {
 	case err := <-done:
@@ -393,13 +455,11 @@ func TestClaudeEndpointAdmissionReleasedHelperWaitingOnLockBecomesReady(t *testi
 	case <-time.After(3 * claudeEndpointPollInterval):
 	}
 	route, reason := f.route(t)
-	if reason != "" || !probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
+	if reason != "" || !claudeRegistrationLeaseServes(t, f.bootstrap.RegistryPath, route) {
 		t.Fatalf("released helper registration is not ready: %q", reason)
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(4 * time.Second):
+	if _, ok := receiveClaudeAdmission(t, done); !ok {
 		t.Fatal("helper did not exit")
 	}
 	assertClaudeAdmissionResidue(t, residue, false)
@@ -434,13 +494,10 @@ func TestClaudeEndpointAdmissionReleasedHelperWaitingOnLockSurvivesSupervisorCle
 	assertClaudeAdmissionDirGone(t, dir)
 	release()
 	helper.assertReleased(t)
-	select {
-	case err := <-done:
-		if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationProviderProcessGone {
-			t.Fatalf("helper exit = %v, want only its claim refusal for the gone provider", err)
-		}
-	case <-time.After(4 * time.Second):
+	if err, ok := receiveClaudeAdmission(t, done); !ok {
 		t.Fatal("released helper did not exit after the provider was gone")
+	} else if reason := claudeRegistrationRefusalReason(err); reason != diagnostics.ClaudeRegistrationProviderProcessGone {
+		t.Fatalf("helper exit = %v, want only its claim refusal for the gone provider", err)
 	}
 	if _, reason := f.route(t); reason == "" {
 		t.Fatal("registration became Ready after supervisor cleanup")
@@ -513,9 +570,12 @@ func claudeAdmissionBinding(t *testing.T, f *claudeEndpointTestFixture) coremeta
 }
 
 // claudeAdmissionHook runs the hook's registration step for bootstrap with an
-// in-process helper in place of the detached one, and waits for the hook to
-// return. It reports whether the hook returned within budget; if it did not,
-// it releases the Registry lock (release) and waits for the hook to finish.
+// in-process helper in place of the detached one, while the caller holds the
+// Registry lock, and waits for the hook to return. onTime reports that it
+// returned with the lock still held. If the hook's own goroutine is seen inside
+// a Registry Store call instead, it is waiting on that lock: the hook then
+// releases the lock (release), waits for the hook to finish, and onTime is
+// false.
 type claudeAdmissionHook struct {
 	helper  *fakeClaudeHelperProcess
 	started bool
@@ -524,7 +584,7 @@ type claudeAdmissionHook struct {
 	onTime  bool
 }
 
-func runClaudeAdmissionHook(t *testing.T, bootstrap claudeEndpointBootstrap, budget time.Duration, release func()) *claudeAdmissionHook {
+func runClaudeAdmissionHook(t *testing.T, bootstrap claudeEndpointBootstrap, release func()) *claudeAdmissionHook {
 	t.Helper()
 	hook := &claudeAdmissionHook{helper: &fakeClaudeHelperProcess{}}
 	start := func(bootstrap claudeEndpointBootstrap) error {
@@ -537,23 +597,68 @@ func runClaudeAdmissionHook(t *testing.T, bootstrap claudeEndpointBootstrap, bud
 		hook.started = true
 		return awaitClaudeHelperAdmission(readAck, time.Now().Add(200*time.Millisecond), hook.helper)
 	}
-	returned := make(chan struct{})
+	goroutine, returned := make(chan string, 1), make(chan struct{})
 	go func() {
+		goroutine <- currentGoroutineID()
 		registerClaudeEndpoint(bootstrap, start)
 		close(returned)
 	}()
-	select {
-	case <-returned:
-		hook.onTime = true
-	case <-time.After(budget):
-		release()
+	id := <-goroutine
+	giveUp := claudeAdmissionGiveUp(t)
+	for {
 		select {
 		case <-returned:
-		case <-time.After(4 * time.Second):
-			t.Fatal("hook did not return after the Registry lock was released")
+			hook.onTime = true
+			return hook
+		case <-giveUp:
+			t.Fatal("hook neither returned nor waited on the Registry lock")
+		case <-time.After(5 * time.Millisecond):
+		}
+		if goroutineInRegistryStore(id) {
+			release()
+			if _, ok := receiveClaudeAdmission(t, returned); !ok {
+				t.Fatal("hook did not return after the Registry lock was released")
+			}
+			return hook
 		}
 	}
-	return hook
+}
+
+// currentGoroutineID is the calling goroutine's id as runtime.Stack prints it.
+func currentGoroutineID() string {
+	var buf [64]byte
+	header := string(buf[:runtime.Stack(buf[:], false)])
+	id, _, _ := strings.Cut(strings.TrimPrefix(header, "goroutine "), " ")
+	return id
+}
+
+// claudeRegistryStoreFrame prefixes every method of the Registry Store in a
+// stack trace. Taking the Registry lock, which is held while the hook runs,
+// blocks inside one of them.
+var claudeRegistryStoreFrame = func() string {
+	name := runtime.FuncForPC(reflect.ValueOf((*intmetadata.Store).UpdateConvergent).Pointer()).Name()
+	prefix, _, _ := strings.Cut(name, "UpdateConvergent")
+	return prefix
+}()
+
+// goroutineInRegistryStore reports whether goroutine id is running, or
+// blocked, inside a Registry Store method right now.
+func goroutineInRegistryStore(id string) bool {
+	buf := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	for trace := range strings.SplitSeq(string(buf), "\n\n") {
+		if strings.HasPrefix(trace, "goroutine "+id+" [") {
+			return strings.Contains(trace, claudeRegistryStoreFrame)
+		}
+	}
+	return false
 }
 
 // K1/K2/K3: Claude cancels the SessionStart hook at its 5s timeout. With the
@@ -568,7 +673,7 @@ func TestClaudeEndpointHookStartsHelperWithoutWaitingOnRegistryLock(t *testing.T
 	resetClaudeAdmissionRegistration(t, f)
 	bootstrap := claudeAdmissionHookBootstrap(t, f)
 	release := holdClaudeRegistryLock(t, f.store, nil)
-	hook := runClaudeAdmissionHook(t, bootstrap, 2*time.Second, release)
+	hook := runClaudeAdmissionHook(t, bootstrap, release)
 	if !hook.onTime {
 		t.Fatal("hook waited on the Registry lock instead of starting its helper")
 	}
@@ -602,7 +707,7 @@ func TestClaudeEndpointHookStartsHelperWithoutWaitingOnRegistryLock(t *testing.T
 	release()
 	waitClaudeAdmission(t, "the released helper to record Ready", func() bool {
 		_, reason := f.route(t)
-		return reason == ""
+		return reason == "" || len(hook.done) > 0
 	})
 	close(stop)
 	<-watched
@@ -617,14 +722,12 @@ func TestClaudeEndpointHookStartsHelperWithoutWaitingOnRegistryLock(t *testing.T
 	route, reason := f.route(t)
 	authority, _ := route.Authority().(coremetadata.ClaudeAuthorityRef)
 	if reason != "" || authority.RegistrationGeneration != bootstrap.Registration.Authority.RegistrationGeneration ||
-		!probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
+		!claudeRegistrationLeaseServes(t, f.bootstrap.RegistryPath, route) {
 		t.Fatalf("released helper registration is not ready: %q", reason)
 	}
 	residue := claudeAdmissionResidue(t, bootstrap)
 	hook.cancel()
-	select {
-	case <-hook.done:
-	case <-time.After(4 * time.Second):
+	if _, ok := receiveClaudeAdmission(t, hook.done); !ok {
 		t.Fatal("helper did not exit")
 	}
 	assertClaudeAdmissionResidue(t, residue, false)
@@ -672,29 +775,24 @@ func TestClaudeEndpointStaleHookHelperKeepsNewerRegistration(t *testing.T) {
 	if _, _, err := f.store.UpdateConvergent(func(reg *coremetadata.Registry) error { return beginClaudeAdmission(reg, newer) }); err != nil {
 		t.Fatal(err)
 	}
-	current := *f
-	current.bootstrap = newer
-	current.start(t)
+	startClaudeAdmissionCurrent(t, newer)
 	release := holdClaudeRegistryLock(t, f.store, nil)
-	hook := runClaudeAdmissionHook(t, stale, 2*time.Second, release)
+	hook := runClaudeAdmissionHook(t, stale, release)
 	if !hook.onTime {
 		t.Error("stale hook waited on the Registry lock instead of starting its helper")
 	}
 	release()
 	if hook.started {
-		select {
-		case err := <-hook.done:
-			if err == nil {
-				t.Fatal("stale helper recorded its registration")
-			}
-		case <-time.After(4 * time.Second):
+		if err, ok := receiveClaudeAdmission(t, hook.done); !ok {
 			t.Fatal("stale helper did not exit")
+		} else if err == nil {
+			t.Fatal("stale helper recorded its registration")
 		}
 	}
 	route, reason := f.route(t)
 	authority, _ := route.Authority().(coremetadata.ClaudeAuthorityRef)
 	if reason != "" || authority.RegistrationGeneration != newer.Registration.Authority.RegistrationGeneration ||
-		!probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
+		!claudeRegistrationLeaseServes(t, f.bootstrap.RegistryPath, route) {
 		t.Fatalf("stale hook disturbed the newer registration: %q", reason)
 	}
 	if binding := claudeAdmissionBinding(t, f); binding.RegistrationGeneration != newer.Registration.Authority.RegistrationGeneration {
