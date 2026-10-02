@@ -82,7 +82,7 @@ func TestCodexNativeObserverRefreshesLongTurnAndWaits(t *testing.T) {
 				t.Helper()
 				select {
 				case ticks <- clock.current():
-				case <-time.After(time.Second):
+				case <-codexObserverGiveUp(t):
 					t.Fatal("observer did not receive refresh tick")
 				}
 			}

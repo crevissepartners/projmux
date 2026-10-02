@@ -364,7 +364,7 @@ func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
 	}()
 	select {
 	case <-sinkAtAuthorityRead:
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("native invalidation did not acquire the authority fence")
 	}
 
@@ -420,7 +420,7 @@ func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
 	}()
 	select {
 	case <-hookInitialGuard:
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("Stop hook did not observe the initial provider-hook authority")
 	}
 	close(allowInvalidation)
@@ -429,7 +429,7 @@ func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("native invalidation did not release the authority fence")
 	}
 	select {
@@ -437,7 +437,7 @@ func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("suppressed Stop hook did not finish after invalidation")
 	}
 
@@ -536,7 +536,7 @@ func TestNativeSemanticApplyAndInvalidationShareExactPaneFence(t *testing.T) {
 	}()
 	select {
 	case <-oldApplyAtPaneWrite:
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("old native Apply did not reach the forced Registry/tmux split")
 	}
 	agent, _ := store.registry.Agent(identity.AgentUID)
@@ -556,7 +556,7 @@ func TestNativeSemanticApplyAndInvalidationShareExactPaneFence(t *testing.T) {
 	}()
 	select {
 	case <-invalidationWaiting:
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("invalidation did not attempt the exact Pane fence")
 	}
 	close(allowOldPaneWrite)
@@ -566,7 +566,7 @@ func TestNativeSemanticApplyAndInvalidationShareExactPaneFence(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", label, err)
 			}
-		case <-time.After(time.Second):
+		case <-codexObserverGiveUp(t):
 			t.Fatalf("%s did not finish behind the semantic fence", label)
 		}
 	}
@@ -874,7 +874,7 @@ func TestCodexNativeObserverReportsExactStartupTerminalState(t *testing.T) {
 				if got.Status != test.want.Status || got.Reason != test.want.Reason || (got.Status == codexObserverStartupReady && got.Epoch == "") {
 					t.Fatalf("startup result = %+v, want %+v with non-empty ready epoch", got, test.want)
 				}
-			case <-time.After(time.Second):
+			case <-codexObserverGiveUp(t):
 				t.Fatal("observer did not report bounded startup result")
 			}
 			cancel()
@@ -883,7 +883,7 @@ func TestCodexNativeObserverReportsExactStartupTerminalState(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-			case <-time.After(time.Second):
+			case <-codexObserverGiveUp(t):
 				t.Fatal("observer did not stop after cancellation")
 			}
 		})
@@ -965,7 +965,7 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 	var ready codexObserverStartupResult
 	select {
 	case ready = <-reported:
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		cancel()
 		t.Fatal("observer did not complete ready handshake")
 	}
@@ -1003,7 +1003,7 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("observer shutdown did not finish")
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
@@ -1207,7 +1207,7 @@ func TestCodexNativeObserverDropsContentBeforeProgressSinkAndClearsTerminal(t *t
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		cancel()
 		t.Fatal("observer did not clear terminal progress")
 	}
@@ -1330,7 +1330,7 @@ func TestCodexNativeObserverForeignThreadSameTurnWritesNoRegistryProgressOrDiagn
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("observer did not exit after exact binding loss")
 	}
 }
@@ -1924,7 +1924,7 @@ func TestRetiredObserverRecoveryBackoffIsCappedAndNeverExhausts(t *testing.T) {
 	case <-enough:
 	case err := <-done:
 		t.Fatalf("recovery terminated while the binding was still current: %v", err)
-	case <-time.After(10 * time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("recovery stopped retrying before the capped backoff was observed")
 	}
 	cancel()
@@ -1933,7 +1933,7 @@ func TestRetiredObserverRecoveryBackoffIsCappedAndNeverExhausts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("cancelled observer did not stop")
 	}
 	mu.Lock()
@@ -2077,8 +2077,7 @@ func TestCodexNativeObserversSharingOneEndpointRecoverIndependently(t *testing.T
 
 func waitForCodexObserverStartupResult(t *testing.T, results <-chan codexObserverStartupResult, status codexObserverStartupStatus) codexObserverStartupResult {
 	t.Helper()
-	deadline := time.NewTimer(time.Second)
-	defer deadline.Stop()
+	giveUp := codexObserverGiveUp(t)
 	var seen []codexObserverStartupResult
 	for {
 		select {
@@ -2087,7 +2086,7 @@ func waitForCodexObserverStartupResult(t *testing.T, results <-chan codexObserve
 			if result.Status == status {
 				return result
 			}
-		case <-deadline.C:
+		case <-giveUp:
 			t.Fatalf("observer did not report startup status %s; seen=%+v", status, seen)
 		}
 	}
@@ -2148,7 +2147,7 @@ func TestCodexNativeObserverBindingLossExitsSilentConnectionWithoutWrites(t *tes
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("observer did not exit after exact binding loss")
 	}
 	if got := sink.snapshot(); len(got) != 2 {
@@ -3173,14 +3172,28 @@ func containsCodexObserverEvent(events []string, want string) bool {
 	return slices.Contains(events, want)
 }
 
+// codexObserverGiveUp fires when a test stops waiting for an observer event
+// that must come. A fixed window fails a correct observer on a starved runner,
+// so the wait lasts until 90% of the time left before the test deadline, which
+// still fails a lost event before the test binary panics. Without a deadline
+// (-test.timeout 0) it never fires.
+func codexObserverGiveUp(t *testing.T) <-chan time.Time {
+	t.Helper()
+	deadline, ok := t.Deadline()
+	if !ok {
+		return nil
+	}
+	remaining := time.Until(deadline)
+	return time.After(remaining - remaining/10)
+}
+
 func waitForCodexObserverEvents(t *testing.T, sink *recordingCodexLifecycleSink, count int) {
 	t.Helper()
-	deadline := time.NewTimer(time.Second)
-	defer deadline.Stop()
+	giveUp := codexObserverGiveUp(t)
 	for len(sink.snapshot()) < count {
 		select {
 		case <-sink.wake:
-		case <-deadline.C:
+		case <-giveUp:
 			t.Fatalf("timed out waiting for observer events: %#v", sink.snapshot())
 		}
 	}
@@ -3255,7 +3268,7 @@ func TestCodexLifecycleSinkDispatchesSendNotiHookWithoutWaiting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(10 * time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("lifecycle sink Apply waited for the pending send-noti hook result")
 	}
 	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].ID != "notice-1" {

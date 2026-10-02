@@ -73,7 +73,7 @@ func TestCodexQuestionChannelAnswersBlockingRequestThroughCLI(t *testing.T) {
 		if reply.id != "17" || len(reply.result.Answers) != 2 || reply.result.Answers["choice"].Answers[0] != "B" || reply.result.Answers["text"].Answers[0] != "private answer" {
 			t.Fatal("Codex response did not preserve question IDs and selected answers")
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("Codex request was not answered")
 	}
 	if stdout, _, err = runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent, "-o", "json"); err != nil {
@@ -116,7 +116,7 @@ func TestCodexQuestionPopupAnswersThroughExistingResponder(t *testing.T) {
 		if reply.id != "17" || reply.result.Answers["choice"].Answers[0] != "B" || reply.result.Answers["reason"].Answers[0] != "because it is faster" {
 			t.Fatalf("popup answer did not reach Codex binding: %+v", reply)
 		}
-	case <-time.After(time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("popup answer did not reach Codex binding")
 	}
 }
@@ -183,7 +183,7 @@ func waitCodexQuestionWaiter(t *testing.T, channel *codexQuestionChannel) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(20 * time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("the Codex question waiter did not return")
 	}
 }
@@ -208,7 +208,7 @@ func TestCodexQuestionPopupReopensAPopupWhoseClientLeft(t *testing.T) {
 		if reply.id != "17" || len(reply.result.Answers) != 1 || len(reply.result.Answers["q1"].Answers) != 1 || reply.result.Answers["q1"].Answers[0] != "A" {
 			t.Fatalf("reopened popup answer = %+v", reply)
 		}
-	case <-time.After(10 * time.Second):
+	case <-codexObserverGiveUp(t):
 		t.Fatal("the answer from the popup that opened again did not reach the Codex binding")
 	}
 	waitCodexQuestionWaiter(t, channel)
@@ -446,7 +446,7 @@ func TestCodexQuestionChannelCloseAndExpiryLeaveNativePromptAnswerable(t *testin
 					t.Fatal(err)
 				}
 			}
-			deadline := time.After(time.Second)
+			deadline := codexObserverGiveUp(t)
 			for {
 				record, found, err := fixture.store.Get(records[0].ID)
 				if err != nil || !found {
