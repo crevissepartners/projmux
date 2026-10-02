@@ -6,13 +6,13 @@
     "gosec": {
       "finding_count": 115,
       "fingerprint_count": 94,
-      "finding_identity_sha256": "37c3ce73b384a09fac4feb7598dcd040dc00e3700c80a9d38f4e0498aff66510",
+      "finding_identity_sha256": "ce7f4b8a6adcd73df38e5ec630f7f094ebc4a5897249378b2c256f879782df3a",
       "baseline_sha256": "ed907f7cf24d9b963d9c916881e5844db3b11d7be6abc9595ca9bd66c4ca084e"
     },
     "staticcheck": {
       "finding_count": 23,
       "fingerprint_count": 22,
-      "finding_identity_sha256": "03160ff307746c052fffbb5a3912c577ae8605a441338a1955220b652eb3c286",
+      "finding_identity_sha256": "8218daedb08d638c6140fa2653d9a897d23707a209ff2e290e86e05be8bb4326",
       "baseline_sha256": "e7644ef7c1e6968274884409b5b3f89a856ba561846c05a9546a4ac4cc6af946"
     }
   }
