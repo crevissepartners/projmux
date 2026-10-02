@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -26,9 +27,46 @@ func TestCodexAgentIdentityIsThePinnedParagraph(t *testing.T) {
 		"\n" +
 		"- When you create an agent with `projmux create agent`, add `--creator uid:agent-abc` so projmux records you as its creator.\n" +
 		"- When you send a message with `projmux agent message send`, add `--source uid:agent-abc` so the message is sent from you.\n" +
-		"- Your shell commands run outside your own pane, in an app server shared with other agents, so projmux cannot tell your pane or agent from the environment: name the pane or agent a command acts on, and add `--socket projmux` to a command that changes the runtime, such as `projmux delete pane` or `projmux agent relaunch`.\n"
+		"- Your shell commands run outside your own pane, in an app server shared with other agents, so projmux cannot tell your pane or agent from the environment: name the pane or agent a command acts on. Add `--socket projmux` only to a command that defines that flag, such as `projmux delete pane` or `projmux agent relaunch`; do not add it to `projmux create agent`, which has no such flag and uses the `projmux` app socket itself.\n"
 	if got := codexAgentIdentity("agent-abc"); got != want {
 		t.Fatalf("codexAgentIdentity = %q, want %q", got, want)
+	}
+}
+
+// TestCodexIdentitySocketAdviceMatchesTheCommandFlags holds the identity
+// paragraph's `--socket` advice to the public flag parser: every command it
+// names as taking `--socket projmux` parses it, and the command it names as
+// not taking it refuses it. Both lists come from the constants the paragraph
+// is built from. A trailing undefined flag stops every argv in flag parsing,
+// so no case reaches the Registry or tmux, and the error names the first
+// undefined flag: the trailing one when `--socket` parsed, `-socket` when it
+// did not.
+func TestCodexIdentitySocketAdviceMatchesTheCommandFlags(t *testing.T) {
+	isolateRuntimeWindowFlagParseEnv(t)
+	const end = "--zz-socket-probe-end"
+	parse := func(command string) error {
+		t.Helper()
+		argv := append(strings.Fields(command), "--socket", "projmux", end)
+		err := New().Run(argv, io.Discard, io.Discard)
+		if err == nil || !IsUsageError(err) {
+			t.Fatalf("projmux %s --socket projmux %s error = %v, want a flag parse usage error", command, end, err)
+		}
+		return err
+	}
+	identity := codexAgentIdentity("agent-abc")
+	for _, command := range codexSocketCommands {
+		if !strings.Contains(identity, "`projmux "+command+"`") {
+			t.Fatalf("identity = %q, want it to name `projmux %s`", identity, command)
+		}
+		if err := parse(command); !strings.Contains(err.Error(), "flag provided but not defined: -"+strings.TrimPrefix(end, "--")) {
+			t.Errorf("projmux %s refused --socket projmux (%v), but the Codex identity paragraph tells agents to pass it", command, err)
+		}
+	}
+	if !strings.Contains(identity, "do not add it to `projmux "+codexNoSocketCommand+"`") {
+		t.Fatalf("identity = %q, want it to tell agents not to pass --socket to `projmux %s`", identity, codexNoSocketCommand)
+	}
+	if err := parse(codexNoSocketCommand); !strings.Contains(err.Error(), "flag provided but not defined: -socket") {
+		t.Errorf("projmux %s accepted --socket projmux (%v), but the Codex identity paragraph tells agents it has no such flag", codexNoSocketCommand, err)
 	}
 }
 

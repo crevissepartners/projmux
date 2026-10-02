@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -187,19 +188,33 @@ func (l agentGuidanceLaunch) codexDeveloperInstructions(agentUID, rest string) s
 	return l.developerInstructions(identity)
 }
 
+// codexSocketCommands are the commands the identity paragraph names as taking
+// `--socket projmux`. Each one defines a socket flag; a static test holds
+// them to that.
+var codexSocketCommands = []string{"delete pane", "agent relaunch"}
+
+// codexNoSocketCommand is the command the identity paragraph tells a Codex
+// Agent not to pass `--socket` to: it defines no socket flag, and outside
+// tmux it routes to the app socket itself (defaultRuntimeMutationRoute).
+const codexNoSocketCommand = "create agent"
+
 // codexAgentIdentity is the paragraph that tells a Codex Agent its own Agent
 // UID and how to name itself and its targets: a Codex shell command runs in
 // the shared app server, not in the Agent's pane, so projmux cannot infer
 // either from the environment.
 func codexAgentIdentity(agentUID string) string {
+	examples := make([]string, 0, len(codexSocketCommands))
+	for _, command := range codexSocketCommands {
+		examples = append(examples, "`projmux "+command+"`")
+	}
 	return fmt.Sprintf(`# Your projmux identity
 
 Your projmux Agent UID is `+"`%[1]s`"+`.
 
 - When you create an agent with `+"`projmux create agent`"+`, add `+"`--creator uid:%[1]s`"+` so projmux records you as its creator.
 - When you send a message with `+"`projmux agent message send`"+`, add `+"`--source uid:%[1]s`"+` so the message is sent from you.
-- Your shell commands run outside your own pane, in an app server shared with other agents, so projmux cannot tell your pane or agent from the environment: name the pane or agent a command acts on, and add `+"`--socket projmux`"+` to a command that changes the runtime, such as `+"`projmux delete pane`"+` or `+"`projmux agent relaunch`"+`.
-`, agentUID)
+- Your shell commands run outside your own pane, in an app server shared with other agents, so projmux cannot tell your pane or agent from the environment: name the pane or agent a command acts on. Add `+"`--socket projmux`"+` only to a command that defines that flag, such as %[2]s; do not add it to %[3]s, which has no such flag and uses the `+"`%[4]s`"+` app socket itself.
+`, agentUID, strings.Join(examples, " or "), "`projmux "+codexNoSocketCommand+"`", defaultAppSocket)
 }
 
 // withCreateAnnotation adds the digest a fresh create launched with to base.
