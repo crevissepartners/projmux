@@ -473,7 +473,10 @@ type flagParseGuardCall struct {
 	stack  []ast.Node // ancestors of call, outermost first
 	fs     *flagParseGuardFlagSet
 	callee string // "" for a direct Parse
-	argIdx int
+	// calleePkg is the import path of the package that declares callee: the
+	// caller's own package, or another scanned internal/app/** package.
+	calleePkg string
+	argIdx    int
 }
 
 type flagParseGuardFunc struct {
@@ -937,24 +940,30 @@ func (a *flagParseGuardAnalyzer) classifyUse(pf *flagParseGuardParsedFile, fnNam
 			info.catalogUsage = true
 			return
 		}
-		callee := ""
+		callee, calleePkg := "", pf.pkg
 		switch fun := p.Fun.(type) {
 		case *ast.Ident:
 			callee = fun.Name
 		case *ast.SelectorExpr:
-			if x, ok := fun.X.(*ast.Ident); !ok || pf.locals[x] != nil || pf.imports[x.Name] == "" {
+			x, ok := fun.X.(*ast.Ident)
+			switch {
+			case !ok || pf.locals[x] != nil || pf.imports[x.Name] == "":
 				callee = fun.Sel.Name
+			case a.funcs[pf.imports[x.Name]] != nil:
+				// A function of another scanned package, such as an
+				// internal/app/** subpackage: its parse is a site too.
+				callee, calleePkg = fun.Sel.Name, pf.imports[x.Name]
 			}
 		}
 		takes := false
-		for _, decl := range a.funcs[pf.pkg][callee] {
+		for _, decl := range a.funcs[calleePkg][callee] {
 			takes = takes || decl.fsParams[idx]
 		}
 		if callee == "" || !takes {
-			a.problem(pf, id.Pos(), "FlagSet "+id.Name+" is passed to "+types.ExprString(p.Fun)+" in "+fnName+", which is not a same-package function taking a *flag.FlagSet at that position")
+			a.problem(pf, id.Pos(), "FlagSet "+id.Name+" is passed to "+types.ExprString(p.Fun)+" in "+fnName+", which is not a scanned function taking a *flag.FlagSet at that position")
 			return
 		}
-		a.calls = append(a.calls, flagParseGuardCall{pf: pf, fn: fnName, call: p, stack: slices.Clone(stack[:len(stack)-1]), fs: info, callee: callee, argIdx: idx})
+		a.calls = append(a.calls, flagParseGuardCall{pf: pf, fn: fnName, call: p, stack: slices.Clone(stack[:len(stack)-1]), fs: info, callee: callee, calleePkg: calleePkg, argIdx: idx})
 		return
 	}
 	a.problem(pf, id.Pos(), "FlagSet "+id.Name+" escapes in "+fnName+" (used in a "+strings.TrimPrefix(reflect.TypeOf(parent).String(), "*ast.")+"); the guard cannot follow it")
@@ -992,7 +1001,7 @@ func (a *flagParseGuardAnalyzer) resolveSites() {
 			changed = true
 		}
 		for i, c := range a.calls {
-			if !promoted[i] && isWrapper(c.pf.pkg, c.callee, c.argIdx) {
+			if !promoted[i] && isWrapper(c.calleePkg, c.callee, c.argIdx) {
 				promoted[i] = true
 				sites = append(sites, classified{c, a.classify(c)})
 				changed = true
@@ -1321,7 +1330,7 @@ func (a *flagParseGuardAnalyzer) resolveOutput(c flagParseGuardCall, site *flagP
 		return
 	}
 	for _, caller := range a.calls {
-		if caller.pf.pkg != c.pf.pkg || caller.callee != c.fs.wrapperFunc || caller.argIdx != c.fs.wrapperIdx {
+		if caller.calleePkg != c.pf.pkg || caller.callee != c.fs.wrapperFunc || caller.argIdx != c.fs.wrapperIdx {
 			continue
 		}
 		out := flagParseGuardOutputOf(caller.fs)

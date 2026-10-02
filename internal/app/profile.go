@@ -9,6 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/crevissepartners/projmux/internal/app/personacmd"
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/profile"
 )
 
@@ -26,6 +28,17 @@ type profileCommand struct {
 
 func newProfileCommand() *profileCommand {
 	return &profileCommand{homeDir: os.UserHomeDir, lookupEnv: os.Getenv, stdin: os.Stdin}
+}
+
+// newPersonaCommand builds `projmux <noun>`, instructions or its deprecated
+// persona spelling, over the config paths homeDir and lookupEnv resolve. Its
+// `edit` opens the editor lookupEnv names ($EDITOR, then $VISUAL) through
+// editorRunner.
+func newPersonaCommand(noun string, homeDir func() (string, error), lookupEnv func(string) string, stdin io.Reader, editorRunner personacmd.EditorRunner) *personacmd.Command {
+	return personacmd.New(noun,
+		func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) },
+		func() string { return editorFromEnv(lookupEnv) },
+		editorRunner, stdin)
 }
 
 // store is the profile store a write goes through. Without HOME or an
@@ -89,7 +102,7 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 	fs := flag.NewFlagSet("profile list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
-	operands, err := parsePersonaArgs(fs, args)
+	operands, err := personacmd.ParseArgs(fs, args)
 	if err != nil {
 		return err
 	}
@@ -132,7 +145,7 @@ func (c *profileCommand) runShow(args []string, stdout, stderr io.Writer) error 
 	fs := flag.NewFlagSet("profile show", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
-	operands, err := parsePersonaArgs(fs, args)
+	operands, err := personacmd.ParseArgs(fs, args)
 	if err != nil {
 		return err
 	}
@@ -158,7 +171,7 @@ func (c *profileCommand) runSet(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
 	file := fs.String("file", "", "read the profile from this file; - reads stdin")
-	operands, err := parsePersonaArgs(fs, args)
+	operands, err := personacmd.ParseArgs(fs, args)
 	if err != nil {
 		return err
 	}
@@ -186,7 +199,7 @@ func (c *profileCommand) runSet(args []string, stdout, stderr io.Writer) error {
 			source = os.Stdin
 		}
 	} else {
-		opened, err := openFileUnderParent(*file)
+		opened, err := personacmd.OpenFileUnderParent(*file)
 		if err != nil {
 			return fmt.Errorf("profile set: %w", err)
 		}
@@ -218,7 +231,7 @@ func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
 	yes := fs.Bool("yes", false, "confirm the deletion")
-	operands, err := parsePersonaArgs(fs, args)
+	operands, err := personacmd.ParseArgs(fs, args)
 	if err != nil {
 		return err
 	}

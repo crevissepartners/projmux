@@ -140,7 +140,7 @@ func TestAgentResumeRepassesThePersonaSnapshot(t *testing.T) {
 	withPersona, snapshotPath := createPersonaForResume(t, planner, "go-reviewer", []byte(personaResumeContent))
 	// This is the pre-rename file and annotation fixture. The new CLI reads
 	// that file, while resume continues to resolve its recorded snapshot.
-	instructions := &personaCommand{noun: "instructions", homeDir: planner.homeDir, lookupEnv: planner.lookupEnv}
+	instructions := newPersonaCommand("instructions", planner.homeDir, planner.lookupEnv, nil, defaultEditorRunner)
 	var shown bytes.Buffer
 	if err := instructions.Run([]string{"show", "go-reviewer"}, &shown, &bytes.Buffer{}); err != nil || shown.String() != personaResumeContent {
 		t.Fatalf("instructions show over legacy file = %q, %v", shown.String(), err)

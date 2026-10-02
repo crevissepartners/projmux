@@ -2,11 +2,14 @@ package app
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/personacmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 )
@@ -50,29 +53,70 @@ func TestInstructionsSpellingsSayInstructions(t *testing.T) {
 	}
 }
 
-// TestInstructionsEditKeepsItsSpellingInARefusal pins the noun of the one
-// refusal `edit` prints itself: instructions on `instructions edit`, persona
-// on the deprecated `persona edit`. Both keep the edited copy under a
-// projmux-instructions- temporary directory.
-func TestInstructionsEditKeepsItsSpellingInARefusal(t *testing.T) {
+func runPersona(cmd *personacmd.Command, args ...string) (string, string, error) {
+	var stdout, stderr bytes.Buffer
+	err := cmd.Run(args, &stdout, &stderr)
+	return stdout.String(), stderr.String(), err
+}
+
+// TestPersonaEditCreatesThroughATempCopyAndWritesAtomically drives `persona
+// edit` through the app wiring, so the editor it opens is the one $EDITOR,
+// then $VISUAL, names.
+func TestPersonaEditCreatesThroughATempCopyAndWritesAtomically(t *testing.T) {
 	t.Parallel()
-	for noun, want := range map[string]string{
-		"instructions": `instructions edit: ` + persona.ReasonTooLarge + `: instructions "reviewer" is `,
-		"persona":      `persona edit: ` + persona.ReasonTooLarge + `: persona "reviewer" is `,
-	} {
-		cmd, _ := newPersonaTestCommand(t, map[string]string{"EDITOR": "ed"}, "")
-		cmd.noun = noun
-		var seen string
-		cmd.editorRunner = editWith(bytes.Repeat([]byte("x"), persona.MaxSize+1), &seen)
-		_, _, err := runPersona(cmd, "edit", "reviewer")
-		if err == nil || !strings.HasPrefix(err.Error(), want) {
-			t.Errorf("%s edit = %v, want it to start %q", noun, err, want)
-		}
-		// The kept copy is in a temporary directory named for instructions.
-		if !strings.HasPrefix(filepath.Base(filepath.Dir(seen)), "projmux-instructions-") || !strings.Contains(err.Error(), seen) {
-			t.Errorf("%s edit kept %q, error %v", noun, seen, err)
-		}
-		_ = os.RemoveAll(filepath.Dir(seen))
+	home := t.TempDir()
+	env := map[string]string{"VISUAL": "vi -n"}
+	var runEditor personacmd.EditorRunner
+	cmd := newPersonaCommand("persona", func() (string, error) { return home, nil }, func(name string) string { return env[name] }, strings.NewReader(""),
+		func(command string, args []string, stdout, stderr io.Writer) error {
+			return runEditor(command, args, stdout, stderr)
+		})
+	dir := filepath.Join(home, ".config", "projmux", "personas")
+	var seen string
+	var gotCommand string
+	var gotArgs []string
+	runEditor = func(command string, args []string, _, _ io.Writer) error {
+		gotCommand, gotArgs = command, args
+		seen = args[len(args)-1]
+		return os.WriteFile(seen, []byte("new persona\n"), 0o600)
+	}
+
+	stdout, _, err := runPersona(cmd, "edit", "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCommand != "vi" || len(gotArgs) != 2 || gotArgs[0] != "-n" {
+		t.Fatalf("editor = %q %q, want $VISUAL when $EDITOR is unset", gotCommand, gotArgs)
+	}
+	path := filepath.Join(dir, "reviewer.md")
+	if seen == path || strings.HasPrefix(seen, dir) {
+		t.Fatalf("the editor was given the persona file itself: %s", seen)
+	}
+	if _, err := os.Stat(filepath.Dir(seen)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the temporary copy was not removed: %v", err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil || string(written) != "new persona\n" {
+		t.Fatalf("persona = %q, %v", written, err)
+	}
+	if !strings.Contains(stdout, "edited persona reviewer") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+
+	// $EDITOR wins over $VISUAL, and the existing content is what it opens.
+	env = map[string]string{"EDITOR": "nano", "VISUAL": "vi"}
+	var opened []byte
+	runEditor = func(command string, args []string, _, _ io.Writer) error {
+		gotCommand = command
+		opened, _ = os.ReadFile(args[len(args)-1])
+		return nil
+	}
+	stdout, _, err = runPersona(cmd, "edit", "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCommand != "nano" || string(opened) != "new persona\n" || !strings.Contains(stdout, "unchanged") {
+		t.Fatalf("editor %q opened %q; stdout %q", gotCommand, opened, stdout)
 	}
 }
 

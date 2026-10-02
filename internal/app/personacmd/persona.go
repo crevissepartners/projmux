@@ -1,4 +1,7 @@
-package app
+// Package personacmd implements `projmux instructions` and its deprecated
+// `projmux persona` spelling: list, show, edit, set, and delete of the stored
+// instruction files.
+package personacmd
 
 import (
 	"bytes"
@@ -12,50 +15,51 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/profile"
 )
 
-// personaCommand implements `projmux persona list|show|edit|set|delete`.
+// Command implements `projmux persona list|show|edit|set|delete`.
 //
 // A persona is a file, not a Registry resource, so it has its own noun group
 // like `hook` and `config` rather than the get/create/delete resource verbs.
 // Every path, name rule, size limit, and write goes through the persona
 // package; this command only parses argv and prints.
-type personaCommand struct {
-	noun      string
-	homeDir   func() (string, error)
-	lookupEnv func(string) string
-	stdin     io.Reader
-	// editorRunner runs the $EDITOR command for `edit`. Tests stub it.
-	editorRunner func(command string, args []string, stdout, stderr io.Writer) error
+type Command struct {
+	noun string
+	// paths resolves the config paths the persona and profile stores live
+	// under.
+	paths func() (config.Paths, error)
+	// editor is the editor command line `edit` opens; empty means none is
+	// set.
+	editor func() string
+	stdin  io.Reader
+	// editorRunner runs the editor command for `edit`. Tests stub it.
+	editorRunner EditorRunner
 }
 
-func newPersonaCommand() *personaCommand {
-	return &personaCommand{
-		noun:         "persona",
-		homeDir:      os.UserHomeDir,
-		lookupEnv:    os.Getenv,
-		stdin:        os.Stdin,
-		editorRunner: defaultEditorRunner,
-	}
+// EditorRunner runs an editor command with args, wired to stdout and stderr.
+type EditorRunner func(command string, args []string, stdout, stderr io.Writer) error
+
+// New builds the command for noun, "persona" or "instructions". The caller
+// supplies how config paths resolve, which editor `edit` opens, and how that
+// editor runs; a nil stdin reads os.Stdin.
+func New(noun string, paths func() (config.Paths, error), editor func() string, editorRunner EditorRunner, stdin io.Reader) *Command {
+	return &Command{noun: noun, paths: paths, editor: editor, stdin: stdin, editorRunner: editorRunner}
 }
 
-func newInstructionsCommand() *personaCommand {
-	c := newPersonaCommand()
-	c.noun = "instructions"
-	return c
-}
-
-func (c *personaCommand) spelling() string {
+func (c *Command) spelling() string {
 	if c.noun == "instructions" {
 		return "instructions"
 	}
 	return "persona"
 }
 
-func (c *personaCommand) store() (persona.Store, error) {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+func (c *Command) store() (persona.Store, error) {
+	paths, err := c.paths()
 	if err != nil {
 		return persona.Store{}, err
 	}
@@ -63,10 +67,10 @@ func (c *personaCommand) store() (persona.Store, error) {
 }
 
 // Run dispatches `projmux persona <verb>`.
-func (c *personaCommand) Run(args []string, stdout, stderr io.Writer) error {
+func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printPersonaUsage(stderr, c.spelling())
-		return usageError(c.spelling() + " requires a subcommand")
+		return &coremetadata.InputError{Detail: c.spelling() + " requires a subcommand"}
 	}
 	rest := args[1:]
 	switch args[0] {
@@ -82,17 +86,17 @@ func (c *personaCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runDelete(rest, stdout, stderr)
 	default:
 		printPersonaUsage(stderr, c.spelling())
-		return usageError("unknown " + c.spelling() + " subcommand: " + args[0])
+		return &coremetadata.InputError{Detail: "unknown " + c.spelling() + " subcommand: " + args[0]}
 	}
 }
 
-// parsePersonaArgs parses flags that may appear before or after the
+// ParseArgs parses flags that may appear before or after the
 // positional operands, and returns the operands. A lone "-" is an operand.
 //
 // A leading argument that is not one of this route's flags is always the name
 // operand, even when it starts with "-": `persona show -x` is a persona name
 // the name rule refuses with its reason token, not an unknown flag.
-func parsePersonaArgs(fs *flag.FlagSet, args []string) ([]string, error) {
+func ParseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	var operands []string
 	if len(args) > 0 && !personaFlagToken(fs, args[0]) {
 		operands = append(operands, args[0])
@@ -103,7 +107,7 @@ func parsePersonaArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil, err
 			}
-			return nil, flagParseError(err)
+			return nil, cli.FlagParseError(err)
 		}
 		rest := fs.Args()
 		if len(rest) == 0 {
@@ -122,34 +126,34 @@ func personaFlagToken(fs *flag.FlagSet, arg string) bool {
 	return name == "h" || name == "help" || fs.Lookup(name) != nil
 }
 
-// personaRefusal maps a persona package refusal onto the CLI's exit codes: a
+// Refusal maps a persona package refusal onto the CLI's exit codes: a
 // bad name or oversized content is invalid input (exit 2). Every other error,
 // including persona-not-found, keeps its text and exits 1. The reason token is
 // in the text either way. The refusal calls the file instructions, except on
 // the deprecated `persona` spelling, which keeps its old noun.
-func personaRefusal(spelling string, err error) error {
+func Refusal(spelling string, err error) error {
 	if strings.HasPrefix(spelling, persona.DeprecatedNoun+" ") {
 		err = persona.SpelledAs(err, persona.DeprecatedNoun)
 	}
 	switch persona.ReasonOf(err) {
 	case persona.ReasonNameInvalid, persona.ReasonTooLarge:
-		return usageError(spelling + ": " + err.Error())
+		return &coremetadata.InputError{Detail: spelling + ": " + err.Error()}
 	default:
 		return fmt.Errorf("%s: %w", spelling, err)
 	}
 }
 
-func (c *personaCommand) runList(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(c.spelling()+" list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
-	operands, err := parsePersonaArgs(fs, args)
+	cli.SetRouteUsage(fs)
+	operands, err := ParseArgs(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(operands) != 0 {
 		printPersonaUsage(stderr, c.spelling()+" list")
-		return usageError(c.spelling() + " list does not accept positional arguments")
+		return &coremetadata.InputError{Detail: c.spelling() + " list does not accept positional arguments"}
 	}
 	store, err := c.store()
 	if err != nil {
@@ -167,7 +171,7 @@ func (c *personaCommand) runList(args []string, stdout, stderr io.Writer) error 
 	return tw.Flush()
 }
 
-func (c *personaCommand) runShow(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runShow(args []string, stdout, stderr io.Writer) error {
 	name, err := personaNameOperand(c.spelling()+" show", args, stderr)
 	if err != nil {
 		return err
@@ -178,7 +182,7 @@ func (c *personaCommand) runShow(args []string, stdout, stderr io.Writer) error 
 	}
 	loaded, err := store.Load(name)
 	if err != nil {
-		return personaRefusal(c.spelling()+" show", err)
+		return Refusal(c.spelling()+" show", err)
 	}
 	// The bytes exactly as stored: no trailing newline is added or removed.
 	_, err = stdout.Write(loaded.Content)
@@ -188,24 +192,24 @@ func (c *personaCommand) runShow(args []string, stdout, stderr io.Writer) error 
 func personaNameOperand(spelling string, args []string, stderr io.Writer) (string, error) {
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
-	operands, err := parsePersonaArgs(fs, args)
+	cli.SetRouteUsage(fs)
+	operands, err := ParseArgs(fs, args)
 	if err != nil {
 		return "", err
 	}
 	if len(operands) != 1 {
 		printPersonaUsage(stderr, spelling)
-		return "", usageError(spelling + " requires exactly one <name>")
+		return "", &coremetadata.InputError{Detail: spelling + " requires exactly one <name>"}
 	}
 	return operands[0], nil
 }
 
-func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runSet(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(c.spelling()+" set", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	file := fs.String("file", "", "read the named "+c.spelling()+" from this file; - reads stdin")
-	operands, err := parsePersonaArgs(fs, args)
+	operands, err := ParseArgs(fs, args)
 	if err != nil {
 		return err
 	}
@@ -218,13 +222,13 @@ func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
 	case len(operands) == 1:
 	default:
 		printPersonaUsage(stderr, c.spelling()+" set")
-		return usageError(c.spelling() + " set requires exactly one <name> and at most one of --file <path> or -")
+		return &coremetadata.InputError{Detail: c.spelling() + " set requires exactly one <name> and at most one of --file <path> or -"}
 	}
 	name := operands[0]
 	// The name is checked before any input is read, so a bad name never
 	// waits on stdin.
 	if err := persona.ValidateName(name); err != nil {
-		return personaRefusal(c.spelling()+" set", err)
+		return Refusal(c.spelling()+" set", err)
 	}
 	var source io.Reader
 	if fromStdin {
@@ -233,7 +237,7 @@ func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
 			source = os.Stdin
 		}
 	} else {
-		opened, err := openFileUnderParent(*file)
+		opened, err := OpenFileUnderParent(*file)
 		if err != nil {
 			return fmt.Errorf(c.spelling()+" set: %w", err)
 		}
@@ -246,7 +250,7 @@ func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
 		if errors.As(err, &refusal) {
 			refusal.Name = name
 		}
-		return personaRefusal(c.spelling()+" set", err)
+		return Refusal(c.spelling()+" set", err)
 	}
 	store, err := c.store()
 	if err != nil {
@@ -254,31 +258,31 @@ func (c *personaCommand) runSet(args []string, stdout, stderr io.Writer) error {
 	}
 	entry, err := store.Write(name, content)
 	if err != nil {
-		return personaRefusal(c.spelling()+" set", err)
+		return Refusal(c.spelling()+" set", err)
 	}
 	_, err = fmt.Fprintf(stdout, "set %s %s %s (%d bytes) at %s\n", c.spelling(), entry.Name, entry.Digest, entry.Size, entry.Path)
 	return err
 }
 
-func (c *personaCommand) runDelete(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runDelete(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(c.spelling()+" delete", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	yes := fs.Bool("yes", false, "confirm the deletion")
-	operands, err := parsePersonaArgs(fs, args)
+	operands, err := ParseArgs(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(operands) != 1 {
 		printPersonaUsage(stderr, c.spelling()+" delete")
-		return usageError(c.spelling() + " delete requires exactly one <name>")
+		return &coremetadata.InputError{Detail: c.spelling() + " delete requires exactly one <name>"}
 	}
 	name := operands[0]
 	if err := persona.ValidateName(name); err != nil {
-		return personaRefusal(c.spelling()+" delete", err)
+		return Refusal(c.spelling()+" delete", err)
 	}
 	if !*yes {
-		return usageError(fmt.Sprintf(c.spelling()+" delete %s requires --yes; nothing was deleted", name))
+		return &coremetadata.InputError{Detail: fmt.Sprintf(c.spelling()+" delete %s requires --yes; nothing was deleted", name)}
 	}
 	store, err := c.store()
 	if err != nil {
@@ -289,11 +293,11 @@ func (c *personaCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf(c.spelling()+" delete %s: %w; nothing was deleted", name, err)
 	}
 	if users != "" {
-		return usageError(fmt.Sprintf(c.spelling()+" delete %s: %s: %s %s %q; point each at other instructions with `projmux profile set <name>`, or remove it with `projmux profile delete <name> --yes`; nothing was deleted",
-			name, profile.ReasonInstructionsInUse, users, c.spelling(), name))
+		return &coremetadata.InputError{Detail: fmt.Sprintf(c.spelling()+" delete %s: %s: %s %s %q; point each at other instructions with `projmux profile set <name>`, or remove it with `projmux profile delete <name> --yes`; nothing was deleted",
+			name, profile.ReasonInstructionsInUse, users, c.spelling(), name)}
 	}
 	if err := store.Delete(name); err != nil {
-		return personaRefusal(c.spelling()+" delete", err)
+		return Refusal(c.spelling()+" delete", err)
 	}
 	_, err = fmt.Fprintf(stdout, "deleted %s %s\n", c.spelling(), name)
 	return err
@@ -305,11 +309,11 @@ func (c *personaCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 // would leave every such profile invalid, and with it every create and resume
 // that applies it. Instructions that do not exist name no users; the delete
 // reports them missing.
-func (c *personaCommand) instructionsUsers(store persona.Store, name string) (string, error) {
+func (c *Command) instructionsUsers(store persona.Store, name string) (string, error) {
 	if _, err := store.Load(name); err != nil {
 		return "", nil
 	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.paths()
 	if err != nil {
 		return "", err
 	}
@@ -334,15 +338,15 @@ func (c *personaCommand) instructionsUsers(store persona.Store, name string) (st
 // itself: whatever the editor does mid-session, the stored persona is either
 // the old content or the new content written atomically by the persona store,
 // and content over the size limit is refused rather than stored.
-func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runEdit(args []string, stdout, stderr io.Writer) error {
 	name, err := personaNameOperand(c.spelling()+" edit", args, stderr)
 	if err != nil {
 		return err
 	}
 	if err := persona.ValidateName(name); err != nil {
-		return personaRefusal(c.spelling()+" edit", err)
+		return Refusal(c.spelling()+" edit", err)
 	}
-	editor := editorFromEnv(c.lookupEnv)
+	editor := c.editor()
 	if editor == "" {
 		return errors.New(c.spelling() + " edit: $EDITOR and $VISUAL are unset; cannot open editor (use `projmux " + c.spelling() + " set` instead)")
 	}
@@ -359,7 +363,7 @@ func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error 
 	case persona.ReasonOf(err) == persona.ReasonNotFound:
 		existed = false
 	default:
-		return personaRefusal(c.spelling()+" edit", err)
+		return Refusal(c.spelling()+" edit", err)
 	}
 
 	tempDir, err := os.MkdirTemp("", "projmux-instructions-*")
@@ -377,14 +381,10 @@ func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf(c.spelling()+" edit: %w", err)
 	}
 	parts := strings.Fields(editor)
-	runner := c.editorRunner
-	if runner == nil {
-		runner = defaultEditorRunner
-	}
-	if err := runner(parts[0], append(parts[1:], tempPath), stdout, stderr); err != nil {
+	if err := c.editorRunner(parts[0], append(parts[1:], tempPath), stdout, stderr); err != nil {
 		return fmt.Errorf(c.spelling()+" edit: editor %q exited: %w; nothing was written", editor, err)
 	}
-	edited, err := openFileUnderParent(tempPath)
+	edited, err := OpenFileUnderParent(tempPath)
 	if err != nil {
 		return fmt.Errorf(c.spelling()+" edit: read the edited copy: %w; nothing was written", err)
 	}
@@ -400,7 +400,7 @@ func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error 
 			// Keep the edit so the work is not lost; the stored persona
 			// is unchanged.
 			keepTemp = true
-			return usageError(fmt.Sprintf(c.spelling()+" edit: %v; nothing was written, the edited copy is kept at %s", err, tempPath))
+			return &coremetadata.InputError{Detail: fmt.Sprintf(c.spelling()+" edit: %v; nothing was written, the edited copy is kept at %s", err, tempPath)}
 		}
 		return fmt.Errorf(c.spelling()+" edit: read the edited copy: %w; nothing was written", err)
 	}
@@ -414,16 +414,16 @@ func (c *personaCommand) runEdit(args []string, stdout, stderr io.Writer) error 
 	}
 	entry, err := store.Write(name, content)
 	if err != nil {
-		return personaRefusal(c.spelling()+" edit", err)
+		return Refusal(c.spelling()+" edit", err)
 	}
 	_, err = fmt.Fprintf(stdout, "edited %s %s %s (%d bytes) at %s\n", c.spelling(), entry.Name, entry.Digest, entry.Size, entry.Path)
 	return err
 }
 
-// openFileUnderParent opens one operator-named file through an os.Root on its
+// OpenFileUnderParent opens one operator-named file through an os.Root on its
 // parent directory, as internal/testutil/codexinstalled does, so the open is
 // confined to that directory.
-func openFileUnderParent(path string) (*os.File, error) {
+func OpenFileUnderParent(path string) (*os.File, error) {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return nil, err
@@ -435,32 +435,32 @@ func openFileUnderParent(path string) (*os.File, error) {
 // printPersonaUsage prints the catalog usage of route, the `<noun> [verb]`
 // route a rejected persona or instructions call reached. The two nouns share
 // this handler, so each route is spelled out once here and every
-// printRouteUsage call names a literal catalog path.
+// cli.WriteRouteUsage call names a literal catalog path.
 func printPersonaUsage(w io.Writer, route string) {
 	switch route {
 	case "persona":
-		printRouteUsage(w, "persona")
+		cli.WriteRouteUsage(w, "persona")
 	case "persona list":
-		printRouteUsage(w, "persona list")
+		cli.WriteRouteUsage(w, "persona list")
 	case "persona show":
-		printRouteUsage(w, "persona show")
+		cli.WriteRouteUsage(w, "persona show")
 	case "persona edit":
-		printRouteUsage(w, "persona edit")
+		cli.WriteRouteUsage(w, "persona edit")
 	case "persona set":
-		printRouteUsage(w, "persona set")
+		cli.WriteRouteUsage(w, "persona set")
 	case "persona delete":
-		printRouteUsage(w, "persona delete")
+		cli.WriteRouteUsage(w, "persona delete")
 	case "instructions":
-		printRouteUsage(w, "instructions")
+		cli.WriteRouteUsage(w, "instructions")
 	case "instructions list":
-		printRouteUsage(w, "instructions list")
+		cli.WriteRouteUsage(w, "instructions list")
 	case "instructions show":
-		printRouteUsage(w, "instructions show")
+		cli.WriteRouteUsage(w, "instructions show")
 	case "instructions edit":
-		printRouteUsage(w, "instructions edit")
+		cli.WriteRouteUsage(w, "instructions edit")
 	case "instructions set":
-		printRouteUsage(w, "instructions set")
+		cli.WriteRouteUsage(w, "instructions set")
 	case "instructions delete":
-		printRouteUsage(w, "instructions delete")
+		cli.WriteRouteUsage(w, "instructions delete")
 	}
 }
