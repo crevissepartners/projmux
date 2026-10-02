@@ -244,15 +244,9 @@ func helpVerbSetProblems(scan helpVerbScan, sites map[string]helpVerbSite, excep
 // stdout, and every branch is a row of helpVerbSites or helpVerbExceptions.
 func TestHandlerHelpVerbsRenderTheCatalogHelp(t *testing.T) {
 	t.Parallel()
-	names, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
 	files := map[string][]byte{}
-	for _, name := range names {
-		if !strings.HasSuffix(name, "_test.go") {
-			files[name] = nil
-		}
+	for _, name := range appSourceFiles(t) {
+		files[name] = nil
 	}
 	for _, problem := range helpVerbSetProblems(scanHelpVerbs(files), helpVerbSites, helpVerbExceptions) {
 		t.Error(problem)

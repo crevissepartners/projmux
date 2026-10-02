@@ -12,15 +12,7 @@ import (
 
 func TestProjectStartupRetiredPathsNegativeAudit(t *testing.T) {
 	t.Parallel()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		path := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			continue
-		}
+	for _, path := range appSourceFiles(t) {
 		source, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

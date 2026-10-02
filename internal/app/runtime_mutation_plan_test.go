@@ -431,18 +431,11 @@ func resolveNativeProjectionString(expr ast.Expr, constants map[string]string) (
 
 func nativeProjectionStringConstants(t *testing.T) map[string]string {
 	t.Helper()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
 	pending := map[string]ast.Expr{}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		parsed, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, 0)
+	for _, name := range appSourceFiles(t) {
+		parsed, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
-			t.Fatalf("parse native projection constant source %s: %v", entry.Name(), err)
+			t.Fatalf("parse native projection constant source %s: %v", name, err)
 		}
 		for _, declaration := range parsed.Decls {
 			general, ok := declaration.(*ast.GenDecl)

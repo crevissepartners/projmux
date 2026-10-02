@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -930,26 +928,14 @@ func TestStandaloneExplicitAuthorityRejectsNonControllerVerbs(t *testing.T) {
 }
 
 func TestStandaloneExplicitAuthorityHasOneProductionConstructor(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source")
-	}
-	root := filepath.Dir(thisFile)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var sites []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		bytes, err := os.ReadFile(filepath.Join(root, entry.Name()))
+	for _, name := range appSourceFiles(t) {
+		bytes, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(string(bytes), "Class: runtimeMutationRouteStandaloneExplicit") {
-			sites = append(sites, entry.Name())
+			sites = append(sites, name)
 		}
 	}
 	if !slices.Equal(sites, []string{"controller_runtime_mutation.go"}) {

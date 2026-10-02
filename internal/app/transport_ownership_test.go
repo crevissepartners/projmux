@@ -24,10 +24,6 @@ func (rawTransportNoopRunner) Run(context.Context, string, ...string) ([]byte, e
 func TestRawTmuxTransportHasOneProductionOwner(t *testing.T) {
 	t.Parallel()
 
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
 	forbidden := map[string]bool{
 		"explicitTmuxTarget":  true,
 		"controllerTransport": true,
@@ -37,11 +33,7 @@ func TestRawTmuxTransportHasOneProductionOwner(t *testing.T) {
 		"delete_pane_runtime.go":   true,
 		"delete_window_runtime.go": true,
 	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)

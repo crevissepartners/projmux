@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -172,10 +171,7 @@ func controlFatal(t *testing.T) {
 		t.Fatalf("fatal shape: violations=%q lookups=%d, want none and 2", negative.violations, negative.lookups)
 	}
 
-	paths, err := filepath.Glob("*_test.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	paths := appTestFiles(t)
 	fset := token.NewFileSet()
 	audit := realTmuxSkipAudit{lookupFunc: map[string]int{}}
 	for _, path := range paths {

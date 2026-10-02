@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -109,16 +108,9 @@ func forwardedRouteUsageProblems(route, stderr string) []string {
 // the hidden internal namespace.
 func scanForwardedRouteLabels(t *testing.T) []string {
 	t.Helper()
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
 	fset := token.NewFileSet()
 	seen := map[string]bool{}
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatal(err)

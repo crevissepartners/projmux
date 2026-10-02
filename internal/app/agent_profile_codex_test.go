@@ -700,16 +700,9 @@ func TestCodexCLIResumePlannerAppliesCurrentProfilePolicy(t *testing.T) {
 // catalog resume, the two paths that re-send the profile's policy.
 func TestCodexNativeResumeCallersAreExactlyTheTwoResumePaths(t *testing.T) {
 	t.Parallel()
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
 	fset := token.NewFileSet()
 	var got []string
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatal(err)

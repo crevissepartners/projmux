@@ -301,16 +301,8 @@ func TestTheOriginPaneIsNotAGlobalScope(t *testing.T) {
 	// into openPicker's inline popup and reads it back in splitOriginPane; the
 	// selection continuation writes it once to hand the same origin on.
 	allowed := map[string]int{"tmux.go": 2, "ai.go": 2, "split_selection_continuation.go": 1}
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package dir: %v", err)
-	}
 	seen := map[string]int{}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		body, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

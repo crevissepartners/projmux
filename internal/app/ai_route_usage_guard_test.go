@@ -255,17 +255,10 @@ type aiRouteUsageCall struct {
 // literal is reported as a problem: the set must stay closed.
 func scanAIRouteUsageCalls(t *testing.T) ([]aiRouteUsageCall, []string) {
 	t.Helper()
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
 	fset := token.NewFileSet()
 	var calls []aiRouteUsageCall
 	var problems []string
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatal(err)

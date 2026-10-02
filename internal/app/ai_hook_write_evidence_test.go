@@ -5,7 +5,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,28 +52,15 @@ const aiBestEffortWriteMarker = "best-effort-write:"
 // its own fix. A gate that cannot tell code from prose about code is a gate
 // people route around.
 func TestHookReflectionWritesNeverDiscardTheirErrorSilently(t *testing.T) {
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("working directory: %v", err)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read package directory: %v", err)
-	}
 	var unjustified []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		path := filepath.Join(dir, name)
-		payload, readErr := os.ReadFile(path) // #nosec G304 -- package source under test.
+	for _, name := range appSourceFiles(t) {
+		payload, readErr := os.ReadFile(name) // #nosec G304 -- package source under test.
 		if readErr != nil {
 			t.Fatalf("read %s: %v", name, readErr)
 		}
 		lines := strings.Split(string(payload), "\n")
 		fileSet := token.NewFileSet()
-		parsed, parseErr := parser.ParseFile(fileSet, path, payload, 0)
+		parsed, parseErr := parser.ParseFile(fileSet, name, payload, 0)
 		if parseErr != nil {
 			t.Fatalf("parse %s: %v", name, parseErr)
 		}

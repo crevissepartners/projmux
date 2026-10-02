@@ -541,20 +541,12 @@ func TestTheLegacySplitRouteIsGone(t *testing.T) {
 // pane-context-menu entries in the generated config -- which is a different thing
 // from projmux producing one.
 func TestOnlyTheMaterializerRunsSplitWindow(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package dir: %v", err)
-	}
 	// materialize.go owns the one detached `split-window`, and tmux.go carries the
 	// generated pane-context-menu entries, which are tmux's own menu items rather
 	// than a projmux-issued split. Snapshot replay lives in its own package and
 	// restores a recorded argv, which is outside this Phase.
 	allowed := map[string]bool{"materialize.go": true, "runtime_mutation_plan.go": true, "runtime_mutation_surface.go": true, "tmux.go": true}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		body, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

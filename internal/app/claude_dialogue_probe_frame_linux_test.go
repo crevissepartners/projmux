@@ -69,12 +69,8 @@ func (f userFrameLiteralFinding) String() string {
 }
 
 // scanUserFrameLiterals reports string literals in the non-test Go files of
-// dir that look like a hand-typed Claude user frame.
-func scanUserFrameLiterals(dir string) (findings []userFrameLiteralFinding, scanned int, err error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
-	if err != nil {
-		return nil, 0, err
-	}
+// paths that look like a hand-typed Claude user frame.
+func scanUserFrameLiterals(paths []string) (findings []userFrameLiteralFinding, scanned int, err error) {
 	sort.Strings(paths)
 	fset := token.NewFileSet()
 	for _, path := range paths {
@@ -106,7 +102,7 @@ func scanUserFrameLiterals(dir string) (findings []userFrameLiteralFinding, scan
 }
 
 func TestClaudeUserFrameHasNoHandTypedLiteral(t *testing.T) {
-	findings, scanned, err := scanUserFrameLiterals(".")
+	findings, scanned, err := scanUserFrameLiterals(appSourceFiles(t))
 	if err != nil {
 		t.Fatalf("scan internal/app: %v", err)
 	}
@@ -121,15 +117,18 @@ func TestClaudeUserFrameHasNoHandTypedLiteral(t *testing.T) {
 func TestScanUserFrameLiteralsPositiveControl(t *testing.T) {
 	dir := t.TempDir()
 	source := "package p\n\nvar x = \"{\\\"type\\\":\\\"user\\\",\\\"message\\\":{}}\"\n\nvar y = `{\"role\": \"user\", \"content\": \"hi\"}`\n\ntype z struct {\n\tType string `json:\"type\"`\n\tRole string `json:\"role\"`\n\tContent string `json:\"content\"`\n}\n"
+	var paths []string
 	for name, content := range map[string]string{
 		"frame.go":      source,
 		"frame_test.go": source,
 	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		paths = append(paths, path)
 	}
-	findings, scanned, err := scanUserFrameLiterals(dir)
+	findings, scanned, err := scanUserFrameLiterals(paths)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
