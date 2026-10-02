@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/personacmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/profile"
@@ -37,7 +38,7 @@ func newProfileCommand() *profileCommand {
 func newPersonaCommand(noun string, homeDir func() (string, error), lookupEnv func(string) string, stdin io.Reader, editorRunner personacmd.EditorRunner) *personacmd.Command {
 	return personacmd.New(noun,
 		func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) },
-		func() string { return editorFromEnv(lookupEnv) },
+		func() string { return hookcmd.EditorFromEnv(lookupEnv) },
 		editorRunner, stdin)
 }
 

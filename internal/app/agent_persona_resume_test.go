@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 )
@@ -140,7 +141,7 @@ func TestAgentResumeRepassesThePersonaSnapshot(t *testing.T) {
 	withPersona, snapshotPath := createPersonaForResume(t, planner, "go-reviewer", []byte(personaResumeContent))
 	// This is the pre-rename file and annotation fixture. The new CLI reads
 	// that file, while resume continues to resolve its recorded snapshot.
-	instructions := newPersonaCommand("instructions", planner.homeDir, planner.lookupEnv, nil, defaultEditorRunner)
+	instructions := newPersonaCommand("instructions", planner.homeDir, planner.lookupEnv, nil, hookcmd.DefaultEditorRunner)
 	var shown bytes.Buffer
 	if err := instructions.Run([]string{"show", "go-reviewer"}, &shown, &bytes.Buffer{}); err != nil || shown.String() != personaResumeContent {
 		t.Fatalf("instructions show over legacy file = %q, %v", shown.String(), err)

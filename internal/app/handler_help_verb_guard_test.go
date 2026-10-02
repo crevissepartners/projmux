@@ -350,14 +350,3 @@ func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
 		t.Errorf("guard reports the leaf help-operand row %s as answered by the help boundary:\n%s", key, problems)
 	}
 }
-
-// TestHookEventsNoteListsSupportedEvents pins the catalog `hook` note, which
-// `hook --help`, `hook help`, and every hook refusal print, to the events the
-// hook runner supports.
-func TestHookEventsNoteListsSupportedEvents(t *testing.T) {
-	t.Parallel()
-	want := "Events:\n  " + supportedHookEventList()
-	if notes := cli.RouteNotes("hook"); !slices.Contains(notes, want) {
-		t.Errorf("catalog hook notes = %q, want a note %q", notes, want)
-	}
-}

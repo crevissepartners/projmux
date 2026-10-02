@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
@@ -1065,7 +1066,7 @@ func (c *shellCommand) resolveShellProjectContext(home string) (string, error) {
 		return "", err
 	}
 	wd = filepath.Clean(wd)
-	if root := nearestProjectMarker(wd, os.TempDir(), home); root != "" {
+	if root := hookcmd.NearestProjectMarker(wd, os.TempDir(), home); root != "" {
 		return root, nil
 	}
 	return "", nil

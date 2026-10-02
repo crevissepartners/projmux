@@ -52,7 +52,7 @@ var routeVerbDispatchers = map[string]routeVerbDispatcher{
 		ranged: "cli.ProviderCreateShortcuts()", rangedVerbs: cli.ProviderCreateShortcuts},
 	"get runtime": {file: "internal/app/get_runtime.go", fn: "(*getCommand).runRuntime",
 		table: getRuntimeDispatchedKinds, uses: []string{"cli.CanonicalGrandchildToken", "runtimeKindTokens"}},
-	"hook":        {file: "internal/app/hook.go", fn: "(*hookCommand).Run", tag: "fs.Arg(0)"},
+	"hook":        {file: "internal/app/hookcmd/hook.go", fn: "(*Command).Run", tag: "fs.Arg(0)"},
 	"pin project": {file: "internal/app/pincmd/pin.go", fn: "(*Command).runLevel", tag: "fs.Arg(0)", passThrough: []string{"project"}},
 	"runtime tag": {file: "internal/app/tag.go", fn: "(*tagCommand).Run", tag: "fs.Arg(0)", passThrough: []string{"project"}},
 	"switch":      {file: "internal/app/switch.go", fn: "(*switchCommand).Run", tag: "args[0]"},
