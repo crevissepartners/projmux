@@ -2,8 +2,8 @@ package app
 
 import (
 	"maps"
-	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
@@ -79,9 +79,11 @@ func TestLiveMachineGuardUnsetsThisPackagesLiveRouting(t *testing.T) {
 // opt-in gate or a known ambient location, so a new real-provider gate cannot
 // run behind the stand-ins unnoticed.
 func TestProviderGuardOptInEnvCoversTheInstalledTests(t *testing.T) {
-	files, err := filepath.Glob("*_installed_test.go")
-	if err != nil {
-		t.Fatal(err)
+	var files []string
+	for _, name := range appTestFiles(t) {
+		if strings.HasSuffix(name, "_installed_test.go") {
+			files = append(files, name)
+		}
 	}
 	files = append(files, "codex_payload_free_installed_outcome_test.go")
 	read, err := liveguard.InstalledTestEnvReads(files, map[string][]int{

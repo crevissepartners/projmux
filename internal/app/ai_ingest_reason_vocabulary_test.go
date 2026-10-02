@@ -226,14 +226,6 @@ func aiIngestReasonSinkCalls(fileSet *token.FileSet, file *ast.File, sinks map[s
 
 // TestIngestReasonColumnCarriesOnlyBoundedValues is the static half.
 func TestIngestReasonColumnCarriesOnlyBoundedValues(t *testing.T) {
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("working directory: %v", err)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read package directory: %v", err)
-	}
 	type parsedFile struct {
 		name    string
 		fileSet *token.FileSet
@@ -241,18 +233,13 @@ func TestIngestReasonColumnCarriesOnlyBoundedValues(t *testing.T) {
 	}
 	var sources []parsedFile
 	sinks := map[string]int{}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		path := filepath.Join(dir, name)
-		payload, readErr := os.ReadFile(path) // #nosec G304 -- package source under test.
+	for _, name := range appSourceFiles(t) {
+		payload, readErr := os.ReadFile(name) // #nosec G304 -- package source under test.
 		if readErr != nil {
 			t.Fatalf("read %s: %v", name, readErr)
 		}
 		fileSet := token.NewFileSet()
-		parsed, parseErr := parser.ParseFile(fileSet, path, payload, 0)
+		parsed, parseErr := parser.ParseFile(fileSet, name, payload, 0)
 		if parseErr != nil {
 			t.Fatalf("parse %s: %v", name, parseErr)
 		}

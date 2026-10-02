@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,10 +18,6 @@ import (
 
 func TestAutomaticRecoveryCallsitesCannotBypassTheProductionAuthorityGate(t *testing.T) {
 	fset := token.NewFileSet()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
 	targets := map[string]map[string]bool{
 		"resourceControllerKernel.plan":                                  {"requireAutomaticRecoveryPaths": false, "authorizeApprovedOrphanImport": false},
 		"resourceControllerKernel.converge":                              {"authorizeApprovedOrphanImport": false},
@@ -30,11 +25,7 @@ func TestAutomaticRecoveryCallsitesCannotBypassTheProductionAuthorityGate(t *tes
 		"registryProjectTopologyMaterializer.MaterializeProjectTopology": {"requireAutomaticRecoveryPaths": false, "runLockedAutomaticMirrorRecovery": false},
 		"topologyMaterializeRun.execute":                                 {"authorizeRecovery": false},
 	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)

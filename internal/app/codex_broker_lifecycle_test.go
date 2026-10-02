@@ -9,7 +9,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -928,17 +927,9 @@ const retiredObserverExhaustionReason = "reconnect-exhausted"
 // own at all, and the native lifecycle observer is built with exactly one
 // connection opener, so a dual-write window has nothing to open it with.
 func TestNativeLifecycleProducerIsExactlyOnePerActivationGeneration(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
 	fileSet := token.NewFileSet()
 	inspected, openers := 0, 0
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || filepath.Ext(name) != ".go" || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fileSet, name, nil, 0)
 		if err != nil {
 			t.Fatal(err)

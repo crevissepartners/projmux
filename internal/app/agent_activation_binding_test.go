@@ -6,7 +6,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -161,16 +160,8 @@ func declaredAgentActivationBindingReasons(t *testing.T) []agentActivationBindin
 	t.Helper()
 	const typeName = "agentActivationBindingReason"
 	fileSet := token.NewFileSet()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package directory: %v", err)
-	}
 	var files []*ast.File
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fileSet, name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse package source %s: %v", name, err)

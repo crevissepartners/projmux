@@ -95,16 +95,9 @@ func assertCentralAIMode(t *testing.T, mode, source string) {
 // and funcs with that prefix, such as aiModeController, are not constants.
 func aiModeStringConstants(t *testing.T) map[string]string {
 	t.Helper()
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatalf("glob package sources: %v", err)
-	}
 	fset := token.NewFileSet()
 	constants := map[string]string{}
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)

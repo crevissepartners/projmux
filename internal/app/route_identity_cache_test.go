@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -460,17 +459,9 @@ func TestMaterializerRouteGuardReprovesIdentityAfterEveryGuardedWrite(t *testing
 func TestMaterializerPlansRunOnlyThroughTheGuardedWriteSeam(t *testing.T) {
 	t.Parallel()
 
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
 	seamFound := false
 	guardedPlans := 0
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		parsed, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)

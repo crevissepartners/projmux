@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -223,21 +224,13 @@ func TestSettingsStaticBuildersBypassLiteralReverseLookup(t *testing.T) {
 		"rowLabelInfo":                     0,
 	}
 
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read app package: %v", err)
-	}
 	fset := token.NewFileSet()
 	type parsedSource struct {
 		name string
 		file *ast.File
 	}
 	var sources []parsedSource
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range appSourceFiles(t) {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
@@ -398,19 +391,14 @@ func settingsTestStringExpression(expression ast.Expr, constants map[string]stri
 // the non-test sources of one internal/app subpackage.
 func settingsTestSubpackageConstants(t *testing.T, dir string) map[string]string {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read %s package: %v", dir, err)
-	}
 	expressions := map[string]ast.Expr{}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+	for _, name := range appSourceFiles(t) {
+		if path.Dir(name) != dir {
 			continue
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, name), nil, 0)
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
-			t.Fatalf("parse %s/%s: %v", dir, name, err)
+			t.Fatalf("parse %s: %v", name, err)
 		}
 		for _, decl := range file.Decls {
 			gen, ok := decl.(*ast.GenDecl)

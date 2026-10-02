@@ -467,19 +467,10 @@ func aiIngestReasonPackageDir(t *testing.T) string {
 
 func aiIngestReasonPackageFiles(t *testing.T) []*ast.File {
 	t.Helper()
-	dir := aiIngestReasonPackageDir(t)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read package directory: %v", err)
-	}
 	var files []*ast.File
 	fileSet := token.NewFileSet()
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		parsed, err := parser.ParseFile(fileSet, filepath.Join(dir, name), nil, 0)
+	for _, name := range appSourceFiles(t) {
+		parsed, err := parser.ParseFile(fileSet, name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
