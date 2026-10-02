@@ -1666,8 +1666,10 @@ the file. The file is at most 64 KiB.
   its own Agent UID, to pass as `--creator uid:<agent>` to
   `projmux create agent` and `--source uid:<agent>` to
   `projmux agent message send`, and tells it to name the target of its shell
-  commands and add `--socket projmux` to a command that changes the runtime;
-  it is left out when the guidance is off. A Codex resume,
+  commands and add `--socket projmux` only to a command that defines that
+  flag, such as `projmux delete pane` or `projmux agent relaunch`, never to
+  `projmux create agent`, which has no such flag and uses the `projmux` app
+  socket itself; it is left out when the guidance is off. A Codex resume,
   and a Codex create without a prompt or with `--interactive-only`, do not
   receive it. A thread keeps the developer instructions it was started with,
   so a changed guidance reaches a Codex Agent only through a new create.
