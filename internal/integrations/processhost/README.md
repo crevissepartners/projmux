@@ -37,6 +37,16 @@ and launch. Spawn only yields `starting`; the first real user input triggers
 Claude init, and only an exact session plus a successful binding CAS yields
 `ready`. `Current` validates ownership before each control write. Callbacks must
 honor their contexts; they must not retain registry locks while waiting for I/O.
+`Stop` closes control admission and expires pending requests, closes provider
+stdin, then closes the owner lifetime pipe. The supervisor waits up to `Grace`
+for SessionEnd and actual child exit before sending TERM to its owned group;
+a further `Grace` without exit escalates to KILL. Owner lifetime loss and
+supervisor termination signals use the same bounded grace sequence. A completed
+child observation skips the remaining grace. Group cleanup and stream drain each
+retain their separate grace budget. Startup rollback allows these four budgets
+plus one grace of scheduling margin before reaping a nonconforming helper.
+Repeated Stop is idempotent; a different binding is refused.
+
 `Wait` reports actual child evidence. `Snapshot.Termination` uses the existing
 metadata classifier, and the consumer offers it to `Mutator.RecordTermination`.
 Turn results and interrupt acknowledgments never produce termination evidence.
@@ -64,6 +74,10 @@ The deterministic suite covers operation concurrency, preparation and init
 failure, binding rollback, multi-turn NDJSON, question/permission response races,
 interrupt ack/result ordering, overflow, malformed/oversized frames, blocked
 stdin, stdout EOF, stderr pressure, and existing metadata receipt guards.
+`TestStopAllowsSessionEnd` verifies a 300ms SessionEnd marker after stdin EOF
+within a 2s grace, actual exit0 with no signal, normal classification, and stale
+and repeated Stop behavior. `TestStopEscalatesUnresponsiveProvider` checks the
+TERM and KILL grace stages against actual child Wait.
 `TestOwnerLifetimeReclaimsOnlyOwnedGroup` kills an isolated owner through normal
 shutdown, stdin EOF, SIGTERM and SIGKILL; it checks child, descendant and helper
 absence while a sibling stays alive. Linux unit/race CI and Darwin's native job

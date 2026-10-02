@@ -142,9 +142,24 @@ func stopGroup(group int, grace time.Duration, waited <-chan error) error {
 		return err
 	default:
 	}
-	_ = syscall.Kill(-group, syscall.SIGTERM)
+	// Owner shutdown closes provider stdin first. Give SessionEnd a bounded
+	// opportunity to complete before signalling the still-owned group. Owner
+	// death follows the same bound even when a descendant retains stdin.
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
+	select {
+	case err := <-waited:
+		return err
+	case <-timer.C:
+	}
+	// Observation failure must never grant signal authority at escalation.
+	select {
+	case err := <-waited:
+		return err
+	default:
+	}
+	_ = syscall.Kill(-group, syscall.SIGTERM)
+	timer.Reset(grace)
 	select {
 	case err := <-waited:
 		return err

@@ -314,3 +314,70 @@ func TestNormalExitDoesNotWaitForDrainDeadline(t *testing.T) {
 		t.Fatalf("normal exit delayed/misclassified: %+v %v", s, err)
 	}
 }
+
+func TestStopAllowsSessionEnd(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "session-end")
+	t.Setenv("PROCESSHOST_SESSION_END_FILE", marker)
+	p := start(t, testHost(t, func(_ *Transactions, l *Limits) { l.Grace = 2 * time.Second }), "session-end")
+	turn(t, p, "q", "question")
+	observeUntil(t, p, func(s Snapshot) bool { return len(s.Pending) == 1 })
+	stale := binding()
+	stale.Generation = "old"
+	if err := p.Stop(stale); err != ErrStale {
+		t.Fatalf("stale Stop: %v", err)
+	}
+	began := time.Now()
+	for range 2 {
+		if err := p.Stop(binding()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, _ := p.Observe(binding())
+	if len(s.Pending) != 0 {
+		t.Fatal("Stop retained pending control")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	s, err := p.Wait(ctx, binding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, markerErr := os.ReadFile(marker)
+	evidence, ok := s.Termination(time.Now())
+	t.Logf("Stop elapsed=%s marker=%q markerErr=%v state=%s exit=%+v classification=%s", time.Since(began), raw, markerErr, s.State, s.Exit, evidence.Classification)
+	if markerErr != nil || string(raw) != "complete" || s.State != "exited" || s.Exit == nil || s.Exit.Code != 0 || s.Exit.Signal != "" || !ok || string(evidence.Classification) != "normal" {
+		t.Fatalf("SessionEnd did not finish normally: %+v", s)
+	}
+	if err := p.Stop(binding()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStopEscalatesUnresponsiveProvider(t *testing.T) {
+	for _, tc := range []struct {
+		mode, signal string
+		stages       int
+	}{
+		{"ignore-eof", "TERM", 1},
+		{"ignore-eof-term", "KILL", 2},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			const grace = 200 * time.Millisecond
+			p := start(t, testHost(t, func(_ *Transactions, l *Limits) { l.Grace = grace }), tc.mode)
+			turn(t, p, "ready", "normal")
+			observeUntil(t, p, func(s Snapshot) bool { return s.State == "ready" && s.Turn == "" })
+			began := time.Now()
+			if err := p.Stop(binding()); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			s, err := p.Wait(ctx, binding())
+			elapsed := time.Since(began)
+			if err != nil || s.State != "exited" || s.Exit == nil || s.Exit.Signal != tc.signal || elapsed < time.Duration(tc.stages)*grace {
+				t.Fatalf("escalation elapsed=%s snapshot=%+v exit=%+v err=%v", elapsed, s, s.Exit, err)
+			}
+			t.Logf("bounded escalation: elapsed=%s actual Wait=%+v", elapsed, s.Exit)
+		})
+	}
+}
