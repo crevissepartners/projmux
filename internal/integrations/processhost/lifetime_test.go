@@ -128,12 +128,23 @@ func TestOwnerLifetimeReclaimsOnlyOwnedGroup(t *testing.T) {
 }
 
 func TestExitObservationRetainsOwnedGroupUntilWait(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "processhost-provider", "exit0")
+	if err := prepareReaper(); err != nil {
+		t.Fatal(err)
+	}
+	leafFile := filepath.Join(t.TempDir(), "leaf")
+	cmd := exec.Command(os.Args[0], "processhost-provider", "exit-with-leaf")
+	cmd.Env = append(os.Environ(), "PROCESSHOST_LEAF_FILE="+leafFile)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait()
+			_ = reapGroup(cmd.Process.Pid, time.Second)
+		}
+	})
 	observed := make(chan error, 1)
 	go func() { observed <- observeChildExit(cmd.Process.Pid) }()
 	select {
@@ -144,17 +155,36 @@ func TestExitObservationRetainsOwnedGroupUntilWait(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("exit observation timeout")
 	}
-	if err := syscall.Kill(-cmd.Process.Pid, 0); err != nil {
-		t.Fatalf("group identity released before cleanup: %v", err)
+	// A second successful observation proves the exact child is still waitable.
+	// kill(0) on a zombie-only group is not a portable identity check (Darwin
+	// returns EPERM). Keep a real descendant alive to test the group signal.
+	if err := observeChildExit(cmd.Process.Pid); err != nil || cmd.ProcessState != nil {
+		t.Fatalf("child was reaped before group cleanup: %v", err)
 	}
-	// A signal to the still-reserved group cannot change the already-exited
-	// leader's genuine status. Reaping remains the final authority for that status.
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+	raw, err := os.ReadFile(leafFile)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Wait(); err != nil || cmd.ProcessState.ExitCode() != 0 {
-		t.Fatalf("lost real Wait status: %v", err)
+	leaf, err := strconv.Atoi(string(raw))
+	if err != nil {
+		t.Fatal(err)
 	}
+	if group, err := syscall.Getpgid(leaf); err != nil || group != cmd.Process.Pid {
+		t.Fatalf("descendant not in exact owned group: %d %v", group, err)
+	}
+	if err := syscall.Kill(leaf, 0); err != nil {
+		t.Fatalf("descendant not alive before product cleanup: %v", err)
+	}
+	// Call the product finalizer: signal the held group, actually Wait the
+	// leader, then verify descendant reaping. The leader's status stays exit0.
+	exit, err := finishOwnedChild(cmd, nil, time.Second)
+	if err != nil || exit.Code != 0 || exit.Signal != "" || cmd.ProcessState == nil {
+		t.Fatalf("lost real Wait status: %+v %v", exit, err)
+	}
+	if err := syscall.Kill(leaf, 0); err != syscall.ESRCH {
+		t.Fatalf("descendant survived product cleanup: %v", err)
+	}
+	t.Logf("child %d observed twice while waitable; descendant %d in owned group killed/reaped by product finalizer; actual Wait exit0", cmd.Process.Pid, leaf)
 }
 
 func TestFailedExitObservationGrantsNoCleanupAuthority(t *testing.T) {

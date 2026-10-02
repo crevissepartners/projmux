@@ -150,7 +150,7 @@ func fixtureProvider() {
 		time.Sleep(time.Hour)
 	case "blocked":
 		time.Sleep(time.Hour)
-	case "group":
+	case "group", "exit-with-leaf":
 		leaf := exec.Command(os.Args[0], "processhost-leaf")
 		leaf.Stdout = os.Stdout
 		leaf.Stderr = os.Stderr
@@ -160,6 +160,9 @@ func fixtureProvider() {
 		ignoreTerm()
 		if err := os.WriteFile(os.Getenv("PROCESSHOST_LEAF_FILE"), []byte(strconv.Itoa(leaf.Process.Pid)), 0600); err != nil {
 			panic(err)
+		}
+		if mode == "exit-with-leaf" {
+			return
 		}
 		// Ignore TERM to exercise escalation rather than only graceful shutdown.
 		ignoreTerm()
